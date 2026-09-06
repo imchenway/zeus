@@ -53,6 +53,8 @@ export class HomebrewUpdateError extends Error {
   ) {
     super(message);
     this.name = 'HomebrewUpdateError';
+    // 保留下载分类供提示使用，重试仍由原有下载状态决定。
+    if (kind === 'transient_download') this.cause = { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', message };
   }
 }
 
@@ -150,7 +152,9 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       });
       const installed = await inspectCask(prepared.brewPath);
       if (installed.installedVersion !== prepared.update.latestVersion) {
-        throw new Error(`Homebrew 安装后版本不一致：expected=${prepared.update.latestVersion} actual=${installed.installedVersion ?? 'none'}`);
+        throw new Error(`Homebrew 安装后版本不一致：expected=${prepared.update.latestVersion} actual=${installed.installedVersion ?? 'none'}`, {
+          cause: { code: 'ZEUS_UPDATE_INSTALLED_IDENTITY_MISMATCH', message: 'Installed app does not match the requested release' },
+        });
       }
       if (!options.testMode && installed.appTarget !== resolve(options.currentAppPath)) {
         throw new Error('Homebrew 安装后的 Zeus App 位置与当前日常正式应用不一致。');
@@ -173,10 +177,12 @@ async function inspectInstalledApp(appPath: string, expectedBundleId: string, ex
   const infoPlistPath = join(resolvedAppPath, 'Contents', 'Info.plist');
   const [bundleId, shortVersion, bundleVersion] = await Promise.all([readPlistString(infoPlistPath, 'CFBundleIdentifier'), readPlistString(infoPlistPath, 'CFBundleShortVersionString'), readPlistString(infoPlistPath, 'CFBundleVersion')]);
   if (bundleId !== expectedBundleId) {
-    throw new Error(`Homebrew 安装后的 Zeus App 身份不一致：expected=${expectedBundleId} actual=${bundleId}`);
+    throw new Error(`Homebrew 安装后的 Zeus App 身份不一致：expected=${expectedBundleId} actual=${bundleId}`, { cause: { code: 'ZEUS_UPDATE_INSTALLED_IDENTITY_MISMATCH', message: 'Installed app does not match the requested release' } });
   }
   if (shortVersion !== bundleVersion || !expectedVersions.includes(shortVersion)) {
-    throw new Error(`Homebrew 安装后的 Zeus App 版本不一致：expected=${expectedVersions.join('|')} actual=${shortVersion} (${bundleVersion})`);
+    throw new Error(`Homebrew 安装后的 Zeus App 版本不一致：expected=${expectedVersions.join('|')} actual=${shortVersion} (${bundleVersion})`, {
+      cause: { code: 'ZEUS_UPDATE_INSTALLED_IDENTITY_MISMATCH', message: 'Installed app does not match the requested release' },
+    });
   }
   return { appPath: resolvedAppPath, bundleId, version: shortVersion };
 }

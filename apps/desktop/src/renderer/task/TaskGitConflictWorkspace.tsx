@@ -341,6 +341,7 @@ export function TaskGitConflictWorkspace(props: {
 
         {viewMode === 'full' ? (
           <FullFileColumns
+            zh={props.zh}
             path={props.conflictPath}
             document={document}
             disabled={!document || props.busy}
@@ -353,6 +354,7 @@ export function TaskGitConflictWorkspace(props: {
           />
         ) : activeBlock && document ? (
           <FocusedConflictColumns
+            zh={props.zh}
             path={props.conflictPath}
             document={document}
             block={activeBlock}
@@ -391,6 +393,8 @@ function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailure
 }
 
 function FocusedConflictColumns(props: {
+  /** 按父页面语言显示冲突操作与辅助阅读文本。 */
+  zh: boolean;
   path: string;
   document: ConflictDocument;
   block: ConflictBlock;
@@ -419,6 +423,7 @@ function FocusedConflictColumns(props: {
   return (
     <div className="task-git-conflict-columns is-focused">
       <FocusedSidePane
+        zh={props.zh}
         paneRef={sourceRef}
         title={props.targetTitle}
         path={props.path}
@@ -439,6 +444,7 @@ function FocusedConflictColumns(props: {
         onChange={(content) => props.onResultChange(`${props.document.visibleContent.slice(0, resultSnippet.startOffset)}${content}${props.document.visibleContent.slice(resultSnippet.endOffset)}`)}
       />
       <FocusedSidePane
+        zh={props.zh}
         paneRef={taskRef}
         title={props.taskTitle}
         path={props.path}
@@ -454,6 +460,8 @@ function FocusedConflictColumns(props: {
 }
 
 function FocusedSidePane(props: {
+  /** 按父页面语言显示冲突操作与辅助阅读文本。 */
+  zh: boolean;
   paneRef: RefObject<HTMLPreElement | null>;
   title: string;
   path: string;
@@ -471,16 +479,23 @@ function FocusedSidePane(props: {
       <header className="task-git-conflict-pane-header">
         <strong>{props.title}</strong>
         <span className="task-git-conflict-side-actions">
-          <button type="button" className="task-git-conflict-accept" onClick={() => props.onAction('accepted')} disabled={props.disabled} aria-label={`${props.title}: 选入`} title="选入">
+          <button type="button" className="task-git-conflict-accept" onClick={() => props.onAction('accepted')} disabled={props.disabled} aria-label={`${props.title}: ${props.zh ? '选入' : 'Include'}`} title={props.zh ? '选入' : 'Include'}>
             {pointsRight ? <ArrowRight aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
-            <span>选入</span>
+            <span>{props.zh ? '选入' : 'Include'}</span>
           </button>
-          <button type="button" className="task-git-conflict-ignore" onClick={() => props.onAction('ignored')} disabled={props.disabled} aria-label={`${props.title}: 忽略`} title="忽略这一侧">
+          <button
+            type="button"
+            className="task-git-conflict-ignore"
+            onClick={() => props.onAction('ignored')}
+            disabled={props.disabled}
+            aria-label={`${props.title}: ${props.zh ? '忽略' : 'Ignore'}`}
+            title={props.zh ? '忽略这一侧' : 'Ignore this side'}
+          >
             <X aria-hidden="true" />
           </button>
         </span>
       </header>
-      <small className="task-git-conflict-side-state">{sideStateLabel(props.state)}</small>
+      <small className="task-git-conflict-side-state">{sideStateLabel(props.state, props.zh)}</small>
       <pre ref={props.paneRef} className="task-git-highlighted-code" onScroll={(event) => props.onScroll(event.currentTarget)}>
         <ConflictCodeLines content={props.snippet.text} path={props.path} lineKinds={lineKinds} lineNumberOffset={props.snippet.startLine - 1} />
       </pre>
@@ -521,6 +536,8 @@ function FocusedResultEditor(props: {
 }
 
 function FullFileColumns(props: {
+  /** 按父页面语言显示冲突操作与辅助阅读文本。 */
+  zh: boolean;
   path: string;
   document: ConflictDocument | null;
   disabled: boolean;
@@ -555,8 +572,9 @@ function FullFileColumns(props: {
   if (!props.document) return <div className="task-git-conflict-columns is-full" />;
   return (
     <div className="task-git-conflict-columns is-full">
-      <FullFilePane path={props.path} textareaRef={sourceRef} title={props.targetTitle} content={props.document.source} readOnly onScroll={syncScroll} />
+      <FullFilePane zh={props.zh} path={props.path} textareaRef={sourceRef} title={props.targetTitle} content={props.document.source} readOnly onScroll={syncScroll} />
       <FullFilePane
+        zh={props.zh}
         path={props.path}
         textareaRef={resultRef}
         title={props.resultTitle}
@@ -567,12 +585,14 @@ function FullFileColumns(props: {
         blocks={props.document.blocks}
         onSideAction={props.onSideAction}
       />
-      <FullFilePane path={props.path} textareaRef={taskRef} title={props.taskTitle} content={props.document.task} readOnly onScroll={syncScroll} />
+      <FullFilePane zh={props.zh} path={props.path} textareaRef={taskRef} title={props.taskTitle} content={props.document.task} readOnly onScroll={syncScroll} />
     </div>
   );
 }
 
 function FullFilePane(props: {
+  /** 按父页面语言显示冲突操作与辅助阅读文本。 */
+  zh: boolean;
   path: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   title: string;
@@ -610,21 +630,45 @@ function FullFilePane(props: {
           aria-label={props.title}
         />
         {props.blocks && props.onSideAction ? (
-          <div className="task-git-conflict-full-controls" aria-label="冲突块处理控制">
+          <div className="task-git-conflict-full-controls" aria-label={props.zh ? '冲突块处理控制' : 'Conflict block actions'}>
             {props.blocks.map((block) => {
               const top = countNewlines(props.content.slice(0, block.visibleStart)) * 18.6 - scrollTop;
               return (
                 <span key={block.id} className={`task-git-conflict-full-control is-${block.status}`} style={{ top }}>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'accepted')} disabled={props.readOnly} aria-label="选入来源分支" title="选入来源分支">
+                  <button
+                    type="button"
+                    onClick={() => props.onSideAction?.(block, 'source', 'accepted')}
+                    disabled={props.readOnly}
+                    aria-label={props.zh ? '选入来源分支' : 'Include source branch'}
+                    title={props.zh ? '选入来源分支' : 'Include source branch'}
+                  >
                     <ArrowRight aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'ignored')} disabled={props.readOnly} aria-label="忽略来源分支" title="忽略来源分支">
+                  <button
+                    type="button"
+                    onClick={() => props.onSideAction?.(block, 'source', 'ignored')}
+                    disabled={props.readOnly}
+                    aria-label={props.zh ? '忽略来源分支' : 'Ignore source branch'}
+                    title={props.zh ? '忽略来源分支' : 'Ignore source branch'}
+                  >
                     <X aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'task', 'ignored')} disabled={props.readOnly} aria-label="忽略任务分支" title="忽略任务分支">
+                  <button
+                    type="button"
+                    onClick={() => props.onSideAction?.(block, 'task', 'ignored')}
+                    disabled={props.readOnly}
+                    aria-label={props.zh ? '忽略任务分支' : 'Ignore task branch'}
+                    title={props.zh ? '忽略任务分支' : 'Ignore task branch'}
+                  >
                     <X aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'task', 'accepted')} disabled={props.readOnly} aria-label="选入任务分支" title="选入任务分支">
+                  <button
+                    type="button"
+                    onClick={() => props.onSideAction?.(block, 'task', 'accepted')}
+                    disabled={props.readOnly}
+                    aria-label={props.zh ? '选入任务分支' : 'Include task branch'}
+                    title={props.zh ? '选入任务分支' : 'Include task branch'}
+                  >
                     <ArrowLeft aria-hidden="true" />
                   </button>
                 </span>
@@ -718,8 +762,9 @@ function countNewlines(content: string): number {
   return (content.match(/\n/gu) ?? []).length;
 }
 
-function sideStateLabel(state: ConflictSideState): string {
-  if (state === 'accepted') return '已选入';
-  if (state === 'ignored') return '已忽略';
-  return '未处理';
+/** 冲突选择状态跟随页面语言。 */
+function sideStateLabel(state: ConflictSideState, zh: boolean): string {
+  if (state === 'accepted') return zh ? '已选入' : 'Included';
+  if (state === 'ignored') return zh ? '已忽略' : 'Ignored';
+  return zh ? '未处理' : 'Pending';
 }

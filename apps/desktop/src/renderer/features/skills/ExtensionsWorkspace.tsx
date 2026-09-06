@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -66,7 +67,7 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
       setMarketplaces(nextMarketplaces);
       setDangerousHookTrustBypass(runtimeStatus.dangerouslyBypassHookTrust);
     } catch (reason) {
-      setError(message(reason, zh ? '无法读取扩展目录。' : 'Unable to load extensions.'));
+      setError(message(reason, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyKey(null);
     }
@@ -91,7 +92,7 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
       return true;
     } catch (reason) {
-      setError(message(reason, zh ? '扩展操作失败。' : 'Extension operation failed.'));
+      setError(message(reason, zh ? 'zh-CN' : 'en'));
       return false;
     } finally {
       setBusyKey(null);
@@ -148,7 +149,7 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
         <div className="skills-workspace-title-row">
           <div>
             <h1>{zh ? '扩展管理' : 'Extension management'}</h1>
-            <p>{zh ? 'Plugin 安装、信任、连接和版本由 Zeus 统一管理，并投影到所有新会话。' : 'Zeus manages plugin installation, trust, connections, and versions for every new conversation.'}</p>
+            <p>{zh ? '在这里安装和管理插件（Plugin）。更改会用于之后新建的对话。' : 'Install and manage plugins here. Changes apply to conversations created afterward.'}</p>
           </div>
           <Button variant="secondary" size="regular" busy={busyKey === 'load'} onClick={() => void load()} disabled={!props.client || Boolean(busyKey)}>
             <ArrowClockwise aria-hidden="true" /> {zh ? '刷新' : 'Refresh'}
@@ -219,7 +220,7 @@ function PluginCatalog(props: {
       <div className="skills-section-heading">
         <div>
           <h2>{props.zh ? '已安装 Plugin' : 'Installed plugins'}</h2>
-          <p>{props.zh ? '启停与更新只影响之后创建的会话；活动会话继续使用已冻结修订。' : 'Enable, disable, and update affect only later conversations; active conversations retain their frozen revision.'}</p>
+          <p>{props.zh ? '启用、停用和更新会影响新对话；正在进行的对话继续使用原来的插件版本。' : 'Enabling, disabling, and updating plugins affects new conversations. Ongoing conversations keep their current plugin versions.'}</p>
         </div>
         <Button variant="primary" size="regular" onClick={props.onInstall} disabled={!props.client || Boolean(props.busyKey)}>
           <Plus aria-hidden="true" /> {props.zh ? '安装 Plugin' : 'Install plugin'}
@@ -310,8 +311,8 @@ function PluginCatalog(props: {
                         if (
                           !window.confirm(
                             props.zh
-                              ? `卸载 Plugin“${plugin.displayName}”？活动会话引用的旧修订会保留，Connector 授权不会自动删除。`
-                              : `Uninstall “${plugin.displayName}”? Revisions used by active conversations and connector authorization are retained.`,
+                              ? `卸载插件“${plugin.displayName}”？正在进行的会话仍可使用当前版本。已连接应用的授权会保留，需要另外撤销；插件以后可以重新安装。`
+                              : `Uninstall “${plugin.displayName}”? Active conversations can still use their current version. Connected app authorizations remain and must be revoked separately. You can reinstall the plugin later.`,
                           )
                         )
                           return;
@@ -337,7 +338,7 @@ function HookReview(props: { descriptor: PluginDescriptor; client: ExtensionsCli
   return (
     <section className="extension-component-section">
       <h3>
-        <ShieldCheck aria-hidden="true" /> {props.zh ? 'Hook 审查' : 'Hook review'}
+        <ShieldCheck aria-hidden="true" /> {props.zh ? '自动执行脚本审查（Hook）' : 'Automatic script review (hooks)'}
       </h3>
       {props.descriptor.hooks.map((trust) => {
         const definition = definitions.get(trust.hookId);
@@ -391,7 +392,7 @@ function McpPolicyPanel(props: { descriptor: PluginDescriptor; client: Extension
             <span>
               <strong>{server.name}</strong>
               <small>
-                {server.transport} · {props.zh ? '单工具覆盖可通过 API 设置' : 'Per-tool overrides are available through the API'}
+                {server.transport} · {props.zh ? '单个工具的权限需要通过 API 设置' : 'Permissions for individual tools must be configured through the API'}
               </small>
             </span>
             <span>
@@ -440,10 +441,14 @@ function ConnectorPanel(props: { descriptor: PluginDescriptor; client: Extension
                   try {
                     serverConfig = JSON.parse(raw) as Record<string, unknown>;
                   } catch {
-                    window.alert(props.zh ? 'JSON 无效。' : 'Invalid JSON.');
+                    window.alert(
+                      props.zh
+                        ? '连接配置不是有效的 JSON。请检查括号、引号和逗号，或复制服务提供的完整配置。'
+                        : 'The connection configuration is not valid JSON. Check brackets, quotes, and commas, or copy the complete configuration from the service.',
+                    );
                     return;
                   }
-                  const secret = window.prompt(props.zh ? '可选：Bearer 密钥（只写入 Keychain）' : 'Optional bearer secret (stored only in Keychain)') ?? undefined;
+                  const secret = window.prompt(props.zh ? '可选：填写服务访问密钥，将保存在 macOS 钥匙串中。' : 'Optional: enter the service access token. It will be stored in macOS Keychain.') ?? undefined;
                   void props.onMutate(`connector:${connectorId}`, () =>
                     props.client!.bindPluginConnector(props.descriptor.plugin.id, connectorId, { appTechnicalId: app.technicalId, serverConfig, ...(secret ? { secret } : {}), connected: true }),
                   );
@@ -484,7 +489,7 @@ function MarketplaceCatalog(props: {
       <div className="skills-section-heading">
         <div>
           <h2>Marketplace</h2>
-          <p>{props.zh ? '仅读取用户明确添加的本地或 Git marketplace.json，不代理官方公共目录。' : 'Only explicit local or Git marketplace.json sources are read; public catalogs are not proxied.'}</p>
+          <p>{props.zh ? '添加本地或 Git 仓库中的插件目录文件 marketplace.json，以浏览和安装其中的插件。' : 'Add a marketplace.json catalog from a local folder or Git repository to browse and install its plugins.'}</p>
         </div>
         <Button variant="primary" size="regular" onClick={props.onAdd} disabled={!props.client || Boolean(props.busyKey)}>
           <Plus aria-hidden="true" /> {props.zh ? '添加来源' : 'Add source'}
@@ -639,6 +644,7 @@ function connectionLabel(state: PluginDescriptor['plugin']['connectionState'], z
   return zh ? '不兼容' : 'Incompatible';
 }
 
-function message(reason: unknown, fallback: string): string {
-  return reason instanceof Error && reason.message ? reason.message : fallback;
+/** 显示当前语言的原因，并保留可展开的原始详情。 */
+function message(error: unknown, language: 'zh-CN' | 'en'): string {
+  return reportApplicationError(error, { language });
 }

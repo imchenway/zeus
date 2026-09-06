@@ -854,12 +854,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .application-error-dialog {
   display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
-    gap: 16px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 16px;
   inline-size: min(520px, calc(100vw - 32px));
   max-block-size: min(680px, calc(100vh - 32px));
   overflow: hidden;
-    padding: 20px;
+  padding: 20px;
   border: 1px solid var(--zeus-solid-surface-edge, var(--zeus-product-border));
   border-radius: 14px;
   background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
@@ -867,71 +867,71 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .application-error-dialog-icon {
-    display: grid;
-    place-items: center;
-    align-self: start;
-    inline-size: 40px;
-    block-size: 40px;
-    border-radius: 50%;
-    color: var(--zeus-control-danger-text);
-    background: var(--zeus-control-danger-bg);
+  display: grid;
+  place-items: center;
+  align-self: start;
+  inline-size: 40px;
+  block-size: 40px;
+  border-radius: 50%;
+  color: var(--zeus-control-danger-text);
+  background: var(--zeus-control-danger-bg);
 }
 
 .macos-ai-app .application-error-dialog-icon svg {
-    inline-size: 22px;
-    block-size: 22px;
+  inline-size: 22px;
+  block-size: 22px;
 }
 
 .macos-ai-app .application-error-dialog-content {
-    display: grid;
+  display: grid;
   min-inline-size: 0;
-    min-block-size: 0;
-    gap: 14px;
-    overflow: auto;
+  min-block-size: 0;
+  gap: 14px;
+  overflow: auto;
 }
 
 .macos-ai-app .application-error-dialog-content header {
-    display: grid;
-    gap: 6px;
+  display: grid;
+  gap: 6px;
 }
 
 .macos-ai-app .application-error-dialog-content header > strong {
-    color: var(--zeus-product-text);
-    font-size: 15px;
-    line-height: 22px;
+  color: var(--zeus-product-text);
+  font-size: 15px;
+  line-height: 22px;
 }
 
 .macos-ai-app .application-error-dialog-content header > p {
-    margin: 0;
-    color: var(--zeus-product-text-muted);
-    font-size: 13px;
-    line-height: 19px;
+  margin: 0;
+  color: var(--zeus-product-text-muted);
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .macos-ai-app .application-error-dialog-details {
-    display: grid;
-    gap: 8px;
-    min-inline-size: 0;
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
 }
 
 .macos-ai-app .application-error-dialog-details > strong {
-    color: var(--zeus-product-text);
-    font-size: 12px;
-    line-height: 16px;
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .macos-ai-app .application-error-dialog-details > pre {
-    max-block-size: 260px;
-    margin: 0;
-    overflow: auto;
-    padding: 10px 12px;
-    border: 1px solid var(--zeus-product-border-soft, var(--zeus-product-border));
-    border-radius: 8px;
-    color: var(--zeus-product-text-muted);
-    background: var(--zeus-product-panel-muted);
-    font: 400 12px/18px var(--zeus-font-mono, 'SFMono-Regular', Consolas, monospace);
+  max-block-size: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--zeus-product-border-soft, var(--zeus-product-border));
+  border-radius: 8px;
+  color: var(--zeus-product-text-muted);
+  background: var(--zeus-product-panel-muted);
+  font: 400 12px/18px var(--zeus-font-mono, 'SFMono-Regular', Consolas, monospace);
   overflow-wrap: anywhere;
-    white-space: pre-wrap;
+  white-space: pre-wrap;
 }
 
 .macos-ai-app .application-error-dialog > footer {
@@ -953,15 +953,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 
   .macos-ai-app .application-error-dialog {
-      grid-template-columns: 32px minmax(0, 1fr);
-      gap: 12px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 12px;
     padding: 16px;
   }
 
-    .macos-ai-app .application-error-dialog-icon {
-        inline-size: 32px;
-        block-size: 32px;
-    }
+  .macos-ai-app .application-error-dialog-icon {
+    inline-size: 32px;
+    block-size: 32px;
+  }
 
   .macos-ai-app .application-error-dialog > footer {
     flex-wrap: wrap;
@@ -1204,4 +1204,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'] .workspace-drawer-backdrop[data-motion-state='closing'] {
     animation: zeus-workspace-drawer-reduced-exit 80ms linear forwards !important;
   }
+}
+
+/* 错误摘要保持连续阅读，详情入口可换行并保留键盘焦点。 */
+.macos-ai-app .application-error-details-link {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 4px;
+  margin-inline-start: 6px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.macos-ai-app .application-error-details-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.macos-ai-app .session-message-delivery-actions:empty {
+  display: none;
 }

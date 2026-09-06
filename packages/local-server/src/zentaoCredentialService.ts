@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import { parseZentaoInstanceBaseUrl, zentaoInstanceApiBase, zentaoSecretAccount, type SaveZentaoInstanceRequest, type ZentaoInstanceRecord, type ZentaoInstanceVerifyCode, type ZentaoInstanceVerifyResult } from '@zeus/shared';
 import type { SecretStore } from './securityCore.js';
@@ -84,7 +85,7 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     return record;
   }
 
-  async function exchangeToken(instance: ZentaoInstanceRecord, account: string, password: string): Promise<{ token: string } | { code: ZentaoInstanceVerifyCode; message: string }> {
+  async function exchangeToken(instance: ZentaoInstanceRecord, account: string, password: string): Promise<{ token: string } | { code: ZentaoInstanceVerifyCode; message: string; cause?: UserFacingErrorCause }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), zentaoVerifyTimeoutMs);
     try {
@@ -95,15 +96,20 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
         signal: controller.signal,
       });
       if (response.status === 404) return { code: 'api_unavailable', message: '该实例未开启禅道 REST 接口（/api.php/v1/tokens 不存在）。' };
-      if (response.status === 400 || response.status === 401 || response.status === 403) return { code: 'auth_failed', message: '账号或密码不正确，无法换取访问令牌。' };
-      if (!response.ok) return { code: 'network_failed', message: `换取访问令牌失败，HTTP ${response.status}。` };
+      if (response.status === 400 || response.status === 401 || response.status === 403)
+        return { code: 'auth_failed', cause: { code: `ZEUS_ZENTAO_HTTP_${response.status}`, message: `HTTP ${response.status}` }, message: '账号或密码不正确，无法换取访问令牌。' };
+      if (!response.ok) return { code: 'network_failed', cause: { code: 'ZEUS_ZENTAO_HTTP_FAILED', message: `HTTP ${response.status}` }, message: `换取访问令牌失败，HTTP ${response.status}。` };
       const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       const token = typeof payload.token === 'string' && payload.token.trim() ? payload.token.trim() : '';
-      if (!token) return { code: 'auth_failed', message: '禅道没有返回访问令牌，请检查账号密码与实例配置。' };
+      if (!token) return { code: 'auth_failed', cause: { code: 'ZEUS_ZENTAO_TOKEN_MISSING', message: 'The response did not include a token' }, message: '禅道没有返回访问令牌，请检查账号密码与实例配置。' };
       return { token };
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError' ? '连接禅道实例超时，请检查地址与网络。' : '无法连接禅道实例，请检查地址与网络。';
-      return { code: 'network_failed', message };
+      return {
+        code: 'network_failed',
+        message,
+        cause: error instanceof Error && error.name === 'AbortError' ? { code: 'ZEUS_ZENTAO_TIMEOUT', message: 'Request timed out' } : { code: 'ZEUS_ZENTAO_CONNECT_FAILED', message: 'Connection failed', cause: userFacingErrorCause(error) },
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -146,7 +152,7 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
       if (!password) return { ok: false, code: 'password_missing', checkedAt, message: '请先为该实例保存密码。' };
       const exchange = await exchangeToken(instance, instance.account, password);
       if ('token' in exchange) return { ok: true, code: 'verified', checkedAt, message: '登录验证通过。' };
-      return { ok: false, code: exchange.code, checkedAt, message: exchange.message };
+      return { ok: false, code: exchange.code, checkedAt, message: exchange.message, cause: exchange.cause };
     },
   };
 }

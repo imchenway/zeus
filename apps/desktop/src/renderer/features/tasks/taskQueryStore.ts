@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { TaskBoardViewSnapshot } from '@zeus/shared';
 import type { TaskRecord } from '../../apiClient.js';
 import type { TaskApiClient } from './taskApiClient.js';
@@ -8,6 +9,8 @@ export interface TaskQuerySnapshot {
   boards: Readonly<Record<string, TaskBoardViewSnapshot>>;
   loading: boolean;
   error: string | null;
+  /** 可选底层原因供界面生成本地化提示，原错误字符串仍保留。 */
+  errorCause?: UserFacingErrorCause | null;
   revision: number;
 }
 
@@ -16,24 +19,24 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
     private readonly client: TaskApiClient | null,
     initialItems: readonly TaskRecord[],
   ) {
-    super({ items: initialItems, boards: {}, loading: false, error: null, revision: 0 });
+    super({ items: initialItems, boards: {}, loading: false, error: null, errorCause: null, revision: 0 });
   }
 
   replace(items: readonly TaskRecord[]): void {
     if (items === this.snapshot.items) return;
-    this.publish({ ...this.snapshot, items, error: null, revision: this.snapshot.revision + 1 });
+    this.publish({ ...this.snapshot, items, error: null, errorCause: null, revision: this.snapshot.revision + 1 });
   }
 
   async load(input: Parameters<TaskApiClient['loadTasks']>[0]): Promise<readonly TaskRecord[]> {
     const client = this.requireClient();
-    this.publish({ ...this.snapshot, loading: true, error: null });
+    this.publish({ ...this.snapshot, loading: true, error: null, errorCause: null });
     try {
       const items = await client.loadTasks(input);
       this.replace(items);
       this.publish({ ...this.snapshot, loading: false });
       return items;
     } catch (error) {
-      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error) });
+      this.publish({ ...this.snapshot, loading: false, error: errorMessage(error), errorCause: userFacingErrorCause(error) });
       throw error;
     }
   }
@@ -46,12 +49,12 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
 
   async loadBoard(projectId: string): Promise<TaskBoardViewSnapshot> {
     const board = await this.requireClient().loadTaskBoard(projectId);
-    this.publish({ ...this.snapshot, boards: { ...this.snapshot.boards, [projectId]: board }, error: null });
+    this.publish({ ...this.snapshot, boards: { ...this.snapshot.boards, [projectId]: board }, error: null, errorCause: null });
     return board;
   }
 
   setBoard(projectId: string, board: TaskBoardViewSnapshot): void {
-    this.publish({ ...this.snapshot, boards: { ...this.snapshot.boards, [projectId]: board }, error: null });
+    this.publish({ ...this.snapshot, boards: { ...this.snapshot.boards, [projectId]: board }, error: null, errorCause: null });
   }
 
   upsert(task: TaskRecord): void {

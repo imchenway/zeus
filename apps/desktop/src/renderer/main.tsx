@@ -1,12 +1,16 @@
+import { describeUserFacingError } from '@zeus/shared';
 import { Profiler, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity, ZeusApiError } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
-import { ApplicationErrorDialogHost, formatVisibleApplicationError, reportApplicationError } from './ui/ApplicationErrorDialog.js';
+import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
 import { primePersistedSessionViewCache } from './session/sessionHotCache.js';
+
+/** 启动阶段尚未加载设置时采用中文；设置就绪后沿用用户选择。 */
+let startupLanguage: 'zh-CN' | 'en-US' = 'zh-CN';
 
 initializeNativeCloseLayerRouting();
 const rendererPerformance = new RendererPerformanceCollector();
@@ -39,6 +43,7 @@ async function renderWithClient(
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   const reactRoot = createRoot(root);
+  startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   reactRoot.render(
     <>
@@ -368,6 +373,7 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   document.body.dataset.surface = 'menu-bar-usage';
+  startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
     <>
@@ -392,6 +398,7 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: 
   const projectName = snapshot.projects.find((project) => project.id === task.projectId)?.name;
   document.body.dataset.surface = 'task-git-delivery';
   document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task.taskCode ?? task.id}`;
+  startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
     <>
@@ -414,6 +421,7 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   document.body.dataset.surface = 'project-git-diff';
+  startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
     <>
@@ -522,7 +530,9 @@ function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<N
 }
 
 function renderStartupFailure(error: unknown): void {
-  reportApplicationError(error, { language: 'zh-CN' });
+  const zh = startupLanguage === 'zh-CN';
+  const failure = describeUserFacingError(error, startupLanguage);
+  reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
   const root = document.getElementById('root');
   if (!root) return;
   document.body.dataset.surface = 'startup-failure';
@@ -541,42 +551,50 @@ function renderStartupFailure(error: unknown): void {
 
   const title = document.createElement('h1');
   title.id = 'startup-failure-title';
-  title.textContent = '启动失败';
+  title.textContent = zh ? 'Zeus 无法启动' : 'Zeus could not start';
 
   const description = document.createElement('p');
   description.className = 'startup-failure-description';
-  description.textContent = 'Zeus 现在无法使用。重新启动会停止遗留工作，并重新启动全部相关进程。';
+  description.textContent = failure.message;
 
   const logHint = document.createElement('p');
   logHint.className = 'startup-failure-log-hint';
-  logHint.textContent = '详细信息已写入本机运行日志。';
+  logHint.textContent = zh ? '重新启动会停止仍在运行的工作。请先根据错误原因处理问题。' : 'Restarting will stop any work that is still running. Address the cause of the error first.';
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.textContent = zh ? '错误详情' : 'Error details';
+  const original = document.createElement('pre');
+  original.textContent = failure.details;
+  original.style.whiteSpace = 'pre-wrap';
+  original.style.overflowWrap = 'anywhere';
+  details.append(summary, original);
 
   const actions = document.createElement('div');
   actions.className = 'startup-failure-actions';
-  const restart = startupFailureButton('重新启动', true);
+  const restart = startupFailureButton(zh ? '停止工作并重启' : 'Stop work and restart', true);
   restart.onclick = async () => {
     restart.disabled = true;
-    restart.textContent = '正在重新启动…';
+    restart.textContent = zh ? '正在重启…' : 'Restarting…';
     try {
       await window.zeus?.restartAfterStartupFailure?.();
     } catch (restartError) {
-      reportApplicationError(restartError, { language: 'zh-CN' });
+      reportApplicationError(restartError, { language: zh ? 'zh-CN' : 'en' });
       restart.disabled = false;
-      restart.textContent = '重新启动';
+      restart.textContent = zh ? '停止工作并重启' : 'Stop work and restart';
     }
   };
-  const exit = startupFailureButton('退出 Zeus', false);
+  const exit = startupFailureButton(zh ? '退出 Zeus' : 'Quit Zeus', false);
   exit.onclick = async () => {
     exit.disabled = true;
     try {
       await window.zeus?.exitAfterStartupFailure?.();
     } catch (exitError) {
-      reportApplicationError(exitError, { language: 'zh-CN' });
+      reportApplicationError(exitError, { language: zh ? 'zh-CN' : 'en' });
       exit.disabled = false;
     }
   };
   actions.append(restart, exit);
-  content.append(mark, title, description, logHint, actions);
+  content.append(mark, title, description, logHint, details, actions);
   shell.append(content);
   root.replaceChildren(shell);
 }
@@ -628,64 +646,16 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
     renderStartupFailure(status.error ?? status);
     return;
   }
-  title.textContent = migrationFailed ? '会话数据升级已安全暂停' : '正在升级会话数据';
+  const zh = startupLanguage === 'zh-CN';
+  title.textContent = zh ? '正在升级对话数据' : 'Updating conversation data';
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
-  detail.textContent = migrationFailed
-    ? formatVisibleApplicationError(status.error ?? (status.phase === 'promoted_but_validation_failed' ? '候选库提升后校验未完成。' : '候选库未通过校验。'), 'zh-CN')
-    : `${migrationPhaseLabel(status.phase)}。升级完成前，本地服务和正常业务界面不会启动。`;
+  detail.textContent = zh ? '正在准备和检查你的对话记录。完成后会自动打开 Zeus，请保持应用开启。' : 'Preparing and checking your conversation history. Zeus will open automatically when ready. Keep the app open.';
   Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
-  if (!migrationFailed) panel.append(title);
+  panel.append(title);
   panel.append(detail);
-  if (migrationFailed) {
-    const actions = document.createElement('div');
-    Object.assign(actions.style, { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' });
-    const retry = migrationButton('重试迁移', true);
-    retry.onclick = async () => {
-      retry.disabled = true;
-      retry.textContent = '正在重试…';
-      try {
-        await window.zeus?.retryConversationStoreMigration?.();
-      } catch (error) {
-        retry.disabled = false;
-        retry.textContent = '重试迁移';
-        detail.textContent = formatVisibleApplicationError(error, 'zh-CN');
-      }
-    };
-    const diagnostics = migrationButton('查看诊断', false);
-    diagnostics.onclick = () => void window.zeus?.openConversationStoreMigrationDiagnostics?.();
-    const exit = migrationButton('退出 Zeus', false);
-    exit.onclick = () => void window.zeus?.exitConversationStoreMigration?.();
-    actions.append(retry, diagnostics, exit);
-    panel.append(actions);
-  }
   shell.append(panel);
   root.replaceChildren(shell);
-}
-
-function migrationButton(label: string, primary: boolean): HTMLButtonElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.textContent = label;
-  Object.assign(button.style, {
-    minHeight: '38px',
-    padding: '0 16px',
-    borderRadius: '10px',
-    border: primary ? '1px solid #202124' : '1px solid #d0d2d7',
-    background: primary ? '#202124' : '#fff',
-    color: primary ? '#fff' : '#202124',
-    cursor: 'pointer',
-  });
-  return button;
-}
-
-function migrationPhaseLabel(phase: string): string {
-  if (phase === 'preflight') return '正在检查磁盘空间、权限和数据库锁';
-  if (phase === 'candidate_build') return '正在构建候选库和安全回退库';
-  if (phase === 'candidate_validation') return '正在逐项校验迁移映射和数据库一致性';
-  if (phase === 'promotion') return '正在同卷原子提升候选库';
-  if (phase === 'promoted_but_validation_failed') return '候选库已经提升，正在等待提升后校验收敛';
-  return '正在准备会话数据';
 }
 
 const executionHostDrainRecoveryLimitMs = 120_000;

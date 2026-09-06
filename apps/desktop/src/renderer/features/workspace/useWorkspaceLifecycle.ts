@@ -122,7 +122,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
             return;
           }
           if (disposed) return;
-          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, state.appShellSettings.appLanguage));
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: failNativeConversationChoiceTaskLoad(current[task.id], message) }));
           recordLocalError('native-code-review-recovery', error);
         })
@@ -154,7 +154,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
         .catch((error) => {
           if (error instanceof ZeusApiError && error.status >= 400 && error.status < 500) clearPendingConflictAiStart(pending.idempotencyKey);
           if (disposed) return;
-          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, state.appShellSettings.appLanguage));
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [pending.taskId]: failNativeConversationChoiceTaskLoad(current[pending.taskId], message) }));
           recordLocalError('native-conflict-ai-recovery', error);
         })

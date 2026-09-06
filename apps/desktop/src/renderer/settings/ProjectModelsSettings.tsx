@@ -3,7 +3,7 @@ import type { DashboardClient, ProjectModelSelection, SelectablePiModel } from '
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 type ProjectModelsClient = Pick<DashboardClient, 'loadSelectablePiModels' | 'loadProjectModelSelection' | 'saveProjectModelSelection'>;
 
@@ -42,7 +42,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+        setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
         setStatus('ready');
       });
     return () => {
@@ -90,7 +90,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       setSelection(saved);
       setMessage(zh ? '项目可用模型已保存。' : 'Project models saved.');
     } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setStatus('ready');
     }
@@ -100,7 +100,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
     <section className="project-model-settings" aria-label={zh ? '项目可用模型' : 'Project models'}>
       <header className="project-model-settings-heading">
         <h2>{zh ? '项目可用模型' : 'Project models'}</h2>
-        <p>{zh ? '可同时选择多个 Pi 模型；默认模型只负责预选，推送任务和会话仍可逐次切换。' : 'Select multiple Pi models. The default only controls preselection; tasks and conversations can still switch per turn.'}</p>
+        <p>{zh ? '可选择多个模型供此项目使用。新任务和新对话会预选默认模型，你仍可随时改选。' : 'Choose multiple models for this project. New tasks and conversations preselect the default model, and you can choose another.'}</p>
       </header>
       <div className="project-model-settings-toolbar">
         <label className="project-model-search-field">

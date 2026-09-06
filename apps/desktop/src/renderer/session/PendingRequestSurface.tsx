@@ -65,14 +65,14 @@ const labels = {
     cancel: '取消',
     submit: '提交回答',
     other: '其他',
-    otherPlaceholder: '否，并告诉 Zeus 应该如何做得不同',
+    otherPlaceholder: '提出其他做法',
     impact: '影响',
-    secret: '敏感回答仅发送给当前本机 app-server，不会显示在会话记录中。',
+    secret: '敏感回答用于本次请求，不显示在对话记录中。',
     responding: '正在提交',
     unsupported: '不支持的请求类型',
     unsupportedHelp: 'Zeus 无法安全识别此请求，因此不会提供允许操作。',
     invalidMcp: 'MCP 响应 JSON 无效',
-    invalidMcpHelp: '请求 schema、URL 或响应 JSON 无法安全验证；修复前只提供拒绝或取消。',
+    invalidMcpHelp: 'Zeus 无法验证这个请求的内容或链接是否有效，因此暂时不能允许，只能拒绝或取消。',
     mcpResponse: 'MCP 结构化回答 JSON',
     mcpUrl: '打开 MCP 请求页面',
     mcpUrlOpenFailed: '无法打开 MCP 请求页面，请重试。',
@@ -82,8 +82,8 @@ const labels = {
     fileTargetUnavailableHelp: 'Zeus 暂时无法确认本次修改的文件目标，因此只提供拒绝或取消操作。',
     fileTargetOutsideProject: '文件不在当前项目内',
     fileTargetOutsideProjectHelp: 'Zeus 只允许审批当前项目内可审计的文件；以下项目外目标只能拒绝或取消。',
-    fileTargetProviderScope: '授权范围无法审计',
-    fileTargetProviderScopeHelp: '该请求要求授权 Provider 根范围，超出单个项目的文件审批边界，因此只提供拒绝或取消操作。',
+    fileTargetProviderScope: '无法确认申请访问的范围',
+    fileTargetProviderScopeHelp: '这个请求申请访问整个 AI 工具的工作范围，超出了当前项目的文件权限，因此不能允许。',
     cwd: '工作目录',
     mode: '当前模式',
     required: '必填',
@@ -96,7 +96,7 @@ const labels = {
     moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
-    allEditScope: '本会话后续仅自动允许当前项目内可审计的文件；项目外目标仍会被拒绝。',
+    allEditScope: '本次对话中，后续只会自动允许已确认属于当前项目的文件访问；项目外文件仍会被拒绝。',
   },
   'en-US': {
     approval: 'Approval required',
@@ -108,14 +108,14 @@ const labels = {
     cancel: 'Cancel',
     submit: 'Submit answers',
     other: 'Other',
-    otherPlaceholder: 'No, tell Zeus what to do differently',
+    otherPlaceholder: 'Suggest another approach',
     impact: 'Impact',
-    secret: 'Secret answers are sent only to the current local app-server and are not shown in the transcript.',
+    secret: 'Sensitive answers are used for this request and are not shown in the conversation history.',
     responding: 'Submitting',
     unsupported: 'Unsupported request type',
     unsupportedHelp: 'Zeus cannot identify this request safely, so no allow action is available.',
     invalidMcp: 'Invalid MCP response payload',
-    invalidMcpHelp: 'The request schema, URL, or response JSON cannot be validated safely. Only decline or cancel remains available.',
+    invalidMcpHelp: 'Zeus cannot validate this request’s content or link. Approval is unavailable; you can decline or cancel.',
     mcpResponse: 'MCP structured response JSON',
     mcpUrl: 'Open MCP request page',
     mcpUrlOpenFailed: 'Could not open the MCP request page. Please try again.',
@@ -125,8 +125,8 @@ const labels = {
     fileTargetUnavailableHelp: 'Zeus cannot yet verify the file target for this change. Only decline or cancel actions are available.',
     fileTargetOutsideProject: 'File is outside the current project',
     fileTargetOutsideProjectHelp: 'Zeus only permits auditable files inside the current project. The targets below can only be declined or cancelled.',
-    fileTargetProviderScope: 'Approval scope cannot be audited',
-    fileTargetProviderScopeHelp: 'This request asks for a provider-root grant beyond the single-project approval boundary. Only decline or cancel actions are available.',
+    fileTargetProviderScope: 'Cannot verify the requested access',
+    fileTargetProviderScopeHelp: 'This request asks for access across the AI tool’s working area, beyond this project’s file permissions. It cannot be approved.',
     cwd: 'Working directory',
     mode: 'Current mode',
     required: 'Required',
@@ -139,7 +139,7 @@ const labels = {
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
-    allEditScope: 'This session only auto-allows auditable files inside the current project; outside targets remain blocked.',
+    allEditScope: 'During this conversation, only verified file access within the current project will be allowed automatically. Access outside the project will still be denied.',
   },
 } as const;
 
@@ -561,6 +561,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   });
 
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: attachmentTextareaRef,
     text: currentQuestion.kind === 'freeform' ? (selectedValues[0] ?? '') : currentOtherAnswer,
     disabled: responding || !answerAttachmentsEnabled,
@@ -1023,7 +1024,9 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
             ) : null}
             {actionsPlacement === 'options' ? renderActions({ gridRow: currentQuestion.options.length }) : null}
           </div>
-          {currentQuestion.secret ? <small className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
+          {currentQuestion.secret ? (
+            <small className="session-secret-hint">{zh ? '敏感回答只用于本次请求，不保存到对话记录或草稿中。' : 'Sensitive answers are used only for this request and are not saved in the conversation history or drafts.'}</small>
+          ) : null}
         </fieldset>
       </form>
     </section>
@@ -1440,13 +1443,13 @@ function requestImpact(request: NativePendingRequest, language: SessionUiLanguag
   const kind = requestKind(request);
   if (language === 'zh-CN') {
     if (kind === 'file') return '允许本轮修改工作区文件。';
-    if (kind === 'permissions') return '该权限结构尚未受支持，Zeus 不会发送允许响应。';
-    if (kind === 'mcp') return '向 MCP server 发送所示 JSON 响应。';
+    if (kind === 'permissions') return 'Zeus 暂不支持这种权限请求，因此不能允许。';
+    if (kind === 'mcp') return '向插件服务发送下方所示的 JSON 格式回答。';
     return '允许本轮执行所列命令。';
   }
   if (kind === 'file') return 'Allows this turn to modify workspace files.';
-  if (kind === 'permissions') return 'This permission schema is unsupported; Zeus will not send an allow response.';
-  if (kind === 'mcp') return 'Sends the shown JSON response to the MCP server.';
+  if (kind === 'permissions') return 'Zeus does not support this type of permission request, so it cannot be approved.';
+  if (kind === 'mcp') return 'Send the JSON response shown below to the plugin service.';
   return 'Allows this turn to execute the listed command.';
 }
 

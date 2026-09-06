@@ -25,18 +25,18 @@ const rendererCrashCopy: Record<
   }
 > = {
   'zh-CN': {
-    ariaLabel: 'Zeus 界面错误边界',
+    ariaLabel: 'Zeus 界面错误',
     status: '详细信息已写入本机运行日志',
-    title: '启动失败',
-    description: 'Zeus 现在无法使用。重新启动会停止遗留工作，并重新启动全部相关进程。',
+    title: '页面无法显示',
+    description: 'Zeus 界面发生错误，无法显示当前页面。重新启动会停止仍在运行的工作。',
     restart: '重新启动',
     exit: '退出',
   },
   'en-US': {
-    ariaLabel: 'Zeus interface error boundary',
+    ariaLabel: 'Zeus interface error',
     status: 'Details were written to the local runtime log',
-    title: 'Startup failed',
-    description: 'Zeus cannot be used right now. Restarting stops remaining work and restarts all related processes.',
+    title: 'This page could not be displayed',
+    description: 'An error in the Zeus interface prevents this page from displaying. Restarting will stop any work that is still running.',
     restart: 'Restart',
     exit: 'Exit',
   },

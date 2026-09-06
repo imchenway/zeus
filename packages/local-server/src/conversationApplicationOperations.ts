@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
@@ -807,7 +808,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     };
   }
 
-  function toNativeSubmissionError(errorJson: string | null): { code: string; message: string; recoveryRequired: boolean } | null {
+  function toNativeSubmissionError(errorJson: string | null): { code: string; message: string; recoveryRequired: boolean; cause?: UserFacingErrorCause } | null {
     if (!errorJson) return null;
     const parsed = parseJsonObject(errorJson);
     const code = typeof parsed.code === 'string' && parsed.code.trim() ? parsed.code : 'ZEUS_NATIVE_SUBMISSION_FAILED';
@@ -815,6 +816,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return {
       code,
       message,
+      ...(parsed.cause ? { cause: userFacingErrorCause(parsed.cause) } : {}),
       recoveryRequired: parsed.recoveryRequired === true || code.includes('RECOVERY') || code.includes('WORKTREE_UNAVAILABLE'),
     };
   }

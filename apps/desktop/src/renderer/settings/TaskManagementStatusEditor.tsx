@@ -216,8 +216,8 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                     ? `有 ${pendingDeletion.taskCount} 个任务正在使用这个状态。请选择替代状态，保存时会先迁移任务。`
                     : `${pendingDeletion.taskCount} tasks use this status. Choose a replacement; tasks will migrate before deletion.`
                   : zh
-                    ? '这个状态承接现有任务行为。请选择接续该行为的替代状态。'
-                    : 'This status carries existing task behavior. Choose a replacement for that behavior.'}
+                    ? '这个状态会触发特定的任务操作。请选择删除后承担这些操作的替代状态。'
+                    : 'This status triggers specific task actions. Choose a replacement status to handle those actions after deletion.'}
               </p>
             </header>
             <ZeusSelect

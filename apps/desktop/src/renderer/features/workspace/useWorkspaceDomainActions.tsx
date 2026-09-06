@@ -417,7 +417,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       pendingRuntimeConversationEvents = [];
       const sessionIds = new Set(events.map((event) => event.payload.sessionId).filter((sessionId): sessionId is string => typeof sessionId === 'string'));
       const appendEvents = (conversation: GraphConversationHistoryItem): GraphConversationHistoryItem =>
-        conversation.sessionId && sessionIds.has(conversation.sessionId) ? appendRuntimeOutputEventsToConversation(conversation, events) : conversation;
+        conversation.sessionId && sessionIds.has(conversation.sessionId) ? appendRuntimeOutputEventsToConversation(conversation, events, appShellSettings.appLanguage) : conversation;
       setGraphConversations((current) => {
         let changed = false;
         const next = current.map((conversation) => {
@@ -521,7 +521,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         },
         (error: unknown) => {
           if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
-          console.warn('会话状态权威快照校准失败，将自动重试。', error);
+          console.warn('暂时无法读取最新会话状态，正在重新连接。', error);
           setNativeConversationStatusSyncState('stale');
           const delay = Math.min(1_000 * 2 ** Math.min(statusSyncAttempt, 3), 8_000);
           statusSyncAttempt += 1;
@@ -663,8 +663,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (!shouldRefreshConversationForRuntimeEvent(event, conversation)) return;
         if (!conversation) return;
         flushRuntimeConversationEvents();
-        setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event) : candidate)));
-        setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event) : current));
+        setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event, appShellSettings.appLanguage) : candidate)));
+        setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event, appShellSettings.appLanguage) : current));
       },
       (state) => {
         connectionState = state;
@@ -712,6 +712,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     ? {
         status: taskDetailPaneModelPushOperation.status,
         error: taskDetailPaneModelPushOperation.error,
+        errorCause: taskDetailPaneModelPushOperation.errorCause,
+        canRetry: taskDetailPaneModelPushOperation.contextRefreshRequired || taskDetailPaneModelPushOperation.canRetry === true,
         ...(taskDetailPaneModelPushOperation.choice ? { conversationId: taskDetailPaneModelPushOperation.choice.id } : {}),
       }
     : undefined;
@@ -743,7 +745,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     // 只记录真实捕获到的前端操作失败，并在渲染前脱敏，避免把 token / API key 明文带到界面。
     setLocalError({
       action,
-      message: redactLocalUiErrorMessage(errorToLocalUiMessage(error)),
+      message: redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)),
       occurredAt: new Date().toISOString(),
     });
     setActionState('failed');
@@ -948,7 +950,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setProjectWorkspaceConfigStatus('idle');
     } catch (error) {
       setProjectWorkspaceConfigStatus('error');
-      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -965,7 +967,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setProjectWorkspaceConfigStatus('idle');
     } catch (error) {
       setProjectWorkspaceConfigStatus('error');
-      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -1457,7 +1459,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         localPath,
       }));
     } catch (error) {
-      setProjectCreateError(errorToLocalUiMessage(error));
+      setProjectCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
     } finally {
       setProjectDirectoryChoosing(false);
     }
@@ -1507,7 +1509,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       resetProjectCreateDialog();
     } catch (error) {
       recordLocalError('renderer-action', error);
-      setProjectCreateError(errorToLocalUiMessage(error));
+      setProjectCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       setActionState('failed');
     }
   }
@@ -1803,7 +1805,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return merged;
     } catch (error) {
       if (nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)) {
-        const message = errorToLocalUiMessage(error);
+        const message = errorToLocalUiMessage(error, appShellSettings.appLanguage);
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: failNativeConversationChoiceTaskLoad(current[taskId], message) }));
       }
       throw error;
@@ -1824,7 +1826,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return merged;
     } catch (error) {
       if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, requestVersion)) {
-        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error)) }));
+        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error, appShellSettings.appLanguage)) }));
       }
       throw error;
     }
@@ -1967,7 +1969,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       }
     } catch (error) {
       setNativeLegacyMessageLoadState('error');
-      setNativeLegacyMessageError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setNativeLegacyMessageError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
       recordLocalError('native-legacy-conversation-load', error);
     }
   }
@@ -2110,7 +2112,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           },
         };
       } catch (error) {
-        const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+        const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
         return { state: 'failed', message };
       }
@@ -2156,7 +2158,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         const rejectedRequest = nativeConversationStartEnvelopeManager.pending(input.task);
         if (rejectedRequest) nativeConversationStartEnvelopeManager.discardPending(input.task, rejectedRequest);
       }
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       if (input.source === 'code_review') {
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
         return { state: 'failed', message };
@@ -2209,7 +2211,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       });
       refreshError = result.refreshError;
     } catch (error) {
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       setNativeConversationChoiceProjectStates((current) => ({
         ...current,
         [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]),
@@ -2403,7 +2405,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskConversationReopenState(undefined);
       setFocusedArchivedConversation(null);
     } catch (error) {
-      setTaskConversationReopenState({ conversationId, status: 'error', error: redactLocalUiErrorMessage(errorToLocalUiMessage(error)) });
+      setTaskConversationReopenState({ conversationId, status: 'error', error: redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)) });
     }
   }
 
@@ -2446,7 +2448,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskModelPushCapabilityRequestRef.current = requestVersion;
     if (!client) {
       setTaskModelPushStatus('error');
-      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? 'Codex app-server 客户端不可用。' : 'Codex app-server client is unavailable.');
+      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '无法连接 Codex 服务。' : 'The Codex service connection is unavailable.');
       return;
     }
     void preloadCodexConversationCapabilities(client, task.projectId)
@@ -2498,7 +2500,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -2515,7 +2517,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (!saved) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存结果无效。' : 'The saved project model speed preference is invalid.');
       setTaskModelPushServiceTierPreferences(saved.serviceTierPreferences);
     } catch (error) {
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
       try {
         const config = normalizeProjectConfig(await props.onLoadProjectConfig?.(task.projectId), task.projectId);
         if (config) setTaskModelPushServiceTierPreferences(config.serviceTierPreferences);
@@ -2585,7 +2587,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       });
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     } finally {
       if (taskModelPushCapabilityRequestRef.current === requestVersion) setTaskModelPushRefreshingRepositoryId(null);
     }
@@ -2707,7 +2709,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     } catch (error) {
       if (taskModelPushLoginRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('ready');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -2728,7 +2730,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'activation-required');
       setTaskModelPushConfigImportNeedsActivation(true);
       setTaskModelPushStatus('ready');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -2791,9 +2793,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             : 'The official sign-in page could not be opened safely. Check your browser settings and try again.'
           : error instanceof Error && error.message === 'ZEUS_CODEX_LOGIN_TIMED_OUT'
             ? appShellSettings.appLanguage === 'zh-CN'
-              ? '登录等待超时，当前配置已保留。请重新点击“登录并继续”。'
-              : 'Sign-in timed out. Your configuration was preserved; choose “Sign in and continue” to try again.'
-            : redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+              ? '登录未在限定时间内完成。请点击“登录并继续”重新登录。'
+              : 'Sign-in did not finish in time. Select Sign in and continue to sign in again.'
+            : redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       setTaskModelPushError(message);
     }
   }
@@ -2922,7 +2924,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushCapabilities(capabilities);
       setTaskModelPushForm(form);
       setTaskModelPushStatus('error');
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       setTaskModelPushError(message);
       return;
     }
@@ -2955,7 +2957,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function dispatchTaskModelPush(pending: TrackedTaskModelPushState): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client) {
-      failTaskModelPushDispatch(pending, appShellSettings.appLanguage === 'zh-CN' ? 'Codex app-server 客户端不可用。' : 'Codex app-server client is unavailable.');
+      failTaskModelPushDispatch(pending, appShellSettings.appLanguage === 'zh-CN' ? '无法连接 Codex 服务。' : 'The Codex service connection is unavailable.');
       return;
     }
     try {
@@ -2984,8 +2986,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             new Error(
               reason ??
                 (appShellSettings.appLanguage === 'zh-CN'
-                  ? '会话已被服务端接受，但 Provider 尚未建立，当前状态不能安全自动重试。'
-                  : 'The conversation was accepted, but the provider was not established and the current state cannot be retried safely.'),
+                  ? '对话还未连接到 AI 服务。为避免重复创建，Zeus 已暂停再次尝试。'
+                  : 'The conversation has not connected to the AI service. Zeus has paused further attempts to avoid creating duplicates.'),
             ),
             { code: typeof submissionError.code === 'string' ? submissionError.code : 'ZEUS_TASK_MODEL_PUSH_PROVIDER_NOT_ESTABLISHED' },
           );
@@ -2994,7 +2996,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         await client.recoverNativeQueue(pending.task.projectId, acceptance.conversation.id);
         choice = await client.loadNativeConversationChoice(pending.task.projectId, acceptance.conversation.id);
         if (!choice.providerThreadId) {
-          throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '直接目录已恢复，但 Provider 线程仍未建立。' : 'The direct directory was restored, but the provider thread is still unavailable.');
+          throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '工作目录已可用，但对话仍未连接到 AI 服务。' : 'The working folder is available, but the conversation has not connected to the AI service.');
         }
       }
       taskModelPushEnvelopeRef.current.delete(pending.task.id);
@@ -3049,11 +3051,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         updateTaskModelPushPendingByTask((current) => {
           const active = current[pending.task.id];
           if (!active || active.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-          const message = appShellSettings.appLanguage === 'zh-CN' ? '任务上下文已变化。当前内容已保留，请重新确认有效的上下文后重试。' : 'Task context changed. Your content is preserved; review the valid context before retrying.';
+          const message = appShellSettings.appLanguage === 'zh-CN' ? '所选任务或关联内容已更新。请检查最新内容后再创建对话。' : 'The selected task or related content has changed. Review the latest content before creating the conversation.';
           return {
             ...current,
             [pending.task.id]: {
-              ...failTaskModelPushPendingState(active, message),
+              ...failTaskModelPushPendingState(active, message, error),
               contextRefreshRequired: true,
               origin: active.origin,
             },
@@ -3095,7 +3097,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushForm(pending.form);
     setTaskModelPushStatus('loading');
     setTaskModelPushError(null);
-    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：Codex 登录已失效，已恢复本次推送。` : `${pending.task.title}: Codex sign-in expired. The push was restored.`);
+    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：Codex 登录已失效，请登录后继续。` : `${pending.task.title}: Codex sign-in expired. Sign in to continue.`);
 
     const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
     taskModelPushCapabilityRequestRef.current = requestVersion;
@@ -3117,7 +3119,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
@@ -3174,12 +3176,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             };
           });
         } catch (error) {
-          const messageText = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          const messageText = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
           updateTaskModelPushPendingByTask((states) => {
             const active = states[pending.task.id];
             if (!active) return states;
             const failedWithMessage = updateTaskModelPushDeferredMessages(active, (messages) => messages.map((entry) => (entry.id === message.id ? { ...entry, status: 'failed', error: messageText } : entry)));
-            return { ...states, [pending.task.id]: { ...failTaskModelPushPendingState(failedWithMessage, messageText), origin: active.origin } };
+            return { ...states, [pending.task.id]: { ...failTaskModelPushPendingState(failedWithMessage, messageText, error), origin: active.origin } };
           });
           return;
         }
@@ -3263,17 +3265,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
   }
 
   function failTaskModelPushDispatch(pending: TrackedTaskModelPushState, error: unknown): void {
-    const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+    const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
     taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
     updateTaskModelPushPendingByTask((current) => {
       const active = current[pending.task.id];
       if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-      return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message), origin: active.origin } };
+      return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message, error), origin: active.origin } };
     });
     setTaskModelPushAnnouncement(message);
     reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
@@ -3281,7 +3283,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   function retryTaskModelPush(taskId: string): void {
     const pending = taskModelPushPendingByTaskRef.current[taskId];
-    if (!pending || pending.status !== 'failed') return;
+    if (!pending || pending.status !== 'failed' || (!pending.contextRefreshRequired && !pending.canRetry)) return;
     if (pending.contextRefreshRequired) {
       void refreshChangedTaskModelPushParentContext(pending);
       return;

@@ -1,3 +1,4 @@
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -60,7 +61,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
       setLoadState('ready');
     } catch (cause) {
       setLoadState('failed');
-      setError(errorMessage(cause, zh ? '无法读取任务工作管理状态。' : 'Could not load task work management.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
   }, [props.client, props.projectId, props.taskId, zh]);
 
@@ -81,7 +82,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
         await load();
         return true;
       } catch (cause) {
-        setError(errorMessage(cause, zh ? '工作管理操作失败。' : 'Work management action failed.'));
+        setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
         return false;
       } finally {
         setBusy(null);
@@ -187,7 +188,7 @@ function WorkOverview(props: { projection: TaskWorkManagementProjection | null; 
       <span>
         <small>{zh ? '工作项' : 'Work items'}</small>
         <strong>{summary?.workItems ?? 0}</strong>
-        <p>{zh ? '每个工作项是一份独立工作责任。' : 'Each item is an independent responsibility.'}</p>
+        <p>{zh ? '每个工作项对应一次单独指派的工作。' : 'Each work item represents a separately assigned piece of work.'}</p>
       </span>
       <span>
         <small>{zh ? '待我处理' : 'Needs me'}</small>
@@ -197,7 +198,7 @@ function WorkOverview(props: { projection: TaskWorkManagementProjection | null; 
       <span>
         <small>{zh ? '正式交付物' : 'Deliverables'}</small>
         <strong>{props.projection?.deliverables.length ?? 0}</strong>
-        <p>{zh ? '版本化保留，会话结束不等于验收。' : 'Versioned; conversation completion is not acceptance.'}</p>
+        <p>{zh ? '保留各次交付的内容，供你检查并确认验收。' : 'Keep each delivery for you to review and accept.'}</p>
       </span>
       <span>
         <small>{zh ? '历史执行' : 'Legacy runs'}</small>
@@ -243,8 +244,12 @@ function WorkItemBoard(props: {
                     {item.entrypointKind === 'command' ? 'Command' : 'Agent'} · {workItemStatus(item.status, props.language)}
                   </small>
                 </span>
-                <p>{item.description || (zh ? '按冻结配置执行当前任务。' : 'Runs from its frozen configuration.')}</p>
-                {current?.errorMessage ? <small className="is-error">{current.errorMessage}</small> : null}
+                <p>{item.description || (zh ? '使用启动时确认的配置执行此任务。' : 'Run this task with the settings confirmed at the start.')}</p>
+                {current?.errorMessage ? (
+                  <small className="is-error">
+                    <VisibleApplicationError error={{ code: current.errorCode, message: current.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
+                  </small>
+                ) : null}
                 {current ? (
                   <small>
                     {zh ? `第 ${current.attempt} 次运行` : `Run ${current.attempt}`} · {runStatus(current.status, props.language)}
@@ -318,8 +323,8 @@ function ManagerInbox(props: {
               {decision.kind === 'deliverable_acceptance' ? <CheckCircle size={19} /> : decision.kind === 'outcome_unknown' || decision.kind === 'command_failure' ? <WarningCircle size={19} /> : <ChatCircle size={19} />}
             </span>
             <span>
-              <strong>{decision.title}</strong>
-              <small>{decision.prompt}</small>
+              <strong>{decisionCopy(decision, 'title', zh)}</strong>
+              <small>{decisionCopy(decision, 'prompt', zh)}</small>
               <time>{formatDateTime(decision.createdAt, props.language)}</time>
             </span>
           </button>
@@ -336,7 +341,7 @@ function DeliverablesView(props: { deliverables: TaskWorkDeliverableRecord[]; la
     <section className="task-work-deliverables">
       <header>
         <strong>{zh ? '正式交付物' : 'Formal deliverables'}</strong>
-        <small>{zh ? '每个版本独立保留验收状态和内容哈希' : 'Every version keeps its acceptance state and content hash'}</small>
+        <small>{zh ? '查看每次交付的内容与验收状态' : 'View the content and acceptance status of each delivery'}</small>
       </header>
       {props.deliverables.map((deliverable) => (
         <article key={deliverable.id}>
@@ -361,7 +366,7 @@ function EvidenceView(props: { refs: Array<Record<string, unknown>>; language: D
     <section className="task-work-evidence">
       <header>
         <strong>{zh ? '证据' : 'Evidence'}</strong>
-        <small>{zh ? '会话、命令日志与历史执行的审计引用' : 'Audit references for conversations, command logs, and legacy runs'}</small>
+        <small>{zh ? '查看相关对话、命令日志和历史运行' : 'View related conversations, command logs, and past runs'}</small>
       </header>
       {props.refs.map((ref, index) => (
         <button
@@ -478,6 +483,7 @@ function TaskEmployeeRunDialog(props: {
   const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
     text: supplementalInfo,
     disabled: props.busy,
@@ -523,7 +529,7 @@ function TaskEmployeeRunDialog(props: {
         });
       })
       .catch((cause) => {
-        if (active) setCapabilityError(errorMessage(cause, zh ? '无法读取本次执行能力。' : 'Could not load run capabilities.'));
+        if (active) setCapabilityError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
       });
     return () => {
       active = false;
@@ -570,7 +576,7 @@ function TaskEmployeeRunDialog(props: {
         .catch((cause) => {
           if (previewVersion.current === version) {
             setPreview(null);
-            setPreviewError(errorMessage(cause, zh ? '无法生成本次执行预览。' : 'Could not generate this run preview.'));
+            setPreviewError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
           }
         })
         .finally(() => {
@@ -594,7 +600,7 @@ function TaskEmployeeRunDialog(props: {
     if (!preview || preview.blockers.length > 0 || inputResources.processing) return;
     setSubmitError(null);
     const success = await props.onSubmit(preview);
-    if (!success) setSubmitError(zh ? '本次运行未启动，请查看页面错误并刷新后重试。' : 'This run did not start. Review the error and refresh.');
+    if (!success) setSubmitError(zh ? '本次运行未能启动，请查看页面上的具体原因。' : 'This run could not start. See the specific cause on this page.');
   }
 
   return (
@@ -603,7 +609,7 @@ function TaskEmployeeRunDialog(props: {
         <header>
           <span>
             <strong id="task-work-run-title">{zh ? '开始任务执行' : 'Start task execution'}</strong>
-            <small>{zh ? '修改只冻结到本次运行，不回写员工或系统模板。' : 'Changes are frozen into this run and do not update the employee or template.'}</small>
+            <small>{zh ? '修改只用于本次工作，不改变员工或模板的默认设置。' : 'Changes apply only to this run and do not change employee or template defaults.'}</small>
           </span>
           <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onDismiss}>
             {zh ? '关闭' : 'Close'}
@@ -667,7 +673,7 @@ function TaskEmployeeRunDialog(props: {
 
           {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
             <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
-              <legend>{zh ? '代码现场' : 'Code workspace'}</legend>
+              <legend>{zh ? '代码工作目录' : 'Code working folder'}</legend>
               <label className={workspaceMode === 'continue' ? 'is-selected' : undefined}>
                 <input
                   type="radio"
@@ -681,14 +687,14 @@ function TaskEmployeeRunDialog(props: {
                 />
                 <span>
                   <strong>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</strong>
-                  <small>{zh ? '继续已登记任务环境，或把未占用的本地任务分支登记为隔离 worktree' : 'Continue a managed environment or register an available local task branch as an isolated worktree'}</small>
+                  <small>{zh ? '使用已有任务目录，或为未被使用的本地分支创建独立工作目录' : 'Use an existing task folder, or create a separate working folder for an unused local branch'}</small>
                 </span>
               </label>
               <label className={workspaceMode === 'create' ? 'is-selected' : undefined}>
                 <input type="radio" name="task-work-workspace-mode" checked={workspaceMode === 'create'} onChange={() => setWorkspaceMode('create')} disabled={props.busy} />
                 <span>
                   <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
-                  <small>{zh ? '新建一条独立执行线，不共享已有员工的代码现场' : 'Create an independent execution line without sharing an existing workspace'}</small>
+                  <small>{zh ? '创建新的分支和工作目录，与其他员工分别修改代码' : 'Create a new branch and working folder to edit code separately from other employees'}</small>
                 </span>
               </label>
               {workspaceMode === 'continue' ? (
@@ -732,7 +738,7 @@ function TaskEmployeeRunDialog(props: {
                         <li key={repository.id}>
                           <span>{repository.name}</span>
                           <code>{selectedLocalBranch.branchName}</code>
-                          <small>{zh ? '启动时登记到新的隔离 worktree' : 'Registered in a new isolated worktree at startup'}</small>
+                          <small>{zh ? '启动时创建独立工作目录' : 'Create a separate working folder at startup'}</small>
                         </li>
                       ))}
                     </ul>
@@ -769,14 +775,14 @@ function TaskEmployeeRunDialog(props: {
           ) : null}
 
           {preview ? (
-            <section className="task-work-preview" aria-label={zh ? '冻结后的有效配置' : 'Frozen effective configuration'}>
+            <section className="task-work-preview" aria-label={zh ? '本次使用的配置' : 'Settings for this run'}>
               <span>
                 <small>{zh ? '执行能力' : 'Execution capability'}</small>
                 <strong>{zh ? 'Agent 会话' : 'Agent conversation'}</strong>
               </span>
               {preview.model ? (
                 <span>
-                  <small>{zh ? '模型与运行内核' : 'Model and runtime'}</small>
+                  <small>{zh ? '模型与 AI 服务' : 'Model and AI service'}</small>
                   <strong>{String(preview.model.displayName ?? preview.model.id)}</strong>
                   <p>
                     {String(preview.model.agentKind ?? '—')} · {String(preview.model.reasoningEffort ?? '—')} · {String(preview.model.serviceTier ?? '—')}
@@ -794,7 +800,7 @@ function TaskEmployeeRunDialog(props: {
               </span>
               {preview.workspace ? (
                 <span>
-                  <small>{zh ? '代码现场' : 'Code workspace'}</small>
+                  <small>{zh ? '代码工作目录' : 'Code working folder'}</small>
                   <strong>{workspacePreviewLabel(preview.workspace, zh)}</strong>
                 </span>
               ) : null}
@@ -803,7 +809,7 @@ function TaskEmployeeRunDialog(props: {
           {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} /> : null}
           {previewBusy ? (
             <p className="task-work-preview-status" role="status">
-              {zh ? '正在自动刷新权威预览…' : 'Refreshing authoritative preview…'}
+              {zh ? '正在更新运行配置预览…' : 'Updating the run settings preview…'}
             </p>
           ) : null}
           {capabilityError || previewError || supplementalResourceError || props.operationError || submitError ? (
@@ -814,7 +820,7 @@ function TaskEmployeeRunDialog(props: {
           {preview?.blockers.map((blocker) => (
             <p key={blocker.code} className="digital-employee-feedback is-error">
               <WarningCircle size={17} aria-hidden="true" />
-              {blocker.message}
+              <VisibleApplicationError error={blocker} language={zh ? 'zh-CN' : 'en'} />
             </p>
           ))}
         </div>
@@ -881,7 +887,7 @@ function commonLocalTaskBranches(capabilities: CodexTaskPushCapabilities): Commo
 
 function localTaskBranchLabel(branch: CommonLocalTaskBranch, zh: boolean): string {
   if (branch.available) return branch.branchName;
-  const reason = branch.unavailableReason === 'checked_out' ? (zh ? '已在其他 worktree 检出' : 'checked out in another worktree') : zh ? '已由任务环境管理' : 'already managed';
+  const reason = branch.unavailableReason === 'checked_out' ? (zh ? '已在其他工作目录使用' : 'In use in another working folder') : zh ? '已由任务环境管理' : 'already managed';
   return `${branch.branchName} · ${reason}`;
 }
 
@@ -928,7 +934,7 @@ function CommandEvidenceDialog(props: { runId: string; client: DigitalEmployeeAp
         if (active) setDetail(value);
       })
       .catch((cause) => {
-        if (active) setError(errorMessage(cause, zh ? '无法读取命令证据。' : 'Could not load command evidence.'));
+        if (active) setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
       });
     return () => {
       active = false;
@@ -1025,7 +1031,7 @@ function DecisionDialog(props: {
         if (active) setDeliverableContent(result.content);
       })
       .catch((cause) => {
-        if (active) setDeliverableContentError(errorMessage(cause, zh ? '无法读取交付物正文。' : 'Could not load deliverable content.'));
+        if (active) setDeliverableContentError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
       });
     return () => {
       active = false;
@@ -1036,8 +1042,8 @@ function DecisionDialog(props: {
       <section className="task-work-decision-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-decision-title">
         <header>
           <span>
-            <strong id="task-work-decision-title">{props.decision.title}</strong>
-            <small>{props.decision.prompt}</small>
+            <strong id="task-work-decision-title">{decisionCopy(props.decision, 'title', zh)}</strong>
+            <small>{decisionCopy(props.decision, 'prompt', zh)}</small>
           </span>
           <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onDismiss}>
             {zh ? '关闭' : 'Close'}
@@ -1103,15 +1109,15 @@ function DecisionDialog(props: {
           {props.decision.kind === 'outcome_unknown' ? (
             <p className="digital-employee-feedback is-error">
               <WarningCircle size={18} />
-              {zh ? '请先核对命令日志和外部现场，再确认成功或失败；任一处置都不会自动重发。' : 'Check command logs and external state, then mark success or failure. Neither action resends the command.'}
+              {zh
+                ? 'Zeus 无法确定命令是否执行成功。请检查命令日志和目标应用的实际结果，再确认成功或失败。确认不会再次执行命令。'
+                : 'Zeus cannot determine whether the command succeeded. Check the command logs and the result in the target app before confirming success or failure. Confirmation will not run the command again.'}
             </p>
           ) : null}
           {props.decision.kind === 'command_failure' ? (
             <p className="digital-employee-feedback is-error">
               <WarningCircle size={18} />
-              {zh
-                ? '命令已明确失败。查看命令证据后可创建一次全新的显式尝试；Zeus 不会复用敏感参数或自动重发。'
-                : 'The command failed. After checking evidence, create a new explicit attempt; Zeus will not reuse sensitive parameters or resend automatically.'}
+              {zh ? '命令已失败。请先查看日志并解决原因，再创建新的尝试；敏感参数需要重新填写。' : 'The command failed. Review the logs and address the cause before starting a new attempt. Sensitive parameters must be entered again.'}
             </p>
           ) : null}
         </div>
@@ -1178,10 +1184,10 @@ function workItemStatus(status: TaskWorkItemRecord['status'], language: DigitalE
 function runStatus(status: TaskWorkItemRecord['runs'][number]['status'], language: DigitalEmployeeLanguage): string {
   const zh = language === 'zh-CN';
   const labels = zh
-    ? { prepared: '已准备', dispatching: '派发中', active: '执行中', waiting_input: '等待输入', runtime_completed: '待验收', succeeded: '已成功', failed: '失败', outcome_unknown: '结果未知', cancelled: '已取消' }
+    ? { prepared: '已准备', dispatching: '正在启动', active: '执行中', waiting_input: '等待输入', runtime_completed: '待验收', succeeded: '已成功', failed: '失败', outcome_unknown: '结果未知', cancelled: '已取消' }
     : {
         prepared: 'Prepared',
-        dispatching: 'Dispatching',
+        dispatching: 'Starting',
         active: 'Active',
         waiting_input: 'Waiting for input',
         runtime_completed: 'Awaiting acceptance',
@@ -1202,4 +1208,40 @@ function evidenceLabel(kind: unknown, language: DigitalEmployeeLanguage): string
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** 只翻译 Zeus 固定的管理提示，AI 问题和用户文本保持原文。 */
+const decisionText: Readonly<Record<string, readonly [string, string]>> = {
+  '核对 Agent 会话派发结果': ['检查 AI 是否已开始处理', 'Check whether AI processing started'],
+  处置命令未知结果: ['检查命令执行结果', 'Check the command result'],
+  '会话可能已经写入 Provider，Zeus 不会自动重发。请核对会话现场后处置。': [
+    '尚未确认 AI 是否已开始处理。请先打开会话检查，再确认结果，避免重复执行。',
+    'It is not yet confirmed whether the AI started. Open the conversation and check before confirming the result to avoid duplicate work.',
+  ],
+  '命令可能已产生外部效果，Zeus 不会自动重发。请核对现场后处置。': [
+    '尚未确认命令是否已执行。请先检查文件、应用或服务中的实际结果，再确认成功或失败。',
+    'It is not yet confirmed whether the command ran. Check the actual result in the files, app, or service before confirming success or failure.',
+  ],
+  验收数字员工交付物: ['验收交付物', 'Review the deliverable'],
+  '请验收该正式交付物，或明确要求修改。': ['请查看交付物，再选择通过验收或要求修改。', 'Review the deliverable, then accept it or request changes.'],
+  重新确认项目命令: ['重新确认项目命令', 'Review the project command again'],
+  '命令确认已过期或定义发生变化，请重新预览后显式处置。': [
+    '先前确认已过期或命令已修改。请查看最新命令和参数后重新确认。',
+    'The previous approval expired or the command changed. Review the current command and parameters before confirming again.',
+  ],
+  处置失败的项目命令: ['处理失败的命令', 'Handle the failed command'],
+  '命令已明确失败。请检查日志后取消工作项或显式创建一次新尝试；Zeus 不会自动重发。': [
+    '命令执行失败。请查看日志，选择取消工作项或开始新的尝试。新的尝试会再次执行命令。',
+    'The command failed. Check its logs, then cancel the work item or start a new attempt. A new attempt runs the command again.',
+  ],
+  确认重试项目命令: ['确认再次执行命令', 'Confirm another command attempt'],
+  '这是一次新的显式尝试。请重新填写参数并确认；敏感值不会从旧运行恢复。': [
+    '这会再次执行命令。请重新填写并核对参数；密码或密钥需要重新输入。',
+    'This runs the command again. Enter and review the parameters; passwords or keys must be entered again.',
+  ],
+};
+
+/** 根据固定文案选择当前语言，不根据文字改变管理操作。 */
+function decisionCopy(decision: TaskWorkDecisionRecord, field: 'title' | 'prompt', zh: boolean): string {
+  return decisionText[decision[field]]?.[zh ? 0 : 1] ?? decision[field];
 }

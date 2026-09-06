@@ -44,7 +44,7 @@ import {
 import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
@@ -752,7 +752,7 @@ function TaskBoardSettingsDialog(props: {
               >
                 <option value="none">{zh ? '无' : 'None'}</option>
                 <option value="content">{zh ? '任务内容' : 'Task content'}</option>
-                <option value="first_image">{zh ? '首张真实图片附件' : 'First image attachment'}</option>
+                <option value="first_image">{zh ? '第一张图片附件' : 'First image attachment'}</option>
               </select>
             </label>
             <label className="task-board-setting-check">
@@ -1204,7 +1204,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.', timeoutMs: 4_000 });
       return updated;
     } catch (error) {
-      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
+      const message = reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
       setSettingsError(message);
       setOperationError(error);
       setFeedback({
@@ -1262,7 +1262,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
         setFeedback({ kind: 'info', message, timeoutMs: 4_000 });
         return;
       }
-      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
+      const message = reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
       setOperationError(error);
       setAnnouncement(message);
       setFeedback({

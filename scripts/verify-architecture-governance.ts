@@ -122,7 +122,8 @@ async function verifyImportBoundaries(): Promise<void> {
     'packages/local-server/src/codexSubagentRuntimeProjection.ts': ['node:fs', 'node:fs/promises', 'node:path', '@zeus/ai-runtime', '@zeus/shared'],
     'packages/local-server/src/conversationCapabilityQueryApplication.ts': ['node:crypto', 'node:path', '@zeus/ai-runtime', '@zeus/git-core', '@zeus/storage'],
     'packages/local-server/src/conversationCapabilityQueryRoutes.ts': ['fastify', './conversationCapabilityQueryApplication.js', './nativeQueryRouteError.js'],
-    'packages/local-server/src/nativeQueryRouteError.ts': ['fastify'],
+    // 查询错误复用共享的脱敏原因结构，保持各查询入口一致。
+    'packages/local-server/src/nativeQueryRouteError.ts': ['fastify', '@zeus/shared'],
   };
   for (const [path, allowed] of Object.entries(modularPolicies)) {
     const specifiers = importSpecifiers(await readText(path));

@@ -635,14 +635,14 @@ export function findLinkedRuntimeSession(task: TaskRecord, runtimeSessions: AiRu
   return runtimeSessions.find((session) => session.taskId === task.id) ?? (sourceSessionId ? runtimeSessions.find((session) => session.id === sourceSessionId) : undefined);
 }
 
-export function formatRuntimeSessionStatus(session: AiRuntimeSession | undefined, labels?: Partial<Record<AiRuntimeSessionStatus, string>>, missingLabel = '未启动 Runtime 会话'): string {
+export function formatRuntimeSessionStatus(session: AiRuntimeSession | undefined, labels?: Partial<Record<AiRuntimeSessionStatus, string>>, missingLabel = '尚未开始运行'): string {
   if (!session) return missingLabel;
   const defaultLabels: Record<AiRuntimeSessionStatus, string> = {
     running: '运行中',
     exited: '已退出',
     failed: '已失败',
     stopped: '已停止',
-    orphan_detected: '孤儿进程',
+    orphan_detected: '运行连接已丢失',
     lost: '已丢失',
   };
   return labels?.[session.status] ?? defaultLabels[session.status];
@@ -659,7 +659,11 @@ function buildTaskTableCells(
   language: 'zh-CN' | 'en-US' = 'zh-CN',
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
-  const displayProjectName = projectName?.trim() || '当前项目';
+  // 表格缺省说明使用当前语言，不改写任务数据。
+  const zh = language === 'zh-CN';
+  const displayProjectName = projectName?.trim() || (zh ? '当前项目' : 'Current project');
+  // 来源名在表格入口翻译；来源标识继续保留供排序与记录使用。
+  const sourceLabels = zh ? undefined : { graph_node: 'Graph node', graph_view: 'Code graph', runtime_session: 'Run', template: 'Task template', graph_question: 'Graph question', manual: 'Created manually', user: 'Created manually' };
   const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   const managementStatus = resolveTaskManagementStatus(task);
   const branchStatus = resolveTaskBranchStatus(conversations);
@@ -682,16 +686,18 @@ function buildTaskTableCells(
       sortValue: branchStatus,
     },
     runStatus: { primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus },
-    source: { primary: formatTaskSource(task), sortValue: formatTaskSource(task) },
-    updatedAt: { primary: formatTaskUpdatedAt(task.updatedAt), sortValue: parseTaskDateSortValue(task.updatedAt) },
-    createdAt: { primary: formatTaskUpdatedAt(task.createdAt), sortValue: parseTaskDateSortValue(task.createdAt) },
-    template: { primary: task.templateId ?? '未绑定模板', sortValue: task.templateId ?? null },
+    source: { primary: formatTaskSource(task, sourceLabels), sortValue: formatTaskSource(task, sourceLabels) },
+    updatedAt: { primary: formatTaskUpdatedAt(task.updatedAt, zh ? '未记录' : 'Not recorded'), sortValue: parseTaskDateSortValue(task.updatedAt) },
+    createdAt: { primary: formatTaskUpdatedAt(task.createdAt, zh ? '未记录' : 'Not recorded'), sortValue: parseTaskDateSortValue(task.createdAt) },
+    template: { primary: task.templateId ?? (zh ? '未绑定模板' : 'No template'), sortValue: task.templateId ?? null },
     project: { primary: displayProjectName, sortValue: displayProjectName },
-    priority: { primary: task.priority ?? '未设置', sortValue: task.priority ?? null },
+    priority: { primary: task.priority ?? (zh ? '未设置' : 'Not set'), sortValue: task.priority ?? null },
     description: { primary: activeContent?.trim() || (language === 'zh-CN' ? '无内容' : 'No content'), sortValue: activeContent?.trim() || null },
     runtimeSession: {
-      primary: taskRuntimeSession?.id ?? '无运行会话',
-      secondary: taskRuntimeSession ? `状态：${taskRuntimeSession.status}` : undefined,
+      primary: taskRuntimeSession?.id ?? (zh ? '无运行会话' : 'No run'),
+      secondary: taskRuntimeSession
+        ? formatRuntimeSessionStatus(taskRuntimeSession, zh ? undefined : { running: 'Running', exited: 'Exited', failed: 'Failed', stopped: 'Stopped', orphan_detected: 'Connection lost', lost: 'Lost' })
+        : undefined,
       sortValue: taskRuntimeSession?.id ?? null,
     },
     rawId: { primary: task.id, sortValue: task.id },
@@ -825,7 +831,7 @@ function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string 
   const sourceLabels: Record<string, string> = {
     graph_node: '图谱节点',
     graph_view: '代码图谱',
-    runtime_session: 'Runtime 会话',
+    runtime_session: '运行会话',
     template: '任务模板',
     graph_question: '图谱问答',
     manual: '手动创建',
@@ -843,4 +849,86 @@ export function parseTaskSourceContext(value?: string): Record<string, unknown> 
   } catch {
     return {};
   }
+}
+
+/** Zeus 自己生成的任务事件按类型展示，不修改保存的历史或用户正文。 */
+const taskEventCopy: Readonly<Record<string, readonly [string, string]>> = {
+  'task.stage.attempt.started': ['任务阶段已开始', 'Task stage started'],
+  'task.git_integration.ai_accepted': ['正在为 AI 准备冲突处理目录', 'Preparing conflict resolution for the AI'],
+  'task.model_push.started': ['任务已加入 AI 对话', 'Task added to an AI conversation'],
+  'task.model_push.turn_not_started': ['对话已创建，AI 尚未开始处理', 'Conversation created; AI processing has not started'],
+  'task.conversation.worktree.rehydrated': ['任务工作目录已恢复', 'Task working folder restored'],
+  'task.work_item.automation_created': ['自动化已创建工作项', 'Automation created a work item'],
+  'task.digital_employee.started': ['数字员工已开始处理任务', 'Digital employee started the task'],
+  'task.digital_employee.stage_output_ready': ['阶段方案已生成，等待确认', 'Stage plan ready for review'],
+  'task.digital_employee.delivery_started': ['已开始执行确认过的交付操作', 'Approved delivery actions started'],
+  'task.digital_employee.delivered': ['数字员工已完成工作', 'Digital employee finished the work'],
+  'task.digital_employee.failed': ['数字员工暂时无法继续，请查看工作项原因', 'Digital employee cannot continue; check the work item’s reason'],
+  'task.digital_employee.retried': ['工作已重新排队', 'Work queued again'],
+  'task.digital_employee.cancelled': ['数字员工工作已取消', 'Digital employee work cancelled'],
+  'task.digital_employee.legacy_adopted': ['已从旧任务接续工作', 'Work continued from an earlier task'],
+  'task.digital_employee.handoff.created': ['任务阶段已交接', 'Task stage handed over'],
+  'task.digital_employee.stage_retry.created': ['失败阶段已重新指派', 'Failed stage reassigned'],
+  'task.digital_employee.rework.created': ['阶段修改已重新指派', 'Stage rework assigned'],
+  'task.digital_employee.collaboration.finalized': ['协作结果已确认，准备交付', 'Collaboration reviewed; preparing delivery'],
+  'task.environment.created': ['已关联本地任务分支', 'Local task branch linked'],
+  'task.terminal_resources.cleaned': ['任务结束后的工作目录已清理', 'Working folders cleaned up after task completion'],
+  'task.git_workspace.committed': ['任务分支已提交', 'Task branch committed'],
+  'task.git_workspace.pushed': ['任务分支已推送', 'Task branch pushed'],
+  'task.git_workspace.sessions_stopped': ['任务分支上的会话已停止', 'Conversations on the task branch stopped'],
+  'task.git_workspace.reclaimed': ['任务独立工作目录已移除', 'Task’s separate working folder removed'],
+  'task.git_workspace.discarded': ['任务本地分支已放弃', 'Local task branch discarded'],
+  'task.git_workspace.refresh_conflicted': ['更新分支后出现新冲突', 'New conflicts found after updating the branch'],
+  'task.git_integration.conflicted': ['合入任务分支前需要处理冲突', 'Conflicts must be resolved before merging the task branch'],
+  'task.git_integration.rebuilt_for_confirmation': ['分支已更新，请重新确认合入内容', 'Branch updated; review the merge again'],
+  'task.git_integration.local_sync_pending': ['合入结果尚未写入本地来源分支', 'Merge result has not been applied to the local source branch'],
+  'task.git_integration.merged': ['任务分支已合入来源分支', 'Task branch merged into its source'],
+  'task.git_integration.source_pushed': ['来源分支已推送', 'Source branch pushed'],
+  'task.git_integration.ai_started': ['AI 已开始处理冲突', 'AI conflict resolution started'],
+  'task.git_integration.ai_prepare_failed': ['冲突处理未能开始，请查看会话中的原因', 'Conflict resolution could not start; see the conversation for the reason'],
+  'task.git_integration.ai_merged': ['AI 已完成本地合入', 'AI completed the local merge'],
+  'task.git_integration.ai_failed': ['AI 未能完成本地合入，请查看会话中的原因', 'AI could not finish the local merge; see the conversation for the reason'],
+  'task.management_status.migrated': ['任务状态设置已更新', 'Task status settings updated'],
+  'telegram.runtime.summary.sent': ['运行进度已发送到 Telegram', 'Progress sent to Telegram'],
+  'telegram.runtime.summary.failed': ['未能向 Telegram 发送运行进度', 'Progress could not be sent to Telegram'],
+  'runtime.session.recovered': ['运行状态已重新读取', 'Run state loaded again'],
+  'telegram.run': ['已从 Telegram 启动任务', 'Task started from Telegram'],
+  'telegram.stop': ['已从 Telegram 停止任务', 'Task stopped from Telegram'],
+  'telegram.continue': ['已从 Telegram 继续任务', 'Task continued from Telegram'],
+  'task.runtime.reconnect': ['任务已重新连接', 'Task reconnected'],
+  'task.created.from_runtime_session': ['已从运行记录创建任务', 'Task created from a run'],
+  'task.runtime.queued': ['任务等待 AI 处理', 'Task waiting for AI processing'],
+  'task.management_status.changed': ['任务状态已更新', 'Task status updated'],
+  'task.workflow.initialized': ['任务阶段已启用', 'Task stages enabled'],
+  'task.stage.configured': ['任务阶段设置已更新', 'Task stage settings updated'],
+  'task.stage.deliverable.accepted': ['阶段交付物已通过验收', 'Stage deliverable accepted'],
+  'task.stage.deliverable.changes_requested': ['阶段交付物需要修改', 'Changes requested to the stage deliverable'],
+  'task.stage.skipped': ['任务阶段已跳过', 'Task stage skipped'],
+  'task.work_item.created': ['工作项已创建', 'Work item created'],
+  'task.work_deliverable.submitted': ['数字员工已提交交付物', 'Digital employee submitted a deliverable'],
+  'task.work_command.started': ['数字员工已启动项目命令', 'Digital employee started a project command'],
+  'task.work_command.succeeded': ['数字员工的命令已完成', 'Digital employee’s command completed'],
+  'task.work_deliverable.accepted': ['数字员工交付物已通过验收', 'Digital employee’s deliverable accepted'],
+  'task.work_deliverable.changes_requested': ['数字员工交付物需要修改', 'Changes requested to the digital employee’s deliverable'],
+  'task.created': ['任务已创建', 'Task created'],
+  'task.runtime.retry': ['任务已重新运行', 'Task run again'],
+  'task.created.from_template': ['已从模板创建任务', 'Task created from a template'],
+  'task.created.from_graph_question': ['已从图谱问答创建任务', 'Task created from a graph conversation'],
+  'task.created.from_graph_node': ['已从图谱节点创建任务', 'Task created from a graph node'],
+  'task.created.from_graph_view': ['已从图谱视图创建任务', 'Task created from a graph view'],
+  'task.linked_graph_node': ['任务已关联图谱节点', 'Task linked to a graph node'],
+  'telegram.notification.sent': ['Telegram 通知已发送', 'Telegram notification sent'],
+  'telegram.notification.failed': ['尚未确认 Telegram 通知是否送达', 'Telegram notification delivery is unconfirmed'],
+  'task.board.moved': ['任务已在看板中移动', 'Task moved on the board'],
+  'task.archived': ['任务已归档', 'Task archived'],
+  'task.restored': ['任务已恢复', 'Task restored'],
+  'task.updated': ['任务内容已更新', 'Task content updated'],
+  'task.tags.updated': ['任务标签已更新', 'Task tags updated'],
+  'task.relationships.updated': ['任务关系已更新', 'Task relationships updated'],
+  'task.deleted': ['任务已删除', 'Task deleted'],
+};
+
+/** 未识别事件保留原始标题，避免改写用户或第三方生成的内容。 */
+export function formatTaskEventTitle(event: { eventType: string; title: string }, language: 'zh-CN' | 'en-US'): string {
+  return taskEventCopy[event.eventType]?.[language === 'zh-CN' ? 0 : 1] ?? event.title;
 }

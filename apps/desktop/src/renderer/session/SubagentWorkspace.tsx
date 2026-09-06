@@ -195,7 +195,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           {thread?.historyBoundary.state === 'unavailable' ? (
             <aside className="session-subagent-boundary-notice" role="status">
               <strong>{zh ? '部分历史归属不可确认' : 'Some history could not be attributed'}</strong>
-              <span>{zh ? '已隐藏可能来自父会话或缺少时间边界的内容。' : 'Content that may belong to the parent conversation or lacks a reliable time boundary is hidden.'}</span>
+              <span>{zh ? '无法确认属于此智能体的内容已隐藏。' : 'Content that could not be confirmed as belonging to this agent is hidden.'}</span>
               {thread.historyBoundary.reason ? <small>{thread.historyBoundary.reason}</small> : null}
             </aside>
           ) : null}
@@ -206,11 +206,11 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
                 description={
                   thread.historyBoundary.state === 'unavailable'
                     ? zh
-                      ? '当前没有能可靠确认属于该智能体的工作内容。'
-                      : 'No work content can currently be attributed to this agent with confidence.'
+                      ? '暂时没有可显示的智能体工作内容。'
+                      : 'No work from this agent is available to display yet.'
                     : zh
-                      ? '该智能体线程尚未产生可读消息。'
-                      : 'This agent thread has no readable messages yet.'
+                      ? '这个智能体还没有发来消息。'
+                      : 'This agent has not sent any messages yet.'
                 }
               />
             ) : null}
@@ -220,7 +220,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       ) : (
         <section className="session-subagent-list" aria-live="polite">
           {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
-          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} description={zh ? '当前会话还没有派生智能体。' : 'This conversation has not spawned any agents.'} /> : null}
+          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} description={zh ? '此对话尚未创建子智能体。' : 'This conversation has no subagents yet.'} /> : null}
           {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
           {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已完成' : 'Done'} items={grouped.done} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
         </section>
@@ -247,7 +247,7 @@ function SubagentTaskInstruction(props: { thread: NativeSubagentThreadSnapshot; 
       ) : (
         <div className="session-subagent-instruction-unavailable" role="status">
           <strong>{zh ? '原始子任务指令不可读取' : 'Original subtask instruction unavailable'}</strong>
-          <span>{zh ? (instruction.reason ?? 'Provider 没有返回可验证的原始指令。') : 'The current Codex provider did not expose the original subtask instruction. Zeus will not substitute inherited parent context.'}</span>
+          <span>{zh ? (instruction.reason ?? 'AI 服务没有提供这个智能体收到的原始指令。') : 'The AI service did not provide the original instructions received by this agent.'}</span>
         </div>
       )}
       {inheritedDiffers ? (

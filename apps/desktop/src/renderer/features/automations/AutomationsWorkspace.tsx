@@ -1,3 +1,4 @@
+import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
@@ -51,7 +52,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         return { ...current, modelSourceId: preferred.sourceId ?? 'codex', modelId: preferred.model, reasoningEffort: preferred.defaultReasoningEffort ?? null };
       });
     } catch (cause) {
-      setError(messageOf(cause));
+      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setLoading(false);
     }
@@ -88,7 +89,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         });
       })
       .catch((cause: unknown) => {
-        if (active) setExtensionsError(messageOf(cause));
+        if (active) setExtensionsError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
       })
       .finally(() => {
         if (active) setExtensionsLoading(false);
@@ -222,7 +223,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       setEditingId(null);
       await refresh();
     } catch (cause) {
-      setError(messageOf(cause));
+      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setBusyId(null);
     }
@@ -235,7 +236,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       await operation();
       await refresh();
     } catch (cause) {
-      setError(messageOf(cause));
+      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setBusyId(null);
     }
@@ -255,7 +256,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         <div>
           <span className="automations-kicker">ZEUS AUTOMATIONS</span>
           <h1 id="automations-title">{zh ? '自动化' : 'Automations'}</h1>
-          <p>{zh ? '把固定指令交给精确的模型、项目和时间，每次运行都保留独立证据。' : 'Bind an instruction to exact models, projects, and time with durable evidence for every run.'}</p>
+          <p>{zh ? '按设定的时间和项目自动执行指令，并查看每次运行的结果。' : 'Run instructions automatically for selected projects on a schedule, and view the result of each run.'}</p>
         </div>
         <div className="automations-header-actions">
           <button type="button" className="automations-icon-button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} disabled={loading}>
@@ -337,7 +338,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 </article>
               ))
             ) : (
-              <EmptyState title={zh ? '还没有自动化' : 'No automations yet'} body={zh ? '创建第一个自动化，从手动触发开始验证。' : 'Create one and begin with a manual trigger.'} />
+              <EmptyState title={zh ? '还没有自动化' : 'No automations yet'} body={zh ? '创建自动化，让重复工作按时执行。' : 'Create an automation to run recurring work on a schedule.'} />
             )
           ) : inbox.length ? (
             inbox.map((run) => {
@@ -350,7 +351,11 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     <small>
                       {projectNames([run.projectId], props.projects)} · {formatDate(run.completedAt ?? run.createdAt)}
                     </small>
-                    {run.errorMessage ? <p>{run.errorMessage}</p> : null}
+                    {run.errorMessage ? (
+                      <p>
+                        <VisibleApplicationError error={{ code: run.errorCode, message: run.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
+                      </p>
+                    ) : null}
                     {run.mayOverlapPrevious ? <p className="automation-warning">{zh ? '可能与旧运行重叠' : 'May overlap a previous run'}</p> : null}
                   </div>
                   <div className="automation-inbox-actions">
@@ -369,7 +374,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               );
             })
           ) : (
-            <EmptyState title={zh ? '收件箱很安静' : 'Inbox is quiet'} body={zh ? '运行进入成功、失败、阻塞或结果未知后会出现在这里。' : 'Terminal runs appear here, including blocked and unknown outcomes.'} />
+            <EmptyState title={zh ? '收件箱很安静' : 'Inbox is quiet'} body={zh ? '自动化的运行结果和需要你处理的问题会显示在这里。' : 'Automation results and requests for your attention appear here.'} />
           )}
         </div>
 
@@ -420,16 +425,16 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               <div className="automation-form-grid">
                 <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
                 <label>
-                  <span>{zh ? 'IANA 时区' : 'IANA timezone'}</span>
+                  <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
                   <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
                 </label>
               </div>
               <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
               <label>
-                <span>{zh ? '精确模型' : 'Exact model'}</span>
+                <span>{zh ? '使用模型' : 'Model'}</span>
                 <ZeusSelect
                   size="regular"
-                  ariaLabel={zh ? '选择精确模型' : 'Choose exact model'}
+                  ariaLabel={zh ? '选择模型' : 'Select a model'}
                   value={selectedModelValue}
                   options={exactModelOptions}
                   onChange={(value) => {
@@ -472,7 +477,9 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               {draft.permissionMode === 'full-access' ? (
                 <label className="automation-risk-ack">
                   <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
-                  <span>{zh ? '我理解该授权会持续到配置变更或撤销，且可产生不可逆副作用。' : 'I understand this grant persists until configuration changes or revocation and may produce irreversible side effects.'}</span>
+                  <span>
+                    {zh ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。' : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}
+                  </span>
                 </label>
               ) : null}
               <div className="automation-form-grid">
@@ -486,12 +493,12 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
                 />
                 <SelectField
-                  label={zh ? '阻塞策略' : 'Blocking policy'}
+                  label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
                   value={draft.blockStrategy ?? 'serial'}
                   options={[
-                    ['serial', zh ? '串行排队' : 'Serial queue'],
-                    ['discard', zh ? '丢弃新触发' : 'Discard new'],
-                    ['cover', zh ? '覆盖旧运行' : 'Cover previous'],
+                    ['serial', zh ? '排队等待' : 'Wait in line'],
+                    ['discard', zh ? '跳过新运行' : 'Skip the new run'],
+                    ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
                   ]}
                   onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
                 />
@@ -503,7 +510,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 </label>
               ) : null}
               <details>
-                <summary>{zh ? '能力、预算与保留' : 'Capabilities, budgets, and retention'}</summary>
+                <summary>{zh ? '插件、用量限制与记录保留' : 'Plugins, usage limits, and history retention'}</summary>
                 <div className="automation-form-grid">
                   <label>
                     <span>Skill</span>
@@ -541,7 +548,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 ) : null}
                 <div className="automation-form-grid">
                   <label>
-                    <span>{zh ? '队列容量' : 'Queue capacity'}</span>
+                    <span>{zh ? '最多等待运行数' : 'Maximum waiting runs'}</span>
                     <input type="number" min="1" max="10000" value={draft.queueCapacity ?? 10} onChange={(event) => setDraft({ ...draft, queueCapacity: event.currentTarget.valueAsNumber })} />
                   </label>
                   <label>
@@ -555,7 +562,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     <input type="number" min="1" value={draft.maxRunsPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxRunsPerDayText: event.currentTarget.value })} />
                   </label>
                   <label>
-                    <span>{zh ? '每日 Token 上限' : 'Tokens per day'}</span>
+                    <span>{zh ? '每日用量上限（Token）' : 'Daily usage limit (tokens)'}</span>
                     <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
                   </label>
                 </div>
@@ -702,7 +709,7 @@ function triggerOptions(zh: boolean): Array<[string, string]> {
     ['interval', zh ? '固定间隔' : 'Interval'],
     ['daily', zh ? '每日' : 'Daily'],
     ['weekly', zh ? '每周' : 'Weekly'],
-    ['rrule', zh ? '高级 RRULE' : 'Advanced RRULE'],
+    ['rrule', zh ? '自定义重复规则（RRULE）' : 'Custom recurrence rule (RRULE)'],
     ['event', zh ? '事件触发' : 'Event'],
   ];
 }
@@ -716,9 +723,6 @@ function modelName(task: AutomationTaskRecord, models: CodexTaskPushModelCapabil
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {
   if (task.status === 'paused') return zh ? '已暂停' : 'Paused';
   if (task.triggerKind === 'manual') return zh ? '手动触发' : 'Manual';
@@ -726,7 +730,7 @@ function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {
 }
 function runStatusLabel(status: AutomationRunRecord['status'], zh: boolean): string {
   const labels = zh
-    ? { queued: '排队', dispatching: '派发中', running: '运行中', succeeded: '成功', failed: '失败', blocked: '阻塞', cancelled: '已取消', outcome_unknown: '结果未知' }
-    : { queued: 'Queued', dispatching: 'Dispatching', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', blocked: 'Blocked', cancelled: 'Cancelled', outcome_unknown: 'Unknown' };
+    ? { queued: '排队', dispatching: '正在启动', running: '运行中', succeeded: '成功', failed: '失败', blocked: '等待处理', cancelled: '已取消', outcome_unknown: '结果未知' }
+    : { queued: 'Queued', dispatching: 'Starting', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', blocked: 'Needs attention', cancelled: 'Cancelled', outcome_unknown: 'Unknown' };
   return labels[status];
 }

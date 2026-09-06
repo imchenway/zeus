@@ -103,10 +103,10 @@ export function AgentExecutionConfigFields(props: {
           />
         </label>
         <label>
-          <span>{zh ? '服务速率' : 'Service tier'}</span>
+          <span>{zh ? '处理速度' : 'Processing speed'}</span>
           <ZeusSelect
             size="regular"
-            ariaLabel={zh ? '选择服务速率' : 'Choose service tier'}
+            ariaLabel={zh ? '选择处理速度' : 'Select processing speed'}
             value={props.value.serviceTier}
             onChange={(serviceTier) => props.onChange({ serviceTier })}
             options={capabilityOptions(props.value.serviceTier, serviceValues, zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不可用' : 'Current value unavailable')}

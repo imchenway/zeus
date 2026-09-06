@@ -1,3 +1,4 @@
+import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import {
   type AiCliAdapterDescriptor,
@@ -1881,7 +1882,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!currentHead || currentHead.status === 'queued' || currentHead.status === 'dispatching') {
         conversationSubmissions.updateStatus(head.id, 'paused', {
           pausedReason: 'recovery_required',
-          error: { code: 'ZEUS_UNIFIED_QUEUE_HEAD_FAILED', message: error instanceof Error ? error.message : String(error) },
+          error: { code: 'ZEUS_UNIFIED_QUEUE_HEAD_FAILED', message: 'Conversation queue dispatch failed.', cause: userFacingErrorCause(error) },
           updatedAt: failureAt,
         });
       }
@@ -1911,6 +1912,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         conversationId,
         error: {
           code: 'ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED',
+          cause: userFacingErrorCause(error),
           message: error instanceof Error ? error.message : String(error),
           recoveryRequired: true,
         },

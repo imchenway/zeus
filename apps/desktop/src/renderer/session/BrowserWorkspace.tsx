@@ -62,10 +62,10 @@ const copy = {
     collapse: '恢复左右分栏',
     resetSize: '恢复默认分栏宽度',
     more: '更多浏览器操作',
-    unavailable: '当前环境没有可用的内置浏览器桥接。',
+    unavailable: '此处无法使用内置浏览器。',
     loading: '正在打开内置浏览器…',
     loadFailed: '浏览器状态加载失败。',
-    stageFailed: '页面批注未能暂存到输入框，浏览器草稿仍已保留。',
+    stageFailed: '无法将批注添加到输入框，你仍可在浏览器中查看和编辑这些批注。',
   },
   'en-US': {
     title: 'Built-in browser',
@@ -99,10 +99,10 @@ const copy = {
     collapse: 'Restore split view',
     resetSize: 'Reset split width',
     more: 'More browser actions',
-    unavailable: 'The built-in browser bridge is unavailable in this environment.',
+    unavailable: 'The built-in browser is unavailable here.',
     loading: 'Opening the built-in browser…',
     loadFailed: 'The browser state could not be loaded.',
-    stageFailed: 'Browser comments were not staged. The page drafts are still saved.',
+    stageFailed: 'The comments could not be added to the composer. You can still view and edit them in the browser.',
   },
 } as const;
 

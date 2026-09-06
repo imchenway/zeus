@@ -109,7 +109,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return;
       }
       if (!bridge?.readProjectSourceFile) {
-        setError(zh ? 'Electron 源码桥接未就绪。' : 'Electron source bridge is unavailable.');
+        setError(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.');
         return;
       }
       setBusyPath(relativePath);
@@ -194,7 +194,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     setLoadingTree(true);
     void (async () => {
       try {
-        if (!bridge?.listProjectSourceDirectory) throw new Error(zh ? 'Electron 源码桥接未就绪。' : 'Electron source bridge is unavailable.');
+        if (!bridge?.listProjectSourceDirectory) throw new Error(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.');
         const root = await bridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath: '' });
         if (!active) return;
         setDirectories({ '': root });
@@ -541,7 +541,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             {searchQuery.trim() ? (
               <SearchResults entries={searchResults} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
             ) : loadingTree ? (
-              <p className="project-source-empty">{zh ? '正在读取真实项目目录…' : 'Loading the real project directory…'}</p>
+              <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
             ) : (
               <TreeRows
                 directoryPath=""
@@ -644,7 +644,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             <section className="project-source-editor-empty">
               <FolderOpen aria-hidden="true" />
               <strong>{zh ? '从左侧目录打开一个文件' : 'Open a file from the source tree'}</strong>
-              <span>{zh ? '这里会显示和编辑当前项目中的真实源码。' : 'The real source from this project will appear here.'}</span>
+              <span>{zh ? '打开文件后，可以在这里查看和编辑代码。' : 'Open a file to view and edit its code here.'}</span>
             </section>
           )}
         </main>

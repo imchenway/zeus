@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEventHandler, type CompositionEventHandler, type FocusEventHandler, type KeyboardEvent, type RefObject, type UIEventHandler, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
@@ -94,7 +95,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           if (active) setCatalog(value);
         })
         .catch((error: unknown) => {
-          if (active) setCatalogError(error instanceof Error ? error.message : zh ? '扩展目录不可用' : 'Extension catalog unavailable');
+          if (active) setCatalogError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
         });
     }
     return () => {
@@ -114,7 +115,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         if (active) setEmployees(value.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent'));
       })
       .catch((error: unknown) => {
-        if (active) setEmployeeError(error instanceof Error ? error.message : zh ? '数字员工目录不可用' : 'Digital employee directory unavailable');
+        if (active) setEmployeeError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
       })
       .finally(() => {
         if (active) setLoadingEmployees(false);
@@ -165,7 +166,15 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           label: `@${employee.name}`,
           detail: [employee.role, employee.domain].filter(Boolean).join(' · '),
           disabled: props.goalActive || selectedIds.has(`expert:${employee.id}`) || selectedExpertCount >= 8,
-          disabledReason: props.goalActive ? (zh ? '目标编辑与专家点名互斥' : 'Goal editing cannot include expert mentions') : selectedExpertCount >= 8 ? (zh ? '每轮最多点名 8 名数字员工' : 'Up to 8 digital employees per turn') : undefined,
+          disabledReason: props.goalActive
+            ? zh
+              ? '目标模式暂不支持指定数字员工'
+              : 'Goal mode does not support choosing a digital employee'
+            : selectedExpertCount >= 8
+              ? zh
+                ? '每轮最多点名 8 名数字员工'
+                : 'Up to 8 digital employees per turn'
+              : undefined,
           token: { kind: 'expert', label: `@${employee.name}`, stableId: employee.id },
         });
       }
@@ -173,15 +182,15 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
     }
 
     const fixed: MenuOption[] = [
-      { id: 'mode:plan', group: zh ? '模式' : 'Modes', label: zh ? '计划模式' : 'Plan mode', detail: zh ? '切换本轮协作模式' : 'Switch collaboration mode for this turn', action: 'plan' },
+      { id: 'mode:plan', group: zh ? '模式' : 'Modes', label: zh ? '计划模式' : 'Plan mode', detail: zh ? '切换对话模式' : 'Switch conversation mode', action: 'plan' },
       {
         id: 'mode:goal',
         group: zh ? '模式' : 'Modes',
         label: zh ? '目标模式' : 'Goal mode',
-        detail: zh ? '进入目标编辑流程' : 'Open goal editing',
+        detail: zh ? '编辑目标' : 'Edit goal',
         action: 'goal',
         disabled: !props.goalAvailable || tokens.some((token) => token.kind === 'expert'),
-        disabledReason: tokens.some((token) => token.kind === 'expert') ? (zh ? '目标编辑与专家点名互斥' : 'Goal editing cannot include expert mentions') : undefined,
+        disabledReason: tokens.some((token) => token.kind === 'expert') ? (zh ? '目标模式暂不支持指定数字员工' : 'Goal mode does not support choosing a digital employee') : undefined,
       },
       {
         id: 'computer:request',
@@ -229,7 +238,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         label: `/${skill.name}`,
         detail: skill.shortDescription || skill.description,
         disabled: selectedIds.has(`${kind}:${skill.id}`) || (!pluginSkill && selectedSkillCount >= 8),
-        disabledReason: !pluginSkill && selectedSkillCount >= 8 ? (zh ? '每轮最多选择 8 个 Skill' : 'Up to 8 Skills per turn') : undefined,
+        disabledReason: !pluginSkill && selectedSkillCount >= 8 ? (zh ? '每次最多选择 8 项技能（Skill）' : 'Choose up to 8 skills per request') : undefined,
         token: { kind, label: `/${skill.name}`, stableId: skill.id },
       });
     }

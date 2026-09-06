@@ -667,8 +667,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           <p>
             {props.mode === 'global'
               ? zh
-                ? '维护可在任意当前项目根目录执行的用户脚本。Zeus 不注入默认命令。'
-                : 'Maintain user scripts that run in the selected project root. Zeus seeds no defaults.'
+                ? '添加你自己的命令脚本，可在各项目目录中运行。'
+                : 'Add your own command scripts to run in project folders.'
               : zh
                 ? '全局命令只读展示；项目命令可在这里维护和执行。'
                 : 'Global commands are read-only here; project commands can be maintained and run.'}
@@ -885,7 +885,7 @@ function CommandRunHistoryModal(props: {
                       <WarningCircle aria-hidden="true" />
                       <span>
                         <strong>{zh ? '连接中断，命令可能仍在执行。' : 'Connection lost; the command may still be running.'}</strong>
-                        <small>{zh ? 'Zeus 正在重连，恢复后会自动追平日志与最终状态。' : 'Zeus is reconnecting and will automatically catch up logs and the final state.'}</small>
+                        <small>{zh ? '正在重新连接，连接恢复后会更新日志和命令状态。' : 'Reconnecting. Logs and command status will update when the connection returns.'}</small>
                       </span>
                     </p>
                   ) : null}
@@ -969,7 +969,7 @@ function CommandDefinitionModal(props: {
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
-            <p>{zh ? '命令在目标项目根目录中通过 sh -lc 执行。' : 'Commands run through sh -lc in the target project root.'}</p>
+            <p>{zh ? '命令会在目标项目目录中执行，使用系统命令解释器（sh -lc）。' : 'Commands run in the target project folder using the system shell (sh -lc).'}</p>
           </span>
           <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
@@ -1013,7 +1013,7 @@ function CommandDefinitionModal(props: {
           <section className="command-parameter-editor" aria-labelledby="command-parameter-heading">
             <header>
               <span>
-                <strong id="command-parameter-heading">{zh ? '声明式参数' : 'Declarative parameters'}</strong>
+                <strong id="command-parameter-heading">{zh ? '运行参数' : 'Run parameters'}</strong>
                 <small>{zh ? '参数以环境变量注入；ZEUS_* 为保留名称。' : 'Parameters are injected as environment variables; ZEUS_* is reserved.'}</small>
               </span>
               <Button size="compact" onClick={() => update('parameters', [...props.draft.parameters, newParameter()])}>
@@ -1133,7 +1133,7 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
             {props.request.missingShell ? (
               <li>
                 <strong>{zh ? 'Shell' : 'Shell'}</strong>
-                <span>{zh ? '允许任务请求当前项目的 Shell 能力。' : 'Allow tasks to request Shell access for this project.'}</span>
+                <span>{zh ? '允许任务在当前项目中执行终端命令。' : 'Allow tasks to run terminal commands in this project.'}</span>
               </li>
             ) : null}
             {props.request.missingGitWrite ? (

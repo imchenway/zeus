@@ -1857,7 +1857,7 @@ function setupIpc(): void {
     chooseProjectDirectory(() =>
       dialog.showOpenDialog({
         properties: ['openDirectory'],
-        title: '选择 Zeus 项目代码库',
+        title: nativeText('选择项目目录', 'Choose a project folder'),
       }),
     ),
   );
@@ -1874,7 +1874,7 @@ function setupIpc(): void {
       throw new Error('Conversation resource picker is unavailable for this window.');
     }
     const selected = await dialog.showOpenDialog(requestingWindow, {
-      title: '选择文件或文件夹',
+      title: nativeText('选择文件或文件夹', 'Choose files or folders'),
       properties: ['openFile', 'openDirectory', 'multiSelections'],
     });
     if (selected.canceled) return [];
@@ -1953,7 +1953,7 @@ function setupIpc(): void {
     return activeMainCommandLedger().execute(request, 'desktop.task_resources.choose', async (_body, command) => {
       await command.markWriteStarted();
       const selected = await dialog.showOpenDialog(requestingWindow, {
-        title: '选择文件或文件夹',
+        title: nativeText('选择文件或文件夹', 'Choose files or folders'),
         properties: ['openFile', 'openDirectory', 'multiSelections'],
       });
       if (selected.canceled) return [];
@@ -2031,7 +2031,7 @@ function setupIpc(): void {
       snapshot,
       chooseFile: () =>
         dialog.showSaveDialog({
-          title: '导出 Zeus 设置快照',
+          title: nativeText('导出 Zeus 设置', 'Export Zeus settings'),
           defaultPath: 'zeus-settings.json',
           filters: [{ name: 'Zeus Settings JSON', extensions: ['json'] }],
         }),
@@ -2042,7 +2042,7 @@ function setupIpc(): void {
     importSettingsSnapshotFromFile({
       chooseFile: () =>
         dialog.showOpenDialog({
-          title: '导入 Zeus 设置快照',
+          title: nativeText('导入 Zeus 设置', 'Import Zeus settings'),
           properties: ['openFile'],
           filters: [{ name: 'Zeus Settings JSON', extensions: ['json'] }],
         }),
@@ -2053,7 +2053,7 @@ function setupIpc(): void {
     importBusinessDataSnapshotFromFile({
       chooseFile: () =>
         dialog.showOpenDialog({
-          title: '导入 Zeus 业务数据快照',
+          title: nativeText('导入 Zeus 数据备份', 'Import a Zeus data backup'),
           properties: ['openFile'],
           filters: [{ name: 'Zeus Business Data JSON', extensions: ['json'] }],
         }),
@@ -2071,7 +2071,7 @@ function setupIpc(): void {
       patch: patch as { fileName: string; mimeType: string; patchText: string },
       chooseFile: () =>
         dialog.showSaveDialog({
-          title: '导出 Zeus Patch',
+          title: nativeText('导出代码修改补丁', 'Export a code patch'),
           defaultPath: (patch as { fileName?: string }).fileName ?? 'zeus-diff.patch',
           filters: [{ name: 'Patch File', extensions: ['patch'] }],
         }),
@@ -2103,7 +2103,7 @@ function setupIpc(): void {
       },
       chooseFile: () =>
         dialog.showSaveDialog({
-          title: '导出 Mermaid 源码',
+          title: nativeText('导出 Mermaid 图表源码', 'Export Mermaid diagram source'),
           defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.mmd',
           filters: [{ name: 'Mermaid Diagram', extensions: ['mmd'] }],
         }),
@@ -2119,7 +2119,7 @@ function setupIpc(): void {
       },
       chooseFile: () =>
         dialog.showSaveDialog({
-          title: '导出 PlantUML 源码',
+          title: nativeText('导出 PlantUML 图表源码', 'Export PlantUML diagram source'),
           defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.puml',
           filters: [{ name: 'PlantUML Diagram', extensions: ['puml', 'plantuml'] }],
         }),
@@ -2137,7 +2137,7 @@ function setupIpc(): void {
       },
       chooseFile: () =>
         dialog.showSaveDialog({
-          title: '导出 Zeus Runtime 日志',
+          title: nativeText('导出 Zeus 运行日志', 'Export Zeus run logs'),
           defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-runtime.log',
           filters: [{ name: 'Runtime Log', extensions: ['log', 'txt'] }],
         }),
@@ -2818,6 +2818,7 @@ async function initializeApplication(): Promise<void> {
       });
     }
     externalBrowserHost = createExternalBrowserHost({
+      language: () => appShellSettings.appLanguage,
       runtimeRoot: dataLayout.browserExtensionRuntime,
       artifactRoot: browserAttachmentRoot,
       helperExecutable: browserNativeMessagingHelperPath(),
@@ -2827,6 +2828,7 @@ async function initializeApplication(): Promise<void> {
       productionEdgeExtensionId: process.env.ZEUS_EDGE_EXTENSION_ID,
     });
     browserHost = createBrowserHost({
+      language: () => appShellSettings.appLanguage,
       statePath: dataLayout.browserState,
       preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
       attachmentRoot: browserAttachmentRoot,
@@ -2842,6 +2844,7 @@ async function initializeApplication(): Promise<void> {
     browserHost.registerIpc();
     await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
+      language: () => appShellSettings.appLanguage,
       statePath: dataLayout.computerState,
       artifactRoot: dataLayout.computerArtifacts,
       helperExecutable: computerServiceExecutablePath(),
@@ -2953,7 +2956,7 @@ async function initializeApplication(): Promise<void> {
           if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
           const notification = new Notification({
             title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
-            body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已通过校验，等待你选择何时重启。` : `Zeus ${latestVersion} passed verification and is waiting for you to choose when to restart.`,
+            body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已下载。重启后可安装更新。` : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
           });
           notification.on('click', showProgress);
           notification.show();
@@ -3067,6 +3070,11 @@ if (!hasSingleInstanceLock) {
   void requestMainWindow();
 }
 
+/** 原生弹窗跟随当前应用语言；设置加载前使用已有中文默认值。 */
+function nativeText(zh: string, en: string): string {
+  return appShellSettings.appLanguage === 'en-US' ? en : zh;
+}
+
 async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | 'cancel'> {
   // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
   if (readOnlyValidationDescriptor) return 'final_quit';
@@ -3074,7 +3082,7 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
   const runtime = localServerRuntime;
   if (!runtime) {
     if (!fullRestartRequested && !upgradeHandoffRequested) return 'final_quit';
-    const confirmed = await confirmRequestedRestart('Zeus 当前无法取得 Core 状态。继续重启可能中断尚未完成的工作。');
+    const confirmed = await confirmRequestedRestart(nativeText('无法读取后台状态。重启可能中断尚未完成的工作。', 'The background service status is unavailable. Restarting may interrupt unfinished work.'));
     return confirmed ? requestedRestartQuitMode() : cancelRequestedRestart();
   }
   let status;
@@ -3082,22 +3090,35 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
     status = await runtime.getStatus();
   } catch {
     if (!fullRestartRequested && !upgradeHandoffRequested) return 'cancel';
-    const confirmed = await confirmRequestedRestart('Zeus 无法读取当前 Core 的活动数量。继续重启可能中断尚未完成的轮次、等待交互、其他 Runtime 或命令执行。');
+    const confirmed = await confirmRequestedRestart(
+      nativeText(
+        '无法确认哪些工作仍在运行。重启可能中断对话、待回答或待授权的请求，以及正在运行的工具和命令。',
+        'Zeus cannot determine which work is still active. Restarting may interrupt conversations, pending answers or approvals, and running tools or commands.',
+      ),
+    );
     if (!confirmed) return cancelRequestedRestart();
     try {
       await runtime.stopActiveWork();
     } catch (error) {
       console.error('Zeus 无法读取活动数量，且显式停止活动工作失败；已取消重启。', error);
-      await showRestartCancelled('当前 Core 无法确认活动数量，也未能安全记录中断状态。本次重启已取消。');
+      await showRestartCancelled(
+        nativeText('无法确认正在运行的工作，也未能完成停止操作。为避免影响这些工作，本次重启已取消。', 'Zeus could not determine which work is active or finish stopping it. Restarting was cancelled to avoid affecting that work.'),
+      );
       return cancelRequestedRestart();
     }
     return requestedRestartQuitMode();
   }
   if (!status.hasActiveWork) return requestedRestartQuitMode();
   if (fullRestartRequested || upgradeHandoffRequested) {
-    const effectfulTurnDetail = typeof status.effectfulTurnCount === 'number' ? `其中已进入副作用阶段 ${status.effectfulTurnCount} 个` : '其中已进入副作用阶段的数量无法由当前 Core 确认';
+    const effectfulTurnDetail =
+      typeof status.effectfulTurnCount === 'number'
+        ? nativeText(`其中 ${status.effectfulTurnCount} 个已开始执行可能修改文件或其他应用的操作`, `${status.effectfulTurnCount} have started actions that may change files or other apps`)
+        : nativeText('无法确认其中多少个已开始修改文件或其他应用', 'Zeus cannot confirm how many have started changing files or other apps');
     const confirmed = await confirmRequestedRestart(
-      `重启会停止正在执行的轮次 ${status.activeTurnCount} 个（${effectfulTurnDetail}）、等待交互 ${status.waitingRequestCount} 个、其他 Runtime ${status.activeRuntimeCount} 个、命令执行 ${status.activeCommandRunCount} 个。`,
+      nativeText(
+        `重启会停止 ${status.activeTurnCount} 个正在处理的请求（${effectfulTurnDetail}）、${status.waitingRequestCount} 个等待回答或授权的请求、${status.activeRuntimeCount} 个其他运行中的工具，以及 ${status.activeCommandRunCount} 个命令。`,
+        `Restarting will stop ${status.activeTurnCount} active requests (${effectfulTurnDetail}), ${status.waitingRequestCount} requests awaiting answers or approvals, ${status.activeRuntimeCount} other running tools, and ${status.activeCommandRunCount} commands.`,
+      ),
     );
     if (!confirmed) return cancelRequestedRestart();
     try {
@@ -3105,17 +3126,22 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       return requestedRestartQuitMode();
     } catch (error) {
       console.error('Zeus 完整重启前未能安全记录全部活动工作的中断状态；已取消重启。', error);
-      await showRestartCancelled('活动工作未能安全停止，本次重启已取消。');
+      await showRestartCancelled(nativeText('正在运行的工作未能停止，本次重启已取消。', 'Active work could not be stopped, so restarting was cancelled.'));
       return cancelRequestedRestart();
     }
   }
   const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
   const options = {
     type: 'warning' as const,
-    title: '仍有任务正在运行',
-    message: '退出 Zeus 时如何处理正在运行的任务？',
-    detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个，命令执行 ${status.activeCommandRunCount} 个。`,
-    buttons: mayContinueInBackground ? ['关闭界面，任务继续运行', '停止活动工作并退出', '取消'] : ['停止活动工作并退出', '取消'],
+    title: nativeText('仍有工作正在运行', 'Work is still running'),
+    message: nativeText('退出 Zeus 时如何处理正在运行的工作？', 'What should happen to active work when you quit Zeus?'),
+    detail: nativeText(
+      `正在处理 ${status.activeTurnCount} 个请求，${status.waitingRequestCount} 个请求等待回答或授权，另有 ${status.activeRuntimeCount} 个工具和 ${status.activeCommandRunCount} 个命令正在运行。`,
+      `${status.activeTurnCount} requests are being processed, ${status.waitingRequestCount} are awaiting answers or approvals, and ${status.activeRuntimeCount} other tools and ${status.activeCommandRunCount} commands are running.`,
+    ),
+    buttons: mayContinueInBackground
+      ? [nativeText('关闭窗口并继续后台运行', 'Close windows and keep work running'), nativeText('停止工作并退出', 'Stop work and quit'), nativeText('取消', 'Cancel')]
+      : [nativeText('停止工作并退出', 'Stop work and quit'), nativeText('取消', 'Cancel')],
     defaultId: mayContinueInBackground ? 2 : 1,
     cancelId: mayContinueInBackground ? 2 : 1,
     noLink: true,
@@ -3140,14 +3166,14 @@ async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'upgrade_
   if (upgradeHandoffRequested) {
     const handoff = pendingUpgradeHandoff;
     if (!handoff) {
-      await showRestartCancelled('升级接力信息已经失效。本次重启已取消，更新保持等待重启。');
+      await showRestartCancelled(nativeText('更新所需的信息已失效，本次重启已取消。更新仍等待安装。', 'The information needed to install the update is no longer valid. Restarting was cancelled; the update is still pending.'));
       return cancelRequestedRestart();
     }
     try {
       await handoff.activate();
     } catch (error) {
       console.error('Zeus 无法在确认后启动升级接力；已取消重启。', error);
-      await showRestartCancelled('升级辅助程序未能安全启动。本次重启已取消，更新保持等待重启。');
+      await showRestartCancelled(nativeText('更新安装程序无法启动，本次重启已取消。更新仍等待安装。', 'The update installer could not start. Restarting was cancelled; the update is still pending.'));
       return cancelRequestedRestart();
     }
     handoff.resolve(true);
@@ -3170,10 +3196,10 @@ function cancelRequestedRestart(): 'cancel' {
 async function confirmRequestedRestart(detail: string): Promise<boolean> {
   const options = {
     type: 'warning' as const,
-    title: '重启会停止活动工作',
-    message: '确认停止活动工作并完整重启 Zeus？',
+    title: nativeText('重启会停止正在运行的工作', 'Restarting will stop active work'),
+    message: nativeText('停止正在运行的工作并重启 Zeus？', 'Stop active work and restart Zeus?'),
     detail,
-    buttons: ['停止活动工作并重启', '取消'],
+    buttons: [nativeText('停止工作并重启', 'Stop work and restart'), nativeText('取消', 'Cancel')],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -3186,10 +3212,10 @@ async function confirmRequestedRestart(detail: string): Promise<boolean> {
 async function showRestartCancelled(detail: string): Promise<void> {
   const options = {
     type: 'warning' as const,
-    title: '重启已取消',
-    message: 'Zeus 没有关闭当前 Core。',
+    title: nativeText('重启已取消', 'Restart cancelled'),
+    message: nativeText('Zeus 将保持打开。', 'Zeus will remain open.'),
     detail,
-    buttons: ['知道了'],
+    buttons: [nativeText('知道了', 'OK')],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -3363,6 +3389,7 @@ function startSystemNotificationBridge(config: { baseUrl: string; apiToken: stri
   if (!Notification.isSupported()) return undefined;
   try {
     return createSystemNotificationBridge({
+      language: () => appShellSettings.appLanguage,
       baseUrl: config.baseUrl,
       apiToken: config.apiToken,
       openWebSocket: (url, protocol) =>

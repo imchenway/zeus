@@ -1,3 +1,4 @@
+import { describeUserFacingError, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
 import type { TaskPushContextAttachmentOption, TaskPushMessageLayout } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from '../session/sessionReducer.js';
@@ -37,6 +38,10 @@ export interface TaskModelPushDeferredMessage {
 }
 
 export interface TaskModelPushPendingState {
+  /** 保留创建失败原因，不能用失败状态直接决定再次发送。 */
+  errorCause?: UserFacingErrorCause;
+  /** 只有明确短暂失败且结果已知时才允许再次执行原请求。 */
+  canRetry?: boolean;
   task: TaskRecord;
   projectName: string;
   navigationId: string;
@@ -117,7 +122,11 @@ export function retryTaskModelPushPendingState(pending: TaskModelPushPendingStat
   };
 }
 
-export function failTaskModelPushPendingState(pending: TaskModelPushPendingState, message: string): TaskModelPushPendingState {
+/** 失败保留原因；结果未知、登录和配置问题不提供默认重试。 */
+export function failTaskModelPushPendingState(pending: TaskModelPushPendingState, message: string, error?: unknown): TaskModelPushPendingState {
+  const cause = userFacingErrorCause(error ?? message);
+  const explanation = describeUserFacingError(cause);
+  const canRetry = explanation.action === 'retry' && !explanation.outcomeUnconfirmed;
   const failedAt = new Date().toISOString();
   const failedItems = Object.fromEntries(
     Object.entries(pending.session.items).map(([key, item]) => [
@@ -159,11 +168,14 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
         message,
         code: 'ZEUS_TASK_MODEL_PUSH_CREATION_FAILED',
         recoveryRequired: false,
-        retryable: true,
+        retryable: canRetry,
+        cause,
       },
     },
     status: 'failed',
     error: message,
+    errorCause: cause,
+    canRetry,
     retryProgress: null,
   };
 }

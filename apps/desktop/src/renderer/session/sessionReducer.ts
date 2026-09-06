@@ -1,3 +1,4 @@
+import { userFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationState,
   NativeConversationAttachment,
@@ -1942,10 +1943,11 @@ function isTerminalItemStatus(status: string): boolean {
 
 function sessionErrorFromPayload(payload: Record<string, unknown>): NativeSessionError {
   const nested = isRecord(payload.error) ? payload.error : null;
-  const code = stringValue(nested?.error) ?? stringValue(payload.error);
+  const code = stringValue(nested?.code) ?? stringValue(nested?.error) ?? stringValue(payload.code) ?? stringValue(payload.error);
   return {
     message: stringValue(nested?.message) ?? stringValue(payload.message) ?? 'Codex native conversation failed',
     code,
+    ...(nested?.cause || payload.cause ? { cause: userFacingErrorCause(nested?.cause ?? payload.cause) } : {}),
     recoveryRequired: false,
     retryable: booleanValue(nested?.retryable) ?? booleanValue(payload.retryable) ?? false,
   };
@@ -2037,6 +2039,7 @@ function nativeTurnFailureFrom(value: unknown): NativeTurnFailureSnapshot | null
     message: value.message,
     providerStatus: value.providerStatus,
     additionalDetails: value.additionalDetails,
+    ...(value.cause ? { cause: userFacingErrorCause(value.cause) } : {}),
   };
 }
 

@@ -12,6 +12,8 @@ export interface NativeUpdateProgressState {
   progressText?: string;
   progress?: number;
   canReconnect?: boolean;
+  /** 仅在当前失败支持安全重试时显示重试按钮。 */
+  canRetry?: boolean;
   technicalDetail?: string;
   present?: boolean;
 }
@@ -30,7 +32,7 @@ export interface NativeUpdateProgressHost {
 
 interface CreateNativeUpdateProgressHostOptions {
   executablePath: string;
-  language: 'zh-CN' | 'en-US';
+  language: 'zh-CN' | 'en-US' | (() => 'zh-CN' | 'en-US');
 }
 
 /**
@@ -74,7 +76,7 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
 
   function send(message: Record<string, unknown>): void {
     if (closed || child.stdin.destroyed) return;
-    child.stdin.write(`${JSON.stringify({ ...message, language: options.language })}\n`);
+    child.stdin.write(`${JSON.stringify({ ...message, language: typeof options.language === 'function' ? options.language() : options.language })}\n`);
   }
 
   return {

@@ -150,11 +150,11 @@ function contextUsageCopy(
   const zh = language === 'zh-CN';
   const title = zh ? '上下文占用' : 'Context usage';
   const estimatedHeadroom = estimatedHeadroomTokens === null ? '' : `${estimatedHeadroomTokens < 0 ? '-' : ''}${formatTokenCount(Math.abs(estimatedHeadroomTokens), language).compact} Token`;
-  const estimatedHeadroomExact = estimatedHeadroomTokens === null ? '' : `${new Intl.NumberFormat(language).format(estimatedHeadroomTokens)} Token (${zh ? '估算，不是 Provider 实测' : 'estimate, not Provider-measured'})`;
+  const estimatedHeadroomExact = estimatedHeadroomTokens === null ? '' : `${new Intl.NumberFormat(language).format(estimatedHeadroomTokens)} Token (${zh ? '估算' : 'estimated'})`;
   const compaction =
     compactionStatus === 'in_progress' ? (zh ? '压缩中' : 'Compacting') : compactionStatus === 'completed' ? (zh ? '最近一次已完成' : 'Latest completed') : compactionStatus === 'failed' ? (zh ? '最近一次失败' : 'Latest failed') : '';
   if (used === null || capacity === null || capacity <= 0 || ratio === null) {
-    const empty = zh ? '完成首轮后显示真实上下文占用。' : 'Measured context usage appears after the first turn.';
+    const empty = zh ? '收到首次回复后显示模型报告的用量。' : 'Usage reported by the model appears after the first response.';
     const estimateAccessible = estimatedHeadroom ? `；${zh ? '下一请求估算安全余量' : 'Estimated next-request safe headroom'} ${estimatedHeadroomExact}` : '';
     const compactionAccessible = compaction ? `；${zh ? '压缩状态' : 'Compaction status'} ${compaction}` : '';
     return {
@@ -168,13 +168,18 @@ function contextUsageCopy(
       remainingLabel: '',
       remaining: '',
       remainingTitle: '',
-      estimatedHeadroomLabel: zh ? '下一请求安全余量（估算）' : 'Next-request safe headroom (estimate)',
+      estimatedHeadroomLabel: zh ? '下次请求可用容量（估算）' : 'Available capacity for the next request (estimated)',
       estimatedHeadroom,
       estimatedHeadroomTitle: estimatedHeadroomExact,
       compactionLabel: zh ? '压缩状态' : 'Compaction status',
       compaction,
       empty,
-      risk: estimatedHeadroomTokens !== null && estimatedHeadroomTokens < 0 ? (zh ? '估算已越过安全预算，将在派发前触发原生压缩。' : 'The estimate exceeds the safe budget; native compaction runs before dispatch.') : null,
+      risk:
+        estimatedHeadroomTokens !== null && estimatedHeadroomTokens < 0
+          ? zh
+            ? '对话长度预计接近模型上限，发送前将先整理较早的内容。'
+            : 'The conversation is estimated to be near the model’s limit. Earlier content will be summarized before sending.'
+          : null,
     };
   }
 
@@ -185,8 +190,8 @@ function contextUsageCopy(
   const risk =
     estimatedHeadroomTokens !== null && estimatedHeadroomTokens < 0
       ? zh
-        ? '下一请求估算已越过安全预算；派发前会先执行原生压缩。'
-        : 'The next-request estimate exceeds the safe budget; native compaction runs before dispatch.'
+        ? '下一条请求预计接近模型的长度上限，发送前将先整理较早的对话内容。'
+        : 'The next request is estimated to be near the model’s length limit. Earlier conversation content will be summarized before sending.'
       : severity === 'danger'
         ? zh
           ? '上下文接近上限'
@@ -216,7 +221,7 @@ function contextUsageCopy(
     remainingLabel: zh ? '剩余' : 'Remaining',
     remaining: remainingDetail,
     remainingTitle: remainingDetailExact,
-    estimatedHeadroomLabel: zh ? '下一请求安全余量（估算）' : 'Next-request safe headroom (estimate)',
+    estimatedHeadroomLabel: zh ? '下次请求可用容量（估算）' : 'Available capacity for the next request (estimated)',
     estimatedHeadroom,
     estimatedHeadroomTitle: estimatedHeadroomExact,
     compactionLabel: zh ? '压缩状态' : 'Compaction status',

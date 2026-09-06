@@ -1,3 +1,4 @@
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { CommandDefinition } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DashboardClient } from '../../dashboardClient.js';
@@ -82,7 +83,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setLoadState('ready');
     } catch (cause) {
       setLoadState('failed');
-      setError(errorMessage(cause, zh ? '无法读取项目数字员工配置。' : 'Could not load project digital employee configuration.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
   }, [props.client, props.projectId, props.skillClient, zh]);
 
@@ -126,7 +127,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setEmployees((current) => [...current, record].sort((left, right) => left.name.localeCompare(right.name)));
       selectEmployee(record);
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '无法把模板分配到项目。' : 'Could not assign the template to this project.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -151,7 +152,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setEmployees((items) => items.map((employee) => (employee.id === record.id ? record : employee)));
       setEmployeeDraftState(employeeDraft(record));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '保存项目数字员工失败。' : 'Could not save the project digital employee.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -166,7 +167,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setEmployees((items) => items.map((employee) => (employee.id === updated.id ? updated : employee)));
       if (selectedEmployeeId === updated.id) setEmployeeDraftState(employeeDraft(updated));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '修改员工状态失败。' : 'Could not change employee status.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -186,7 +187,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
         setEmployeeDraftState(null);
       }
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '移除数字员工失败。' : 'Could not remove the digital employee.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -225,7 +226,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setAutomations((current) => [record, ...current]);
       setAutomationDraft((current) => ({ ...emptyAutomationDraft, employeeId: current.employeeId }));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '创建自动化规则失败。' : 'Could not create the automation rule.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -239,7 +240,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       const updated = await props.client.updateDigitalEmployeeAutomation(props.projectId, record.id, record.revision, { enabled: !record.enabled });
       setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '修改自动化状态失败。' : 'Could not change automation status.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -254,7 +255,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
       window.setTimeout(() => void refreshExecutions(), 1_500);
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '请求立即运行失败。' : 'Could not request an immediate run.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -269,7 +270,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       await props.client.deleteDigitalEmployeeAutomation(props.projectId, record.id, record.revision);
       setAutomations((items) => items.filter((automation) => automation.id !== record.id));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '删除自动化规则失败。' : 'Could not delete the automation rule.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyAction(null);
     }
@@ -282,7 +283,11 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       <header className="digital-employee-page-heading">
         <span>
           <h2>{zh ? '数字员工' : 'Digital employees'}</h2>
-          <p>{zh ? '员工只在当前项目内工作。配置变更不会影响已经开始的执行；每次执行固定员工与授权快照。' : 'Employees work only in this project. Running executions keep an immutable employee and grant snapshot.'}</p>
+          <p>
+            {zh
+              ? '员工在当前项目中工作。修改配置只影响之后启动的工作，正在执行的工作继续使用原配置和权限。'
+              : 'Employees work in this project. Settings changes apply to new work; ongoing work keeps its original configuration and permissions.'}
+          </p>
         </span>
         <Button variant="secondary" size="compact" busy={loadState === 'loading'} onClick={() => void loadProjectConfiguration()}>
           {zh ? '刷新' : 'Refresh'}
@@ -351,7 +356,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
-                  <span>{zh ? '岗位、领域、Skill、提示词、找活策略和交付权限都属于项目副本。' : 'Role, domain, skills, prompt, work policy, and delivery grants belong to the project copy.'}</span>
+                  <span>{zh ? '在此设置员工的岗位、技能、工作要求、任务选择方式和交付权限。设置只用于当前项目。' : 'Set the employee’s role, skills, instructions, task selection, and delivery permissions for this project.'}</span>
                 </div>
               )}
               {selectedEmployeeId && employeeDraftState ? (
@@ -418,7 +423,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
           <header>
             <span>
               <strong>{zh ? '最近执行' : 'Recent executions'}</strong>
-              <small>{zh ? '排队、会话、等待与交付保持独立状态。' : 'Queueing, conversation work, waiting, and delivery remain separate states.'}</small>
+              <small>{zh ? '查看员工每次工作的进展和交付结果。' : 'View progress and deliverables from each employee run.'}</small>
             </span>
             <Button variant="secondary" size="compact" onClick={() => void refreshExecutions()}>
               {zh ? '刷新记录' : 'Refresh executions'}
@@ -441,7 +446,11 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                 </small>
               </span>
               <time dateTime={execution.updatedAt}>{formatDateTime(execution.updatedAt, props.language)}</time>
-              {execution.errorMessage ? <p role="alert">{execution.errorMessage}</p> : null}
+              {execution.errorMessage ? (
+                <p role="alert">
+                  <VisibleApplicationError error={{ code: execution.errorCode, message: execution.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
+                </p>
+              ) : null}
             </article>
           ))}
         </section>
@@ -502,9 +511,7 @@ function EmployeeEditor(props: {
       <section className="digital-employee-form-section">
         <header>
           <strong>{zh ? '基础配置' : 'Agent configuration'}</strong>
-          <small>
-            {zh ? '数字员工始终通过 Agent 会话工作；执行命令是运行能力，由权限模式统一约束。' : 'Digital employees always work through an Agent conversation. Command execution is a runtime capability governed by the permission mode.'}
-          </small>
+          <small>{zh ? '员工通过 AI 对话完成工作，执行命令时遵循你设置的权限。' : 'Employees work through AI conversations and follow your permissions when running commands.'}</small>
         </header>
         <AgentExecutionConfigFields value={props.draft} models={props.capabilities?.models ?? []} skillClient={props.skillClient} projectId={props.projectId} language={props.language} allowProjectDefaultModel onChange={patch} />
       </section>
@@ -529,44 +536,40 @@ function EmployeeEditor(props: {
             checked={props.draft.allowTests}
             onChange={(allowTests) => patch({ allowTests })}
             title={zh ? '允许执行验证' : 'Allow verification'}
-            description={zh ? '允许执行项目已具备的检查；不会创建单元测试体系。' : 'Allows existing project checks without creating a unit-test system.'}
+            description={zh ? '允许员工运行项目已有的检查。' : 'Allow the employee to run the project’s existing checks.'}
           />
         </div>
-        <p className="digital-employee-boundary-note">
-          {zh
-            ? '执行命令不是员工类型。Agent 是否可执行命令及其可写范围，由上方权限模式和 Zeus 运行时审批共同决定。'
-            : 'Command execution is not an employee type. The permission mode and Zeus runtime approvals determine whether the Agent may run commands and what they may change.'}
-        </p>
+        <p className="digital-employee-boundary-note">{zh ? '能否执行命令、修改哪些文件，取决于上方权限设置和操作时的授权。' : 'Command execution and file access depend on the permissions above and approvals granted during work.'}</p>
         <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作授权' : 'Management action grants'}>
           <CheckboxRow
             checked={props.draft.allowCommit}
             onChange={(checked) => patchGrant('allowCommit', checked)}
             title={zh ? '提交' : 'Commit'}
-            description={zh ? '允许显式提交动作；不会自动提交。' : 'Allows an explicit commit action; never commits automatically.'}
+            description={zh ? '允许在你发起提交操作时创建 Git 提交。' : 'Allow Git commits when you request a commit action.'}
           />
           <CheckboxRow
             checked={props.draft.allowPush}
             onChange={(checked) => patchGrant('allowPush', checked)}
             title={zh ? '推送' : 'Push'}
-            description={zh ? '允许显式推送动作；必须由管理动作或未来流程节点触发。' : 'Allows an explicit push action from a manager command or future workflow node.'}
+            description={zh ? '允许在你发起推送操作时上传已提交代码。' : 'Allow committed code to be uploaded when you request a push action.'}
           />
           <CheckboxRow
             checked={props.draft.allowMerge}
             onChange={(checked) => patchGrant('allowMerge', checked)}
             title={zh ? '合入' : 'Merge'}
-            description={zh ? '允许显式合入动作；冲突即停止。' : 'Allows an explicit merge action and stops on conflicts.'}
+            description={zh ? '允许在你发起合入操作时合并代码，遇到冲突会停止。' : 'Allow code merges when you request them. Merging stops if there are conflicts.'}
           />
           <CheckboxRow
             checked={props.draft.allowDeploy}
             onChange={(checked) => patchGrant('allowDeploy', checked)}
             title={zh ? '部署' : 'Deploy'}
-            description={zh ? '允许显式部署动作；Agent 完成不会自动部署。' : 'Allows an explicit deploy action; Agent completion does not deploy.'}
+            description={zh ? '允许在你发起部署操作时部署项目，员工完成工作不会自动部署。' : 'Allow deployment when you request it. Finishing the employee’s work does not deploy automatically.'}
           />
           <CheckboxRow
             checked={props.draft.allowComplete}
             onChange={(checked) => patchGrant('allowComplete', checked)}
             title={zh ? '结束任务' : 'Complete task'}
-            description={zh ? '允许显式完结动作；交付物仍需管理者验收。' : 'Allows explicit task completion; deliverables still require manager acceptance.'}
+            description={zh ? '允许执行结束任务的操作，交付物仍需由你验收。' : 'Allow task completion actions. Deliverables still require your acceptance.'}
           />
         </div>
         {props.draft.allowDeploy ? (
@@ -582,7 +585,7 @@ function EmployeeEditor(props: {
                 ...props.deployCommands.map((command) => ({ value: command.id, label: command.title, searchText: `${command.name} ${command.description}` })),
               ]}
             />
-            <small>{zh ? '这是 Agent 可显式调用的项目能力，不改变员工身份，也不会自动执行。' : 'This is a project capability the Agent may invoke explicitly. It does not change the employee identity or run automatically.'}</small>
+            <small>{zh ? '此命令可供员工在获得授权后使用，不会因保存配置而执行。' : 'The employee can use this command after approval. Saving these settings does not run it.'}</small>
           </label>
         ) : null}
       </section>
@@ -590,9 +593,7 @@ function EmployeeEditor(props: {
       <section className="digital-employee-form-section">
         <header>
           <strong>{zh ? '自动化' : 'Automation'}</strong>
-          <small>
-            {zh ? '自动化只决定何时为数字员工创建工作项，不会绕过员工权限或静默执行部署命令。' : 'Automation only decides when to create work for the employee; it never bypasses employee permissions or silently runs deployment commands.'}
-          </small>
+          <small>{zh ? '自动化按规则为员工安排工作，仍需遵守员工权限和部署授权。' : 'Automations assign work according to rules and still follow the employee’s permissions and deployment approvals.'}</small>
         </header>
         <div className="digital-employee-policy-grid">
           <CheckboxRow
@@ -648,7 +649,7 @@ function AutomationEditor(props: {
     <section className="digital-employee-automation-editor" aria-label={zh ? '新建自动化规则' : 'Create automation rule'}>
       <header>
         <strong>{zh ? '新建自动化规则' : 'Create automation rule'}</strong>
-        <small>{zh ? '每条规则独立启停并按稳定事件身份去重。' : 'Each rule is independently enabled and deduplicated by stable event identity.'}</small>
+        <small>{zh ? '每条规则可单独启用或停用，同一事件不会重复触发工作。' : 'Enable or disable each rule separately. The same event will not trigger duplicate work.'}</small>
       </header>
       <div className="digital-employee-form">
         <label>

@@ -1,3 +1,4 @@
+import type { UserFacingErrorCause } from '@zeus/shared';
 import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
@@ -5,7 +6,7 @@ import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
@@ -23,7 +24,7 @@ import {
   type TaskResourcePayload,
   toPersistedTaskAttachment,
 } from './taskAttachments.js';
-import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
+import { formatTaskEventTitle, formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -80,7 +81,7 @@ export interface TaskDetailPaneContentProps {
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
-  modelPushOperation?: { status: 'submitting' | 'failed' | 'accepted'; error: string | null; conversationId?: string };
+  modelPushOperation?: { errorCause?: UserFacingErrorCause; canRetry?: boolean; status: 'submitting' | 'failed' | 'accepted'; error: string | null; conversationId?: string };
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
   onRetryModelPush?: (taskId: string) => void;
@@ -174,7 +175,7 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
 };
 
 function taskEditErrorMessage(error: unknown, fallback: string, language: 'zh-CN' | 'en'): string {
-  return error === null || error === undefined || error === '' ? fallback : formatVisibleApplicationError(error, language);
+  return error === null || error === undefined || error === '' ? fallback : reportApplicationError(error, { language: language });
 }
 
 function normalizeTaskTagsInput(value: string): string[] {
@@ -253,6 +254,8 @@ function TaskSaveSpinner() {
 }
 
 function TaskDetailFieldAttachments(props: {
+  /** 附件文案缺省值也跟随页面语言。 */
+  zh: boolean;
   field: TaskAttachmentField;
   attachments: TaskAttachmentView[];
   copy: TaskDetailPaneCopy;
@@ -274,16 +277,17 @@ function TaskDetailFieldAttachments(props: {
         onLoadPreview={props.onLoadPreview}
         onOpenAttachment={props.onOpenAttachment}
         copy={{
-          imageLabel: props.copy.imageAttachmentLabel ?? '图片',
-          fileLabel: props.copy.fileAttachmentLabel ?? '文件',
-          openFileLabel: props.copy.openFileAttachmentLabel ?? '打开附件',
-          openPreviewLabel: props.copy.previewAttachmentLabel ?? '放大预览附件',
-          closePreviewLabel: props.copy.previewCloseLabel ?? '关闭附件预览',
-          previewLoading: props.copy.previewLoadingLabel ?? '正在加载图片预览…',
-          previewUnavailable: props.copy.previewUnavailableLabel ?? '无法读取图片预览。文件可能不是受支持的图片，或不在 Zeus 受信目录。',
-          previewLoadFailed: props.copy.previewLoadFailedLabel ?? '读取图片失败，文件可能已移动、损坏或暂时不可用。',
-          retryPreviewLabel: props.copy.previewRetryLabel ?? '重试预览',
-          localPathLabel: props.copy.localPathLabel ?? '本机路径',
+          imageLabel: props.copy.imageAttachmentLabel ?? (props.zh ? '图片' : 'Image'),
+          fileLabel: props.copy.fileAttachmentLabel ?? (props.zh ? '文件' : 'File'),
+          openFileLabel: props.copy.openFileAttachmentLabel ?? (props.zh ? '打开附件' : 'Open attachment'),
+          openPreviewLabel: props.copy.previewAttachmentLabel ?? (props.zh ? '放大预览附件' : 'Enlarge attachment preview'),
+          closePreviewLabel: props.copy.previewCloseLabel ?? (props.zh ? '关闭附件预览' : 'Close attachment preview'),
+          previewLoading: props.copy.previewLoadingLabel ?? (props.zh ? '正在加载图片预览…' : 'Loading image preview…'),
+          previewUnavailable:
+            props.copy.previewUnavailableLabel ?? (props.zh ? '无法显示这张图片的预览，具体原因尚未确定。可尝试在外部应用中打开文件。' : 'The preview cannot be displayed, and the cause is unknown. Try opening the file in another app.'),
+          previewLoadFailed: props.copy.previewLoadFailedLabel ?? (props.zh ? '无法读取这张图片，具体原因尚未确定。' : 'The image cannot be read, and the cause is unknown.'),
+          retryPreviewLabel: props.copy.previewRetryLabel ?? (props.zh ? '重试预览' : 'Reload preview'),
+          localPathLabel: props.copy.localPathLabel ?? (props.zh ? '本机路径' : 'Local path'),
           removeLabel: props.editCopy.removeAttachment,
         }}
       />
@@ -770,7 +774,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     if (failedCount && failedCount > 0) {
       return zh ? `${failedCount} 个粘贴资源读取失败，请重试。` : `${failedCount} pasted resource(s) could not be read. Try again.`;
     }
-    return zh ? '无法读取或保存粘贴附件，请重试。' : 'The pasted attachment could not be read or saved. Try again.';
+    return zh ? '无法添加粘贴的附件。请使用“添加附件”选择文件。' : 'The pasted attachment could not be added. Use Add attachment to select the file.';
   }
 
   async function pasteTaskDetailResources(field: TaskAttachmentField, request: TaskAttachmentPasteRequest): Promise<TaskAttachmentPasteResult> {
@@ -955,7 +959,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
           <small>
-            {props.copy.taskCodeLabel ?? '任务编码'} {taskIdentity}
+            {props.copy.taskCodeLabel ?? (zh ? '任务编码' : 'Task code')} {taskIdentity}
           </small>
           <InlineTaskTextField
             task={props.task}
@@ -1002,11 +1006,11 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </span>
         <span className="task-detail-summary-row">
-          <small>{props.copy.sourceLabel ?? '上下文来源'}</small>
+          <small>{props.copy.sourceLabel ?? (zh ? '上下文来源' : 'Context source')}</small>
           <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>
         </span>
         <span className="task-detail-summary-row">
-          <small>{props.copy.priorityLabel ?? '优先级'}</small>
+          <small>{props.copy.priorityLabel ?? (zh ? '优先级' : 'Priority')}</small>
           <TaskImmediateSelect
             task={props.task}
             value={taskPriority}
@@ -1031,19 +1035,19 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </span>
         <span className="task-detail-summary-row">
-          <small>{props.copy.updatedAtLabel ?? '更新时间'}</small>
-          <strong>{formatTaskUpdatedAt(props.task.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</strong>
+          <small>{props.copy.updatedAtLabel ?? (zh ? '更新时间' : 'Updated')}</small>
+          <strong>{formatTaskUpdatedAt(props.task.updatedAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</strong>
         </span>
         <span className="task-detail-summary-row task-detail-evidence-row">
-          <small>{props.copy.latestEvidenceLabel ?? '最近事件'}</small>
+          <small>{props.copy.latestEvidenceLabel ?? (zh ? '最近事件' : 'Latest event')}</small>
           <strong>
             {latestEvent ? (
               <>
-                {latestEvent.title}
-                <small>{formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? '未记录')}</small>
+                {formatTaskEventTitle(latestEvent, props.language)}
+                <small>{formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</small>
               </>
             ) : (
-              (props.copy.noEvidence ?? '暂无执行证据')
+              (props.copy.noEvidence ?? (zh ? '暂无执行证据' : 'No task events yet'))
             )}
           </strong>
         </span>
@@ -1065,6 +1069,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             <strong>{field.label}</strong>
           </span>
           <TaskDetailFieldAttachments
+            zh={zh}
             field={field.field}
             attachments={taskAttachments}
             copy={props.copy}
@@ -1096,6 +1101,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <small>{props.task.tags?.length ?? 0}</small>
         </span>
         <TaskDetailFieldAttachments
+          zh={zh}
           field="tags"
           attachments={taskAttachments}
           copy={props.copy}
@@ -1266,7 +1272,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                       </small>
                     </span>
                     <span className="task-detail-conversation-row-meta">
-                      <time dateTime={conversation.activityAt ?? conversation.createdAt}>{formatTaskUpdatedAt(conversation.activityAt ?? conversation.createdAt, props.copy.updatedAtMissing ?? '未记录')}</time>
+                      <time dateTime={conversation.activityAt ?? conversation.createdAt}>{formatTaskUpdatedAt(conversation.activityAt ?? conversation.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</time>
                       <small>{props.copy.openConversation}</small>
                     </span>
                   </button>
@@ -1328,9 +1334,9 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             {props.events.slice(-8).map((event) => (
               <li className="task-detail-event-row" key={event.id}>
                 <span>
-                  <strong>{event.title}</strong>
+                  <strong>{formatTaskEventTitle(event, props.language)}</strong>
                 </span>
-                <time dateTime={event.createdAt}>{formatTaskUpdatedAt(event.createdAt, props.copy.updatedAtMissing ?? '未记录')}</time>
+                <time dateTime={event.createdAt}>{formatTaskUpdatedAt(event.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</time>
               </li>
             ))}
           </ol>
@@ -1343,10 +1349,22 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             <span>
               {modelPushCreating ? <TaskSaveSpinner /> : null}
               <strong>
-                {modelPushCreating ? (zh ? '正在后台创建会话' : 'Creating conversation in the background') : modelPushFailed ? (zh ? '会话创建失败' : 'Conversation creation failed') : zh ? '会话已创建' : 'Conversation created'}
+                {modelPushCreating ? (
+                  zh ? (
+                    '正在后台创建会话'
+                  ) : (
+                    'Creating conversation in the background'
+                  )
+                ) : modelPushFailed ? (
+                  <VisibleApplicationError error={props.modelPushOperation.errorCause ?? props.modelPushOperation.error} language={zh ? 'zh-CN' : 'en'} />
+                ) : zh ? (
+                  '会话已创建'
+                ) : (
+                  'Conversation created'
+                )}
               </strong>
             </span>
-            {modelPushFailed && props.onRetryModelPush ? (
+            {modelPushFailed && props.modelPushOperation.canRetry && props.onRetryModelPush ? (
               <Button variant="secondary" size="compact" onClick={() => props.onRetryModelPush?.(props.task.id)}>
                 {zh ? '重试创建' : 'Retry creation'}
               </Button>

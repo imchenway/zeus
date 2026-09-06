@@ -51,7 +51,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   );
   const branchOptions = useMemo(() => {
     if (!rootRepository) return [];
-    const unavailableReason = zh ? '已在其他工作区检出' : 'Checked out in another worktree';
+    const unavailableReason = zh ? '已在其他工作目录使用' : 'In use in another working folder';
     return [
       ...rootRepository.snapshot.localBranches.map((branch) => {
         const current = branch === rootRepository.snapshot.branch;
@@ -132,7 +132,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
 
   return (
     <>
-      <div className="session-new-conversation-context" aria-label={zh ? '新会话执行上下文' : 'New conversation execution context'}>
+      <div className="session-new-conversation-context" aria-label={zh ? '新对话的项目与分支' : 'Project and branch for the new conversation'}>
         <span className="session-new-conversation-context-control">
           <ZeusSelect
             ariaLabel={zh ? `项目：${selectedProject?.name ?? '不可用'}` : `Project: ${selectedProject?.name ?? 'Unavailable'}`}

@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope } from '@zeus/shared';
 import { CommandDeliveryRepository, CommandDeliveryStoreError, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
@@ -62,6 +63,8 @@ export class ConversationCommandApplicationError extends Error {
     message: string,
     readonly statusCode: 400 | 409 | 500,
     readonly recoveryRequired = false,
+    /** 错误包装保留底层原因，便于界面解释实际阻塞。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
     super(message);
   }
@@ -318,7 +321,7 @@ function serializeError(error: unknown, redactSensitiveText: (value: string) => 
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
     const dispatchDisposition = 'dispatchDisposition' in error && typeof error.dispatchDisposition === 'string' ? boundedScalar(error.dispatchDisposition) : null;
-    return { code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText), dispatchDisposition };
+    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText), dispatchDisposition };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText), dispatchDisposition: null };
 }
@@ -337,7 +340,7 @@ function assertBoundedReceiptEvidence(value: unknown): void {
 
 function outcomeUnknown(cause: unknown, redactSensitiveText: (value: string) => { text: string }): ConversationCommandApplicationError {
   const detail = boundedErrorMessage(cause instanceof Error ? cause.message : String(cause), redactSensitiveText);
-  return new ConversationCommandApplicationError('ZEUS_CONVERSATION_COMMAND_OUTCOME_UNKNOWN', `Conversation command result is unknown after the external write started: ${detail}`, 409, true);
+  return new ConversationCommandApplicationError('ZEUS_CONVERSATION_COMMAND_OUTCOME_UNKNOWN', `Conversation command result is unknown after the external write started: ${detail}`, 409, true, userFacingErrorCause(cause));
 }
 
 function boundedErrorMessage(value: string, redactSensitiveText: (value: string) => { text: string }): string {
@@ -354,9 +357,18 @@ function boundedScalar(value: string | number): string | number {
   return typeof value === 'number' ? value : value.slice(0, 128);
 }
 
-export function conversationCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function conversationCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof ConversationCommandApplicationError) {
-    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+    return {
+      statusCode: error.statusCode,
+      payload: {
+        error: error.code,
+        message: error.message,
+        cause: userFacingErrorCause(error).cause,
+        ...(error.cause ? { cause: userFacingErrorCause(error.cause) } : {}),
+        ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}),
+      },
+    };
   }
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, payload: { error: error.code, message: error.message } };
   if (!isCommandDeliveryError(error)) return null;

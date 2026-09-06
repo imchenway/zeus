@@ -21,7 +21,7 @@ export interface AppShellMenuActions {
 }
 
 export interface MenuBarTrayActions {
-  settings: Pick<MainAppShellSettings, 'multiWindowEnabled' | 'backgroundModeEnabled'>;
+  settings: Pick<MainAppShellSettings, 'multiWindowEnabled' | 'backgroundModeEnabled'> & { appLanguage?: MainAppShellSettings['appLanguage'] };
   showMainWindow: () => void;
   createWindow: () => void | Promise<void>;
   quit: () => void;
@@ -40,53 +40,64 @@ export interface AppShellMenuItem {
 
 /** 根据用户设置生成菜单模板，避免 Renderer 设置只停留在页面展示。 */
 export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShellMenuItem[] {
+  // 设置加载前沿用中文；角色菜单也显式跟随应用语言。
+  const zh = actions.settings.appLanguage !== 'en-US';
   return [
     {
       label: 'Zeus',
       submenu: [
-        { role: 'about' },
+        { role: 'about', label: zh ? '关于 Zeus' : 'About Zeus' },
         { type: 'separator' },
         {
-          label: 'Settings...',
+          label: zh ? '设置…' : 'Settings...',
           accelerator: 'CommandOrControl+,',
           click: actions.openSettings,
         },
         {
-          label: 'Check for Updates...',
+          label: zh ? '检查更新…' : 'Check for Updates...',
           accelerator: 'CommandOrControl+U',
           click: actions.checkForUpdates,
         },
         { type: 'separator' },
-        { label: 'Show Zeus', click: actions.showMainWindow },
+        { label: zh ? '显示 Zeus' : 'Show Zeus', click: actions.showMainWindow },
         {
-          label: 'Open Logs Folder',
+          label: zh ? '打开日志文件夹' : 'Open Logs Folder',
           accelerator: 'CommandOrControl+L',
           click: actions.openLogsDirectory,
         },
         { type: 'separator' },
-        { role: 'quit', click: actions.quit },
+        { role: 'quit', label: zh ? '退出 Zeus' : 'Quit Zeus', click: actions.quit },
       ],
     },
     {
-      label: 'File',
+      label: zh ? '文件' : 'File',
       submenu: [
         {
-          label: 'New Chat',
+          label: zh ? '新建对话' : 'New Chat',
           accelerator: 'CommandOrControl+N',
           click: actions.createNewConversation,
         },
       ],
     },
     {
-      label: 'Edit',
-      submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }, { role: 'selectAll' }],
+      label: zh ? '编辑' : 'Edit',
+      submenu: [
+        { role: 'undo', label: zh ? '撤销' : 'Undo' },
+        { role: 'redo', label: zh ? '重做' : 'Redo' },
+        { type: 'separator' },
+        { role: 'cut', label: zh ? '剪切' : 'Cut' },
+        { role: 'copy', label: zh ? '复制' : 'Copy' },
+        { role: 'paste', label: zh ? '粘贴' : 'Paste' },
+        { type: 'separator' },
+        { role: 'selectAll', label: zh ? '全选' : 'Select All' },
+      ],
     },
     {
-      label: 'View',
+      label: zh ? '显示' : 'View',
       submenu: [
-        { role: 'reload' },
+        { role: 'reload', label: zh ? '重新加载页面' : 'Reload Page' },
         {
-          label: 'Toggle Developer Tools',
+          label: zh ? '开发者工具' : 'Toggle Developer Tools',
           accelerator: 'Alt+CommandOrControl+I',
           visible: actions.settings.webviewDebugEnabled,
           enabled: actions.settings.webviewDebugEnabled,
@@ -95,11 +106,11 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
       ],
     },
     {
-      label: 'Window',
+      label: zh ? '窗口' : 'Window',
       submenu: [
-        { role: 'minimize' },
+        { role: 'minimize', label: zh ? '最小化' : 'Minimize' },
         {
-          label: 'Close',
+          label: zh ? '关闭窗口' : 'Close',
           accelerator: 'CommandOrControl+W',
           click: actions.closeFocusedWindow,
         },
@@ -113,15 +124,17 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
  * 多窗口关闭时禁用 New Window，避免 Tray 绕过用户的窗口策略。
  */
 export function buildMenuBarTrayTemplate(actions: MenuBarTrayActions): AppShellMenuItem[] {
+  // 设置加载前沿用中文；角色菜单也显式跟随应用语言。
+  const zh = actions.settings.appLanguage !== 'en-US';
   return [
-    { label: 'Show Zeus', click: actions.showMainWindow },
+    { label: zh ? '显示 Zeus' : 'Show Zeus', click: actions.showMainWindow },
     {
-      label: 'New Window',
+      label: zh ? '新建窗口' : 'New Window',
       enabled: actions.settings.multiWindowEnabled,
       click: actions.createWindow,
     },
     { type: 'separator' },
-    { label: 'Quit Zeus', click: actions.quit },
+    { label: zh ? '退出 Zeus' : 'Quit Zeus', click: actions.quit },
   ];
 }
 

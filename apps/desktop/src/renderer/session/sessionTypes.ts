@@ -1,3 +1,4 @@
+import type { UserFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationContextDraft,
   ConversationResource,
@@ -130,6 +131,8 @@ export interface NativeTurnSnapshot {
 export type NativeTurnFailureCategory = 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
 
 export interface NativeTurnFailureSnapshot {
+  /** 用于解释模型拒绝、用量限制等具体原因。 */
+  cause?: UserFacingErrorCause;
   category: NativeTurnFailureCategory;
   code: string | null;
   message: string;
@@ -271,6 +274,8 @@ export interface NativeQueuedSubmission {
   providerTurnId?: string | null;
   pausedReason: string | null;
   error?: {
+    /** 保留队列错误的底层原因。 */
+    cause?: UserFacingErrorCause;
     code: string;
     message: string;
     recoveryRequired: boolean;
@@ -1711,6 +1716,8 @@ export function isAssistantDeliverableItem(item: Pick<NativeSessionItemBuffer, '
 }
 
 export interface NativeSessionError {
+  /** 可选的底层原因，不改变消息处理状态。 */
+  cause?: UserFacingErrorCause;
   message: string;
   code: string | null;
   recoveryRequired: boolean;

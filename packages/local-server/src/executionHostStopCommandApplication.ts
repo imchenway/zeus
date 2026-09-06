@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import {
   canonicalCommandInputJson,
@@ -41,6 +42,8 @@ export class ExecutionHostStopCommandApplicationError extends Error {
     message: string,
     readonly statusCode: 400 | 409 | 500,
     readonly recoveryRequired = false,
+    /** 保留底层错误原因，不改变原有操作结果和恢复限制。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
     super(message);
   }
@@ -299,7 +302,7 @@ function boundedText(value: unknown, field: string, maximumBytes: number): strin
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
-    return { code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
+    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText) };
 }
@@ -332,7 +335,7 @@ function missingResult(commandId: string): ExecutionHostStopCommandApplicationEr
 
 function outcomeUnknown(cause: unknown, redactSensitiveText: (value: string) => { text: string }): ExecutionHostStopCommandApplicationError {
   const detail = boundedErrorMessage(cause instanceof Error ? cause.message : String(cause), redactSensitiveText);
-  return new ExecutionHostStopCommandApplicationError('ZEUS_EXECUTION_HOST_STOP_OUTCOME_UNKNOWN', `Execution Host stop result is unknown after external write started: ${detail}`, 409, true);
+  return new ExecutionHostStopCommandApplicationError('ZEUS_EXECUTION_HOST_STOP_OUTCOME_UNKNOWN', `Execution Host stop result is unknown after external write started: ${detail}`, 409, true, userFacingErrorCause(cause));
 }
 
 function isCommandDeliveryError(error: unknown): error is CommandDeliveryStoreError {
@@ -343,13 +346,13 @@ function isReceiptConflict(error: unknown): boolean {
   return isCommandDeliveryError(error) && error.code === 'ZEUS_COMMAND_DELIVERY_RECEIPT_CONFLICT';
 }
 
-export function executionHostStopCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function executionHostStopCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof ExecutionHostStopCommandApplicationError) {
-    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, cause: error.cause, ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}) } };
   }
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, payload: { error: error.code, message: error.message } };
   if (!isCommandDeliveryError(error)) return null;
   const recoveryRequired = error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED';
   const statusCode = error.code === 'ZEUS_COMMAND_DELIVERY_NOT_FOUND' ? 404 : error.code === 'ZEUS_COMMAND_DELIVERY_INVALID_ARGUMENT' ? 400 : error.code === 'ZEUS_COMMAND_DELIVERY_SCHEMA_CONFLICT' ? 500 : 409;
-  return { statusCode, payload: { error: error.code, message: error.message, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+  return { statusCode, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
 }

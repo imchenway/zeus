@@ -1,3 +1,4 @@
+import { userFacingErrorCause } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, type ConversationFileIconKind, type ConversationResource, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -1231,6 +1232,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
           type: 'send_reconciliation_failed',
           error: {
             ...toSessionError(error, true),
+            // 保留读取失败原因；外层仍表示发送结果等待核对，不因此允许重新发送。
+            cause: userFacingErrorCause(error),
             message: 'The message was accepted, but its durable conversation snapshot is temporarily unavailable.',
             code: 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING',
             recoveryRequired: false,
@@ -3352,11 +3355,12 @@ function nativeQueueSnapshotFrom(value: unknown): NativeQueueSnapshot | null {
 
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {
   if (typeof error === 'object' && error !== null) {
-    const value = error as { message?: unknown; error?: unknown; code?: unknown; status?: unknown; recoveryRequired?: unknown; retryable?: unknown };
+    const value = error as { message?: unknown; error?: unknown; code?: unknown; status?: unknown; recoveryRequired?: unknown; retryable?: unknown; cause?: unknown };
     const code = typeof value.code === 'string' ? value.code : typeof value.error === 'string' ? value.error : null;
     return {
       message: typeof value.message === 'string' ? value.message : String(error),
       code,
+      ...(value.cause ? { cause: userFacingErrorCause(value.cause) } : {}),
       recoveryRequired: typeof value.recoveryRequired === 'boolean' ? value.recoveryRequired : false,
       retryable: typeof value.retryable === 'boolean' ? value.retryable : retryable,
       ...(typeof value.status === 'number' ? { status: value.status } : {}),

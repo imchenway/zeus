@@ -3,7 +3,7 @@ import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '..
 import type { TaskApiClient } from '../features/tasks/taskApiClient.js';
 import type { CreateTaskStageRequest, TaskRecord, TaskStageDeliverableRecord, TaskStageRecord, TaskWorkflowSnapshot, UpdateTaskStageRequest } from '../features/tasks/taskContracts.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 
 export type TaskWorkflowClient = Pick<
@@ -172,7 +172,7 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
             {busyKey === 'initialize' ? (zh ? '正在启用…' : 'Enabling…') : zh ? '启用阶段工作流' : 'Enable workflow'}
           </Button>
         </span>
-        <p>{zh ? '每个阶段使用独立会话和模型；正式交付物按版本沉淀，并作为下一阶段的已验收输入。' : 'Each stage gets its own conversation and model. Versioned deliverables become the accepted inputs of the next stage.'}</p>
+        <p>{zh ? '每个阶段使用独立对话和模型。交付物验收后，会提供给下一阶段使用。' : 'Each stage uses a separate conversation and model. Accepted deliverables are passed to the next stage.'}</p>
       </section>
     );
   }
@@ -402,7 +402,7 @@ function TaskStageItem(props: {
           {stage.status === 'running' && latestAttempt?.conversationId ? (
             <>
               <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onCapture}>
-                {zh ? '沉淀最新回复' : 'Capture latest reply'}
+                {zh ? '将最新回复作为交付物' : 'Use the latest reply as a deliverable'}
               </Button>
               <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onToggleManual}>
                 {zh ? '手动交付' : 'Manual deliverable'}
@@ -516,5 +516,5 @@ function deliverableStatus(status: TaskStageDeliverableRecord['status'], zh: boo
 }
 
 function visibleError(error: unknown, zh: boolean): string {
-  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
+  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
 }

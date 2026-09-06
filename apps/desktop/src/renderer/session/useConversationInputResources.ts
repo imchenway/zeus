@@ -1,3 +1,4 @@
+import { reportApplicationError, type ApplicationErrorLanguage } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
@@ -5,6 +6,8 @@ import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolic
 export const CONVERSATION_LONG_PASTE_THRESHOLD = PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
 
 interface UseConversationInputResourcesOptions {
+  /** 附件处理失败跟随当前页面语言。 */
+  language: ApplicationErrorLanguage;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   text: string;
   disabled: boolean;
@@ -48,7 +51,7 @@ export function useConversationInputResources(options: UseConversationInputResou
     try {
       await operation();
     } catch (error) {
-      latest.current.onError(error instanceof Error ? error.message : String(error));
+      latest.current.onError(reportApplicationError(error, { language: latest.current.language }));
     } finally {
       if (mounted.current) setProcessingCount((current) => Math.max(0, current - 1));
     }
@@ -64,7 +67,7 @@ export function useConversationInputResources(options: UseConversationInputResou
         if (result.resources.length === 0) throw new Error('没有可读取的文件或文件夹。');
         latest.current.onAddAttachments(result.resources);
         if (result.failedCount > 0) {
-          latest.current.onError(`已添加可读取资源，另有 ${result.failedCount} 项读取失败。`);
+          latest.current.onError(latest.current.language === 'zh-CN' ? `已添加可读取的附件，另有 ${result.failedCount} 项无法读取。` : `Readable attachments were added; ${result.failedCount} other item(s) could not be read.`);
         }
       });
     },

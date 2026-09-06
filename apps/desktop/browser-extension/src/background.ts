@@ -12,6 +12,11 @@ const cdpEvents = new Map();
 const cdpAttachedTabs = new Set();
 let cdpSequence = 0;
 let nativePort = null;
+/** 弹出页使用 Zeus 最近传来的语言，连接前默认中文。 */
+let appLanguage = 'zh-CN';
+chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+  if (message?.type === 'zeus-ui-language') respond({ language: appLanguage });
+});
 let reconnectTimer = null;
 const nativeConnectionId = crypto.randomUUID();
 
@@ -62,6 +67,7 @@ function connectNative() {
 }
 
 async function receiveCommand(command) {
+  if (command?.language === 'zh-CN' || command?.language === 'en-US') appLanguage = command.language;
   if (!command || command.type === 'noop') return;
   if (command.type !== 'command' || typeof command.id !== 'string') return;
   try {

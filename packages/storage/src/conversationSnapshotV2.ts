@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import {
   conversationSnapshotV2StructureGeneration,
   type ConversationSnapshotV2BoundedContent,
@@ -189,6 +190,8 @@ export class ConversationSnapshotV2Error extends Error {
 }
 
 export interface ConversationSnapshotV2TurnFailure {
+  /** 保留 AI 服务返回的具体错误身份和脱敏说明。 */
+  cause?: UserFacingErrorCause;
   category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
   code: string | null;
   message: string;
@@ -497,6 +500,8 @@ interface TurnRow {
   error_provider_status: string | null;
   error_provider_info: string | null;
   error_additional_details: string | null;
+  /** 读取已有原因记录，不修改历史数据。 */
+  error_cause_json: string | null;
   has_plan: number;
   plan_json: string | null;
   legacy_plan_text: string | null;
@@ -1831,6 +1836,8 @@ function turnSummarySelectSql(): string {
                      CASE
                        WHEN json_type(error_json, '$.providerError.codexErrorInfo') = 'text'
                          THEN substr(json_extract(error_json, '$.providerError.codexErrorInfo'), 1, 120)
+                       WHEN json_type(error_json, '$.providerError.codexErrorInfo') = 'object'
+                         THEN (SELECT substr(key, 1, 120) FROM json_each(json_extract(error_json, '$.providerError.codexErrorInfo')) LIMIT 1)
                        ELSE NULL
                      END
                    ELSE NULL
@@ -1844,6 +1851,10 @@ function turnSummarySelectSql(): string {
                      END
                    ELSE NULL
                  END AS error_additional_details,
+                 CASE WHEN json_valid(error_json) THEN
+                   CASE WHEN json_type(error_json, '$.cause') = 'object'
+                     THEN substr(json_extract(error_json, '$.cause'), 1, 8000) ELSE NULL END
+                   ELSE NULL END AS error_cause_json,
                  CASE WHEN EXISTS (
                    SELECT 1
                      FROM conversation_provider_item_states AS projected_plan
@@ -1876,6 +1887,7 @@ function turnFailure(row: TurnRow): ConversationSnapshotV2TurnFailure | null {
     code: row.error_code,
     message: row.error_message,
     providerStatus: row.error_provider_status,
+    cause: parseJsonRecordOrNull(row.error_cause_json),
     providerError: {
       codexErrorInfo: row.error_provider_info,
       additionalDetails: row.error_additional_details,
@@ -1896,6 +1908,7 @@ export function projectConversationTurnFailure(value: unknown): ConversationSnap
   const capacity = providerInfo === 'serverOverloaded' || /selected model is at capacity/iu.test(message);
   const detail = typeof providerError.additionalDetails === 'string' ? sanitizeTurnFailureText(providerError.additionalDetails) : '';
   return {
+    ...(isRecord(failure.cause) && Object.keys(failure.cause).length > 0 ? { cause: userFacingErrorCause(failure.cause) } : providerInfo ? { cause: userFacingErrorCause({ code: providerInfo, message: detail || message }) } : {}),
     category: capacity ? 'rate_limit' : classifyTurnFailure(message),
     code: capacity ? 'ZEUS_CODEX_MODEL_AT_CAPACITY' : boundedFailureIdentity(typeof failure.code === 'string' ? failure.code : null),
     message,

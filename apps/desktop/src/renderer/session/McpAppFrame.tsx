@@ -80,19 +80,19 @@ export function McpAppFrame(props: { value: unknown; context: Record<string, unk
 
   if (!app) return <p className="session-mcp-app-error">{props.language === 'zh-CN' ? 'MCP App 文档无效。' : 'Invalid MCP App document.'}</p>;
   return (
-    <section className="session-mcp-app" aria-label={props.language === 'zh-CN' ? '交互式 MCP App' : 'Interactive MCP App'}>
+    <section className="session-mcp-app" aria-label={props.language === 'zh-CN' ? '插件交互页面' : 'Interactive plugin page'}>
       <header>
         <strong>MCP App</strong>
         <span>{app.resourceUri}</span>
         <em data-state={bridgeState}>
           {bridgeState === 'ready'
             ? props.language === 'zh-CN'
-              ? '已连接受控桥'
-              : 'Controlled bridge ready'
+              ? '已连接 Zeus'
+              : 'Connected to Zeus'
             : bridgeState === 'rejected'
               ? props.language === 'zh-CN'
-                ? '已拒绝越权请求'
-                : 'Blocked request'
+                ? '已阻止未经授权的操作'
+                : 'Unauthorized action blocked'
               : props.language === 'zh-CN'
                 ? '正在初始化'
                 : 'Initializing'}

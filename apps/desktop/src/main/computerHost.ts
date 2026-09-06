@@ -46,6 +46,8 @@ interface ComputerElementSummary {
 type ComputerPermissionKind = 'accessibility' | 'screen_capture';
 
 interface CreateComputerHostOptions {
+  /** 原生确认使用应用当前语言，尚未加载时默认中文。 */
+  language?: () => 'zh-CN' | 'en-US';
   statePath: string;
   artifactRoot: string;
   helperExecutable: string;
@@ -488,13 +490,13 @@ export class ComputerHost implements BrowserAutomationPort {
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
     const options: Electron.MessageBoxOptions = {
       type: 'warning',
-      buttons: ['允许一次', '拒绝'],
+      buttons: this.options.language?.() === 'en-US' ? ['Allow once', 'Decline'] : ['允许一次', '拒绝'],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
-      title: '确认敏感 Computer Use 操作',
-      message: 'Agent 请求执行可能产生外部影响的操作。',
-      detail: `${input.tool} · ${(element?.title || element?.description || '目标应用').slice(0, 300)}`,
+      title: this.options.language?.() === 'en-US' ? 'Allow this computer action?' : '允许这次电脑操作？',
+      message: this.options.language?.() === 'en-US' ? 'The AI wants to perform an action that may send information or change content in another app.' : 'AI 请求执行可能发送信息或修改其他应用内容的操作。',
+      detail: `${input.tool} · ${(element?.title || element?.description || (this.options.language?.() === 'en-US' ? 'Target app' : '目标应用')).slice(0, 300)}`,
     };
     const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
     if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });

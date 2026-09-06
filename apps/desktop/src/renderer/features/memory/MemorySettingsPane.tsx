@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { MemoryApiClient } from './memoryApiClient.js';
 import { memoryDisplayStatus, type MemoryCandidateInput, type MemoryEffect, type MemoryKind, type MemoryRecord, type MemoryScope } from './memoryContracts.js';
 import { useMemoryFeatureController } from './useMemoryFeatureController.js';
-import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import './memorySettingsPane.css';
 
 type MemoryLanguage = 'zh-CN' | 'en-US';
@@ -66,7 +66,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       setEditor(null);
       setFormError(null);
     } catch (error) {
-      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     }
   };
 
@@ -78,7 +78,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       setTombstoneReason('');
       setFormError(null);
     } catch (error) {
-      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     }
   };
 
@@ -90,7 +90,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
           <p>{zh ? '只管理稳定偏好、安全边界和工作流。不会从会话自动抽取任务事实或运行结果。' : 'Only stable preferences, safety boundaries, and workflows are managed. Conversations are never mined automatically.'}</p>
         </span>
         <button type="button" onClick={openCreate} disabled={busy || (scopeKind === 'project' && !projectId)}>
-          {zh ? '显式新增' : 'Add explicitly'}
+          {zh ? '新增记忆' : 'Add memory'}
         </button>
       </header>
 
@@ -134,7 +134,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       {tombstoneTarget ? (
         <section className="memory-tombstone-confirmation" aria-label={zh ? '停用记忆确认' : 'Confirm memory deactivation'}>
           <strong>{zh ? `停用“${tombstoneTarget.memoryKey}”` : `Deactivate “${tombstoneTarget.memoryKey}”`}</strong>
-          <p>{zh ? '删除采用 tombstone，审计链仍保留且不会再注入上下文。' : 'Deletion creates a tombstone: the audit chain remains, and the memory is no longer injected.'}</p>
+          <p>{zh ? '停用后，AI 不再使用这条记忆，修改记录仍会保留。' : 'Once disabled, this memory will no longer be used by the AI. Its change history will remain.'}</p>
           <label>
             <span>{zh ? '原因' : 'Reason'}</span>
             <input value={tombstoneReason} onChange={(event) => setTombstoneReason(event.currentTarget.value)} maxLength={2048} />
@@ -144,7 +144,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
               {zh ? '取消' : 'Cancel'}
             </button>
             <button type="button" className="is-danger" onClick={() => void tombstone()} disabled={busy || !tombstoneReason.trim()}>
-              {zh ? '确认停用/删除' : 'Confirm deactivation'}
+              {zh ? '确认停用' : 'Disable memory'}
             </button>
           </span>
         </section>
@@ -152,7 +152,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
 
       {(formError ?? controller.snapshot.error) ? (
         <p className="memory-settings-error" role="alert">
-          {formError ?? controller.snapshot.error}
+          {formError ?? <VisibleApplicationError error={controller.snapshot.errorCause ?? controller.snapshot.error} language={zh ? 'zh-CN' : 'en'} />}
         </p>
       ) : null}
 
@@ -173,7 +173,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
                     {zh ? '修正' : 'Correct'}
                   </button>
                   <button type="button" disabled={busy || record.tombstone || status === 'superseded'} onClick={() => setTombstoneTarget(record)}>
-                    {zh ? '停用/删除' : 'Deactivate'}
+                    {zh ? '停用' : 'Disable'}
                   </button>
                 </span>
               </header>
@@ -237,7 +237,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
   return (
     <section className="memory-editor" aria-label={props.mode === 'create' ? (zh ? '新增长期记忆' : 'Add long-term memory') : zh ? '修正长期记忆' : 'Correct long-term memory'}>
       <label>
-        <span>{zh ? '稳定 key' : 'Stable key'}</span>
+        <span>{zh ? '记忆标识' : 'Memory identifier'}</span>
         <input value={props.lockedKey ?? props.draft.memoryKey} disabled={props.lockedKey !== null} maxLength={160} onChange={(event) => patch({ memoryKey: event.currentTarget.value })} />
       </label>
       <label>
@@ -274,7 +274,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
       {props.draft.effect === 'external_state' ? (
         <label className="memory-explicit-confirmation">
           <input type="checkbox" checked={props.draft.externalStateConfirmed} onChange={(event) => patch({ externalStateConfirmed: event.currentTarget.checked })} />
-          <span>{zh ? '我明确确认：这条记忆可影响外部状态；将以 explicit + user_explicit 来源保存。' : 'I explicitly confirm that this memory may affect external state; it will be saved as explicit + user_explicit.'}</span>
+          <span>{zh ? '我确认允许 AI 使用这条记忆指导可能修改文件或其他应用的操作。' : 'I allow the AI to use this memory to guide actions that may change files or other apps.'}</span>
         </label>
       ) : null}
       <span className="memory-inline-actions">
@@ -292,9 +292,10 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
 function candidateFromDraft(draft: MemoryDraft, scope: MemoryScope, zh: boolean): MemoryCandidateInput {
   const confidence = Number(draft.confidence);
   if (!draft.memoryKey.trim() || !draft.content.trim() || !draft.sourceReference.trim() || !draft.reviewAfter)
-    throw new Error(zh ? 'key、内容、来源引用和复核日期均不能为空。' : 'Key, content, source reference, and review date are required.');
+    throw new Error(zh ? '请填写记忆标识、内容、来源和复核日期。' : 'Enter the memory identifier, content, source, and review date.');
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw new Error(zh ? '置信度必须位于 0 到 1。' : 'Confidence must be between 0 and 1.');
-  if (draft.effect === 'external_state' && !draft.externalStateConfirmed) throw new Error(zh ? '影响外部状态的记忆必须经过 explicit 确认。' : 'External-state memory requires explicit confirmation.');
+  if (draft.effect === 'external_state' && !draft.externalStateConfirmed)
+    throw new Error(zh ? '这条记忆可能指导 AI 修改文件或其他应用，请先勾选确认。' : 'This memory may guide the AI to change files or other apps. Select the confirmation before saving.');
   return {
     memoryKey: draft.memoryKey.trim(),
     scope,

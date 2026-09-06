@@ -1,3 +1,4 @@
+import type { UserFacingErrorCause } from '@zeus/shared';
 import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
 import type {
@@ -131,6 +132,8 @@ export interface NativeTurnResultWaiter {
 }
 
 export interface NativeSubmissionError {
+  /** 可选的底层原因，不改变消息处理状态。 */
+  cause?: UserFacingErrorCause;
   code: string;
   message: string;
   recoveryRequired: boolean;
