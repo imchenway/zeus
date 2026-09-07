@@ -93,11 +93,13 @@ export interface ProjectGitRecentRef {
 }
 
 export interface ProjectGitRepositorySnapshot {
+  submodules?: { path: string; initialized: boolean }[];
   branch: string;
   detached: boolean;
   headTags: string[];
   headSha: string;
   upstream: string | null;
+  integrationState?: 'merge' | 'rebase' | null;
   ahead: number;
   behind: number;
   clean: boolean;
@@ -122,6 +124,8 @@ export interface ProjectGitRepositoryWorkbenchItem {
   id: string;
   name: string;
   relativePath: string;
+  isSubmodule?: boolean;
+  subtreePaths?: string[];
   snapshot: ProjectGitRepositorySnapshot;
 }
 
@@ -133,6 +137,8 @@ export interface ProjectGitWorkbenchSnapshot {
 }
 
 export type ProjectGitAction =
+  | { type: 'subtree'; operation: 'add' | 'pull' | 'push'; path: string; remote: string; branch: string }
+  | { type: 'submodule_update'; path: string }
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
@@ -148,7 +154,8 @@ export type ProjectGitAction =
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
-  | { type: 'drop_stash'; stashRef: string };
+  | { type: 'drop_stash'; stashRef: string }
+  | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };
 
 export interface ProjectGitActionResponse {
   projectId: string;

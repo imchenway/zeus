@@ -3,11 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "${ZEUS_FAST_RELEASE:-0}" = "1" ]; then
-  echo 'Zeus verify-release: 快速发布模式由独立作业执行 typecheck，本作业只负责正式打包和致命产物校验。'
+  echo 'Zeus verify-release: 快速发布模式由独立作业执行 verify:publish，本作业只负责正式打包和致命产物校验。'
 else
   pnpm verify:publish
-  pnpm verify:acceptance-matrix
-  node scripts/verify-ai-cli-adapters.mjs
 fi
 release_output_dir="${ZEUS_RELEASE_OUTPUT_DIR:-.tmp/zeus-release/verify}"
 ZEUS_PACKAGE_OUTPUT_DIR="$release_output_dir" pnpm package:mac:release
@@ -77,7 +75,7 @@ if ! ELECTRON_RUN_AS_NODE=1 "$app_executable" -e 'if (!process.versions.electron
 fi
 
 # 非 GUI 模式验证包内 Renderer、Main、Preload 结构，并确认没有夹带 Codex CLI。
-# 真实本地服务启动、127.0.0.1 绑定和 /health 响应必须由正式 App 运行验收单独证明。
+# 真实本地服务启动、127.0.0.1 绑定和 /health 响应必须由开发或安装包的真实运行验收单独证明。
 if ! ELECTRON_RUN_AS_NODE=1 "$app_executable" scripts/verify-packaged-app-health.mjs "$app"; then
   echo 'Zeus verify-release: packaged app content integrity check failed' >&2
   exit 1

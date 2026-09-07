@@ -877,6 +877,11 @@ async function createWindow(): Promise<void> {
     // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
+    // 使用 macOS 原生振动材质作为网页的透底，Renderer 里的半透明面板才能真正形成玻璃效果。
+    transparent: true,
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    backgroundColor: '#00000000',
     show: false,
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),
@@ -1204,9 +1209,11 @@ function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): Proj
   return projectSourceWorkspace;
 }
 
-function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent): ProjectGitWorkbenchService {
+const projectGitOperations = new Map<number, Map<string, AbortController>>();
+
+function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent, write = false): ProjectGitWorkbenchService {
   const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-  const trustedWindow = requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || projectGitDiffWindows.has(requestingWindow));
+  const trustedWindow = requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || (!write && projectGitDiffWindows.has(requestingWindow))) && event.senderFrame === event.sender.mainFrame;
   if (!trustedWindow || !projectGitWorkbench) throw new Error('项目 Git 请求来自不受信任窗口或 Git 服务尚未就绪。');
   return projectGitWorkbench;
 }
@@ -1413,6 +1420,14 @@ function setupIpc(): void {
     if (typeof projectId !== 'string') throw new TypeError('项目 Git 工作台请求缺少项目身份。');
     return requireProjectGitWorkbench(event).loadWorkbench(projectId);
   });
+  ipcMain.handle('zeus:project-git:load-history', (event, input: unknown) => {
+    const workbench = requireProjectGitWorkbench(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('历史请求无效。');
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.offset !== 'number' || (candidate.ref !== undefined && typeof candidate.ref !== 'string'))
+      throw new TypeError('历史请求参数无效。');
+    return workbench.loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined);
+  });
   ipcMain.handle('zeus:project-git:load-commit', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 提交请求无效。');
     const candidate = input as Record<string, unknown>;
@@ -1427,16 +1442,79 @@ function setupIpc(): void {
     }
     return requireProjectGitWorkbench(event).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
   });
+  ipcMain.handle('zeus:project-git:cancel-action', (event, repositoryId: unknown) => {
+    requireProjectGitWorkbench(event, true);
+    if (typeof repositoryId !== 'string') throw new TypeError('仓库身份无效。');
+    const controller = projectGitOperations.get(event.sender.id)?.get(repositoryId);
+    controller?.abort();
+    return { cancelled: Boolean(controller) };
+  });
   ipcMain.handle('zeus:project-git:execute-action', (event, request: MainCommandRequest) => {
-    const workbench = requireProjectGitWorkbench(event);
+    const workbench = requireProjectGitWorkbench(event, true);
     return activeMainCommandLedger().execute(request, 'desktop.project_git.execute_action', async (input, command) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 动作请求无效。');
       const candidate = input as Record<string, unknown>;
       if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.action || typeof candidate.action !== 'object' || Array.isArray(candidate.action)) {
         throw new TypeError('项目 Git 动作请求身份无效。');
       }
-      await command.markWriteStarted();
-      return workbench.execute(candidate.projectId, candidate.repositoryId, candidate.action);
+      const ownerOperations = projectGitOperations.get(event.sender.id) ?? new Map<string, AbortController>();
+      projectGitOperations.set(event.sender.id, ownerOperations);
+      if (ownerOperations.has(candidate.repositoryId)) throw new Error('该仓库已有操作正在执行。');
+      const controller = new AbortController();
+      ownerOperations.set(candidate.repositoryId, controller);
+      const abortOnClose = () => controller.abort();
+      event.sender.once('destroyed', abortOnClose);
+      try {
+        return await workbench.execute(
+          candidate.projectId,
+          candidate.repositoryId,
+          candidate.action,
+          async (repository, action) => {
+            const dangerous =
+              action.type === 'subtree' ||
+              (action.type === 'push' && action.forceWithLease) ||
+              (action.type === 'update' && action.strategy === 'reset') ||
+              action.type === 'drop_stash' ||
+              action.type === 'delete_branch' ||
+              action.type === 'abort_integration';
+            if (dangerous) {
+              const owner = BrowserWindow.fromWebContents(event.sender);
+              if (!owner || owner.isDestroyed()) throw new Error('操作窗口已关闭。');
+              const effect =
+                action.type === 'subtree'
+                  ? `子树 ${action.operation}：${action.path} ↔ ${action.remote}/${action.branch}。添加和拉取会创建本地提交，推送会修改远端分支。`
+                  : action.type === 'push'
+                    ? '强制推送可能改写远端提交历史。'
+                    : action.type === 'update'
+                      ? '重置会移动当前分支；未保护的本地修改会丢失。'
+                      : action.type === 'drop_stash'
+                        ? `删除贮藏 ${action.stashRef} 后无法直接恢复。`
+                        : action.type === 'delete_branch'
+                          ? `将删除本地分支 ${action.branchName}。`
+                          : '终止当前合并或变基，并撤销此次冲突解决过程中的修改。';
+              const confirmation = await dialog.showMessageBox(owner, {
+                type: 'warning',
+                title: '确认 Git 操作',
+                message: effect,
+                detail: `仓库：${repository.localPath}\n当前分支：${repository.branch}`,
+                buttons: ['取消', '确认执行'],
+                defaultId: 0,
+                cancelId: 0,
+                noLink: true,
+              });
+              if (confirmation.response !== 1) throw new Error('已取消 Git 操作，尚未修改仓库。');
+            }
+            requireProjectGitWorkbench(event, true);
+            controller.signal.throwIfAborted();
+            await command.markWriteStarted();
+          },
+          controller.signal,
+        );
+      } finally {
+        event.sender.removeListener('destroyed', abortOnClose);
+        ownerOperations.delete(candidate.repositoryId);
+        if (!ownerOperations.size) projectGitOperations.delete(event.sender.id);
+      }
     });
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
@@ -2256,6 +2334,9 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
     show: false,
     frame: false,
     transparent: true,
+    // 对应 AgentDesk 的原生 NSPopover，由 macOS 合成窗口背后的磨砂材质。
+    backgroundColor: '#00000000',
+    ...(process.platform === 'darwin' ? { vibrancy: 'popover' as const, visualEffectState: 'active' as const } : {}),
     resizable: false,
     movable: false,
     minimizable: false,

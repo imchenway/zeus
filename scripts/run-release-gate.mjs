@@ -27,7 +27,7 @@ async function main() {
   assertTagDoesNotExist(expectedVersion);
   assertPackageVersions(expectedVersion);
 
-  const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `v${expectedVersion}.md`);
+  const releaseNotesPath = join(repositoryRoot, 'releases', `v${expectedVersion}.md`);
   validateReleaseNotesFile(releaseNotesPath, expectedVersion);
 
   const worktreeStatus = git(['status', '--short']);
@@ -40,7 +40,7 @@ async function main() {
   }
 
   console.log(`Zeus 发布门禁：版本 ${expectedVersion}，范围 ${latestTag}..${headSha.slice(0, 12)}`);
-  console.log('正在执行静态检查、验收矩阵、正式打包和产物校验；不执行 Git 写入或公开发布。');
+  console.log('正在执行静态检查、正式打包和产物校验；不执行 Git 写入或公开发布。');
   run('pnpm', ['verify:release'], {
     env: {
       ...process.env,

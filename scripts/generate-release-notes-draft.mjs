@@ -78,11 +78,6 @@ function buildEvidence() {
   const packageVersion = readPackageVersion(join(repositoryRoot, 'package.json'));
   const desktopVersion = readPackageVersion(join(repositoryRoot, 'apps', 'desktop', 'package.json'));
   const minimumSystemVersion = readMinimumSystemVersion();
-  const changedTaskDocuments = committedFiles
-    .split(/\r?\n/u)
-    .map((line) => line.trim().split(/\s+/u).at(-1) ?? '')
-    .filter((path) => /^docs\/TASK_.+\.md$/u.test(path))
-    .filter((path) => !path.includes(`${releaseVersion}升级发布`));
 
   return [
     '# Zeus 发布内容生成证据',
@@ -118,10 +113,6 @@ function buildEvidence() {
     committedStat || '无',
     '```',
     '',
-    '## 相关任务文档',
-    '',
-    ...(changedTaskDocuments.length > 0 ? changedTaskDocuments.map((path) => `- ${path}`) : ['- 未发现。']),
-    '',
     '## 当前工作区',
     '',
     '```text',
@@ -138,7 +129,7 @@ function buildEvidence() {
 }
 
 function buildPrompt(currentEvidencePath, currentEvidence) {
-  const ignoredReleaseNotes = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
+  const ignoredReleaseNotes = join(repositoryRoot, 'releases', `v${releaseVersion}.md`);
   const committedDiff = boundedModelContext(git(['diff', '--no-ext-diff', '--unified=2', `${baseTag}..${headSha}`], { maxBuffer: 16 * 1024 * 1024 }), 160_000);
   return `你负责为 Zeus ${releaseVersion} 生成一份面向用户的候选 Release notes。
 
@@ -151,8 +142,8 @@ function buildPrompt(currentEvidencePath, currentEvidence) {
 - 忽略既有目标版本发布正文：${ignoredReleaseNotes}
 
 工作要求：
-1. 先完整读取生成证据，再按需只读检查真实 Git diff、相关任务文档、package.json、apps/desktop/electron-builder.yml 和上一版本 Release notes。
-2. 不得读取或复用 ${ignoredReleaseNotes}、docs/release.md 中目标版本的发布结果，也不得以目标版本的升级发布结果文档反推正文。
+1. 先完整读取生成证据，再按需只读检查真实 Git diff、package.json、apps/desktop/electron-builder.yml 和上一版本 Release notes。
+2. 不得读取或复用 ${ignoredReleaseNotes} 中目标版本的发布结果，也不得以目标版本的升级发布结果文档反推正文。
 3. 用用户能理解的功能和交互变化组织内容，不把 commit subject、文件清单或内部实现名直接当作发布卖点。
 4. 只写证据支持的事实；发布验证章节使用发布后仍然成立的门禁契约表述，说明公开 Release 只有在固定候选通过哪些检查后才会创建。不得写当前生成阶段、草稿状态、尚未发生或将在稍后执行，也不得把门禁写成已经取得的结果。
 5. 当前公开制品若仍是 ad-hoc、未公证，只能描述为手动升级，不得声称应用内自动安装可用。
@@ -325,7 +316,7 @@ function validateDraft(markdown) {
     throw new Error('发布内容无条件承诺 Developer ID 签名与 Apple 公证，拒绝进入版本写入阶段。');
   }
   if (markdown.length > 32_000) throw new Error('发布内容超过 32,000 字符，拒绝作为命令产物。');
-  if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
+  if (/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
     throw new Error('发布内容泄漏内部任务或发布文档路径，请调整生成范围后重试。');
   }
   const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];

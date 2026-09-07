@@ -335,7 +335,8 @@ export interface TaskWorkspaceProps {
 
 function getTaskTableColumnTrack(columnKey: TaskTableColumnKey, preferences: TaskTableColumnPreferences): string {
   const width = preferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-  return `${clampTaskTableColumnWidth(columnKey, width)}px`;
+  // 以用户偏好的宽度作为上限，窄窗口下允许列一起收缩，避免表格把右侧内容推出工作区。
+  return `minmax(0, ${clampTaskTableColumnWidth(columnKey, width)}px)`;
 }
 
 const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {

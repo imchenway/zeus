@@ -48,7 +48,7 @@ export function applyLocalCorsHeaders(reply: FastifyReply, origin: string | unde
   if (!origin || origin === 'null') return;
   reply.header('Access-Control-Allow-Origin', origin);
   reply.header('Access-Control-Allow-Credentials', 'false');
-  reply.header('Access-Control-Allow-Headers', 'authorization,content-type,x-zeus-snapshot-caller,x-zeus-trace-id');
+  reply.header('Access-Control-Allow-Headers', 'authorization,content-type,idempotency-key,x-zeus-snapshot-caller,x-zeus-trace-id');
   reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   reply.header('Access-Control-Expose-Headers', 'deprecation,link,server-timing,x-zeus-conversation-snapshot-generation,x-zeus-trace-id');
   reply.header('Vary', 'Origin');

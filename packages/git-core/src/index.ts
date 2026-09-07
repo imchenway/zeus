@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -6,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const projectGitExecution = new AsyncLocalStorage<{ signal?: AbortSignal; env?: NodeJS.ProcessEnv }>();
 
 /**
  * Git Core 对外暴露的真实 mutation capability 单一来源。
@@ -255,6 +257,8 @@ export interface ProjectGitRecentRef {
 }
 
 export interface ProjectGitRepositorySnapshot {
+  submodules?: { path: string; initialized: boolean }[];
+  integrationState?: 'merge' | 'rebase' | null;
   branch: string;
   detached: boolean;
   headTags: string[];
@@ -280,6 +284,8 @@ export interface ProjectGitRepositorySnapshot {
 }
 
 export type ProjectGitAction =
+  | { type: 'subtree'; operation: 'add' | 'pull' | 'push'; path: string; remote: string; branch: string }
+  | { type: 'submodule_update'; path: string }
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
@@ -295,7 +301,8 @@ export type ProjectGitAction =
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
-  | { type: 'drop_stash'; stashRef: string };
+  | { type: 'drop_stash'; stashRef: string }
+  | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };
 
 export interface ProjectGitActionResult extends GitRunnerResult {
   action: ProjectGitAction['type'];
@@ -362,7 +369,7 @@ export async function getGitRepositoryContext(cwd: string): Promise<GitRepositor
     const topLevel = await requireGitStdout(cwd, ['rev-parse', '--show-toplevel']);
     const [rawBranch, headSha, rawLocalBranches, rawRemoteBranches, rawRemotes, rawWorktrees] = await Promise.all([
       requireGitStdout(topLevel, ['branch', '--show-current']),
-      requireGitStdout(topLevel, ['rev-parse', 'HEAD']),
+      readGitStdout(topLevel, ['rev-parse', '--verify', 'HEAD']),
       readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
       readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
       readGitStdout(topLevel, ['remote']),
@@ -1521,11 +1528,61 @@ function localBranchRef(branchName: string): string {
 }
 
 async function defaultGitCommandRunner(cwd: string, args: string[]): Promise<GitRunnerResult> {
-  const result = await execFileAsync('git', args, {
-    cwd,
-    maxBuffer: 10 * 1024 * 1024,
+  const execution = projectGitExecution.getStore();
+  execution?.signal?.throwIfAborted();
+  return new Promise((resolveResult, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env },
+    });
+    let stdout = '';
+    let stderr = '';
+    let bytes = 0;
+    let stopped: string | undefined;
+    const stop = (reason: string) => {
+      stopped ??= reason;
+      // 同时终止 SSH、凭据助手等子进程，防止取消后仍在后台写入。
+      try {
+        if (child.pid && process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch {
+        /* 进程可能已经退出。 */
+      }
+    };
+    const cancel = () => stop('Git 操作已中止。');
+    const timer = setTimeout(() => stop('ETIMEDOUT: Git 操作超过两分钟。'), 120_000);
+    execution?.signal?.addEventListener('abort', cancel, { once: true });
+    if (execution?.signal?.aborted) cancel();
+    const cleanup = () => {
+      clearTimeout(timer);
+      execution?.signal?.removeEventListener('abort', cancel);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    const append = (text: string, error: boolean) => {
+      bytes += Buffer.byteLength(text);
+      if (bytes > 10 * 1024 * 1024) {
+        stop('Git 输出超过 10 MB 上限。');
+        return;
+      }
+      if (error) stderr += text;
+      else stdout += text;
+    };
+    child.stdout.on('data', (text: string) => append(text, false));
+    child.stderr.on('data', (text: string) => append(text, true));
+    child.once('error', (error) => {
+      cleanup();
+      reject(error);
+    });
+    child.once('close', (code) => {
+      cleanup();
+      if (stopped || code !== 0)
+        reject(Object.assign(gitCoreError('ZEUS_GIT_COMMAND_FAILED', stopped ?? (stderr || `Git 命令退出码：${code}`)), { interrupted: Boolean(stopped), stdout: redactGitOutput(stdout), stderr: redactGitOutput(stderr) }));
+      else resolveResult({ stdout, stderr });
+    });
   });
-  return { stdout: result.stdout, stderr: result.stderr };
 }
 
 async function runGit(cwd: string, args: string[]): Promise<GitRunnerResult> {
@@ -1553,6 +1610,7 @@ async function runGitPreservingConflict(cwd: string, args: string[]): Promise<Gi
   try {
     return await defaultGitCommandRunner(cwd, args);
   } catch (error) {
+    if (projectGitExecution.getStore()?.signal?.aborted || (error as { interrupted?: boolean }).interrupted) throw error;
     const status = await getGitStatus(cwd).catch(() => emptyGitStatus());
     if (status.conflictFiles.length === 0) {
       const message = error instanceof Error ? error.message : 'Git command failed.';
@@ -1868,8 +1926,17 @@ async function readWorkspaceText(cwd: string, path: string): Promise<string> {
   return bytes.toString('utf8');
 }
 
+/** 只清洗操作诊断；不改写用户文件和差异正文。 */
+export function redactGitOutput(message: string): string {
+  return message
+    .replace(/(https?:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu, '$1[已隐藏]@')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/giu, '$1 [已隐藏]')
+    .replace(/((?:access_token|private_token|token|password|passwd|authorization|client_secret)[=:]\s*)[^\s&]+/giu, '$1[已隐藏]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+)\b/gu, '[已隐藏]');
+}
+
 function gitCoreError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+  return Object.assign(new Error(redactGitOutput(message)), { code });
 }
 
 /** 只读获取 Git 状态，不执行提交、回退、合并等高风险写操作。 */
@@ -1906,7 +1973,7 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     readGitStdout(context.topLevel, ['tag', '--points-at', 'HEAD', '--sort=-creatordate']),
     readGitStdout(context.topLevel, ['reflog', '-n', '120', '--format=%gs']),
     readGitStdout(context.topLevel, ['stash', 'list', '--format=%gd%x1f%H%x1f%s%x1f%an%x1f%aI']),
-    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--all', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']),
   ]);
   const upstream = upstreamText || null;
   const divergence = upstream ? await readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : '';
@@ -1922,6 +1989,8 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     headTags: splitLines(headTagsText),
     headSha: context.headSha,
     upstream,
+    integrationState: await readIntegrationState(context.topLevel),
+    submodules: await readRegisteredSubmodules(context.topLevel),
     ahead: Number.parseInt(aheadText, 10) || 0,
     behind: Number.parseInt(behindText, 10) || 0,
     clean: status.clean,
@@ -1942,39 +2011,135 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
   };
 }
 
+/** 分页读取拓扑历史；分支引用先解析为提交，避免被解释为命令选项。 */
+export async function getProjectGitHistory(cwd: string, offset = 0, ref?: string): Promise<{ commits: GitRecentCommit[]; hasMore: boolean }> {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) throw gitCoreError('ZEUS_GIT_HISTORY_OFFSET_INVALID', '历史分页位置无效。');
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', '仓库不可用。');
+  if (!context.headSha && !context.localBranches.length && !context.remoteBranches.length) return { commits: [], hasMore: false };
+  const revisions = ref ? [await resolveCommit(cwd, ref)] : ['--all', ...(context.headSha ? [context.headSha] : [])];
+  const output = await requireGitStdout(cwd, ['log', '--topo-order', `--skip=${offset}`, '-n', '201', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', ...revisions, '--']);
+  const commits = parseRecentCommits(output);
+  return { commits: commits.slice(0, 200), hasMore: commits.length > 200 };
+}
+
+async function readRegisteredSubmodules(cwd: string): Promise<{ path: string; initialized: boolean }[]> {
+  const raw = await readGitStdout(cwd, ['config', '-z', '--file', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$']);
+  const paths = raw
+    .split('\0')
+    .filter(Boolean)
+    .map((record) => record.slice(record.indexOf('\n') + 1));
+  const modules: { path: string; initialized: boolean }[] = [];
+  for (const path of paths) {
+    requireRepositoryPaths(cwd, [path]);
+    const indexEntry = await requireGitStdout(cwd, ['--literal-pathspecs', 'ls-files', '--stage', '--', path]);
+    if (!indexEntry.startsWith('160000 ')) continue;
+    modules.push({
+      path,
+      initialized: await lstat(join(cwd, path, '.git')).then(
+        () => true,
+        () => false,
+      ),
+    });
+  }
+  return modules;
+}
+
+async function readIntegrationState(cwd: string): Promise<'merge' | 'rebase' | null> {
+  for (const [marker, state] of [
+    ['rebase-merge', 'rebase'],
+    ['rebase-apply', 'rebase'],
+    ['MERGE_HEAD', 'merge'],
+  ] as const) {
+    const path = await requireGitStdout(cwd, ['rev-parse', '--git-path', marker]);
+    if (
+      await lstat(resolve(cwd, path)).then(
+        () => true,
+        () => false,
+      )
+    )
+      return state;
+  }
+  return null;
+}
+
 /** 执行项目 Git 工作台白名单动作；调用方不能传入任意子命令或任意工作目录。 */
-export async function executeProjectGitAction(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
+export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<ProjectGitActionResult> {
+  return projectGitExecution.run({ signal, env }, () => executeProjectGitActionInternal(cwd, action));
+}
+
+async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
   const repositoryPath = context.topLevel;
   let args: string[];
   switch (action.type) {
+    case 'subtree': {
+      const [path] = requireRepositoryPaths(repositoryPath, [action.path]);
+      if (!path || relative(repositoryPath, resolve(repositoryPath, path)) === '') throw gitCoreError('ZEUS_GIT_SUBTREE_INVALID', '子树必须使用仓库内的子目录。');
+      const remote = requireKnownRemote(context, action.remote);
+      const branch = await assertGitBranchFormat(repositoryPath, action.branch, 'subtree branch');
+      if (action.operation !== 'push' && !(await getGitStatus(repositoryPath)).clean) throw gitCoreError('ZEUS_GIT_DIRTY', '添加或拉取子树前，请先提交或贮藏本地修改。');
+      if (action.operation !== 'add') {
+        const history = await requireGitStdout(repositoryPath, ['log', '--all', '--format=%b', '--grep=git-subtree-dir:']);
+        if (![...history.matchAll(/^git-subtree-dir:\s*(.+)$/gm)].some((match) => match[1]!.trim() === path)) throw gitCoreError('ZEUS_GIT_SUBTREE_INVALID', '该目录没有子树记录，请先确认子树路径。');
+      }
+      args = ['subtree', action.operation, `--prefix=${path}`, ...(action.operation === 'push' ? [] : ['--squash']), remote, branch];
+      break;
+    }
+    case 'submodule_update': {
+      const modules = await readRegisteredSubmodules(repositoryPath);
+      if (!modules.some((item) => item.path === action.path)) throw gitCoreError('ZEUS_GIT_SUBMODULE_INVALID', '该路径不是当前仓库登记的子模块。');
+      args = ['--literal-pathspecs', 'submodule', 'update', '--init', '--', action.path];
+      break;
+    }
+    case 'continue_integration':
+    case 'abort_integration': {
+      if ((await readIntegrationState(repositoryPath)) !== action.kind) throw gitCoreError('ZEUS_GIT_INTEGRATION_CHANGED', '合并或变基状态已变化，请刷新后重试。');
+      args = action.type === 'abort_integration' ? [action.kind, '--abort'] : action.kind === 'merge' ? ['-c', 'core.editor=true', 'merge', '--continue'] : ['-c', 'core.editor=true', 'rebase', '--continue'];
+      break;
+    }
     case 'fetch': {
       const remote = requireKnownRemote(context, action.remote);
       args = ['fetch', '--prune', remote];
       break;
     }
     case 'stage':
-      args = ['add', '-A', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
+      args = ['--literal-pathspecs', 'add', '-A', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
       break;
     case 'unstage':
-      args = ['restore', '--staged', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
+      args = context.headSha
+        ? ['--literal-pathspecs', 'restore', '--staged', '--', ...requireRepositoryPaths(repositoryPath, action.paths)]
+        : ['--literal-pathspecs', 'rm', '--cached', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
       break;
     case 'commit':
       args = ['commit', '-m', requireSafeGitText(action.message, 'commit message')];
       break;
     case 'push': {
       requireNamedCurrentBranch(context);
-      const remote = requireKnownRemote(context, action.remote);
-      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'push target branch');
+      const trackingRemote = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.remote`]);
+      const trackingRef = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.merge`]);
+      const remote = requireKnownRemote(context, action.remote || (trackingRemote === '.' ? undefined : trackingRemote));
+      const trackingBranch = (!action.remote || action.remote === trackingRemote) && trackingRef.startsWith('refs/heads/') ? trackingRef.slice(11) : '';
+      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || trackingBranch || context.branch, 'push target branch');
       const sourceBranch = await assertGitBranchFormat(repositoryPath, context.branch, 'current branch');
-      args = ['push', ...(action.forceWithLease ? ['--force-with-lease'] : []), ...(action.pushTags ? ['--follow-tags'] : []), remote, `${sourceBranch}:refs/heads/${targetBranch}`];
+      args = [
+        'push',
+        ...(!trackingRef ? ['--set-upstream'] : []),
+        ...(action.forceWithLease ? [`--force-with-lease=refs/heads/${targetBranch}:${await readGitStdout(repositoryPath, ['rev-parse', '--verify', `refs/remotes/${remote}/${targetBranch}`])}`] : []),
+        ...(action.pushTags ? ['--follow-tags'] : []),
+        remote,
+        `${sourceBranch}:refs/heads/${targetBranch}`,
+      ];
       break;
     }
     case 'pull': {
       requireNamedCurrentBranch(context);
-      const remote = requireKnownRemote(context, action.remote);
-      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'pull branch');
+      const trackingRemote = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.remote`]);
+      const trackingRef = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.merge`]);
+      const remote = requireKnownRemote(context, action.remote || (trackingRemote === '.' ? undefined : trackingRemote));
+      const trackingBranch = (!action.remote || action.remote === trackingRemote) && trackingRef.startsWith('refs/heads/') ? trackingRef.slice(11) : '';
+      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || trackingBranch || context.branch, 'pull branch');
       args = ['pull', action.strategy === 'rebase' ? '--rebase' : '--no-rebase', remote, targetBranch];
       break;
     }
@@ -2013,7 +2178,8 @@ export async function executeProjectGitAction(cwd: string, action: ProjectGitAct
       args = ['stash', 'drop', requireStashRef(action.stashRef)];
       break;
   }
-  const conflictCapable = action.type === 'pull' || action.type === 'merge' || action.type === 'rebase' || action.type === 'apply_stash';
+  const conflictCapable =
+    (action.type === 'subtree' && action.operation === 'pull') || action.type === 'continue_integration' || action.type === 'pull' || action.type === 'merge' || action.type === 'rebase' || action.type === 'apply_stash';
   const operation = () => (conflictCapable ? runGitPreservingConflict(repositoryPath, args) : runGit(repositoryPath, args));
   const smart = (action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && action.smart === true;
   const output = smart ? await runWithSmartStash(repositoryPath, action.type === 'checkout_revision' ? 'Checkout Revision' : 'Checkout', operation) : await operation();
@@ -2029,7 +2195,8 @@ async function finishProjectGitAction(repositoryPath: string, action: ProjectGit
     branch: nextContext.branch,
     headSha: nextContext.headSha,
     conflictFiles: nextStatus.conflictFiles,
-    ...output,
+    stdout: redactGitOutput(output.stdout),
+    stderr: redactGitOutput(output.stderr),
   };
 }
 
@@ -2202,15 +2369,15 @@ async function readProjectGitRecentRefs(cwd: string, reflog: string, context: Gi
 
 function requireKnownRemote(context: GitRepositoryContext, requested?: string): string {
   const remote = requested?.trim() || (context.remotes.includes('origin') ? 'origin' : context.remotes[0]);
-  if (!remote || !context.remotes.includes(remote)) throw gitCoreError('ZEUS_GIT_REMOTE_REQUIRED', 'A configured repository remote is required.');
+  if (!remote || remote.startsWith('-') || remote.includes('\0') || !context.remotes.includes(remote)) throw gitCoreError('ZEUS_GIT_REMOTE_REQUIRED', 'A configured repository remote is required.');
   return remote;
 }
 
 function requireRepositoryPaths(repositoryPath: string, paths: string[]): string[] {
-  const normalized = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+  const normalized = Array.from(new Set(paths));
   if (normalized.length === 0) throw gitCoreError('ZEUS_GIT_PATH_REQUIRED', 'At least one repository path is required.');
   for (const path of normalized) {
-    if (isAbsolute(path) || path.includes('\0')) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository path: ${path}`);
+    if (!path || isAbsolute(path) || path.includes('\0')) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository path: ${path}`);
     const target = resolve(repositoryPath, path);
     const targetRelative = relative(repositoryPath, target);
     if (targetRelative === '..' || targetRelative.startsWith(`..${sep}`) || isAbsolute(targetRelative)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Repository path is outside the selected repository: ${path}`);
@@ -2304,7 +2471,7 @@ function classifyGitFileStatus(indexStatus: string, workingTreeStatus: string): 
 
 async function readGitStdout(cwd: string, args: string[]): Promise<string> {
   try {
-    return (await execFileAsync('git', args, { cwd })).stdout.trim();
+    return (await execFileAsync('git', args, { cwd, timeout: 30_000, maxBuffer: 20 * 1024 * 1024 })).stdout.trim();
   } catch {
     return '';
   }

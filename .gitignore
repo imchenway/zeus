@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .env
 .env.*
+# 任务记录保留在本地，不随源码提交；发布正文统一放在 releases/。
+/docs/ZEUS-*
+/docs/TASK_*

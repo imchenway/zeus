@@ -1,11 +1,18 @@
+# 测试包继承通用资源、签名和构建配置。
 extends: ./electron-builder.yml
+# 独立身份避免与正式安装版混用系统授权。
 appId: dev.hypha.zeus.test
+# 应用名称与正式安装版区分。
 productName: Zeus Test
+# 测试产物使用独立文件名。
 artifactName: Zeus-Test-${version}-${arch}.${ext}
+# 默认将测试产物写入独立目录。
 directories:
   output: ../../dist/test
+# 可执行文件跟随测试应用名称。
 mac:
   executableName: Zeus Test
+# 显式请求测试磁盘映像时仍保持测试名称。
 dmg:
   title: Zeus Test
   artifactName: Zeus-Test-${version}-${arch}.dmg

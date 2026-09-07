@@ -96,7 +96,7 @@ jobs:
             exit 1
           fi
 
-  typecheck:
+  verify:
     needs: preflight
     runs-on: macos-latest
     steps:
@@ -112,8 +112,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 执行阻塞级 TypeScript 检查
-        run: pnpm typecheck
+      - name: 执行与本地一致的发布前检查
+        run: pnpm verify:publish
 
   package-mac:
     needs: preflight
@@ -182,7 +182,7 @@ jobs:
 
   publish:
     if: ${{ inputs.publish_release }}
-    needs: [preflight, typecheck, package-mac]
+    needs: [preflight, verify, package-mac]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -228,7 +228,7 @@ jobs:
         run: |
           version="$(node -p "require('./package.json').version")"
           local_dmg="$(node -e "const m=require('./dist/zeus-release-manifest.json'); const a=m.artifacts?.find((x)=>x.kind==='dmg'); if(!a) process.exit(1); process.stdout.write('dist/'+a.fileName)")"
-          release_notes_file="docs/releases/${RELEASE_TAG}.md"
+          release_notes_file="releases/${RELEASE_TAG}.md"
           if [ ! -s "$release_notes_file" ]; then
             echo "公开发布缺少面向用户的 Release notes：$release_notes_file" >&2
             exit 1

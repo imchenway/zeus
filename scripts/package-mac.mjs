@@ -20,6 +20,7 @@ export function electronDistDirName(version, arch) {
   return `electron-v${version}-darwin-${arch}`;
 }
 
+/** 日常产物默认使用测试身份，正式发布必须显式选择。 */
 export function packagedAppPathForArch(arch, variant = 'test', requestedOutputRoot) {
   const outputRoot = requestedOutputRoot ?? (variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist'));
   const appName = variant === 'test' ? 'Zeus Test.app' : 'Zeus.app';
@@ -198,33 +199,37 @@ async function prepareElectronDist(version, arch) {
   return distDir;
 }
 
-export async function packageMac() {
+/** 按显式身份打包，默认仅生成独立测试应用。 */
+export async function packageMac({ dmg = false } = {}) {
   if (process.platform !== 'darwin') {
     throw new Error('Zeus package:mac 只能在 macOS 上执行。');
   }
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
-  const requestedVariant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'test';
-  if (requestedVariant !== 'test' && requestedVariant !== 'release') {
-    throw new Error(`Zeus package:mac 不支持打包身份：${requestedVariant}。`);
+  /** 未指定身份时始终使用测试包。 */
+  const variant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'test';
+  if (variant !== 'test' && variant !== 'release') {
+    throw new Error(`Zeus package:mac 不支持打包身份：${variant}。`);
   }
-  const variant = requestedVariant;
   if (variant === 'release' && process.env.ZEUS_RELEASE_BUILD !== '1') {
     throw new Error('生产身份 Zeus.app 只能由正式发布链路生成；日常开发与验收请使用 pnpm package:mac 生成 Zeus Test.app。');
   }
+  /** 测试配置只覆盖应用身份，其余打包规则继承正式配置。 */
   const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';
   const configuredOutputRoot = process.env.ZEUS_PACKAGE_OUTPUT_DIR?.trim();
+  /** 默认分开保存测试与正式产物，仍支持显式输出目录。 */
   const outputRoot = configuredOutputRoot ? resolve(rootDir, configuredOutputRoot) : variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
   const version = await readElectronVersion();
   const electronDist = await prepareElectronDist(version, arch);
   const appPath = packagedAppPathForArch(arch, variant, outputRoot);
   await assertPackagedAppIsNotRunning(appPath);
   // 打包必须从当前源码构建全部工作区依赖，不能依赖本机残留的包级 dist 目录。
-  await run('pnpm', ['build'], { cwd: rootDir });
-  const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
+  const packageEnvironment = { ...process.env, ZEUS_PACKAGE_VARIANT: variant, ZEUS_RELEASE_BUILD: variant === 'release' ? '1' : '0' };
+  await run('pnpm', ['build'], { cwd: rootDir, env: packageEnvironment });
+  const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(packageEnvironment));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv, variant);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
   const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', ...(dmg ? ['dmg'] : ['--dir']), '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });
@@ -235,7 +240,7 @@ export async function packageMac() {
 
 const invokedScriptPath = process.argv[1];
 if (invokedScriptPath && import.meta.url === pathToFileURL(invokedScriptPath).href) {
-  packageMac().catch((error) => {
+  packageMac({ dmg: process.argv.includes('--dmg') }).catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   });

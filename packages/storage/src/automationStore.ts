@@ -736,10 +736,24 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE ${clauses.join(' AND ')} ORDER BY completed_at DESC, created_at DESC LIMIT ?`, params).map(mapRun);
   }
 
+  /** 恢复只读取未结束运行，不受历史列表页数限制。 */
+  listInFlight(): AutomationRunRecord[] {
+    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running') ORDER BY accepted_at, id`).map(mapRun);
+  }
+
+  findAcceptedSubmission(run: AutomationRunRecord): { conversationId: string; submissionId: string } | undefined {
+    return this.db.get<{ conversationId: string; submissionId: string }>(
+      `SELECT s.conversation_id AS conversationId, s.id AS submissionId FROM conversation_submissions s
+       JOIN conversations c ON c.id = s.conversation_id WHERE s.idempotency_key = ? AND c.project_id = ? LIMIT 1`,
+      [`automation:${run.id}`, run.projectId],
+    );
+  }
+
   listDispatchable(limit = 10): AutomationRunRecord[] {
     return this.db
       .select<DbAutomationRunRow>(
         `SELECT ${runSelect} FROM automation_runs r WHERE r.status = 'queued' AND COALESCE(r.queue_position, 0) = 0
+       AND EXISTS (SELECT 1 FROM automation_tasks t WHERE t.id = r.automation_id AND t.status = 'active')
        AND NOT EXISTS (SELECT 1 FROM automation_runs active WHERE active.automation_id = r.automation_id AND active.project_id = r.project_id
          AND active.id <> r.id AND active.status IN ('dispatching', 'running')) ORDER BY r.accepted_at, r.id LIMIT ?`,
         [Math.max(1, Math.min(Math.trunc(limit), 100))],
@@ -751,12 +765,19 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? AND project_id = ? AND status IN ('dispatching', 'running') ORDER BY accepted_at, id`, [automationId, projectId]).map(mapRun);
   }
 
-  markDispatching(id: string): AutomationRunRecord {
-    const timestamp = nowIso();
-    const current = this.getById(id);
-    if (!current || current.status !== 'queued') throw new Error('ZEUS_AUTOMATION_DISPATCH_NOT_QUEUED: 运行已不在等待队列。');
-    const attempt = current.attempt + 1;
-    this.db.transaction(() => {
+  /** 领取与状态核对共用事务，暂停后已取出的候选也不得继续派发。 */
+  markDispatching(id: string): AutomationRunRecord | undefined {
+    return this.db.transaction(() => {
+      /** 候选可能在等待前一次派发时被取消或移出队列。 */
+      const current = this.getById(id);
+      if (!current || current.status !== 'queued') return undefined;
+      /** 以领取时的任务状态为准，不沿用候选查询时的启用状态。 */
+      const task = this.db.get<{ status: AutomationStatus }>('SELECT status FROM automation_tasks WHERE id = ?', [current.automationId]);
+      if (task?.status !== 'active') return undefined;
+      /** 仅实际领取的运行记录开始时间和尝试次数。 */
+      const timestamp = nowIso();
+      /** 本次领取使用下一次尝试身份。 */
+      const attempt = current.attempt + 1;
       this.db.execute(`UPDATE automation_runs SET status = 'dispatching', attempt = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status = 'queued'`, [attempt, timestamp, timestamp, id]);
       this.db.execute(`INSERT INTO automation_run_attempts (id, run_id, attempt, status, operation_identity, started_at) VALUES (?, ?, ?, 'dispatching', ?, ?)`, [
         `automation_attempt_${randomId(12)}`,
@@ -765,8 +786,8 @@ export class AutomationRunRepository {
         `automation-dispatch:${id}:${attempt}`,
         timestamp,
       ]);
+      return this.getById(id)!;
     });
-    return this.getById(id)!;
   }
 
   markRunning(id: string, conversationId: string, submissionId: string): AutomationRunRecord {
