@@ -99,6 +99,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     language: zh ? 'zh-CN' : 'en',
   });
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
+  const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
   const [selectedCommitHash, setSelectedCommitHash] = useState('');
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
@@ -433,47 +434,152 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </span>
       </nav>
 
-      {tab === 'log' ? (
-        <GitLogSurface
-          zh={zh}
-          repositories={repositories}
-          commits={allCommits.filter(({ repository }) => repository.id === selectedRepository?.id)}
-          selectedRepository={selectedRepository}
-          selectedCommitHash={selectedCommitHash}
-          commitDetail={commitDetail}
-          commitLoading={commitLoading}
-          selectedFilePath={selectedFilePath}
-          onSelectRepository={setSelectedRepositoryId}
-          onSelectCommit={selectCommit}
-          onSelectFile={setSelectedFilePath}
-          busy={busy}
-          onExecute={execute}
-          onOpenDiff={openDiffWindow}
-        />
-      ) : tab === 'changes' ? (
-        <LocalChangesSurface
-          zh={zh}
-          repositories={repositories}
-          selectedRepository={selectedRepository}
-          selectedFilePath={selectedFilePath}
-          selectedFileStage={selectedFileStage}
-          busy={busy}
-          onSelectRepository={setSelectedRepositoryId}
-          onSelectFile={(path, stage) => {
-            setSelectedFilePath(path);
-            setSelectedFileStage(stage);
-          }}
-          onOpenDiff={openDiffWindow}
-          onExecute={execute}
-          onCommit={openCommit}
-        />
-      ) : tab === 'stash' ? (
-        <StashSurface zh={zh} repositories={repositories} busy={busy} onExecute={execute} />
-      ) : tab === 'shelf' ? (
-        <ShelfSurface zh={zh} />
-      ) : (
-        <ConsoleSurface zh={zh} operations={operationRecords} />
-      )}
+      <div className="project-git-browser-layout">
+        <aside className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
+          <details open>
+            <summary>{zh ? '工作区' : 'Workspace'}</summary>
+            {(
+              [
+                ['changes', zh ? '文件状态' : 'File status'],
+                ['log', zh ? '历史' : 'History'],
+                ['stash', zh ? '贮藏区' : 'Stashes'],
+              ] as const
+            ).map(([id, label]) => (
+              <button key={id} type="button" aria-current={tab === id ? 'true' : undefined} onClick={() => setTab(id)}>
+                {label}
+              </button>
+            ))}
+          </details>
+          {[
+            { title: zh ? '仓库' : 'Repositories', items: repositories.filter((repository) => !repository.isSubmodule) },
+            { title: zh ? '子模块' : 'Submodules', items: repositories.filter((repository) => repository.isSubmodule) },
+          ].map((group) => (
+            <details key={group.title} open>
+              <summary>
+                {group.title}
+                <small>{group.items.length}</small>
+              </summary>
+              <RepositoryNavigationTree
+                repositories={group.items}
+                zh={zh}
+                selectedId={selectedRepository?.id}
+                onSelect={(id) => {
+                  setSubtree(null);
+                  setSelectedRepositoryId(id);
+                  setSelectedFilePath('');
+                  setSelectedCommitHash('');
+                }}
+              />
+            </details>
+          ))}
+          {selectedRepository ? (
+            <>
+              {(
+                [
+                  [zh ? '分支' : 'Branches', selectedRepository.snapshot.localBranches, 'local'],
+                  [zh ? '远程' : 'Remotes', selectedRepository.snapshot.remoteBranches, 'remote'],
+                  [zh ? '标签' : 'Tags', selectedRepository.snapshot.tags, 'local'],
+                ] as const
+              ).map(([title, branches, kind]) => (
+                <details key={title} open>
+                  <summary>
+                    {title}
+                    <small>{branches.length}</small>
+                  </summary>
+                  <BranchDirectoryTree
+                    branches={[...branches]}
+                    current={selectedRepository.snapshot.branch}
+                    kind={kind}
+                    onSelect={(ref) => {
+                      setTab('log');
+                      selectCommit(selectedRepository, ref);
+                    }}
+                    onContextMenu={(event) => event.preventDefault()}
+                  />
+                </details>
+              ))}
+              <details open>
+                <summary>
+                  {zh ? '贮藏区' : 'Stashes'}
+                  <small>{selectedRepository.snapshot.stashes.length}</small>
+                </summary>
+                {selectedRepository.snapshot.stashes.map((stash) => (
+                  <button key={stash.ref} type="button" onClick={() => setTab('stash')} title={stash.subject}>
+                    <Archive aria-hidden="true" />
+                    <span>
+                      {stash.subject}
+                      <small>{stash.ref}</small>
+                    </span>
+                  </button>
+                ))}
+              </details>
+              <details open>
+                <summary>{zh ? '子树' : 'Subtrees'}</summary>
+                {(selectedRepository.subtreePaths ?? []).map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    onClick={() => {
+                      setSubtree({ repositoryId: selectedRepository.id, path });
+                      setSelectedFilePath('');
+                      setTab('changes');
+                    }}
+                  >
+                    <Folder aria-hidden="true" />
+                    <span>{path}</span>
+                  </button>
+                ))}
+              </details>
+            </>
+          ) : null}
+        </aside>
+        <div className="project-git-browser-content">
+          {tab === 'log' ? (
+            <GitLogSurface
+              zh={zh}
+              repositories={repositories}
+              commits={allCommits.filter(({ repository }) => repository.id === selectedRepository?.id)}
+              selectedRepository={selectedRepository}
+              selectedCommitHash={selectedCommitHash}
+              commitDetail={commitDetail}
+              commitLoading={commitLoading}
+              selectedFilePath={selectedFilePath}
+              onSelectRepository={setSelectedRepositoryId}
+              onSelectCommit={selectCommit}
+              onSelectFile={setSelectedFilePath}
+              busy={busy}
+              onExecute={execute}
+              onOpenDiff={openDiffWindow}
+            />
+          ) : tab === 'changes' ? (
+            <LocalChangesSurface
+              subtree={subtree}
+              onClearSubtree={() => setSubtree(null)}
+              zh={zh}
+              onOpenStash={() => setTab('stash')}
+              repositories={repositories}
+              selectedRepository={selectedRepository}
+              selectedFilePath={selectedFilePath}
+              selectedFileStage={selectedFileStage}
+              busy={busy}
+              onSelectRepository={setSelectedRepositoryId}
+              onSelectFile={(path, stage) => {
+                setSelectedFilePath(path);
+                setSelectedFileStage(stage);
+              }}
+              onOpenDiff={openDiffWindow}
+              onExecute={execute}
+              onCommit={openCommit}
+            />
+          ) : tab === 'stash' ? (
+            <StashSurface zh={zh} repositories={selectedRepository ? [selectedRepository] : []} busy={busy} onExecute={execute} />
+          ) : tab === 'shelf' ? (
+            <ShelfSurface zh={zh} />
+          ) : (
+            <ConsoleSurface zh={zh} operations={operationRecords} />
+          )}
+        </div>
+      </div>
 
       <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} />
       <UpdateProjectDialog
@@ -1250,7 +1356,7 @@ interface BranchTreeNode {
   children: Map<string, BranchTreeNode>;
 }
 
-function BranchDirectoryTree(props: { branches: string[]; current: string; kind: BranchKind; onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void }) {
+function BranchDirectoryTree(props: { onSelect?: (branch: string) => void; branches: string[]; current: string; kind: BranchKind; onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void }) {
   const tree = useMemo(() => buildBranchTree(props.branches), [props.branches.join('\0')]);
   return (
     <div className="project-git-branch-directory-tree">
@@ -1277,7 +1383,13 @@ function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { no
     );
   }
   return (
-    <button type="button" className={props.node.branch === props.current ? 'is-current' : ''} style={{ paddingLeft: `${props.depth * 12 + 7}px` }} onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}>
+    <button
+      type="button"
+      className={props.node.branch === props.current ? 'is-current' : ''}
+      style={{ paddingLeft: `${props.depth * 12 + 7}px` }}
+      onClick={() => props.onSelect?.(props.node.branch)}
+      onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}
+    >
       <GitBranch aria-hidden="true" />
       <span>{props.node.name}</span>
     </button>
@@ -1373,8 +1485,76 @@ function CommitGraph(props: { commits: ProjectGitRepositoryWorkbenchItem['snapsh
   return <canvas ref={canvasRef} className="project-git-graph-canvas" aria-hidden="true" />;
 }
 
+// 子模块按仓库相对路径组织，目录节点只负责展开，不改变仓库选择。
+function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWorkbenchItem[]; zh: boolean; selectedId?: string; onSelect: (id: string) => void }) {
+  type Node = { name: string; path: string; children: Map<string, Node>; repository?: ProjectGitRepositoryWorkbenchItem };
+  const root: Node = { name: '', path: '', children: new Map() };
+  for (const repository of props.repositories) {
+    const parts = repository.relativePath === '.' ? [repository.name] : repository.relativePath.split('/').filter(Boolean);
+    let node = root;
+    for (const name of parts) {
+      if (!node.children.has(name)) node.children.set(name, { name, path: `${node.path}/${name}`, children: new Map() });
+      node = node.children.get(name)!;
+    }
+    node.repository = repository;
+  }
+  const render = (node: Node): React.ReactNode => {
+    const repository = node.repository;
+    const snapshot = repository?.snapshot;
+    const relation = !snapshot
+      ? ''
+      : snapshot.detached
+        ? props.zh
+          ? '分离 HEAD'
+          : 'Detached HEAD'
+        : !snapshot.upstream
+          ? props.zh
+            ? '未跟踪'
+            : 'No upstream'
+          : snapshot.ahead || snapshot.behind
+            ? [snapshot.ahead ? `↑${snapshot.ahead}` : '', snapshot.behind ? `↓${snapshot.behind}` : ''].filter(Boolean).join(' ')
+            : props.zh
+              ? '已同步'
+              : 'Synced';
+    const row =
+      repository && snapshot ? (
+        <button
+          type="button"
+          aria-current={props.selectedId === repository.id ? 'true' : undefined}
+          onClick={() => props.onSelect(repository.id)}
+          title={`${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
+        >
+          <GitBranch aria-hidden="true" />
+          <span>
+            {node.name}
+            <small>{snapshot.detached ? snapshot.headSha.slice(0, 7) : snapshot.branch}</small>
+          </span>
+          <span className="git-tracking-badge" aria-label={relation}>
+            {relation}
+          </span>
+        </button>
+      ) : null;
+    if (!node.children.size) return <div key={node.path}>{row}</div>;
+    return (
+      <details key={node.path} className="git-repository-directory" open>
+        <summary>
+          <Folder aria-hidden="true" /> {node.name}
+        </summary>
+        <div className="git-repository-directory-children">
+          {row}
+          {[...node.children.values()].sort((a, b) => a.name.localeCompare(b.name)).map(render)}
+        </div>
+      </details>
+    );
+  };
+  return <>{[...root.children.values()].sort((a, b) => a.name.localeCompare(b.name)).map(render)}</>;
+}
+
 function LocalChangesSurface(props: {
+  subtree: { repositoryId: string; path: string } | null;
+  onClearSubtree: () => void;
   zh: boolean;
+  onOpenStash: () => void;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   selectedRepository: ProjectGitRepositoryWorkbenchItem | null;
   selectedFilePath: string;
@@ -1386,23 +1566,33 @@ function LocalChangesSurface(props: {
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
   onCommit: () => void;
 }) {
+  const subtree = props.subtree;
+  const matchesSubtree = (path: string) => !subtree || subtree.repositoryId !== props.selectedRepository?.id || path === subtree.path || path.startsWith(`${subtree.path}/`);
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
-  const selectedDiff = stageDiff?.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? stageDiff?.fileDiffs[0] ?? null;
-  const changedRepositories = props.repositories.filter((repository) => repository.snapshot.fileStatuses.length > 0);
+  const selectedDiff =
+    stageDiff?.fileDiffs.find((file) => (file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) && matchesSubtree(file.newPath || file.oldPath)) ??
+    stageDiff?.fileDiffs.find((file) => matchesSubtree(file.newPath || file.oldPath)) ??
+    null;
+  const changedRepositories = props.selectedRepository ? [props.selectedRepository] : [];
   const stagedRepositories = props.repositories.flatMap((repository) => {
     const count = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').length;
     return count > 0 ? [{ repository, count }] : [];
   });
   return (
-    <div className="project-git-changes-layout">
+    <div className="project-git-changes-layout project-git-navigator-layout">
       <aside className="project-git-change-tree">
         <header>
           <strong>{props.zh ? '变更文件' : 'Changed files'}</strong>
-          <span>{props.repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0)}</span>
+          <span>{props.selectedRepository?.snapshot.fileStatuses.filter((file) => matchesSubtree(file.path)).length ?? 0}</span>
+          {subtree?.repositoryId === props.selectedRepository?.id ? (
+            <button type="button" onClick={props.onClearSubtree}>
+              {props.zh ? '清除目录筛选' : 'Clear folder filter'}
+            </button>
+          ) : null}
         </header>
         {changedRepositories.map((repository) => {
-          const staged = repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
-          const unstaged = repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?');
+          const staged = repository.snapshot.fileStatuses.filter((file) => matchesSubtree(file.path) && file.indexStatus !== ' ' && file.indexStatus !== '?');
+          const unstaged = repository.snapshot.fileStatuses.filter((file) => matchesSubtree(file.path) && (file.workingTreeStatus !== ' ' || file.indexStatus === '?'));
           return (
             <section key={repository.id}>
               <button className="project-git-change-repository" type="button" onClick={() => props.onSelectRepository(repository.id)}>
@@ -1412,7 +1602,7 @@ function LocalChangesSurface(props: {
               </button>
               {unstaged.length > 0 ? <span className="project-git-change-group-title">{props.zh ? '未暂存' : 'Unstaged'}</span> : null}
               <ChangeDirectoryTree
-                files={unstaged.map((file) => file.path)}
+                files={unstaged.map((file) => file.path).filter(matchesSubtree)}
                 stage="unstaged"
                 repository={repository}
                 selectedRepositoryId={props.selectedRepository?.id}
@@ -1427,7 +1617,7 @@ function LocalChangesSurface(props: {
               />
               {staged.length > 0 ? <span className="project-git-change-group-title">{props.zh ? '已暂存' : 'Staged'}</span> : null}
               <ChangeDirectoryTree
-                files={staged.map((file) => file.path)}
+                files={staged.map((file) => file.path).filter(matchesSubtree)}
                 stage="staged"
                 repository={repository}
                 selectedRepositoryId={props.selectedRepository?.id}
@@ -1445,7 +1635,7 @@ function LocalChangesSurface(props: {
         })}
       </aside>
       <main className="project-git-change-diff">
-        <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null} zh={props.zh} />
+        <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null} zh={props.zh} />
       </main>
       <aside className="project-git-commit-rail">
         <strong>{props.zh ? '提交' : 'Commit'}</strong>

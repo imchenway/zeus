@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import {
   discoverGitRepositories,
@@ -23,6 +25,8 @@ export interface ProjectGitRepositoryWorkbenchItem {
   id: string;
   name: string;
   relativePath: string;
+  isSubmodule?: boolean;
+  subtreePaths?: string[];
   snapshot: ProjectGitRepositorySnapshot;
 }
 
@@ -62,6 +66,7 @@ export class ProjectGitWorkbenchService {
       projectName: project.name,
       refreshedAt: new Date().toISOString(),
       repositories: await mapWithConcurrency(repositories, async (repository) => ({
+        ...(await loadNavigationMetadata(repository.localPath)),
         id: stableRepositoryId(project.id, repository.relativePath),
         name: repository.name,
         relativePath: repository.relativePath,
@@ -197,4 +202,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function projectGitError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
+}
+
+// 通过 Git 自身识别子模块关系；子树来自标准 git-subtree 提交标记。
+async function loadNavigationMetadata(cwd: string): Promise<{ isSubmodule: boolean; subtreePaths: string[] }> {
+  const execute = promisify(execFile);
+  const [parent, history] = await Promise.all([
+    execute('git', ['rev-parse', '--show-superproject-working-tree'], { cwd, timeout: 10000 }),
+    execute('git', ['log', '--all', '-500', '--format=%b', '--grep=git-subtree-dir:'], { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024 }),
+  ]);
+  const subtreePaths = [...new Set([...history.stdout.matchAll(/^git-subtree-dir:\s*(.+)$/gm)].map((match) => match[1]!.trim()).filter((path) => path && !path.startsWith('/') && !path.split('/').includes('..')))];
+  return { isSubmodule: Boolean(parent.stdout.trim()), subtreePaths };
 }

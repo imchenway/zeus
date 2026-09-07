@@ -726,10 +726,7 @@ body:has(.menu-bar-usage-root),
   --usage-ok: #16804b;
   --usage-shadow: 0 20px 48px -28px rgb(31 41 55 / 38%);
   --usage-shadow-soft: 0 12px 30px -24px rgb(31 41 55 / 30%);
-  background:
-    radial-gradient(circle at 88% -20%, rgb(139 109 255 / 16%), transparent 36%),
-    radial-gradient(circle at 10% 110%, rgb(40 102 247 / 10%), transparent 40%),
-    var(--usage-bg);
+  background: radial-gradient(circle at 88% -20%, rgb(139 109 255 / 16%), transparent 36%), radial-gradient(circle at 10% 110%, rgb(40 102 247 / 10%), transparent 40%), var(--usage-bg);
 }
 
 .menu-bar-usage-root[data-appearance='dark'] {
@@ -753,10 +750,7 @@ body:has(.menu-bar-usage-root),
   --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
   --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
   color-scheme: dark;
-  background:
-    radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%),
-    radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%),
-    var(--usage-bg);
+  background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%), var(--usage-bg);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -781,17 +775,16 @@ body:has(.menu-bar-usage-root),
     --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
     --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
     color-scheme: dark;
-    background:
-      radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%),
-      radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%),
-      var(--usage-bg);
+    background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%), var(--usage-bg);
   }
 }
 
 .menu-bar-usage-surface {
   border-color: var(--usage-edge);
   background: linear-gradient(145deg, var(--usage-panel-strong), var(--usage-panel));
-  box-shadow: var(--usage-shadow), inset 0 1px 0 rgb(255 255 255 / 48%);
+  box-shadow:
+    var(--usage-shadow),
+    inset 0 1px 0 rgb(255 255 255 / 48%);
   backdrop-filter: blur(28px) saturate(170%);
   -webkit-backdrop-filter: blur(28px) saturate(170%);
 }
@@ -821,7 +814,9 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-mark {
   border-color: var(--usage-accent-border);
   background: linear-gradient(145deg, rgb(255 255 255 / 94%), var(--usage-accent-soft));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 68%), 0 8px 18px -15px rgb(40 102 247 / 70%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 68%),
+    0 8px 18px -15px rgb(40 102 247 / 70%);
   color: var(--usage-accent);
 }
 
@@ -837,7 +832,10 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-tabs button {
   border: 1px solid transparent;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .menu-bar-usage-tabs button:hover,
@@ -886,7 +884,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-list > button {
-  transition: background-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .menu-bar-usage-provider-list > button:hover,
@@ -905,7 +905,9 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-token-hero {
   border-color: var(--usage-accent-border);
   background: linear-gradient(135deg, color-mix(in srgb, var(--usage-accent-soft) 92%, white), var(--usage-panel-strong) 68%, color-mix(in srgb, var(--usage-accent-secondary) 10%, var(--usage-panel-strong)));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 45%), 0 14px 28px -24px rgb(40 102 247 / 68%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 14px 28px -24px rgb(40 102 247 / 68%);
 }
 
 .menu-bar-usage-quota-summary {
@@ -930,7 +932,9 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars {
   border: 1px solid var(--usage-line);
   background: var(--usage-panel);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 26%), var(--usage-shadow-soft);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 26%),
+    var(--usage-shadow-soft);
 }
 
 .menu-bar-usage-bar-slot i {
@@ -957,7 +961,11 @@ body:has(.menu-bar-usage-root),
   border: 1px solid var(--usage-line);
   background: var(--usage-panel);
   box-shadow: var(--usage-shadow-soft);
-  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
 }
 
 .menu-bar-usage-actions .menu-bar-usage-primary-action {
@@ -986,7 +994,9 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-root button:focus-visible {
   border-color: color-mix(in srgb, var(--usage-accent) 52%, transparent);
-  box-shadow: var(--usage-shadow-soft), 0 0 0 3px rgb(40 102 247 / 18%);
+  box-shadow:
+    var(--usage-shadow-soft),
+    0 0 0 3px rgb(40 102 247 / 18%);
   outline: 0;
 }
 
@@ -1049,4 +1059,32 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-actions button:not(.menu-bar-usage-primary-action):hover:not(:disabled) {
   background: var(--usage-accent-soft);
   color: var(--usage-text);
+}
+
+/* 原生 popover 承担背景模糊，网页只叠加轻薄的中性表面。 */
+.menu-bar-usage-root,
+.menu-bar-usage-root[data-appearance='dark'],
+.menu-bar-usage-root[data-appearance='system'] {
+  background: transparent;
+  --usage-panel: rgb(255 255 255 / 24%);
+  --usage-panel-strong: rgb(255 255 255 / 40%);
+  --usage-panel-inset: rgb(120 128 140 / 8%);
+  --usage-line: rgb(100 110 125 / 16%);
+  --usage-edge: rgb(255 255 255 / 44%);
+}
+.menu-bar-usage-root[data-appearance='dark'] {
+  --usage-panel: rgb(255 255 255 / 5%);
+  --usage-panel-strong: rgb(255 255 255 / 10%);
+  --usage-panel-inset: rgb(0 0 0 / 10%);
+  --usage-line: rgb(255 255 255 / 12%);
+  --usage-edge: rgb(255 255 255 / 18%);
+}
+@media (prefers-color-scheme: dark) {
+  .menu-bar-usage-root[data-appearance='system'] {
+    --usage-panel: rgb(255 255 255 / 5%);
+    --usage-panel-strong: rgb(255 255 255 / 10%);
+    --usage-panel-inset: rgb(0 0 0 / 10%);
+    --usage-line: rgb(255 255 255 / 12%);
+    --usage-edge: rgb(255 255 255 / 18%);
+  }
 }

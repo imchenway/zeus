@@ -2261,6 +2261,9 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
     show: false,
     frame: false,
     transparent: true,
+    // 对应 AgentDesk 的原生 NSPopover，由 macOS 合成窗口背后的磨砂材质。
+    backgroundColor: '#00000000',
+    ...(process.platform === 'darwin' ? { vibrancy: 'popover' as const, visualEffectState: 'active' as const } : {}),
     resizable: false,
     movable: false,
     minimizable: false,

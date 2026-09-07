@@ -273,8 +273,7 @@ export function ProjectWorkspaceModeToolbar(props: {
     commands: <WorkspaceCommandsIcon aria-hidden="true" />,
   };
   return (
-    <header className="project-workspace-mode-toolbar">
-      <strong title={props.project.localPath}>{props.project.name}</strong>
+    <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
@@ -339,7 +338,6 @@ export function SidebarNav(props: {
   const [openProjectMenuIds, setOpenProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
-  const [projectSearchOpen, setProjectSearchOpen] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();
@@ -364,17 +362,6 @@ export function SidebarNav(props: {
       projectMenuCloseTimerRefs.current.clear();
     };
   }, []);
-  const closeProjectSearch = () => {
-    setProjectSearchOpen(false);
-    setProjectSearchQuery('');
-  };
-  const toggleProjectSearch = () => {
-    if (projectSearchOpen) {
-      closeProjectSearch();
-      return;
-    }
-    setProjectSearchOpen(true);
-  };
   const toggleProjectCollapsed = (projectId: string, expanded: boolean) => {
     if (expanded) {
       setVisibleConversationCountByProject((current) => {
@@ -387,9 +374,10 @@ export function SidebarNav(props: {
     props.onToggleProjectCollapsed(projectId);
   };
   const handleProjectSearchKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Escape') return;
+    // 输入时保留光标按键，避免触发项目列表的方向键导航。
     event.stopPropagation();
-    closeProjectSearch();
+    if (event.key !== 'Escape') return;
+    setProjectSearchQuery('');
   };
   const clearProjectMenuCloseTimer = (projectId: string) => {
     const timer = projectMenuCloseTimerRefs.current.get(projectId);
@@ -587,6 +575,7 @@ export function SidebarNav(props: {
     <aside className="zeus-sidebar ai-sidebar project-first-sidebar zeus-titlebar-protected-source-list" aria-label={copy.ariaLabel} style={titlebarProtectedSidebarStyle}>
       <div className="project-window-control-reserved-space" aria-hidden="true" />
       <nav className="project-quick-actions codex-source-list-quick-actions" aria-label={copy.quickActionsLabel}>
+        <strong className="project-sidebar-brand">Zeus</strong>
         <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
           <span className="project-quick-action-icon" aria-hidden="true">
             <svg viewBox="0 0 20 20" focusable="false">
@@ -595,15 +584,6 @@ export function SidebarNav(props: {
             </svg>
           </span>
           <span className="project-quick-action-label">{copy.newChat}</span>
-        </button>
-        <button type="button" className="project-quick-action" aria-expanded={projectSearchOpen} onClick={toggleProjectSearch} disabled={props.projects.length === 0}>
-          <span className="project-quick-action-icon" aria-hidden="true">
-            <svg viewBox="0 0 20 20" focusable="false">
-              <circle cx="8.8" cy="8.8" r="5.4" />
-              <path d="m13 13 3.4 3.4" />
-            </svg>
-          </span>
-          <span className="project-quick-action-label">{copy.search}</span>
         </button>
         <button
           type="button"
@@ -629,19 +609,15 @@ export function SidebarNav(props: {
           <span className="project-quick-action-label">{copy.skills}</span>
         </button>
       </nav>
-      {projectSearchOpen ? (
-        <section className="project-sidebar-search-row" aria-label={copy.search} onKeyDown={handleProjectSearchKeyDown}>
-          {/* 搜索入口只负责本地过滤项目 source-list，不再偷偷跳到第一个项目任务页，避免误切当前工作上下文。 */}
-          <span className="project-sidebar-search-icon" aria-hidden="true">
-            ⌕
-          </span>
-          <input type="search" aria-label={copy.search} placeholder={copy.search} value={projectSearchQuery} autoFocus onChange={(event) => setProjectSearchQuery(event.currentTarget.value)} />
-        </section>
-      ) : null}
-
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation}>
         <div className="project-sidebar-heading">
-          <span>{copy.projects}</span>
+          <label className="project-sidebar-search-field" onKeyDown={handleProjectSearchKeyDown}>
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <circle cx="8.8" cy="8.8" r="5.4" />
+              <path d="m13 13 3.4 3.4" />
+            </svg>
+            <input type="search" aria-label={copy.search} placeholder={copy.search} value={projectSearchQuery} onChange={(event) => setProjectSearchQuery(event.currentTarget.value)} />
+          </label>
           <span className="project-sidebar-heading-actions">
             <button
               type="button"

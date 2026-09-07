@@ -122,6 +122,8 @@ export interface ProjectGitRepositoryWorkbenchItem {
   id: string;
   name: string;
   relativePath: string;
+  isSubmodule?: boolean;
+  subtreePaths?: string[];
   snapshot: ProjectGitRepositorySnapshot;
 }
 
