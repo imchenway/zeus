@@ -21,6 +21,8 @@ import type {
 
 interface TaskPushContextProjection {
   revision: string;
+  /** 任务检查结果中的独立图片预览来源，不写入布局或提示词。 */
+  attachmentPreviewSources: unknown[];
   current: { options: unknown[] };
   parent: { options: unknown[] };
   related: { options: unknown[] };
@@ -193,6 +195,7 @@ export class ConversationCapabilityQueryApplication {
       parentContextOptions: taskContext.parent.options,
       relatedContextOptions: taskContext.related.options,
       currentAttachmentOptions,
+      attachmentPreviewSources: taskContext.attachmentPreviewSources,
       repositoryRevision: repositoryRevision(registeredRepositories),
       repositoryDiscovery,
       repositories: repositoryCapabilities,

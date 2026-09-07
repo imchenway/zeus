@@ -876,7 +876,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  const conversationResourceBackfillRevision = '20260825_durable_assistant_markdown_images';
+  // 仅补齐已完成答复遗漏的托管产物图片，保留已有资源。
+  const conversationResourceBackfillRevision = '20260907_managed_artifact_markdown_images';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1474,6 +1475,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             trustedAttachmentRoots: trustedConversationAttachmentRoots,
             generatedImageRoot,
             assistantImageArchiveRoot: conversationAttachmentRoot,
+            artifactsDirectory: dataLayout.artifactsDirectory,
             now: item.updatedAt,
           });
           const existing = existingResourcesByItem.get(item.id) ?? [];
@@ -1501,6 +1503,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           trustedAttachmentRoots: trustedConversationAttachmentRoots,
           generatedImageRoot,
           assistantImageArchiveRoot: conversationAttachmentRoot,
+          artifactsDirectory: dataLayout.artifactsDirectory,
           now: item.updatedAt,
         }).filter(isDurableAssistantMarkdownImageResource);
         if (normalized.length === 0) continue;
@@ -1710,6 +1713,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       },
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       generatedImageRoot,
+      artifactsDirectory: dataLayout.artifactsDirectory,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       ensureExecutionContext: ensureNativeConversationExecutionContext,
       preflightCodexModelBudget: ({ modelId, modelSourceId, providerGenerationId }) => {

@@ -70,6 +70,8 @@ export interface TaskPushRelatedContextState {
 
 export interface TaskPushContextState {
   revision: string;
+  /** 独立展示数据，只含已通过任务附件校验的图片来源，不参与首发正文。 */
+  attachmentPreviewSources: NativeConversationAttachment[];
   current: TaskPushCurrentConversationState;
   parent: TaskPushParentContextState;
   related: TaskPushRelatedContextState;
@@ -520,12 +522,18 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     const current = resolveTaskPushCurrentConversationState(task);
     const parent = resolveTaskPushParentContextState(project, task);
     const related = resolveTaskPushRelatedContextState(project, task, new Set(parent.options.map((option) => option.taskId)));
-    const currentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    // 同次检查同时提供修订依据与图片预览来源，避免重复读取产生不同快照。
+    const inspectedCurrentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected;
+    const currentAttachments = inspectedCurrentAttachments.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    // 来源独立于布局；客户端只加载当前选中附件，名称相同也按稳定标识区分。
+    const attachmentPreviewSources = [...inspectedCurrentAttachments, ...Array.from(parent.attachmentsByTaskId.values()).flat(), ...Array.from(related.attachmentsByTaskId.values()).flat()].flatMap((entry) =>
+      entry.option.kind === 'image' && entry.attachment ? [entry.attachment] : [],
+    );
     // 管理状态不属于首发正文；修订只绑定真实输入资源，避免推送确认时的状态同步使同一次首发失效。
     const revision = createHash('sha256')
       .update(JSON.stringify({ current: { content: taskPushPromptContent(task), attachments: currentAttachments, conversations: current.revision }, parent: parent.revision, related: related.revision }))
       .digest('hex');
-    return { revision, current, parent, related };
+    return { revision, current, parent, related, attachmentPreviewSources };
   }
 
   function parseTaskPushSelectionStringArray(value: unknown, field: string): string[] {

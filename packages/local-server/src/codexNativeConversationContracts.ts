@@ -61,6 +61,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   trustedAttachmentRoots: string[];
   generatedImageRoot?: string;
+  /** 当前身份的产物目录，供实时与历史答复共用图片归档。 */
+  artifactsDirectory?: string;
   getProjectRoot: (projectId: string) => string | null;
   ensureExecutionContext: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{
     projectLocalPath: string;

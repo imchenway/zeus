@@ -57,6 +57,8 @@ export interface NormalizeConversationResourcesInput {
   text: string;
   trustedAttachmentRoots: readonly string[];
   generatedImageRoot?: string;
+  /** 当前身份的产物目录，仅用于完成答复的图片归档，不扩大普通文件打开权限。 */
+  artifactsDirectory?: string;
   assistantImageArchiveRoot?: string;
   now: string;
 }
@@ -88,7 +90,7 @@ const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
   const candidates: ResourceCandidate[] = [];
   const assistantImageArchiveBudget = { remainingBytes: maximumArchivedAssistantImageBatchBytes };
-  const assistantImageSourceRoots = [input.projectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, tmpdir(), '/private/tmp']
+  const assistantImageSourceRoots = [input.projectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, input.artifactsDirectory, tmpdir(), '/private/tmp']
     .filter((root): root is string => Boolean(root))
     .map(safeRealpath)
     .filter((root): root is string => Boolean(root));

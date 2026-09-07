@@ -1,11 +1,13 @@
-import React, { useRef, useState } from 'react';
-import { describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
+import React, { useEffect, useRef, useState } from 'react';
+import { buildTaskPushLayout, describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
 import { MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
-import type { NativeSessionItemBuffer } from '../src/renderer/session/sessionTypes.js';
+import type { NativeConversationAttachment, NativeSessionItemBuffer } from '../src/renderer/session/sessionTypes.js';
+import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
+import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 
 interface QaScene {
   query: string;
@@ -16,6 +18,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
   { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
   {
     query: 'overview',
@@ -72,6 +75,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'images') return <TaskPushImagesQa />;
   if (props.scene.query === 'copy') return <CopyErrorQa />;
   const items = props.scene.activities.map((_, index) => activity(props.scene, index));
   return (
@@ -99,6 +103,90 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 浏览器使用合成图片；已有原生桥时保持真实读取，不覆盖 Electron 的能力。 */
+function TaskPushImagesQa() {
+  /** 读取次数用于发现重渲染导致的重复加载。 */
+  const [reads, setReads] = useState(0);
+  /** 只在浏览器预览桥就绪后挂载图片组件。 */
+  const [ready, setReady] = useState(false);
+  /** 模拟推送配置变化，图片身份保持不变。 */
+  const [revision, setRevision] = useState(0);
+  /** 外层弹窗必须在图片关闭后保持打开。 */
+  const [open, setOpen] = useState(false);
+  /** 四个来源故意使用同名文件，以稳定标识区分。 */
+  const sources = ['current', 'parent', 'related', 'supplemental'];
+  /** 原生验收可指向当前 Test 身份下已准备的附件目录。 */
+  const imageRoot = new URLSearchParams(window.location.search).get('imageRoot') ?? '/qa';
+  /** 来源仅传入预览组件，不写回任务布局。 */
+  const attachments: NativeConversationAttachment[] = [...sources, 'missing'].map((source) => ({ name: '同名.png', mime: 'image/png', size: 1, kind: 'image', localPath: `${imageRoot}/${source}.png`, taskPushAttachmentKey: source }));
+  /** 每个字段只通过附件标识绑定来源。 */
+  const promptAttachment = (source: string) => ({ key: source, name: '同名.png', kind: 'image' as const, field: 'description' as const });
+  /** 使用实际布局构建器，覆盖字段图片和补充图片的共同入口。 */
+  const layout = buildTaskPushLayout({
+    taskTitle: '当前任务',
+    taskType: 'requirement',
+    taskDescription: '蓝色图片',
+    attachments: [promptAttachment('current')],
+    parentContexts: [{ taskId: 'parent', taskCode: '父任务', taskTitle: '父任务', taskType: 'requirement', taskDescription: '绿色图片', attachments: [promptAttachment('parent')], conversationPaths: [] }],
+    relatedContexts: [{ taskId: 'related', taskCode: '关联任务', taskTitle: '关联任务', taskType: 'requirement', taskDescription: '红色图片', attachments: [promptAttachment('related')], conversationPaths: [] }],
+    supplementalAttachments: [promptAttachment('supplemental'), promptAttachment('missing')],
+    supplementalInfo: '紫色图片；缺失图片明确失败。',
+  });
+
+  useEffect(() => {
+    if (window.zeus) {
+      setReady(true);
+      return;
+    }
+    /** 固定色块只用于人工组件检查，不访问文件或模型服务。 */
+    const colors: Record<string, string> = { current: '#2878d4', parent: '#24844b', related: '#ca4848', supplemental: '#804ac4' };
+    /** 按请求路径返回不同图片，缺失来源返回明确失败。 */
+    const loadPreview = async (path: string) => {
+      setReads((count) => count + 1);
+      const source = path.split('/').at(-1)?.replace('.png', '') ?? '';
+      if (!colors[source]) return null;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160"><rect width="240" height="160" fill="${colors[source]}"/><text x="12" y="84" fill="white" font-size="25">${source}</text></svg>`;
+      return { previewUrl: `data:image/svg+xml,${encodeURIComponent(svg)}`, mimeType: 'image/svg+xml' };
+    };
+    window.zeus = { getTaskAttachmentPreview: loadPreview } as NonNullable<Window['zeus']>;
+    setReady(true);
+    return () => {
+      delete window.zeus;
+    };
+  }, []);
+
+  return (
+    <main className="macos-ai-app zeus-shell qa-page">
+      <h1>推送图片预览验收</h1>
+      <Button disabled={!ready} onClick={() => setOpen(true)}>
+        打开推送预览
+      </Button>
+      <output>
+        读取次数：{reads}；配置更新：{revision}；推送弹窗：{open ? '打开' : '关闭'}
+      </output>
+      {open ? (
+        <ModalPortal onDismiss={() => setOpen(false)}>
+          <form
+            className="task-model-push-modal zeus-solid-form-surface"
+            role="dialog"
+            aria-label="图片验收推送弹窗"
+            onSubmit={(event) => event.preventDefault()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setOpen(false);
+            }}
+          >
+            <div className="task-model-push-body">
+              <Button onClick={() => setRevision((value) => value + 1)}>更新配置</Button>
+              <TaskPushLayoutPreview layout={layout} language="zh-CN" previewAttachments={attachments} />
+              <Button onClick={() => setOpen(false)}>关闭推送预览</Button>
+            </div>
+          </form>
+        </ModalPortal>
+      ) : null}
     </main>
   );
 }
