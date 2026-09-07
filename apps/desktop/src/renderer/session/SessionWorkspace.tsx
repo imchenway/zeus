@@ -8,14 +8,14 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserConversationSnapshot, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
-import {codexCapabilitiesChangedEvent} from '../features/codex/codexApiClient.js';
+import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedRecoveredRequestUserInput, type SessionCreationStatus } from './ConversationTranscript.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
-import {AsyncQuestionPanel, asyncQuestionIdentity, useAsyncQuestionDock} from './AsyncQuestionMessage.js';
+import { AsyncQuestionPanel, asyncQuestionIdentity, useAsyncQuestionDock } from './AsyncQuestionMessage.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
@@ -380,8 +380,8 @@ export function preloadCodexConversationCapabilities(client: SessionControllerCl
   if (entry.promise) return entry.promise;
   const promise = load(projectId)
     .then((capabilities) => {
-        // 登录后的强制刷新已经接管时，登录前预读的迟到结果不能回写缓存。
-        if (entry.promise === promise) entry.value = capabilities;
+      // 登录后的强制刷新已经接管时，登录前预读的迟到结果不能回写缓存。
+      if (entry.promise === promise) entry.value = capabilities;
       return capabilities;
     })
     .finally(() => {
@@ -396,10 +396,10 @@ function refreshCodexConversationCapabilities(client: SessionControllerClient, p
   const load = client.loadCodexConversationCapabilities;
   if (!load) return Promise.resolve(null);
   const entry = conversationCapabilitiesEntry(client, projectId);
-    if (entry.promise && !force) return entry.promise;
+  if (entry.promise && !force) return entry.promise;
   const promise = load(projectId)
     .then((capabilities) => {
-        if (entry.promise === promise) entry.value = capabilities;
+      if (entry.promise === promise) entry.value = capabilities;
       return capabilities;
     })
     .finally(() => {
@@ -411,15 +411,15 @@ function refreshCodexConversationCapabilities(client: SessionControllerClient, p
 
 /** 原地刷新新会话和已有会话的模型能力，不重建输入区或清空用户选择。 */
 function useCodexCapabilitiesRevision(): number {
-    /** 每次已完成的连接触发一次能力重读。 */
-    const [revision, setRevision] = useState(0);
-    useEffect(() => {
-        /** 只改变读取代次，由工作面保留草稿和处理迟到回执。 */
-        const refresh = (): void => setRevision((current) => current + 1);
-        window.addEventListener(codexCapabilitiesChangedEvent, refresh);
-        return () => window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
-    }, []);
-    return revision;
+  /** 每次已完成的连接触发一次能力重读。 */
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    /** 只改变读取代次，由工作面保留草稿和处理迟到回执。 */
+    const refresh = (): void => setRevision((current) => current + 1);
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+  }, []);
+  return revision;
 }
 
 /** 同步读取已有项目能力，只用于首帧展示；提交仍由服务端重新复验。 */
@@ -428,8 +428,8 @@ export function readCachedCodexConversationCapabilities(client: SessionControlle
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
-    /** 订阅登录完成后刷新已打开的模型选择器。 */
-    const capabilitiesRevision = useCodexCapabilitiesRevision();
+  /** 订阅登录完成后刷新已打开的模型选择器。 */
+  const capabilitiesRevision = useCodexCapabilitiesRevision();
   const controllerEnabled = props.controllerEnabled !== false;
   const [continuedHistoryConversationId, setContinuedHistoryConversationId] = useState<string | null>(null);
   const historySnapshotOnly = Boolean(props.historyOnly && continuedHistoryConversationId !== props.conversation.id);
@@ -469,13 +469,13 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     projectId: props.conversation.projectId,
     value: props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, props.conversation.projectId),
   }));
-    const capabilities = (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : readCachedCodexConversationCapabilities(props.client, props.conversation.projectId)) ?? props.initialCapabilities;
+  const capabilities = (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : readCachedCodexConversationCapabilities(props.client, props.conversation.projectId)) ?? props.initialCapabilities;
   useEffect(() => {
     const projectId = props.conversation.projectId;
     let active = true;
     const cached = props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, projectId);
     if (cached) setCapabilitiesScope({ projectId, value: cached });
-      void refreshCodexConversationCapabilities(props.client, projectId, capabilitiesRevision > 0)
+    void refreshCodexConversationCapabilities(props.client, projectId, capabilitiesRevision > 0)
       .then((snapshot) => {
         if (active && snapshot) setCapabilitiesScope({ projectId, value: snapshot });
       })
@@ -1725,11 +1725,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const pendingPlanImplementationRequests = props.historyOnly ? [] : (props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? []);
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
-    /** 异步问题使用同一个底部位置，正式阻塞请求保持原有优先级。 */
-    const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion));
-    /** 底部一次只显示一个交互表单，后台异步执行不转成等待状态。 */
-    const dockedAsyncQuestion = blockingPendingRequest || blockingPlanImplementationRequest ? null : asyncQuestionDock.selected;
-    const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length + Number(Boolean(dockedAsyncQuestion));
+  /** 异步问题使用同一个底部位置，正式阻塞请求保持原有优先级。 */
+  const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion));
+  /** 底部一次只显示一个交互表单，后台异步执行不转成等待状态。 */
+  const dockedAsyncQuestion = blockingPendingRequest || blockingPlanImplementationRequest ? null : asyncQuestionDock.selected;
+  const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length + Number(Boolean(dockedAsyncQuestion));
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
   const goal = props.state?.snapshot?.goal ?? null;
@@ -1945,14 +1945,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       void respond(userInputRequest, { type: 'userInput', answers: {} });
       return;
     }
-      if (dockedAsyncQuestion) {
-          // 表单内编辑按键归共用答题面板；表单外 Escape 只收起异步问题，不中断 AI。
-          if (event.target instanceof Element && event.target.closest('.session-interaction-dock')) return;
-          event.preventDefault();
-          event.stopPropagation();
-          asyncQuestionDock.dismiss(dockedAsyncQuestion);
-          return;
-      }
+    if (dockedAsyncQuestion) {
+      // 表单内编辑按键归共用答题面板；表单外 Escape 只收起异步问题，不中断 AI。
+      if (event.target instanceof Element && event.target.closest('.session-interaction-dock')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      asyncQuestionDock.dismiss(dockedAsyncQuestion);
+      return;
+    }
     const state = props.state;
     const active = state?.conversationState === 'active_prework' || state?.conversationState === 'active_final_answer';
     const result = resolveSessionWorkspaceEscape({
@@ -2272,8 +2272,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
-    /** 同步与异步表单共享底部容器，分别保留既有提交权限和生命周期。 */
-    function renderBottomInteraction(): ReactNode {
+  /** 同步与异步表单共享底部容器，分别保留既有提交权限和生命周期。 */
+  function renderBottomInteraction(): ReactNode {
     if (props.suppressComposer || props.historyOnly) return null;
     if (blockingPendingRequest) {
       return (
@@ -2310,18 +2310,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </section>
       );
     }
-        if (dockedAsyncQuestion && props.state && actions.onAnswerAsyncQuestion) {
-            return (
-                <section className="session-interaction-dock"
-                         aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
-                    <AsyncQuestionPanel
-                        key={asyncQuestionIdentity(dockedAsyncQuestion)}
-                        item={dockedAsyncQuestion}
-                        state={props.state}
-                        language={props.language}
-                        onAnswer={actions.onAnswerAsyncQuestion}
-                        onDismiss={() => asyncQuestionDock.dismiss(dockedAsyncQuestion)}
-                    />
+    if (dockedAsyncQuestion && props.state && actions.onAnswerAsyncQuestion) {
+      return (
+        <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
+          <AsyncQuestionPanel
+            key={asyncQuestionIdentity(dockedAsyncQuestion)}
+            item={dockedAsyncQuestion}
+            state={props.state}
+            language={props.language}
+            onAnswer={actions.onAnswerAsyncQuestion}
+            onDismiss={() => asyncQuestionDock.dismiss(dockedAsyncQuestion)}
+          />
         </section>
       );
     }
@@ -2614,22 +2613,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
                   />
                   {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                    {renderBottomInteraction()}
-                    {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
+                  {renderBottomInteraction()}
+                  {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
                     <>
-                        {!props.historyOnly && transcriptInteractionsEnabled && asyncQuestionDock.questions.length > 0 ? (
-                            <nav className="session-interaction-dock session-async-question-reminder"
-                                 aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Unanswered questions'}>
-                                <div className="session-message-delivery-actions">
-                                    {asyncQuestionDock.questions.map((item, index) => (
-                                        <button key={asyncQuestionIdentity(item)} type="button"
-                                                onClick={() => asyncQuestionDock.open(item)}>
-                                            {props.language === 'zh-CN' ? `回答问题${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}`}
-                                        </button>
-                                    ))}
-                                </div>
-                            </nav>
-                        ) : null}
+                      {!props.historyOnly && transcriptInteractionsEnabled && asyncQuestionDock.questions.length > 0 ? (
+                        <nav className="session-interaction-dock session-async-question-reminder" aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Unanswered questions'}>
+                          <div className="session-message-delivery-actions">
+                            {asyncQuestionDock.questions.map((item, index) => (
+                              <button key={asyncQuestionIdentity(item)} type="button" onClick={() => asyncQuestionDock.open(item)}>
+                                {props.language === 'zh-CN' ? `回答问题${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}`}
+                              </button>
+                            ))}
+                          </div>
+                        </nav>
+                      ) : null}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       {renderConversationComposer()}
                     </>
@@ -2902,8 +2899,8 @@ function NewConversationComposer(props: {
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
-    /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
-    const capabilitiesRevision = useCodexCapabilitiesRevision();
+  /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
+  const capabilitiesRevision = useCodexCapabilitiesRevision();
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -2951,7 +2948,7 @@ function NewConversationComposer(props: {
       setServiceTierSelection({ type: 'standard' });
       runtimePreferencesInitializedRef.current = true;
     }
-      if (props.capabilities && capabilitiesRevision === 0) {
+    if (props.capabilities && capabilitiesRevision === 0) {
       setCapabilities(props.capabilities);
       setCapabilitiesLoading(false);
       return;

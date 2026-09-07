@@ -1,4 +1,4 @@
-import {classifyAssistantMessage} from '@zeus/shared';
+import { classifyAssistantMessage } from '@zeus/shared';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 
 const emptyItems: NativeSessionState['items'] = Object.freeze({});
@@ -117,8 +117,8 @@ function itemNeededByWorkspaceResourcePanels(item: NativeSessionItemBuffer): boo
   const payloadType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
   const normalizedType = payloadType.toLocaleLowerCase().replaceAll(/[^a-z]/gu, '');
   const recoveredUserInput = normalizedType === 'requestuserinput' && item.payload.recovery === 'content_only' && item.payload.outcome === 'pending';
-    /** 底部问题只需要完整题目、答复状态与最终交付边界，不订阅流式正文。 */
-    const questionControlItem =
-        Boolean(item.payload.questionAnswer) || (item.status === 'completed' && ['agentmessage', 'assistantmessage', 'assistant', 'message'].includes(normalizedType) && classifyAssistantMessage(item.payload, item.phase) !== 'progress');
-    return questionControlItem || recoveredUserInput || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
+  /** 底部问题只需要完整题目、答复状态与最终交付边界，不订阅流式正文。 */
+  const questionControlItem =
+    Boolean(item.payload.questionAnswer) || (item.status === 'completed' && ['agentmessage', 'assistantmessage', 'assistant', 'message'].includes(normalizedType) && classifyAssistantMessage(item.payload, item.phase) !== 'progress');
+  return questionControlItem || recoveredUserInput || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
 }

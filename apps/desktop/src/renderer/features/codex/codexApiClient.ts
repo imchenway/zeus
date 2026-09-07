@@ -341,13 +341,13 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         operationPrefix: 'codex_configuration_activate',
         value: {},
       });
-        /** 服务端完成模型目录与容量握手后才发布更新，失败时不宣告可用。 */
-        const activation = await transport.request<CodexConfigActivationResult>('/api/codex-config/activate', {
-            method: 'POST',
-            body: JSON.stringify(body)
-        });
-        globalThis.window?.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
-        return activation;
+      /** 服务端完成模型目录与容量握手后才发布更新，失败时不宣告可用。 */
+      const activation = await transport.request<CodexConfigActivationResult>('/api/codex-config/activate', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      globalThis.window?.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+      return activation;
     },
     loadSkills: (projectId, forceReload = false) => {
       const query = new URLSearchParams();

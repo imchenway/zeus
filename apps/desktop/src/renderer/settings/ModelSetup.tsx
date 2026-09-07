@@ -210,7 +210,7 @@ export function useModelSetup(input: {
         onLoginId: (loginId) => {
           loginIdRef.current = loginId;
         },
-          onPreparingModels: () => setOperation('activating'),
+        onPreparingModels: () => setOperation('activating'),
         showSuccess: (value) => {
           setAccount(value);
           setAccountChecked(true);
@@ -491,21 +491,19 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                     ? zh
                       ? '请在官方网页完成登录。完成后返回这里确认设置。'
                       : 'Complete sign-in on the official page, then return here to review your settings.'
-                        : c.operation === 'activating'
-                            ? zh
-                                ? '正在加载订阅模型…'
-                                : 'Loading subscription models…'
-                            : c.operation === 'authenticated'
-                                ? zh
-                                    ? '登录成功，正在返回 Zeus…'
-                                    : 'Signed in, returning to Zeus…'
-                                : zh
-                                    ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
-                                    : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
+                    : c.operation === 'activating'
+                      ? zh
+                        ? '正在加载订阅模型…'
+                        : 'Loading subscription models…'
+                      : c.operation === 'authenticated'
+                        ? zh
+                          ? '登录成功，正在返回 Zeus…'
+                          : 'Signed in, returning to Zeus…'
+                        : zh
+                          ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
+                          : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
               </p>
-                <Button disabled={c.operation !== 'idle'}
-                        busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'}
-                        onClick={() => void c.prepareCodex()}>
+              <Button disabled={c.operation !== 'idle'} busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'} onClick={() => void c.prepareCodex()}>
                 {zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
               </Button>
               <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>

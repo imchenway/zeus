@@ -1,5 +1,5 @@
-import {AsyncQuestionMessage} from './AsyncQuestionMessage.js';
-import {classifyAssistantMessage} from '@zeus/shared';
+import { AsyncQuestionMessage } from './AsyncQuestionMessage.js';
+import { classifyAssistantMessage } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -73,8 +73,8 @@ export interface ConversationTranscriptProps {
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
-    /** 时间线入口只打开底部答题区，不在历史中展开表单。 */
-    onOpenAsyncQuestion?: (item: NativeSessionItemBuffer) => void;
+  /** 时间线入口只打开底部答题区，不在历史中展开表单。 */
+  onOpenAsyncQuestion?: (item: NativeSessionItemBuffer) => void;
   /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
   localSubmissionRevision?: number;
 }
@@ -1343,8 +1343,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     );
   }
   if (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question') {
-      return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language}
-                                   onOpen={row.item.status === 'completed' ? options.props.onOpenAsyncQuestion : undefined}/>;
+    return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language} onOpen={row.item.status === 'completed' ? options.props.onOpenAsyncQuestion : undefined} />;
   }
   if (row.item.type === 'plan') {
     return (
