@@ -46,4 +46,17 @@ brew upgrade --cask imchenway/tap/zeus
 requirement，用于减少升级后因代码身份变化而重复询问“文稿”“下载”等隐私权限。用户主动选择项目、附件或导出位置时，macOS 仍可能
 按真实目录访问边界请求授权。配置 Developer ID 与公证凭据后，仍可显式启用严格 Apple 分发。
 
-更多技术信息参见[发布说明](docs/release.md)和[架构文档](docs/architecture.md)。
+版本更新内容见 [GitHub Releases](https://github.com/imchenway/zeus/releases)。
+
+## 开发与验证
+
+使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。
+
+- `pnpm dev`：构建后直接运行 Electron 源码，不生成安装包；开发数据使用当前仓库的 `.tmp/electron-development-data`，与 DMG 安装版分开。
+- `pnpm verify:publish`：本地与 CI 共用的检查入口，执行冲突、格式、Lint、架构边界、类型和构建检查，不发布。
+- `pnpm package:mac`：开发阶段默认只生成 `Zeus.app`，输出到 `dist/mac-arm64/`（Intel 为 `dist/mac/`），便于快速验收。
+- `pnpm package:mac:release`：生成正式 DMG；仅在明确需要安装包或发布时执行。
+- `pnpm verify:release`：正式发布候选的检查、打包和产物校验；不自动安装或发布。
+
+日常改动按影响范围执行检查；行为变化补充真实运行证据。既有专项探针按需使用，不默认全量运行。
+发布正文由发布准备流程写入 `releases/v<版本>.md`。不维护与源码重复的设计书、验收矩阵或逐任务报告。

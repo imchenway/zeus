@@ -21,7 +21,7 @@ function main() {
   const applyChanges = parseBoolean('APPLY_CHANGES', process.env.APPLY_CHANGES, false);
   const latestTag = resolveLatestStableTag();
   const baseVersion = latestTag.slice(1);
-  const targetNotesPath = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
+  const targetNotesPath = join(repositoryRoot, 'releases', `v${releaseVersion}.md`);
   const sourceNotes = readFileSync(sourceNotesPath, 'utf8');
 
   assertVersionAfterTag(releaseVersion, latestTag, '。');

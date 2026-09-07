@@ -1,3 +1,4 @@
+import { withProjectGitAuthentication } from './projectGitAuthentication.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -5,8 +6,10 @@ import {
   discoverGitRepositories,
   executeProjectGitAction,
   getProjectGitCommitDetail,
+  getProjectGitHistory,
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
+  redactGitOutput,
   type DiscoveredGitRepository,
   type GitDiffSummary,
   type ProjectGitAction,
@@ -56,6 +59,7 @@ interface ResolvedProjectGitRepository {
  * 所有请求都从受信项目身份重新发现仓库，Renderer 提供的仓库 ID 不能直接变成本机路径。
  */
 export class ProjectGitWorkbenchService {
+  private readonly activeRepositories = new Set<string>();
   constructor(private readonly loadProject: (projectId: string) => Promise<ProjectGitProjectIdentity>) {}
 
   async loadWorkbench(projectId: string): Promise<ProjectGitWorkbenchSnapshot> {
@@ -75,6 +79,11 @@ export class ProjectGitWorkbenchService {
     };
   }
 
+  async loadHistory(projectId: string, repositoryId: string, offset: number, ref?: string) {
+    const resolved = await this.resolveRepository(projectId, repositoryId);
+    return getProjectGitHistory(resolved.repository.localPath, offset, ref);
+  }
+
   async loadCommit(projectId: string, repositoryId: string, commitHash: string): Promise<ProjectGitCommitDetail> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!commitHash.trim()) throw projectGitError('ZEUS_GIT_COMMIT_REQUIRED', '必须选择一个提交。');
@@ -87,17 +96,37 @@ export class ProjectGitWorkbenchService {
     return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode);
   }
 
-  async execute(projectId: string, repositoryId: string, value: unknown): Promise<ProjectGitActionResponse> {
+  async execute(projectId: string, repositoryId: string, value: unknown, beforeWrite: (repository: DiscoveredGitRepository, action: ProjectGitAction) => Promise<void>, signal?: AbortSignal): Promise<ProjectGitActionResponse> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     const action = parseProjectGitAction(value);
-    const result = await executeProjectGitAction(resolved.repository.localPath, action);
-    return {
-      projectId: resolved.project.id,
-      repositoryId: resolved.id,
-      repositoryName: resolved.repository.name,
-      result,
-      snapshot: await getProjectGitRepositorySnapshot(resolved.repository.localPath),
-    };
+    const repositoryPath = resolved.repository.localPath;
+    if (this.activeRepositories.has(repositoryPath)) throw projectGitError('ZEUS_GIT_BUSY', '该仓库已有 Git 操作正在执行，请等待完成。');
+    this.activeRepositories.add(repositoryPath);
+    try {
+      await beforeWrite(resolved.repository, action);
+      signal?.throwIfAborted();
+      const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'pull' || action.type === 'update';
+      const run = (env?: NodeJS.ProcessEnv) => executeProjectGitAction(resolved.repository.localPath, action, signal, env);
+      const result = await (remoteAction ? withProjectGitAuthentication(run) : run()).catch((error: unknown) => {
+        if (signal?.aborted) throw projectGitError('ZEUS_GIT_CANCELLED', 'Git 操作已中止，请刷新核对仓库状态。已完成的写入不会自动撤销；推送结果需要核对远端。');
+        const message = redactGitOutput(error instanceof Error ? error.message : String(error));
+        if (/authentication failed|could not read Username|terminal prompts disabled|permission denied.*publickey/iu.test(message)) {
+          throw projectGitError('ZEUS_GIT_AUTH_REQUIRED', `Git 鉴权失败。请检查系统凭据管理器、SSH agent 和仓库访问权限后重试。\n${message}`);
+        }
+        if (/host key verification failed/iu.test(message)) throw projectGitError('ZEUS_GIT_HOST_UNVERIFIED', `SSH 主机验证失败，请核对服务器指纹和 known_hosts 后重试。\n${message}`);
+        if (/SIGKILL|ETIMEDOUT/iu.test(message)) throw projectGitError('ZEUS_GIT_TIMEOUT', 'Git 操作超过两分钟，已停止等待。请刷新仓库核对操作结果；推送结果也需要核对远端。');
+        throw projectGitError('ZEUS_GIT_ACTION_FAILED', message);
+      });
+      return {
+        projectId: resolved.project.id,
+        repositoryId: resolved.id,
+        repositoryName: resolved.repository.name,
+        result,
+        snapshot: await getProjectGitRepositorySnapshot(resolved.repository.localPath),
+      };
+    } finally {
+      this.activeRepositories.delete(repositoryPath);
+    }
   }
 
   private async requireProject(projectId: string): Promise<ProjectGitProjectIdentity> {
@@ -134,6 +163,15 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     return candidate;
   };
   switch (value.type) {
+    case 'subtree':
+      if (value.operation !== 'add' && value.operation !== 'pull' && value.operation !== 'push') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '不支持的子树操作。');
+      return { type: 'subtree', operation: value.operation, path: typeof value.path === 'string' ? value.path : '', remote: stringValue('remote') ?? '', branch: stringValue('branch') ?? '' };
+    case 'submodule_update':
+      return { type: 'submodule_update', path: typeof value.path === 'string' ? value.path : '' };
+    case 'continue_integration':
+    case 'abort_integration':
+      if (value.kind !== 'merge' && value.kind !== 'rebase') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '恢复动作必须指定合并或变基。');
+      return { type: value.type, kind: value.kind };
     case 'fetch':
       return { type: 'fetch', remote: stringValue('remote') };
     case 'stage':
@@ -209,7 +247,11 @@ async function loadNavigationMetadata(cwd: string): Promise<{ isSubmodule: boole
   const execute = promisify(execFile);
   const [parent, history] = await Promise.all([
     execute('git', ['rev-parse', '--show-superproject-working-tree'], { cwd, timeout: 10000 }),
-    execute('git', ['log', '--all', '-500', '--format=%b', '--grep=git-subtree-dir:'], { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024 }),
+    execute('git', ['log', '--all', '--format=%b', '--grep=git-subtree-dir:'], { cwd, timeout: 10000, maxBuffer: 4 * 1024 * 1024 }).catch((error: unknown) => {
+      // 新仓库没有提交时，导航仍然可用；其他错误保持可见。
+      if (/does not have any commits|bad default revision/iu.test(error instanceof Error ? error.message : '')) return { stdout: '' };
+      throw error;
+    }),
   ]);
   const subtreePaths = [...new Set([...history.stdout.matchAll(/^git-subtree-dir:\s*(.+)$/gm)].map((match) => match[1]!.trim()).filter((path) => path && !path.startsWith('/') && !path.split('/').includes('..')))];
   return { isSubmodule: Boolean(parent.stdout.trim()), subtreePaths };

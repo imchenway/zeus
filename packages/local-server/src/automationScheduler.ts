@@ -1,4 +1,4 @@
-import type { AutomationDefinitionSnapshot, AutomationRunRecord, AutomationRunRepository, AutomationTaskRecord, AutomationTaskRepository, ConversationRepository, ZeusProjectRecord } from '@zeus/storage';
+import type { AutomationDefinitionSnapshot, AutomationRunRecord, AutomationRunRepository, AutomationTaskRecord, AutomationTaskRepository, ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
 
 export interface AutomationDispatchResult {
   conversationId: string;
@@ -9,6 +9,7 @@ export interface AutomationSchedulerOptions {
   tasks: AutomationTaskRepository;
   runs: AutomationRunRepository;
   conversations: ConversationRepository;
+  submissions: ConversationSubmissionRepository;
   getProject(projectId: string): ZeusProjectRecord | undefined;
   dispatch(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord }): Promise<AutomationDispatchResult>;
   save(): Promise<void>;
@@ -21,14 +22,20 @@ export interface AutomationScheduler {
   close(): Promise<void>;
 }
 
-const terminalConversationStages = new Set(['completed', 'failed', 'waiting_user', 'waiting_approval', 'paused', 'archived']);
+const interactionConversationStages = new Set(['waiting_user', 'waiting_approval', 'paused', 'archived']);
 
 export function createAutomationScheduler(options: AutomationSchedulerOptions): AutomationScheduler {
   let timer: ReturnType<typeof setInterval> | undefined;
   let tickPromise: Promise<void> | null = null;
   let closed = false;
+  let recovered = false;
 
   async function tick(): Promise<void> {
+    if (!recovered) {
+      recoverInterruptedDispatches();
+      await options.save();
+      recovered = true;
+    }
     const now = options.now();
     acceptDue(now);
     reconcileRunning();
@@ -52,19 +59,40 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     }
   }
 
+  function recoverInterruptedDispatches(): void {
+    for (const run of options.runs.listInFlight()) {
+      if (run.status !== 'dispatching') continue;
+      const accepted = options.runs.findAcceptedSubmission(run);
+      if (accepted) options.runs.markRunning(run.id, accepted.conversationId, accepted.submissionId);
+      else markOutcomeUnknown(run, '进程在提交期间退出，尚未找到接收回执。请检查会话后再恢复自动化。');
+    }
+  }
+
+  function markOutcomeUnknown(run: AutomationRunRecord, message: string): void {
+    // 结果未知时暂停后续调度，避免旧操作仍在执行而新队列继续产生副作用。
+    options.tasks.setStatus(run.automationId, 'paused');
+    options.runs.setTerminal(run.id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN', message);
+    options.publish('automation.run.terminal', { automationId: run.automationId, runId: run.id, projectId: run.projectId, status: 'outcome_unknown', unread: true });
+  }
+
   function reconcileRunning(): void {
-    for (const task of options.tasks.list()) {
-      for (const run of options.runs.listByAutomation(task.id, 200)) {
-        if (run.status !== 'running' || !run.conversationId) continue;
-        const conversation = options.conversations.getById(run.conversationId);
-        if (!conversation || !terminalConversationStages.has(conversation.stage)) continue;
-        if (conversation.stage === 'completed') {
-          settle(run, 'succeeded');
-        } else if (conversation.stage === 'failed') {
-          settle(run, 'failed', 'ZEUS_AUTOMATION_DISPATCH_PROVIDER_FAILED', '模型运行失败。');
-        } else {
-          settle(run, 'blocked', 'ZEUS_AUTOMATION_DISPATCH_INTERACTION_REQUIRED', '自动化运行需要用户处理审批、问题或恢复边界。');
-        }
+    for (const run of options.runs.listInFlight()) {
+      if (run.status !== 'running' || !run.conversationId) continue;
+      const conversation = options.conversations.getById(run.conversationId);
+      if (!conversation) {
+        markOutcomeUnknown(run, '运行关联的会话已不可用，请检查实际执行结果后再恢复自动化。');
+        continue;
+      }
+      const submission = run.submissionId ? options.submissions.getById(run.submissionId) : undefined;
+      if (!submission) {
+        markOutcomeUnknown(run, '运行关联的提交已不可用，请检查实际执行结果后再恢复自动化。');
+        continue;
+      }
+      // 原会话可能同时存在其他轮次，不能用整条会话的完成态替代本次提交结果。
+      if (submission.status === 'completed' || submission.status === 'resolved') settle(run, 'succeeded');
+      else if (submission.status === 'failed') settle(run, 'failed', 'ZEUS_AUTOMATION_DISPATCH_PROVIDER_FAILED', '模型运行失败。');
+      else if (['cancelled', 'deleted', 'paused'].includes(submission.status) || (submission.status === 'active' && interactionConversationStages.has(conversation.stage))) {
+        settle(run, 'blocked', 'ZEUS_AUTOMATION_DISPATCH_INTERACTION_REQUIRED', '自动化运行需要用户处理审批、问题或恢复边界。');
       }
     }
   }
@@ -82,20 +110,25 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
       options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', !revision ? '运行修订已不可用。' : '目标项目已不可用。');
       return;
     }
+    // 在进入外部提交前保存运行身份；退出后可据此对账，不能重新生成运行。
+    await options.save();
     try {
       const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project });
       const updated = options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
+      await options.save();
       options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, conversationId: updated.conversationId });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      options.runs.setTerminal(running.id, 'failed', errorCode(error), message.slice(0, 2_000));
+      const accepted = options.runs.findAcceptedSubmission(running);
+      if (accepted) options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
+      else markOutcomeUnknown(running, `${errorCode(error)}: ${message.slice(0, 2_000)}`);
     }
   }
 
   function kick(): void {
     if (closed || tickPromise) return;
     tickPromise = tick()
-      .catch(() => undefined)
+      .catch((error) => options.publish('automation.scheduler.failed', { message: error instanceof Error ? error.message : String(error) }))
       .finally(() => {
         tickPromise = null;
       });

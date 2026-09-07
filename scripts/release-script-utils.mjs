@@ -33,7 +33,7 @@ export function validateReleaseNotes(markdown, version) {
   }
   if (!markdown.includes('brew upgrade --cask imchenway/tap/zeus')) throw new Error('Release notes 缺少 Homebrew 升级命令。');
   if (!markdown.includes(`Zeus-${version}-arm64.dmg`)) throw new Error(`Release notes 缺少版本化 DMG 名称：Zeus-${version}-arm64.dmg。`);
-  if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) throw new Error('Release notes 泄漏内部任务或发布文档路径。');
+  if (/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) throw new Error('Release notes 泄漏内部任务或发布文档路径。');
   const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
   if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
   const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];

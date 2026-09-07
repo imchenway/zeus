@@ -736,10 +736,24 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE ${clauses.join(' AND ')} ORDER BY completed_at DESC, created_at DESC LIMIT ?`, params).map(mapRun);
   }
 
+  /** 恢复只读取未结束运行，不受历史列表页数限制。 */
+  listInFlight(): AutomationRunRecord[] {
+    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running') ORDER BY accepted_at, id`).map(mapRun);
+  }
+
+  findAcceptedSubmission(run: AutomationRunRecord): { conversationId: string; submissionId: string } | undefined {
+    return this.db.get<{ conversationId: string; submissionId: string }>(
+      `SELECT s.conversation_id AS conversationId, s.id AS submissionId FROM conversation_submissions s
+       JOIN conversations c ON c.id = s.conversation_id WHERE s.idempotency_key = ? AND c.project_id = ? LIMIT 1`,
+      [`automation:${run.id}`, run.projectId],
+    );
+  }
+
   listDispatchable(limit = 10): AutomationRunRecord[] {
     return this.db
       .select<DbAutomationRunRow>(
         `SELECT ${runSelect} FROM automation_runs r WHERE r.status = 'queued' AND COALESCE(r.queue_position, 0) = 0
+       AND EXISTS (SELECT 1 FROM automation_tasks t WHERE t.id = r.automation_id AND t.status = 'active')
        AND NOT EXISTS (SELECT 1 FROM automation_runs active WHERE active.automation_id = r.automation_id AND active.project_id = r.project_id
          AND active.id <> r.id AND active.status IN ('dispatching', 'running')) ORDER BY r.accepted_at, r.id LIMIT ?`,
         [Math.max(1, Math.min(Math.trunc(limit), 100))],

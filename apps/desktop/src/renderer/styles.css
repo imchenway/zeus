@@ -4814,6 +4814,7 @@ a {
   white-space: nowrap;
 }
 .project-git-change-file-row {
+  padding-left: 8px;
   align-items: center;
   border-radius: 5px;
   display: flex;
@@ -4828,6 +4829,7 @@ a {
   background: var(--zeus-source-list-selected);
 }
 .project-git-change-file-row input {
+  flex-shrink: 0;
   height: 13px;
   margin: 0 6px 0 0;
   width: 13px;

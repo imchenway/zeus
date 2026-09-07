@@ -1,3 +1,5 @@
+import type { CodexModelCapability } from '@zeus/ai-runtime';
+import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
 import {
   checkAiCliAdapter,
   type CodexRemoteControlStatus,
@@ -151,6 +153,8 @@ import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
 import { registerProjectGitQueryRoutes } from './projectGitQueryRoutes.js';
 import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
+import { generateCodexCommitMessage } from './gitCommitCodexGeneration.js';
+import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
 import { registerReleaseUpdateApi } from './releaseUpdateApi.js';
 import { parseRuntimeArgs, RuntimeQueryApplication, runtimeSessionIsConfirmedTerminal, type RuntimeSettingsSnapshot, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
@@ -598,6 +602,66 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     now,
   });
   registerProjectGitQueryRoutes({ server, application: projectGitQueries });
+
+  server.get('/api/projects/:projectId/git/commit-models', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+    if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
+    const items = (await modelConnections.listSelectableModels())
+      .filter((model: SelectableConnectionModel) => model.available && model.enabled && model.runtimeAdapter === 'pi_sdk')
+      .map((model: SelectableConnectionModel) => ({ id: model.id, label: `${model.sourceName} · ${model.displayName}` }));
+    let warning = '';
+    try {
+      if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
+      const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
+      const account = await codexAppServerManager.readAccount();
+      if (!account.signedIn && account.requiresOpenaiAuth) throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
+      items.push(...capabilities.models.filter((model: CodexModelCapability) => model.raw.hidden !== true).map((model: CodexModelCapability) => ({ id: `codex:${model.model}`, label: `Codex · ${model.displayName || model.model}` })));
+    } catch (error) {
+      warning = redactSensitiveText(error instanceof Error ? error.message : 'Codex 模型加载失败。').text;
+    }
+    return { items, warning };
+  });
+
+  server.post(
+    '/api/projects/:projectId/git/commit-message',
+    { bodyLimit: 512_000 },
+    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryName?: unknown; stagedDiff?: unknown; files?: unknown; language?: unknown; modelRef?: unknown } }>, reply) => {
+      if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
+      const body = request.body;
+      if (
+        typeof body?.repositoryName !== 'string' ||
+        body.repositoryName.length > 1000 ||
+        (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000)) ||
+        typeof body.stagedDiff !== 'string' ||
+        body.stagedDiff.length > 100_000 ||
+        !Array.isArray(body.files) ||
+        body.files.length > 2000 ||
+        body.files.some((file) => typeof file !== 'string' || file.length > 4096)
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
+      }
+      try {
+        const input = {
+          repositoryName: body.repositoryName,
+          stagedDiff: redactSensitiveText(body.stagedDiff).text,
+          files: body.files as string[],
+          language: body.language === 'en' ? ('en' as const) : ('zh-CN' as const),
+          ...(typeof body.modelRef === 'string' ? { modelRef: body.modelRef } : {}),
+        };
+        if (input.modelRef?.startsWith('codex:')) {
+          if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
+          return await generateCodexCommitMessage(input, {
+            commandPath: currentCodexRuntimeCommandPath(),
+            codexHome: options.codexHome ?? dataLayout.codexHome,
+            ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+          });
+        }
+        return await generateGitCommitMessage(modelConnections, request.params.projectId, input);
+      } catch (error) {
+        const status = typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
+        return reply.code(status).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_FAILED', message: error instanceof Error ? error.message : 'AI 生成失败。' });
+      }
+    },
+  );
 
   const projectQueries = new ProjectQueryApplication({
     projects,
@@ -2773,7 +2837,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     server,
     tasks: automationTasks,
     runs: automationRuns,
-    save: () => db.save(),
+    db,
     kick: () => automationScheduler?.kick(),
     now,
   });
@@ -2839,67 +2903,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       tasks: automationTasks,
       runs: automationRuns,
       conversations,
+      submissions: conversationSubmissions,
       getProject: (projectId) => projects.getById(projectId),
       save: () => db.save(),
       now,
       publish: publishRealtimeEvent,
-      dispatch: async ({ run, snapshot, project }) => {
-        const digest = createHash('sha256').update(run.id).digest('hex').slice(0, 24);
-        if (snapshot.conversationMode === 'original') {
-          const originalConversation = snapshot.originalConversationId ? conversations.getById(snapshot.originalConversationId) : undefined;
-          if (!originalConversation || originalConversation.projectId !== project.id) throw nativeApiError('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_UNAVAILABLE', '原会话已不存在或不属于目标项目。');
-          if (originalConversation.archived) throw nativeApiError('ZEUS_AUTOMATION_DISPATCH_ORIGINAL_CONVERSATION_ARCHIVED', '原会话已归档，自动化不会自行恢复。');
-          const response = await executeConversationDispatchMessage({
-            params: { projectId: project.id, conversationId: originalConversation.id },
-            body: {
-              content: snapshot.prompt,
-              delivery: 'queue',
-              idempotencyKey: `automation:${run.id}`,
-              model: snapshot.modelId,
-              ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
-              ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
-              permissionMode: snapshot.permissionMode,
-            },
-            operationIdentity: `automation:${run.id}`,
-            providerWriteLifecycle: { markPrepared: async () => undefined, markRpcStarted: () => undefined },
-          });
-          const accepted = response.body as { conversationId: string; submissionId: string };
-          return { conversationId: accepted.conversationId, submissionId: accepted.submissionId };
-        }
-        const idempotencyKey = `automation:${run.id}`;
-        const connection = snapshot.modelSourceId === 'codex' ? undefined : modelConnections.listMetadata().find((candidate: { id: string }) => candidate.id === snapshot.modelSourceId);
-        const configuredModel = connection?.models.find((candidate: { id: string; runtimeAdapter?: string }) => candidate.id === snapshot.modelId);
-        const runtimeKind = configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : 'codex';
-        const result = await executeProjectConversationIdempotent(
-          project,
-          {
-            mode: 'create',
-            content: snapshot.prompt,
-            model: snapshot.modelSourceId === 'codex' ? snapshot.modelId : modelRef(snapshot.modelSourceId, snapshot.modelId),
-            agentKind: runtimeKind,
-            ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
-            ...(snapshot.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
-            permissionMode: snapshot.permissionMode,
-            collaborationMode: 'default',
-            clientUserMessageId: `automation-client-${digest}`,
-            ...(snapshot.skillId ? { skillReferences: [{ id: snapshot.skillId }] } : {}),
-            ...(snapshot.pluginIds.length > 0
-              ? {
-                  pluginReferences: snapshot.pluginIds.map((id) => ({
-                    kind: 'plugin',
-                    id,
-                  })),
-                }
-              : {}),
-          },
-          idempotencyKey,
-        );
-        const body = isNativeApiRecord(result.body) ? result.body : {};
-        const conversation = isNativeApiRecord(body.conversation) ? body.conversation : {};
-        const submission = isNativeApiRecord(body.submission) ? body.submission : {};
-        if (typeof conversation.id !== 'string' || typeof submission.id !== 'string') throw nativeApiError('ZEUS_AUTOMATION_ACCEPTANCE_INVALID', 'Automation conversation acceptance omitted durable identities.');
-        return { conversationId: conversation.id, submissionId: submission.id };
-      },
+      dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent }),
     });
     digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
       server,

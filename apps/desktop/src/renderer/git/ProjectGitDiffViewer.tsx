@@ -1,3 +1,4 @@
+import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { useEffect, useMemo, useRef, useState, type UIEvent as ReactUIEvent } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -160,6 +161,7 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
                 ),
               )}
             </div>
+            <GitPaneSeparator name="diff" label={props.zh ? '调整左右代码宽度' : 'Resize diff columns'} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" />
             <div ref={rightPaneRef} className="project-git-diff-side-pane" onScroll={(event) => syncVerticalScroll(event, leftPaneRef.current, syncingVerticalScrollRef)}>
               {alignedRows.map((row) =>
                 row.metadata ? (

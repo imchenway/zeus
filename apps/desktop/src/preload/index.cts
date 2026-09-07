@@ -161,8 +161,10 @@ contextBridge.exposeInMainWorld('zeus', {
   openTaskGitDeliveryConversation: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open-conversation', input),
   openProjectGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:project-git-diff:open', input),
   loadProjectGitWorkbench: (projectId: string) => ipcRenderer.invoke('zeus:project-git:load-workbench', projectId),
+  loadProjectGitHistory: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-history', input),
   loadProjectGitCommit: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-commit', input),
   loadProjectGitComparisonDiff: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-comparison', input),
+  cancelProjectGitAction: (repositoryId: string) => ipcRenderer.invoke('zeus:project-git:cancel-action', repositoryId),
   executeProjectGitAction: (input: unknown) => {
     const candidate = input && typeof input === 'object' && !Array.isArray(input) ? (input as { repositoryId?: unknown }) : {};
     return invokeMainCommand('zeus:project-git:execute-action', 'desktop.project_git.execute_action', 'git_repository', mainCommandScopeId(candidate.repositoryId, 'project-git'), input);

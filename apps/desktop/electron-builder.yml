@@ -49,7 +49,7 @@ mac:
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.inherit.plist
   target:
-    - dmg
+    - dir
 dmg:
   title: Zeus
   artifactName: Zeus-${version}-${arch}.dmg

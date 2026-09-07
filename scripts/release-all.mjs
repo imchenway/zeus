@@ -194,7 +194,7 @@ function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isol
   const parent = captureInDirectory(isolatedRepository, 'git', ['rev-parse', `${isolatedHead}^`], true);
   if (parent.status !== 0 || parent.stdout.trim() !== sourceHead) return false;
   const changedPaths = gitInDirectory(isolatedRepository, ['diff-tree', '--no-commit-id', '--name-only', '-r', isolatedHead]).split(/\r?\n/u).filter(Boolean);
-  const versionNotes = changedPaths.filter((path) => /^docs\/releases\/v\d+\.\d+\.\d+\.md$/u.test(path));
+  const versionNotes = changedPaths.filter((path) => /^releases\/v\d+\.\d+\.\d+\.md$/u.test(path));
   return changedPaths.length === 3 && releaseFiles.every((path) => changedPaths.includes(path)) && versionNotes.length === 1;
 }
 
@@ -218,7 +218,7 @@ function seedIsolatedReleaseState(isolatedRepository, sourceHead) {
   if (!remoteMainSha || captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceState.releaseCommit, remoteMainSha], true).status === 0) {
     return;
   }
-  const notesSource = join(isolatedRepository, 'docs', 'releases', `${sourceState.tag}.md`);
+  const notesSource = join(isolatedRepository, 'releases', `${sourceState.tag}.md`);
   if (!existsSync(notesSource)) throw new Error(`隔离恢复缺少仓库 Release notes：${notesSource}`);
   const notesDirectory = join(stateDirectory, 'notes');
   mkdirSync(notesDirectory, { recursive: true, mode: 0o700 });
@@ -553,7 +553,7 @@ function assertResumeWorktree(state) {
   const status = git(['status', '--short']);
   if (!status) return;
   if (!['initialized', 'notes_generated'].includes(state.phase)) throw new Error(`恢复发布要求工作区干净：\n${status}`);
-  const allowed = new Set([...releaseFiles, `docs/releases/${state.tag}.md`]);
+  const allowed = new Set([...releaseFiles, `releases/${state.tag}.md`]);
   const unexpected = status
     .split(/\r?\n/u)
     .map((line) => line.slice(3).split(' -> ').at(-1))
@@ -635,7 +635,7 @@ function formatReleaseCandidate(state) {
 }
 
 function syncReleaseNotesSnapshot(state) {
-  const notesTarget = join(repositoryRoot, 'docs', 'releases', `${state.tag}.md`);
+  const notesTarget = join(repositoryRoot, 'releases', `${state.tag}.md`);
   if (!existsSync(notesTarget)) throw new Error(`恢复发布缺少仓库 Release notes：${notesTarget}`);
   const notesDirectory = join(state.stateDirectory, 'notes');
   mkdirSync(notesDirectory, { recursive: true, mode: 0o700 });
@@ -670,7 +670,7 @@ async function ensureReleaseCommit(state) {
     if (currentHead !== state.releaseCommit) throw new Error(`本地 main 已偏离发布提交：expected=${state.releaseCommit} actual=${currentHead}`);
     return;
   }
-  const notesTarget = `docs/releases/${state.tag}.md`;
+  const notesTarget = `releases/${state.tag}.md`;
   if (currentHead !== state.sourceHead && reconstructReleaseCommit(state, currentHead, notesTarget)) return;
   if (currentHead === state.sourceHead && readMatchingPackageVersion() === state.version && isPreparedWorktree(state, notesTarget)) {
     commitPreparedCandidate(state, notesTarget);
@@ -832,7 +832,7 @@ function buildFinalResult(state) {
     '',
     `- Release notes 范围：${state.baseTag}..${state.sourceHead}`,
     `- 发布提交：${state.releaseCommit}`,
-    `- main CI：${state.ciUrl ?? '快速发布未串行等待；阻塞级 typecheck 已由 Release Workflow 执行'}`,
+    `- main CI：${state.ciUrl ?? '快速发布未串行等待；verify:publish 已由 Release Workflow 执行'}`,
     `- GitHub Release：https://github.com/${repository}/releases/tag/${state.tag}`,
     `- 本地快速检查摘要：${state.gateSummaryPath}`,
     `- 公开资产回验：${state.publishResultPath}`,

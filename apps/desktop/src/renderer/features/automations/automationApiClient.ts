@@ -16,18 +16,22 @@ export interface AutomationApiClient {
 export function createAutomationApiClient(transport: LocalApiTransport): AutomationApiClient {
   return {
     loadAutomations: async () => (await transport.request<{ items: AutomationTaskRecord[] }>('/api/automations')).items,
-    createAutomation: (input) => transport.request('/api/automations', jsonRequest('POST', input)),
-    updateAutomation: (automationId, expectedRevision, input) => transport.request(`/api/automations/${encodeURIComponent(automationId)}`, jsonRequest('PATCH', { ...input, expectedRevision })),
-    runAutomation: async (automationId) => (await transport.request<{ items: AutomationRunRecord[] }>(`/api/automations/${encodeURIComponent(automationId)}/run`, jsonRequest('POST', {}))).items,
-    setAutomationStatus: (automationId, status) => transport.request(`/api/automations/${encodeURIComponent(automationId)}/status`, jsonRequest('POST', { status })),
-    setAutomationFullAccessGrant: (automationId, expectedRevision, granted) => transport.request(`/api/automations/${encodeURIComponent(automationId)}/full-access-grant`, jsonRequest('POST', { expectedRevision, granted })),
-    deleteAutomation: (automationId) => transport.request(`/api/automations/${encodeURIComponent(automationId)}`, { method: 'DELETE' }),
+    createAutomation: (input) => transport.request('/api/automations', automationRequest('POST', input)),
+    updateAutomation: (automationId, expectedRevision, input) => transport.request(`/api/automations/${encodeURIComponent(automationId)}`, automationRequest('PATCH', { ...input, expectedRevision })),
+    runAutomation: async (automationId) => (await transport.request<{ items: AutomationRunRecord[] }>(`/api/automations/${encodeURIComponent(automationId)}/run`, automationRequest('POST', {}))).items,
+    setAutomationStatus: (automationId, status) => transport.request(`/api/automations/${encodeURIComponent(automationId)}/status`, automationRequest('POST', { status })),
+    setAutomationFullAccessGrant: (automationId, expectedRevision, granted) => transport.request(`/api/automations/${encodeURIComponent(automationId)}/full-access-grant`, automationRequest('POST', { expectedRevision, granted })),
+    deleteAutomation: (automationId) => transport.request(`/api/automations/${encodeURIComponent(automationId)}`, automationRequest('DELETE', null)),
     loadAutomationInbox: async (input = {}) => {
       const query = new URLSearchParams();
       if (input.unreadOnly) query.set('unread', 'true');
       if (input.status) query.set('status', input.status);
       return (await transport.request<{ items: AutomationRunRecord[] }>(`/api/automations/inbox${query.size ? `?${query.toString()}` : ''}`)).items;
     },
-    acknowledgeAutomationRun: (runId) => transport.request(`/api/automation-runs/${encodeURIComponent(runId)}/read`, jsonRequest('POST', {})),
+    acknowledgeAutomationRun: (runId) => transport.request(`/api/automation-runs/${encodeURIComponent(runId)}/read`, automationRequest('POST', {})),
   };
+}
+
+function automationRequest(method: 'POST' | 'PATCH' | 'DELETE', body: unknown): RequestInit {
+  return { ...jsonRequest(method, body), headers: { 'idempotency-key': crypto.randomUUID() } };
 }
