@@ -268,9 +268,11 @@ export function mergeConversationContentV2(snapshot: NativeConversationSnapshot,
     matched = true;
     const content = parseProjection(text, false);
     const processDetail = item.payload.v2ContentKind === 'process_detail';
+    // 思考全文没有可读内容时保持为空，不能重新沿用预览阶段的通用标题。
+    const fallback = item.type === 'reasoning' ? '' : processDetail ? item.text : text;
     return {
       ...item,
-      text: projectionText(content, processDetail ? item.text : text, false),
+      text: projectionText(content, fallback, false),
       payload: {
         ...item.payload,
         ...(processDetail ? { detail: content } : { content }),
@@ -509,7 +511,8 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // Snapshot V2 为控制首屏体积会把结构化模型正文投影为纯文本，reasoningSummary
     // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
-    const text = projectionText(content, item.content.preview, item.content.truncated);
+    // 空思考历史不以结构化预览代替正文，与过程分页和全文恢复保持同一口径。
+    const text = projectionText(content, reasoning ? '' : item.content.preview, item.content.truncated);
     const expertStatus = item.expertExecutionId && typeof contentRecord?.expertStatus === 'string' ? contentRecord.expertStatus : null;
     const persistedPlan = item.phase === 'plan';
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
@@ -698,17 +701,22 @@ function startsWithToolCallProjection(preview: string): boolean {
   return /^\s*\{\s*"type"\s*:\s*"tool_call"(?:\s*[,}])/u.test(preview);
 }
 
+/** 思考只投影实际内容；其他过程仍可用标题说明操作，运行进度由独立状态行表达。 */
 function processProjectionText(item: NativeConversationProcessV2Item, detail: unknown): string {
-  const projected = projectionText(detail, item.title, item.detail.truncated);
+  // 同时覆盖完整详情和截断预览，避免任一读取路径把标题作为摘要。
+  const fallback = item.kind === 'reasoning' ? '' : item.title;
+  // 可解析详情优先保留真实文字；截断的结构化内容继续按已有字段提取。
+  const projected = projectionText(detail, fallback, item.detail.truncated);
   if (!item.detail.truncated || typeof detail !== 'string') return projected;
   const preferredFields = item.kind === 'command' ? ['command'] : item.kind === 'tool' ? ['name', 'toolName', 'query'] : item.kind === 'reasoning' ? ['thinking', 'text', 'summary'] : ['message', 'text', 'summary'];
   for (const field of preferredFields) {
     const value = leadingJsonString(detail, field);
     if (value?.trim()) return value.trim();
   }
-  return item.title;
+  return fallback;
 }
 
+/** 截断预览仅为非空文字补省略号，空白内容仍交由调用方决定是否展示。 */
 function parseProjection(preview: string, truncated: boolean): unknown {
   if (!truncated) {
     try {
@@ -718,7 +726,7 @@ function parseProjection(preview: string, truncated: boolean): unknown {
     }
   }
   const text = leadingJsonText(preview);
-  return text === null ? preview : { text: `${text}…`, truncated: true };
+  return text === null ? preview : { text: text.trim() ? `${text}…` : '', truncated: true };
 }
 
 function leadingJsonText(preview: string): string | null {
@@ -735,11 +743,12 @@ function leadingJsonString(preview: string, field: string): string | null {
   }
 }
 
+/** 有实际文字才标记截断；空回退值不生成单独的省略号占位。 */
 function projectionText(value: unknown, fallback: string, truncated: boolean): string {
   const fragments = textFragments(value);
   const text = fragments.join('\n\n').trim();
   if (text) return truncated && !text.endsWith('…') ? `${text}…` : text;
-  return truncated ? `${fallback.trim()}…` : fallback;
+  return truncated && fallback.trim() ? `${fallback.trim()}…` : fallback;
 }
 
 function textFragments(value: unknown, depth = 0): string[] {
