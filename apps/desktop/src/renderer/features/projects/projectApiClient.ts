@@ -13,8 +13,11 @@ import type {
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildSettingsCommandRequest, settingsClientCommandTypes } from '../settings/settingsCommandClient.js';
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
+import type { ProjectRepositoryDiscovery } from '@zeus/shared';
 
 export interface ProjectApiClient {
+  /** 接纳后台本地仓库发现，立即返回状态，不等待扫描。 */
+  refreshProjectRepositories: (projectId: string) => Promise<ProjectRepositoryDiscovery>;
   loadProjects: (input?: LoadProjectsRequest) => Promise<ProjectRecord[]>;
   loadProject: (projectId: string) => Promise<ProjectRecord>;
   loadProjectConfig: (projectId: string) => Promise<ProjectConfig>;
@@ -38,6 +41,17 @@ export interface ProjectApiClient {
 /** 项目上下文的公开查询/命令映射；路径和 HTTP method 不再泄漏给页面 controller。 */
 export function createProjectApiClient(transport: LocalApiTransport): ProjectApiClient {
   return {
+    refreshProjectRepositories: async (projectId) => {
+      // 请求信封在网络重连时复用，同一次刷新不会重复接纳。
+      const body = await buildWorkManagementCommandRequest({
+        commandType: workManagementClientCommandTypes.projectRepositoriesRefresh,
+        scopeKind: 'project',
+        scopeId: () => projectId,
+        operationPrefix: 'project_repositories_refresh_',
+        value: {},
+      });
+      return transport.request<ProjectRepositoryDiscovery>(`${projectPath(projectId)}/git/repositories/refresh`, jsonRequest('POST', body));
+    },
     loadProjects: (input) => transport.request<ProjectRecord[]>(`/api/projects${input?.query ? `?query=${encodeURIComponent(input.query)}` : ''}`),
     loadProject: (projectId) => transport.request<ProjectRecord>(projectPath(projectId)),
     loadProjectConfig: (projectId) => transport.request<ProjectConfig>(`${projectPath(projectId)}/config`),

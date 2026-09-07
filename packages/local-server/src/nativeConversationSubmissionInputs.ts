@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { realpathSync, statSync } from 'node:fs';
@@ -6,6 +7,8 @@ import type { ConversationDispatchContext, NativeConversationAttachmentInput, Na
 import { coordinatorError, isRecord, parseJsonRecord } from './codexNativeConversationPolicy.js';
 
 export interface PersistedSubmissionInput {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   text: string;
   requestedServiceTier?: string | null;
   serviceTierDowngrade?: {

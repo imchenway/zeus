@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
@@ -64,6 +65,8 @@ export class WorkspaceGitCommandApplicationError extends Error {
     message: string,
     readonly statusCode: 400 | 409 | 500,
     readonly recoveryRequired = false,
+    /** 保留底层错误原因，不改变原有操作结果和恢复限制。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
     super(message);
   }
@@ -294,7 +297,7 @@ function isReceiptConflict(error: unknown): boolean {
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
-    return { code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
+    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText) };
 }
@@ -315,16 +318,17 @@ function boundedScalar(value: string | number): string | number {
 
 function outcomeUnknown(cause: unknown, redactSensitiveText: (value: string) => { text: string }): WorkspaceGitCommandApplicationError {
   const detail = boundedErrorMessage(cause instanceof Error ? cause.message : String(cause), redactSensitiveText);
-  return new WorkspaceGitCommandApplicationError('ZEUS_WORKSPACE_GIT_COMMAND_OUTCOME_UNKNOWN', `Workspace Git result is unknown after the external write started: ${detail}`, 409, true);
+  return new WorkspaceGitCommandApplicationError('ZEUS_WORKSPACE_GIT_COMMAND_OUTCOME_UNKNOWN', `Workspace Git result is unknown after the external write started: ${detail}`, 409, true, userFacingErrorCause(cause));
 }
 
-export function workspaceGitCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function workspaceGitCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof WorkspaceGitCommandApplicationError) {
     return {
       statusCode: error.statusCode,
       payload: {
         error: error.code,
         message: error.message,
+        cause: error.cause,
         ...(error.recoveryRequired ? { recoveryRequired: true as const } : {}),
       },
     };
@@ -333,5 +337,5 @@ export function workspaceGitCommandHttpError(error: unknown): { statusCode: numb
   if (!isCommandDeliveryError(error)) return null;
   const recoveryRequired = error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED';
   const statusCode = error.code === 'ZEUS_COMMAND_DELIVERY_NOT_FOUND' ? 404 : error.code === 'ZEUS_COMMAND_DELIVERY_INVALID_ARGUMENT' ? 400 : error.code === 'ZEUS_COMMAND_DELIVERY_SCHEMA_CONFLICT' ? 500 : 409;
-  return { statusCode, payload: { error: error.code, message: error.message, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+  return { statusCode, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
 }

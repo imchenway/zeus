@@ -4,6 +4,7 @@ import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigS
 import type { AppendAuditLogInput, ProjectRepository, ProjectSharedPathRepository, TaskTemplateRepository, ZeusProjectRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
 import type { WorkManagementTaskCommandContext } from './workManagementTaskCommandRoutes.js';
 import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
+import type { ProjectRepositoryDiscoveryService } from './projectRepositoryDiscovery.js';
 
 export interface CreateProjectCommandInput {
   name: string;
@@ -31,10 +32,14 @@ export interface SetProjectDefaultTemplateCommandInput {
 }
 
 interface ProjectOperationPorts {
+  /** 项目命令提交后异步发现本地仓库。 */
+  repositoryDiscovery: Pick<ProjectRepositoryDiscoveryService, 'request'>;
   projects: Pick<ProjectRepository, 'archive' | 'create' | 'delete' | 'getById' | 'prepareArchive' | 'restore' | 'setDefaultTemplate' | 'update'>;
   sharedPaths: Pick<ProjectSharedPathRepository, 'replaceForProject'>;
   templates: Pick<TaskTemplateRepository, 'getById'>;
   saveProjectConfig(projectId: string, config: ProjectConfigSnapshot): void;
+  /** 为新项目写入经过目录验证的默认模型及可用模型集合。 */
+  stageProjectModelSelection(projectId: string, explicitModel: string | null): void;
   stageProjectManagementStatus(projectId: string): void;
   activateProjectManagementStatus(projectId: string): void;
   appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void;
@@ -55,7 +60,9 @@ export class WorkManagementProjectOperations {
     if (!projectConfig) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
     const project = this.ports.projects.create({ id: projectId, name: input.name, localPath, description: input.description, note: input.note });
     this.ports.saveProjectConfig(project.id, { ...projectConfig, projectId: project.id });
+    this.ports.repositoryDiscovery.request(project, context.commandId);
     this.ports.stageProjectManagementStatus(project.id);
+    this.ports.stageProjectModelSelection(project.id, projectConfig.defaultModel);
     this.audit(context, 'project.config.detected', project, {
       language: projectConfig.language.primary,
       packageManagers: projectConfig.dependencies.packageManagers,
@@ -75,6 +82,7 @@ export class WorkManagementProjectOperations {
     const existing = this.requireProject(projectId);
     const localPath = typeof input.localPath === 'string' && input.localPath !== existing.localPath ? requireReadableProjectDirectory(input.localPath) : undefined;
     const updated = this.ports.projects.update(existing.id, { ...input, localPath });
+    if (localPath) this.ports.repositoryDiscovery.request(updated, context.commandId);
     this.audit(context, 'project.updated', updated, { name: updated.name, localPath: updated.localPath });
     this.ports.afterCommit(() => this.ports.publishRealtimeEvent('project.updated', { projectId: updated.id, name: updated.name, localPath: updated.localPath }));
     return updated;
@@ -90,6 +98,11 @@ export class WorkManagementProjectOperations {
     );
     this.audit(context, 'project.workspace_config.updated', project, { sharedWritablePaths: savedSharedPaths.map((entry) => entry.relativePath) });
     return { projectId: project.id, containerPath: project.localPath, sharedWritablePaths: savedSharedPaths };
+  }
+
+  /** 显式刷新只接纳后台发现，不在 HTTP 响应中等待目录扫描。 */
+  refreshRepositories(projectId: string, context: WorkManagementTaskCommandContext) {
+    return this.ports.repositoryDiscovery.request(this.requireProject(projectId), context.commandId);
   }
 
   remove(projectId: string, context: WorkManagementTaskCommandContext): ZeusProjectRecord {

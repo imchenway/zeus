@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type {
   DigitalEmployeeAutomationActionKind,
   DigitalEmployeeAutomationTriggerKind,
@@ -213,8 +214,9 @@ export function nullable(value: string): string | null {
   return normalized ? normalized : null;
 }
 
-export function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
+/** 显示当前语言的原因，并保留可展开的原始详情。 */
+export function errorMessage(error: unknown, language: 'zh-CN' | 'en'): string {
+  return reportApplicationError(error, { language });
 }
 
 export function formatDateTime(value: string | null | undefined, language: DigitalEmployeeLanguage): string {
@@ -227,7 +229,7 @@ export function formatDateTime(value: string | null | undefined, language: Digit
 export function executionStatusLabel(status: DigitalEmployeeExecutionStatus, language: DigitalEmployeeLanguage): string {
   const zh: Record<DigitalEmployeeExecutionStatus, string> = {
     queued: '排队中',
-    dispatching: '正在派发',
+    dispatching: '正在启动',
     running: '处理中',
     waiting: '等待处理',
     delivery_pending: '正在交付',
@@ -238,7 +240,7 @@ export function executionStatusLabel(status: DigitalEmployeeExecutionStatus, lan
   };
   const en: Record<DigitalEmployeeExecutionStatus, string> = {
     queued: 'Queued',
-    dispatching: 'Dispatching',
+    dispatching: 'Starting',
     running: 'Running',
     waiting: 'Waiting',
     delivery_pending: 'Delivering',

@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 import type { ConversationApiClient } from './conversationApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
@@ -9,6 +10,8 @@ export interface ConversationQuerySnapshot {
   archivedLoadState: 'idle' | 'loading' | 'ready' | 'error';
   restoringConversationId: string | null;
   error: string | null;
+  /** 可选底层原因供界面生成本地化提示，原错误字符串仍保留。 */
+  errorCause?: UserFacingErrorCause | null;
   revision: number;
 }
 
@@ -26,6 +29,7 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
       archivedLoadState: 'idle',
       restoringConversationId: null,
       error: null,
+      errorCause: null,
       revision: 0,
     });
   }
@@ -41,7 +45,7 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
   }
 
   setArchived(items: readonly NativeConversationChoice[]): void {
-    this.publish({ ...this.snapshot, archived: items, archivedLoadState: 'ready', error: null, revision: this.snapshot.revision + 1 });
+    this.publish({ ...this.snapshot, archived: items, archivedLoadState: 'ready', error: null, errorCause: null, revision: this.snapshot.revision + 1 });
   }
 
   setArchivedLoadState(archivedLoadState: ConversationQuerySnapshot['archivedLoadState']): void {
@@ -54,13 +58,13 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
 
   async loadArchived(): Promise<readonly NativeConversationChoice[]> {
     const client = this.requireClient();
-    this.publish({ ...this.snapshot, archivedLoadState: 'loading', error: null });
+    this.publish({ ...this.snapshot, archivedLoadState: 'loading', error: null, errorCause: null });
     try {
       const result = await client.loadArchivedConversations();
       this.setArchived(result.choices);
       return result.choices;
     } catch (error) {
-      this.publish({ ...this.snapshot, archivedLoadState: 'error', error: errorMessage(error) });
+      this.publish({ ...this.snapshot, archivedLoadState: 'error', error: errorMessage(error), errorCause: userFacingErrorCause(error) });
       throw error;
     }
   }

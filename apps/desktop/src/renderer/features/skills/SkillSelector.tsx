@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useEffect, useMemo, useState } from 'react';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
@@ -41,7 +42,7 @@ export function SkillSelector(props: {
         if (!active) return;
         setCatalog(next);
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : zh ? '无法读取 Skill' : 'Unable to load skills');
+        if (active) setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
       } finally {
         if (active) setLoading(false);
       }

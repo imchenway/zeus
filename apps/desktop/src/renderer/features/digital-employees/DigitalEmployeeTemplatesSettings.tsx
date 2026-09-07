@@ -36,7 +36,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       setLoadState('ready');
     } catch (cause) {
       setLoadState('failed');
-      setError(errorMessage(cause, zh ? '无法读取数字员工模板。' : 'Could not load digital employee templates.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
   }, [props.client, zh]);
 
@@ -74,7 +74,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       setEditorTarget({ kind: 'template', record });
       setDraft(templateDraft(record));
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '保存数字员工模板失败。' : 'Could not save the digital employee template.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusy(false);
     }
@@ -92,7 +92,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       setEditorTarget(null);
       setDraft({ ...emptyTemplateDraft });
     } catch (cause) {
-      setError(errorMessage(cause, zh ? '删除数字员工模板失败。' : 'Could not delete the digital employee template.'));
+      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusy(false);
     }
@@ -113,7 +113,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       <header className="digital-employee-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '数字员工' : 'Digital employees'}</h2>
-          <p>{zh ? '维护可复用的岗位基线。模板不会获得任何项目访问权；分配到项目后才形成独立员工配置。' : 'Maintain reusable role baselines. Templates gain no project access until assigned as a project employee.'}</p>
+          <p>{zh ? '保存可重复使用的岗位和工作要求。将模板添加到项目后，再为该员工设置项目权限。' : 'Save reusable roles and work instructions. Add a template to a project, then configure that employee’s project permissions.'}</p>
         </span>
         <span className="digital-employee-actions">
           <Button variant="secondary" size="compact" busy={loadState === 'loading'} onClick={() => void loadTemplates()}>
@@ -179,11 +179,11 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <small>
                 {readOnly
                   ? zh
-                    ? '内置模板是只读基线；可将它分配到项目后覆盖。'
-                    : 'Built-in templates are read-only baselines. Override them after project assignment.'
+                    ? '内置模板不能直接修改。添加到项目后，可以调整该员工的配置。'
+                    : 'Built-in templates cannot be edited directly. Add one to a project to customize that employee’s settings.'
                   : zh
-                    ? '模板更新不会静默覆盖现有项目员工。'
-                    : 'Template changes never silently overwrite existing project employees.'}
+                    ? '更新模板不会改变已添加到项目的员工配置。'
+                    : 'Updating a template does not change employees already added to projects.'}
               </small>
               <span className="digital-employee-actions">
                 {editorTarget.kind === 'template' && !editorTarget.record.builtIn ? (
@@ -237,7 +237,7 @@ function TemplateEditor(props: {
       </label>
       <section className="digital-employee-form-section">
         <header>
-          <strong>{zh ? 'Agent 基础配置' : 'Agent configuration'}</strong>
+          <strong>{zh ? 'AI 工作配置' : 'AI work settings'}</strong>
           <small>{zh ? '与项目数字员工和单次执行使用相同的模型、联动选项、Skill 与提示词字段。' : 'Uses the same model, linked options, skills, and prompt fields as project employees and individual runs.'}</small>
         </header>
         <AgentExecutionConfigFields value={props.draft} models={props.models} skillClient={props.skillClient} language={props.language} readOnly={props.readOnly} onChange={patch} />

@@ -67,7 +67,7 @@ export function PlanImplementationRequestSurface(props: {
             <textarea
               ref={inputRef}
               value={feedback}
-              placeholder={zh ? '告诉 Codex 应该如何做得不同' : 'Tell Codex what to do differently'}
+              placeholder={zh ? '说明希望如何修改计划' : 'Describe how you would like to change the plan'}
               onChange={(event) => setFeedback(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {

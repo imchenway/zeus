@@ -1,3 +1,4 @@
+import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
 export * from './codexUsage.js';
@@ -10,6 +11,21 @@ export * from './conversationDispatchWire.js';
 export * from './conversationSnapshotV2Wire.js';
 export * from './im.js';
 export * from './skillIdentity.js';
+export * from './userFacingError.js';
+
+/** 项目本地仓库发现状态；完成时间只代表当前目录最近一次完整扫描。 */
+export interface ProjectRepositoryDiscovery {
+  /** 本次发现所属的项目。 */
+  projectId: string;
+  /** 已规范化的项目目录，防止目录变更后接受旧结果。 */
+  localPath: string;
+  /** 未开始、后台进行中、完整完成或失败。 */
+  status: 'not_started' | 'running' | 'completed' | 'failed';
+  /** 最近一次完整扫描时间；刷新失败时保留。 */
+  completedAt: string | null;
+  /** 本次失败的可读原因，成功或进行中时为空。 */
+  error: string | null;
+}
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
@@ -462,6 +478,7 @@ export * from './conversationResources.js';
 export * from './portableConversationContext.js';
 export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';
+export * from './assistantMessage.js';
 export * from './sourceLanguage.js';
 
 /** 禅道对象类型只从链接结构识别；Zeus 不会主动调用禅道接口。 */
@@ -547,6 +564,8 @@ export interface SaveZentaoInstanceRequest {
 export type ZentaoInstanceVerifyCode = 'verified' | 'password_missing' | 'auth_failed' | 'api_unavailable' | 'network_failed' | 'bad_request';
 
 export interface ZentaoInstanceVerifyResult {
+  /** 保留检查失败的实际原因，旧检查结果和错误码继续兼容。 */
+  cause?: UserFacingErrorCause;
   ok: boolean;
   code: ZentaoInstanceVerifyCode;
   checkedAt: string;

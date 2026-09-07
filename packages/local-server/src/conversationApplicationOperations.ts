@@ -1,3 +1,5 @@
+import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
 import {
@@ -796,6 +798,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ...(options.includeRecoveryPayload && Array.isArray(input.browserComments) && input.browserComments.length ? { browserComments: input.browserComments } : {}),
       ...(options.includeRecoveryPayload && typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
       ...(isNativeApiRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
+      ...(isNativeApiRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer } : {}),
       expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
       clientUserMessageId: submission.clientMessageId,
       position: submission.queuePosition,
@@ -807,7 +810,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     };
   }
 
-  function toNativeSubmissionError(errorJson: string | null): { code: string; message: string; recoveryRequired: boolean } | null {
+  function toNativeSubmissionError(errorJson: string | null): { code: string; message: string; recoveryRequired: boolean; cause?: UserFacingErrorCause } | null {
     if (!errorJson) return null;
     const parsed = parseJsonObject(errorJson);
     const code = typeof parsed.code === 'string' && parsed.code.trim() ? parsed.code : 'ZEUS_NATIVE_SUBMISSION_FAILED';
@@ -815,6 +818,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return {
       code,
       message,
+      ...(parsed.cause ? { cause: userFacingErrorCause(parsed.cause) } : {}),
       recoveryRequired: parsed.recoveryRequired === true || code.includes('RECOVERY') || code.includes('WORKTREE_UNAVAILABLE'),
     };
   }
@@ -1202,6 +1206,36 @@ export function createConversationApplicationOperations(dependencies: Conversati
     reservedSubmissionId?: string,
   ) {
     let delivery = body.delivery ?? 'queue';
+    // 回答来自已落账的问题，客户端不能伪造问题内容、轮次或发送目标。
+    let questionAnswer: AsyncQuestionAnswer | undefined;
+    if (body.questionAnswer !== undefined) {
+      const answer = body.questionAnswer;
+      if (!isNativeApiRecord(answer) || typeof answer.providerItemId !== 'string' || typeof answer.providerTurnId !== 'string' || (answer.asNewMessage !== undefined && typeof answer.asNewMessage !== 'boolean')) {
+        throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '问题回答缺少有效的问题和轮次身份。');
+      }
+      const source = conversationProviderItems.listByConversation(conversation.id).find((item) => item.providerItemId === answer.providerItemId && item.providerTurnId === answer.providerTurnId);
+      const questions = source?.itemType === 'agentMessage' && source.status === 'completed' ? asyncMessageQuestions(parseJsonObject(source.payloadJson)) : [];
+      const validation = validateCanonicalRequestUserInputAnswers({ questions }, answer.answers);
+      if (!questions.length || validation || !Object.keys(answer.answers ?? {}).length) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', validation ?? '无法确认原问题及完整回答。');
+      questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
+      content = formatAsyncQuestionAnswer(questions, questionAnswer.answers);
+      if ((questionAnswer.asNewMessage ? 'queue' : 'steer_now') !== delivery || (!questionAnswer.asNewMessage && body.expectedTurnId !== questionAnswer.providerTurnId)) {
+        throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答必须进入原轮次；作为新消息发送需要明确选择。');
+      }
+      // 不同页面的重复提交也复用原答复；未知送达结果不能被重复点击绕过。
+      const existing = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
+        const previous = parseJsonObject(submission.inputJson).questionAnswer;
+        return (
+          isNativeApiRecord(previous) && previous.providerItemId === questionAnswer!.providerItemId && previous.providerTurnId === questionAnswer!.providerTurnId && Boolean(previous.asNewMessage) === Boolean(questionAnswer!.asNewMessage)
+        );
+      });
+      if (existing) {
+        if (parseJsonObject(existing.inputJson).text !== content) throw nativeApiError('ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED', '该问题已有另一份回答，请等待送达确认后使用普通消息补充。');
+        if (existing.status === 'paused') throw nativeApiError('ZEUS_NATIVE_RECOVERY_REQUIRED', '上一份回答的送达结果尚未确认，请先恢复会话。');
+        if (existing.status === 'cancelled' || existing.status === 'failed') throw nativeApiError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
+        if (existing.status !== 'deleted') return toNativeDurableAcceptance(stableOperationId, idempotencyKey, conversation, existing);
+      }
+    }
     if (delivery !== 'queue' && delivery !== 'steer_now') throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Message delivery must be queue or steer_now.');
     const project = projects.getById(conversation.projectId);
     if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
@@ -1261,7 +1295,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       const activeTurn = [...conversationTurns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
       if (!expectedTurnId || activeTurn?.providerTurnId !== expectedTurnId) {
-        throw nativeApiError('ZEUS_NATIVE_TURN_MISMATCH', 'steer_now requires the exact currently active provider turn id.');
+        throw nativeApiError(
+          questionAnswer ? 'ZEUS_ASYNC_QUESTION_TURN_ENDED' : 'ZEUS_NATIVE_TURN_MISMATCH',
+          questionAnswer ? '原轮次已结束，回答草稿已保留，请选择作为新消息发送。' : 'steer_now requires the exact currently active provider turn id.',
+        );
       }
       // UI 可能仍停留在旧活动态；只要正式正文或计划已经完成，本次输入就无损降级为普通下一轮。
       // 正式计划由已经落账的实施请求指向，普通过程计划不关闭引导窗口。
@@ -1274,8 +1311,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
             (item.providerTurnId === expectedTurnId || item.turnId === activeTurn.id) &&
             item.status === 'completed' &&
             item.textContent.trim().length > 0 &&
-            ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id)),
+            ((item.itemType === 'agentMessage' && classifyAssistantMessage(parseJsonObject(item.payloadJson), item.phase) === 'final') || formalPlanItemIds.has(item.id)),
         );
+      if (completedOutput && questionAnswer) throw nativeApiError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已交付，回答草稿已保留，请选择作为新消息发送。');
       if (completedOutput) delivery = 'queue';
     }
     let selectedModel: string | null = null;
@@ -1363,6 +1401,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(permissionMode ? { permissionMode } : {}),
             idempotencyKey,
             clientUserMessageId,
+            ...(questionAnswer ? { questionAnswer } : {}),
             attachments,
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
@@ -1381,6 +1420,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           expectedTurnId: expectedTurnId!,
           idempotencyKey,
           clientUserMessageId,
+          ...(questionAnswer ? { questionAnswer } : {}),
           providerWriteLifecycle,
         });
       }
@@ -1397,6 +1437,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           expectedTurnId: expectedTurnId!,
           idempotencyKey,
           clientUserMessageId,
+          ...(questionAnswer ? { questionAnswer } : {}),
           providerWriteLifecycle,
         });
       }
@@ -1427,6 +1468,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             permissionMode: permissionMode ?? conversation.permissionMode,
             idempotencyKey,
             clientUserMessageId,
+            ...(questionAnswer ? { questionAnswer } : {}),
             attachments,
             allowedAttachmentRoots: trustedConversationAttachmentRoots,
             workMode: collaborationMode ?? conversation.collaborationMode,
@@ -1454,6 +1496,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           collaborationMode: collaborationMode ?? conversation.collaborationMode,
           idempotencyKey,
           clientUserMessageId,
+          ...(questionAnswer ? { questionAnswer } : {}),
           attachments,
           ...((selectedSkill ?? conversationSkill) ? { skill: selectedSkill ?? conversationSkill! } : {}),
           ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
@@ -1483,6 +1526,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
         idempotencyKey,
         clientUserMessageId,
+        ...(questionAnswer ? { questionAnswer } : {}),
         deferDispatch: true,
         providerWriteLifecycle,
         ...(segmentLifecycle ? { segmentLifecycle } : {}),
@@ -1494,6 +1538,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       db.execute('UPDATE conversation_messages SET metadata_json = ? WHERE conversation_id = ? AND client_message_id = ?', [
         JSON.stringify({
           clientUserMessageId,
+          ...(questionAnswer ? { questionAnswer } : {}),
           delivery,
           attachments,
           browserComments,

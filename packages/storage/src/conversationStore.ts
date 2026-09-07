@@ -2204,12 +2204,14 @@ export class ConversationSubmissionRepository {
   ): ZeusConversationSubmissionRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation submission not found: ${id}`);
-    if (existing.status !== 'queued' && existing.status !== 'paused' && existing.status !== 'failed') {
+    // 已明确拒绝的引导允许从派发态退回队列；普通编辑仍不能改动派发中的提交。
+    const rejectedSteer = input.reason === 'steer_replacement' && existing.status === 'dispatching';
+    if (!rejectedSteer && existing.status !== 'queued' && existing.status !== 'paused' && existing.status !== 'failed') {
       throw Object.assign(new Error('Only queued, paused, or failed submissions can be edited.'), { code: 'ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE' as const });
     }
     const updatedAt = input.updatedAt ?? nowIso();
     const replacementId = `conversation_submission_${randomId(12)}`;
-    const replacementStatus = input.reason === 'retry' || input.reason === 'reroute' ? 'queued' : existing.status === 'failed' ? 'paused' : existing.status;
+    const replacementStatus = input.reason === 'retry' || input.reason === 'reroute' || input.reason === 'steer_replacement' ? 'queued' : existing.status === 'failed' ? 'paused' : existing.status;
     const replacementPausedReason = replacementStatus === 'paused' ? existing.pausedReason : null;
     this.db.transaction(() => {
       this.db.execute(
@@ -2314,11 +2316,20 @@ export class ConversationSubmissionRepository {
     return updated;
   }
 
+  /** 同一明确拒绝只创建一次替代提交；中途问题答复必须保留原轮次约束。 */
   requeueRejectedSteer(id: string, updatedAt = nowIso()): ZeusConversationSubmissionRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation submission not found: ${id}`);
     const parsedInput = parseStoredJson(existing.inputJson);
     if (!isPlainRecord(parsedInput)) throw new Error(`Conversation submission input is invalid: ${id}`);
+    if (isPlainRecord(parsedInput.questionAnswer) && parsedInput.questionAnswer.asNewMessage !== true) {
+      throw Object.assign(new Error('原轮次已结束，回答不能自动进入下一轮。'), { code: 'ZEUS_ASYNC_QUESTION_TURN_ENDED' });
+    }
+    // Provider 对账前后会重复调用此入口，必须复用已建立的替代身份。
+    const previousReplacement = this.listByConversation(existing.conversationId).find((entry) => entry.replacementOfSubmissionId === id && entry.replacementReason === 'steer_replacement');
+    if (previousReplacement) {
+      return previousReplacement.status === 'paused' && previousReplacement.pausedReason === 'recovered_unsent' ? this.updateStatus(previousReplacement.id, 'queued', { updatedAt }) : previousReplacement;
+    }
     // Provider 明确拒绝已结束轮次的 steer 时，原提交保持审计事实，改由关联 replacement 进入普通队列。
     const replacement = this.createReplacement(id, {
       requestHash: createHash('sha256')

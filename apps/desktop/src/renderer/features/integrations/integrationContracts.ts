@@ -1,3 +1,5 @@
+import type { UserFacingErrorCause } from '@zeus/shared';
+
 export interface SecretPresence {
   configured: boolean;
   label: '已安全保存' | '未配置';
@@ -81,6 +83,8 @@ export interface SaveModelConnectionRequest {
 }
 
 export interface ModelConnectionDiagnostic {
+  /** 保留连接检查的底层原因，供中英文错误摘要与详情使用。 */
+  cause?: UserFacingErrorCause;
   ok: boolean;
   stage: 'configuration' | 'credential' | 'catalog';
   code: string;

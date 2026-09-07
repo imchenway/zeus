@@ -1,3 +1,4 @@
+import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import {
@@ -180,6 +181,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   });
   const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
+    providerItems: options.providerItems,
+    persist,
     manager: options.manager,
     providerCommands,
     toolResults: options.toolResults,
@@ -553,6 +556,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           ...(submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
           ...(typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission)! } : {}),
+          ...(isRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer as unknown as AsyncQuestionAnswer } : {}),
           expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
           clientUserMessageId: submission.clientMessageId,
           ...(input.origin === 'implement_plan' || input.origin === 'refine_plan' ? { controlAction: input.origin } : {}),
@@ -603,6 +607,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       origin?: 'implement_plan' | 'refine_plan';
       planItemId?: string;
       requestAnswerId?: string;
+      /** 原异步问题的答复关联。 */
+      questionAnswer?: AsyncQuestionAnswer;
       internalOperation?: boolean;
       recoveryKind?: NativeSubmissionRecoveryKind;
       goalObjective?: string;
@@ -627,6 +633,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.planItemId ? { planItemId: input.planItemId } : {}),
       ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
+      ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
       ...(input.internalOperation ? { internalOperation: true } : {}),
       ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
@@ -1160,8 +1167,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       delivery: 'steer_now',
       expectedTurnId: input.expectedTurnId,
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
+      ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
     };
-    const existingSubmission = input.requestAnswerId ? options.submissions.listByConversation(conversation.id).find((candidate) => candidate.idempotencyKey === input.idempotencyKey) : undefined;
+    const existingSubmission = input.requestAnswerId || input.questionAnswer ? options.submissions.listByConversation(conversation.id).find((candidate) => candidate.idempotencyKey === input.idempotencyKey) : undefined;
     const submission = options.submissions.createOrGet({
       conversationId: conversation.id,
       idempotencyKey: input.idempotencyKey,
@@ -1193,6 +1201,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId || turnHasCompletedOutput(conversation.id, input.expectedTurnId)) {
+      if (input.questionAnswer) {
+        options.submissions.updateStatus(submission.id, 'cancelled', { error: { code: 'ZEUS_ASYNC_QUESTION_TURN_ENDED', message: '原轮次已结束，回答未发送。' }, updatedAt: now() });
+        await persist();
+        throw coordinatorError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
+      }
       const requeued = options.submissions.requeueRejectedSteer(submission.id, now());
       await persist();
       options.broadcast('conversation.queue.changed', {
@@ -1226,6 +1239,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
     } catch (error) {
       if (isProviderTurnAlreadyEndedSteerError(error)) {
+        if (input.questionAnswer) {
+          options.submissions.updateStatus(submission.id, 'cancelled', { error: { code: 'ZEUS_ASYNC_QUESTION_TURN_ENDED', message: 'Provider 已结束原轮次，回答未发送。' }, updatedAt: now() });
+          await persist();
+          throw coordinatorError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
+        }
         options.submissions.requeueRejectedSteer(submission.id, now());
         await persist();
         await providerEvents.waitForIdle();
@@ -1295,7 +1313,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return options.providerItems.listByConversation(conversationId).some((item) => {
       // 项目必须明确属于目标 turn，不能被同会话其他已完成正文误伤。
       const belongsToTurn = item.providerTurnId === providerTurnId || (turn ? item.turnId === turn.id : false);
-      return belongsToTurn && item.status === 'completed' && item.textContent.trim().length > 0 && ((item.itemType === 'agentMessage' && item.phase === 'final_answer') || formalPlanItemIds.has(item.id));
+      return (
+        belongsToTurn &&
+        item.status === 'completed' &&
+        item.textContent.trim().length > 0 &&
+        ((item.itemType === 'agentMessage' && classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final') || formalPlanItemIds.has(item.id))
+      );
     });
   }
 
@@ -1515,6 +1538,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(typeof itemPayload.origin === 'string' ? { origin: itemPayload.origin } : {}),
         ...(typeof itemPayload.planItemId === 'string' ? { planItemId: itemPayload.planItemId } : {}),
         ...(submission && typeof parseJsonRecord(submission.inputJson).requestAnswerId === 'string' ? { requestAnswerId: parseJsonRecord(submission.inputJson).requestAnswerId } : {}),
+        ...(submission && isRecord(parseJsonRecord(submission.inputJson).questionAnswer) ? { questionAnswer: parseJsonRecord(submission.inputJson).questionAnswer } : {}),
       },
       createdAt,
       providerThreadId,
@@ -1522,6 +1546,22 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
+    // 引导答复必须进入模型历史，才能在重启和分页后继续保留原问题关联。
+    const questionAnswer = submission ? parseJsonRecord(submission.inputJson).questionAnswer : null;
+    const segment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
+    const turn = options.turns.getByProvider(providerThreadId, providerTurnId);
+    if (submission && isSteeringSubmission(submission) && isRecord(questionAnswer) && segment && turn && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'userMessage')) {
+      options.execution.appendModelHistory({
+        conversationId: conversation.id,
+        turnId: turn.id,
+        segmentId: segment.id,
+        role: 'user',
+        submissionId: submission.id,
+        confirmedAt: createdAt,
+        content: { text: projection.content, providerItemId, questionAnswer },
+        reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'userMessage', readableSummary: false },
+      });
+    }
     flushServiceTierDowngradeNotice(submission);
     resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
     return clientMessageId;
@@ -1643,6 +1683,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.origin === 'implement_plan' ? { origin: input.origin } : {}),
       ...(typeof input.planItemId === 'string' ? { planItemId: input.planItemId } : {}),
       ...(typeof input.requestAnswerId === 'string' ? { requestAnswerId: input.requestAnswerId } : {}),
+      ...(isRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer } : {}),
       ...(isRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
     };
   }
@@ -1778,6 +1819,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const stateTurnId =
       state.type === 'active' || state.type === 'waiting' ? state.turnId : options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === input.providerTurnId && turn.status === 'waiting')?.providerTurnId;
     if (stateTurnId !== input.providerTurnId) throw coordinatorError('ZEUS_NATIVE_TURN_MISMATCH', 'Interrupt target is not the current active provider turn.');
+    // 同时撤销桌面控制与中断 Provider；桌面桥断线不能阻止用户停止模型。
+    const computerStop = options.browserAutomation?.endComputerUse?.({ conversationId: conversation.id, turnId: input.providerTurnId }).then(
+      () => null,
+      (error: unknown) => ({ error }),
+    );
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     await input.providerWriteLifecycle?.markPrepared(input.providerTurnId);
     input.providerWriteLifecycle?.markRpcStarted(input.providerTurnId);
@@ -1805,6 +1851,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (terminalResult.status !== 'interrupted') {
       throw coordinatorError('ZEUS_NATIVE_INTERRUPT_OUTCOME_UNKNOWN', 'Codex did not confirm a terminal outcome for the interrupted turn.');
     }
+    // 模型停止后仍如实报告桌面撤销失败，不将两者混同为全部停止。
+    const computerStopFailure = await computerStop;
+    if (computerStopFailure) throw computerStopFailure.error;
     const submission = options.submissions.listByConversation(conversation.id).find((entry) => entry.providerTurnId === input.providerTurnId);
     return {
       operationId: operationId(),
@@ -1958,7 +2007,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       state.type === 'active' ||
       state.type === 'waiting'
     ) {
-      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+      throw Object.assign(coordinatorError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has unfinished work and cannot be archived.'), {
+        cause: {
+          code: pendingRequest
+            ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_REQUEST'
+            : unfinishedTurn || conversation.providerState === 'active' || conversation.providerState === 'binding'
+              ? 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE'
+              : pendingSubmission
+                ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_MESSAGES'
+                : 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE',
+          message: 'Archive blocked by current conversation state.',
+        },
+      });
     }
   }
 

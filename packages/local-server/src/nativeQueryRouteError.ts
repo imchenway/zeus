@@ -1,3 +1,4 @@
+import { userFacingErrorCause } from '@zeus/shared';
 import type { FastifyReply } from 'fastify';
 
 /** 保持历史 Native 查询接口的错误码与 HTTP 映射，不让各领域路由重复猜测状态码。 */
@@ -31,7 +32,9 @@ export function sendNativeQueryRouteError(reply: FastifyReply, error: unknown): 
         : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')
           ? 400
           : 500);
-  return reply.code(statusCode).send({ error: code, message, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') ? { recoveryRequired: true } : {}) });
+  return reply
+    .code(statusCode)
+    .send({ error: code, message, ...(candidate?.cause ? { cause: userFacingErrorCause(candidate.cause) } : {}), ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') ? { recoveryRequired: true } : {}) });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

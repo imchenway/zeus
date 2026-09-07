@@ -16,6 +16,7 @@ import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/Use
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import { SessionComputerPreview } from './SessionComputerPreview.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushModelCapability,
@@ -419,6 +420,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               </button>
             </div>
 
+            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} />
+
             <section className="session-quick-actions-sources" aria-label={zh ? '来源' : 'Sources'}>
               <header>
                 <strong>{zh ? '来源' : 'Sources'}</strong>
@@ -457,7 +460,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               ) : null}
             </section>
 
-            {workspaceState === 'error' ? <p role="status">{zh ? '目录与分支来自最近一次会话快照。' : 'Directory and branch come from the latest conversation snapshot.'}</p> : null}
+            {workspaceState === 'error' ? <p role="status">{zh ? '显示最近一次读取的目录与分支。' : 'Shows the most recently loaded folder and branch.'}</p> : null}
           </section>
         </SessionQuickActionsCardMount>
       ) : null}
@@ -588,12 +591,12 @@ function resolveCodeReviewUnavailableReason(input: {
   startAvailable: boolean;
 }): string | null {
   if (!input.startAvailable) return input.zh ? '当前版本没有可用的代码审查入口' : 'Code review is unavailable in this version';
-  if (!input.taskId) return input.zh ? '项目对话没有可用于代码审查的任务 Worktree' : 'Project conversations do not have a task worktree for code review';
+  if (!input.taskId) return input.zh ? '请从拥有独立工作目录的任务对话中启动代码审查' : 'Start a code review from a task conversation with its own working folder';
   if (!input.conversation.workspaceId || !input.conversation.environmentId) {
-    return input.zh ? '直接目录会话没有冻结审查基线，请从 Worktree 任务会话启动' : 'Direct-directory conversations have no frozen review baseline; start from a task worktree conversation';
+    return input.zh ? '此对话没有任务开始时的代码记录。请从拥有独立工作目录的任务对话启动审查' : 'This conversation has no record of the code when the task started. Start the review from a task conversation with its own working folder';
   }
-  if (input.workspaceState === 'idle' || input.workspaceState === 'loading') return input.zh ? '正在确认代码审查 Worktree…' : 'Checking the code review worktree…';
-  if (!input.workspace || input.workspace.state !== 'ready') return input.zh ? '当前会话的精确任务 Worktree 不可用' : 'The exact task worktree for this conversation is unavailable';
+  if (input.workspaceState === 'idle' || input.workspaceState === 'loading') return input.zh ? '正在检查代码审查的工作目录…' : 'Checking the working folder for the code review…';
+  if (!input.workspace || input.workspace.state !== 'ready') return input.zh ? '此任务的工作目录不可用' : 'This task’s working folder is unavailable';
   return null;
 }
 

@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { CommandDeliveryRepository, CommandDeliveryStoreError, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
@@ -7,6 +8,8 @@ export const workManagementCommandTypes = {
   projectCreate: 'work_management.project.create',
   projectUpdate: 'work_management.project.update',
   projectWorkspaceUpdate: 'work_management.project.workspace.update',
+  /** 只接纳项目本地仓库的后台发现请求。 */
+  projectRepositoriesRefresh: 'work_management.project.repositories.refresh',
   projectDelete: 'work_management.project.delete',
   projectArchive: 'work_management.project.archive',
   projectRestore: 'work_management.project.restore',
@@ -515,7 +518,7 @@ function boundedReplayResult<TResult>(result: TResult, commandId: string): TResu
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
-    return { code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
+    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText) };
 }
@@ -550,13 +553,13 @@ function isReceiptConflict(error: unknown): boolean {
   return isCommandDeliveryStoreError(error) && error.code === 'ZEUS_COMMAND_DELIVERY_RECEIPT_CONFLICT';
 }
 
-export function workManagementCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function workManagementCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof WorkManagementCommandApplicationError) return { statusCode: error.statusCode, payload: { error: error.code, message: error.message } };
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, payload: { error: error.code, message: error.message } };
   if (!isCommandDeliveryStoreError(error)) return null;
   const recoveryRequired = error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED';
   const statusCode = error.code === 'ZEUS_COMMAND_DELIVERY_NOT_FOUND' ? 404 : error.code === 'ZEUS_COMMAND_DELIVERY_INVALID_ARGUMENT' ? 400 : error.code === 'ZEUS_COMMAND_DELIVERY_SCHEMA_CONFLICT' ? 500 : 409;
-  return { statusCode, payload: { error: error.code, message: error.message, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
+  return { statusCode, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, ...(recoveryRequired ? { recoveryRequired: true as const } : {}) } };
 }
 
 export function workManagementExternalOutcome(error: unknown): Exclude<CommandDeliveryOutcome, 'accepted'> | null {

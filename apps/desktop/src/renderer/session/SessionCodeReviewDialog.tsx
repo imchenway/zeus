@@ -159,7 +159,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     event.preventDefault();
     if (!form || !selectedModel || !props.onStart) {
       setStatus('error');
-      setError(zh ? '当前现场无法启动代码审查。' : 'Code review cannot be started from the current context.');
+      setError(zh ? '当前代码目录不满足审查条件。' : 'The current code folder does not meet the review requirements.');
       return;
     }
     setStatus('submitting');
@@ -199,7 +199,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         <header>
           <span>
             <strong id="session-code-review-title">{zh ? '开始代码审查' : 'Start code review'}</strong>
-            <small>{zh ? '创建独立 AI 会话，并复用当前执行环境' : 'Create an independent AI conversation in the current execution environment'}</small>
+            <small>{zh ? '新建对话，审查当前工作目录中的代码' : 'Start a new conversation to review code in the current working folder'}</small>
           </span>
           <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={close} disabled={busy}>
             ×
@@ -219,7 +219,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
               </div>
               <div>
                 <dt>{zh ? '范围' : 'Range'}</dt>
-                <dd>{zh ? '来源基线至当前现场的全部变化' : 'All changes from the source baseline to the current workspace'}</dd>
+                <dd>{zh ? '从任务开始到现在的全部修改' : 'All changes since the task started'}</dd>
               </div>
               <div>
                 <dt>{zh ? '权限' : 'Permission'}</dt>
@@ -253,7 +253,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
                 onChange={(skillId) => setForm((current) => (current ? { ...current, skillId } : current))}
                 language={props.language}
                 disabled={!form || busy}
-                ariaLabel={zh ? '代码审查使用的 Skill' : 'Skill for code review'}
+                ariaLabel={zh ? '审查技能（Skill）' : 'Review skill'}
               />
             </label>
             {selectedModel && selectedModel.supportedReasoningEfforts.length > 0 ? (
@@ -305,8 +305,8 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
           <small>
             {status === 'preparing'
               ? zh
-                ? '准备期间不会创建半成品会话。'
-                : 'No partial conversation is created while preparing.'
+                ? '准备完成后会打开审查对话。'
+                : 'The review conversation opens when preparation is complete.'
               : zh
                 ? '确认后会切换到新建的审查会话。'
                 : 'After confirmation, Zeus switches to the new review conversation.'}

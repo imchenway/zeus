@@ -1,3 +1,4 @@
+import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
@@ -1070,6 +1071,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function queueHeldMessage(input: {
+    /** 原异步问题的答复关联。 */
+    questionAnswer?: AsyncQuestionAnswer;
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
@@ -1108,6 +1111,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'queued',
       input: {
         text: input.content,
+        ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
         ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
@@ -1176,6 +1180,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function steerMessage(input: {
+    /** 原异步问题的答复关联。 */
+    questionAnswer?: AsyncQuestionAnswer;
     conversation: ZeusConversationWithMessagesRecord;
     submissionId: string;
     content: string;
@@ -1198,7 +1204,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       kind: 'message',
       requestedDelivery: 'send_now',
       status: 'dispatching',
-      input: { text: input.content, context: { agentKind: 'pi', projectLocalPath: context.cwd }, delivery: 'steer_now', expectedTurnId: input.expectedTurnId },
+      input: { text: input.content, ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}), context: { agentKind: 'pi', projectLocalPath: context.cwd }, delivery: 'steer_now', expectedTurnId: input.expectedTurnId },
       createdAt,
       dispatchedAt: createdAt,
     });
@@ -1419,11 +1425,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             confirmedAt: event.createdAt,
           });
         }
-        attention = options.conversations.markAttentionUnread(run.conversationId, {
-          kind: 'unread',
-          turnId: run.providerTurnId,
-          occurredAt: event.createdAt,
-        });
+        // 工具调用阶段的说明只记录过程；正式正文才产生普通未读与通知。
+        if (phase === 'final_answer') {
+          attention = options.conversations.markAttentionUnread(run.conversationId, {
+            kind: 'unread',
+            turnId: run.providerTurnId,
+            occurredAt: event.createdAt,
+          });
+        }
       }
       await options.db.save();
       publishPiProcessItems(run, processItems);
@@ -1954,7 +1963,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       .listByConversation(conversation.id)
       .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
     if (activeRun || pendingApproval || pendingRequest || unfinishedTurn || pendingSubmission || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting') {
-      throw piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+      throw Object.assign(piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has unfinished work and cannot be archived.'), {
+        cause: {
+          code: pendingRequest
+            ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_REQUEST'
+            : unfinishedTurn || conversation.providerState === 'active' || conversation.providerState === 'binding'
+              ? 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE'
+              : pendingSubmission
+                ? 'ZEUS_CONVERSATION_ARCHIVE_PENDING_MESSAGES'
+                : 'ZEUS_CONVERSATION_ARCHIVE_ACTIVE',
+          message: 'Archive blocked by current conversation state.',
+        },
+      });
     }
   }
 
@@ -2007,6 +2027,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '目标 Pi 轮次当前未在执行。');
       const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
       if (!context) throw piError('ZEUS_PI_SESSION_NOT_LOADED', '目标 Pi 会话当前未载入运行内核。');
+      // 同时撤销桌面控制与中断 Provider；桌面桥断线不能阻止用户停止模型。
+      const computerStop = options.browserAutomation?.endComputerUse?.({ conversationId: input.conversation.id, turnId: input.providerTurnId }).then(
+        () => null,
+        (error: unknown) => ({ error }),
+      );
       const persistedTurn = options.turns.getById(run.turnId);
       const command = providerCommands.prepare({
         operation: 'run_interrupt',
@@ -2081,6 +2106,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           acceptedAt: options.now(),
         });
       }
+      // 模型停止后仍如实报告桌面撤销失败，不将两者混同为全部停止。
+      const computerStopFailure = await computerStop;
+      if (computerStopFailure) throw computerStopFailure.error;
       return { submissionId: run.submissionId };
     },
     async respondToRequest(input: { requestId: string; response: unknown }): Promise<void> {

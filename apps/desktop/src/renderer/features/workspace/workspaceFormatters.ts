@@ -185,8 +185,8 @@ export function formatGraphRiskTag(tag: string, appLanguage: AppLanguage = 'zh-C
       task_paused: '任务暂停',
       task_cancelled: '任务取消',
       source_verified: '来源已验证',
-      schema_drift: 'Schema 漂移',
-      orphan_detected: '孤儿会话',
+      schema_drift: '数据结构已变化',
+      orphan_detected: '运行连接已丢失',
     },
     'en-US': {
       task_completed: 'Task completed',
@@ -195,8 +195,8 @@ export function formatGraphRiskTag(tag: string, appLanguage: AppLanguage = 'zh-C
       task_paused: 'Task paused',
       task_cancelled: 'Task cancelled',
       source_verified: 'Source verified',
-      schema_drift: 'Schema drift',
-      orphan_detected: 'Orphan detected',
+      schema_drift: 'Data structure changed',
+      orphan_detected: 'Run connection lost',
     },
   };
   return riskTagLabels[appLanguage][tag] ?? tag;

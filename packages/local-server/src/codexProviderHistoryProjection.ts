@@ -1,3 +1,4 @@
+import { assistantMessageMetadata } from '@zeus/shared';
 import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
 import type { ConversationResource } from '@zeus/shared';
 import {
@@ -653,7 +654,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         role: 'assistant',
         content: item.textContent,
         source: 'codex_native',
-        metadata: { phase: item.phase },
+        metadata: { ...assistantMessageMetadata(parseJsonRecord(item.payloadJson), item.phase) },
         createdAt: timestamp,
         providerThreadId,
         providerTurnId,

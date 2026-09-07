@@ -36,13 +36,81 @@ export class ZeusPluginSourceError extends Error {
   }
 }
 
-export async function materializePluginSource(source: ZeusPluginDirectSource, stagingRoot: string): Promise<string> {
+/** 统一解析 GitHub 仓库页、分支页和目录页，供安装及来源身份持久化复用。 */
+export async function normalizePluginSource(source: ZeusPluginDirectSource): Promise<ZeusPluginDirectSource> {
   if (!source || typeof source !== 'object') throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', 'Plugin 安装来源无效。');
-  if (source.kind === 'local') return requireLocalDirectory(source.path, '本地 Plugin 路径');
+  if (source.kind === 'local') return source;
   if (source.kind !== 'git') throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', '仅支持本地目录或 Git Plugin 来源。');
+  /** 保留非 GitHub 来源原有 Git 协议，仍统一校验可选字段。 */
   const repositoryUrl = boundedText(source.repositoryUrl, 'Git 仓库地址', 8_000);
   const requestedRef = optionalText(source.ref, 'Git ref', 512);
   const subdirectory = optionalRelativePath(source.subdirectory, 'Git 子目录');
+  if (requestedRef?.startsWith('-')) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', 'Git ref 不能以 - 开头。');
+  /** 标准 URL 解析不会把 SSH 简写误识别为 GitHub 网页。 */
+  const url = URL.parse(repositoryUrl);
+  if (!url || !['https:', 'http:'].includes(url.protocol) || url.hostname !== 'github.com') return { kind: 'git', repositoryUrl, ...(requestedRef ? { ref: requestedRef } : {}), ...(subdirectory ? { subdirectory } : {}) };
+  if (url.username || url.password) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', 'GitHub 页面地址不能内嵌凭据。');
+  /** 路径保留编码边界，分支名中的编码斜杠在分段后解码。 */
+  const segments = url.pathname.replace(/\/+$/u, '').slice(1).split('/');
+  if (segments.length < 2 || segments.some((segment) => !segment) || (segments.length > 2 && (segments[2] !== 'tree' || segments.length < 4))) {
+    throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', '请填写 GitHub 仓库地址或分支、目录页面地址；文件及其他页面不能作为安装来源。');
+  }
+  /** 仓库页与克隆地址归一，避免同一插件重复注册。 */
+  const cloneUrl = `${url.origin}/${segments[0]}/${segments[1]!.replace(/\.git$/u, '')}.git`;
+  /** 页面明确指定的分支或提交引用。 */
+  let pageRef: string | null = null;
+  /** 页面所选目录仍以仓库根为基准。 */
+  let pageDirectory: string | null = null;
+  if (segments.length > 2) {
+    /** 解码后的分支与目录必须继续经过现有输入边界。 */
+    let treeSegments: string[];
+    try {
+      treeSegments = segments.slice(3).map((segment) => decodeURIComponent(segment));
+    } catch {
+      throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', 'GitHub 页面地址包含无效编码。');
+    }
+    /** 编码斜杠属于引用本身，不能拆成另一个分支下的目录。 */
+    const encodedRef = treeSegments[0]!.includes('/') ? treeSegments[0]! : null;
+    /** 未编码的斜杠通过真实远端引用确定分支和目录边界。 */
+    const treePath = treeSegments.join('/');
+    if (encodedRef && requestedRef && encodedRef !== requestedRef) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', '填写的 Ref 与 GitHub 页面地址不一致，请修改 Ref 或使用仓库根地址。');
+    if (requestedRef) {
+      pageRef = requestedRef;
+    } else if (encodedRef) {
+      pageRef = encodedRef;
+    } else if (segments.length === 4) {
+      pageRef = treePath;
+    } else {
+      /** 用真实引用的最长前缀区分带斜杠的分支名和子目录。 */
+      let remoteRefs: string;
+      try {
+        remoteRefs = await runGit(['ls-remote', '--heads', '--tags', '--', cloneUrl], process.cwd());
+      } catch (error) {
+        throw new ZeusPluginSourceError('ZEUS_PLUGIN_SOURCE_UNAVAILABLE', `Git 来源读取失败：${commandDiagnostic(error)}`, 404);
+      }
+      pageRef =
+        remoteRefs
+          .split('\n')
+          .map((line) => line.split('\t')[1]?.replace(/^refs\/(?:heads|tags)\//u, ''))
+          .filter((ref): ref is string => Boolean(ref) && (treePath === ref || treePath.startsWith(`${ref}/`)))
+          .sort((left, right) => right.length - left.length)[0] ?? treePath.split('/')[0]!;
+    }
+    if (treePath !== pageRef && !treePath.startsWith(`${pageRef}/`)) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', '填写的 Ref 与 GitHub 页面地址不一致，请修改 Ref 或使用仓库根地址。');
+    pageRef = boundedText(pageRef, 'Git ref', 512);
+    if (pageRef.startsWith('-')) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', 'Git ref 不能以 - 开头。');
+    pageDirectory = optionalRelativePath(treePath.slice(pageRef.length).replace(/^\//u, ''), 'Git 页面子目录');
+    if (pageDirectory && subdirectory && pageDirectory !== subdirectory) throw new ZeusPluginSourceError('ZEUS_PLUGIN_INPUT_INVALID', '填写的子目录与 GitHub 页面地址不一致，请使用仓库根地址或保持两者一致。');
+  }
+  return { kind: 'git', repositoryUrl: cloneUrl, ...((pageRef ?? requestedRef) ? { ref: (pageRef ?? requestedRef)! } : {}), ...((pageDirectory ?? subdirectory) ? { subdirectory: (pageDirectory ?? subdirectory)! } : {}) };
+}
+
+/** 将来源复制到隔离目录；本地来源和所有 Git 调用方共享相同安全边界。 */
+export async function materializePluginSource(sourceInput: ZeusPluginDirectSource, stagingRoot: string): Promise<string> {
+  /** 直接调用来源读取器时也执行归一，避免绕过服务层的页面识别。 */
+  const source = await normalizePluginSource(sourceInput);
+  if (source.kind === 'local') return requireLocalDirectory(source.path, '本地 Plugin 路径');
+  /** 归一后的仓库、引用和目录是唯一克隆输入。 */
+  const { repositoryUrl, ref: requestedRef, subdirectory } = source;
   const cloneRoot = join(stagingRoot, 'repository');
   const cloneArgs = ['clone', '--depth', '1', '--filter=blob:none', '--no-tags', '--', repositoryUrl, cloneRoot];
   try {
@@ -58,8 +126,10 @@ export async function materializePluginSource(source: ZeusPluginDirectSource, st
   await rm(join(cloneRoot, '.git'), { recursive: true, force: true });
   const sourceRoot = subdirectory ? resolve(cloneRoot, subdirectory) : cloneRoot;
   if (!isInside(sourceRoot, cloneRoot)) throw new ZeusPluginSourceError('ZEUS_PLUGIN_UNSAFE_SOURCE', 'Git 子目录不能离开仓库根目录。', 422);
-  await requireDirectoryWithoutRootSymlink(sourceRoot, 'Git Plugin 子目录');
-  return sourceRoot;
+  /** 中间目录也可能是符号链接，必须检查真实路径仍在本次仓库内。 */
+  const resolvedRoot = await requireDirectoryWithoutRootSymlink(sourceRoot, 'Git Plugin 子目录');
+  if (!isInside(resolvedRoot, await realpath(cloneRoot))) throw new ZeusPluginSourceError('ZEUS_PLUGIN_UNSAFE_SOURCE', 'Git 子目录解析后不能离开仓库根目录。', 422);
+  return resolvedRoot;
 }
 
 export async function discoverMarketplace(snapshotRootInput: string, configuredSubdirectory?: string): Promise<ZeusMarketplaceDocument> {
@@ -86,7 +156,9 @@ export async function discoverMarketplace(snapshotRootInput: string, configuredS
   const displayName = optionalText(interfaceMetadata.displayName, 'Marketplace displayName', 160) ?? name;
   if (!Array.isArray(document.plugins)) throw new ZeusPluginSourceError('ZEUS_PLUGIN_MARKETPLACE_INVALID', 'Marketplace plugins 必须是数组。', 422);
   const marketplaceRoot = marketplaceRelativeRoot(marketplacePath, snapshotRoot);
-  const entries = document.plugins.map((value, index) => parseMarketplaceEntry(value, index, marketplaceRoot));
+  /** Claude 市场没有 Codex policy；只在已识别的格式内应用默认值。 */
+  const claudeMarketplace = marketplacePath.endsWith(`${sep}.claude-plugin${sep}marketplace.json`);
+  const entries = document.plugins.map((value, index) => parseMarketplaceEntry(value, index, marketplaceRoot, claudeMarketplace));
   const names = new Set<string>();
   for (const entry of entries) {
     if (names.has(entry.name)) throw new ZeusPluginSourceError('ZEUS_PLUGIN_MARKETPLACE_INVALID', `Marketplace Plugin 名称重复：${entry.name}`, 422);
@@ -127,16 +199,21 @@ export async function inspectSafeSourceTree(rootInput: string, limits: { maximum
   return { contentSha256: hash.digest('hex'), totalNodes, totalBytes };
 }
 
-function parseMarketplaceEntry(value: unknown, index: number, marketplaceRoot: string): ZeusMarketplaceEntry {
+/** 按市场格式读取条目，显式禁止安装的策略始终保留。 */
+function parseMarketplaceEntry(value: unknown, index: number, marketplaceRoot: string, claudeMarketplace: boolean): ZeusMarketplaceEntry {
   if (!isRecord(value)) throw new ZeusPluginSourceError('ZEUS_PLUGIN_MARKETPLACE_INVALID', `Marketplace plugins[${index}] 必须是对象。`, 422);
   const name = requiredKebabName(value.name, `Marketplace plugins[${index}].name`);
-  const policyValue = isRecord(value.policy) ? value.policy : null;
+  const policyValue = value.policy === undefined && claudeMarketplace ? { installation: 'AVAILABLE', authentication: 'ON_INSTALL' } : isRecord(value.policy) ? value.policy : null;
   if (!policyValue) throw new ZeusPluginSourceError('ZEUS_PLUGIN_MARKETPLACE_INVALID', `Marketplace Plugin ${name} 缺少 policy。`, 422);
   const policy = {
     installation: boundedText(policyValue.installation, `${name}.policy.installation`, 80),
     authentication: boundedText(policyValue.authentication, `${name}.policy.authentication`, 80),
   };
-  const category = boundedText(value.category, `${name}.category`, 160);
+  const category = boundedText(value.category ?? (claudeMarketplace ? 'uncategorized' : undefined), `${name}.category`, 160);
+  // Claude 市场内联组件不能在安装时被静默忽略；当前只读取独立清单的插件。
+  if (claudeMarketplace && (value.strict === false || ['skills', 'commands', 'agents', 'hooks', 'mcpServers', 'lspServers', 'outputStyles'].some((key) => value[key] !== undefined))) {
+    throw new ZeusPluginSourceError('ZEUS_PLUGIN_MARKETPLACE_INVALID', `Marketplace Plugin ${name} 使用内联组件，请提供独立插件目录及清单。`, 422);
+  }
   const sourceValue = value.source;
   let source: ZeusMarketplaceEntry['source'];
   if (typeof sourceValue === 'string') {
@@ -167,9 +244,11 @@ function localMarketplaceSource(value: unknown, marketplaceRoot: string, name: s
   return { kind: 'local', path: absolutePath };
 }
 
+/** 两种市场清单所在层级不同，相对路径都应从各自插件仓库根开始。 */
 function marketplaceRelativeRoot(marketplacePath: string, snapshotRoot: string): string {
   const normalized = marketplacePath.split(sep).join('/');
-  if (normalized.endsWith('/.agents/plugins/marketplace.json') || normalized.endsWith('/.claude-plugin/marketplace.json')) return dirname(dirname(dirname(marketplacePath)));
+  if (normalized.endsWith('/.agents/plugins/marketplace.json')) return dirname(dirname(dirname(marketplacePath)));
+  if (normalized.endsWith('/.claude-plugin/marketplace.json')) return dirname(dirname(marketplacePath));
   return snapshotRoot;
 }
 
@@ -204,13 +283,16 @@ async function requireDirectoryWithoutRootSymlink(path: string, label: string): 
   return realpath(path);
 }
 
-async function runGit(args: string[], cwd: string): Promise<void> {
-  await execFileAsync('git', args, {
+/** 非交互执行 Git，并返回引用发现需要的标准输出。 */
+async function runGit(args: string[], cwd: string): Promise<string> {
+  /** 命令输出保持有界，防止来源产生无限诊断内容。 */
+  const result = await execFileAsync('git', args, {
     cwd,
     timeout: 120_000,
     maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oConnectTimeout=10' },
   });
+  return result.stdout;
 }
 
 function commandDiagnostic(error: unknown): string {

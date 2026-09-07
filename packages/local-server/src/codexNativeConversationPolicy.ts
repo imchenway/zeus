@@ -1,3 +1,5 @@
+import { classifyAssistantMessage } from '@zeus/shared';
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
@@ -356,9 +358,10 @@ export function itemTypeFromValue(value: unknown): ConversationItemType {
 }
 
 export function phaseFromItem(item: Record<string, unknown>): ConversationItemPhase {
+  if (item.type === 'agentMessage') return classifyAssistantMessage(item) === 'final' ? 'final_answer' : 'prework';
   if (item.phase === 'final_answer' || item.phase === 'finalAnswer') return 'final_answer';
   if (typeof item.phase === 'string' && item.phase.trim().length > 0) return 'prework';
-  return item.type === 'agentMessage' ? 'final_answer' : 'prework';
+  return 'prework';
 }
 
 export function itemText(item: Record<string, unknown>): string {
@@ -1147,6 +1150,7 @@ export function submissionErrorSnapshot(errorJson: string | null): NativeSubmiss
     return {
       code,
       message,
+      ...(parsed.cause ? { cause: userFacingErrorCause(parsed.cause) } : {}),
       recoveryRequired: parsed.recoveryRequired === true || code.includes('RECOVERY') || code.includes('WORKTREE_UNAVAILABLE'),
     };
   } catch {
@@ -1212,14 +1216,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function serializeError(error: unknown): { message: string; code?: string } {
-  return { message: error instanceof Error ? error.message : String(error), ...(isRecord(error) && typeof error.code === 'string' ? { code: error.code } : {}) };
+export function serializeError(error: unknown): UserFacingErrorCause {
+  return userFacingErrorCause(error);
 }
 
-export function toRecoverySubmissionError(error: unknown): { message: string; code: string; recoveryRequired: true } {
+export function toRecoverySubmissionError(error: unknown): UserFacingErrorCause & { code: string; recoveryRequired: true } {
   const serialized = serializeError(error);
   return {
-    message: serialized.message,
+    ...serialized,
     code: serialized.code ?? 'ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW',
     recoveryRequired: true,
   };

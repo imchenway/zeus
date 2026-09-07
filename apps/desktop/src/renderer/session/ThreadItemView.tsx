@@ -1,3 +1,4 @@
+import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
@@ -40,7 +41,7 @@ const copy = {
     file: '文件变更',
     request: '等待操作',
     error: '本轮错误',
-    unknown: '未知 provider 项',
+    unknown: '未识别的处理记录',
     thinking: '正在思考',
     expand: '展开全文',
     collapse: '收起',
@@ -89,7 +90,7 @@ const copy = {
     file: 'File change',
     request: 'Action pending',
     error: 'Turn error',
-    unknown: 'Unknown provider item',
+    unknown: 'Unrecognized activity',
     thinking: 'Thinking',
     expand: 'Expand full text',
     collapse: 'Collapse',
@@ -197,7 +198,11 @@ function TaskPushMessageContent(
       {props.layout.blocks.map((block) => (
         <section key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="session-task-push-block">
           <header>
-            <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
+            <strong>
+              {block.contextKind === 'current'
+                ? block.taskTitle
+                : `${block.contextKind === 'parent' ? (props.language === 'zh-CN' ? '父任务' : 'Parent task') : props.language === 'zh-CN' ? '关联任务' : 'Related task'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}
+            </strong>
           </header>
           {block.fields.map((field) => {
             const markdownResources = field.attachmentKeys.flatMap((key) => {
@@ -222,7 +227,7 @@ function TaskPushMessageContent(
                 <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
                 {missingAttachmentKeys.map((key) => (
                   <span key={key} className="session-task-push-resource-placeholder">
-                    附件 · {attachmentNames.get(key) ?? key}
+                    {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachmentNames.get(key) ?? key}
                   </span>
                 ))}
                 {field.text ? (
@@ -252,7 +257,7 @@ function TaskPushMessageContent(
       ))}
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="session-task-push-field">
-          <strong>补充信息：</strong>
+          <strong>{props.language === 'zh-CN' ? '补充信息：' : 'Additional information:'}</strong>
           <ConversationResourceCards
             resources={supplementalAttachments.flatMap((attachment) => {
               const resource = resourcesByKey.get(attachment.key);
@@ -275,7 +280,7 @@ function TaskPushMessageContent(
             .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingImagesByKey.has(attachment.key))
             .map((attachment) => (
               <span key={attachment.key} className="session-task-push-resource-placeholder">
-                附件 · {attachment.name}
+                {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachment.name}
               </span>
             ))}
           {props.layout.supplementalInfo ? (
@@ -299,7 +304,7 @@ function TaskPushMessageContent(
   );
 }
 
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string | null {
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage): string | null {
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
   if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'recovered_unsent' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation')
@@ -314,7 +319,7 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     if (pausedReason === 'provider_stop_pending') return labels.providerStopPending;
     if (pausedReason === 'preflight_failed') {
       // 优先展示服务端持久化的真实失败原因，避免笼统状态掩盖下一步。
-      const deliveryError = isRecord(item.payload.deliveryError) ? primitiveText(item.payload.deliveryError.message) : '';
+      const deliveryError = isRecord(item.payload.deliveryError) ? describeUserFacingError(item.payload.deliveryError, language).message : '';
       return deliveryError || labels.preflightFailed;
     }
     return labels.deliveryPaused;
@@ -473,7 +478,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
-  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels) : null;
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language) : null;
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);

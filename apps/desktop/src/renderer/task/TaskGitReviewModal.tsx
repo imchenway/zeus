@@ -4,7 +4,7 @@ import { type DashboardClient, type TaskRecord } from '../apiClient.js';
 import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 
@@ -411,17 +411,17 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               <section className="task-git-review-push-scope">
                 <strong>{zh ? '本次推送范围' : 'Push scope'}</strong>
                 <small>
-                  {zh ? '只推送当前 HEAD。未提交和已暂存改动会原样保留在本机，不会自动提交、回收或合入。' : 'Only the current HEAD will be pushed. Uncommitted and staged changes stay local and will not be committed, reclaimed, or merged.'}
+                  {zh ? '只推送当前分支已提交的代码。未提交的修改仍留在本机，不会包含在本次推送中。' : 'Only committed code on the current branch will be pushed. Uncommitted changes stay on this computer and are excluded from this push.'}
                 </small>
               </section>
             ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
               <section className="task-git-review-active-sessions">
-                <strong>{zh ? '活动会话不阻止 Git 操作' : 'Active sessions do not block Git operations'}</strong>
+                <strong>{zh ? '仍有会话可能继续修改代码' : 'Conversations may still change the code'}</strong>
                 <small>
                   {zh
-                    ? `系统检测到 ${activeWorkspace.activeConversationCount} 个会话仍可能写入此分支。该状态只作提示，不参与提交或推送门禁；本次提交只包含当前已经落盘的内容，后续变化可以继续提交。`
-                    : `The system detected ${activeWorkspace.activeConversationCount} conversation(s) that may still write to this branch. This is informational only and never gates commit or push; this commit includes only content written so far, and later changes can be committed again.`}
+                    ? `还有 ${activeWorkspace.activeConversationCount} 个会话可能修改此分支。本次只提交当前文件中的内容，后续修改需要再次提交。`
+                    : `Another ${activeWorkspace.activeConversationCount} conversation(s) may modify this branch. This commit includes the files as they are now. Later changes need another commit.`}
                 </small>
               </section>
             ) : null}
@@ -541,27 +541,27 @@ function fileStatusLabel(file: TaskGitFileStatus, zh: boolean): string {
 }
 
 function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: TaskWorkspaceSnapshot | undefined, loadState: 'loading' | 'error' | undefined, zh: boolean): string {
-  if (workspace.state === 'reclaimed') return zh ? '已推送 · worktree 已回收' : 'Pushed · worktree reclaimed';
+  if (workspace.state === 'reclaimed') return zh ? '已推送 · 独立工作目录已移除' : 'Pushed · separate working folder removed';
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (loadState === 'loading') return zh ? '正在读取…' : 'Loading…';
   if (loadState === 'error') return '';
   if (!detail) return zh ? '尚未读取' : 'Not loaded';
   if (detail.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
-  if (detail.remoteRefreshError && detail.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
-  if (detail.review?.clean) return zh ? '工作区干净' : 'Clean';
+  if (detail.remoteRefreshError && detail.review?.clean) return zh ? '没有未提交修改 · 远端操作受阻' : 'No uncommitted changes · remote action blocked';
+  if (detail.review?.clean) return zh ? '没有未提交修改' : 'No uncommitted changes';
   return zh ? '待审查' : 'Review required';
 }
 
 function confirmActiveSessionRisk(action: 'reclaim' | 'discard', activeConversationCount: number, zh: boolean): boolean {
-  const actionLabel = action === 'reclaim' ? (zh ? '回收 worktree' : 'reclaim the worktree') : zh ? '放弃本地分支' : 'discard the local branch';
+  const actionLabel = action === 'reclaim' ? (zh ? '移除独立工作目录' : 'Remove the separate working folder') : zh ? '放弃本地分支' : 'discard the local branch';
   return window.confirm(
     zh
-      ? `当前仍有 ${activeConversationCount} 个活动会话可能写入此分支。继续${actionLabel}可能让后续写入失败或丢失工作区现场，已落盘内容不会自动替你补交。确定继续吗？`
-      : `${activeConversationCount} active conversation(s) may still write to this branch. Continuing to ${actionLabel} may interrupt later writes or remove the worktree, and content already written will not be committed automatically. Continue?`,
+      ? `还有 ${activeConversationCount} 个会话可能修改此分支。继续${actionLabel}可能导致后续修改失败或未提交内容丢失；现有修改不会自动提交。继续吗？`
+      : `Another ${activeConversationCount} conversation(s) may modify this branch. Continuing to ${actionLabel} may cause later changes to fail or uncommitted work to be lost. Existing changes will not be committed automatically. Continue?`,
   );
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
+  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
 }

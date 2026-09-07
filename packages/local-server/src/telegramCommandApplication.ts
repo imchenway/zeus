@@ -1,3 +1,4 @@
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope } from '@zeus/shared';
 import { CommandDeliveryRepository, CommandDeliveryStoreError, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
@@ -93,6 +94,8 @@ export class TelegramCommandApplicationError extends Error {
     message: string,
     readonly statusCode: 400 | 409 | 429 | 500,
     readonly recoveryRequired = false,
+    /** 保留底层错误原因，不改变原有操作结果和恢复限制。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
     super(message);
   }
@@ -326,12 +329,13 @@ export function telegramChildOperation(operationIdentity: string, kind: string):
 
 export function telegramCommandHttpError(error: unknown): { statusCode: number; payload: Record<string, unknown> } | undefined {
   if (error instanceof TelegramCommandApplicationError) {
-    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, recoveryRequired: error.recoveryRequired } };
+    return { statusCode: error.statusCode, payload: { error: error.code, message: error.message, cause: error.cause, recoveryRequired: error.recoveryRequired } };
   }
-  if (error instanceof CommandEnvelopeError) return { statusCode: error.code === 'ZEUS_COMMAND_EXPECTED_REVISION_CONFLICT' ? 409 : 400, payload: { error: error.code, message: error.message, details: error.details } };
+  if (error instanceof CommandEnvelopeError)
+    return { statusCode: error.code === 'ZEUS_COMMAND_EXPECTED_REVISION_CONFLICT' ? 409 : 400, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, details: error.details } };
   if (isCommandDeliveryError(error)) {
     const statusCode = error.code === 'ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT' || error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED' || error.code === 'ZEUS_COMMAND_DELIVERY_STATE_CONFLICT' ? 409 : 500;
-    return { statusCode, payload: { error: error.code, message: error.message, details: error.details, recoveryRequired: error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED' } };
+    return { statusCode, payload: { error: error.code, message: error.message, cause: userFacingErrorCause(error).cause, details: error.details, recoveryRequired: error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED' } };
   }
   if (isExplicitTelegramRejection(error)) {
     return { statusCode: 502, payload: { error: 'ZEUS_TELEGRAM_EXPLICITLY_REJECTED', message: 'Telegram 已明确拒绝该操作，本次未自动重试。', recoveryRequired: false } };
@@ -379,12 +383,12 @@ function serializeError(error: unknown, redactor: (value: string) => { text: str
   const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string' ? String((error as { code: string }).code).slice(0, 128) : null;
   const raw = error instanceof Error ? error.message : String(error);
   const message = truncateUtf8(redactor(raw).text, telegramCommandRoutePolicy.maximumErrorBytes);
-  return { name: error instanceof Error ? error.name.slice(0, 128) : 'Error', code, message, truncated: Buffer.byteLength(raw, 'utf8') > telegramCommandRoutePolicy.maximumErrorBytes };
+  return { cause: userFacingErrorCause(error).cause, name: error instanceof Error ? error.name.slice(0, 128) : 'Error', code, message, truncated: Buffer.byteLength(raw, 'utf8') > telegramCommandRoutePolicy.maximumErrorBytes };
 }
 
 function outcomeUnknown(error: unknown, redactor: (value: string) => { text: string }): TelegramCommandApplicationError {
   const message = serializeError(error, redactor).message;
-  return new TelegramCommandApplicationError('ZEUS_TELEGRAM_COMMAND_OUTCOME_UNKNOWN', `Telegram 外部操作写出后结果未知，已阻断自动重试：${String(message)}`, 409, true);
+  return new TelegramCommandApplicationError('ZEUS_TELEGRAM_COMMAND_OUTCOME_UNKNOWN', `Telegram 外部操作写出后结果未知，已阻断自动重试：${String(message)}`, 409, true, userFacingErrorCause(error));
 }
 
 function isExplicitTelegramRejection(error: unknown): boolean {

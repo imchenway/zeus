@@ -70,7 +70,7 @@ const labels = {
     ready: '会话就绪',
     connecting: '正在连接',
     reconnecting: '正在重连',
-    paused: '队列已暂停',
+    paused: '处理已暂停',
     queued: '待发送',
     streaming: '正在响应',
     pending_approval: '等待批准',
@@ -93,7 +93,7 @@ const labels = {
     ready: 'Thread ready',
     connecting: 'Connecting',
     reconnecting: 'Reconnecting',
-    paused: 'Queue paused',
+    paused: 'Processing paused',
     queued: 'Queued',
     streaming: 'Responding',
     pending_approval: 'Approval required',
@@ -134,7 +134,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   const organization = props.organization ?? 'flat';
   const flattenedGroups = props.groups
-    .map((project) => flattenProjectConversations(project, normalizedQuery))
+    .map((project) => flattenProjectConversations(project, normalizedQuery, props.language))
     .map((group) => (normalizedQuery ? group : limitFlattenedProjectConversations(group, organization, props.visibleConversationCount)));
   const visibleConversations = flattenedGroups.flatMap((group) => {
     if (organization === 'flat') return group.flatConversations;
@@ -142,7 +142,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return [...group.projectConversations, ...group.statusGroups.filter((statusGroup) => !collapsedStatusIds.includes(statusGroup.statusId)).flatMap((statusGroup) => statusGroup.conversations)];
   });
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
-  const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '').flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '', props.language).flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -246,7 +246,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             </>
           )}
           {visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
-          {!normalizedQuery && props.onShowMore && visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) < flattenProjectConversations(project, '').flatConversations.length ? (
+          {!normalizedQuery && props.onShowMore && visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) < flattenProjectConversations(project, '', props.language).flatConversations.length ? (
             <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
               {copy.showMore}
             </button>
@@ -408,7 +408,7 @@ function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRu
   return 'idle';
 }
 
-function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string): FlattenedProjectConversations {
+function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string, language: 'zh-CN' | 'en-US'): FlattenedProjectConversations {
   const matchesQuery = (entry: FlattenedConversation) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery);
   const projectConversations = (project.conversations ?? [])
     .map((conversation): FlattenedConversation => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) }))
@@ -424,7 +424,7 @@ function flattenProjectConversations(project: ProjectConversationGroup, normaliz
     return task.conversations
       .map((conversation): FlattenedConversation & { managementStatus: string } => ({
         conversation,
-        displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle),
+        displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language),
         managementStatus: task.managementStatus,
       }))
       .filter(matchesQuery);

@@ -1,3 +1,4 @@
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
@@ -33,7 +34,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
   const load = useCallback(
     async (forceReload = false) => {
       if (!props.client) {
-        setError(zh ? '当前执行宿主未提供 Skill 管理能力。' : 'Skill management is unavailable on this execution host.');
+        setError(zh ? '当前 Zeus 后台不支持管理技能。' : 'The current Zeus background service does not support skill management.');
         setLoading(false);
         return;
       }
@@ -42,7 +43,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       try {
         setCatalog(await props.client.loadSkills(undefined, forceReload));
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : zh ? '无法读取 Skill' : 'Unable to load skills');
+        setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
       } finally {
         setLoading(false);
       }
@@ -96,7 +97,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       await load(true);
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
     } catch (reason) {
-      setInstallError(reason instanceof Error ? reason.message : zh ? 'Skill 安装失败' : 'Skill installation failed');
+      setInstallError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setInstalling(false);
     }
@@ -117,7 +118,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       await load(true);
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : zh ? '无法移除 Skill' : 'Unable to remove skill');
+      setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
       setRemovingId(null);
     }
@@ -155,7 +156,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       <section className="skills-workflow-defaults" aria-labelledby="skills-workflow-defaults-title">
         <div className="skills-section-heading">
           <div>
-            <h2 id="skills-workflow-defaults-title">{zh ? '工作流默认 Skill' : 'Workflow defaults'}</h2>
+            <h2 id="skills-workflow-defaults-title">{zh ? '各类工作的默认技能' : 'Default skills for each workflow'}</h2>
             <p>{zh ? '每次打开工作流时自动带入，仍可在提交前临时改选。' : 'Preselected when a workflow opens, with a per-run override before submission.'}</p>
           </div>
         </div>
@@ -183,8 +184,8 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       <section className="skills-catalog" aria-labelledby="skills-catalog-title">
         <div className="skills-section-heading skills-catalog-heading">
           <div>
-            <h2 id="skills-catalog-title">{zh ? '已发现的 Skill' : 'Discovered skills'}</h2>
-            <p>{catalog ? `${catalog.skills.length} ${zh ? '项' : 'items'} · ${catalog.cwd}` : zh ? '读取 Zeus Skill 目录' : 'Reading the Zeus skill catalog'}</p>
+            <h2 id="skills-catalog-title">{zh ? '可用技能（Skill）' : 'Available skills'}</h2>
+            <p>{catalog ? `${catalog.skills.length} ${zh ? '项' : 'items'} · ${catalog.cwd}` : zh ? '读取技能目录' : 'Read the skills folder'}</p>
           </div>
           <input type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={zh ? '搜索名称、说明或路径' : 'Search name, description, or path'} aria-label={zh ? '搜索 Skill' : 'Search skills'} />
         </div>

@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -98,7 +99,7 @@ const labels = {
     goalPlaceholder: '说明要达成什么、如何验证，以及何时停止',
     exitGoal: '退出目标输入',
     normalDraftPreserved: '普通消息草稿已保留',
-    recoveredInputBlocked: '断线恢复的问题当前只读；可使用停止按钮终止本轮。',
+    recoveredInputBlocked: '连接中断后恢复的问题暂时无法回答。你可以停止当前处理。',
   },
   'en-US': {
     input: (provider: string) => `Message ${provider}`,
@@ -119,7 +120,7 @@ const labels = {
     goalPlaceholder: 'Describe the outcome, validation, and stopping condition',
     exitGoal: 'Exit goal input',
     normalDraftPreserved: 'Message draft preserved',
-    recoveredInputBlocked: 'The recovered question is read-only. You can still stop this turn.',
+    recoveredInputBlocked: 'This question cannot be answered after the connection was interrupted. You can stop the current work.',
   },
 } as const;
 
@@ -169,6 +170,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
     text: props.state.draft,
     disabled: !inputWritable || busy || goalInputActive,
@@ -272,7 +274,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     const normalized = objective.trim();
     if (!props.onSetGoal || !normalized || [...normalized].length > 4_000 || goalOperationBusy) return;
     if (structuredSelectionRef.current.expertMentions.length > 0) {
-      setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+      setInputResourceError(new Error(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.'));
       return;
     }
     setGoalSubmitting(true);
@@ -340,7 +342,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
       }
       if (/^\/goal(?:\s|$)/u.test(editorValue.trim()) && !props.state.browserSubmission && props.goalAvailable) {
         if (structuredSelectionRef.current.expertMentions.length > 0) {
-          setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+          setInputResourceError(new Error(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.'));
           return;
         }
         void runGoalCommand(editorValue.trim());
@@ -529,7 +531,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   if (props.goal) props.onOpenGoal?.();
                   else if (goalInputActive) exitGoalInput();
                   else if (structuredSelectionRef.current.expertMentions.length > 0) {
-                    setInputResourceError(new Error(props.language === 'zh-CN' ? '同一草稿不能同时进入目标模式并点名数字员工。' : 'A draft cannot combine goal mode with digital employee mentions.'));
+                    setInputResourceError(new Error(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.'));
                   } else enterGoalInput();
                 }}
                 disabled={props.readOnly === true || props.inputBlocked === true || goalOperationBusy || (props.goal ? !props.onOpenGoal : !props.onSetGoal)}
@@ -698,8 +700,8 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
     // 不同 Provider 的正文类型命名先归一化再判断。
     const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
     // 旧快照可能把阶段保存在顶层，新快照优先使用原始载荷。
-    const phase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
-    if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && (phase === 'final_answer' || phase === 'finalAnswer')) return true;
+    const messageKind = classifyAssistantMessage(item.payload, item.phase);
+    if ((type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') && messageKind === 'final') return true;
     if (type !== 'plan') return false;
     return item.payload.formalPlan === true || state.planImplementationRequests.some((request) => request.planItemId === item.localItemId || request.planItemId === item.itemId || request.planItemId === item.providerItemId);
   });

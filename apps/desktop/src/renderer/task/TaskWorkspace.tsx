@@ -20,7 +20,7 @@ import type {
 } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import {
@@ -94,7 +94,7 @@ function TaskPriorityControl(props: {
       desiredValueRef.current = null;
       setSaveState({ kind: 'idle' });
     } catch (error) {
-      setSaveState({ kind: 'error', message: formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en') });
+      setSaveState({ kind: 'error', message: reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }) });
     }
   }
 

@@ -65,14 +65,14 @@ const labels = {
     cancel: '取消',
     submit: '提交回答',
     other: '其他',
-    otherPlaceholder: '否，并告诉 Zeus 应该如何做得不同',
+    otherPlaceholder: '提出其他做法',
     impact: '影响',
-    secret: '敏感回答仅发送给当前本机 app-server，不会显示在会话记录中。',
+    secret: '敏感回答用于本次请求，不显示在对话记录中。',
     responding: '正在提交',
     unsupported: '不支持的请求类型',
     unsupportedHelp: 'Zeus 无法安全识别此请求，因此不会提供允许操作。',
     invalidMcp: 'MCP 响应 JSON 无效',
-    invalidMcpHelp: '请求 schema、URL 或响应 JSON 无法安全验证；修复前只提供拒绝或取消。',
+    invalidMcpHelp: 'Zeus 无法验证这个请求的内容或链接是否有效，因此暂时不能允许，只能拒绝或取消。',
     mcpResponse: 'MCP 结构化回答 JSON',
     mcpUrl: '打开 MCP 请求页面',
     mcpUrlOpenFailed: '无法打开 MCP 请求页面，请重试。',
@@ -82,8 +82,8 @@ const labels = {
     fileTargetUnavailableHelp: 'Zeus 暂时无法确认本次修改的文件目标，因此只提供拒绝或取消操作。',
     fileTargetOutsideProject: '文件不在当前项目内',
     fileTargetOutsideProjectHelp: 'Zeus 只允许审批当前项目内可审计的文件；以下项目外目标只能拒绝或取消。',
-    fileTargetProviderScope: '授权范围无法审计',
-    fileTargetProviderScopeHelp: '该请求要求授权 Provider 根范围，超出单个项目的文件审批边界，因此只提供拒绝或取消操作。',
+    fileTargetProviderScope: '无法确认申请访问的范围',
+    fileTargetProviderScopeHelp: '这个请求申请访问整个 AI 工具的工作范围，超出了当前项目的文件权限，因此不能允许。',
     cwd: '工作目录',
     mode: '当前模式',
     required: '必填',
@@ -96,7 +96,7 @@ const labels = {
     moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
-    allEditScope: '本会话后续仅自动允许当前项目内可审计的文件；项目外目标仍会被拒绝。',
+    allEditScope: '本次对话中，后续只会自动允许已确认属于当前项目的文件访问；项目外文件仍会被拒绝。',
   },
   'en-US': {
     approval: 'Approval required',
@@ -108,14 +108,14 @@ const labels = {
     cancel: 'Cancel',
     submit: 'Submit answers',
     other: 'Other',
-    otherPlaceholder: 'No, tell Zeus what to do differently',
+    otherPlaceholder: 'Suggest another approach',
     impact: 'Impact',
-    secret: 'Secret answers are sent only to the current local app-server and are not shown in the transcript.',
+    secret: 'Sensitive answers are used for this request and are not shown in the conversation history.',
     responding: 'Submitting',
     unsupported: 'Unsupported request type',
     unsupportedHelp: 'Zeus cannot identify this request safely, so no allow action is available.',
     invalidMcp: 'Invalid MCP response payload',
-    invalidMcpHelp: 'The request schema, URL, or response JSON cannot be validated safely. Only decline or cancel remains available.',
+    invalidMcpHelp: 'Zeus cannot validate this request’s content or link. Approval is unavailable; you can decline or cancel.',
     mcpResponse: 'MCP structured response JSON',
     mcpUrl: 'Open MCP request page',
     mcpUrlOpenFailed: 'Could not open the MCP request page. Please try again.',
@@ -125,8 +125,8 @@ const labels = {
     fileTargetUnavailableHelp: 'Zeus cannot yet verify the file target for this change. Only decline or cancel actions are available.',
     fileTargetOutsideProject: 'File is outside the current project',
     fileTargetOutsideProjectHelp: 'Zeus only permits auditable files inside the current project. The targets below can only be declined or cancelled.',
-    fileTargetProviderScope: 'Approval scope cannot be audited',
-    fileTargetProviderScopeHelp: 'This request asks for a provider-root grant beyond the single-project approval boundary. Only decline or cancel actions are available.',
+    fileTargetProviderScope: 'Cannot verify the requested access',
+    fileTargetProviderScopeHelp: 'This request asks for access across the AI tool’s working area, beyond this project’s file permissions. It cannot be approved.',
     cwd: 'Working directory',
     mode: 'Current mode',
     required: 'Required',
@@ -139,7 +139,7 @@ const labels = {
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
-    allEditScope: 'This session only auto-allows auditable files inside the current project; outside targets remain blocked.',
+    allEditScope: 'During this conversation, only verified file access within the current project will be allowed automatically. Access outside the project will still be denied.',
   },
 } as const;
 
@@ -501,6 +501,10 @@ interface RequestUserInputActionsProps {
   style?: CSSProperties;
   onPrevious: () => void;
   onSkip: () => void;
+  /** 异步历史问题可明确改为新消息发送。 */
+  submitLabel?: string;
+  /** 异步提问只收起表单，不提交跳过回答。 */
+  dismissLabel?: string;
 }
 
 function RequestUserInputActions(props: RequestUserInputActionsProps) {
@@ -513,18 +517,33 @@ function RequestUserInputActions(props: RequestUserInputActionsProps) {
         </button>
       ) : null}
       <button type="button" onClick={props.onSkip}>
-        {zh ? '跳过' : 'Skip'}
+        {props.dismissLabel ?? (zh ? '跳过' : 'Skip')}
       </button>
       {props.showSubmit ? (
         <button type="submit" disabled={!props.currentComplete || (props.questionIndex === props.questionCount - 1 && !props.allComplete)}>
-          {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
+          {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (props.submitLabel ?? (zh ? '提交' : 'Submit')) : zh ? '继续' : 'Continue'}
         </button>
       ) : null}
     </div>
   );
 }
 
-function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: RequestQuestion[] }) {
+/** 同步与异步询问共用的表单；不持有服务端请求或审批权限。 */
+export interface RequestUserInputPanelProps extends Omit<PendingRequestSurfaceProps, 'request'> {
+  request: Pick<NativePendingRequest, 'id' | 'expiresAt' | 'autoResolutionState'>;
+  questions: RequestQuestion[];
+  /** 异步回答在 Provider 确认前保留草稿。 */
+  retainDraft?: boolean;
+  /** 选择选项后显式提交，避免预选被误当作回答。 */
+  confirmSelection?: boolean;
+  /** 历史轮次的答复通过明确的新消息动作发送。 */
+  submitLabel?: string;
+  /** 异步面板收起只改变展示，不产生跳过请求。 */
+  onDismiss?: () => void;
+}
+
+/** 复用原问题表单、草稿、选项和自由输入，不伪造同步请求。 */
+export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   const zh = props.language === 'zh-CN';
   const copy = labels[props.language];
   const restored = useMemo(() => restoreRuiDraft(props.request.id, props.questions), [props.questions, props.request.id]);
@@ -554,13 +573,14 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const otherSelected = selectedValues.includes(otherAnswerControlValue(currentQuestion));
   const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
   const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
-  const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
+  const showSubmitAction = props.confirmSelection === true || currentQuestion.kind !== 'single' || otherSelected;
 
   useApplicationErrorDialog(resourceError, {
     language: zh ? 'zh-CN' : 'en',
   });
 
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: attachmentTextareaRef,
     text: currentQuestion.kind === 'freeform' ? (selectedValues[0] ?? '') : currentOtherAnswer,
     disabled: responding || !answerAttachmentsEnabled,
@@ -640,8 +660,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
       const activeAttachments = activeRequestAnswerAttachments(props.questions, nextAnswers, nextAttachments);
-      await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers, activeAttachments, props.language));
-      clearRuiDraft(props.request.id);
+      if (props.retainDraft) persistRuiDraft(props.request.id, props.questions, nextAnswers, nextOtherAnswers, activeAttachments);
+      await props.onRespond(props.request.id, buildQuestionResponse(props.questions, nextAnswers, nextOtherAnswers, activeAttachments, props.language));
+      if (!props.retainDraft) clearRuiDraft(props.request.id);
+    } catch (failure) {
+      setResourceError(failure);
     } finally {
       setLocallyResponding(false);
     }
@@ -664,7 +687,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       setAnswerAttachments(nextAttachments);
       void discardAnswerAttachmentResources(currentAttachments);
     }
-    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
+    if (!props.confirmSelection && currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
   }
 
   function removeAnswerAttachment(questionId: string, attachment: NativeConversationAttachment): void {
@@ -761,11 +784,15 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
 
   async function skip(): Promise<void> {
     if (responding) return;
+    if (props.onDismiss) {
+      props.onDismiss();
+      return;
+    }
     setLocallyResponding(true);
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
       await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
-      clearRuiDraft(props.request.id);
+      if (!props.retainDraft) clearRuiDraft(props.request.id);
       await discardAnswerAttachmentResources(Object.values(answerAttachments).flat());
     } finally {
       setLocallyResponding(false);
@@ -788,6 +815,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
         currentComplete={currentComplete}
         allComplete={allComplete}
         showSubmit={showSubmitAction}
+        submitLabel={props.submitLabel}
+        dismissLabel={props.onDismiss ? (zh ? '稍后回答' : 'Answer later') : undefined}
         style={style}
         onPrevious={() => {
           void snooze();
@@ -1023,7 +1052,9 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
             ) : null}
             {actionsPlacement === 'options' ? renderActions({ gridRow: currentQuestion.options.length }) : null}
           </div>
-          {currentQuestion.secret ? <small className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
+          {currentQuestion.secret ? (
+            <small className="session-secret-hint">{zh ? '敏感回答只用于本次请求，不保存到对话记录或草稿中。' : 'Sensitive answers are used only for this request and are not saved in the conversation history or drafts.'}</small>
+          ) : null}
         </fieldset>
       </form>
     </section>
@@ -1042,7 +1073,7 @@ function questionAnswerComplete(question: RequestQuestion, values: string[], oth
   return !values.includes(otherAnswerControlValue(question)) || Boolean(other?.trim()) || attachments.length > 0;
 }
 
-function requestRemainingMs(request: NativePendingRequest): number | null {
+function requestRemainingMs(request: Pick<NativePendingRequest, 'expiresAt'>): number | null {
   if (!request.expiresAt) return null;
   const deadline = Date.parse(request.expiresAt);
   return Number.isFinite(deadline) ? deadline - Date.now() : null;
@@ -1101,7 +1132,8 @@ function persistRuiDraft(requestId: string, questions: RequestQuestion[], answer
   }
 }
 
-function clearRuiDraft(requestId: string): void {
+/** 只在请求已解决或 Provider 已确认回答时清理原表单草稿。 */
+export function clearRuiDraft(requestId: string): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.removeItem(ruiDraftStorageKey(requestId));
@@ -1176,7 +1208,7 @@ function updateQuestionAnswers(current: Record<string, string[]>, question: Requ
   return { ...current, [question.id]: checked ? [...new Set([...currentValues, value])] : currentValues.filter((entry) => entry !== value) };
 }
 
-export function normalizeRequestQuestions(request: NativePendingRequest): RequestQuestion[] {
+export function normalizeRequestQuestions(request: Pick<NativePendingRequest, 'payload'>): RequestQuestion[] {
   const parsed = parseCanonicalRequestUserInputQuestions(request.payload);
   if (!parsed.ok) return [];
   return parsed.questions.map((question) => ({
@@ -1208,27 +1240,7 @@ export function buildPendingRequestResponse(
 ): Record<string, unknown> {
   const kind = requestKind(request);
   if (kind === 'request_user_input') {
-    const questions = normalizeRequestQuestions(request);
-    if (questions.length === 0) throw new Error('The pending request does not contain a complete canonical question set.');
-    const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments);
-    if (validationError) throw new Error(validationError);
-    const attachmentOnlyLabel = language === 'zh-CN' ? '见附件' : 'See attachments';
-    const normalizedAnswers = Object.fromEntries(
-      questions.map((question) => {
-        const attachments = answerAttachments[question.id] ?? [];
-        const values = answers[question.id] ?? [];
-        const normalized = (values.length > 0 ? values : ['']).map((value) => {
-          if (value === otherAnswerControlValue(question)) return otherAnswers[question.id]?.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
-          return value.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
-        });
-        return [question.id, { answers: normalized }];
-      }),
-    );
-    return {
-      type: 'userInput',
-      answers: normalizedAnswers,
-      ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
-    };
+    return buildQuestionResponse(normalizeRequestQuestions(request), answers, otherAnswers, answerAttachments, language);
   }
   if (kind === 'unknown') throw new Error('Unsupported pending request type.');
   const requestedDecision = answers.decision?.[0];
@@ -1440,13 +1452,13 @@ function requestImpact(request: NativePendingRequest, language: SessionUiLanguag
   const kind = requestKind(request);
   if (language === 'zh-CN') {
     if (kind === 'file') return '允许本轮修改工作区文件。';
-    if (kind === 'permissions') return '该权限结构尚未受支持，Zeus 不会发送允许响应。';
-    if (kind === 'mcp') return '向 MCP server 发送所示 JSON 响应。';
+    if (kind === 'permissions') return 'Zeus 暂不支持这种权限请求，因此不能允许。';
+    if (kind === 'mcp') return '向插件服务发送下方所示的 JSON 格式回答。';
     return '允许本轮执行所列命令。';
   }
   if (kind === 'file') return 'Allows this turn to modify workspace files.';
-  if (kind === 'permissions') return 'This permission schema is unsupported; Zeus will not send an allow response.';
-  if (kind === 'mcp') return 'Sends the shown JSON response to the MCP server.';
+  if (kind === 'permissions') return 'Zeus does not support this type of permission request, so it cannot be approved.';
+  if (kind === 'mcp') return 'Send the JSON response shown below to the plugin service.';
   return 'Allows this turn to execute the listed command.';
 }
 
@@ -1744,4 +1756,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** 将已校验的通用表单值编码为现有 userInput 响应结构。 */
+function buildQuestionResponse(
+  questions: RequestQuestion[],
+  answers: Record<string, string[]>,
+  otherAnswers: Record<string, string>,
+  answerAttachments: Record<string, NativeConversationAttachment[]>,
+  language: SessionUiLanguage,
+): Record<string, unknown> {
+  if (questions.length === 0) throw new Error('The pending request does not contain a complete canonical question set.');
+  const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments);
+  if (validationError) throw new Error(validationError);
+  const attachmentOnlyLabel = language === 'zh-CN' ? '见附件' : 'See attachments';
+  const normalizedAnswers = Object.fromEntries(
+    questions.map((question) => {
+      const attachments = answerAttachments[question.id] ?? [];
+      const values = answers[question.id] ?? [];
+      const normalized = (values.length > 0 ? values : ['']).map((value) => {
+        if (value === otherAnswerControlValue(question)) return otherAnswers[question.id]?.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+        return value.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+      });
+      return [question.id, { answers: normalized }];
+    }),
+  );
+  return {
+    type: 'userInput',
+    answers: normalizedAnswers,
+    ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
+  };
 }

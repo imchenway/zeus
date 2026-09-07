@@ -21,4 +21,6 @@ export interface BrowserAutomationToolResult {
  */
 export interface BrowserAutomationPort {
   invoke(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult>;
+  /** 轮次结束或用户中断时撤销桌面控制；浏览器会话不受影响。 */
+  endComputerUse?(input: { conversationId: string; turnId: string }): Promise<void>;
 }

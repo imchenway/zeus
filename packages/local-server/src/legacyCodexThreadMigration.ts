@@ -1,3 +1,4 @@
+import { classifyAssistantMessage } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import type { CodexAppServerManager, CodexThreadSnapshot } from '@zeus/ai-runtime';
@@ -453,9 +454,10 @@ function itemStatus(item: Record<string, unknown>): ConversationItemStatus {
 }
 
 function itemPhase(item: Record<string, unknown>): ConversationItemPhase {
+  if (item.type === 'agentMessage') return classifyAssistantMessage(item) === 'final' ? 'final_answer' : 'prework';
   if (item.phase === 'final_answer' || item.phase === 'finalAnswer') return 'final_answer';
   if (typeof item.phase === 'string' && item.phase.trim().length > 0) return 'prework';
-  return item.type === 'agentMessage' ? 'final_answer' : 'prework';
+  return 'prework';
 }
 
 function itemText(item: Record<string, unknown>): string {

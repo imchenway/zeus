@@ -4,7 +4,8 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-private struct ServiceFailure: Error {
+/** 供原生控制和辅助功能层共用的结构化失败。 */
+struct ServiceFailure: Error {
     let code: String
     let message: String
 }
@@ -22,14 +23,26 @@ private let minimumScreenshotBudgetMilliseconds: Double = 5_000
 
 @main
 private struct ZeusComputerService {
-    static func main() async {
+    /** 主线程运行 AppKit，让系统采集回调、停止按钮和用户接管监听不被 AX 扫描阻塞。 */
+    static func main() {
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
         let service = ComputerService()
-        while let line = readLine(strippingNewline: true) {
-            guard !line.isEmpty else { continue }
-            let response = await service.handle(line: line)
-            FileHandle.standardOutput.write(response)
-            FileHandle.standardOutput.write(Data([0x0a]))
+        // 宿主终止请求先释放本服务的虚拟按键，避免中断拖拽后目标应用保留按下状态。
+        signal(SIGTERM, SIG_IGN)
+        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        termination.setEventHandler { service.shutdown(); NSApp.terminate(nil) }
+        termination.resume()
+        Task.detached {
+            while let line = readLine(strippingNewline: true) {
+                guard !line.isEmpty else { continue }
+                let response = await service.handle(line: line)
+                writeComputerOutput(response)
+            }
+            service.shutdown()
+            await MainActor.run { NSApp.terminate(nil) }
         }
+        withExtendedLifetime(termination) { application.run() }
     }
 }
 
@@ -37,11 +50,15 @@ private final class ComputerService {
     private var generation = 0
     private var snapshots: [pid_t: ElementSnapshot] = [:]
     private var snapshotHistory: [Int: ElementSnapshot] = [:]
-    private var virtualPointers: [pid_t: CGPoint] = [:]
+    /** 唯一控制窗口、持续采集和原生停止入口。 */
+    private let control = ComputerControlSession()
+    /** 当前串行请求由宿主签发的控制身份。 */
+    private var controlSessionId = ""
+    /** 虚拟输入独立于硬件键鼠状态，不继承用户正在按住的修饰键。 */
+    private let inputSource = CGEventSource(stateID: .privateState)
     private let artifactRoot: URL
     private let parentPid: pid_t
     private let qaMode: Bool
-    private let systemWideElement: AXUIElement
     private let encoder = JSONSerialization.self
 
     init() {
@@ -50,9 +67,12 @@ private final class ComputerService {
         artifactRoot = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
         parentPid = pid_t(Int32(environment["ZEUS_PARENT_PID"] ?? "-1") ?? -1)
         qaMode = environment["ZEUS_COMPUTER_QA_MODE"] == "1"
-        systemWideElement = AXUIElementCreateSystemWide()
-        _ = AXUIElementSetMessagingTimeout(systemWideElement, axMessagingTimeoutSeconds)
+        inputSource?.userData = Int64(ProcessInfo.processInfo.processIdentifier)
+        inputSource?.localEventsSuppressionInterval = 0
     }
+
+    /** 父进程管道关闭时结束采集和预览。 */
+    func shutdown() { control.stop(reason: "parent_closed") }
 
     func handle(line: String) async -> Data {
         var requestId: Any = NSNull()
@@ -65,6 +85,7 @@ private final class ComputerService {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_REQUEST_INVALID", message: "Computer 请求缺少 method。")
             }
             var params = request["params"] as? [String: Any] ?? [:]
+            controlSessionId = params["_control_session_id"] as? String ?? ""
             if let requestId = requestId as? String { params["_request_id"] = requestId }
             let result = try await invoke(method: method, params: params)
             return try response(["id": requestId, "ok": true, "result": result])
@@ -89,6 +110,10 @@ private final class ComputerService {
             return status()
         case "request_permissions":
             return requestPermissions(params)
+        case "resume_control":
+            // 此方法仅由宿主用户命令调用，不注册为模型工具。
+            try control.resume(sessionId: controlSessionId)
+            return control.status
         case "list_apps":
             return listApps()
         case "get_app_state":
@@ -100,7 +125,7 @@ private final class ComputerService {
         case "perform_secondary_action":
             return try performClick(params, secondary: true)
         case "drag":
-            return try performDrag(params)
+            return try await performDrag(params)
         case "paste":
             return try performPaste(params)
         case "press_key":
@@ -166,9 +191,18 @@ private final class ComputerService {
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
         try rejectSelf(app)
+        // 观察与后续输入固定同一窗口；截屏关闭只省略返回图片，不隐藏正在控制的系统状态。
+        let target = try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
         let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 1000)
         let deadlineUnixMilliseconds = numberValue(params["_deadline_unix_ms"])
         let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        // Chromium 等应用按需暴露语义树；只启用目标应用声明支持的辅助功能属性，不激活窗口。
+        var manualAccessibilitySettable = DarwinBoolean(false)
+        if AXUIElementIsAttributeSettable(applicationElement, "AXManualAccessibility" as CFString, &manualAccessibilitySettable) == .success && manualAccessibilitySettable.boolValue {
+            _ = AXUIElementSetAttributeValue(applicationElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        }
+        // 语义树优先与采集窗口一致；应用未公开窗口树时仍保留有界应用观察。
+        let observedWindow = (attribute(applicationElement, kAXWindowsAttribute) as? [AXUIElement])?.first { matchesWindow($0, target: target) }
         generation += 1
         var elements: [AXUIElement] = []
         var summaries: [[String: Any]] = []
@@ -176,7 +210,7 @@ private final class ComputerService {
         var truncatedReason: String?
         reportProgress(params, stage: "ax_walk", elementCount: 0, startedAt: startedAt)
         walk(
-            element: applicationElement,
+            element: observedWindow ?? applicationElement,
             depth: 0,
             maxElements: maxElements,
             deadlineUnixMilliseconds: deadlineUnixMilliseconds,
@@ -202,6 +236,8 @@ private final class ComputerService {
             "app": app.bundleIdentifier ?? app.bundleURL?.path ?? app.localizedName ?? "",
             "application": appSummary(app),
             "snapshot_generation": generation,
+            "window": target.metadata,
+            "control": control.status,
             "elements": summaries,
             "text": accessibilityText(summaries),
             "complete": complete,
@@ -255,7 +291,7 @@ private final class ComputerService {
             truncatedReason = truncatedReason ?? "element_limit"
             return true
         }
-        guard depth <= 14 else {
+        guard depth <= 32 else {
             truncatedReason = truncatedReason ?? "depth_limit"
             return false
         }
@@ -304,7 +340,7 @@ private final class ComputerService {
         let target: AXUIElement?
         if let x = numberValue(params["x"]), let y = numberValue(params["y"]) {
             var candidate: AXUIElement?
-            guard AXUIElementCopyElementAtPosition(systemWideElement, Float(x), Float(y), &candidate) == .success,
+            guard AXUIElementCopyElementAtPosition(AXUIElementCreateApplication(app.processIdentifier), Float(x), Float(y), &candidate) == .success,
                   let candidate,
                   elementProcessIdentifier(candidate) == app.processIdentifier
             else { return ["available": false] }
@@ -331,7 +367,7 @@ private final class ComputerService {
     }
 
     private func rejectSelf(_ app: NSRunningApplication) throws {
-        if app.processIdentifier == parentPid {
+        if app.processIdentifier == parentPid || app.processIdentifier == ProcessInfo.processInfo.processIdentifier || ["dev.hypha.zeus.helper.computer", "dev.hypha.zeus.test.helper.computer"].contains(app.bundleIdentifier ?? "") {
             throw ServiceFailure(code: "ZEUS_COMPUTER_SELF_CONTROL_BLOCKED", message: "当前 Zeus 实例不能控制自身或自身审批界面。")
         }
         if let bundleId = app.bundleIdentifier, bundleId == "dev.hypha.zeus" || bundleId == "dev.hypha.zeus.test" {
@@ -342,7 +378,7 @@ private final class ComputerService {
     }
 
     private func canControl(_ app: NSRunningApplication) -> Bool {
-        if app.processIdentifier == parentPid { return false }
+        if app.processIdentifier == parentPid || app.processIdentifier == ProcessInfo.processInfo.processIdentifier || ["dev.hypha.zeus.helper.computer", "dev.hypha.zeus.test.helper.computer"].contains(app.bundleIdentifier ?? "") { return false }
         guard let bundleId = app.bundleIdentifier, bundleId == "dev.hypha.zeus" || bundleId == "dev.hypha.zeus.test" else { return true }
         return qaMode && bundleId == "dev.hypha.zeus.test"
     }
@@ -372,6 +408,7 @@ private final class ComputerService {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行，请先调用 get_app_state。")
         }
         try rejectSelf(app)
+        let target = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
         guard let elementIndex = intValue(params["element_index"]) else {
             if elementRequired { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "该操作需要 element_index。") }
             return (app, nil)
@@ -384,13 +421,35 @@ private final class ComputerService {
         else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_STALE", message: "element_index 已过期，请重新调用 get_app_state。")
         }
-        return (app, snapshot.elements[elementIndex])
+        let element = snapshot.elements[elementIndex]
+        try requireElementWindow(element, target: target)
+        return (app, element)
+    }
+
+    /** 语义动作不能利用同一应用的旧元素跨到未观察窗口。 */
+    private func requireElementWindow(_ element: AXUIElement, target: ComputerWindowTarget) throws {
+        let value = attribute(element, kAXWindowAttribute)
+        let window = stringAttribute(element, kAXRoleAttribute) == kAXWindowRole ? element : value.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        guard let window, matchesWindow(window, target: target) else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_MISMATCH", message: "无法确认元素或键盘焦点属于已观察窗口，请重新观察目标窗口。")
+        }
+    }
+
+    /** 辅助功能窗口与采集窗口使用相同的逻辑边界，允许系统的小数舍入。 */
+    private func matchesWindow(_ element: AXUIElement, target: ComputerWindowTarget) -> Bool {
+        guard let frame = frameAttribute(element), let x = frame["x"], let y = frame["y"], let width = frame["width"], let height = frame["height"] else { return false }
+        return abs(x - target.frame.minX) < 1 && abs(y - target.frame.minY) < 1 && abs(width - target.frame.width) < 1 && abs(height - target.frame.height) < 1
     }
 
     private func performClick(_ params: [String: Any], secondary: Bool) throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
-        let (app, element) = try appAndElement(params, elementRequired: false)
+        let (app, requestedElement) = try appAndElement(params, elementRequired: false)
+        // 坐标也先命中目标应用自己的语义元素，后台控件不依赖前台鼠标路由。
+        let element = try requestedElement ?? hitElement(app.processIdentifier, params: params)
+        if let element { try requireElementWindow(element, target: control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)) }
+        defer { control.didMutate() }
+        if let element, let point = centerPoint(element) { control.showCursor(point) }
         if secondary {
             guard let element, let action = params["action"] as? String, !action.isEmpty else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_SECONDARY_ACTION_INVALID", message: "perform_secondary_action 需要元素公开的 action。")
@@ -408,37 +467,43 @@ private final class ComputerService {
             }
             if let point = centerPoint(element) {
                 try postClick(pid: app.processIdentifier, point: point, button: requestedButton, count: requestedCount)
-                virtualPointers[app.processIdentifier] = point
-                return ["performed": "click", "semantic": false]
+                control.showCursor(point)
+                return ["dispatched": "click", "semantic": false, "effect_verified": false]
             }
         }
         guard let x = numberValue(params["x"]), let y = numberValue(params["y"]) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_REQUIRED", message: "点击需要语义元素或坐标。")
         }
         try postClick(pid: app.processIdentifier, point: CGPoint(x: x, y: y), button: requestedButton, count: requestedCount)
-        virtualPointers[app.processIdentifier] = CGPoint(x: x, y: y)
-        return ["performed": "click", "semantic": false, "click_count": requestedCount]
+        control.showCursor(CGPoint(x: x, y: y))
+        return ["dispatched": "click", "semantic": false, "click_count": requestedCount, "effect_verified": false]
     }
 
-    private func performDrag(_ params: [String: Any]) throws -> [String: Any] {
+    /** 按约定的持续时间投递拖拽，每一步重新检查停止和窗口身份。 */
+    private func performDrag(_ params: [String: Any]) async throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
         let (app, _) = try appAndElement(params, elementRequired: false)
         guard let startX = numberValue(params["from_x"] ?? params["start_x"]), let startY = numberValue(params["from_y"] ?? params["start_y"]),
               let endX = numberValue(params["to_x"] ?? params["end_x"]), let endY = numberValue(params["to_y"] ?? params["end_y"])
         else { throw ServiceFailure(code: "ZEUS_COMPUTER_DRAG_INVALID", message: "拖拽坐标不完整。") }
-        let source = CGEventSource(stateID: .hidSystemState)
         let start = CGPoint(x: startX, y: startY)
         let end = CGPoint(x: endX, y: endY)
-        try postMouse(pid: app.processIdentifier, source: source, type: .leftMouseDown, point: start, button: .left)
+        let target = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
+        guard target.frame.contains(start), target.frame.contains(end) else { throw ServiceFailure(code: "ZEUS_COMPUTER_POINT_OUTSIDE_WINDOW", message: "拖拽起终点必须位于已观察窗口。") }
+        let duration = boundedInt(params["duration_ms"], fallback: 300, min: 0, max: 5000)
+        defer { control.didMutate() }
+        try postMouse(pid: app.processIdentifier, type: .leftMouseDown, point: start, button: .left)
         for step in 1...16 {
             let fraction = CGFloat(step) / 16
             let point = CGPoint(x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction)
-            try postMouse(pid: app.processIdentifier, source: source, type: .leftMouseDragged, point: point, button: .left)
+            try postMouse(pid: app.processIdentifier, type: .leftMouseDragged, point: point, button: .left)
+            control.showCursor(point)
+            if duration > 0 { try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000 / 16) }
         }
-        try postMouse(pid: app.processIdentifier, source: source, type: .leftMouseUp, point: end, button: .left)
-        virtualPointers[app.processIdentifier] = end
-        return ["dragged": true, "start": ["x": startX, "y": startY], "end": ["x": endX, "y": endY]]
+        try postMouse(pid: app.processIdentifier, type: .leftMouseUp, point: end, button: .left)
+        control.showCursor(end)
+        return ["dispatched": "drag", "effect_verified": false, "start": ["x": startX, "y": startY], "end": ["x": endX, "y": endY]]
     }
 
     private func performPaste(_ params: [String: Any]) throws -> [String: Any] {
@@ -457,11 +522,12 @@ private final class ComputerService {
         if format == "html" { pasteboard.setString(text, forType: .html) }
         if format == "md" { pasteboard.setString(text, forType: NSPasteboard.PasteboardType("net.daringfireball.markdown")) }
         let zeusChangeCount = pasteboard.changeCount
+        // 无论投递是否成功，只在剪贴板仍属于本次粘贴时恢复，避免覆盖用户的新复制。
+        defer { if pasteboard.changeCount == zeusChangeCount { restorePasteboard(pasteboard, previous) } }
         try postKeyChord(pid: app.processIdentifier, keyCode: 9, flags: .maskCommand)
         Thread.sleep(forTimeInterval: 0.25)
         let shouldRestore = pasteboard.changeCount == zeusChangeCount
-        if shouldRestore { restorePasteboard(pasteboard, previous) }
-        return ["pasted": true, "format": format, "length": text.utf16.count, "clipboardRestored": shouldRestore]
+        return ["dispatched": "paste", "effect_verified": false, "format": format, "length": text.utf16.count, "clipboardRestored": shouldRestore]
     }
 
     private func performKey(_ params: [String: Any]) throws -> [String: Any] {
@@ -471,13 +537,15 @@ private final class ComputerService {
         guard let chord = params["key"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_KEY_REQUIRED", message: "press_key 缺少 key。") }
         let parsed = try keyChord(chord)
         try postKeyChord(pid: app.processIdentifier, keyCode: parsed.code, flags: parsed.flags)
-        return ["pressed": chord]
+        return ["dispatched": "key", "key": chord, "effect_verified": false]
     }
 
     private func performScroll(_ params: [String: Any]) throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
-        let (app, element) = try appAndElement(params, elementRequired: false)
+        let (app, requestedElement) = try appAndElement(params, elementRequired: false)
+        let element = try requestedElement ?? hitElement(app.processIdentifier, params: params)
+        defer { control.didMutate() }
         let direction = (params["direction"] as? String ?? "down").lowercased()
         let normalized = ["u": "up", "d": "down", "l": "left", "r": "right"][direction] ?? direction
         guard ["up", "down", "left", "right"].contains(normalized) else { throw ServiceFailure(code: "ZEUS_COMPUTER_SCROLL_DIRECTION_INVALID", message: "scroll direction 无效。") }
@@ -492,18 +560,29 @@ private final class ComputerService {
         let distance = Int32(min(Double(Int32.max), 600 * pages))
         let deltaX: Int32 = normalized == "left" ? -distance : normalized == "right" ? distance : 0
         let deltaY: Int32 = normalized == "up" ? distance : normalized == "down" ? -distance : 0
-        guard let event = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState), units: .pixel, wheelCount: 2, wheel1: deltaY, wheel2: deltaX, wheel3: 0) else {
+        guard let scroll = CGEvent(scrollWheelEvent2Source: inputSource, units: .pixel, wheelCount: 2, wheel1: deltaY, wheel2: deltaX, wheel3: 0) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建滚动事件。")
         }
-        event.postToPid(app.processIdentifier)
-        if let x = numberValue(params["x"]), let y = numberValue(params["y"]) { virtualPointers[app.processIdentifier] = CGPoint(x: x, y: y) }
-        return ["scrolled": true, "semantic": false, "direction": normalized, "pages": pages, "delta_x": deltaX, "delta_y": deltaY]
+        let point: CGPoint
+        if let x = numberValue(params["x"]), let y = numberValue(params["y"]) { point = CGPoint(x: x, y: y) }
+        else if let element, let center = centerPoint(element) { point = center }
+        else { throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_REQUIRED", message: "滚动需要元素或明确坐标，不能使用用户鼠标位置。") }
+        // AppKit 事件携带真实窗口归属；仅填写“鼠标下窗口”字段不足以路由到目标窗口。
+        let event = try windowMouseEvent(pid: app.processIdentifier, type: .mouseMoved, point: point, clickState: 0)
+        event.type = .scrollWheel
+        for field: CGEventField in [.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2, .scrollWheelEventIsContinuous] {
+            event.setIntegerValueField(field, value: scroll.getIntegerValueField(field))
+        }
+        try postEvent(event, pid: app.processIdentifier, point: point)
+        control.showCursor(point)
+        return ["dispatched": "scroll", "effect_verified": false, "semantic": false, "direction": normalized, "pages": pages, "delta_x": deltaX, "delta_y": deltaY]
     }
 
     private func selectText(_ params: [String: Any]) throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
         let (_, element) = try appAndElement(params, elementRequired: true)
+        defer { control.didMutate() }
         guard let element else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "select_text 缺少元素。") }
         try rejectSecure(element)
         guard let requested = params["text"] as? String, !requested.isEmpty,
@@ -530,6 +609,7 @@ private final class ComputerService {
         try requireAccessibility()
         try requireUnlockedSession()
         let (_, element) = try appAndElement(params, elementRequired: true)
+        defer { control.didMutate() }
         guard let element, let value = params["value"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_VALUE_REQUIRED", message: "set_value 参数不完整。") }
         try rejectSecure(element)
         guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
@@ -543,21 +623,47 @@ private final class ComputerService {
         try requireUnlockedSession()
         let (app, element) = try appAndElement(params, elementRequired: false)
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "type_text 缺少 text。") }
-        if let element { try rejectSecure(element); try focus(element) }
-        else if let focused = focusedElement(app.processIdentifier) { try rejectSecure(focused) }
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-        else { throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建文字事件。") }
-        let characters = Array(text.utf16)
-        characters.withUnsafeBufferPointer { buffer in
-            guard let base = buffer.baseAddress else { return }
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
-            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
+        guard let target = element ?? focusedElement(app.processIdentifier) else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "文字输入需要明确的可编辑元素。") }
+        try rejectSecure(target)
+        try requireElementWindow(target, target: control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId))
+        if element != nil { try focus(target) }
+        defer { control.didMutate() }
+        var selectedTextSettable = DarwinBoolean(false)
+        // Chromium 单行框声明可写 SelectedText 却可能不更新值，直接使用可验证的值与范围接口。
+        let singleLine = stringAttribute(target, kAXRoleAttribute) == kAXTextFieldRole
+        if !singleLine && AXUIElementIsAttributeSettable(target, kAXSelectedTextAttribute as CFString, &selectedTextSettable) == .success && selectedTextSettable.boolValue {
+            guard AXUIElementSetAttributeValue(target, kAXSelectedTextAttribute as CFString, text as CFString) == .success else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_INSERT_FAILED", message: "目标控件拒绝插入文字。") }
+        } else {
+            // 单行输入框可保留已有值和选择范围；富文本与自绘编辑器不退化成整篇替换。
+            guard singleLine,
+                  let current = stringAttribute(target, kAXValueAttribute),
+                  let selection = attribute(target, kAXSelectedTextRangeAttribute), CFGetTypeID(selection) == AXValueGetTypeID(), AXValueGetType(selection as! AXValue) == .cfRange else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_INPUT_UNSUPPORTED", message: "目标控件不支持后台文字插入；请使用明确的粘贴操作或由用户接管。")
+            }
+            var range = CFRange()
+            guard AXValueGetValue(selection as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0,
+                  range.location <= (current as NSString).length, range.length <= (current as NSString).length - range.location else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_SELECTION_INVALID", message: "无法确认文字选择范围，请重新观察。")
+            }
+            let replacement = (current as NSString).replacingCharacters(in: NSRange(location: range.location, length: range.length), with: text)
+            guard AXUIElementSetAttributeValue(target, kAXValueAttribute as CFString, replacement as CFString) == .success else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_INSERT_FAILED", message: "目标控件拒绝插入文字。") }
+            var caret = CFRange(location: range.location + text.utf16.count, length: 0)
+            guard let value = AXValueCreate(.cfRange, &caret), AXUIElementSetAttributeValue(target, kAXSelectedTextRangeAttribute as CFString, value) == .success else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_EFFECT_UNKNOWN", message: "文字已写入，但无法确认光标位置；请重新观察，不得自动重复输入。")
+            }
         }
-        down.postToPid(app.processIdentifier)
-        up.postToPid(app.processIdentifier)
-        return ["typed": true, "length": text.utf16.count]
+        return ["typed": true, "length": text.utf16.count, "semantic": true]
+    }
+
+    /** 使用应用自己的命中检测，避免被前台应用遮挡时误读或点击其他应用。 */
+    private func hitElement(_ pid: pid_t, params: [String: Any]) throws -> AXUIElement? {
+        guard let x = numberValue(params["x"]), let y = numberValue(params["y"]) else { return nil }
+        let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        guard x.isFinite, y.isFinite, target.frame.contains(CGPoint(x: x, y: y)) else { throw ServiceFailure(code: "ZEUS_COMPUTER_POINT_OUTSIDE_WINDOW", message: "坐标必须位于已观察窗口。") }
+        var element: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(AXUIElementCreateApplication(pid), Float(x), Float(y), &element) == .success,
+              let element, elementProcessIdentifier(element) == pid else { return nil }
+        return element
     }
 
     private func focus(_ element: AXUIElement) throws {
@@ -615,21 +721,63 @@ private final class ComputerService {
     }
 
     private func postClick(pid: pid_t, point: CGPoint, button: CGMouseButton, count: Int) throws {
-        let source = CGEventSource(stateID: .hidSystemState)
         let down: CGEventType = button == .right ? .rightMouseDown : button == .center ? .otherMouseDown : .leftMouseDown
         let up: CGEventType = button == .right ? .rightMouseUp : button == .center ? .otherMouseUp : .leftMouseUp
         for click in 1...count {
-            try postMouse(pid: pid, source: source, type: down, point: point, button: button, clickState: Int64(click))
-            try postMouse(pid: pid, source: source, type: up, point: point, button: button, clickState: Int64(click))
+            try postMouse(pid: pid, type: down, point: point, button: button, clickState: Int64(click))
+            try postMouse(pid: pid, type: up, point: point, button: button, clickState: Int64(click))
         }
     }
 
-    private func postMouse(pid: pid_t, source: CGEventSource?, type: CGEventType, point: CGPoint, button: CGMouseButton, clickState: Int64 = 1) throws {
-        guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建鼠标事件。")
-        }
+    private func postMouse(pid: pid_t, type: CGEventType, point: CGPoint, button: CGMouseButton, clickState: Int64 = 1) throws {
+        let event = try windowMouseEvent(pid: pid, type: type, point: point, clickState: clickState)
+        event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
         event.setIntegerValueField(.mouseEventClickState, value: clickState)
-        event.postToPid(pid)
+        try postEvent(event, pid: pid, point: point)
+    }
+
+    /** 用公开 AppKit 构造器附带窗口身份，再设置全局逻辑坐标与独立输入状态。 */
+    private func windowMouseEvent(pid: pid_t, type: CGEventType, point: CGPoint, clickState: Int64) throws -> CGEvent {
+        let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        guard let eventType = NSEvent.EventType(rawValue: UInt(type.rawValue)),
+              let event = NSEvent.mouseEvent(with: eventType, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: Int(target.windowId), context: nil, eventNumber: 0, clickCount: Int(clickState), pressure: 1)?.cgEvent else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建目标窗口鼠标事件。")
+        }
+        event.setSource(inputSource)
+        event.location = point
+        return event
+    }
+
+    /** 键盘事件也携带目标窗口，不能依赖 WindowServer 的当前前台窗口。 */
+    private func windowKeyEvent(pid: pid_t, keyCode: CGKeyCode, down: Bool, flags: CGEventFlags) throws -> CGEvent {
+        let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        // 由系统键盘布局提供按键字符，空字符的 AppKit 事件会被部分应用直接忽略。
+        guard let base = CGEvent(keyboardEventSource: inputSource, virtualKey: keyCode, keyDown: down) else { throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建按键。") }
+        base.flags = flags
+        let translated = NSEvent(cgEvent: base)
+        guard let event = NSEvent.keyEvent(with: down ? .keyDown : .keyUp, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue)),
+                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(target.windowId), context: nil,
+                                          characters: translated?.characters ?? "", charactersIgnoringModifiers: translated?.charactersIgnoringModifiers ?? "", isARepeat: false, keyCode: keyCode)?.cgEvent else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建目标窗口键盘事件。")
+        }
+        event.setSource(inputSource)
+        event.flags = flags
+        return event
+    }
+
+    /** 所有合成输入共用目标窗口校验及路由，不激活应用、不写全局鼠标位置。 */
+    private func postEvent(_ event: CGEvent, pid: pid_t, point: CGPoint? = nil) throws {
+        try requireUnlockedSession()
+        let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        if let point {
+            guard point.x.isFinite, point.y.isFinite, target.frame.contains(point) else { throw ServiceFailure(code: "ZEUS_COMPUTER_POINT_OUTSIDE_WINDOW", message: "坐标不在已观察窗口内；请根据截图 frame 和 scale 换算全局逻辑坐标。") }
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(target.windowId))
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(target.windowId))
+        } else if let focused = focusedElement(pid) {
+            try requireElementWindow(focused, target: target)
+        }
+        try control.postInput(event, pid: pid, sessionId: controlSessionId)
     }
 
     private func mouseButton(_ value: Any?) throws -> CGMouseButton {
@@ -641,14 +789,11 @@ private final class ComputerService {
     }
 
     private func postKeyChord(pid: pid_t, keyCode: CGKeyCode, flags: CGEventFlags) throws {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        else { throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建键盘事件。") }
-        down.flags = flags
-        up.flags = flags
-        down.postToPid(pid)
-        up.postToPid(pid)
+        let down = try windowKeyEvent(pid: pid, keyCode: keyCode, down: true, flags: flags)
+        let up = try windowKeyEvent(pid: pid, keyCode: keyCode, down: false, flags: flags)
+        try postEvent(down, pid: pid)
+        try postEvent(up, pid: pid)
+        control.didMutate()
     }
 
     private func keyChord(_ value: String) throws -> (code: CGKeyCode, flags: CGEventFlags) {
@@ -670,7 +815,7 @@ private final class ComputerService {
         if let code = named[key] { return (code, flags) }
         let letters = "abcdefghijklmnopqrstuvwxyz"
         let letterCodes: [CGKeyCode] = [0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46, 45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6]
-        if let index = letters.firstIndex(of: Character(key)), key.count == 1 {
+        if key.count == 1, let index = letters.firstIndex(of: Character(key)) {
             return (letterCodes[letters.distance(from: letters.startIndex, to: index)], flags)
         }
         throw ServiceFailure(code: "ZEUS_COMPUTER_KEY_UNSUPPORTED", message: "不支持的按键：\(key)")
@@ -678,37 +823,13 @@ private final class ComputerService {
 
     private func captureWindow(_ app: NSRunningApplication) async throws -> [String: Any]? {
         try FileManager.default.createDirectory(at: artifactRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let capture: CGImage?
-        if #available(macOS 14.0, *) {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            if let window = content.windows.first(where: { $0.owningApplication?.processID == app.processIdentifier && $0.frame.width > 1 && $0.frame.height > 1 }) {
-                let configuration = SCStreamConfiguration()
-                let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 1
-                configuration.width = max(1, Int(window.frame.width * scale))
-                configuration.height = max(1, Int(window.frame.height * scale))
-                configuration.showsCursor = false
-                capture = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: configuration)
-            } else { capture = nil }
-        } else {
-            capture = legacyWindowImage(app.processIdentifier)
-        }
-        guard let image = capture else { return nil }
+        let (image, target, capturedAt) = try await control.snapshot()
         let representation = NSBitmapImageRep(cgImage: image)
         guard let png = representation.representation(using: .png, properties: [:]) else { return nil }
         let file = artifactRoot.appendingPathComponent("computer-\(app.processIdentifier)-\(generation)-\(UUID().uuidString).png")
         try png.write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        return ["artifactPath": file.path, "mimeType": "image/png", "width": image.width, "height": image.height, "byteLength": png.count]
-    }
-
-    private func legacyWindowImage(_ pid: pid_t) -> CGImage? {
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
-              let match = windows.first(where: {
-                  ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
-              }),
-              let number = match[kCGWindowNumber as String] as? UInt32
-        else { return nil }
-        return CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(number), [.boundsIgnoreFraming, .bestResolution])
+        return target.metadata.merging(["artifactPath": file.path, "mimeType": "image/png", "width": image.width, "height": image.height, "byteLength": png.count, "captured_at": ISO8601DateFormatter().string(from: capturedAt)]) { _, value in value }
     }
 
     private func appSummary(_ app: NSRunningApplication) -> [String: Any] {

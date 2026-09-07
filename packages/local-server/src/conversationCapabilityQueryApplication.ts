@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
+import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
   ConversationRepository,
   ConversationSubmissionRepository,
   ProjectRepository,
   ProjectRepositoryRegistrationRepository,
   ProjectSharedPathRepository,
+  SettingRepository,
   TaskEnvironmentRepository,
   TaskRepository,
   TaskWorkspaceRepository,
@@ -38,6 +40,8 @@ export interface TaskPushGitReadPort {
 }
 
 interface ConversationCapabilityQueryPorts {
+  /** 只读取本地仓库发现的持久状态，不启动扫描。 */
+  settings: Pick<SettingRepository, 'getJson'>;
   projects: Pick<ProjectRepository, 'getById'>;
   tasks: Pick<TaskRepository, 'getById'>;
   repositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
@@ -142,7 +146,9 @@ export class ConversationCapabilityQueryApplication {
     const taskContext = this.ports.taskContext.read(project, task);
     const currentAttachmentOptions = this.ports.taskContext.readAttachmentOptions(project, task);
     // GET 只消费已登记仓库；仓库发现、登记、fetch 与工作区准备仍属于显式 Command。
-    const registeredRepositories = this.ports.repositories.listByProject(project.id);
+    const registeredRepositories = this.ports.repositories.listByProject(project.id).filter((repository) => isPathInsideRoot(repository.localPath, project.localPath));
+    // 状态与仓库清单在同一同步读取段冻结，避免扫描完成后拼出前后不一致的能力。
+    const repositoryDiscovery = readProjectRepositoryDiscovery(this.ports.settings, project);
     // Git、任务上下文和 Worktree 选择不能等待 Provider 账户通道。账户状态由独立的
     // 会话能力请求在后台读取；真正提交时仍由服务端权威校验登录状态。
     const [capabilities, repositoryCapabilities] = await Promise.all([
@@ -188,6 +194,7 @@ export class ConversationCapabilityQueryApplication {
       relatedContextOptions: taskContext.related.options,
       currentAttachmentOptions,
       repositoryRevision: repositoryRevision(registeredRepositories),
+      repositoryDiscovery,
       repositories: repositoryCapabilities,
       directWorkspace: {
         path: project.localPath,
@@ -261,43 +268,61 @@ export class ConversationCapabilityQueryApplication {
   }
 
   private async readRepositoryCapability(project: ZeusProjectRecord, task: ZeusTaskRecord, registered: ZeusProjectRepositoryRecord) {
-    const repository = await this.ports.git.readRepositoryContext(registered.localPath);
-    const clean = await this.ports.git.readWorktreeClean(registered.localPath, this.repositoryIgnoredPaths(project.id, registered.id, registered.localPath));
-    if (!repository.isRepository) throw queryError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registered.relativePath}`);
-    const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
-    const sourceRefs = [
-      ...repository.localBranches.map((branch) => ({ ref: `refs/heads/${branch}`, label: branch, kind: 'local' as const, group: 'local', current: branch === repository.branch })),
-      ...repository.remoteBranches.map((ref) => {
-        const separator = ref.indexOf('/');
-        const remoteName = separator > 0 ? ref.slice(0, separator) : defaultRemoteName;
-        const branch = separator > 0 ? ref.slice(separator + 1) : ref;
-        return { ref: `refs/remotes/${ref}`, label: branch, kind: 'remote' as const, group: remoteName || 'remote', current: false };
-      }),
-    ];
-    const localTaskBranches = repository.localBranches
-      .filter((branchName) => branchName.startsWith(buildTaskBranchPrefix(task.taskCode)))
-      .map((branchName) => {
-        const managed = this.ports.workspaces.getByRepositoryBranch(registered.id, branchName);
-        const checkedOut = repository.worktrees.find((worktree) => worktree.branch === branchName);
-        return {
-          branchName,
-          available: !managed && !checkedOut,
-          unavailableReason: managed ? ('managed_environment' as const) : checkedOut ? ('checked_out' as const) : null,
-          worktreePath: checkedOut?.path ?? null,
-        };
-      });
-    return {
-      ...registered,
-      branch: repository.branch,
-      headSha: repository.headSha,
-      clean,
-      defaultRemoteName,
-      remoteRefreshStatus: 'not_requested' as const,
-      remoteRefreshError: null,
-      sourceRefs,
-      localTaskBranches,
-      suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
-    };
+    try {
+      const repository = await this.ports.git.readRepositoryContext(registered.localPath);
+      const clean = await this.ports.git.readWorktreeClean(registered.localPath, this.repositoryIgnoredPaths(project.id, registered.id, registered.localPath));
+      if (!repository.isRepository) throw queryError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registered.relativePath}`);
+      const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
+      const sourceRefs = [
+        ...repository.localBranches.map((branch) => ({ ref: `refs/heads/${branch}`, label: branch, kind: 'local' as const, group: 'local', current: branch === repository.branch })),
+        ...repository.remoteBranches.map((ref) => {
+          const separator = ref.indexOf('/');
+          const remoteName = separator > 0 ? ref.slice(0, separator) : defaultRemoteName;
+          const branch = separator > 0 ? ref.slice(separator + 1) : ref;
+          return { ref: `refs/remotes/${ref}`, label: branch, kind: 'remote' as const, group: remoteName || 'remote', current: false };
+        }),
+      ];
+      const localTaskBranches = repository.localBranches
+        .filter((branchName) => branchName.startsWith(buildTaskBranchPrefix(task.taskCode)))
+        .map((branchName) => {
+          const managed = this.ports.workspaces.getByRepositoryBranch(registered.id, branchName);
+          const checkedOut = repository.worktrees.find((worktree) => worktree.branch === branchName);
+          return {
+            branchName,
+            available: !managed && !checkedOut,
+            unavailableReason: managed ? ('managed_environment' as const) : checkedOut ? ('checked_out' as const) : null,
+            worktreePath: checkedOut?.path ?? null,
+          };
+        });
+      return {
+        ...registered,
+        branch: repository.branch,
+        headSha: repository.headSha,
+        clean,
+        defaultRemoteName,
+        remoteRefreshStatus: 'not_requested' as const,
+        remoteRefreshError: null,
+        unavailableReason: null,
+        sourceRefs,
+        localTaskBranches,
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
+      };
+    } catch {
+      // 单仓被移除或失去访问权限时，其他仓库和任务表单仍可读取；不得伪造可选分支。
+      return {
+        ...registered,
+        branch: '',
+        headSha: '',
+        clean: false,
+        defaultRemoteName: '',
+        remoteRefreshStatus: 'not_requested' as const,
+        remoteRefreshError: null,
+        unavailableReason: '仓库暂时无法读取，请检查项目目录或刷新本地仓库。',
+        sourceRefs: [],
+        localTaskBranches: [],
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
+      };
+    }
   }
 
   private repositoryIgnoredPaths(projectId: string, repositoryId: string, repositoryPath: string): string[] {

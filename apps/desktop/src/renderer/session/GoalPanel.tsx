@@ -33,8 +33,8 @@ const statusLabels: Record<NativeGoalSnapshot['status'], { zh: string; en: strin
 const eventLabels: Record<NativeGoalTimelineEvent['kind'], { zh: string; en: string }> = {
   created: { zh: '创建目标', en: 'Goal created' },
   edited: { zh: '编辑目标', en: 'Goal edited' },
-  paused: { zh: '暂停自动续跑', en: 'Auto-continuation paused' },
-  resumed: { zh: '恢复自动续跑', en: 'Auto-continuation resumed' },
+  paused: { zh: '暂停后续自动执行', en: 'Pause further automatic work' },
+  resumed: { zh: '恢复自动执行', en: 'Resume automatic work' },
   blocked: { zh: '目标受阻', en: 'Goal blocked' },
   usage_limited: { zh: '用量受限', en: 'Usage limited' },
   budget_limited: { zh: '预算受限', en: 'Budget limited' },
@@ -74,7 +74,7 @@ export function GoalPanel(props: GoalPanelProps) {
           {props.goal ? <span className={`session-goal-status is-${props.goal.status}`}>{statusLabels[props.goal.status][zh ? 'zh' : 'en']}</span> : null}
         </header>
         <p id={descriptionId} className="session-goal-description">
-          {zh ? '写清要达成什么、不能改什么、如何验证，以及何时停止。目标独立于普通或 PLAN 协作模式。' : 'Describe the outcome, boundaries, validation, and stopping condition. Goals are independent of collaboration mode.'}
+          {zh ? '写清要达成什么、不能改什么、如何验证，以及何时停止。' : 'Describe the goal, what must stay unchanged, how to verify it, and when to stop.'}
         </p>
         <label className="session-goal-objective-field">
           <span>{zh ? '目标内容' : 'Objective'}</span>
@@ -99,7 +99,7 @@ export function GoalPanel(props: GoalPanelProps) {
         ) : null}
         {confirmClear ? (
           <section className="session-goal-clear-confirm" role="alertdialog" aria-label={zh ? '确认清除目标' : 'Confirm goal clear'}>
-            <strong>{zh ? '清除后将停止后续自动续跑' : 'Clearing stops future auto-continuation'}</strong>
+            <strong>{zh ? '清除后将不再自动继续执行此目标' : 'Clearing the goal stops further automatic work toward it'}</strong>
             <p>{zh ? '当前轮次不会被中断；会话和目标时间线仍会保留，但目标不能直接恢复。' : 'The current turn will continue. Conversation and goal history remain, but the goal cannot be restored directly.'}</p>
             <button type="button" className="is-danger" disabled={props.busy} onClick={() => void props.onClear?.(unfinished)}>
               {zh ? '确认清除' : 'Clear goal'}

@@ -46,6 +46,12 @@ export interface TaskModelPushForm {
   permissionMode: NativePermissionMode;
   skillId: string;
   workspaceMode: 'direct' | 'worktree';
+  /** 工作方式经过用户选择或来自项目记忆时，不再被后台发现覆盖。 */
+  workspaceModeSelected?: boolean;
+  /** 首次发现 Git 后固定默认方式，不因后台清单变空而静默切换成直接目录。 */
+  workspaceModeResolved?: boolean;
+  /** 已展示的仓库集合发生变化时，创建前要求用户核对新清单。 */
+  repositorySelectionNeedsReview?: boolean;
   taskBranchMode: 'create' | 'existing';
   environmentId: string;
   directConcurrencyConfirmed: boolean;
@@ -319,9 +325,7 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
           </fieldset>
         ) : (
           <p className="task-model-push-context-empty" role="status">
-            {props.zh
-              ? '当前任务还没有关联会话。先从当前任务创建一次会话；会话建立后，可在这里选择它作为本次推送的上下文。'
-              : 'This task has no associated conversations yet. Create a conversation from this task first, then select it here as context for a later push.'}
+            {props.zh ? '此任务还没有会话。创建会话后，可以在这里选择要提供给 AI 的历史对话。' : 'This task has no conversations yet. After creating one, you can select past conversations here to share with the AI.'}
           </p>
         )}
       </div>
@@ -451,7 +455,11 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
       {props.layout.blocks.map((block) => (
         <article key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="task-push-layout-block">
           <header>
-            <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
+            <strong>
+              {block.contextKind === 'current'
+                ? block.taskTitle
+                : `${block.contextKind === 'parent' ? (props.language === 'zh-CN' ? '父任务' : 'Parent task') : props.language === 'zh-CN' ? '关联任务' : 'Related task'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}
+            </strong>
           </header>
           {block.fields.map((field) => (
             <section key={field.field} className="task-push-layout-field">
@@ -479,7 +487,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
       ))}
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="task-push-layout-field">
-          <strong>补充信息：</strong>
+          <strong>{props.language === 'zh-CN' ? '补充信息：' : 'Additional information:'}</strong>
           {supplementalAttachments.map((attachment) => (
             <span key={attachment.key} className="task-push-layout-attachment">
               {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}
@@ -531,7 +539,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
     serviceTier: form.serviceTier,
     permissionMode: form.permissionMode,
     collaborationMode: form.workMode,
-    workspaceMode: form.workspaceMode,
+    ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
   });
   storage.setItem(
     `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
@@ -540,7 +548,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
       effort: form.effort,
       workMode: form.workMode,
       permissionMode: form.permissionMode,
-      workspaceMode: form.workspaceMode,
+      ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
     }),
   );
 }
@@ -554,13 +562,14 @@ export function resolveTaskModelPushInitialForm(
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
-  if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
-  const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-  const requestedServiceTier = projectModelServiceTierSelection(serviceTierPreferences, selectedModel);
-  const normalizedServiceTier = normalizeServiceTierSelection(requestedServiceTier, selectedModel);
+  const effort = rememberedModel && remembered && selectedModel?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel?.defaultReasoningEffort ?? selectedModel?.supportedReasoningEfforts[0] ?? '');
+  // 模型目录未就绪不能阻断本地仓库表单，模型到达后由既有选择器补齐模型能力。
+  const normalizedServiceTier = selectedModel
+    ? normalizeServiceTierSelection(projectModelServiceTierSelection(serviceTierPreferences, selectedModel), selectedModel)
+    : { selection: remembered?.serviceTier ?? { type: 'standard' as const }, downgraded: false };
   const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
-    model: selectedModel.id,
+    model: selectedModel?.id ?? remembered?.model ?? '',
     effort,
     serviceTier: normalizedServiceTier.selection,
     serviceTierDowngraded: normalizedServiceTier.downgraded,
@@ -569,6 +578,8 @@ export function resolveTaskModelPushInitialForm(
     permissionMode: remembered?.permissionMode ?? 'read-only',
     skillId,
     workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    workspaceModeSelected: Boolean(remembered?.workspaceMode),
+    workspaceModeResolved: capabilities.repositories.length > 0,
     taskBranchMode: 'create',
     environmentId: firstAvailableEnvironment?.id ?? '',
     directConcurrencyConfirmed: false,
@@ -578,7 +589,7 @@ export function resolveTaskModelPushInitialForm(
         return [
           repository.id,
           {
-            // 远端模式按当前同名远端分支选默认值；纯本地模式才使用当前本地分支。
+            // 来源默认使用真实当前本地分支，远端来源始终由用户明确选择。
             sourceRef: currentSourceRef,
             branchName: repository.suggestedBranchName,
             includeLocalChanges: false,
@@ -594,11 +605,48 @@ export function resolveTaskModelPushInitialForm(
   };
 }
 
+/** 只更新仓库选择，保留整张推送草稿；仓库或来源消失时要求重新核对。 */
+export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilities: CodexTaskPushCapabilities): TaskModelPushForm {
+  /** 旧选择的键集合用于识别仓库新增或移除，首次加载不触发复核。 */
+  const previousIds = Object.keys(form.repositorySelections);
+  /** 已展示清单变化后不能静默改变本次隔离范围。 */
+  const changed = previousIds.length > 0 && (previousIds.length !== capabilities.repositories.length || capabilities.repositories.some((repository) => !previousIds.includes(repository.id)));
+  /** 已选来源消失后明确要求重选，禁止切换到其他默认分支。 */
+  const sourceMissing = capabilities.repositories.some((repository) => {
+    const sourceRef = form.repositorySelections[repository.id]?.sourceRef;
+    return Boolean(sourceRef) && !repository.sourceRefs.some((source) => source.ref === sourceRef);
+  });
+  return {
+    ...form,
+    workspaceMode: form.workspaceModeSelected || form.workspaceModeResolved ? form.workspaceMode : capabilities.repositories.length > 0 ? 'worktree' : 'direct',
+    workspaceModeResolved: form.workspaceModeResolved || capabilities.repositories.length > 0,
+    repositorySelectionNeedsReview: form.repositorySelectionNeedsReview || changed || sourceMissing,
+    repositorySelections: Object.fromEntries(
+      capabilities.repositories.map((repository) => {
+        /** 保留仍存在的来源及用户填写的新分支名，失效来源清空以要求重选。 */
+        const previous = form.repositorySelections[repository.id];
+        /** 来源失效时同时撤销带入原目录改动，避免重选来源后沿用旧勾选。 */
+        const sourceAvailable = repository.sourceRefs.some((source) => source.ref === previous?.sourceRef);
+        return [
+          repository.id,
+          previous
+            ? { ...previous, sourceRef: sourceAvailable ? previous.sourceRef : '', includeLocalChanges: sourceAvailable && previous.includeLocalChanges }
+            : {
+                sourceRef: repository.sourceRefs.find((source) => source.current)?.ref ?? '',
+                branchName: repository.suggestedBranchName,
+                includeLocalChanges: false,
+              },
+        ];
+      }),
+    ),
+  };
+}
+
 function TaskModelPushLoginDialog(props: { language: 'zh-CN' | 'en-US'; status: Extract<TaskModelPushModalStatus, 'inspecting-config' | 'authenticating' | 'authenticated'>; onCancel: () => void }) {
   const zh = props.language === 'zh-CN';
   const authenticated = props.status === 'authenticated';
   const inspectingConfig = props.status === 'inspecting-config';
-  const title = zh ? '登录 Zeus 专属 Codex' : 'Sign in to Codex for Zeus';
+  const title = zh ? '登录 Codex 以继续' : 'Sign in to Codex to continue';
   return (
     <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={authenticated} onDismiss={props.onCancel}>
       <section className="task-model-push-step-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-login-title" aria-describedby="task-model-push-login-description">
@@ -618,15 +666,15 @@ function TaskModelPushLoginDialog(props: { language: 'zh-CN' | 'en-US'; status: 
           <p id="task-model-push-login-description">
             {authenticated
               ? zh
-                ? 'Zeus 已验证专属账号，正在恢复刚才的推送设置并创建会话。'
-                : 'Zeus verified its dedicated account and is restoring your push settings to create the conversation.'
+                ? '登录成功，正在使用刚才的设置创建对话。'
+                : 'Signed in. Creating the conversation with your selected settings.'
               : inspectingConfig
                 ? zh
-                  ? '正在检查是否有可安全导入的 Codex App 配置；有可导入内容时会单独询问。'
-                  : 'Checking for Codex App configuration that can be imported safely. If anything is available, Zeus will ask in a separate dialog.'
+                  ? '正在检查可导入的 Codex App 设置，导入前会请你确认。'
+                  : 'Checking for Codex App settings to import. You will be asked before importing.'
                 : zh
-                  ? '官方登录页已在系统浏览器中打开。完成授权后无需点击网页中的其他产品按钮，Zeus 会自动回到前台并继续。'
-                  : 'The official sign-in page is open in your system browser. After authorization, do not choose another product button there; Zeus will return to the foreground and continue automatically.'}
+                  ? '请在已打开的官方页面完成登录。登录成功后，Zeus 会自动继续。'
+                  : 'Complete sign-in on the official page that opened. Zeus will continue automatically once you are signed in.'}
           </p>
           <small>{zh ? 'Zeus 只读取登录结果，不会读取、复制或覆盖 Codex App 的账号信息。' : 'Zeus only reads the sign-in result and does not read, copy, or overwrite the Codex App account.'}</small>
         </div>
@@ -681,8 +729,8 @@ function TaskModelPushConfigImportDialog(props: {
           <p id="task-model-push-config-import-description">
             {props.needsActivation
               ? zh
-                ? '配置文件已经安全导入。Zeus 需要先启动新的 Codex 运行服务，才能保证本次新会话使用这些配置。'
-                : 'The configuration was imported safely. Zeus must start a fresh Codex runtime before this conversation can use it.'
+                ? '配置已导入，需要重新启动 Codex 服务后才能用于新对话。'
+                : 'Settings have been imported. The Codex service needs to restart before new conversations can use them.'
               : zh
                 ? 'Zeus 会把普通偏好、指令、规则、提示词、技能以及 Computer/Browser 工具组件复制到专属目录；不会导入账号、密钥或历史会话。'
                 : 'Zeus will copy preferences, instructions, rules, prompts, skills, and Computer/Browser tool components into its own directory. Accounts, secrets, and conversation history are excluded.'}
@@ -761,6 +809,8 @@ export function TaskModelPushModal(props: {
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onServiceTierPreferenceChange: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onRefreshRepository: (repositoryId: string) => void;
+  /** 本地发现与各仓远端拉取分别操作。 */
+  onRefreshLocalRepositories: () => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
   onCancelCodexConfigImport: () => void;
@@ -777,6 +827,7 @@ export function TaskModelPushModal(props: {
   });
   const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
   const inputResources = useConversationInputResources({
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
     text: props.form.supplementalInfo,
     disabled: resourceInputDisabled,
@@ -794,7 +845,7 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
-  const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
+  const runtimeCapabilities = props.capabilities?.models.length ? props.capabilities : props.runtimeCapabilities;
   const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
   const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
@@ -822,6 +873,8 @@ export function TaskModelPushModal(props: {
   const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
+  /** 后台扫描状态不清空上一次可用仓库，也不限制直接目录和已有环境。 */
+  const discovery = props.capabilities?.repositoryDiscovery;
   const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
   const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
   const selectedEnvironment = existingEnvironments.find((environment) => environment.id === props.form.environmentId);
@@ -921,7 +974,7 @@ export function TaskModelPushModal(props: {
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
-              <small>{zh ? '直接使用项目目录，或创建、继续独立分支和 worktree' : 'Use the project directory directly, or create and continue isolated branches and worktrees'}</small>
+              <small>{zh ? '直接修改项目文件，或使用独立分支与工作目录（worktree）' : 'Edit project files directly, or use a separate branch and working folder (worktree)'}</small>
             </span>
             <fieldset className="task-model-push-mode-choice">
               <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
@@ -931,12 +984,12 @@ export function TaskModelPushModal(props: {
                   name="task-workspace-mode"
                   value="direct"
                   checked={props.form.workspaceMode === 'direct'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', directConcurrencyConfirmed: false })}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
                   disabled={busy}
                 />
                 <span>
                   <strong>{zh ? '直接使用项目目录' : 'Use project directory directly'}</strong>
-                  <small>{zh ? '不创建分支或隔离目录，修改直接写入真实项目' : 'No branch or isolated directory; changes write to the real project'}</small>
+                  <small>{zh ? '修改会直接写入项目文件' : 'Changes are written directly to the project files'}</small>
                 </span>
               </label>
               <label className={props.form.workspaceMode === 'worktree' ? 'is-selected' : undefined}>
@@ -945,7 +998,7 @@ export function TaskModelPushModal(props: {
                   name="task-workspace-mode"
                   value="worktree"
                   checked={props.form.workspaceMode === 'worktree'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', directConcurrencyConfirmed: false })}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
                   disabled={busy}
                 />
                 <span>
@@ -954,6 +1007,32 @@ export function TaskModelPushModal(props: {
                 </span>
               </label>
             </fieldset>
+            <div className="task-model-push-section-heading">
+              <span role="status" className={discovery?.status === 'failed' ? 'task-model-push-error' : 'task-model-push-message'}>
+                {discovery?.status === 'running'
+                  ? zh
+                    ? '正在发现项目中的 Git 仓库…'
+                    : 'Discovering Git repositories in this project…'
+                  : discovery?.status === 'failed'
+                    ? discovery.error
+                    : discovery?.status === 'not_started'
+                      ? zh
+                        ? '尚未发现本地仓库，可刷新后选择分支。'
+                        : 'Local repositories have not been discovered yet. Refresh to select branches.'
+                      : zh
+                        ? '本地 Git 仓库'
+                        : 'Local Git repositories'}
+              </span>
+              <Button variant="secondary" size="compact" onClick={props.onRefreshLocalRepositories} busy={discovery?.status === 'running'} disabled={busy || discovery?.status === 'running'}>
+                {zh ? (discovery?.status === 'failed' ? '重试发现仓库' : '刷新本地仓库') : discovery?.status === 'failed' ? 'Retry discovery' : 'Refresh local repositories'}
+              </Button>
+            </div>
+            {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' && props.form.repositorySelectionNeedsReview ? (
+              <label className="task-model-push-concurrency-confirm">
+                <input type="checkbox" checked={false} disabled={busy} onChange={() => props.onChange({ ...props.form, repositorySelectionNeedsReview: false })} />
+                <span>{zh ? '仓库清单或已选来源分支已变化，请重新选择失效来源，并核对下方清单后勾选确认。' : 'Repositories or selected source branches changed. Reselect unavailable sources, review the list below, then confirm.'}</span>
+              </label>
+            ) : null}
             {props.form.workspaceMode === 'worktree' && existingEnvironments.length > 0 ? (
               <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
                 <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
@@ -961,7 +1040,7 @@ export function TaskModelPushModal(props: {
                   <input type="radio" name="task-branch-mode" value="create" checked={props.form.taskBranchMode === 'create'} onChange={() => props.onChange({ ...props.form, taskBranchMode: 'create' })} disabled={busy} />
                   <span>
                     <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
-                    <small>{zh ? '从下方来源分支创建新的独立开发线' : 'Create a new isolated development line from the source branches below'}</small>
+                    <small>{zh ? '从下方所选分支创建任务专用分支' : 'Create a task branch from the source branch selected below'}</small>
                   </span>
                 </label>
                 <label className={props.form.taskBranchMode === 'existing' ? 'is-selected' : undefined}>
@@ -978,8 +1057,8 @@ export function TaskModelPushModal(props: {
                     <small>
                       {availableEnvironments.length > 0
                         ? zh
-                          ? '创建新会话，继续使用原 worktree 和分支'
-                          : 'Create a new conversation in the original worktree and branches'
+                          ? '创建新对话，继续使用原来的独立工作目录和分支'
+                          : 'Start a new conversation using the existing separate working folder and branch'
                         : zh
                           ? '现有任务分支正在写入或已部分关闭'
                           : 'Existing task branches are active or partially closed'}
@@ -993,9 +1072,7 @@ export function TaskModelPushModal(props: {
                 <small>
                   {zh ? '工作目录' : 'Working directory'}：{props.capabilities?.directWorkspace.path ?? '—'}
                 </small>
-                <p className="task-model-push-warning">
-                  {zh ? 'AI 将直接读写项目真实目录；现有文件和当前 Git 分支不会被隔离。' : 'The agent writes directly to the real project directory; existing files and the current Git branch are not isolated.'}
-                </p>
+                <p className="task-model-push-warning">{zh ? 'AI 将直接修改此目录中的文件，影响当前项目和 Git 分支。' : 'The AI will edit files directly in this folder, affecting the current project and Git branch.'}</p>
                 {directWorkspaceNeedsConfirmation ? (
                   <label className="task-model-push-concurrency-confirm">
                     <input type="checkbox" checked={props.form.directConcurrencyConfirmed} onChange={(event) => props.onChange({ ...props.form, directConcurrencyConfirmed: event.currentTarget.checked })} disabled={busy} />
@@ -1011,7 +1088,7 @@ export function TaskModelPushModal(props: {
               <section className="task-model-push-existing-environment" aria-labelledby="task-model-push-existing-environment-title">
                 <span className="task-model-push-section-heading">
                   <strong id="task-model-push-existing-environment-title">{zh ? '选择已有任务分支' : 'Choose existing task branches'}</strong>
-                  <small>{zh ? '多仓任务会整体继续，保持原执行目录与可写根一致' : 'Multi-repository tasks continue as one environment to preserve the execution root'}</small>
+                  <small>{zh ? '多仓库任务会继续使用原来的全部工作目录' : 'Tasks with multiple repositories will keep using all their original working folders'}</small>
                 </span>
                 <ZeusSelect
                   size="regular"
@@ -1129,6 +1206,11 @@ export function TaskModelPushModal(props: {
                           {refreshing ? (zh ? '正在刷新…' : 'Refreshing…') : zh ? '刷新远端分支' : 'Refresh remote branches'}
                         </Button>
                       </legend>
+                      {repository.unavailableReason ? (
+                        <p className="task-model-push-error" role="alert">
+                          {repository.unavailableReason}
+                        </p>
+                      ) : null}
                       <div className="task-model-push-workspace-grid">
                         <label>
                           <span>{zh ? '来源分支（必选）' : 'Source branch (required)'}</span>
@@ -1185,9 +1267,9 @@ export function TaskModelPushModal(props: {
                             'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
                           )
                         ) : zh ? (
-                          '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                          '该仓库没有远端，将使用本地分支的代码。默认不包含未提交的修改。'
                         ) : (
-                          'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'
+                          'This repository has no remote, so local branch code will be used. Uncommitted changes are excluded by default.'
                         )}
                       </p>
                       {selectedSource?.kind === 'local' && repository.clean === false ? (
@@ -1209,18 +1291,18 @@ export function TaskModelPushModal(props: {
                             }
                             disabled={busy}
                           />
-                          <span>{zh ? '显式带入当前项目目录中的未提交内容。' : 'Explicitly copy uncommitted changes from the current project directory.'}</span>
+                          <span>{zh ? '包含当前项目目录中尚未提交的修改。' : 'Include uncommitted changes from the current project folder.'}</span>
                         </label>
                       ) : null}
                     </fieldset>
                   );
                 })}
               </div>
-            ) : (
+            ) : discovery?.status === 'completed' ? (
               <p className="task-model-push-error" role="alert">
                 {zh ? '项目目录下没有发现 Git 仓库。请先自行初始化仓库，或改用“直接使用项目目录”。' : 'No Git repository was found. Initialize one first, or use the project directory directly.'}
               </p>
-            )}
+            ) : null}
             {props.form.workspaceMode === 'worktree' && props.form.taskBranchMode === 'create' ? (
               <small className="task-model-push-worktree-root">
                 {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
@@ -1295,7 +1377,7 @@ export function TaskModelPushModal(props: {
             </label>
             {props.form.serviceTierDowngraded ? (
               <p className="task-model-push-warning" role="status">
-                {zh ? '已记住 Fast，但当前模型不再支持；本次将按 Standard 继续，偏好不会被自动改写。' : 'Fast is remembered, but this model no longer supports it. This run will continue on Standard without changing the preference.'}
+                {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
               </p>
             ) : null}
             <label>
@@ -1333,8 +1415,8 @@ export function TaskModelPushModal(props: {
           {props.form.stageId ? (
             <small className="task-model-push-stage-lock">
               {zh
-                ? '模型、推理强度、速度、工作模式与权限已由任务阶段冻结；如需调整，请返回任务详情修改尚未启动的阶段配置。'
-                : 'Model, effort, speed, work mode, and permissions are frozen by the task stage. Return to task details to edit an unstarted stage.'}
+                ? '本次使用任务阶段中设定的模型、速度和权限。若需调整，请返回任务详情修改尚未启动的阶段。'
+                : 'This run uses the model, speed, and permissions set for the task stage. To change them, return to the task details and edit a stage that has not started.'}
             </small>
           ) : null}
 
@@ -1386,8 +1468,8 @@ export function TaskModelPushModal(props: {
                   ? '模型已就绪；正在读取任务上下文和 Git 工作区…'
                   : 'Models are ready; loading task context and the Git workspace…'
                 : zh
-                  ? '正在连接运行内核并读取可用模型…'
-                  : 'Connecting to the runtime and loading models…'}
+                  ? '正在连接 AI 服务并读取可用模型…'
+                  : 'Connecting to the AI service and loading available models…'}
             </p>
           ) : null}
         </div>
@@ -1396,8 +1478,8 @@ export function TaskModelPushModal(props: {
           <small>
             {codexLoginRequired
               ? zh
-                ? '需要先登录 Zeus 专属 Codex；当前推送设置会完整保留。'
-                : 'Sign in to Codex for Zeus first; the current push settings will be preserved.'
+                ? '尚未登录 Codex。请登录后继续创建对话。'
+                : 'Codex is not signed in. Sign in to continue creating the conversation.'
               : zh
                 ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。'
                 : 'A new conversation will be created and opened; history remains unchanged.'}
@@ -1416,11 +1498,14 @@ export function TaskModelPushModal(props: {
                 !props.capabilities ||
                 props.status === 'loading' ||
                 !props.form.model ||
+                !selectedModel ||
                 (props.form.workspaceMode === 'direct'
                   ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
                   : props.form.taskBranchMode === 'existing'
                     ? !selectedEnvironment?.available
-                    : repositories.length === 0 ||
+                    : !discovery?.completedAt ||
+                      Boolean(props.form.repositorySelectionNeedsReview) ||
+                      repositories.length === 0 ||
                       repositories.some((repository) => {
                         const selection = props.form.repositorySelections[repository.id];
                         return !selection?.sourceRef || !selection.branchName.trim();

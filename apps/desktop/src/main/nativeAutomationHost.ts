@@ -9,6 +9,8 @@ interface NativeAutomationHostOptions {
 /** Electron Main 的单一自动化端口；执行宿主只持有短期桥租约，不拥有任何 UI 或系统权限。 */
 export function createNativeAutomationHost(options: NativeAutomationHostOptions): BrowserAutomationPort {
   return {
+    /** 将桌面控制生命周期送到唯一的原生控制宿主。 */
+    endComputerUse: (input) => options.computer.endComputerUse?.(input) ?? Promise.resolve(),
     invoke(input: BrowserAutomationToolCall) {
       if (input.namespace === 'zeus_computer') return options.computer.invoke(input);
       if (input.namespace && input.namespace !== 'zeus_browser') {

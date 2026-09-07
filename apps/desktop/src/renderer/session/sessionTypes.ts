@@ -1,3 +1,5 @@
+import type { AssistantMessageMetadata, AsyncQuestionAnswer, AsyncQuestionResponse } from '@zeus/shared';
+import type { UserFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationContextDraft,
   ConversationResource,
@@ -130,6 +132,8 @@ export interface NativeTurnSnapshot {
 export type NativeTurnFailureCategory = 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
 
 export interface NativeTurnFailureSnapshot {
+  /** 用于解释模型拒绝、用量限制等具体原因。 */
+  cause?: UserFacingErrorCause;
   category: NativeTurnFailureCategory;
   code: string | null;
   message: string;
@@ -253,6 +257,8 @@ export interface NativeSubagentPromptFact {
 }
 
 export interface NativeQueuedSubmission {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   id: string;
   conversationId?: string;
   content: string;
@@ -271,6 +277,8 @@ export interface NativeQueuedSubmission {
   providerTurnId?: string | null;
   pausedReason: string | null;
   error?: {
+    /** 保留队列错误的底层原因。 */
+    cause?: UserFacingErrorCause;
     code: string;
     message: string;
     recoveryRequired: boolean;
@@ -671,6 +679,12 @@ export interface NativeConversationModelHistoryV2Item {
   providerItemId: string | null;
   reasoningSummary: boolean;
   phase: string | null;
+  /** 助手消息的统一语义与原始问题结构。 */
+  assistantMessage?: AssistantMessageMetadata;
+  /** 不依赖答复与原问题处于同一分页。 */
+  questionResponse?: AsyncQuestionResponse;
+  /** 用户回答与原问题的稳定关联。 */
+  questionAnswer?: AsyncQuestionAnswer;
   /** 生成该历史条目的线协议族。 */
   protocolFamily?: string | null;
   /** 该历史条目所属的稳定展示阶段。 */
@@ -990,6 +1004,8 @@ export interface ProjectSharedPathRecord {
 }
 
 export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
+  /** 仓库无法读取时保留条目和原因，但不给出可选分支。 */
+  unavailableReason?: string | null;
   branch: string;
   headSha: string;
   clean: boolean;
@@ -1021,6 +1037,8 @@ export interface CodexChatGptLogin {
 }
 
 export interface CodexTaskPushCapabilities {
+  /** 本地仓库发现与模型加载分别表达；完成后的空清单才表示没有仓库。 */
+  repositoryDiscovery: import('@zeus/shared').ProjectRepositoryDiscovery;
   generationId: string;
   initializedAt: string;
   projectId: string;
@@ -1445,6 +1463,8 @@ export interface StartProjectConversationRequest {
 }
 
 export interface SendNativeMessageRequest {
+  /** 绑定原始异步问题，沿用现有提交及确认链路。 */
+  questionAnswer?: AsyncQuestionAnswer;
   agentKind?: 'codex' | 'pi' | 'claude';
   content: string;
   displayText?: string;
@@ -1711,6 +1731,8 @@ export function isAssistantDeliverableItem(item: Pick<NativeSessionItemBuffer, '
 }
 
 export interface NativeSessionError {
+  /** 可选的底层原因，不改变消息处理状态。 */
+  cause?: UserFacingErrorCause;
   message: string;
   code: string | null;
   recoveryRequired: boolean;
