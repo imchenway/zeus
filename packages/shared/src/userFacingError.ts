@@ -30,6 +30,10 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 
 /** 跨页面、原生窗口和通知共用的原因目录。每组只合并具有相同产品含义的错误。 */
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
+  [
+    ['ZEUS_CONVERSATION_READ_FAILED', 'ZEUS_CONVERSATION_SNAPSHOT_V2_READ_FAILED', 'Snapshot V2 首屏身份、结构代次或事件水位不一致。'],
+    ['会话内容暂时无法刷新', 'Conversation content could not be refreshed right now.', 'retry'],
+  ],
   [['ZEUS_CONVERSATION_HYDRATION_TIMEOUT'], ['对话读取超过 20 秒仍未完成，可重新加载对话。', 'The conversation took more than 20 seconds to load. Reload the conversation.', 'retry']],
   [['ZEUS_CONVERSATION_REALTIME_OPEN_TIMEOUT'], ['对话内容已载入，但还未连上实时服务，暂时无法接收新回复。', 'The conversation is loaded, but the live service is not connected yet, so new replies cannot be received.', 'retry']],
   [
@@ -870,14 +874,18 @@ export function redactUserFacingErrorDetails(value: string): string {
     .slice(0, 2000);
 }
 
-/** 从最内层已知原因生成解释；未知原因不伪装成网络故障，也不建议无依据重试。 */
+/** 优先解释会话读取失败，其余错误使用最内层已知原因；未知原因不伪装成网络故障。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
   const chain: UserFacingErrorCause[] = [];
   for (let item: UserFacingErrorCause | undefined = root; item; item = item.cause) chain.push(item);
   // 已解释过的字符串仍可切换语言，避免再次格式化时丢失原因。
   const translated = explanations.find(([, copy]) => copy[0] === root.message || copy[1] === root.message)?.[1];
-  const match = [...chain].reverse().flatMap((item) => explanations.filter(([codes]) => codes.includes(item.message) || (item.code && codes.includes(item.code))))[0]?.[1] ?? translated;
+  // 发送后核对可能包住读取失败，仍优先解释刷新状态，底层原因继续完整保留在详情中。
+  const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED');
+  // 只改变解释优先级，不改变下方对发送结果未知的保护。
+  const explanationChain = readFailure ? [readFailure] : [...chain].reverse();
+  const match = explanationChain.flatMap((item) => explanations.filter(([codes]) => codes.includes(item.message) || (item.code && codes.includes(item.code))))[0]?.[1] ?? translated;
   const details = chain
     .map((item) => [[item.code, item.message].filter(Boolean).join(': '), item.details].filter(Boolean).join('\n'))
     .filter(Boolean)
