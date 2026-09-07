@@ -243,7 +243,7 @@ export interface SessionControllerClient {
   reorderNativeQueue(projectId: string, conversationId: string, orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendNativeQueuedNow(projectId: string, conversationId: string, submissionId: string): Promise<NativeOperationAcceptance>;
   resumeNativeQueue(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
-  recoverNativeQueue(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
+  recoverNativeQueue(projectId: string, conversationId: string, intent: 'check' | 'continue'): Promise<NativeQueueSnapshot>;
   interruptNativeTurn(projectId: string, conversationId: string, turnId: string): Promise<NativeOperationAcceptance>;
   respondToNativeRequest(projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>): Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
 
@@ -296,7 +296,7 @@ export interface SessionController {
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
   /** 回答绑定原问题，独立于 Composer 普通消息草稿。 */
   answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean): Promise<NativeOperationAcceptance | void>;
-  retryPendingSend(clientUserMessageId: string): Promise<NativeOperationAcceptance | void>;
+  retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
@@ -305,7 +305,7 @@ export interface SessionController {
   reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendQueuedNow(submissionId: string): Promise<NativeOperationAcceptance>;
   resumeQueue(): Promise<NativeQueueSnapshot>;
-  recoverQueue(): Promise<NativeQueueSnapshot>;
+  recoverQueue(intent: 'check' | 'continue'): Promise<NativeQueueSnapshot>;
 
   restoreArchivedConversation(): Promise<NativeConversationSnapshot>;
   interruptActiveTurn(): Promise<NativeOperationAcceptance>;
@@ -370,8 +370,6 @@ interface PendingSendEnvelope {
   idempotencyKey: string;
   clientUserMessageId: string;
   startedAt?: string;
-  /** 跨 Renderer 生命周期最多自动重放一次；写入后再发，避免连续崩溃形成循环。 */
-  autoReplayCount?: 0 | 1;
   deliveryState?: 'pending' | 'accepted' | 'failed' | 'uncertain';
   deliveryError?: NativeSessionError;
   acceptance?: NativeOperationAcceptance;
@@ -416,7 +414,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const storageKey = `zeus.native-session-draft:${options.projectId}:${options.conversationId}`;
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
-  let restoredPendingSendMayReplay = Boolean(persisted.pendingSend);
   let deferredSends: PendingSendEnvelope[] = (persisted.deferredSends ?? []).map((envelope) => ({
     ...envelope,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
@@ -461,6 +458,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
+  // 退出时仍在发送中的消息按未知结果展示，重启不会触发额外发送。
+  if (pendingSend && (!pendingSend.deliveryState || pendingSend.deliveryState === 'pending')) {
+    pendingSend = { ...pendingSend, deliveryState: 'uncertain', deliveryError: { code: 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING', message: 'Message status needs confirmation.', recoveryRequired: true, retryable: true } };
+  }
   if ((pendingSend?.deliveryState === 'failed' || pendingSend?.deliveryState === 'uncertain') && pendingSend.deliveryError) {
     const previousConversationState = state.conversationState;
     const startedAt = pendingSend.startedAt ?? new Date().toISOString();
@@ -1187,28 +1188,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
   }
 
-  function replayPersistedSendAfterHydration(snapshot: NativeConversationSnapshot): void {
-    const envelope = pendingSend;
-    if (!restoredPendingSendMayReplay || !envelope || envelope.deliveryState === 'accepted') return;
-    if (acceptedEnvelopeIsDurable(snapshot, envelope) || envelopeWasTerminalWithoutProviderFact(snapshot, envelope)) return;
-    restoredPendingSendMayReplay = false;
-    if ((envelope.autoReplayCount ?? 0) >= 1) return;
-    const replay: PendingSendEnvelope = {
-      ...envelope,
-      autoReplayCount: 1,
-      deliveryState: 'pending',
-    };
-    delete replay.acceptance;
-    delete replay.deliveryError;
-    // 先把次数和原始身份落盘，再复用同一个耐久 command；进程再次退出时不得无限自动重放。
-    pendingSend = replay;
-    persistDraft();
-    queueMicrotask(() => {
-      if (disposed || pendingSend !== replay || state.transportState !== 'ready' || !realtimeSubscribed || activeOperation) return;
-      void submitEnvelope(replay).catch(() => undefined);
-    });
-  }
-
   async function reconcileAcceptedSend(): Promise<void> {
     const envelope = pendingSend;
     if (!envelope || envelope.deliveryState !== 'accepted' || !envelope.acceptance || disposed) return;
@@ -1757,7 +1736,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       ready = true;
       dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
       void flushPendingBrowserCommentMarks();
-      replayPersistedSendAfterHydration(snapshot);
       void flushDeferredSends();
     } catch (error) {
       hydrating = false;
@@ -1924,7 +1902,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  async function retryPendingSend(clientUserMessageId: string): Promise<NativeOperationAcceptance | void> {
+  async function retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void> {
     const envelope = pendingSend;
     if (!envelope || envelope.clientUserMessageId !== clientUserMessageId || envelope.deliveryState === 'accepted') {
       throw new Error('这条本地消息已经不在待发送状态。');
@@ -1935,10 +1913,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return reconciliation.acceptance;
     }
     if (reconciliation.kind === 'terminal') return;
-    if (reconciliation.kind === 'unknown') throw new Error('暂时无法确认 Zeus 是否已经接收这条消息，已停止重复发送。');
+    if (reconciliation.kind === 'unknown' || intent === 'check') throw new Error('ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING');
     await ensureRealtimeConnection();
     if (pendingSend !== envelope) throw new Error('待发送消息在确认期间已经变化。');
-    const retry: PendingSendEnvelope = { ...envelope, autoReplayCount: 1, deliveryState: 'pending' };
+    const retry: PendingSendEnvelope = { ...envelope, deliveryState: 'pending' };
     delete retry.acceptance;
     delete retry.deliveryError;
     pendingSend = retry;
@@ -1958,7 +1936,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     if (reconciliation.kind === 'unknown') throw new Error('暂时无法确认 Zeus 是否已经接收这条消息，不能安全取消。');
     if (pendingSend === envelope) pendingSend = null;
-    restoredPendingSendMayReplay = false;
     dispatch({
       type: 'queued_submission_deleted',
       submissionId: envelope.clientUserMessageId,
@@ -2626,7 +2603,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
           startedAt: reusableIdentity?.startedAt ?? new Date().toISOString(),
-          autoReplayCount: reusableIdentity?.autoReplayCount ?? 0,
         };
       }
       const envelope = pendingSend;
@@ -2680,7 +2656,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (pendingSend?.deliveryState === 'accepted') await reconcileAcceptedSend();
       if (pendingSend) {
         if (pendingSend.fingerprint !== fingerprint) throw new Error('上一条消息尚未确认送达，请先重试或取消。');
-        return retryPendingSend(pendingSend.clientUserMessageId);
+        return retryPendingSend(pendingSend.clientUserMessageId, 'continue');
       }
       await ensureRealtimeConnection();
       const envelope: PendingSendEnvelope = {
@@ -2699,7 +2675,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         idempotencyKey: identity,
         clientUserMessageId: identity,
         startedAt: new Date().toISOString(),
-        autoReplayCount: 0,
       };
       return submitEnvelope(envelope);
     },
@@ -2830,10 +2805,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (queue) => applyAuthoritativeQueue(queue),
       );
     },
-    recoverQueue() {
+    recoverQueue(intent) {
       return runOperation(
-        'queue:recover',
-        () => options.client.recoverNativeQueue(options.projectId, options.conversationId),
+        `queue:recover:${intent}`,
+        () => options.client.recoverNativeQueue(options.projectId, options.conversationId, intent),
         (queue) => applyAuthoritativeQueue(queue),
         true,
       );
@@ -3263,7 +3238,6 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&
     (pending.startedAt === undefined || typeof pending.startedAt === 'string') &&
-    (pending.autoReplayCount === undefined || pending.autoReplayCount === 0 || pending.autoReplayCount === 1) &&
     (pending.deliveryState === undefined || pending.deliveryState === 'pending' || pending.deliveryState === 'accepted' || pending.deliveryState === 'failed' || pending.deliveryState === 'uncertain') &&
     (pending.deliveryError === undefined || isNativeSessionError(pending.deliveryError)) &&
     (pending.acceptance === undefined || isNativeOperationAcceptance(pending.acceptance)) &&

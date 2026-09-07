@@ -505,7 +505,7 @@ function TaskEmployeeRunDialog(props: {
     setCapabilityError(null);
     const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current() : props.client.loadDigitalEmployeeCapabilities();
     void request
-      .then((nextCapabilities) => {
+      .then((nextCapabilities: CodexTaskPushCapabilities | Awaited<ReturnType<typeof props.client.loadDigitalEmployeeCapabilities>>) => {
         if (!active) return;
         const taskCapabilities = 'repositories' in nextCapabilities ? nextCapabilities : null;
         const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities) : ({ mode: 'create' } as const);

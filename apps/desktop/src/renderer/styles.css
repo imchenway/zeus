@@ -26968,13 +26968,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   padding-bottom: 22px;
   border-bottom: 1px solid var(--zeus-product-line-soft);
 }
-.macos-ai-app .model-setup-connect-entry {
-  position: absolute;
-  top: 42px;
-  right: 22px;
-  z-index: 30;
-  -webkit-app-region: no-drag;
-}
 .macos-ai-app .model-setup-dialog [hidden] {
   display: none;
 }
@@ -26989,5 +26982,248 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
   .macos-ai-app .model-setup-dialog .model-connection-field-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 首次任务流程：系统字体、灰阶分组与单一主操作，沿用现有主题和动效。 */
+.macos-ai-app .project-start-guide {
+  box-sizing: border-box;
+  inline-size: min(720px, 100%);
+  margin: clamp(32px, 8vh, 96px) auto 32px;
+  padding: 32px clamp(24px, 4vw, 48px);
+  color: var(--zeus-product-text);
+  text-align: start;
+  animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
+}
+.macos-ai-app .project-start-symbol {
+  color: var(--zeus-product-muted);
+  margin-block-end: 24px;
+}
+.macos-ai-app .project-start-eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .project-start-guide h1 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.macos-ai-app .project-start-description {
+  max-inline-size: 48ch;
+  margin: 16px 0 32px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .project-start-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  list-style: none;
+  margin: 0 0 32px;
+  padding: 24px 0;
+  border-block: 1px solid var(--zeus-product-line-soft);
+}
+.macos-ai-app .project-start-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-inline-size: 0;
+}
+.macos-ai-app .project-start-steps li > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  block-size: 24px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 50%;
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .project-start-steps li[aria-current] > span {
+  background: var(--zeus-product-accent);
+  color: var(--zeus-accent-text, white);
+  border-color: transparent;
+}
+.macos-ai-app .project-start-steps strong {
+  display: block;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 500;
+}
+.macos-ai-app .project-start-steps small {
+  display: block;
+  margin-block-start: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .project-start-action {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+.macos-ai-app .project-start-action > small {
+  max-inline-size: 50ch;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .task-flow-context {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .task-push-task-title {
+  color: var(--zeus-product-text);
+  font-size: 16px;
+  font-weight: 500;
+}
+.macos-ai-app .task-flow-feedback {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .task-model-connect-link {
+  justify-self: start;
+}
+.macos-ai-app .task-model-push-body > .task-model-push-config-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.macos-ai-app .task-model-push-body > .task-model-push-config-grid > label:first-child {
+  grid-column: 1 / -1;
+}
+/* 模型选项直接展示；分栏保持宽窗口紧凑，操作区留在滚动内容之外。 */
+.macos-ai-app .task-model-push-model-options {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.macos-ai-app .task-model-push-model-options > .task-model-push-warning {
+  grid-column: 1 / -1;
+}
+/* 创建任务的附加字段始终可见，导入与标签各占一行。 */
+.macos-ai-app .task-create-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+.macos-ai-app .task-create-options > .task-create-zentao-field,
+.macos-ai-app .task-create-options > .task-create-tags-field {
+  grid-column: 1 / -1;
+}
+.macos-ai-app .task-model-push-workspace {
+  padding: 20px 0;
+  border-inline: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.macos-ai-app .task-create-modal-header strong,
+.macos-ai-app .task-model-push-header strong,
+.macos-ai-app .project-create-dialog-header strong,
+.macos-ai-app .model-setup-heading strong {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.macos-ai-app .model-setup-dialog {
+  width: min(720px, calc(100vw - 40px));
+  border-radius: 14px;
+  gap: 24px;
+  animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
+}
+.macos-ai-app .model-setup-heading p {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+.macos-ai-app .model-setup-task-context {
+  display: block;
+  margin-block-start: 12px;
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .model-setup-options {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.macos-ai-app .model-setup-options > button {
+  min-height: 88px;
+  padding: 18px 20px;
+  justify-items: start;
+  gap: 6px;
+  border-radius: 10px;
+}
+.macos-ai-app .model-setup-options strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.macos-ai-app .model-setup-options span {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.macos-ai-app .model-setup-actions small {
+  font-size: 12px;
+}
+.macos-ai-app .session-conversation-archive-error {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  margin: 4px 6px 10px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .session-conversation-archive-error > button {
+  display: block;
+  margin-block-start: 8px;
+  min-block-size: 28px;
+  color: var(--zeus-product-text);
+}
+@media (max-width: 850px) {
+  .macos-ai-app .project-start-steps {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .macos-ai-app .project-start-guide {
+    margin-block-start: 24px;
+  }
+}
+@media (max-width: 600px) {
+  .macos-ai-app .task-create-options,
+  .macos-ai-app .task-model-push-config-grid,
+  .macos-ai-app .task-model-push-body > .task-model-push-config-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .macos-ai-app .task-model-push-footer {
+    flex-wrap: wrap;
+  }
+  .macos-ai-app .task-model-push-footer > span {
+    margin-inline-start: auto;
+  }
+  .macos-ai-app .project-start-guide h1 {
+    font-size: 24px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .project-start-guide,
+  .macos-ai-app .model-setup-dialog {
+    animation: none;
   }
 }

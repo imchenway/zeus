@@ -36,7 +36,7 @@ interface CodexProviderThreadAuthorityOptions {
 }
 
 export interface CodexProviderThreadAuthorityApplication {
-  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean }): Promise<ProviderThreadAuthority>;
+  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean; readOnly?: boolean }): Promise<ProviderThreadAuthority>;
   observe(conversationId: string, providerThreadId: string): void;
   queueChanged(conversationId: string): void;
   stopObserver(conversationId: string): void;
@@ -63,6 +63,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
 
   function requiresProviderTurnProjection(conversation: ZeusConversationWithMessagesRecord, providerStatus: CodexThreadRuntimeStatus): boolean {
     if (providerStatus.type === 'active') return true;
+    // 未知写入需要读取已有轮次寻找原提交身份，不能仅靠线程空闲推断未发送。
+    if (options.submissions.listByConversation(conversation.id).some((submission) => submission.submissionOutcome === 'outcome_unknown')) return true;
     const state = options.runStates.get(conversation.id) ?? options.inferRunState(conversation);
     if (state.type === 'active' || state.type === 'waiting') return true;
     // queued -> dispatching 只是 Zeus 已取得本地派发租约，并不代表 Provider 已接受轮次。
@@ -253,7 +255,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     return afterResume;
   }
 
-  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean } = {}): Promise<ProviderThreadAuthority> {
+  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean; readOnly?: boolean } = {}): Promise<ProviderThreadAuthority> {
     const previous = authorityChains.get(conversation.id);
     const waitForPrevious = previous
       ? previous.then(
@@ -261,7 +263,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
           () => undefined,
         )
       : Promise.resolve();
-    const authority = waitForPrevious.then(() => inspectUnserialized(options.requireConversation(conversation.id), context));
+    // 只读检查与执行共享身份串行边界，但不恢复订阅或启动观察器。
+    const authority = waitForPrevious.then(() => (input.readOnly ? readAndProject(options.requireConversation(conversation.id)) : inspectUnserialized(options.requireConversation(conversation.id), context)));
     authorityChains.set(conversation.id, authority);
     void authority
       .finally(() => {
@@ -269,6 +272,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
       })
       .catch(() => undefined);
     return authority.then((result) => {
+      if (input.readOnly) return result;
       if (result.type === 'active' && input.observeActive !== false) {
         observe(conversation.id, requireString(options.requireConversation(conversation.id).providerThreadId, 'provider thread id'));
       } else if (result.type === 'idle') {

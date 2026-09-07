@@ -1,4 +1,4 @@
-import { useModelSetup, ModelSetupDialog, CodexAccountSettings } from '../../settings/ModelSetup.js';
+import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { useId, useState } from 'react';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
@@ -40,6 +40,7 @@ import {
   parseRuntimeDefaultArgsText,
   parseRuntimeTerminalEnvText,
   ProjectCreateDialog,
+  ProjectStartGuide,
   ProjectWorkspaceModeToolbar,
   SidebarNav,
 } from './WorkspaceChrome.js';
@@ -72,6 +73,7 @@ import {
   taskHierarchyDepth,
   TaskTableLayoutDecisionDialog,
   TaskTerminalCleanupDialog,
+  isTaskModelPushOriginCurrent,
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
@@ -288,9 +290,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskGitReviewState,
     taskModelPushAnnouncement,
     taskModelPushCapabilities,
-    taskModelPushConfigImportNeedsActivation,
-    taskModelPushConfigImportPreview,
     taskModelPushError,
+    taskModelPushEntry,
     taskModelPushForm,
     taskModelPushRefreshingRepositoryId,
     taskModelPushRuntimeCapabilities,
@@ -322,8 +323,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     applyZentaoTaskExtract,
     archiveConversation,
     authorizeTaskCreateFiles,
-    cancelTaskModelPushAuthentication,
-    cancelTaskModelPushCodexConfigImport,
     changedFiles,
     chooseProjectDirectoryForCreate,
     closeProjectCreateDialog,
@@ -335,7 +334,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     currentRuntimeAdapterDisplayName,
     deleteProject,
     effectiveTaskStatusSettingsTargetId,
-    importTaskModelPushCodexConfig,
     loadGraphConversationDetail,
     materializeTaskCreateResources,
     openProjectCreateDialog,
@@ -360,7 +358,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     revealProjectInFinder,
     selectNativeConversation,
     selectProjectCodeWorkspaceMode,
-    skipTaskModelPushCodexConfigImport,
     submitTaskCreateModal,
     submitTaskModelPush,
     taskDetailPaneTask,
@@ -457,8 +454,30 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskManagementStatusConfigDraft,
     workspaceDrawerPortalStyle,
   } = operations;
-  // 登录和接入弹窗留在现有工作面上方，避免切路由丢失会话草稿。
-  const modelSetup = useModelSetup({ client: props.nativeConversationClient ?? null, settings: appShellSettings, onSettingsSaved: state.setAppShellSettings });
+  /** 接入上下文随当前确认页失效，关闭或切换任务后旧回执不再生效。 */
+  const modelSetupTask = snapshot.tasks.find((task) => task.id === taskModelPushTaskId);
+  const taskModelSetupContext: TaskModelSetupContext | undefined =
+    modelSetupTask &&
+    activeNavTarget === 'projects' &&
+    modelSetupTask.projectId === activeProjectId &&
+    (!state.taskModelPushEntryRef.current || isTaskModelPushOriginCurrent(state.taskModelPushEntryRef.current.origin, state.taskModelPushNavigationRef.current))
+      ? {
+          projectId: modelSetupTask.projectId,
+          taskId: modelSetupTask.id,
+          label: `${snapshot.projects.find((project) => project.id === modelSetupTask.projectId)?.name ?? ''} · ${modelSetupTask.title}`,
+          entry: taskModelPushEntry === 'confirmation' ? 'from_confirmation' : 'before_confirmation',
+          onCancel: taskModelPushEntry === 'confirmation' ? () => undefined : domainActions.closeTaskModelPush,
+          onComplete: domainActions.refreshTaskModelPushModels,
+        }
+      : undefined;
+  /** 接入弹窗留在确认页上方，原表单继续持有输入与附件。 */
+  const modelSetup = useModelSetup({
+    client: props.nativeConversationClient ?? null,
+    settings: appShellSettings,
+    onSettingsSaved: state.setAppShellSettings,
+    taskContext: taskModelSetupContext,
+    requestedTaskStep: taskModelPushEntry === 'choose' || taskModelPushEntry === 'custom' ? taskModelPushEntry : undefined,
+  });
   const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
   const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
   return (
@@ -472,11 +491,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-label={uiCopy.shellAriaLabel}
     >
       <ModelSetupDialog controller={modelSetup} />
-      {appShellSettings.modelSetupStatus === 'pending' || appShellSettings.modelSetupStatus === 'skipped' ? (
-        <Button className="model-setup-connect-entry" variant="secondary" onClick={() => modelSetup.setStep('choose')}>
-          {appShellSettings.appLanguage === 'zh-CN' ? '连接模型' : 'Connect a model'}
-        </Button>
-      ) : null}
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
@@ -688,6 +702,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         />
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
+        {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
+          <ProjectStartGuide
+            language={appShellSettings.appLanguage}
+            busy={projectDirectoryChoosing || creatingProjectBusy}
+            available={projectCreationReady}
+            onChooseFolder={() => {
+              openProjectCreateDialog();
+              void chooseProjectDirectoryForCreate();
+            }}
+          />
+        ) : null}
         {activeNavTarget === 'skills' ? <ExtensionsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
         {activeNavTarget === 'automations' ? (
           <AutomationsWorkspace
@@ -757,7 +782,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'project-settings' ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && activeProjectSection === 'project-settings' ? (
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
@@ -801,7 +826,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </section>
           </section>
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
           <section
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
             aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
@@ -896,6 +921,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     />
                   )}
                   <TaskCreateModal
+                    projectName={selectedProject?.name}
                     open={taskCreateModalOpen}
                     copy={taskWorkspaceCopy}
                     form={taskCreateForm}
@@ -936,7 +962,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               )}
 
               <TaskModelPushModal
-                open={Boolean(taskModelPushTaskId)}
+                open={Boolean(taskModelPushTaskId) && taskModelPushEntry === 'confirmation' && !modelSetup.step}
                 language={appShellSettings.appLanguage}
                 task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
@@ -945,8 +971,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 serviceTierPreferences={taskModelPushServiceTierPreferences}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
-                configImportPreview={taskModelPushConfigImportPreview}
-                configImportNeedsActivation={taskModelPushConfigImportNeedsActivation}
                 refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
                 skillClient={props.nativeConversationClient ?? null}
@@ -961,11 +985,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
+                onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
+                onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
                 onClose={closeTaskModelPush}
-                onCancelAuthentication={cancelTaskModelPushAuthentication}
-                onCancelCodexConfigImport={cancelTaskModelPushCodexConfigImport}
-                onImportCodexConfig={() => void importTaskModelPushCodexConfig()}
-                onSkipCodexConfigImport={skipTaskModelPushCodexConfigImport}
                 onSubmit={(event) => void submitTaskModelPush(event)}
               />
               <TaskGitMergeModal

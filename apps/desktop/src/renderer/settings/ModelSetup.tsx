@@ -15,10 +15,35 @@ import {
   type NativeConversationAppClient,
 } from '../features/workspace/workspaceSupport.js';
 
-/** 首次接入与常驻设置共用同一流程，关闭只释放当前请求，不切换工作面。 */
-export function useModelSetup(input: { client: NativeConversationAppClient | null; settings: AppShellSettings; onSettingsSaved: (settings: AppShellSettings) => void }) {
-  /** 步骤状态属于当前窗口；是否再次自动显示由已持久化状态决定。 */
-  const [step, setStep] = useState<'choose' | 'custom' | 'codex' | 'config' | null>(() => (input.settings.modelSetupStatus === 'pending' ? 'choose' : null));
+/** 任务接入返回原确认页，结果始终绑定发起时的项目和任务。 */
+export interface TaskModelSetupContext {
+  /** 发起接入的项目。 */
+  projectId: string;
+  /** 发起接入的任务。 */
+  taskId: string;
+  /** 接入期间保持用户正在处理的任务可见。 */
+  label: string;
+  /** 首次接入取消回到任务；确认页主动接入取消回到原表单。 */
+  entry: 'before_confirmation' | 'from_confirmation';
+  /** 只在用户取消本次接入时调用，登录完成不调用。 */
+  onCancel: () => void;
+  /** 只刷新确认页，不创建会话或发送消息。 */
+  onComplete: (modelRef: string | null) => Promise<void>;
+}
+
+/** 按需接入与常驻设置共用同一流程，关闭只释放当前请求，不切换工作面。 */
+export function useModelSetup(input: {
+  client: NativeConversationAppClient | null;
+  settings: AppShellSettings;
+  onSettingsSaved: (settings: AppShellSettings) => void;
+  taskContext?: TaskModelSetupContext;
+  /** 入口检查确认需要接入时打开对应步骤，普通渲染不触发接入。 */
+  requestedTaskStep?: 'choose' | 'custom';
+}) {
+  /** 接入只由用户操作打开，不在启动时打断工作。 */
+  const [step, setStep] = useState<'choose' | 'custom' | 'codex' | 'config' | null>(null);
+  /** 接入目标冻结到发起操作，迟到结果不能改变另一项任务。 */
+  const targetRef = useRef<TaskModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
   const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
   /** 当前步骤只展示脱敏后的可恢复错误。 */
@@ -54,13 +79,35 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
     if (loginId && input.client) void input.client.cancelCodexChatGptLogin(loginId).catch(() => undefined);
   }
 
+  /** 打开时冻结目标，设置入口不继承任务接入的作用范围。 */
+  function open(next: 'choose' | 'codex' | 'custom' = 'choose', target: TaskModelSetupContext | null = null): void {
+    invalidate();
+    targetRef.current = target;
+    setOperation('idle');
+    setError(null);
+    if (next === 'custom') setCustomVisited(true);
+    setStep(next);
+  }
+
+  useEffect(() => {
+    if (!targetRef.current || (targetRef.current.taskId === input.taskContext?.taskId && targetRef.current.projectId === input.taskContext?.projectId)) return;
+    invalidate();
+    targetRef.current = null;
+    setStep(null);
+    setCustomVisited(false);
+    setOperation('idle');
+  }, [input.taskContext?.taskId, input.taskContext?.projectId]);
+
+  useEffect(() => {
+    if (input.taskContext && input.requestedTaskStep) open(input.requestedTaskStep, input.taskContext);
+  }, [input.requestedTaskStep, input.taskContext?.taskId, input.taskContext?.projectId]);
+
   useEffect(() => {
     // 错误弹窗打开原地引导，避免路由切换销毁用户正在编辑的会话草稿。
     const openFromError = (event: Event): void => {
       /** 错误出口只允许选择已有接入步骤。 */
       const requested = (event as CustomEvent).detail;
-      setStep(requested === 'codex' ? 'codex' : 'choose');
-      setError(null);
+      open(requested === 'codex' ? 'codex' : 'choose', currentInputRef.current.taskContext ?? null);
     };
     window.addEventListener(modelSetupRequestedEvent, openFromError);
     return () => {
@@ -77,37 +124,65 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
     /** 保存时读取最新普通设置，避免恢复旧快照。 */
     const current = currentInputRef.current;
     if (!current.client) throw new Error('Model setup client unavailable');
+    /** 保存期间只允许当前目标接收完成通知。 */
+    const target = targetRef.current;
+    const request = ++requestRef.current;
+    const isCurrent = (): boolean => requestRef.current === request && (!target || (currentInputRef.current.taskContext?.taskId === target.taskId && currentInputRef.current.taskContext?.projectId === target.projectId));
     setOperation('saving');
     setError(null);
     try {
+      if (target) {
+        if (reference) {
+          /** 合并当前项目选择；只有缺失或失效的默认模型才被替换。 */
+          const [selection, catalog] = await Promise.all([current.client.loadProjectModelSelection(target.projectId), current.client.loadSelectablePiModels()]);
+          if (!isCurrent()) return;
+          const available = new Set(catalog.filter((model) => model.available).map((model) => model.id));
+          if (!available.has(reference)) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+          await current.client.saveProjectModelSelection(target.projectId, {
+            ...selection,
+            allowedModelRefs: [...new Set([...selection.allowedModelRefs, reference])],
+            defaultModelRef: selection.defaultModelRef && available.has(selection.defaultModelRef) ? selection.defaultModelRef : reference,
+          });
+        }
+        if (!isCurrent()) return;
+        await target.onComplete(reference);
+        if (!isCurrent()) return;
+        setStep(null);
+        setCustomVisited(false);
+        targetRef.current = null;
+        return;
+      }
       /** 持久化成功后才更新界面状态。 */
       const saved = await current.client.settings.saveAppShellSettings({
         ...toAppShellSettingsSavePayload(current.settings),
         modelSetupStatus: skipped ? 'skipped' : 'completed',
         ...(skipped ? {} : { newProjectDefaultModelRef: reference }),
       });
+      if (!isCurrent()) return;
       current.onSettingsSaved(saved);
       setStep(null);
       setCustomVisited(false);
     } catch (failure) {
+      if (!isCurrent()) return;
       setError(formatVisibleApplicationError(failure, zh ? 'zh-CN' : 'en'));
       throw failure;
     } finally {
-      setOperation('idle');
+      if (isCurrent()) setOperation('idle');
     }
   }
 
-  /** 关闭接入引导时保留已完成用户的状态，首次用户则记为稍后设置。 */
+  /** 关闭只回到原工作面，不写入默认模型或引导状态。 */
   function close(): void {
     if (operation === 'importing' || operation === 'saving' || editorBusy) return;
     invalidate();
     setOperation('idle');
     setError(null);
-    if (input.settings.modelSetupStatus === 'pending') void finish(null, true).catch(() => undefined);
-    else {
-      setStep(null);
-      setCustomVisited(false);
-    }
+    /** 先清除本次目标，再执行该入口对应的返回动作。 */
+    const target = targetRef.current;
+    targetRef.current = null;
+    setStep(null);
+    setCustomVisited(false);
+    target?.onCancel();
   }
 
   /** 返回首屏保留供应商编辑器普通字段，编辑器自身负责清除密钥。 */
@@ -153,7 +228,7 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
   }
 
   /** 安全配置导入单独询问；预览失败不阻塞订阅登录。 */
-  async function prepareCodex(): Promise<void> {
+  async function inspectConfig(): Promise<void> {
     if (!input.client || operation !== 'idle') return;
     /** 记录本次操作身份，忽略取消后的迟到回执。 */
     const request = ++requestRef.current;
@@ -168,30 +243,32 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
       setOperation('idle');
       return;
     }
-    if (preference !== 'answered') {
-      try {
-        /** 用户选择 Codex 后才读取普通配置预览。 */
-        const value = await input.client.inspectCodexConfigImport();
-        if (requestRef.current !== request) return;
-        if (value.available && value.entries.length > 0) {
-          setPreview(value);
-          setNeedsActivation(false);
-          setStep('config');
-          setOperation('idle');
-          return;
-        }
-      } catch {
-        if (requestRef.current !== request) return;
-      }
+    try {
+      /** 普通配置预览不读取账号、密钥或会话。 */
+      const value = await input.client.inspectCodexConfigImport();
+      if (requestRef.current !== request) return;
+      if (value.available && value.entries.length > 0) {
+        setPreview(value);
+        setNeedsActivation(false);
+        setStep('config');
+      } else setError(zh ? '没有可导入的配置，可以直接登录。' : 'No configuration to import. You can sign in directly.');
+    } catch (failure) {
+      if (requestRef.current === request) setError(modelSetupLoginError(failure, zh));
+    } finally {
+      if (requestRef.current === request) setOperation('idle');
     }
-    if (requestRef.current === request) await login();
   }
 
   /** 跳过仅记录普通偏好；不会复制其他应用账号。 */
   function skipImport(): void {
     writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'answered');
     setPreview(null);
-    void login();
+    setStep('codex');
+  }
+
+  /** 登录直接进入官方授权，普通配置导入由单独的可选入口发起。 */
+  async function prepareCodex(): Promise<void> {
+    if (operation === 'idle') await login();
   }
 
   /** 配置已经导入但尚未启用时，只重试启用，不重复复制文件。 */
@@ -216,7 +293,8 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
       writeCodexConfigImportPromptPreference(browserNativeConversationStartStorage(), 'answered');
       setNeedsActivation(false);
       setPreview(null);
-      await login();
+      setStep('codex');
+      setOperation('idle');
     } catch (failure) {
       if (requestRef.current !== request) return;
       setOperation('idle');
@@ -258,6 +336,8 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
     input,
     step,
     setStep,
+    open,
+    taskTarget: targetRef.current,
     operation,
     error,
     account,
@@ -272,6 +352,7 @@ export function useModelSetup(input: { client: NativeConversationAppClient | nul
     close,
     back,
     prepareCodex,
+    inspectConfig,
     skipImport,
     importConfig,
     checkAccount,
@@ -310,11 +391,11 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
       </header>
       <p>{zh ? '使用 ChatGPT 账号授权 Codex。Zeus 的登录独立于其他应用；也可以在下方配置自定义供应商。' : 'Authorize Codex with your ChatGPT account. Zeus signs in independently; custom providers can also be configured below.'}</p>
       <div className="model-setup-actions">
-        <Button onClick={() => controller.setStep('codex')}>{zh ? '使用 Codex 订阅登录' : 'Sign in with Codex subscription'}</Button>
+        <Button onClick={() => controller.open('codex')}>{zh ? '使用 Codex 订阅登录' : 'Sign in with Codex subscription'}</Button>
         <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking'} onClick={() => void controller.checkAccount()}>
           {zh ? '检查状态' : 'Check status'}
         </Button>
-        <Button variant="secondary" onClick={() => controller.setStep('choose')}>
+        <Button variant="secondary" onClick={() => controller.open('choose')}>
           {zh ? '重新选择接入方式' : 'Choose connection method'}
         </Button>
       </div>
@@ -338,12 +419,12 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
             <strong id="model-setup-title">
               {c.step === 'choose'
                 ? zh
-                  ? '欢迎使用 Zeus'
-                  : 'Welcome to Zeus'
+                  ? '连接模型'
+                  : 'Connect a model'
                 : c.step === 'custom'
                   ? zh
-                    ? '连接自定义供应商'
-                    : 'Connect a custom provider'
+                    ? 'API Key 与已有供应商'
+                    : 'API key or existing provider'
                   : c.step === 'config'
                     ? zh
                       ? '导入 Codex 配置'
@@ -352,7 +433,16 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                       ? '使用 Codex 订阅'
                       : 'Use a Codex subscription'}
             </strong>
-            <p id="model-setup-description">{zh ? '选择模型接入方式。完成后即可为新项目使用模型，也可以稍后设置。' : 'Choose how to connect a model for new projects. You can also set this up later.'}</p>
+            <p id="model-setup-description">
+              {c.taskTarget
+                ? zh
+                  ? '接入后进入推送确认，检查设置后再开始。'
+                  : 'Continue to push confirmation after setup. Review your settings before starting.'
+                : zh
+                  ? '选择模型接入方式，或使用已有供应商。'
+                  : 'Choose how to connect, or select an existing provider.'}
+            </p>
+            {c.taskTarget ? <small className="model-setup-task-context">{c.taskTarget.label}</small> : null}
           </div>
           <Button variant="secondary" aria-label={zh ? '关闭接入引导' : 'Close model setup'} disabled={locked} onClick={c.close}>
             ×
@@ -372,14 +462,21 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                   c.setStep('custom');
                 }}
               >
-                <strong>{zh ? '连接自定义供应商' : 'Connect a custom provider'}</strong>
+                <strong>{zh ? 'API Key 与已有供应商' : 'API key or existing provider'}</strong>
                 <span>{zh ? '填写服务地址与 API Key，选择模型' : 'Enter a service URL and API key, then choose a model'}</span>
               </Button>
             </div>
           ) : null}
           <div hidden={c.step !== 'custom'}>
             {c.customVisited ? (
-              <ModelConnectionsSettingsPane language={c.input.settings.appLanguage} client={c.input.client} active={c.step === 'custom'} onBusyChange={c.setEditorBusy} onComplete={(reference) => c.finish(reference)} />
+              <ModelConnectionsSettingsPane
+                language={c.input.settings.appLanguage}
+                client={c.input.client}
+                active={c.step === 'custom'}
+                onBusyChange={c.setEditorBusy}
+                completionScope={c.taskTarget ? 'project' : 'new_projects'}
+                onComplete={(reference) => c.finish(reference)}
+              />
             ) : null}
           </div>
           {c.step === 'codex' ? (
@@ -391,8 +488,8 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                     : 'Preparing sign-in…'
                   : c.operation === 'authenticating'
                     ? zh
-                      ? '请在官方网页完成登录，Zeus 会自动返回并继续，无需点击网页中的其他产品按钮。'
-                      : 'Complete sign-in on the official page. Zeus will return automatically; no other product buttons are needed.'
+                      ? '请在官方网页完成登录。完成后返回这里确认设置。'
+                      : 'Complete sign-in on the official page, then return here to review your settings.'
                     : c.operation === 'authenticated'
                       ? zh
                         ? '登录成功，正在返回 Zeus…'
@@ -403,6 +500,9 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
               </p>
               <Button disabled={c.operation !== 'idle'} busy={c.operation === 'inspecting' || c.operation === 'authenticating'} onClick={() => void c.prepareCodex()}>
                 {zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
+              </Button>
+              <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>
+                {zh ? '导入已有配置（可选）' : 'Import configuration (optional)'}
               </Button>
               <Button variant="secondary" disabled={locked} onClick={() => void c.openInstallGuide()}>
                 {zh ? '查看官方安装指引' : 'Official installation guide'}
@@ -447,7 +547,21 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
         </div>
         <footer className="model-setup-actions">
           <Button variant="secondary" disabled={locked} onClick={c.step === 'choose' ? c.close : c.back}>
-            {c.step === 'choose' ? (zh ? '稍后设置' : 'Set up later') : zh ? '返回选择' : 'Back to choices'}
+            {c.step === 'choose'
+              ? c.taskTarget
+                ? c.taskTarget.entry === 'before_confirmation'
+                  ? zh
+                    ? '返回任务详情'
+                    : 'Back to task'
+                  : zh
+                    ? '返回推送确认'
+                    : 'Back to confirmation'
+                : zh
+                  ? '稍后设置'
+                  : 'Set up later'
+              : zh
+                ? '返回选择'
+                : 'Back to choices'}
           </Button>
           <small>{zh ? '可随时在“设置 → 模型供应商”再次接入。' : 'You can reconnect in Settings → Model providers at any time.'}</small>
         </footer>

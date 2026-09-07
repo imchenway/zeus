@@ -102,9 +102,6 @@ export class ConversationQueueCoreMutationApplication {
     if ((submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以重试。');
     }
-    if (submission.pausedReason === 'outcome_unknown' || submission.submissionOutcome === 'outcome_unknown') {
-      throw mutationError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '接纳结果未知的提交禁止重试，必须先完成恢复核对或取消。');
-    }
     if (submission.pausedReason === 'semantic_route_changed' || submission.pausedReason === 'upgrade_interrupted' || !submission.executionSnapshotId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '原执行路由已变化或不可恢复，请使用当前输入框模型创建改路由 replacement。');
     }
@@ -139,6 +136,8 @@ export class ConversationQueueCoreMutationApplication {
   private requireOwnedSubmission(conversationId: string, submissionId: string): ZeusConversationSubmissionRecord {
     const submission = this.options.submissions.getById(submissionId);
     if (!submission || submission.conversationId !== conversationId) throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_FOUND', 'Native submission was not found.', 404);
+    // 外部写入结果未知时只允许核对，不能由人工操作抹除或替换原提交。
+    if (submission.pausedReason === 'outcome_unknown' || submission.submissionOutcome === 'outcome_unknown') throw mutationError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '消息是否送达尚未确认，请先检查处理状态。');
     return submission;
   }
 

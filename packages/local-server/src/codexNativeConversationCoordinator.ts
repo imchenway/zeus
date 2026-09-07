@@ -1885,6 +1885,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (conversation.archived || conversation.providerState === 'archived') {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', 'The provider conversation must be restored explicitly before its queue can be recovered.');
     }
+    if (input.intent === 'check') {
+      // 未绑定线程时没有外部事实可读；不得为检查创建线程或准备工作目录。
+      if (conversation.providerThreadId) {
+        await providerThreadAuthority.inspect(conversation, contextFromConversation(conversation), { readOnly: true });
+        await persist();
+      }
+      return toQueueSnapshot(conversation.id);
+    }
+    // 未知写入不能因继续恢复而重新入队；先由只读检查取得确认事实。
+    if (options.submissions.listByConversation(conversation.id).some((submission) => submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown')) {
+      throw coordinatorError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', 'Submission delivery must be confirmed before continuing.');
+    }
     if (providerStopRecovery.hasPendingEvidence(conversation.id)) {
       const stopRecovery = await providerStopRecovery.retry(conversation.id);
       if (stopRecovery === 'pending' || stopRecovery === 'recovery_required') return toQueueSnapshot(conversation.id);

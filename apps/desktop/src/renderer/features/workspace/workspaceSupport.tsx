@@ -183,6 +183,11 @@ export type TaskModelPushNavigationTarget = {
   selectedConversationPresentation: 'history' | 'interactive';
   taskDetailPaneTaskId?: string;
 };
+
+/** 接入请求只属于发起时的任务工作面，导航或切换任务后不再接收回执。 */
+export function isTaskModelPushOriginCurrent(origin: TaskModelPushNavigationTarget, current: TaskModelPushNavigationTarget): boolean {
+  return origin.projectId === current.projectId && origin.activeNavTarget === current.activeNavTarget && origin.activeProjectSection === current.activeProjectSection && origin.taskDetailPaneTaskId === current.taskDetailPaneTaskId;
+}
 export type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: TaskModelPushNavigationTarget };
 export type NativeConversationAppClient = SessionControllerClient &
   Pick<
@@ -332,6 +337,8 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
       acceptedByTask.set(choice.taskId, accepted);
     },
     forget(taskId, conversationId) {
+      // 已确认归档后，让归档前发出的目录读取失效。
+      requestVersions.set(taskId, (requestVersions.get(taskId) ?? 0) + 1);
       const accepted = acceptedByTask.get(taskId);
       if (!accepted) return;
       accepted.delete(conversationId);
@@ -380,6 +387,8 @@ export function createNativeProjectConversationChoiceLoadCoordinator(): NativePr
       acceptedByProject.set(choice.projectId, accepted);
     },
     forget(projectId, conversationId) {
+      // 已确认归档后，让归档前发出的目录读取失效。
+      requestVersions.set(projectId, (requestVersions.get(projectId) ?? 0) + 1);
       const accepted = acceptedByProject.get(projectId);
       if (!accepted) return;
       accepted.delete(conversationId);
@@ -1595,6 +1604,8 @@ export function TaskCreateFieldAttachments(props: {
 
 export function TaskCreateModal(props: {
   open: boolean;
+  /** 当前项目作为任务上下文始终可见。 */
+  projectName?: string;
   copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
   form: TaskCreateFormState;
   error?: string;
@@ -1638,26 +1649,7 @@ export function TaskCreateModal(props: {
   const resourcesBusy = resourceProcessingCount > 0;
   const interactionBusy = props.busy || resourcesBusy;
 
-  function trapTaskCreateModalFocus(event: ReactKeyboardEvent<HTMLFormElement>): void {
-    if (event.key !== 'Tab' || typeof document === 'undefined') return;
-    const focusableTaskCreateControls = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'),
-    ).filter((element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true');
-    if (focusableTaskCreateControls.length === 0) return;
-    const firstControl = focusableTaskCreateControls[0];
-    const lastControl = focusableTaskCreateControls[focusableTaskCreateControls.length - 1];
-    // 弹窗打开时把 Tab 环限制在表单内，避免键盘用户跳到背景任务列表后误操作真实任务。
-    if (event.shiftKey && document.activeElement === firstControl) {
-      event.preventDefault();
-      lastControl?.focus();
-    } else if (!event.shiftKey && document.activeElement === lastControl) {
-      event.preventDefault();
-      firstControl?.focus();
-    }
-  }
-
   function handleTaskCreateModalKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
-    trapTaskCreateModalFocus(event);
     if (event.key === 'Escape' && !interactionBusy) {
       event.stopPropagation();
       props.onClose();
@@ -1838,55 +1830,11 @@ export function TaskCreateModal(props: {
           </button>
         </header>
         <div className="task-create-modal-body">
-          {/* 创建任务只收集 Zeus 本地任务 draft，避免复制 giraffe 的负责人、迭代、附件和富文本团队字段。 */}
-          <div className="task-create-field task-create-zentao-field">
-            <span id="task-create-zentao-label">{props.copy.taskCreateZentaoLinkLabel}</span>
-            <div className="task-create-zentao-row">
-              <input
-                id="task-create-zentao-input"
-                className="task-create-title-input task-create-zentao-input"
-                value={zentaoLinkInput}
-                placeholder={props.copy.taskCreateZentaoLinkPlaceholder}
-                aria-labelledby="task-create-zentao-label"
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.value;
-                  setZentaoLinkInput(nextValue);
-                  // 粘贴完整链接后自动解析，手动逐字输入时在 URL 完整后才触发。
-                  const pastedLink = extractZentaoTaskLink(nextValue);
-                  if (pastedLink && pastedLink !== lastAutoParsedUrlRef.current) void handleZentaoLinkParse(pastedLink);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !interactionBusy) {
-                    event.preventDefault();
-                    void handleZentaoLinkParse(zentaoLinkInput);
-                  }
-                }}
-                disabled={interactionBusy}
-              />
-              <Button
-                variant="secondary"
-                size="regular"
-                className="task-create-zentao-parse-button"
-                busy={zentaoParsing}
-                disabled={interactionBusy || zentaoParsing || !zentaoLinkInput.trim()}
-                onClick={() => void handleZentaoLinkParse(zentaoLinkInput)}
-              >
-                {zentaoParsing ? props.copy.taskCreateZentaoParsing : props.copy.taskCreateZentaoParse}
-              </Button>
-            </div>
-            <small className={`task-create-zentao-hint${zentaoHint ? ` task-create-zentao-hint-${zentaoHint.tone}` : ''}`} role={zentaoHint ? 'status' : undefined}>
-              {zentaoHint
-                ? [
-                    zentaoHint.text,
-                    zentaoHint.openUrl ? (
-                      <button key="open" type="button" className="task-create-zentao-open-button" onClick={() => void props.onOpenZentaoLink(zentaoHint.openUrl as string)} disabled={interactionBusy}>
-                        {props.copy.taskCreateZentaoOpenLink}
-                      </button>
-                    ) : null,
-                  ]
-                : props.copy.taskCreateZentaoLinkHelp}
-            </small>
-          </div>
+          <p className="task-flow-context">
+            {props.projectName}
+            {props.projectName ? ' · ' : ''}
+            {props.copy.taskCountPrefix === 'Tasks' ? 'Describe the task. Choose a model when you push.' : '先描述任务，推送时再选择模型。'}
+          </p>
           <div className="task-create-field task-create-title-field">
             <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
             <input
@@ -1902,23 +1850,6 @@ export function TaskCreateModal(props: {
               disabled={interactionBusy}
             />
           </div>
-          <div className="task-create-field task-create-parent-field">
-            <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}
-              value={props.form.parentTaskId ?? ''}
-              options={[
-                { value: '', label: props.copy.taskCountPrefix === 'Tasks' ? 'No parent (root task)' : '无父任务（根任务）' },
-                ...props.parentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
-              ]}
-              onChange={(value) => props.onParentChange(value || null)}
-              searchPlaceholder={props.copy.selectSearchPlaceholder}
-              emptyLabel={props.copy.selectNoResults}
-              disabled={interactionBusy}
-            />
-            <small>{props.copy.taskCountPrefix === 'Tasks' ? 'Up to three hierarchy levels are allowed.' : '任务层级最多三级，超过后无法保存。'}</small>
-          </div>
           <div className="task-create-two-column-row">
             <div className="task-create-field task-create-type-field">
               <span id="task-create-type-label">{props.copy.taskCreateTypeLabel}</span>
@@ -1929,19 +1860,6 @@ export function TaskCreateModal(props: {
                 value={props.form.taskType}
                 options={taskTypeOptions}
                 onChange={props.onTaskTypeChange}
-                searchable={false}
-                disabled={interactionBusy}
-              />
-            </div>
-            <div className="task-create-field task-create-priority-field">
-              <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
-              <ZeusSelect
-                size="regular"
-                className="task-create-priority-select"
-                ariaLabel={props.copy.taskCreatePriorityLabel}
-                value={props.form.priority}
-                options={props.copy.taskCreatePriorityOptions}
-                onChange={props.onPriorityChange}
                 searchable={false}
                 disabled={interactionBusy}
               />
@@ -2089,27 +2007,107 @@ export function TaskCreateModal(props: {
               </div>
             </>
           ) : null}
-          <div className="task-create-field task-create-tags-field">
-            <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
-            <TaskCreateFieldAttachments
-              field="tags"
-              attachments={props.form.attachments}
-              copy={props.copy}
-              disabled={interactionBusy}
-              onRemove={props.onRemoveAttachment}
-              onRestoreText={restoreTaskCreateText}
-              onLoadPreview={props.onLoadAttachmentPreview}
-              onOpenAttachment={props.onOpenAttachment}
-            />
-            <input
-              id="task-create-tags-input"
-              className="task-create-tags-input"
-              value={props.form.tags}
-              placeholder={props.copy.taskCreateTagsPlaceholder}
-              aria-labelledby="task-create-tags-label"
-              onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
-              disabled={interactionBusy}
-            />
+          <div className="task-create-options">
+            <div className="task-create-field task-create-zentao-field">
+              <span id="task-create-zentao-label">{props.copy.taskCreateZentaoLinkLabel}</span>
+              <div className="task-create-zentao-row">
+                <input
+                  id="task-create-zentao-input"
+                  className="task-create-title-input task-create-zentao-input"
+                  value={zentaoLinkInput}
+                  placeholder={props.copy.taskCreateZentaoLinkPlaceholder}
+                  aria-labelledby="task-create-zentao-label"
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.value;
+                    setZentaoLinkInput(nextValue);
+                    // 粘贴完整链接后自动解析，手动逐字输入时在 URL 完整后才触发。
+                    const pastedLink = extractZentaoTaskLink(nextValue);
+                    if (pastedLink && pastedLink !== lastAutoParsedUrlRef.current) void handleZentaoLinkParse(pastedLink);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !interactionBusy) {
+                      event.preventDefault();
+                      void handleZentaoLinkParse(zentaoLinkInput);
+                    }
+                  }}
+                  disabled={interactionBusy}
+                />
+                <Button
+                  variant="secondary"
+                  size="regular"
+                  className="task-create-zentao-parse-button"
+                  busy={zentaoParsing}
+                  disabled={interactionBusy || zentaoParsing || !zentaoLinkInput.trim()}
+                  onClick={() => void handleZentaoLinkParse(zentaoLinkInput)}
+                >
+                  {zentaoParsing ? props.copy.taskCreateZentaoParsing : props.copy.taskCreateZentaoParse}
+                </Button>
+              </div>
+              <small className={`task-create-zentao-hint${zentaoHint ? ` task-create-zentao-hint-${zentaoHint.tone}` : ''}`} role={zentaoHint ? 'status' : undefined}>
+                {zentaoHint
+                  ? [
+                      zentaoHint.text,
+                      zentaoHint.openUrl ? (
+                        <button key="open" type="button" className="task-create-zentao-open-button" onClick={() => void props.onOpenZentaoLink(zentaoHint.openUrl as string)} disabled={interactionBusy}>
+                          {props.copy.taskCreateZentaoOpenLink}
+                        </button>
+                      ) : null,
+                    ]
+                  : props.copy.taskCreateZentaoLinkHelp}
+              </small>
+            </div>
+            <div className="task-create-field task-create-priority-field">
+              <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
+              <ZeusSelect
+                size="regular"
+                className="task-create-priority-select"
+                ariaLabel={props.copy.taskCreatePriorityLabel}
+                value={props.form.priority}
+                options={props.copy.taskCreatePriorityOptions}
+                onChange={props.onPriorityChange}
+                searchable={false}
+                disabled={interactionBusy}
+              />
+            </div>
+            <div className="task-create-field task-create-parent-field">
+              <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}
+                value={props.form.parentTaskId ?? ''}
+                options={[
+                  { value: '', label: props.copy.taskCountPrefix === 'Tasks' ? 'No parent (root task)' : '无父任务（根任务）' },
+                  ...props.parentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
+                ]}
+                onChange={(value) => props.onParentChange(value || null)}
+                searchPlaceholder={props.copy.selectSearchPlaceholder}
+                emptyLabel={props.copy.selectNoResults}
+                disabled={interactionBusy}
+              />
+              <small>{props.copy.taskCountPrefix === 'Tasks' ? 'Up to three hierarchy levels are allowed.' : '任务层级最多三级，超过后无法保存。'}</small>
+            </div>
+            <div className="task-create-field task-create-tags-field">
+              <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
+              <TaskCreateFieldAttachments
+                field="tags"
+                attachments={props.form.attachments}
+                copy={props.copy}
+                disabled={interactionBusy}
+                onRemove={props.onRemoveAttachment}
+                onRestoreText={restoreTaskCreateText}
+                onLoadPreview={props.onLoadAttachmentPreview}
+                onOpenAttachment={props.onOpenAttachment}
+              />
+              <input
+                id="task-create-tags-input"
+                className="task-create-tags-input"
+                value={props.form.tags}
+                placeholder={props.copy.taskCreateTagsPlaceholder}
+                aria-labelledby="task-create-tags-label"
+                onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
+                disabled={interactionBusy}
+              />
+            </div>
           </div>
           {props.error ? (
             <p className="task-create-error" id="task-create-error" role="alert">
@@ -2121,7 +2119,7 @@ export function TaskCreateModal(props: {
           <Button variant="secondary" size="regular" className="task-create-cancel-button" onClick={props.onClose} disabled={interactionBusy}>
             {props.copy.taskCreateCancel}
           </Button>
-          <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={resourcesBusy}>
+          <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={interactionBusy}>
             {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
           </Button>
         </footer>

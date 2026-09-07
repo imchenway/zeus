@@ -1,14 +1,4 @@
-import {
-  checkAiCliAdapter,
-  type CodexRemoteControlStatus,
-  createAgentCapabilityCatalog,
-  createAiRuntimeSessionManager,
-  isNonCodexAiCliAdapterId,
-  listAiCliAdapters,
-  modelRef,
-  type ModelConnectionRecord,
-  type SelectableConnectionModel,
-} from '@zeus/ai-runtime';
+import { checkAiCliAdapter, type CodexRemoteControlStatus, createAgentCapabilityCatalog, createAiRuntimeSessionManager, isNonCodexAiCliAdapterId, listAiCliAdapters, modelRef, type SelectableConnectionModel } from '@zeus/ai-runtime';
 import {
   buildGitPatchExport,
   getGitRepositoryContext,
@@ -1168,14 +1158,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const conversation = requireNativeQueueConversation(params);
         return codexNativeCoordinator.resumeInterruptedQueue({ conversationId: conversation.id });
       },
-      queueRecover: async ({ params }) => {
+      queueRecover: async ({ params, intent }) => {
         const conversation = requireNativeQueueConversation(params);
+        // 检查只返回已有 Pi 事实；不重启执行器或重新准备合入目录。
+        if (intent === 'check' && conversation.agentKind === 'pi') return toNativeQueueApiSnapshot(conversation);
         const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
-        if (conflictAttempt?.state === 'failed') {
+        if (intent === 'continue' && conflictAttempt?.state === 'failed') {
           await retryTaskIntegrationAiPreparation(conversation, conflictAttempt);
           return toNativeQueueApiSnapshot(conversation);
         }
-        return codexNativeCoordinator.recoverQueue({ conversationId: conversation.id });
+        return codexNativeCoordinator.recoverQueue({ conversationId: conversation.id, intent });
       },
       queueReorder: ({ params, orderedSubmissionIds }) => {
         const conversation = requireNativeQueueConversation(params);
@@ -2005,13 +1997,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       // 项目显式模型优先；完整引用保存在模型选择中，不裁成裸模型名。
       const reference = explicitModel ?? platformMutableState.appShellSettings.newProjectDefaultModelRef;
       if (!reference) return;
-      const connections: ModelConnectionRecord[] = modelConnections.listMetadata();
-      const models = connections.flatMap((connection) => connection.models.map((model) => ({ connection, model, reference: modelRef(connection.id, model.id) })));
-      const selected = models.find((candidate) => candidate.reference === reference);
-      if (explicitModel && !selected && !reference.includes(':')) return;
-      if (!selected || !selected.connection.enabled || !selected.model.enabled || selected.model.capability.tools.state === 'unsupported') {
-        throw Object.assign(new Error('新项目默认模型已不可用，请到“设置 > 模型供应商”重新选择。'), { code: 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE', statusCode: 409 });
-      }
+      // 保留用户指定的完整引用；可用性只在推送阶段判断，不阻断项目创建。
+      if (!reference.includes(':')) return;
       modelConnections.savePreparedProjectSelectionInCurrentTransaction({ projectId, allowedModelRefs: [reference], defaultModelRef: reference });
     },
     stageProjectManagementStatus: (projectId) => {
@@ -2039,15 +2026,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerWorkManagementProjectCommandRoutes({
     server,
     application: workManagementCommands,
-    prepareCreate: async (input) => {
-      // 明确选择的 Codex 裸模型沿用原有配置；默认的自定义引用需在创建前确认凭据仍存在。
-      const reference = typeof input.defaultModel === 'string' && input.defaultModel.trim() ? input.defaultModel.trim() : platformMutableState.appShellSettings.newProjectDefaultModelRef;
-      if (!reference || !reference.includes(':')) return;
-      const models: SelectableConnectionModel[] = await modelConnections.listSelectableModels();
-      if (!models.some((model) => model.id === reference && model.available)) {
-        throw Object.assign(new Error('新项目默认模型已不可用，请在模型接入中重新选择。'), { code: 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE', statusCode: 409 });
-      }
-    },
     create: (input, projectId, context) => workManagementProjectOperations.create(input, projectId, context),
     update: (projectId, input, context) => workManagementProjectOperations.update(projectId, input, context),
     refreshRepositories: (projectId, context) => workManagementProjectOperations.refreshRepositories(projectId, context),

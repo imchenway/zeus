@@ -29,7 +29,7 @@ import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDet
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
@@ -69,7 +69,7 @@ export interface ConversationTranscriptProps {
   onReconnectCodex?: () => void | Promise<void>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
@@ -1513,12 +1513,11 @@ export function MessageDeliveryOutcomeFeedback(props: {
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   clientUserMessageId?: string;
-  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
   const [busyAction, setBusyAction] = useState<'recover' | 'reconnect' | 'retry' | 'cancel' | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
-  useApplicationErrorDialog(actionError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   const pausedReason = props.item.payload.pausedReason;
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
   const localAcceptanceFailure = Boolean(props.item.optimistic && !props.submissionId && props.clientUserMessageId);
@@ -1571,7 +1570,11 @@ export function MessageDeliveryOutcomeFeedback(props: {
         {localAcceptanceFailure ? (
           <>
             {(unconfirmed || (deliveryError.retryable && explanation.action === 'retry')) && props.onRetryPendingSend ? (
-              <button type="button" disabled={busyAction !== null || !props.clientUserMessageId} onClick={() => runAction('retry', props.clientUserMessageId ? () => props.onRetryPendingSend?.(props.clientUserMessageId!) : undefined)}>
+              <button
+                type="button"
+                disabled={busyAction !== null || !props.clientUserMessageId}
+                onClick={() => runAction('retry', props.clientUserMessageId ? () => props.onRetryPendingSend?.(props.clientUserMessageId!, unconfirmed ? 'check' : 'continue') : undefined)}
+              >
                 {busyAction === 'retry'
                   ? props.language === 'zh-CN'
                     ? '正在检查…'
