@@ -25,6 +25,14 @@ brew install --cask imchenway/tap/zeus
 brew upgrade --cask imchenway/tap/zeus
 ```
 
+彻底卸载 Zeus（包括 Homebrew Cask 已登记的本地配置）使用：
+
+```bash
+brew uninstall --cask --zap imchenway/tap/zeus
+```
+
+如需保留本地项目、会话和配置，请去掉 `--zap`，使用 `brew uninstall --cask imchenway/tap/zeus`。
+
 也可以前往 [GitHub Releases](https://github.com/imchenway/zeus/releases) 下载安装包。
 
 ## 首次打开

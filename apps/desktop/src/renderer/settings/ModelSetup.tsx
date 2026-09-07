@@ -45,7 +45,7 @@ export function useModelSetup(input: {
   /** 接入目标冻结到发起操作，迟到结果不能改变另一项任务。 */
   const targetRef = useRef<TaskModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
-  const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
+  const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
   /** 当前步骤只展示脱敏后的可恢复错误。 */
   const [error, setError] = useState<string | null>(null);
   /** 账号事实来自现有认证接口，不由引导完成状态推断。 */
@@ -210,6 +210,7 @@ export function useModelSetup(input: {
         onLoginId: (loginId) => {
           loginIdRef.current = loginId;
         },
+          onPreparingModels: () => setOperation('activating'),
         showSuccess: (value) => {
           setAccount(value);
           setAccountChecked(true);
@@ -490,15 +491,21 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                     ? zh
                       ? '请在官方网页完成登录。完成后返回这里确认设置。'
                       : 'Complete sign-in on the official page, then return here to review your settings.'
-                    : c.operation === 'authenticated'
-                      ? zh
-                        ? '登录成功，正在返回 Zeus…'
-                        : 'Signed in, returning to Zeus…'
-                      : zh
-                        ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
-                        : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
+                        : c.operation === 'activating'
+                            ? zh
+                                ? '正在加载订阅模型…'
+                                : 'Loading subscription models…'
+                            : c.operation === 'authenticated'
+                                ? zh
+                                    ? '登录成功，正在返回 Zeus…'
+                                    : 'Signed in, returning to Zeus…'
+                                : zh
+                                    ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
+                                    : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
               </p>
-              <Button disabled={c.operation !== 'idle'} busy={c.operation === 'inspecting' || c.operation === 'authenticating'} onClick={() => void c.prepareCodex()}>
+                <Button disabled={c.operation !== 'idle'}
+                        busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'}
+                        onClick={() => void c.prepareCodex()}>
                 {zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
               </Button>
               <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>

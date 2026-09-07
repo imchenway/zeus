@@ -42,9 +42,11 @@ export async function completeCodexLoginHandoff(input: CodexLoginHandoffInput): 
 
 /** 共享官方登录流程；所有入口都通过当前请求身份隔离取消和迟到回执。 */
 export async function authenticateCodexWithBrowser(input: {
-  client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'cancelCodexChatGptLogin' | 'loadCodexAccount'>;
+    client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'cancelCodexChatGptLogin' | 'loadCodexAccount' | 'activateCodexConfig'>;
   isCurrent: () => boolean;
   onLoginId: (loginId: string | null) => void;
+    /** 认证完成后仍需等待当前账号的模型目录与容量就绪。 */
+    onPreparingModels: () => void;
   showSuccess: (account: CodexAccountSnapshot) => void;
   continueOriginalAction: (account: CodexAccountSnapshot) => void;
   recordActivationError: (error: unknown) => void;
@@ -69,6 +71,10 @@ export async function authenticateCodexWithBrowser(input: {
       if (account.signedIn && account.accountType === 'chatgpt') {
         loginId = null;
         input.onLoginId(null);
+          // 登录前的运行实例冻结了未认证目录；复用现有代际切换，保留旧实例正在执行的轮次。
+          input.onPreparingModels();
+          await input.client.activateCodexConfig();
+          if (!input.isCurrent()) return;
         await completeCodexLoginHandoff({
           isCurrent: input.isCurrent,
           showSuccess: () => input.showSuccess(account),

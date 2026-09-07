@@ -27,6 +27,9 @@ import { buildGraphConversationCommandRequest, graphConversationClientCommandTyp
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
 import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTransport.js';
 
+/** 新运行实例就绪后通知当前窗口刷新模型选择器，保留正在编辑的草稿。 */
+export const codexCapabilitiesChangedEvent = 'zeus:codex-capabilities-changed';
+
 export interface CodexApiClient {
   loadAgents: () => Promise<AgentCatalogSnapshot>;
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
@@ -338,7 +341,13 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         operationPrefix: 'codex_configuration_activate',
         value: {},
       });
-      return transport.request<CodexConfigActivationResult>('/api/codex-config/activate', { method: 'POST', body: JSON.stringify(body) });
+        /** 服务端完成模型目录与容量握手后才发布更新，失败时不宣告可用。 */
+        const activation = await transport.request<CodexConfigActivationResult>('/api/codex-config/activate', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+        globalThis.window?.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+        return activation;
     },
     loadSkills: (projectId, forceReload = false) => {
       const query = new URLSearchParams();

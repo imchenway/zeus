@@ -8,6 +8,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserConversationSnapshot, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
+import {codexCapabilitiesChangedEvent} from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedRecoveredRequestUserInput, type SessionCreationStatus } from './ConversationTranscript.js';
@@ -378,7 +379,8 @@ export function preloadCodexConversationCapabilities(client: SessionControllerCl
   if (entry.promise) return entry.promise;
   const promise = load(projectId)
     .then((capabilities) => {
-      entry.value = capabilities;
+        // 登录后的强制刷新已经接管时，登录前预读的迟到结果不能回写缓存。
+        if (entry.promise === promise) entry.value = capabilities;
       return capabilities;
     })
     .finally(() => {
@@ -388,14 +390,15 @@ export function preloadCodexConversationCapabilities(client: SessionControllerCl
   return promise;
 }
 
-function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string): Promise<CodexConversationCapabilities | null> {
+/** 登录或重新连接后必须发起新读取，旧请求不能覆盖更新后的缓存。 */
+function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string, force = false): Promise<CodexConversationCapabilities | null> {
   const load = client.loadCodexConversationCapabilities;
   if (!load) return Promise.resolve(null);
   const entry = conversationCapabilitiesEntry(client, projectId);
-  if (entry.promise) return entry.promise;
+    if (entry.promise && !force) return entry.promise;
   const promise = load(projectId)
     .then((capabilities) => {
-      entry.value = capabilities;
+        if (entry.promise === promise) entry.value = capabilities;
       return capabilities;
     })
     .finally(() => {
@@ -403,6 +406,19 @@ function refreshCodexConversationCapabilities(client: SessionControllerClient, p
     });
   entry.promise = promise;
   return promise;
+}
+
+/** 原地刷新新会话和已有会话的模型能力，不重建输入区或清空用户选择。 */
+function useCodexCapabilitiesRevision(): number {
+    /** 每次已完成的连接触发一次能力重读。 */
+    const [revision, setRevision] = useState(0);
+    useEffect(() => {
+        /** 只改变读取代次，由工作面保留草稿和处理迟到回执。 */
+        const refresh = (): void => setRevision((current) => current + 1);
+        window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+        return () => window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    }, []);
+    return revision;
 }
 
 /** 同步读取已有项目能力，只用于首帧展示；提交仍由服务端重新复验。 */
@@ -411,6 +427,8 @@ export function readCachedCodexConversationCapabilities(client: SessionControlle
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
+    /** 订阅登录完成后刷新已打开的模型选择器。 */
+    const capabilitiesRevision = useCodexCapabilitiesRevision();
   const controllerEnabled = props.controllerEnabled !== false;
   const [continuedHistoryConversationId, setContinuedHistoryConversationId] = useState<string | null>(null);
   const historySnapshotOnly = Boolean(props.historyOnly && continuedHistoryConversationId !== props.conversation.id);
@@ -450,13 +468,13 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     projectId: props.conversation.projectId,
     value: props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, props.conversation.projectId),
   }));
-  const capabilities = props.initialCapabilities ?? (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : readCachedCodexConversationCapabilities(props.client, props.conversation.projectId));
+    const capabilities = (capabilitiesScope.projectId === props.conversation.projectId ? capabilitiesScope.value : readCachedCodexConversationCapabilities(props.client, props.conversation.projectId)) ?? props.initialCapabilities;
   useEffect(() => {
     const projectId = props.conversation.projectId;
     let active = true;
     const cached = props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, projectId);
     if (cached) setCapabilitiesScope({ projectId, value: cached });
-    void refreshCodexConversationCapabilities(props.client, projectId)
+      void refreshCodexConversationCapabilities(props.client, projectId, capabilitiesRevision > 0)
       .then((snapshot) => {
         if (active && snapshot) setCapabilitiesScope({ projectId, value: snapshot });
       })
@@ -466,7 +484,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     return () => {
       active = false;
     };
-  }, [props.client, props.conversation.projectId, props.initialCapabilities]);
+  }, [props.client, props.conversation.projectId, props.initialCapabilities, capabilitiesRevision]);
   useEffect(() => {
     if (!controllerEnabled || !props.onStateChange) return;
     const publish = (): void => props.onStateChange?.(props.conversation.id, controller.getState());
@@ -2842,6 +2860,8 @@ function NewConversationComposer(props: {
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
+    /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
+    const capabilitiesRevision = useCodexCapabilitiesRevision();
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -2889,7 +2909,7 @@ function NewConversationComposer(props: {
       setServiceTierSelection({ type: 'standard' });
       runtimePreferencesInitializedRef.current = true;
     }
-    if (props.capabilities) {
+      if (props.capabilities && capabilitiesRevision === 0) {
       setCapabilities(props.capabilities);
       setCapabilitiesLoading(false);
       return;
@@ -2911,7 +2931,7 @@ function NewConversationComposer(props: {
     return () => {
       active = false;
     };
-  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId]);
+  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision]);
 
   const preferredModel = resolveModelCapability(capabilities?.models, selectedModelId) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
