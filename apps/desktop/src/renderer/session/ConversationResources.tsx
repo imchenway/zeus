@@ -390,7 +390,19 @@ function ConversationImagePreviewDialog(props: { previewUrl: string; label: stri
   }
 
   return (
-    <dialog ref={dialogRef} className="task-attachment-zoom-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onClose={props.onClose} onCancel={handleDialogCancel} onPointerDown={handleDialogPointerDown}>
+    <dialog
+      ref={dialogRef}
+      className="task-attachment-zoom-dialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onClose={props.onClose}
+      onCancel={handleDialogCancel}
+      onPointerDown={handleDialogPointerDown}
+      onKeyDown={(event) => {
+        // 原生弹窗自己处理 Escape 和 Tab，不能穿透到外层推送弹窗的关闭或焦点循环。
+        if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();
+      }}
+    >
       <div className="task-attachment-zoom-sheet">
         <header className="task-attachment-zoom-header">
           <span>

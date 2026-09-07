@@ -17989,6 +17989,33 @@ body[data-surface='project-git-diff'] #root {
   white-space: pre-wrap;
 }
 
+/* 推送正文复用会话图片交互，只在此处限制缩略图尺寸，放大图沿用附件弹窗。 */
+.macos-ai-app .task-push-layout .session-resource-image {
+  display: grid;
+  place-items: center;
+  inline-size: 144px;
+  max-inline-size: 100%;
+  block-size: 108px;
+  padding: 4px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+  cursor: pointer;
+}
+
+.macos-ai-app .task-push-layout .session-resource-image > img {
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 0;
+  object-fit: contain;
+}
+
+.macos-ai-app .task-push-layout .session-resource-image-placeholder > svg,
+.macos-ai-app .task-push-layout .session-pending-attachment-fallback svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
 .macos-ai-app .task-push-layout-field code,
 .macos-ai-app .task-push-layout-attachment {
   overflow-wrap: anywhere;

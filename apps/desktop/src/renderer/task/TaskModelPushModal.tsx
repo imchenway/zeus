@@ -23,6 +23,7 @@ import type {
   TaskPushSupplementalAttachmentInput,
 } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
+import { ConversationPendingAttachmentImages } from '../session/ConversationResources.js';
 import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
 import { resolveModelCapability } from '../session/modelSelection.js';
@@ -446,9 +447,28 @@ function TaskPushContextPicker(props: {
   );
 }
 
-export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; language: 'zh-CN' | 'en-US' }) {
+/** 根据已选布局匹配独立图片来源，复用会话缩略图与放大弹窗。 */
+export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; language: 'zh-CN' | 'en-US'; previewAttachments: NativeConversationAttachment[] }) {
   const supplementalAttachments = props.layout.supplementalAttachments ?? [];
   const attachmentsByKey = new Map([...props.layout.blocks.flatMap((block) => block.attachments), ...supplementalAttachments].map((attachment) => [attachment.key, attachment]));
+  // 不按文件名匹配，也不将本机预览路径写回布局。
+  const previewAttachmentsByKey = new Map(props.previewAttachments.map((attachment) => [attachment.taskPushAttachmentKey, attachment]));
+
+  /** 当前字段和补充附件共用同一图片匹配入口。 */
+  function renderAttachment(key: string) {
+    // 元数据决定是否为图片，来源只负责提供受控预览输入。
+    const attachment = attachmentsByKey.get(key);
+    const previewAttachment = previewAttachmentsByKey.get(key);
+    if (!attachment) return null;
+    if (attachment.kind === 'image' && previewAttachment) {
+      return <ConversationPendingAttachmentImages key={key} attachments={[{ ...previewAttachment, kind: 'image' }]} language={props.language} />;
+    }
+    return (
+      <span key={key} className="task-push-layout-attachment">
+        {attachment.kind === 'image' ? (props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable') : props.language === 'zh-CN' ? '附件' : 'Attachment'} · {attachment.name}
+      </span>
+    );
+  }
   return (
     <section className="task-model-push-canonical task-push-layout" aria-label={props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}>
       <strong>{props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}</strong>
@@ -464,14 +484,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           {block.fields.map((field) => (
             <section key={field.field} className="task-push-layout-field">
               <strong>{field.label}：</strong>
-              {field.attachmentKeys.map((key) => {
-                const attachment = attachmentsByKey.get(key);
-                return attachment ? (
-                  <span key={key} className="task-push-layout-attachment">
-                    {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}
-                  </span>
-                ) : null;
-              })}
+              {field.attachmentKeys.map(renderAttachment)}
               {field.text ? <p>{field.text}</p> : null}
             </section>
           ))}
@@ -488,11 +501,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="task-push-layout-field">
           <strong>{props.language === 'zh-CN' ? '补充信息：' : 'Additional information:'}</strong>
-          {supplementalAttachments.map((attachment) => (
-            <span key={attachment.key} className="task-push-layout-attachment">
-              {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}
-            </span>
-          ))}
+          {supplementalAttachments.map((attachment) => renderAttachment(attachment.key))}
           {props.layout.supplementalInfo ? <p>{props.layout.supplementalInfo}</p> : null}
         </section>
       ) : null}
@@ -1459,7 +1468,7 @@ export function TaskModelPushModal(props: {
           <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
           <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
 
-          <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} />
+          <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} previewAttachments={[...(props.capabilities?.attachmentPreviewSources ?? []), ...props.form.supplementalAttachments]} />
 
           {props.status === 'loading' ? (
             <p className="task-model-push-message">

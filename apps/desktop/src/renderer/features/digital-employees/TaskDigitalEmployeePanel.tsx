@@ -806,7 +806,7 @@ function TaskEmployeeRunDialog(props: {
               ) : null}
             </section>
           ) : null}
-          {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} /> : null}
+          {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} previewAttachments={supplementalAttachments} /> : null}
           {previewBusy ? (
             <p className="task-work-preview-status" role="status">
               {zh ? '正在更新运行配置预览…' : 'Updating the run settings preview…'}

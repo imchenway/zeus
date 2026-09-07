@@ -1048,6 +1048,8 @@ export interface CodexTaskPushCapabilities {
   parentContextRevision: string;
   repositoryRevision: string;
   currentAttachmentOptions: TaskPushParentContextOption['attachments'];
+  /** 服务端已校验的图片来源，按 taskPushAttachmentKey 对应布局，不进入发送内容。 */
+  attachmentPreviewSources: NativeConversationAttachment[];
   currentConversationOptions: TaskPushParentContextOption['conversations'];
   parentContextOptions: TaskPushParentContextOption[];
   relatedContextOptions: TaskPushRelatedContextOption[];
