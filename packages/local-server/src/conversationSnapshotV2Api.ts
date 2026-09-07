@@ -47,6 +47,28 @@ type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compact
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
   const { server, repository } = options;
 
+  // 首屏和恢复共用一次读取；项目分支查询结束后，同一 Core 内的同步查询不会被会话写入穿插。
+  server.get('/api/projects/:projectId/conversations/:conversationId/readable-snapshot', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    try {
+      // Git 信息可异步读取，但必须在会话结构和消息读取之前完成。
+      const executionContext = await options.readExecutionContext?.(request.params.conversationId);
+      // 复用现有有界结构查询；聚合统计继续独立加载。
+      const snapshot = repository.readSnapshot(request.params.conversationId, {
+        closedTurnLimit: 2,
+        byteLimit: 64 * 1024,
+        includeSessionMetrics: false,
+        ...(executionContext ? { executionContext } : {}),
+      });
+      // 此处不能加入异步等待或写事务，确保消息与结构共享同一事件进度，并支持只读资料。
+      const history = repository.listModelHistoryTailPage({ conversationId: request.params.conversationId, entryLimit: 48, byteLimit: 96 * 1024 });
+      return { snapshot, history };
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
   server.get(
     '/api/projects/:projectId/conversations/:conversationId/snapshot-v2',
     async (

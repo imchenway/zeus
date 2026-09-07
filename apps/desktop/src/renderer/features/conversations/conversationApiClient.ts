@@ -11,8 +11,8 @@ import type {
   NativeConversationEventPage,
   NativeConversationModelHistoryV2Item,
   NativeConversationProcessV2Item,
+  NativeConversationReadableSnapshot,
   NativeConversationResourceV2Item,
-  NativeConversationSnapshotV2,
   NativeConversationSnapshotV2Page,
   NativeConversationStartDispatchResult,
   NativeConversationToolResultPage,
@@ -50,7 +50,8 @@ export interface ConversationApiClient {
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
-  loadNativeConversationV2: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshotV2>;
+  /** 一次取得同一事件进度下的会话结构与消息尾页。 */
+  loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string) => Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationModelHistoryV2: (
     projectId: string,
@@ -168,8 +169,9 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       });
       return { acceptance, operationIdentity: commandBody.command.payload.operationIdentity };
     },
-    loadNativeConversationV2: (projectId, conversationId) =>
-      transport.request<NativeConversationSnapshotV2>(`${conversationPath(projectId, conversationId)}/snapshot-v2?includeMetrics=false`, {
+    // 会话恢复只读取组合结果，不再让两个独立请求碰运气对齐事件进度。
+    loadNativeConversationReadableSnapshot: (projectId, conversationId) =>
+      transport.request<NativeConversationReadableSnapshot>(`${conversationPath(projectId, conversationId)}/readable-snapshot`, {
         headers: { 'x-zeus-snapshot-caller': 'renderer-session-v2' },
       }),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),

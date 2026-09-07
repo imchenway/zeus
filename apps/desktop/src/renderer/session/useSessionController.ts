@@ -17,9 +17,9 @@ import {
   type NativeConversationEventPage,
   type NativeConversationModelHistoryV2Item,
   type NativeConversationProcessV2Item,
+  type NativeConversationReadableSnapshot,
   type NativeConversationResourceV2Item,
   type NativeConversationSnapshot,
-  type NativeConversationSnapshotV2,
   type NativeConversationSnapshotV2Page,
   type NativeConversationToolResultPage,
   type NativeGoalResponse,
@@ -173,7 +173,8 @@ export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
 
   activateCodexConfig?(): Promise<unknown>;
-  loadNativeConversationV2(projectId: string, conversationId: string): Promise<NativeConversationSnapshotV2>;
+  /** 首次加载、重连和发送后核对共用同一份结构与消息读取结果。 */
+  loadNativeConversationReadableSnapshot(projectId: string, conversationId: string): Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;
   loadNativeConversationQueueV2(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
@@ -1533,21 +1534,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
     });
   }
 
-  async function loadConversationReadableForHydration(): Promise<{
-    snapshot: NativeConversationSnapshotV2;
-    history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
-    choice: NativeConversationChoice;
-  }> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const [snapshot, history, choice] = await Promise.all([
-        options.client.loadNativeConversationV2(options.projectId, options.conversationId),
-        options.client.loadNativeConversationModelHistoryV2(options.projectId, options.conversationId, { direction: 'tail', limit: 48, byteLimit: 96 * 1024 }),
-        options.client.loadNativeConversationChoice(options.projectId, options.conversationId),
-      ]);
-      if (history.throughEventSeq !== snapshot.throughEventSeq) continue;
-      return { snapshot, history, choice };
+  /** 后台负责结构与消息的一致性；适配器继续校验身份和事件进度，后续更新沿用现有缓冲与补拉。 */
+  async function loadConversationReadableForHydration(): Promise<NativeConversationReadableSnapshot & { choice: NativeConversationChoice }> {
+    try {
+      // 会话选择信息不参与消息进度判断，保持独立并行读取。
+      const [readable, choice] = await Promise.all([options.client.loadNativeConversationReadableSnapshot(options.projectId, options.conversationId), options.client.loadNativeConversationChoice(options.projectId, options.conversationId)]);
+      return { ...readable, choice };
+    } catch (error) {
+      // 刷新失败不代表模型执行失败；原始原因只随详情传递，不触发消息重发。
+      throw Object.assign(new Error('会话内容暂时无法刷新'), { code: 'ZEUS_CONVERSATION_READ_FAILED', cause: userFacingErrorCause(error) });
     }
-    throw new Error('Snapshot V2 结构与尾部历史未能在同一事件水位稳定读取，请重试。');
   }
 
   async function loadConversationInteractionForHydration(): Promise<{ queue: NativeQueueSnapshot; pending: NativePendingInteractionsSnapshot }> {

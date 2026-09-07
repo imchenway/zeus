@@ -136,9 +136,10 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
   const requestedAfterSequences: number[] = [];
   const connectedAfterSequences: number[] = [];
   const client = {
-    async loadNativeConversationV2() {
+    /** 模拟服务端一次返回同一事件进度下的结构和消息。 */
+    async loadNativeConversationReadableSnapshot() {
       snapshotReads += 1;
-      return { ...snapshotV2, throughEventSeq: snapshotSequence };
+      return { snapshot: { ...snapshotV2, throughEventSeq: snapshotSequence }, history: { ...historyV2, throughEventSeq: snapshotSequence } };
     },
     async loadNativeConversationModelHistoryV2() {
       return { ...historyV2, throughEventSeq: snapshotSequence };

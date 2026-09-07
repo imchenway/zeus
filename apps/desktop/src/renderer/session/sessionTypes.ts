@@ -672,6 +672,14 @@ export interface NativeConversationSnapshotV2 {
 
 export type NativeConversationSnapshotV2Page<T> = SharedConversationSnapshotV2Page<T>;
 
+/** 会话结构和最新消息由服务端在同一次同步读取中生成。 */
+export interface NativeConversationReadableSnapshot {
+  /** 当前事件进度对应的有界会话结构。 */
+  snapshot: NativeConversationSnapshotV2;
+  /** 与结构具有相同事件进度的消息尾页。 */
+  history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
+}
+
 export interface NativeConversationModelHistoryV2Item {
   id: string;
   sequence: number;
