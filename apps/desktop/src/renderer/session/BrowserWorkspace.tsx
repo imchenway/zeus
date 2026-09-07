@@ -192,31 +192,47 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   }, [activeTab?.id]);
 
   useLayoutEffect(() => {
+    // 沿用当前标签的原生布局通道，隐藏期间保留网页实例与页面状态。
     const bridge = window.zeus;
+    // 原生网页在应用界面中的布局占位节点。
     const viewport = viewportRef.current;
+    // 本次布局订阅只服务于当前标签，切换时由清理函数解除。
     const tabId = activeTab?.id;
     if (!bridge?.setBrowserLayout || !viewport || !tabId) return;
+    // 只保留最新一帧的显示请求，弹窗出现时立即取消。
     let frame = 0;
+    // 共用弹窗直接挂在 body 下；任一弹窗存在时原生网页都不得显示。
+    const isSuspended = (): boolean => Boolean(props.suspended || document.body.querySelector(':scope > [data-zeus-primitive="modal"]'));
+    // 每次提交都重新读取弹窗状态和尺寸，避免延迟回调把网页重新盖到弹窗上。
+    const syncLayout = (): void => {
+      if (closedTabIdsRef.current.has(tabId)) return;
+      // 恢复时使用当前布局，保持弹窗期间缩放后的网页位置正确。
+      const rect = viewport.getBoundingClientRect();
+      void bridge.setBrowserLayout!({
+        conversationId: props.conversationId,
+        tabId,
+        visible: !isSuspended(),
+        bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      }).catch(setError);
+    };
+    // 隐藏立即提交，显示仍合并到下一帧，并在提交前再次检查遮挡条件。
     const apply = (): void => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        if (closedTabIdsRef.current.has(tabId)) return;
-        const rect = viewport.getBoundingClientRect();
-        void bridge.setBrowserLayout!({
-          conversationId: props.conversationId,
-          tabId,
-          visible: !props.suspended,
-          bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        }).catch(setError);
-      });
+      if (isSuspended()) syncLayout();
+      else frame = requestAnimationFrame(syncLayout);
     };
+    // 占位区尺寸变化继续复用同一布局入口。
     const observer = new ResizeObserver(apply);
     observer.observe(viewport);
+    // 只观察 body 直属节点增删，不订阅会话正文或弹窗内部内容变化。
+    const modalObserver = new MutationObserver(apply);
+    modalObserver.observe(document.body, { childList: true });
     window.addEventListener('resize', apply);
     apply();
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      modalObserver.disconnect();
       window.removeEventListener('resize', apply);
       if (closedTabIdsRef.current.has(tabId)) return;
       const rect = viewport.getBoundingClientRect();
