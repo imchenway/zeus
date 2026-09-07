@@ -17339,10 +17339,36 @@ body[data-surface='project-git-diff'] #root {
   padding: 12px var(--zeus-solid-surface-edge);
 }
 
+/* 模型与 Skill 占较宽的首列，六个控件按真实阅读顺序排成两行。 */
 .macos-ai-app .task-model-push-config-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* 没有模型等级时，由模型选择吸收空出的列，下一行仍从 Skill 开始。 */
+.macos-ai-app .task-model-push-config-grid:not(:has(.task-model-push-effort-field)) > .task-model-push-model-field {
+  grid-column: span 2;
+}
+
+/* 标题与次要操作同行，长名称和窄窗口允许自然换行。 */
+.macos-ai-app .task-model-push-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-toolbar > :first-child {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-model-push-toolbar > button {
+  flex-shrink: 0;
+  margin-inline-start: auto;
 }
 
 .macos-ai-app .task-model-push-workspace {
@@ -17492,6 +17518,63 @@ body[data-surface='project-git-diff'] #root {
   outline: none;
 }
 
+/* 推送弹窗使用紧凑分段单选；数字员工继续使用原有卡片样式。 */
+.macos-ai-app .task-model-push-modal .task-model-push-mode-choice {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .task-model-push-modal .task-model-push-mode-choice > label {
+  position: relative;
+  justify-content: center;
+  min-block-size: 34px;
+  padding: 6px 10px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.macos-ai-app .task-model-push-modal .task-model-push-mode-choice > label.is-selected {
+  border-color: var(--zeus-control-border);
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-accent);
+  font-weight: 600;
+}
+
+/* 隐藏圆点但保留原生单选和焦点，整段选项继续提供可见的键盘焦点。 */
+.macos-ai-app .task-model-push-modal .task-model-push-mode-choice > label > input[type='radio'] {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* 当前选择说明紧跟控件，不可用原因独立保留。 */
+.macos-ai-app .task-model-push-mode-group {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-mode-description {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .macos-ai-app .task-model-push-concurrency-confirm input {
   inline-size: 16px;
   min-block-size: 16px;
@@ -17624,31 +17707,41 @@ body[data-surface='project-git-diff'] #root {
   line-height: 1.5;
 }
 
+/* 仓库信息与刷新按钮置于卡片内部，避免按钮切开分组边框。 */
 .macos-ai-app .task-model-push-repository {
   min-width: 0;
+  display: grid;
+  gap: 10px;
   margin: 0;
   padding: 12px;
   border: 1px solid var(--zeus-product-line-soft);
   border-radius: 12px;
 }
 
-.macos-ai-app .task-model-push-repository legend {
+.macos-ai-app .task-model-push-repository-heading {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   align-items: center;
   justify-content: space-between;
-  width: calc(100% - 8px);
-  padding: 0 4px;
+  min-inline-size: 0;
 }
 
-.macos-ai-app .task-model-push-repository legend > span {
+.macos-ai-app .task-model-push-repository-heading > span {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   align-items: baseline;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.macos-ai-app .task-model-push-repository legend small {
+.macos-ai-app .task-model-push-repository-heading > button {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+
+.macos-ai-app .task-model-push-repository-heading small {
   color: var(--text-muted);
 }
 
@@ -18061,8 +18154,6 @@ body[data-surface='project-git-diff'] #root {
 }
 
 @media (max-width: 680px) {
-  .macos-ai-app .task-model-push-config-grid,
-  .macos-ai-app .task-model-push-workspace-grid,
   .macos-ai-app .task-model-push-mode-choice,
   .macos-ai-app .task-model-push-parent-resources {
     grid-template-columns: minmax(0, 1fr);
@@ -27106,11 +27197,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
-.macos-ai-app .task-push-task-title {
-  color: var(--zeus-product-text);
-  font-size: 16px;
-  font-weight: 500;
-}
 .macos-ai-app .task-flow-feedback {
   display: grid;
   justify-items: start;
@@ -27126,20 +27212,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .task-model-connect-link {
   justify-self: start;
-}
-.macos-ai-app .task-model-push-body > .task-model-push-config-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.macos-ai-app .task-model-push-body > .task-model-push-config-grid > label:first-child {
-  grid-column: 1 / -1;
-}
-/* 模型选项直接展示；分栏保持宽窗口紧凑，操作区留在滚动内容之外。 */
-.macos-ai-app .task-model-push-model-options {
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.macos-ai-app .task-model-push-model-options > .task-model-push-warning {
-  grid-column: 1 / -1;
 }
 /* 创建任务的附加字段始终可见，导入与标签各占一行。 */
 .macos-ai-app .task-create-options {
@@ -27235,8 +27307,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 @media (max-width: 600px) {
   .macos-ai-app .task-create-options,
   .macos-ai-app .task-model-push-config-grid,
-  .macos-ai-app .task-model-push-body > .task-model-push-config-grid {
+  .macos-ai-app .task-model-push-workspace-grid,
+  .macos-ai-app .task-model-push-modal .task-model-push-mode-choice {
     grid-template-columns: minmax(0, 1fr);
+  }
+  /* 单列时取消模型跨列，防止缺少模型等级的窗口出现隐式横向列。 */
+  .macos-ai-app .task-model-push-config-grid:not(:has(.task-model-push-effort-field)) > .task-model-push-model-field {
+    grid-column: auto;
   }
   .macos-ai-app .task-model-push-footer {
     flex-wrap: wrap;

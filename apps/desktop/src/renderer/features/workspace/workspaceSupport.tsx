@@ -2084,7 +2084,6 @@ export function TaskCreateModal(props: {
                 emptyLabel={props.copy.selectNoResults}
                 disabled={interactionBusy}
               />
-              <small>{props.copy.taskCountPrefix === 'Tasks' ? 'Up to three hierarchy levels are allowed.' : '任务层级最多三级，超过后无法保存。'}</small>
             </div>
             <div className="task-create-field task-create-tags-field">
               <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
