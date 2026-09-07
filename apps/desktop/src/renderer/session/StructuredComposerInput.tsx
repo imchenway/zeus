@@ -14,7 +14,7 @@ interface StructuredToken {
   end: number;
   label: string;
   stableId: string;
-  /** Skill 与 Plugin 的显式调用文本；其他标签仅通过结构化字段提交。 */
+  /** 扩展与电脑操作的显式调用文本；员工标签通过结构化字段提交。 */
   invocation?: string;
 }
 
@@ -42,6 +42,7 @@ export interface StructuredComposerSelection {
   expertMentions: Array<{ employeeId: string }>;
   skillReferences: Array<{ id: string }>;
   pluginReferences: PluginSkillReference[];
+  /** 可选的电脑操作意图，不是每轮授权开关。 */
   computerUseRequested: boolean;
 }
 
@@ -199,10 +200,10 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         id: 'computer:request',
         group: 'Computer Use',
         label: 'Computer Use',
-        detail: computerEnabled ? (zh ? '仅为本轮启用' : 'Enable for this turn only') : zh ? '需要先在设置中全局启用' : 'Enable globally in Settings first',
+        detail: computerEnabled ? (zh ? '明确指定使用电脑操作' : 'Request computer interaction') : zh ? '需要先在设置中全局启用' : 'Enable globally in Settings first',
         disabled: !computerEnabled || selectedIds.has('computer:computer-use'),
         disabledReason: !computerEnabled ? (zh ? 'Computer Use 尚未启用' : 'Computer Use is disabled') : undefined,
-        token: { kind: 'computer', label: '/Computer Use', stableId: 'computer-use' },
+        token: { kind: 'computer', label: '/Computer Use', stableId: 'computer-use', invocation: zh ? '使用 Computer Use。' : 'Use Computer Use.' },
       },
     ];
     if (!computerEnabled && props.onOpenComputerSettings) {

@@ -349,7 +349,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       `员工人格与职责：${input.actor.prompt}`,
       '只以你自己的专家身份回答；不要替其他专家或默认 Agent 发言。',
       '本轮其他专家与你并行或串行调度，但你不可假设已经看见他们本轮尚未确认的回复。',
-      input.computerUseRequested ? '本轮用户明确请求 Computer Use；只有在全局能力和权限实际允许时才可调用对应工具。' : '本轮未请求 Computer Use；不要主动调用 Computer Use 工具。',
+      input.computerUseRequested ? '本轮用户明确请求 Computer Use；只有在全局能力和权限实际允许时才可调用对应工具。' : '可按用户任务需要使用 Computer Use；是否可用由全局开关和系统权限决定。',
       input.skillNames.length > 0 ? `本轮显式 Skill：${input.skillNames.map((name) => `$${name}`).join('、')}` : '',
     ]
       .filter(Boolean)

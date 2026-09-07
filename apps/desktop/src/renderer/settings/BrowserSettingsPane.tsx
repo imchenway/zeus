@@ -48,8 +48,8 @@ const copy = {
     allSitesConfirm: '允许所有站点后，Agent 不再逐站点询问即可读取和操作页面；敏感动作仍会单独确认。确定继续吗？',
     cdpConfirm: '完整 CDP 可绕过常规浏览器工具的能力边界并读取或修改页面。每次调用仍会确认。确定启用吗？',
     computerTitle: 'Computer Use',
-    // 说明全局开关、系统权限和本轮启用分别需要完成。
-    computerHelp: '启用并授予 macOS 辅助功能和录屏权限后，还需在发送消息前输入 / 并选择 Computer Use，为本轮允许 AI 操作其他应用。敏感操作会再次征求同意。',
+    // 全局启用后会话即可按需使用，无需逐条消息选择。
+    computerHelp: '启用并授予 macOS 辅助功能和录屏权限后，AI 可以在会话中按需操作其他应用。敏感操作会再次征求同意。',
     computerEnable: '启用 Computer Use',
     computerStop: '立即停止控制',
     computerAccessibility: '辅助功能',
@@ -117,9 +117,8 @@ const copy = {
     allSitesConfirm: 'Allowing all sites lets the Agent read and operate pages without per-site prompts. Sensitive actions still ask. Continue?',
     cdpConfirm: 'Full CDP can bypass the normal browser-tool boundary to inspect or modify a page. Every call still asks. Enable it?',
     computerTitle: 'Computer Use',
-    // 英文说明与中文保持相同的逐轮授权边界。
-    computerHelp:
-      'After enabling this and granting macOS Accessibility and Screen Recording permissions, type / and select Computer Use before sending a message to allow the AI to operate other apps for that turn. Sensitive actions will ask for approval again.',
+    // 英文同步说明全局开关生效后的会话能力。
+    computerHelp: 'After enabling this and granting macOS Accessibility and Screen Recording permissions, the AI can operate other apps as needed in conversations. Sensitive actions will ask for approval again.',
     computerEnable: 'Enable Computer Use',
     computerStop: 'Stop control now',
     computerAccessibility: 'Accessibility',

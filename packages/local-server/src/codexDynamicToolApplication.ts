@@ -1,5 +1,5 @@
 import type { CodexAppServerEvent, CodexAppServerManager, CodexServerRequestResponse } from '@zeus/ai-runtime';
-import type { ConversationExecutionRepository, ConversationTurnRepository, ConversationProviderItemRepository } from '@zeus/storage';
+import type { ConversationExecutionRepository, ConversationTurnRepository } from '@zeus/storage';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
@@ -14,11 +14,7 @@ interface CodexDynamicToolApplicationOptions {
   findConversation(threadId: string): { id: string; permissionMode?: string } | undefined;
   turns: Pick<ConversationTurnRepository, 'getByProvider'>;
   execution: Pick<ConversationExecutionRepository, 'currentSegment'>;
-  /** 工具的明确能力要求沿现有条目持久化，供实时和重启后的界面提示。 */
-  providerItems: Pick<ConversationProviderItemRepository, 'getByProvider' | 'upsertProgress'>;
-  persist(): Promise<void>;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
-  computerUseAllowed(conversationId: string, threadId: string, turnId: string): boolean;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
   now(): string;
@@ -198,12 +194,10 @@ async function resolveResponse(input: {
     if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
     }
-    if (input.namespace === 'zeus_computer' && !input.options.computerUseAllowed(input.conversation.id, input.threadId, input.turnId)) {
-      throw dynamicToolError('ZEUS_COMPUTER_NOT_REQUESTED', 'Computer Use 仅在 Composer 为本轮明确启用后可调用。');
-    }
     if (input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
     }
+    // Computer Use 由原生宿主按全局开关统一检查，输入框标签仅表达调用意图。
     const result = await input.options.toolBroker.invoke({
       conversationId: input.conversation.id,
       threadId: input.threadId,
@@ -216,36 +210,6 @@ async function resolveResponse(input: {
     return dynamicToolResponse(input.event, await projectContentItems(input, result.contentItems), result.success);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
-    const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
-    if (code === 'ZEUS_COMPUTER_NOT_REQUESTED' && input.conversation && turn) {
-      const existing = input.options.providerItems.getByProvider(input.threadId, input.callId);
-      const payload = existing ? (JSON.parse(existing.payloadJson) as Record<string, unknown>) : {};
-      const item = input.options.providerItems.upsertProgress({
-        conversationId: input.conversation.id,
-        turnId: turn.id,
-        providerThreadId: input.threadId,
-        providerTurnId: input.turnId,
-        providerItemId: input.callId,
-        itemType: 'dynamicToolCall',
-        phase: 'prework',
-        payload: { ...payload, userActionRequired: { code, capability: 'computer_use' } },
-        textContent: existing?.textContent ?? detail,
-        updatedAt: input.options.now(),
-      });
-      await input.options.persist();
-      input.options.broadcast('conversation.item.updated', {
-        conversationId: input.conversation.id,
-        providerThreadId: input.threadId,
-        providerTurnId: input.turnId,
-        providerItemId: input.callId,
-        itemType: item.itemType,
-        phase: item.phase,
-        status: item.status,
-        textContent: item.textContent,
-        itemPayload: JSON.parse(item.payloadJson),
-      });
-    }
     return dynamicToolResponse(input.event, [{ type: 'inputText', text: `Zeus dynamic tool failed: ${detail.slice(0, 1200)}` }], false);
   }
 }
