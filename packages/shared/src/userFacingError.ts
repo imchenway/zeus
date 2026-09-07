@@ -762,6 +762,18 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['所选模型目前繁忙，无法处理这次请求。可以切换模型，或稍后再试。', 'The selected model is busy and cannot handle this request. Choose another model or try again later.', 'choose_model'],
   ],
   [['ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE'], ['Zeus 未能读取所选模型的使用限制，暂时无法向它发送请求。请重新连接 Codex。', 'Zeus could not read the selected model’s limits and cannot send the request yet. Reconnect Codex.', 'settings']],
+  // 任务文档读取失败保留具体原因；缺少可选文档由读取入口正常处理，不会进入这些错误分支。
+  [
+    ['项目 docs 不是普通目录或是符号链接。', 'ZEUS_CONTEXT_SOURCE_PATH_INVALID: 项目 docs 不是普通目录或是符号链接。'],
+    ['Zeus 要读取的 docs 不是普通文件夹，或是指向其他位置的链接。请检查该目录。', 'The docs entry Zeus is trying to read is not a regular folder or is a symbolic link. Check that entry.'],
+  ],
+  [['ZEUS_CONTEXT_SOURCE_ROOT_NOT_FOUND'], ['任务文档所在的项目目录不存在或无法读取。请检查目录位置和访问权限。', 'The project folder containing task documents does not exist or cannot be read. Check its location and access permissions.']],
+  [['ZEUS_CONTEXT_SOURCE_NOT_FOUND'], ['找不到要读取的任务文档。请检查项目 docs 目录中的文件是否仍然存在。', 'The task document could not be found. Check whether the file still exists in the project docs folder.']],
+  [['ZEUS_CONTEXT_SOURCE_PATH_INVALID'], ['任务文档的路径、文件类型或内容格式不符合读取要求。请查看错误详情。', 'The task document path, file type, or content format does not meet the reading requirements. See the error details.']],
+  [
+    ['ZEUS_CONTEXT_SOURCE_CHANGED'],
+    ['任务文档在读取期间发生了变化，本次读取已停止。请等待文档保存完成后重新操作。', 'The task document changed while it was being read, so reading stopped. Wait for the document to finish saving, then try again.'],
+  ],
   [
     ['ZEUS_MODEL_NOT_READY', 'ZEUS_MODEL_CONNECTION_NOT_FOUND', 'ZEUS_CONVERSATION_ROUTE_CHANGED'],
     ['所选模型的连接已更改或不可用。请检查模型设置并重新选择可用模型。', 'The selected model connection has changed or is unavailable. Check its settings and select an available model.', 'choose_model'],
