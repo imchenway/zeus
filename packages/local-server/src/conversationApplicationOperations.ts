@@ -862,6 +862,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   function inferNativeQueueWaitReason(conversation: ZeusConversationRecord, state: ReturnType<typeof inferNativeConversationSnapshotState>, submissions: ReturnType<ConversationSubmissionRepository['listQueueByConversation']>) {
+    // HTTP 快照与实时 queue.changed 都从同一个恢复入口读取当前阶段。
+    if (conversation.agentKind === 'codex' && codexNativeCoordinator.isRecovering(conversation.id)) return 'conversation_restoring' as const;
     if (state.type === 'active') return 'current_turn' as const;
     if (state.type === 'dispatching') return 'dispatching' as const;
     if (state.type === 'waiting') return state.reason;

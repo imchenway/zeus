@@ -61,7 +61,7 @@ const copy = {
     attachments: '附件',
     details: '技术详情',
     queued: '排队中',
-    restoringConversation: '正在恢复对话',
+    restoringConversation: '正在恢复会话',
     conflictPreparing: '正在准备冲突现场',
     conflictPreparationFailed: '冲突现场准备失败',
     deliveryPaused: '发送已暂停',
@@ -152,6 +152,8 @@ export interface ThreadItemViewProps {
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
   queuedSubmissionId?: string;
+  /** 来自服务端队列的真实恢复阶段，与页面历史加载分开。 */
+  conversationRestoring?: boolean;
   queuedSteerDisabledReason?: string | null;
   onSteerQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -304,9 +306,10 @@ function TaskPushMessageContent(
   );
 }
 
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage): string | null {
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage, conversationRestoring = false): string | null {
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
+  if (conversationRestoring && (item.status === 'queued' || item.status === 'paused')) return labels.restoringConversation;
   if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'recovered_unsent' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation')
     return null;
   if (delivery === 'steer_now') {
@@ -478,7 +481,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
-  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language) : null;
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring) : null;
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);

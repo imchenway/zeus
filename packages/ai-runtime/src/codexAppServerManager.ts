@@ -668,6 +668,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (child !== spawned || state.type === 'closed') return;
       for (const frame of decoder.push(toBuffer(chunk))) {
         if (frame.type === 'protocol_error') {
+          // 坏回包无法可靠关联请求；结束本连接的全部待定等待，写入结果仍由上层核对，不能自动重发。
+          rejectGeneration(generationId, Object.assign(managerError('ZEUS_CODEX_RPC_PROTOCOL_ERROR', 'Codex 响应无法读取，已结束待定请求；已发出的操作需要核对结果。'), { protocolError: frame.error }));
           emitEvent(generationId, 'transport/protocol_error', frame.error);
         } else {
           handleWireMessage(generationId, frame.message);
@@ -1338,6 +1340,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           'thread/resume',
           compactObject({
             threadId: input.threadId,
+            // 恢复只返回元信息和实时状态；正文走已有分页读取，避免完整历史回包触发接收上限。
+            excludeTurns: true,
             cwd: input.cwd,
             modelProvider: responsesProvider?.id,
             config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
