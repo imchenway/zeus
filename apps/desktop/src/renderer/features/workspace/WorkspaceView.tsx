@@ -1578,7 +1578,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         data-inline-rail-item="true"
                         onClick={() => setSettingsCategory(id)}
                       >
-                        <span className="settings-section-icon" aria-hidden="true" />
                         <span className="settings-section-label">{label}</span>
                         {badge ? <span className="settings-section-badge">{badge}</span> : null}
                       </button>

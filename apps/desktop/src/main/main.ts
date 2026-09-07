@@ -877,6 +877,11 @@ async function createWindow(): Promise<void> {
     // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
+    // 使用 macOS 原生振动材质作为网页的透底，Renderer 里的半透明面板才能真正形成玻璃效果。
+    transparent: true,
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    backgroundColor: '#00000000',
     show: false,
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),

@@ -20862,7 +20862,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .settings-sidebar-nav .settings-section-button {
   align-items: center;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px;
   min-block-size: 30px;
   inline-size: 100%;
@@ -20885,24 +20885,6 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .settings-sidebar-nav .settings-section-button.selected {
   background: var(--zeus-source-list-selected, oklch(91.8% 0.006 255));
   color: var(--zeus-settings-tab-selected-text, var(--zeus-product-text, oklch(23% 0.003 255)));
-}
-
-.macos-ai-app .settings-section-icon {
-  inline-size: 16px;
-  block-size: 16px;
-  border: 1.4px solid currentColor;
-  border-radius: 5px;
-  opacity: 0.74;
-  position: relative;
-}
-
-.macos-ai-app .settings-section-icon::after {
-  content: '';
-  position: absolute;
-  inset: 5px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.55;
 }
 
 .macos-ai-app .settings-section-label {

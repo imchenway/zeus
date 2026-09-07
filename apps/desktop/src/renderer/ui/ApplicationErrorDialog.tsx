@@ -58,8 +58,8 @@ const copyByLanguage = {
 
 const visibleCopyByCode: Readonly<Record<string, Readonly<Record<ApplicationErrorLanguage, string>>>> = {
   ZEUS_CODEX_LOGIN_REQUIRED: {
-    'zh-CN': 'Zeus 专属 Codex 尚未登录。请先前往“设置 > AI CLI / Runtime”完成登录，再重试。',
-    en: 'The dedicated Codex runtime for Zeus is not signed in. Sign in under Settings > AI CLI / Runtime, then try again.',
+    'zh-CN': 'Zeus 专属 Codex 尚未登录。请在终端执行 CODEX_HOME=$HOME/.Zeus/providers/codex codex login 完成登录，再重试。',
+    en: 'The dedicated Codex runtime for Zeus is not signed in. Run "CODEX_HOME=$HOME/.Zeus/providers/codex codex login" in Terminal, then try again.',
   },
   ZEUS_UNIFIED_QUEUE_HEAD_FAILED: {
     'zh-CN': '消息已保存，但后台派发未完成。请点击“重新恢复”进行权威核对；不要重复发送同一消息。',
