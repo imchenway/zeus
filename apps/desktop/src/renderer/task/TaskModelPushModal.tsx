@@ -661,6 +661,7 @@ export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilit
   };
 }
 
+/** 按模型、补充信息和工作区组织推送配置，复用原有资源与分支处理。 */
 export function TaskModelPushModal(props: {
   open: boolean;
   language: 'zh-CN' | 'en-US';
@@ -839,7 +840,14 @@ export function TaskModelPushModal(props: {
             readingPositionRef.current.scrollTop = event.currentTarget.scrollTop;
           }}
         >
-          <p className="task-flow-context task-push-task-title">{props.task.title}</p>
+          <div className="task-model-push-toolbar">
+            <strong id="task-model-push-model-heading">{zh ? '模型选择' : 'Model selection'}</strong>
+            {props.onConnectModel && !modelSetupRequired ? (
+              <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
+                {zh ? '接入其他模型' : 'Connect another model'}
+              </Button>
+            ) : null}
+          </div>
           {props.error || supplementalResourceError || repositoryRefreshError ? (
             <div className="task-flow-feedback" role="status">
               <VisibleApplicationError error={props.error ?? supplementalResourceError ?? repositoryRefreshError} language={zh ? 'zh-CN' : 'en'} />
@@ -855,8 +863,8 @@ export function TaskModelPushModal(props: {
               {zh ? '连接一个可用模型后即可推送。当前任务与填写内容会保留。' : 'Connect an available model to push. Your task and entered details will be preserved.'}
             </p>
           ) : null}
-          <div className="task-model-push-config-grid">
-            <label>
+          <div className="task-model-push-config-grid" role="group" aria-labelledby="task-model-push-model-heading">
+            <label className="task-model-push-model-field">
               <span>{zh ? '模型' : 'Model'}</span>
               <ZeusSelect
                 size="regular"
@@ -870,63 +878,56 @@ export function TaskModelPushModal(props: {
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
             </label>
-            <div className="task-model-push-config-grid task-model-push-model-options">
-              <label>
-                <span>Skill</span>
-                <SkillSelector
-                  client={props.skillClient}
-                  projectId={props.task.projectId}
-                  value={props.form.skillId}
-                  onChange={(skillId) => props.onChange({ ...props.form, skillId })}
-                  language={props.language}
-                  disabled={busy}
-                  ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
-                />
-              </label>
-              {selectedModel?.supportedReasoningEfforts.length ? (
-                <label>
-                  <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                    value={props.form.effort}
-                    options={selectedModel.supportedReasoningEfforts.map((effort) => ({
-                      value: effort,
-                      label: effort,
-                    }))}
-                    onChange={(effort) => props.onChange({ ...props.form, effort })}
-                    disabled={busy || Boolean(props.form.stageId)}
-                    searchable={false}
-                  />
-                </label>
-              ) : null}
-              <label>
-                <span>{zh ? '速度' : 'Speed'}</span>
+            {selectedModel?.supportedReasoningEfforts.length ? (
+              <label className="task-model-push-effort-field">
+                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
                 <ZeusSelect
                   size="regular"
-                  ariaLabel={zh ? '速度' : 'Speed'}
-                  value={serviceTierSelectionValue(props.form.serviceTier)}
-                  options={serviceTierOptions(selectedModel, props.language)}
-                  onChange={(value) => {
-                    if (!selectedModel) return;
-                    const selection = serviceTierSelectionFromValue(value);
-                    props.onChange({
-                      ...props.form,
-                      serviceTier: selection,
-                      serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
-                    });
-                    void props.onServiceTierPreferenceChange(selectedModel, selection);
-                  }}
-                  disabled={!selectedModel || busy || Boolean(props.form.stageId)}
+                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                  value={props.form.effort}
+                  options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                    value: effort,
+                    label: effort,
+                  }))}
+                  onChange={(effort) => props.onChange({ ...props.form, effort })}
+                  disabled={busy || Boolean(props.form.stageId)}
                   searchable={false}
                 />
               </label>
-              {props.form.serviceTierDowngraded ? (
-                <p className="task-model-push-warning" role="status">
-                  {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
-                </p>
-              ) : null}
-            </div>
+            ) : null}
+            <label>
+              <span>{zh ? '速度' : 'Speed'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '速度' : 'Speed'}
+                value={serviceTierSelectionValue(props.form.serviceTier)}
+                options={serviceTierOptions(selectedModel, props.language)}
+                onChange={(value) => {
+                  if (!selectedModel) return;
+                  const selection = serviceTierSelectionFromValue(value);
+                  props.onChange({
+                    ...props.form,
+                    serviceTier: selection,
+                    serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
+                  });
+                  void props.onServiceTierPreferenceChange(selectedModel, selection);
+                }}
+                disabled={!selectedModel || busy || Boolean(props.form.stageId)}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>Skill</span>
+              <SkillSelector
+                client={props.skillClient}
+                projectId={props.task.projectId}
+                value={props.form.skillId}
+                onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+                language={props.language}
+                disabled={busy}
+                ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
+              />
+            </label>
             <label>
               <span>{zh ? '工作模式' : 'Work mode'}</span>
               <ZeusSelect
@@ -959,6 +960,11 @@ export function TaskModelPushModal(props: {
               />
             </label>
           </div>
+          {props.form.serviceTierDowngraded ? (
+            <p className="task-model-push-warning" role="status">
+              {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
+            </p>
+          ) : null}
           {props.form.stageId ? (
             <small className="task-model-push-stage-lock">
               {zh
@@ -967,48 +973,76 @@ export function TaskModelPushModal(props: {
             </small>
           ) : null}
 
-          {props.onConnectModel && !modelSetupRequired ? (
-            <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
-              {zh ? '接入其他模型' : 'Connect another model'}
-            </Button>
-          ) : null}
+          <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
+            <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
+              {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
+            </label>
+            <TaskPushSupplementalAttachmentCards
+              attachments={props.form.supplementalAttachments}
+              language={props.language}
+              disabled={busy}
+              onRemove={(attachment) => {
+                const identity = taskPushSupplementalAttachmentIdentity(attachment);
+                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
+              }}
+              onRestoreText={inputResources.restorePastedText}
+              onError={setSupplementalResourceError}
+            />
+            <textarea
+              ref={supplementalTextareaRef}
+              id="task-model-push-supplement-input"
+              value={props.form.supplementalInfo}
+              maxLength={20_000}
+              onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
+              onPaste={inputResources.handlePaste}
+              onKeyDown={inputResources.handlePasteShortcut}
+              disabled={busy}
+              placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
+            />
+          </section>
+
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
               <small>{zh ? '直接修改项目文件，或使用独立分支与工作目录（worktree）' : 'Edit project files directly, or use a separate branch and working folder (worktree)'}</small>
             </span>
-            <fieldset className="task-model-push-mode-choice">
-              <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
-              <label className={props.form.workspaceMode === 'direct' ? 'is-selected' : undefined}>
-                <input
-                  type="radio"
-                  name="task-workspace-mode"
-                  value="direct"
-                  checked={props.form.workspaceMode === 'direct'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
-                  disabled={busy}
-                />
-                <span>
-                  <strong>{zh ? '直接使用项目目录' : 'Use project directory directly'}</strong>
-                  <small>{zh ? '修改会直接写入项目文件' : 'Changes are written directly to the project files'}</small>
-                </span>
-              </label>
-              <label className={props.form.workspaceMode === 'worktree' ? 'is-selected' : undefined}>
-                <input
-                  type="radio"
-                  name="task-workspace-mode"
-                  value="worktree"
-                  checked={props.form.workspaceMode === 'worktree'}
-                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
-                  disabled={busy}
-                />
-                <span>
-                  <strong>Worktree</strong>
-                  <small>{zh ? '自动发现全部 Git 仓库，并创建或继续独立任务分支' : 'Discover all Git repositories, then create or continue isolated task branches'}</small>
-                </span>
-              </label>
-            </fieldset>
-            <div className="task-model-push-section-heading">
+            <div className="task-model-push-mode-group">
+              <fieldset className="task-model-push-mode-choice" aria-describedby="task-model-push-workspace-description">
+                <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
+                <label className={props.form.workspaceMode === 'direct' ? 'is-selected' : undefined}>
+                  <input
+                    type="radio"
+                    name="task-workspace-mode"
+                    value="direct"
+                    checked={props.form.workspaceMode === 'direct'}
+                    onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
+                    disabled={busy}
+                  />
+                  <span>{zh ? '直接使用项目目录' : 'Use project directory directly'}</span>
+                </label>
+                <label className={props.form.workspaceMode === 'worktree' ? 'is-selected' : undefined}>
+                  <input
+                    type="radio"
+                    name="task-workspace-mode"
+                    value="worktree"
+                    checked={props.form.workspaceMode === 'worktree'}
+                    onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', workspaceModeSelected: true, directConcurrencyConfirmed: false })}
+                    disabled={busy}
+                  />
+                  <span>Worktree</span>
+                </label>
+              </fieldset>
+              <p id="task-model-push-workspace-description" className="task-model-push-mode-description">
+                {props.form.workspaceMode === 'direct'
+                  ? zh
+                    ? '修改会直接写入项目文件'
+                    : 'Changes are written directly to the project files'
+                  : zh
+                    ? '自动发现全部 Git 仓库，并创建或继续独立任务分支'
+                    : 'Discover all Git repositories, then create or continue isolated task branches'}
+              </p>
+            </div>
+            <div className="task-model-push-toolbar">
               <span role="status" className={discovery?.status === 'failed' ? 'task-model-push-error' : 'task-model-push-message'}>
                 {discovery?.status === 'running'
                   ? zh
@@ -1035,38 +1069,41 @@ export function TaskModelPushModal(props: {
               </label>
             ) : null}
             {props.form.workspaceMode === 'worktree' && existingEnvironments.length > 0 ? (
-              <fieldset className="task-model-push-mode-choice task-model-push-branch-choice">
-                <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
-                <label className={props.form.taskBranchMode === 'create' ? 'is-selected' : undefined}>
-                  <input type="radio" name="task-branch-mode" value="create" checked={props.form.taskBranchMode === 'create'} onChange={() => props.onChange({ ...props.form, taskBranchMode: 'create' })} disabled={busy} />
-                  <span>
-                    <strong>{zh ? '创建新的任务分支' : 'Create new task branches'}</strong>
-                    <small>{zh ? '从下方所选分支创建任务专用分支' : 'Create a task branch from the source branch selected below'}</small>
-                  </span>
-                </label>
-                <label className={props.form.taskBranchMode === 'existing' ? 'is-selected' : undefined}>
-                  <input
-                    type="radio"
-                    name="task-branch-mode"
-                    value="existing"
-                    checked={props.form.taskBranchMode === 'existing'}
-                    onChange={() => props.onChange({ ...props.form, taskBranchMode: 'existing', environmentId: availableEnvironments[0]?.id ?? '' })}
-                    disabled={busy || availableEnvironments.length === 0}
-                  />
-                  <span>
-                    <strong>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</strong>
-                    <small>
-                      {availableEnvironments.length > 0
-                        ? zh
-                          ? '创建新对话，继续使用原来的独立工作目录和分支'
-                          : 'Start a new conversation using the existing separate working folder and branch'
-                        : zh
-                          ? '现有任务分支正在写入或已部分关闭'
-                          : 'Existing task branches are active or partially closed'}
-                    </small>
-                  </span>
-                </label>
-              </fieldset>
+              <div className="task-model-push-mode-group">
+                <fieldset className="task-model-push-mode-choice task-model-push-branch-choice" aria-describedby="task-model-push-branch-description">
+                  <legend>{zh ? '任务分支方式' : 'Task branch mode'}</legend>
+                  <label className={props.form.taskBranchMode === 'create' ? 'is-selected' : undefined}>
+                    <input type="radio" name="task-branch-mode" value="create" checked={props.form.taskBranchMode === 'create'} onChange={() => props.onChange({ ...props.form, taskBranchMode: 'create' })} disabled={busy} />
+                    <span>{zh ? '创建新的任务分支' : 'Create new task branches'}</span>
+                  </label>
+                  <label className={props.form.taskBranchMode === 'existing' ? 'is-selected' : undefined}>
+                    <input
+                      type="radio"
+                      name="task-branch-mode"
+                      value="existing"
+                      checked={props.form.taskBranchMode === 'existing'}
+                      onChange={() => props.onChange({ ...props.form, taskBranchMode: 'existing', environmentId: availableEnvironments[0]?.id ?? '' })}
+                      disabled={busy || availableEnvironments.length === 0}
+                      aria-describedby={availableEnvironments.length === 0 ? 'task-model-push-branch-unavailable' : undefined}
+                    />
+                    <span>{zh ? '继续已有任务分支' : 'Continue existing task branches'}</span>
+                  </label>
+                </fieldset>
+                <p id="task-model-push-branch-description" className="task-model-push-mode-description">
+                  {props.form.taskBranchMode === 'create'
+                    ? zh
+                      ? '从下方所选分支创建任务专用分支'
+                      : 'Create a task branch from the source branch selected below'
+                    : zh
+                      ? '创建新对话，继续使用原来的独立工作目录和分支'
+                      : 'Start a new conversation using the existing separate working folder and branch'}
+                </p>
+                {availableEnvironments.length === 0 ? (
+                  <p id="task-model-push-branch-unavailable" className="task-model-push-mode-description">
+                    {zh ? '现有任务分支正在写入或已部分关闭' : 'Existing task branches are active or partially closed'}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {props.form.workspaceMode === 'direct' ? (
               <div className="task-model-push-direct-summary">
@@ -1197,8 +1234,8 @@ export function TaskModelPushModal(props: {
                   const selectedSource = repository.sourceRefs.find((source) => source.ref === selection.sourceRef);
                   const refreshing = props.refreshingRepositoryId === repository.id;
                   return (
-                    <fieldset key={repository.id} className="task-model-push-repository">
-                      <legend>
+                    <section key={repository.id} className="task-model-push-repository" aria-label={repository.name}>
+                      <div className="task-model-push-repository-heading">
                         <span>
                           <strong>{repository.name}</strong>
                           <small>{repository.relativePath}</small>
@@ -1206,7 +1243,7 @@ export function TaskModelPushModal(props: {
                         <Button variant="secondary" size="compact" busy={refreshing} onClick={() => props.onRefreshRepository(repository.id)} disabled={busy || refreshing || !repository.defaultRemoteName}>
                           {refreshing ? (zh ? '正在刷新…' : 'Refreshing…') : zh ? '刷新远端分支' : 'Refresh remote branches'}
                         </Button>
-                      </legend>
+                      </div>
                       {repository.unavailableReason ? (
                         <p className="task-model-push-error" role="alert">
                           {repository.unavailableReason}
@@ -1295,7 +1332,7 @@ export function TaskModelPushModal(props: {
                           <span>{zh ? '包含当前项目目录中尚未提交的修改。' : 'Include uncommitted changes from the current project folder.'}</span>
                         </label>
                       ) : null}
-                    </fieldset>
+                    </section>
                   );
                 })}
               </div>
@@ -1309,34 +1346,6 @@ export function TaskModelPushModal(props: {
                 {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
               </small>
             ) : null}
-          </section>
-
-          <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
-            <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
-              {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
-            </label>
-            <TaskPushSupplementalAttachmentCards
-              attachments={props.form.supplementalAttachments}
-              language={props.language}
-              disabled={busy}
-              onRemove={(attachment) => {
-                const identity = taskPushSupplementalAttachmentIdentity(attachment);
-                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
-              }}
-              onRestoreText={inputResources.restorePastedText}
-              onError={setSupplementalResourceError}
-            />
-            <textarea
-              ref={supplementalTextareaRef}
-              id="task-model-push-supplement-input"
-              value={props.form.supplementalInfo}
-              maxLength={20_000}
-              onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
-              onPaste={inputResources.handlePaste}
-              onKeyDown={inputResources.handlePasteShortcut}
-              disabled={busy}
-              placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
-            />
           </section>
 
           <TaskPushCurrentConversationPicker
