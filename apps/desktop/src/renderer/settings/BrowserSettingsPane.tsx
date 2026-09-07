@@ -9,7 +9,8 @@ interface BrowserSettingsPaneProps {
 const copy = {
   'zh-CN': {
     title: '内置浏览器',
-    intro: 'Zeus 使用独立的浏览器资料。网站登录会在 Zeus 对话之间保留，但不与 Chrome 共享。',
+    // 明确即时保存的开关与需要手动保存的其他输入。
+    intro: 'Zeus 使用独立的浏览器资料。网站登录会在 Zeus 对话之间保留，但不与 Chrome 共享。开关修改后立即保存；其他设置请点击“保存浏览器设置”。',
     unavailable: '此处无法使用内置浏览器设置。',
     loading: '正在读取浏览器设置…',
     enabled: '启用内置浏览器',
@@ -38,6 +39,8 @@ const copy = {
     fullCdpHelp: '允许 Agent 请求任意 Chrome DevTools Protocol 方法；每次调用仍需明确确认。',
     save: '保存浏览器设置',
     saved: '浏览器设置已保存。',
+    // 单个开关保存不能暗示页面中的其他草稿也已保存。
+    switchSaved: '开关设置已保存。',
     clear: '清除浏览器数据',
     clearHelp: '清除 Cookie、缓存、站点存储、站点授权和页面批注，并把现有标签重置为空白页。',
     cleared: '浏览器数据已清除。',
@@ -45,7 +48,8 @@ const copy = {
     allSitesConfirm: '允许所有站点后，Agent 不再逐站点询问即可读取和操作页面；敏感动作仍会单独确认。确定继续吗？',
     cdpConfirm: '完整 CDP 可绕过常规浏览器工具的能力边界并读取或修改页面。每次调用仍会确认。确定启用吗？',
     computerTitle: 'Computer Use',
-    computerHelp: '启用后，AI 可以按需操作其他应用。你仍需授予 macOS 辅助功能和录屏权限；敏感操作会再次征求同意。',
+    // 说明全局开关、系统权限和本轮启用分别需要完成。
+    computerHelp: '启用并授予 macOS 辅助功能和录屏权限后，还需在发送消息前输入 / 并选择 Computer Use，为本轮允许 AI 操作其他应用。敏感操作会再次征求同意。',
     computerEnable: '启用 Computer Use',
     computerStop: '立即停止控制',
     computerAccessibility: '辅助功能',
@@ -74,7 +78,8 @@ const copy = {
   },
   'en-US': {
     title: 'Built-in browser',
-    intro: 'Zeus uses a separate browser profile. Website sign-ins persist across Zeus conversations but are not shared with Chrome.',
+    // 英文说明保持相同的保存规则。
+    intro: 'Zeus uses a separate browser profile. Website sign-ins persist across Zeus conversations but are not shared with Chrome. Switches save immediately; use “Save browser settings” for other changes.',
     unavailable: 'Built-in browser settings are unavailable here.',
     loading: 'Loading browser settings…',
     enabled: 'Enable built-in browser',
@@ -103,6 +108,8 @@ const copy = {
     fullCdpHelp: 'Lets the Agent request arbitrary Chrome DevTools Protocol methods. Every call still requires explicit approval.',
     save: 'Save browser settings',
     saved: 'Browser settings saved.',
+    // 只确认本次开关已经保存。
+    switchSaved: 'Switch setting saved.',
     clear: 'Clear browser data',
     clearHelp: 'Clears cookies, cache, site storage, site grants, and page comments, then resets open tabs to blank pages.',
     cleared: 'Browser data cleared.',
@@ -110,7 +117,9 @@ const copy = {
     allSitesConfirm: 'Allowing all sites lets the Agent read and operate pages without per-site prompts. Sensitive actions still ask. Continue?',
     cdpConfirm: 'Full CDP can bypass the normal browser-tool boundary to inspect or modify a page. Every call still asks. Enable it?',
     computerTitle: 'Computer Use',
-    computerHelp: 'Once enabled, the AI can operate other apps as needed. macOS Accessibility and Screen Recording permissions are still required. Sensitive actions will ask for approval again.',
+    // 英文说明与中文保持相同的逐轮授权边界。
+    computerHelp:
+      'After enabling this and granting macOS Accessibility and Screen Recording permissions, type / and select Computer Use before sending a message to allow the AI to operate other apps for that turn. Sensitive actions will ask for approval again.',
     computerEnable: 'Enable Computer Use',
     computerStop: 'Stop control now',
     computerAccessibility: 'Accessibility',
@@ -191,13 +200,24 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     };
   }, [labels.unavailable]);
 
-  function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled' | 'externalChromeEnabled' | 'externalEdgeEnabled', value: boolean): void {
-    if (!settings) return;
+  /** 开关直接保存单个字段，成功后更新显示，保留其他尚未保存的输入。 */
+  async function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled' | 'externalChromeEnabled' | 'externalEdgeEnabled', value: boolean): Promise<void> {
+    if (!settings || busy || !window.zeus?.updateBrowserSettings) return;
     if (value && key === 'allowAgentAllSites' && !window.confirm(labels.allSitesConfirm)) return;
     if (value && key === 'fullCdpEnabled' && !window.confirm(labels.cdpConfirm)) return;
-    setSettings({ ...settings, [key]: value });
+    setBusy(true);
     setStatus(null);
     setError(null);
+    try {
+      // 只提交点击的开关，避免顺带提交下载目录等草稿。
+      const saved = await window.zeus.updateBrowserSettings({ [key]: value });
+      setSettings((current) => (current ? { ...current, [key]: saved[key] } : current));
+      setStatus(labels.switchSaved);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError : labels.saveFailed);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function setComputerEnabled(enabled: boolean): Promise<void> {
@@ -331,7 +351,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       <p className="browser-settings-intro">{labels.intro}</p>
       <section className="native-settings-pane browser-settings-pane" aria-label={labels.title}>
         <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
-          <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => setBoolean('enabled', checked)} />
+          <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => void setBoolean('enabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
           <select
@@ -395,19 +415,19 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           <input aria-label={labels.downloads} value={settings.downloadDirectory} disabled={busy} onChange={(event) => setSettings({ ...settings, downloadDirectory: event.currentTarget.value })} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
-          <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => setBoolean('askWhereToSave', checked)} />
+          <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.allSites} description={labels.allSitesHelp} danger>
-          <BrowserSwitch label={labels.allSites} checked={settings.allowAgentAllSites} disabled={busy} onChange={(checked) => setBoolean('allowAgentAllSites', checked)} />
+          <BrowserSwitch label={labels.allSites} checked={settings.allowAgentAllSites} disabled={busy} onChange={(checked) => void setBoolean('allowAgentAllSites', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.fullCdp} description={labels.fullCdpHelp} danger>
-          <BrowserSwitch label={labels.fullCdp} checked={settings.fullCdpEnabled} disabled={busy} onChange={(checked) => setBoolean('fullCdpEnabled', checked)} />
+          <BrowserSwitch label={labels.fullCdp} checked={settings.fullCdpEnabled} disabled={busy} onChange={(checked) => void setBoolean('fullCdpEnabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.chromeEnable} description={labels.chromeHelp}>
-          <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => setBoolean('externalChromeEnabled', checked)} />
+          <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalChromeEnabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.edgeEnable} description={labels.edgeHelp}>
-          <BrowserSwitch label={labels.edgeEnable} checked={settings.externalEdgeEnabled} disabled={busy} onChange={(checked) => setBoolean('externalEdgeEnabled', checked)} />
+          <BrowserSwitch label={labels.edgeEnable} checked={settings.externalEdgeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalEdgeEnabled', checked)} />
         </BrowserSettingRow>
         {computerSettings ? (
           <BrowserSettingRow title={labels.computerTitle} description={`${labels.computerHelp}${computerSettings.detail ? ` ${computerSettings.detail}` : ''}`} danger>

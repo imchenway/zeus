@@ -75,38 +75,34 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
       });
       if (!response.ok) throw new Error(`撤销 Computer Use 失败：HTTP ${response.status}`);
     },
+    /** 单次调用失败不撤销共享连接；登记和撤销只由界面租约生命周期负责。 */
     async invoke(input) {
-      let lastError: unknown;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const current = await waitForRegistration();
-        try {
-          const response = await fetch(`${current.baseUrl}/invoke`, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${current.token}`,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify(input),
-          });
-          const payload = (await response.json().catch(() => ({}))) as unknown;
-          if (!response.ok) {
-            const detail = isRecord(payload) && typeof payload.message === 'string' ? payload.message : `HTTP ${response.status}`;
-            throw new Error(`Zeus BrowserHost bridge failed: ${detail}`);
-          }
-          if (!isBrowserAutomationResult(payload)) throw new Error('Zeus BrowserHost bridge returned an invalid result.');
-          return payload;
-        } catch (error) {
-          // 桌面调用可能已执行；断线不能在新租约自动重放点击、输入或控制会话。
-          if (input.namespace === 'zeus_computer') {
-            throw Object.assign(new Error(`Computer Use 桥连接中断，动作结果未知，请先停止控制并检查目标应用：${error instanceof Error ? error.message : String(error)}`), {
-              code: 'ZEUS_COMPUTER_EFFECT_UNKNOWN',
-            });
-          }
-          lastError = error;
-          if (registration?.leaseId === current.leaseId) register(null);
+      const current = await waitForRegistration();
+      try {
+        const response = await fetch(`${current.baseUrl}/invoke`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${current.token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(input),
+        });
+        const payload = (await response.json().catch(() => ({}))) as unknown;
+        if (!response.ok) {
+          const detail = isRecord(payload) && typeof payload.message === 'string' ? payload.message : `HTTP ${response.status}`;
+          throw new Error(`Zeus BrowserHost bridge failed: ${detail}`);
         }
+        if (!isBrowserAutomationResult(payload)) throw new Error('Zeus BrowserHost bridge returned an invalid result.');
+        return payload;
+      } catch (error) {
+        // 浏览器和桌面动作都可能已执行；失败直接返回，不能在当前或新租约自动重放。
+        if (input.namespace === 'zeus_computer') {
+          throw Object.assign(new Error(`Computer Use 桥连接中断，动作结果未知，请先停止控制并检查目标应用：${error instanceof Error ? error.message : String(error)}`), {
+            code: 'ZEUS_COMPUTER_EFFECT_UNKNOWN',
+          });
+        }
+        throw error;
       }
-      throw lastError instanceof Error ? lastError : new Error('Zeus BrowserHost bridge is unavailable.');
     },
   };
 }
