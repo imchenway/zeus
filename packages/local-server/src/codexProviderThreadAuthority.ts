@@ -36,6 +36,8 @@ interface CodexProviderThreadAuthorityOptions {
 }
 
 export interface CodexProviderThreadAuthorityApplication {
+  /** 当前会话是否正在读取并恢复模型端状态。 */
+  isRecovering(conversationId: string): boolean;
   inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean }): Promise<ProviderThreadAuthority>;
   observe(conversationId: string, providerThreadId: string): void;
   queueChanged(conversationId: string): void;
@@ -51,11 +53,37 @@ const observerDelaysMs = [1_000, 2_000, 5_000, 15_000] as const;
 export function createCodexProviderThreadAuthorityApplication(options: CodexProviderThreadAuthorityOptions): CodexProviderThreadAuthorityApplication {
   const authorityChains = new Map<string, Promise<ProviderThreadAuthority>>();
   const activeObservers = new Map<string, ProviderActiveObserver>();
-  const subscribedThreads = new Set<string>();
+  /** 订阅绑定真实运行实例，进程更换后必须重新恢复订阅。 */
+  const subscribedThreads = new Map<string, string>();
   /** 关闭协调器时结束仍在加载大体量历史的本地恢复等待。 */
   const resumeAbortController = new AbortController();
   let closing = false;
   let closePromise: Promise<void> | null = null;
+
+  /** 所有恢复入口和异步续体共用关闭检查。 */
+  function assertOpen(): void {
+    if (closing) throw coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', '会话恢复已随执行宿主关闭而停止。');
+  }
+
+  /** 只认当前线程所属实例的订阅，不把旧进程订阅带到新进程。 */
+  function hasCurrentSubscription(providerThreadId: string): boolean {
+    return subscribedThreads.get(providerThreadId) === (options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId());
+  }
+
+  /** 读取结果落地前核对线程和实例，防止旧结果重新启用已交接的会话。 */
+  function assertCurrent(conversationId: string, providerThreadId: string, generationId: string | null): void {
+    assertOpen();
+    if (options.requireConversation(conversationId).providerThreadId !== providerThreadId || !generationId || generationId !== (options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId())) {
+      throw coordinatorError('ZEUS_CODEX_GENERATION_CHANGED_DURING_RECOVERY', '会话或运行实例已变化，需要重新核对恢复状态。');
+    }
+  }
+
+  /** 实时订阅由本次线程所属的运行实例确认。 */
+  function markSubscribed(providerThreadId: string): void {
+    if (closing) return;
+    const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();
+    if (generationId) subscribedThreads.set(providerThreadId, generationId);
+  }
 
   function hasQueuedSubmission(conversationId: string): boolean {
     return options.submissions.listByConversation(conversationId).some((submission) => submission.status === 'queued' && !submission.providerTurnId);
@@ -129,7 +157,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
 
   function isTerminalAuthorityError(error: unknown): boolean {
     const code = isRecord(error) && typeof error.code === 'string' ? error.code : null;
-    return code === 'ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR' || code === 'ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED' || code === 'ZEUS_CODEX_INVALID_RESPONSE';
+    return code === 'ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR' || code === 'ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED' || code === 'ZEUS_CODEX_INVALID_RESPONSE' || code === 'ZEUS_CODEX_RPC_PROTOCOL_ERROR';
   }
 
   async function pollActiveTurn(observer: ProviderActiveObserver): Promise<void> {
@@ -178,9 +206,13 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   }
 
   async function readAndProject(conversation: ZeusConversationWithMessagesRecord): Promise<ProviderThreadAuthority> {
+    assertOpen();
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+    /** 在请求发出前固定来源实例，返回后再核对。 */
+    const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();
     // 派发门禁属于控制面读取，不能被同一 app-server 的慢过程投影反向阻塞。
     const metadata = await options.manager.readThread({ threadId: providerThreadId, priority: 'control' });
+    assertCurrent(conversation.id, providerThreadId, generationId);
     if (metadata.id !== providerThreadId) {
       throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while reading authoritative state.');
     }
@@ -196,9 +228,9 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (requiresProviderTurnProjection(conversation, providerStatus)) {
       await options.enqueueProviderTurnReconciliation(options.requireConversation(conversation.id), { priority: 'control' });
     }
+    assertCurrent(conversation.id, providerThreadId, generationId);
     const current = options.requireConversation(conversation.id);
     const snapshot = options.projectedProviderThreadSnapshot(conversation.id, metadata);
-    const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();
     if (!generationId) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread has no authoritative runtime generation.');
     options.reconcileConversationSnapshot(current, snapshot, generationId, { preserveUnsentQueue: true });
     const state = options.runStates.get(conversation.id) ?? options.inferRunState(options.requireConversation(conversation.id));
@@ -217,12 +249,15 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   async function inspectUnserialized(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext): Promise<ProviderThreadAuthority> {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const first = await readAndProject(conversation);
-    if (first.type === 'active' && subscribedThreads.has(providerThreadId)) return first;
+    if (first.type === 'active' && hasCurrentSubscription(providerThreadId)) return first;
     const confirmed = first.type === 'active' ? first : await readAndProject(options.requireConversation(conversation.id));
-    if (confirmed.type === 'active' && subscribedThreads.has(providerThreadId)) return confirmed;
-    if (confirmed.status.type === 'idle' && subscribedThreads.has(providerThreadId)) return confirmed;
+    if (confirmed.type === 'active' && hasCurrentSubscription(providerThreadId)) return confirmed;
+    if (confirmed.status.type === 'idle' && hasCurrentSubscription(providerThreadId)) return confirmed;
 
     const responsesRuntime = await options.responsesRuntimeFor(context);
+    assertOpen();
+    /** 恢复完成时仍须属于同一运行实例。 */
+    const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();
     let resumed: CodexThreadSnapshot;
     try {
       resumed = await options.manager.resumeThread({
@@ -237,13 +272,14 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
       // 只读确认后可能恰好开始新轮次；仅当本连接已从实时事件确认订阅时才能
       // 接受该竞争结果。活动态本身不代表新宿主拥有后续事件订阅。
       const raced = await readAndProject(options.requireConversation(conversation.id)).catch(() => null);
-      if (raced?.type === 'active' && subscribedThreads.has(providerThreadId)) return raced;
+      if (raced?.type === 'active' && hasCurrentSubscription(providerThreadId)) return raced;
       throw resumeError;
     }
+    assertCurrent(conversation.id, providerThreadId, generationId);
     if (resumed.id !== providerThreadId) {
       throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while resuming authoritative state.');
     }
-    subscribedThreads.add(providerThreadId);
+    markSubscribed(providerThreadId);
     options.persistThreadProviderSettings(conversation.id, resumed);
     const afterResume = await readAndProject(options.requireConversation(conversation.id));
     if (afterResume.type === 'active') return afterResume;
@@ -254,6 +290,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   }
 
   function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean } = {}): Promise<ProviderThreadAuthority> {
+    if (closing) return Promise.reject(coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', '会话恢复已随执行宿主关闭而停止。'));
     const previous = authorityChains.get(conversation.id);
     const waitForPrevious = previous
       ? previous.then(
@@ -263,12 +300,16 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
       : Promise.resolve();
     const authority = waitForPrevious.then(() => inspectUnserialized(options.requireConversation(conversation.id), context));
     authorityChains.set(conversation.id, authority);
+    if (!previous) options.broadcast('conversation.queue.changed', { conversationId: conversation.id, queueDispatchRequested: false });
     void authority
       .finally(() => {
-        if (authorityChains.get(conversation.id) === authority) authorityChains.delete(conversation.id);
+        if (authorityChains.get(conversation.id) !== authority) return;
+        authorityChains.delete(conversation.id);
+        if (!closing) options.broadcast('conversation.queue.changed', { conversationId: conversation.id, queueDispatchRequested: false });
       })
       .catch(() => undefined);
     return authority.then((result) => {
+      assertOpen();
       if (result.type === 'active' && input.observeActive !== false) {
         observe(conversation.id, requireString(options.requireConversation(conversation.id).providerThreadId, 'provider thread id'));
       } else if (result.type === 'idle') {
@@ -292,13 +333,16 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   }
 
   return {
+    isRecovering: (conversationId) => {
+      // 已订阅线程的日常状态观察不属于恢复，避免排队标签随后台检查来回跳变。
+      const providerThreadId = options.getConversation(conversationId)?.providerThreadId;
+      return !closing && authorityChains.has(conversationId) && Boolean(providerThreadId && !hasCurrentSubscription(providerThreadId));
+    },
     inspect,
     observe,
     queueChanged,
     stopObserver,
-    markSubscribed(providerThreadId) {
-      subscribedThreads.add(providerThreadId);
-    },
+    markSubscribed,
     markUnsubscribed(providerThreadId) {
       subscribedThreads.delete(providerThreadId);
     },

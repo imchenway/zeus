@@ -1401,6 +1401,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         queuedSubmissionId={queuedSubmissionId}
+        conversationRestoring={Boolean(queuedSubmission && options.props.state.queue?.waitReason === 'conversation_restoring')}
         queuedSteerDisabledReason={queuedSteerDisabledReason}
         onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
         onDeleteQueuedSubmission={queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused' ? options.props.onCancelQueuedSubmission : undefined}

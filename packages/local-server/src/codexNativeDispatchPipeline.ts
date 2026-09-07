@@ -42,6 +42,10 @@ interface NativeConversationDispatchLease {
 }
 
 interface CodexNativeDispatchPipelineDependencies {
+  /** 写入前重新核对宿主和提交是否仍有效。 */
+  assertSubmissionDispatchable(submissionId: string): void;
+  /** 关闭期间只允许收尾既有写入，不开始新派发。 */
+  isClosed(): boolean;
   options: CreateCodexNativeConversationCoordinatorOptions;
   providerCommands: CodexProviderCommandApplicationService;
   providerThreadAuthority: CodexProviderThreadAuthorityApplication;
@@ -93,6 +97,8 @@ interface CodexNativeDispatchPipelineDependencies {
 
 export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispatchPipelineDependencies) {
   const {
+    assertSubmissionDispatchable,
+    isClosed,
     accepted,
     contexts,
     dispatchContextForSubmission,
@@ -130,6 +136,12 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     return state.type === 'ready' ? state.generationId : null;
   };
 
+  /** 迟到结果不得把已结束或已替换的提交改回排队状态。 */
+  function dispatchStopped(submissionId: string): boolean {
+    const current = options.submissions.getById(submissionId);
+    return isClosed() || !current || current.status === 'cancelled' || current.status === 'deleted';
+  }
+
   function dispatchSubmission(
     conversationInput: ZeusConversationWithMessagesRecord | ReturnType<ConversationRepository['create']>,
     submission: ZeusConversationSubmissionRecord,
@@ -137,6 +149,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     providerArchiveRecoveryAttempted = false,
     segmentLifecycle?: ConversationSegmentLifecycle,
   ): Promise<NativeAcceptedOperation> {
+    assertSubmissionDispatchable(submission.id);
     const activeLease = dispatchLeases.get(conversationInput.id);
     if (activeLease) {
       if (activeLease.submissionId !== submission.id) {
@@ -174,14 +187,20 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
     try {
       await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
+      assertSubmissionDispatchable(submission.id);
       const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
       if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'provider_stop_pending') {
         return accepted(submission, 'queued', conversation.providerThreadId, null);
       }
       if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'recovery_required') {
         conversation = await recoverPausedConversation(conversation.id, 'dispatch');
+        assertSubmissionDispatchable(submission.id);
       }
     } catch (error) {
+      if (dispatchStopped(submission.id)) {
+        await segmentLifecycle?.fail(error, now());
+        return accepted(submission, 'interrupted', conversation.providerThreadId, null);
+      }
       options.submissions.updateStatus(submission.id, 'paused', {
         pausedReason: 'recovery_required',
         error: toRecoverySubmissionError(error),
@@ -210,6 +229,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     let threadStartedForSubmission = false;
     try {
       if (!segmentLifecycle?.requiresNewSegment) await ensureGenerationReconciled([conversation.id]);
+      assertSubmissionDispatchable(submission.id);
       conversation = options.conversations.getById(conversation.id) ?? conversation;
       if (!segmentLifecycle?.requiresNewSegment && conversation.providerThreadId) {
         const reconciledState = runStates.get(conversation.id) ?? inferRunState(conversation);
@@ -220,6 +240,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         if (reconciledState.type === 'waiting' || reconciledState.type === 'dispatching') return accepted(submission, 'queued', conversation.providerThreadId, null);
         if (reconciledState.type !== 'idle') return accepted(submission, 'recovery_required', conversation.providerThreadId, null);
         const authority = await providerThreadAuthority.inspect(conversation, context);
+        assertSubmissionDispatchable(submission.id);
         if (authority.type === 'active') return accepted(submission, 'queued', conversation.providerThreadId, null);
         conversation = requireConversation(conversation.id);
       }
@@ -319,7 +340,10 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
             dynamicToolsSha256: requestHash(dynamicTools),
           },
           providerGenerationId: commandProviderGenerationId,
-          invoke: (traceIdentity) => options.manager.startThread({ ...threadRequest, traceIdentity }),
+          invoke: (traceIdentity) => {
+            assertSubmissionDispatchable(submission.id);
+            return options.manager.startThread({ ...threadRequest, traceIdentity });
+          },
           recoverAccepted: (nativeSessionId) => options.manager.readThread({ threadId: nativeSessionId }),
           isExplicitRejection: isRuntimeRejected,
           nativeSessionId: (acceptedThread) => acceptedThread.id,
@@ -424,6 +448,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         beforePortableProviderWrite: () => markDispatchRpcStarted(lease, submission.id),
         now,
       });
+      assertSubmissionDispatchable(submission.id);
       const compiledDispatchContext = preparedContext.compiled;
       const pluginCompactContext = preparedContext.pluginCompactContext;
       if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
@@ -452,6 +477,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         });
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
+      assertSubmissionDispatchable(submission.id);
       if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
       else
         options.commandDeliveries.markProviderWriteStarted({
@@ -590,7 +616,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
-      if (!serviceTierFallbackAttempted && context.serviceTier === 'priority' && isServiceTierUnavailableError(error)) {
+      if (!dispatchStopped(submission.id) && !serviceTierFallbackAttempted && context.serviceTier === 'priority' && isServiceTierUnavailableError(error)) {
         const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
         persistSubmissionDispatchContext(submission, standardContext);
         options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
@@ -623,6 +649,15 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           nativeSessionId: candidateProviderThreadId ?? conversation.providerThreadId,
           occurredAt: now(),
         });
+      }
+      if (dispatchStopped(submission.id) && !providerWriteStarted) return accepted(submission, 'interrupted', candidateProviderThreadId ?? conversation.providerThreadId, null);
+      if (providerWriteStarted && !explicitlyRejected) {
+        // 写出后的未知结果优先于通用暂停或归档恢复，不能覆盖为可重试失败。
+        if (!segmentLifecycle) options.execution.markCurrentSubmissionOutcomeUnknown(conversation.id, submission.id, serializeError(error), now());
+        runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+        await persist();
+        options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id, queueDispatchRequested: false });
+        return accepted(submission, 'recovery_required', candidateProviderThreadId ?? conversation.providerThreadId, null);
       }
       if (runtimeRejected) {
         runStates.set(conversation.id, { type: 'paused', reason: 'runtime_rejected' });
@@ -707,6 +742,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
   }
 
   function markDispatchRpcStarted(lease: NativeConversationDispatchLease, resourceId: string): void {
+    assertSubmissionDispatchable(lease.submissionId);
     lease.rpcStartedResourceId = resourceId;
     for (const lifecycle of lease.lifecycles) lifecycle.markRpcStarted(resourceId);
   }

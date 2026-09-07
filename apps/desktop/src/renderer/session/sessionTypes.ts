@@ -308,6 +308,8 @@ export type NativeConversationRunState =
     };
 
 export type NativeQueueWaitReason =
+  /** 正在核对并恢复模型端会话，不等同于页面历史加载。 */
+  | 'conversation_restoring'
   | 'current_turn'
   | 'dispatching'
   | 'user_input'

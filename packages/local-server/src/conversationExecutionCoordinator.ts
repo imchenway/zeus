@@ -494,6 +494,9 @@ export class ConversationExecutionCoordinator {
         if (acceptedByRuntime) return;
         const failure = serializeError(error);
         const mutateBusinessState = () => {
+          // 未写出用户消息时，取消、删除和替换的终态优先于迟到的准备失败。
+          const currentSubmission = submissionId ? this.options.submissions.getById(submissionId) : undefined;
+          if (!providerWriteStarted && currentSubmission && (currentSubmission.status === 'cancelled' || currentSubmission.status === 'deleted')) return;
           if (switchOperationId) {
             if (providerWriteStarted) this.options.execution.markOutcomeUnknown(switchOperationId, failure, occurredAt);
             else this.options.execution.failBeforeProviderWrite(switchOperationId, failure, occurredAt);
