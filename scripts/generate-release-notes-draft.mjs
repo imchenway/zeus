@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -34,7 +34,7 @@ const draftPath = join(outputDirectory, `Zeus-${releaseVersion}-release-notes-dr
 const evidence = buildEvidence();
 
 writeFileSync(evidencePath, evidence, { mode: 0o600 });
-const prompt = buildPrompt(evidencePath, evidence);
+const prompt = await buildPrompt(evidencePath, evidence);
 
 console.log(`Zeus 发布内容草稿：版本 ${releaseVersion}，范围 ${baseTag}..${shortHeadSha}`);
 let response;
@@ -128,9 +128,11 @@ function buildEvidence() {
   ].join('\n');
 }
 
-function buildPrompt(currentEvidencePath, currentEvidence) {
+/** 以完整范围摘要与受限的源码差异构造发布说明输入。 */
+async function buildPrompt(currentEvidencePath, currentEvidence) {
   const ignoredReleaseNotes = join(repositoryRoot, 'releases', `v${releaseVersion}.md`);
-  const committedDiff = boundedModelContext(git(['diff', '--no-ext-diff', '--unified=2', `${baseTag}..${headSha}`], { maxBuffer: 16 * 1024 * 1024 }), 160_000);
+  /** 读取时限制内存占用，避免大批文档变化在截断前撑满子进程缓冲区。 */
+  const committedDiff = await readCommittedDiff();
   return `你负责为 Zeus ${releaseVersion} 生成一份面向用户的候选 Release notes。
 
 这只是只读内容生成，不发布、不修改源码、不运行验证命令。最终响应必须满足输出 Schema；markdown 字段只能包含 Release notes 正文，confidence、uncertainties 或生成过程说明只能放在各自字段，禁止追加到 markdown。
@@ -161,9 +163,43 @@ ${boundedModelContext(currentEvidence, 120_000)}
 </release_evidence>
 
 <committed_diff>
+差异正文省略本地 docs/ 任务记录；完整变更文件清单、提交摘要和统计仍在上方证据中。
 ${committedDiff}
 </committed_diff>
 `;
+}
+
+/** 持续消费 Git 输出但只保留模型所需片段，不为完整补丁分配缓冲区。 */
+function readCommittedDiff() {
+  /** 沿用模型上下文上限，多保留一个字符用于明确标记截断。 */
+  const maxLength = 160_000;
+  return new Promise((resolveDiff, rejectDiff) => {
+    /** 本地任务文档只进入范围摘要，源码差异仍包含删除和重命名。 */
+    const child = spawn('git', ['--no-pager', '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--unified=2', `${baseTag}..${headSha}`, '--', '.', ':(top,exclude)docs/**'], {
+      cwd: repositoryRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    /** 达到上限后继续排空管道，保证 Git 能正常结束并校验退出状态。 */
+    let output = '';
+    /** 错误详情同样限制大小，不把异常输出无限保留。 */
+    let errorOutput = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      output += chunk.slice(0, Math.max(0, maxLength + 1 - output.length));
+    });
+    child.stderr.on('data', (chunk) => {
+      errorOutput += chunk.slice(0, Math.max(0, 8_000 - errorOutput.length));
+    });
+    child.once('error', rejectDiff);
+    child.once('close', (code, signal) => {
+      if (code !== 0) {
+        rejectDiff(new Error(`读取发布差异失败：${errorOutput.trim() || (signal ? `进程信号 ${signal}` : `退出码 ${code}`)}`));
+        return;
+      }
+      resolveDiff(boundedModelContext(output, maxLength));
+    });
+  });
 }
 
 function git(args, options = {}) {
