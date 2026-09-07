@@ -1088,13 +1088,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               ))}
             </p>
           ) : null}
-          {activeTurnId && items.some((item) => item.turnId === activeTurnId && recordValue(item.payload.userActionRequired)?.code === 'ZEUS_COMPUTER_NOT_REQUESTED') ? (
-            <p className="session-message-delivery-feedback" role="status">
-              {props.language === 'zh-CN'
-                ? 'Computer Use 本轮未启用。需要此能力的工作须在输入框启用后开始新轮次；其他工作仍可继续。'
-                : 'Computer Use is not enabled for this turn. Enable it in the composer for a new turn to use it; other work can continue.'}
-            </p>
-          ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>

@@ -1707,19 +1707,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (nativeTool) {
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
-      if (nativeTool.namespace === 'zeus_computer') {
-        const submission = options.submissions.getById(activeRun.submissionId);
-        let requested = false;
-        try {
-          requested = Boolean(submission && (JSON.parse(submission.inputJson) as Record<string, unknown>).computerUseRequested === true);
-        } catch {
-          requested = false;
-        }
-        if (!requested) throw piError('ZEUS_COMPUTER_NOT_REQUESTED', 'Computer Use 仅在 Composer 为本轮明确启用后可调用。');
-      }
       if (context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
         throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
       }
+      // 与 Codex 共用原生宿主的全局开关，不按本轮输入框标签重复授权。
       const result = await zeusToolBroker!.invokePi({
         conversationId: context.conversationId,
         threadId: request.session.nativeSessionId,

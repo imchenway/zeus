@@ -93,7 +93,7 @@ import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
-import { nativeTurnComputerUseRequested, type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type NativeUserMessageProjection, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -195,8 +195,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   });
   const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
-    providerItems: options.providerItems,
-    persist,
     manager: options.manager,
     providerCommands,
     toolResults: options.toolResults,
@@ -211,7 +209,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const context = contexts.get(conversationId) ?? contextFromConversation(conversation);
       return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode };
     },
-    computerUseAllowed: (_conversationId, threadId, turnId) => nativeTurnComputerUseRequested(options.turns, options.submissions, threadId, turnId),
     requestPluginApproval: pluginToolApprovals.requestApproval,
     broadcast: options.broadcast,
     now,
