@@ -175,6 +175,14 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       return { type: value.type, kind: value.kind };
     case 'fetch':
       return { type: 'fetch', remote: stringValue('remote') };
+    case 'discard':
+      return { type: 'discard', paths: paths() };
+    case 'rename_branch':
+      return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
+    case 'create_tag':
+      return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '' };
+    case 'delete_tag':
+      return { type: 'delete_tag', tagName: stringValue('tagName') ?? '' };
     case 'stage':
       return { type: 'stage', paths: paths() };
     case 'unstage':

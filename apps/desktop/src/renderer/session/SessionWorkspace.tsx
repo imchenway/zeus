@@ -2347,7 +2347,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     >
       {displayedHeader ? (
         <header className="session-thread-header" data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
-          <span key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
+          <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
                 <button
@@ -2395,8 +2395,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 </span>
               ) : null}
             </span>
-            {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
-          </span>
+            <div className="session-thread-subtitle-row">
+              {displayedHeader.contextLabel ? (
+                <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
+                  {displayedHeader.contextLabel}
+                </small>
+              ) : null}
+              {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
+            </div>
+          </div>
           <div className="session-thread-header-actions">
             {!legacy && computerControlIdentity && window.zeus?.stopComputerUse ? (
               <button
@@ -2548,7 +2555,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 data-browser-resizing={browserResizing || undefined}
               >
                 <div className="session-conversation-pane">
-                  <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
+                  {!displayedHeader ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <SessionTranscriptProjection
                     state={props.state}

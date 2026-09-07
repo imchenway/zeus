@@ -284,6 +284,10 @@ export interface ProjectGitRepositorySnapshot {
 }
 
 export type ProjectGitAction =
+  | { type: 'discard'; paths: string[] }
+  | { type: 'rename_branch'; branchName: string; newName: string }
+  | { type: 'create_tag'; tagName: string; revision: string }
+  | { type: 'delete_tag'; tagName: string }
   | { type: 'subtree'; operation: 'add' | 'pull' | 'push'; path: string; remote: string; branch: string }
   | { type: 'submodule_update'; path: string }
   | { type: 'fetch'; remote?: string }
@@ -2102,6 +2106,32 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
     case 'fetch': {
       const remote = requireKnownRemote(context, action.remote);
       args = ['fetch', '--prune', remote];
+      break;
+    }
+    case 'discard': {
+      const paths = requireRepositoryPaths(repositoryPath, action.paths);
+      const status = await getGitStatus(repositoryPath);
+      if (status.conflictFiles.length || paths.some((path) => !status.fileStatuses.some((file) => file.path === path && file.indexStatus !== '?')))
+        throw gitCoreError('ZEUS_GIT_DISCARD_INVALID', '只能丢弃已跟踪文件的未暂存修改；未跟踪文件和冲突文件不会被删除。');
+      args = ['--literal-pathspecs', 'restore', '--worktree', '--', ...paths];
+      break;
+    }
+    case 'rename_branch': {
+      const branch = await assertNamedBranchExists(repositoryPath, action.branchName, 'branch');
+      const name = await assertGitBranchFormat(repositoryPath, action.newName, 'new branch');
+      args = ['branch', '-m', branch, name];
+      break;
+    }
+    case 'create_tag':
+    case 'delete_tag': {
+      const name = requireSafeGitRef(action.tagName, 'tag');
+      await requireGitStdout(repositoryPath, ['check-ref-format', `refs/tags/${name}`]);
+      if (action.type === 'delete_tag') args = ['tag', '-d', name];
+      else {
+        const revision = requireSafeGitRef(action.revision, 'revision');
+        const sha = await requireGitStdout(repositoryPath, ['rev-parse', '--verify', `${revision}^{commit}`]);
+        args = ['tag', name, sha.trim()];
+      }
       break;
     }
     case 'stage':
