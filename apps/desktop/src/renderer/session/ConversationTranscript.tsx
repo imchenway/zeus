@@ -1,5 +1,5 @@
-import { AsyncQuestionMessage, asyncQuestionReply, asyncQuestionAnchor } from './AsyncQuestionMessage.js';
-import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
+import {AsyncQuestionMessage} from './AsyncQuestionMessage.js';
+import {classifyAssistantMessage} from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -73,8 +73,8 @@ export interface ConversationTranscriptProps {
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
-  /** 使用原问题与原轮次的引导身份提交答复。 */
-  onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean) => Promise<void>;
+    /** 时间线入口只打开底部答题区，不在历史中展开表单。 */
+    onOpenAsyncQuestion?: (item: NativeSessionItemBuffer) => void;
   /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
   localSubmissionRevision?: number;
 }
@@ -470,9 +470,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [props.state.turnsByProviderId, transcriptRows]);
   const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
-  const unansweredQuestions = items.filter(
-    (item) => item.turnId === activeTurnId && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && !item.payload.questionResponse && !asyncQuestionReply(item, props.state),
-  );
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
@@ -1079,15 +1076,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus && activeStatusKind ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
-          {unansweredQuestions.length > 0 ? (
-            <p className="session-message-delivery-actions">
-              {unansweredQuestions.map((item, index) => (
-                <a key={item.key} href={`#${asyncQuestionAnchor(item)}`}>
-                  {props.language === 'zh-CN' ? `回答问题${unansweredQuestions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question ${index + 1}`}
-                </a>
-              ))}
-            </p>
-          ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
@@ -1355,7 +1343,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     );
   }
   if (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question') {
-    return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language} onAnswer={row.item.status === 'completed' ? options.props.onAnswerAsyncQuestion : undefined} />;
+      return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language}
+                                   onOpen={row.item.status === 'completed' ? options.props.onOpenAsyncQuestion : undefined}/>;
   }
   if (row.item.type === 'plan') {
     return (

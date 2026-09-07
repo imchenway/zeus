@@ -1,3 +1,4 @@
+import {classifyAssistantMessage} from '@zeus/shared';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 
 const emptyItems: NativeSessionState['items'] = Object.freeze({});
@@ -14,7 +15,7 @@ const emptySequences: NativeSessionState['lastSequenceByGeneration'] = Object.fr
 type StateSelector = (state: NativeSessionState) => NativeSessionState;
 
 /**
- * 工作区壳只保留控制、运行态与右侧资源所需投影。流式正文、草稿和事件去重水位不会
+ * 工作区壳只保留控制、运行态、底部问题与右侧资源所需投影。流式正文、草稿和事件去重水位不会
  * 改变这个对象的身份，因而不会让整个工作区随每个 delta commit。
  */
 export function createSessionWorkspaceStateSelector(): StateSelector {
@@ -116,5 +117,8 @@ function itemNeededByWorkspaceResourcePanels(item: NativeSessionItemBuffer): boo
   const payloadType = typeof item.payload.type === 'string' ? item.payload.type : item.type;
   const normalizedType = payloadType.toLocaleLowerCase().replaceAll(/[^a-z]/gu, '');
   const recoveredUserInput = normalizedType === 'requestuserinput' && item.payload.recovery === 'content_only' && item.payload.outcome === 'pending';
-  return recoveredUserInput || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
+    /** 底部问题只需要完整题目、答复状态与最终交付边界，不订阅流式正文。 */
+    const questionControlItem =
+        Boolean(item.payload.questionAnswer) || (item.status === 'completed' && ['agentmessage', 'assistantmessage', 'assistant', 'message'].includes(normalizedType) && classifyAssistantMessage(item.payload, item.phase) !== 'progress');
+    return questionControlItem || recoveredUserInput || normalizedType === 'subagentactivity' || normalizedType === 'collabagenttoolcall' || normalizedType === 'filechange';
 }

@@ -2422,8 +2422,7 @@
   pointer-events: none;
 }
 
-/* 异步问题与底部答题入口复用正文列宽，避免落到会话容器的左边缘。 */
-.session-codex-parity-v1 .session-transcript > .session-message-delivery-actions,
+/* 异步问题历史摘要复用正文列宽，可操作表单只由底部交互区承载。 */
 .session-codex-parity-v1
   .session-transcript-window-row
   > :where(
@@ -5131,18 +5130,18 @@
   inline-size: 100%;
 }
 
-/* 异步表单与上方答复状态保持间距；面板宽度由所在的正文列提供。 */
-.session-codex-parity-v1 .session-async-question .session-request-user-input-surface {
-  margin-block-start: 10px;
+/* 稍后回答入口贴近普通输入框，仍处于消息滚动区之外。 */
+.session-codex-parity-v1 .session-async-question-reminder {
+    margin-block-end: 8px;
 }
 
-/* 底部询问与时间线询问共享内部尺寸，避免状态和回答框再次独立居中。 */
-.session-codex-parity-v1 :is(.session-interaction-dock, .session-async-question) .session-question-status {
+/* 同步与异步询问共用底部内部尺寸。 */
+.session-codex-parity-v1 .session-interaction-dock .session-question-status {
   inline-size: 100%;
   margin-block-end: 10px;
 }
 
-.session-codex-parity-v1 :is(.session-interaction-dock, .session-async-question) .session-question-panel,
+.session-codex-parity-v1 .session-interaction-dock .session-question-panel,
 .session-codex-parity-v1 .session-interaction-dock .session-plan-implementation-request {
   inline-size: 100%;
   margin-block: 0;

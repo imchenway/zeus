@@ -15,6 +15,7 @@ import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedR
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
+import {AsyncQuestionPanel, asyncQuestionIdentity, useAsyncQuestionDock} from './AsyncQuestionMessage.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
@@ -1724,7 +1725,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const pendingPlanImplementationRequests = props.historyOnly ? [] : (props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? []);
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
-  const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
+    /** 异步问题使用同一个底部位置，正式阻塞请求保持原有优先级。 */
+    const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion));
+    /** 底部一次只显示一个交互表单，后台异步执行不转成等待状态。 */
+    const dockedAsyncQuestion = blockingPendingRequest || blockingPlanImplementationRequest ? null : asyncQuestionDock.selected;
+    const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length + Number(Boolean(dockedAsyncQuestion));
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
   const goal = props.state?.snapshot?.goal ?? null;
@@ -1940,6 +1945,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       void respond(userInputRequest, { type: 'userInput', answers: {} });
       return;
     }
+      if (dockedAsyncQuestion) {
+          // 表单内编辑按键归共用答题面板；表单外 Escape 只收起异步问题，不中断 AI。
+          if (event.target instanceof Element && event.target.closest('.session-interaction-dock')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          asyncQuestionDock.dismiss(dockedAsyncQuestion);
+          return;
+      }
     const state = props.state;
     const active = state?.conversationState === 'active_prework' || state?.conversationState === 'active_final_answer';
     const result = resolveSessionWorkspaceEscape({
@@ -2259,7 +2272,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
-  function renderBlockingInteraction(): ReactNode {
+    /** 同步与异步表单共享底部容器，分别保留既有提交权限和生命周期。 */
+    function renderBottomInteraction(): ReactNode {
     if (props.suppressComposer || props.historyOnly) return null;
     if (blockingPendingRequest) {
       return (
@@ -2293,6 +2307,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             error={requestErrors[blockingPlanImplementationRequest.id]}
             onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
           />
+        </section>
+      );
+    }
+        if (dockedAsyncQuestion && props.state && actions.onAnswerAsyncQuestion) {
+            return (
+                <section className="session-interaction-dock"
+                         aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
+                    <AsyncQuestionPanel
+                        key={asyncQuestionIdentity(dockedAsyncQuestion)}
+                        item={dockedAsyncQuestion}
+                        state={props.state}
+                        language={props.language}
+                        onAnswer={actions.onAnswerAsyncQuestion}
+                        onDismiss={() => asyncQuestionDock.dismiss(dockedAsyncQuestion)}
+                    />
         </section>
       );
     }
@@ -2550,7 +2579,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
-                    onAnswerAsyncQuestion={transcriptInteractionsEnabled ? actions.onAnswerAsyncQuestion : undefined}
+                    onOpenAsyncQuestion={transcriptInteractionsEnabled && !props.suppressComposer && actions.onAnswerAsyncQuestion ? asyncQuestionDock.open : undefined}
                     openPlanItem={planWorkspaceItem}
                     onOpenPlan={(item) => {
                       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -2585,9 +2614,22 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
                   />
                   {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                  {renderBlockingInteraction()}
-                  {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest ? null : (
+                    {renderBottomInteraction()}
+                    {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
                     <>
+                        {!props.historyOnly && transcriptInteractionsEnabled && asyncQuestionDock.questions.length > 0 ? (
+                            <nav className="session-interaction-dock session-async-question-reminder"
+                                 aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Unanswered questions'}>
+                                <div className="session-message-delivery-actions">
+                                    {asyncQuestionDock.questions.map((item, index) => (
+                                        <button key={asyncQuestionIdentity(item)} type="button"
+                                                onClick={() => asyncQuestionDock.open(item)}>
+                                            {props.language === 'zh-CN' ? `回答问题${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}`}
+                                        </button>
+                                    ))}
+                                </div>
+                            </nav>
+                        ) : null}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       {renderConversationComposer()}
                     </>
