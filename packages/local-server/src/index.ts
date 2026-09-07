@@ -1066,6 +1066,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return budget;
   }
 
+  /** 按项目原目录读取任务文档；任务工作目录继续由执行上下文管理。 */
   async function compileProviderDispatchContext(input: ProviderDispatchContextCompilerInput): Promise<ContextDispatchEnvelope> {
     const project = projects.getById(input.projectId);
     if (!project) throw nativeApiError('ZEUS_CONTEXT_PROJECT_NOT_FOUND', '上下文编译找不到目标项目，已拒绝 Provider 派发。');
@@ -1127,7 +1128,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : 'Pi SDK 0.83.0 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。',
     };
     const envelope = await contextDispatch.compileForDispatch({
-      project: { id: project.id, localPath: input.projectLocalPath },
+      project: { id: project.id, localPath: project.localPath },
       task: task ? { id: task.id, code: task.taskCode } : null,
       provider: {
         id: input.provider === 'codex' ? 'codex' : `pi:${input.modelSourceId ?? 'custom'}`,
