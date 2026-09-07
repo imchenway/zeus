@@ -1,3 +1,6 @@
+import Fastify from 'fastify';
+import { registerConversationDispatchCommandRoutes, type ConversationDispatchCommandRouteOperations } from '../packages/local-server/src/conversationDispatchCommandRoutes.js';
+import { createCodexProviderThreadAuthorityApplication } from '../packages/local-server/src/codexProviderThreadAuthority.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -272,6 +275,7 @@ try {
       writeMarker: unknownAttempt.attempt.providerWriteStartedAt !== null,
     };
 
+    observed.recoveryIntents = await verifyRecoveryIntents(application, deliveries);
     const structure = await inspectStructure();
     observed.structure = structure;
     observed.quickCheck = db.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check ?? null;
@@ -478,4 +482,104 @@ function errorCode(error: unknown): string {
 
 function assertProbe(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+/** 使用现有真实路由、命令账本和线程读取应用验证检查边界，不调用外部模型。 */
+async function verifyRecoveryIntents(application: ConversationDispatchCommandApplication, deliveries: CommandDeliveryRepository) {
+  /** 计数区分读取、投影与明确继续；其他外部动作立即报错。 */
+  let reads = 0;
+  let projections = 0;
+  let continuations = 0;
+  let failRead = false;
+  /** 冷线程只提供读取事实，任何恢复订阅或派发都不能通过此检查。 */
+  const conversation = { id: 'intent-conversation', providerThreadId: 'intent-thread' } as Parameters<ReturnType<typeof createCodexProviderThreadAuthorityApplication>['inspect']>[0];
+  /** 未被此路径授权的动作遇到调用便失败。 */
+  const forbidden = (): never => {
+    throw new Error('检查触发了未授权的外部动作');
+  };
+  /** 真实读取应用使用最小端口，保留生产的串行与投影判断。 */
+  const authority = createCodexProviderThreadAuthorityApplication({
+    manager: {
+      generationForThread: () => 'intent-generation',
+      readThread: async () => {
+        reads += 1;
+        if (failRead) throw new Error('读取超时');
+        return { id: 'intent-thread', status: { type: 'notLoaded' } };
+      },
+      resumeThread: forbidden,
+    },
+    submissions: { listByConversation: () => [] },
+    runStates: new Map(),
+    getConversation: () => conversation,
+    requireConversation: () => conversation,
+    inferRunState: () => ({ type: 'idle' }),
+    prepareContext: forbidden,
+    responsesRuntimeFor: forbidden,
+    enqueueProviderTurnReconciliation: forbidden,
+    projectedProviderThreadSnapshot: (_id, metadata) => metadata,
+    reconcileConversationSnapshot: (_conversation, _snapshot, _generation, input) => {
+      assertProbe(input?.preserveUnsentQueue, '只读检查必须保留尚未发送的队列');
+      projections += 1;
+    },
+    readyGenerationId: () => 'intent-generation',
+    persistThreadProviderSettings: forbidden,
+    persist: async () => undefined,
+    markConversationRecoveryRequired: forbidden,
+    // 主线会通知界面刷新恢复状态；通知必须明确禁止触发队列派发。
+    broadcast: (type, payload) => {
+      assertProbe(type === 'conversation.queue.changed' && payload.conversationId === conversation.id && payload.queueDispatchRequested === false, '只读检查只能通知界面刷新，不能请求派发');
+    },
+    requestQueueDrain: forbidden,
+  });
+  /** 每个请求使用真实 Fastify 校验与耐久回执，只有末端业务端口受控。 */
+  const server = Fastify();
+  registerConversationDispatchCommandRoutes({
+    server,
+    application,
+    operations: {
+      queueRecover: async ({ intent }) => {
+        if (intent === 'continue') {
+          continuations += 1;
+          return { continued: true };
+        }
+        await authority.inspect(conversation, {} as Parameters<typeof authority.inspect>[1], { readOnly: true });
+        return { checked: true };
+      },
+    } as ConversationDispatchCommandRouteOperations,
+    sendNativeError: (reply) => reply.code(503).send({ error: 'READ_FAILED' }),
+    sendChangeSetError: forbidden,
+  });
+  /** 独立身份用于核对意图、重复点击和迟到回执。 */
+  const request = (label: string, input: object) =>
+    commandRequest({ label, input, commandType: conversationDispatchCommandTypes.queueRecover, scopeKind: 'product_conversation', scopeId: conversation.id, operationIdentity: `recover-${label}` });
+  /** 请求经过本地真实 HTTP 处理栈，不开放端口。 */
+  const send = (payload: unknown) => server.inject({ method: 'POST', url: `/api/projects/intent-project/conversations/${conversation.id}/queue/recover`, payload });
+  try {
+    for (const [label, input] of [
+      ['missing', {}],
+      ['invalid', { intent: 'retry' }],
+      ['extra', { intent: 'check', extra: true }],
+    ] as const) {
+      assertProbe((await send(request(label, input).body)).statusCode === 400, '缺失、无效或额外恢复字段必须拒绝');
+    }
+    /** 同一个检查回执重放时不重新调用 Provider。 */
+    const check = request('check', { intent: 'check' });
+    assertProbe((await send(check.body)).statusCode === 202, '只读检查应完成');
+    assertProbe((await send(check.body)).statusCode === 202 && reads === 1 && projections === 1 && continuations === 0, '重复检查回执不能继续执行');
+    assertProbe(requiredAttempt(deliveries, check.commandId).attempt.providerWriteStartedAt === null, '检查不能写入外部写开始标记');
+    assertProbe((await send({ ...check.body, input: { intent: 'continue' } })).statusCode === 400, '修改意图必须使原摘要失效');
+    assertProbe((await send(request('check', { intent: 'continue' }).body)).statusCode === 409 && continuations === 0, '重新计算摘要也不能把旧检查身份改成继续执行');
+    assertProbe((await send(request('continue', { intent: 'continue' }).body)).statusCode === 202 && continuations === 1, '独立的继续身份才允许执行');
+    /** 读取失败可按原身份重新检查，不形成外部写入未知。 */
+    const failure = request('failed-check', { intent: 'check' });
+    failRead = true;
+    assertProbe((await send(failure.body)).statusCode === 503, '读取失败应如实返回');
+    assertProbe(requiredAttempt(deliveries, failure.commandId).receipt.outcome === 'failed_before_write', '检查失败不得被标记为外部写入未知');
+    failRead = false;
+    assertProbe((await send(failure.body)).statusCode === 202 && continuations === 1, '再次检查只能读取状态');
+    return { reads, projections, continuations, repeatedCheckWasReadOnly: true, failedCheckCanRetry: true };
+  } finally {
+    await server.close();
+    await authority.close();
+  }
 }

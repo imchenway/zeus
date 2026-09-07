@@ -16,7 +16,7 @@ import type {
 } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */
@@ -49,6 +49,8 @@ export function ModelConnectionsSettingsPane(props: {
   /** 首次引导在编辑器内选择新项目默认模型。 */
   onComplete?: (modelRef: string) => Promise<void>;
   onBusyChange?: (busy: boolean) => void;
+  /** 当前任务只启用当前项目模型，不调整其他项目或全局默认。 */
+  completionScope?: 'project' | 'new_projects';
 }) {
   const zh = props.language === 'zh-CN';
   const [connections, setConnections] = useState<ModelConnectionRecord[]>([]);
@@ -82,7 +84,7 @@ export function ModelConnectionsSettingsPane(props: {
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('idle');
       });
     return () => {
@@ -205,7 +207,7 @@ export function ModelConnectionsSettingsPane(props: {
     try {
       await props.onComplete(defaultModelRef);
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -230,7 +232,7 @@ export function ModelConnectionsSettingsPane(props: {
       if (props.onComplete) await refreshDefaultModels(draft.id);
       setMessage(zh ? `发现 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个。` : `Discovered ${result.discoveredModelIds.length} models and added ${result.addedModelIds.length}.`);
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -243,7 +245,7 @@ export function ModelConnectionsSettingsPane(props: {
     try {
       setDiagnostic(await props.client.diagnoseModelConnection(draft.id));
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -257,7 +259,7 @@ export function ModelConnectionsSettingsPane(props: {
       await reloadConnections(draft.id);
       setMessage(zh ? 'API Key 已从钥匙串清除。' : 'API key cleared from Keychain.');
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -274,7 +276,7 @@ export function ModelConnectionsSettingsPane(props: {
       setDiagnostic(null);
       setMessage(zh ? '供应商已删除。' : 'Provider deleted.');
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -524,15 +526,24 @@ export function ModelConnectionsSettingsPane(props: {
           ) : null}
           {props.onComplete ? (
             <label className="model-setup-default-model">
-              <span>{zh ? '新项目默认模型' : 'Default model for new projects'}</span>
+              <span>{props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}</span>
               <ZeusSelect
                 size="regular"
-                ariaLabel={zh ? '新项目默认模型' : 'Default model for new projects'}
+                ariaLabel={props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}
                 value={defaultModelRef}
                 onChange={setDefaultModelRef}
                 options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))}
               />
-              <small>{zh ? '只影响之后新建的项目。当前配置不代表实际模型调用已经验证。' : 'Only affects new projects. Configuration does not prove actual model calls.'}</small>
+              <small>
+                {props.completionScope === 'project'
+                  ? zh
+                    ? '仅为当前项目启用。接入后返回确认，不会开始执行。'
+                    : 'Enable for this project only. Return to confirmation without starting the task.'
+                  : zh
+                    ? '只影响之后新建的项目。'
+                    : 'Only affects new projects.'}{' '}
+                {zh ? '模型目录可用不代表实际调用成功。' : 'A model listing does not verify actual calls.'}
+              </small>
             </label>
           ) : null}
           <footer className="model-connection-actions">

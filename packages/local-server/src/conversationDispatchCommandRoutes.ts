@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ConversationDispatchCommandApplication, conversationDispatchCommandHttpError, conversationDispatchCommandTypes, type ConversationDispatchMutationRequest } from './conversationDispatchCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
+/** 恢复意图参与请求摘要与幂等身份，缺省和未知值均拒绝。 */
+type RecoverInput = { intent?: unknown };
 type ConversationParams = { projectId: string; conversationId: string };
 type SubmissionParams = ConversationParams & { submissionId: string };
 type TurnParams = ConversationParams & { turnId: string };
@@ -57,7 +59,7 @@ export interface ConversationDispatchCommandRouteOperations {
   planImplementationRespond(input: { params: RequestParams; action: 'implement' | 'refine' | 'dismiss'; feedback?: string; operationIdentity: string }): Promise<unknown>;
   requestSnooze(input: { params: RequestParams }): unknown;
   queueResume(input: { params: ConversationParams; operationIdentity: string }): Promise<unknown>;
-  queueRecover(input: { params: ConversationParams; operationIdentity: string }): Promise<unknown>;
+  queueRecover(input: { params: ConversationParams; operationIdentity: string; intent: 'check' | 'continue' }): Promise<unknown>;
   queueReorder(input: { params: ConversationParams; orderedSubmissionIds: string[] }): unknown;
   afterMessageAccepted(input: { params: ConversationParams; message: Record<string, unknown>; result: RouteResponse; replayed: boolean }): void;
   afterCoreAccepted(input: { kind: 'queue_update' | 'queue_retry' | 'queue_reroute' | 'queue_delete' | 'request_snooze' | 'queue_reorder'; params: ConversationParams; result: unknown }): void;
@@ -308,10 +310,27 @@ export function registerConversationDispatchCommandRoutes(options: {
     );
   });
 
-  server.post('/api/projects/:projectId/conversations/:conversationId/queue/recover', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationDispatchMutationRequest<EmptyInput> }>, reply) => {
-    return executeConversationExternal(request, reply, conversationDispatchCommandTypes.queueRecover, 'conversation-queue-recover', `queue-recover:${request.params.conversationId}`, (operationIdentity) =>
-      operations.queueRecover({ params: request.params, operationIdentity }),
-    );
+  server.post('/api/projects/:projectId/conversations/:conversationId/queue/recover', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationDispatchMutationRequest<RecoverInput> }>, reply) => {
+    try {
+      /** 校验后的意图与命令身份绑定，检查回执不能被复用为继续执行。 */
+      const parsed = parseConversationCommand(request, conversationDispatchCommandTypes.queueRecover);
+      assertExactInputKeys(parsed.input, ['intent'], parsed.command.commandType);
+      if (parsed.input.intent !== 'check' && parsed.input.intent !== 'continue') throw routeError('ZEUS_CONVERSATION_DISPATCH_COMMAND_INVALID', 'intent must be check or continue.', 400);
+      /** 只读检查不记录外部写入开始，失败可安全再次检查。 */
+      const intent = parsed.input.intent;
+      const executed = await application.executeExternal({
+        parsed,
+        destinationId: 'conversation-queue-recover',
+        resourceId: request.params.conversationId,
+        externalOperationId: `queue-recover:${request.params.conversationId}:${intent}:${parsed.operationIdentity}`,
+        manualExternalWriteStart: intent === 'check',
+        invoke: () => operations.queueRecover({ params: request.params, operationIdentity: parsed.operationIdentity, intent }),
+        isExplicitRejection: isExplicitRouteRejection,
+      });
+      return reply.code(202).send(executed.result);
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
   });
 
   server.post('/api/projects/:projectId/conversations/:conversationId/queue/reorder', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationDispatchMutationRequest<QueueReorderInput> }>, reply) => {

@@ -227,12 +227,14 @@ export function createModelConnectionService(options: { settings: SettingReposit
       return listSelectableConnectionModels(await hydrate());
     },
     async getProjectSelection(projectId) {
-      const models = await this.listSelectableModels();
-      return normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId), new Set(models.map((model) => model.id)));
+      // 读取保留失效引用，推送时由用户重新选择。
+      return normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId));
     },
     async prepareProjectSelection(projectId, value) {
       const models = await this.listSelectableModels();
-      const availableRefs = new Set(models.map((model) => model.id));
+      // 保留原来已启用但已失效的引用；新增引用仍须在本地目录中存在。
+      const previous = normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId));
+      const availableRefs = new Set([...models.map((model) => model.id), ...previous.allowedModelRefs]);
       const selection = normalizeProjectModelSelection(projectId, value, availableRefs);
       const requested = isRecord(value) && Array.isArray(value.allowedModelRefs) ? value.allowedModelRefs : [];
       if (requested.some((reference) => typeof reference !== 'string' || !availableRefs.has(reference))) throw serviceError('ZEUS_PROJECT_MODEL_SELECTION_INVALID', '项目选择包含不存在的模型。', 400);

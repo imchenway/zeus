@@ -1212,7 +1212,8 @@
 .session-codex-parity-v1 .session-message-delivery-feedback {
   box-sizing: border-box;
   color: var(--session-text-muted);
-  font-size: var(--session-readable-font-size);
+  font-size: 13px;
+  line-height: 1.65;
   inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
   margin: 8px auto;
 }
@@ -1231,7 +1232,7 @@
   border-radius: 8px;
   color: var(--session-text);
   inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
-  padding: 8px 10px 8px 9px;
+  padding: 12px 14px;
 }
 
 .session-codex-parity-v1 .session-message-delivery-feedback[data-state='provider-stop-pending'],
@@ -1242,7 +1243,7 @@
   border-radius: 8px;
   color: var(--session-text);
   inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
-  padding: 8px 10px 8px 9px;
+  padding: 12px 14px;
 }
 
 .session-codex-parity-v1 .session-message-delivery-actions {
@@ -1258,8 +1259,12 @@
   border-radius: 6px;
   color: inherit;
   cursor: pointer;
-  font: inherit;
-  padding: 4px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  min-block-size: 30px;
+  padding: 5px 10px;
 }
 
 .session-codex-parity-v1 .session-message-delivery-actions button:disabled {
@@ -1274,7 +1279,7 @@
   border-radius: 8px;
   color: var(--session-text);
   inline-size: min(680px, calc(100% - (2 * var(--session-gutter))));
-  padding: 8px 10px 8px 9px;
+  padding: 12px 14px;
 }
 
 .session-codex-parity-v1 .session-activity-item-output {

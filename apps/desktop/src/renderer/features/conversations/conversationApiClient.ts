@@ -127,7 +127,7 @@ export interface ConversationApiClient {
   }>;
   respondToPlanImplementationRequest: (projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }) => Promise<NativePlanImplementationResponseAcceptance>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
-  recoverNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
+  recoverNativeQueue: (projectId: string, conversationId: string, intent: 'check' | 'continue') => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }) => WebSocket;
 }
@@ -328,8 +328,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueResume, scopeKind: 'product_conversation', scopeId: conversationId, value: {} });
       return transport.request<NativeQueueSnapshot>(`${conversationPath(projectId, conversationId)}/queue/resume`, jsonRequest('POST', body));
     },
-    recoverNativeQueue: async (projectId, conversationId) => {
-      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueRecover, scopeKind: 'product_conversation', scopeId: conversationId, value: {} });
+    recoverNativeQueue: async (projectId, conversationId, intent) => {
+      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueRecover, scopeKind: 'product_conversation', scopeId: conversationId, value: { intent } });
       return transport.request<NativeQueueSnapshot>(`${conversationPath(projectId, conversationId)}/queue/recover`, jsonRequest('POST', body));
     },
     reorderNativeQueue: async (projectId, conversationId, orderedSubmissionIds) => {

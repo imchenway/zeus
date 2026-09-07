@@ -169,7 +169,7 @@ export interface SessionWorkspaceActions {
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onRetryPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
+  onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -763,8 +763,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     onRetryQueuedSubmission: (submissionId) => settle(input.controller.retryQueuedSubmission(submissionId)),
     // 本地未接受消息的重试/取消必须把拒绝原因返回给气泡，不能像全局状态操作一样静默吞掉。
-    onRetryPendingSend: async (clientUserMessageId) => {
-      await input.controller.retryPendingSend(clientUserMessageId);
+    onRetryPendingSend: async (clientUserMessageId, intent) => {
+      await input.controller.retryPendingSend(clientUserMessageId, intent);
     },
     onCancelPendingSend: async (clientUserMessageId) => {
       await input.controller.cancelPendingSend(clientUserMessageId);
@@ -783,7 +783,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
-    onRecoverQueue: () => settle(input.controller.recoverQueue()),
+    // 检查失败回传消息旁的反馈，不由通用操作吞掉或重复弹窗。
+    onRecoverQueue: async () => {
+      await input.controller.recoverQueue('check');
+    },
     onRestoreArchivedConversation: () => settle(input.controller.restoreArchivedConversation()),
     onRespondToRequest: (requestId, response) => input.controller.respondToRequest(requestId, response).then(() => undefined),
     onRespondToPlanImplementationRequest: (requestId, response) => input.controller.respondToPlanImplementationRequest(requestId, response),

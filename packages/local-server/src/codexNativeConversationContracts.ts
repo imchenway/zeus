@@ -452,8 +452,11 @@ export interface ResumeNativeQueueInput {
   conversationId: string;
 }
 
+/** 恢复意图必须显式传入，检查不能隐式继续派发。 */
 export interface RecoverNativeQueueInput {
   conversationId: string;
+  /** 检查仅更新已确认状态；继续才允许恢复执行。 */
+  intent: 'check' | 'continue';
 }
 
 export interface RestoreArchivedConversationInput {

@@ -11,7 +11,7 @@ import {
   type TaskPushRelatedContextOption,
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import type { CodexConfigImportPreview, ProjectModelServiceTierPreference, TaskRecord } from '../apiClient.js';
+import type { ProjectModelServiceTierPreference, TaskRecord } from '../apiClient.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushCapabilities,
@@ -29,7 +29,7 @@ import { readConversationRuntimePreferences, writeConversationRuntimePreferences
 import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { projectModelServiceTierSelection } from '../session/projectServiceTierPreferences.js';
@@ -64,7 +64,15 @@ export interface TaskModelPushForm {
   supplementalAttachments: TaskPushSupplementalAttachmentDraft[];
 }
 
-export type TaskModelPushModalStatus = 'loading' | 'ready' | 'inspecting-config' | 'importing-config' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
+export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'error';
+
+/** 入口只根据已读取的账号和项目目录选择下一步，不替换模型或启动执行。 */
+export function resolveTaskModelPushEntry(capabilities: CodexConversationCapabilities, hasConfiguredProvider: boolean): 'confirmation' | 'choose' | 'custom' {
+  /** 未就绪占位账号不能视为无需登录的可用 Codex。 */
+  const codexReady = capabilities.codexAccount.generationId !== 'codex-unavailable' && (!capabilities.codexAccount.requiresOpenaiAuth || capabilities.codexAccount.signedIn);
+  if (capabilities.models.some((model) => model.available !== false && (model.agentKind === 'pi' || model.sourceId !== 'codex' || codexReady))) return 'confirmation';
+  return hasConfiguredProvider ? 'custom' : 'choose';
+}
 
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'serviceTier' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
@@ -570,7 +578,9 @@ export function resolveTaskModelPushInitialForm(
 ): TaskModelPushForm {
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
-  const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
+  // 已记住或已配置的模型失效时等待用户明确选择。
+  const requestedModel = remembered?.model || capabilities.preferredModel;
+  const selectedModel = requestedModel ? resolveModelCapability(availableModels, requestedModel) : availableModels[0];
   const effort = rememberedModel && remembered && selectedModel?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel?.defaultReasoningEffort ?? selectedModel?.supportedReasoningEfforts[0] ?? '');
   // 模型目录未就绪不能阻断本地仓库表单，模型到达后由既有选择器补齐模型能力。
   const normalizedServiceTier = selectedModel
@@ -578,7 +588,7 @@ export function resolveTaskModelPushInitialForm(
     : { selection: remembered?.serviceTier ?? { type: 'standard' as const }, downgraded: false };
   const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
-    model: selectedModel?.id ?? remembered?.model ?? '',
+    model: selectedModel?.id ?? requestedModel ?? '',
     effort,
     serviceTier: normalizedServiceTier.selection,
     serviceTierDowngraded: normalizedServiceTier.downgraded,
@@ -651,155 +661,6 @@ export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilit
   };
 }
 
-function TaskModelPushLoginDialog(props: { language: 'zh-CN' | 'en-US'; status: Extract<TaskModelPushModalStatus, 'inspecting-config' | 'authenticating' | 'authenticated'>; onCancel: () => void }) {
-  const zh = props.language === 'zh-CN';
-  const authenticated = props.status === 'authenticated';
-  const inspectingConfig = props.status === 'inspecting-config';
-  const title = zh ? '登录 Codex 以继续' : 'Sign in to Codex to continue';
-  return (
-    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={authenticated} onDismiss={props.onCancel}>
-      <section className="task-model-push-step-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-login-title" aria-describedby="task-model-push-login-description">
-        <header className="task-model-push-header">
-          <span>
-            <strong id="task-model-push-login-title">{title}</strong>
-            <small>{zh ? '账号登录' : 'Account sign-in'}</small>
-          </span>
-          <button type="button" aria-label={zh ? '返回推送设置' : 'Back to push settings'} onClick={props.onCancel} disabled={authenticated}>
-            ×
-          </button>
-        </header>
-        <div className="task-model-push-step-body" role="status" aria-live="polite" aria-atomic="true">
-          <strong>
-            {authenticated ? (zh ? '登录成功，正在返回 Zeus' : 'Signed in, returning to Zeus') : inspectingConfig ? (zh ? '正在准备登录' : 'Preparing sign-in') : zh ? '请在官方页面完成登录' : 'Complete sign-in on the official page'}
-          </strong>
-          <p id="task-model-push-login-description">
-            {authenticated
-              ? zh
-                ? '登录成功，正在使用刚才的设置创建对话。'
-                : 'Signed in. Creating the conversation with your selected settings.'
-              : inspectingConfig
-                ? zh
-                  ? '正在检查可导入的 Codex App 设置，导入前会请你确认。'
-                  : 'Checking for Codex App settings to import. You will be asked before importing.'
-                : zh
-                  ? '请在已打开的官方页面完成登录。登录成功后，Zeus 会自动继续。'
-                  : 'Complete sign-in on the official page that opened. Zeus will continue automatically once you are signed in.'}
-          </p>
-          <small>{zh ? 'Zeus 只读取登录结果，不会读取、复制或覆盖 Codex App 的账号信息。' : 'Zeus only reads the sign-in result and does not read, copy, or overwrite the Codex App account.'}</small>
-        </div>
-        <footer className="task-model-push-footer">
-          <small>{zh ? '当前模型、工作区、权限、补充信息和附件都会保留。' : 'Your model, workspace, permissions, supplemental information, and attachments are preserved.'}</small>
-          {authenticated ? (
-            <Button variant="primary" size="regular" busy disabled>
-              {zh ? '正在继续…' : 'Continuing…'}
-            </Button>
-          ) : (
-            <Button variant="secondary" size="regular" onClick={props.onCancel}>
-              {zh ? '返回' : 'Back'}
-            </Button>
-          )}
-        </footer>
-      </section>
-    </ModalPortal>
-  );
-}
-
-function TaskModelPushConfigImportDialog(props: {
-  language: 'zh-CN' | 'en-US';
-  preview: CodexConfigImportPreview | null;
-  needsActivation: boolean;
-  importing: boolean;
-  onCancel: () => void;
-  onClose: () => void;
-  onSkip: () => void;
-  onImport: () => void;
-}) {
-  const zh = props.language === 'zh-CN';
-  const dismiss = props.needsActivation ? props.onClose : props.onCancel;
-  return (
-    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={props.importing} onDismiss={dismiss}>
-      <section
-        className="task-model-push-step-modal task-model-push-config-dialog zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-model-push-config-import-title"
-        aria-describedby="task-model-push-config-import-description"
-      >
-        <header className="task-model-push-header">
-          <span>
-            <strong id="task-model-push-config-import-title">{props.needsActivation ? (zh ? '启用已导入配置' : 'Enable imported configuration') : zh ? '导入 Codex 配置' : 'Import Codex configuration'}</strong>
-            <small>{zh ? '配置导入' : 'Configuration import'}</small>
-          </span>
-          <button type="button" aria-label={zh ? (props.needsActivation ? '关闭' : '返回登录') : props.needsActivation ? 'Close' : 'Back to sign-in'} onClick={dismiss} disabled={props.importing}>
-            ×
-          </button>
-        </header>
-        <div className="task-model-push-step-body task-model-push-config-import">
-          <p id="task-model-push-config-import-description">
-            {props.needsActivation
-              ? zh
-                ? '配置已导入，需要重新启动 Codex 服务后才能用于新对话。'
-                : 'Settings have been imported. The Codex service needs to restart before new conversations can use them.'
-              : zh
-                ? 'Zeus 会把普通偏好、指令、规则、提示词、技能以及 Computer/Browser 工具组件复制到专属目录；不会导入账号、密钥或历史会话。'
-                : 'Zeus will copy preferences, instructions, rules, prompts, skills, and Computer/Browser tool components into its own directory. Accounts, secrets, and conversation history are excluded.'}
-          </p>
-          {props.preview ? (
-            <ul aria-label={zh ? '可导入配置' : 'Configuration available to import'}>
-              {props.preview.entries.map((entry) => (
-                <li key={entry.path}>
-                  <strong>{entry.path}</strong>
-                  <small>{zh ? `${entry.nodeCount} 项` : `${entry.nodeCount} item(s)`}</small>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {(props.preview?.skipped.length ?? 0) > 0 ? (
-            <small>
-              {zh
-                ? `另有 ${props.preview!.skipped.length} 项因安全限制、缺失、格式不支持或属于运行缓存而跳过。`
-                : `${props.preview!.skipped.length} item(s) will be skipped because they are missing, unsafe, unsupported, or generated runtime cache.`}
-            </small>
-          ) : null}
-        </div>
-        <footer className="task-model-push-footer">
-          <small>
-            {props.needsActivation
-              ? zh
-                ? '启用成功前不会创建本次会话。'
-                : 'This conversation will not be created until activation succeeds.'
-              : zh
-                ? '只询问这一次；暂不导入后仍可在设置中手动导入。'
-                : 'You will only be asked once. You can still import later from Settings.'}
-          </small>
-          <span>
-            <Button variant="secondary" size="regular" onClick={props.needsActivation ? props.onClose : props.onSkip} disabled={props.importing}>
-              {props.needsActivation ? (zh ? '关闭' : 'Close') : zh ? '暂不导入' : 'Not now'}
-            </Button>
-            <Button type="button" variant="primary" size="regular" busy={props.importing} disabled={props.importing} onClick={props.onImport}>
-              {props.importing
-                ? props.needsActivation
-                  ? zh
-                    ? '正在启用…'
-                    : 'Enabling…'
-                  : zh
-                    ? '正在导入并启用…'
-                    : 'Importing and enabling…'
-                : props.needsActivation
-                  ? zh
-                    ? '重试启用'
-                    : 'Retry enabling'
-                  : zh
-                    ? '导入并继续'
-                    : 'Import and continue'}
-            </Button>
-          </span>
-        </footer>
-      </section>
-    </ModalPortal>
-  );
-}
-
 export function TaskModelPushModal(props: {
   open: boolean;
   language: 'zh-CN' | 'en-US';
@@ -810,8 +671,6 @@ export function TaskModelPushModal(props: {
   serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
-  configImportPreview: CodexConfigImportPreview | null;
-  configImportNeedsActivation: boolean;
   refreshingRepositoryId: string | null;
   error: string | null;
   skillClient: Pick<CodexApiClient, 'loadSkills'> | null;
@@ -820,21 +679,34 @@ export function TaskModelPushModal(props: {
   onRefreshRepository: (repositoryId: string) => void;
   /** 本地发现与各仓远端拉取分别操作。 */
   onRefreshLocalRepositories: () => void;
+  /** 接入在同一任务流程内完成，不提交表单。 */
+  onConnectModel?: () => void;
+  /** 查询失败原地重新读取，不重建表单。 */
+  onRetryModels?: () => void;
   onClose: () => void;
-  onCancelAuthentication: () => void;
-  onCancelCodexConfigImport: () => void;
-  onImportCodexConfig: () => void;
-  onSkipCodexConfigImport: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
+  /** 接入过程中表单状态保留，返回时恢复同一任务的阅读位置。 */
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const readingPositionRef = useRef({ taskId: props.task?.id, scrollTop: 0, focusSelector: '[data-task-push-primary]' });
+  if (readingPositionRef.current.taskId !== props.task?.id) readingPositionRef.current = { taskId: props.task?.id, scrollTop: 0, focusSelector: '[data-task-push-primary]' };
+  useEffect(() => {
+    if (!props.open) return;
+    /** 接入返回后恢复触发位置；原控件不存在时回到确认操作。 */
+    const frame = window.requestAnimationFrame(() => {
+      /** 表单重新挂载后按稳定标识找到控件，不保留已卸载的节点。 */
+      const form = bodyRef.current?.closest('form');
+      const target = form?.querySelector<HTMLElement>(readingPositionRef.current.focusSelector) ?? form?.querySelector<HTMLElement>('[data-task-push-primary]');
+      target?.focus({ preventScroll: true });
+      if (bodyRef.current) bodyRef.current.scrollTop = readingPositionRef.current.scrollTop;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.open, props.task?.id]);
   const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
   const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
-  useApplicationErrorDialog(props.error ?? supplementalResourceError ?? repositoryRefreshError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  const resourceInputDisabled = !props.open || props.status === 'inspecting-config' || props.status === 'importing-config' || props.status === 'authenticating' || props.status === 'submitting';
+  const resourceInputDisabled = !props.open || props.status === 'submitting';
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
@@ -854,33 +726,18 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
-  const runtimeCapabilities = props.capabilities?.models.length ? props.capabilities : props.runtimeCapabilities;
+  const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
   const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
   const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
-  const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
-  useEffect(() => {
-    if (!props.open || !selectedModel || props.form.model === selectedModel.id) return;
-    props.onChange((current) => {
-      if (current.model === selectedModel.id) return current;
-      const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, selectedModel), selectedModel);
-      return {
-        ...current,
-        model: selectedModel.id,
-        effort: selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '',
-        serviceTier: normalizedTier.selection,
-        serviceTierDowngraded: normalizedTier.downgraded,
-      };
-    });
-  }, [props.form.model, props.onChange, props.open, props.serviceTierPreferences, selectedModel]);
+  // 目录变化不能静默替换用户选中的模型；失效时保留原选择并请求处理。
+  const selectedModel = requestedModel?.available === false ? undefined : requestedModel;
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
-  const authenticating = props.status === 'authenticating';
-  const authenticated = props.status === 'authenticated';
-  const inspectingConfig = props.status === 'inspecting-config';
-  const importingConfig = props.status === 'importing-config';
-  const busy = inspectingConfig || importingConfig || authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
+  const busy = props.status === 'submitting' || inputResources.processing;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
+  /** 只有已完成的能力查询才能判定需要接入；查询失败保持为失败。 */
+  const modelSetupRequired = Boolean(props.capabilities) && (!selectedModel || codexLoginRequired);
   const repositories = props.capabilities?.repositories ?? [];
   /** 后台扫描状态不清空上一次可用仓库，也不限制直接目录和已有环境。 */
   const discovery = props.capabilities?.repositoryDiscovery;
@@ -947,31 +804,27 @@ export function TaskModelPushModal(props: {
     props.onChange({ ...props.form, repositorySelections });
   }
 
-  if (props.configImportPreview || props.configImportNeedsActivation) {
-    return (
-      <TaskModelPushConfigImportDialog
-        language={props.language}
-        preview={props.configImportPreview}
-        needsActivation={props.configImportNeedsActivation}
-        importing={importingConfig}
-        onCancel={props.onCancelCodexConfigImport}
-        onClose={props.onClose}
-        onSkip={props.onSkipCodexConfigImport}
-        onImport={props.onImportCodexConfig}
-      />
-    );
-  }
-
-  if (inspectingConfig || authenticating || authenticated) {
-    return <TaskModelPushLoginDialog language={props.language} status={authenticated ? 'authenticated' : authenticating ? 'authenticating' : 'inspecting-config'} onCancel={props.onCancelAuthentication} />;
-  }
-
   const modal = (
     <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
-      <form className="task-model-push-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
+      <form
+        className="task-model-push-modal zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-model-push-title"
+        onSubmit={props.onSubmit}
+        onKeyDown={handleKeyDown}
+        onFocusCapture={(event) => {
+          /** 保存接入按钮或具备稳定标识的输入框，返回时保持键盘位置。 */
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (target.matches('.task-model-connect-link')) readingPositionRef.current.focusSelector = '.task-model-connect-link';
+          else if (target.matches('[data-task-push-primary]')) readingPositionRef.current.focusSelector = '[data-task-push-primary]';
+          else if (target.id) readingPositionRef.current.focusSelector = `#${CSS.escape(target.id)}`;
+        }}
+      >
         <header className="task-model-push-header">
           <span>
-            <strong id="task-model-push-title">{zh ? '推送到新会话' : 'Push to new conversation'}</strong>
+            <strong id="task-model-push-title">{zh ? '推送任务' : 'Push task'}</strong>
             <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
           </span>
           <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
@@ -979,7 +832,146 @@ export function TaskModelPushModal(props: {
           </button>
         </header>
 
-        <div className="task-model-push-body">
+        <div
+          ref={bodyRef}
+          className="task-model-push-body"
+          onScroll={(event) => {
+            readingPositionRef.current.scrollTop = event.currentTarget.scrollTop;
+          }}
+        >
+          <p className="task-flow-context task-push-task-title">{props.task.title}</p>
+          {props.error || supplementalResourceError || repositoryRefreshError ? (
+            <div className="task-flow-feedback" role="status">
+              <VisibleApplicationError error={props.error ?? supplementalResourceError ?? repositoryRefreshError} language={zh ? 'zh-CN' : 'en'} />
+              {props.error && props.onRetryModels ? (
+                <Button variant="secondary" size="compact" onClick={props.onRetryModels} disabled={busy || props.status === 'loading'}>
+                  {zh ? '重新检查' : 'Check again'}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {modelSetupRequired ? (
+            <p className="task-flow-feedback" role="status">
+              {zh ? '连接一个可用模型后即可推送。当前任务与填写内容会保留。' : 'Connect an available model to push. Your task and entered details will be preserved.'}
+            </p>
+          ) : null}
+          <div className="task-model-push-config-grid">
+            <label>
+              <span>{zh ? '模型' : 'Model'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '模型' : 'Model'}
+                value={props.form.model}
+                options={modelPresentation.options}
+                triggerLabel={selectedModel ? modelPresentation.triggerLabel : props.form.model || (zh ? '选择或接入模型' : 'Choose or connect a model')}
+                onChange={onModelChange}
+                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
+                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <div className="task-model-push-config-grid task-model-push-model-options">
+              <label>
+                <span>Skill</span>
+                <SkillSelector
+                  client={props.skillClient}
+                  projectId={props.task.projectId}
+                  value={props.form.skillId}
+                  onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+                  language={props.language}
+                  disabled={busy}
+                  ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
+                />
+              </label>
+              {selectedModel?.supportedReasoningEfforts.length ? (
+                <label>
+                  <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                    value={props.form.effort}
+                    options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                      value: effort,
+                      label: effort,
+                    }))}
+                    onChange={(effort) => props.onChange({ ...props.form, effort })}
+                    disabled={busy || Boolean(props.form.stageId)}
+                    searchable={false}
+                  />
+                </label>
+              ) : null}
+              <label>
+                <span>{zh ? '速度' : 'Speed'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '速度' : 'Speed'}
+                  value={serviceTierSelectionValue(props.form.serviceTier)}
+                  options={serviceTierOptions(selectedModel, props.language)}
+                  onChange={(value) => {
+                    if (!selectedModel) return;
+                    const selection = serviceTierSelectionFromValue(value);
+                    props.onChange({
+                      ...props.form,
+                      serviceTier: selection,
+                      serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
+                    });
+                    void props.onServiceTierPreferenceChange(selectedModel, selection);
+                  }}
+                  disabled={!selectedModel || busy || Boolean(props.form.stageId)}
+                  searchable={false}
+                />
+              </label>
+              {props.form.serviceTierDowngraded ? (
+                <p className="task-model-push-warning" role="status">
+                  {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
+                </p>
+              ) : null}
+            </div>
+            <label>
+              <span>{zh ? '工作模式' : 'Work mode'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '工作模式' : 'Work mode'}
+                value={props.form.workMode}
+                options={[
+                  { value: 'default', label: zh ? '默认' : 'Default' },
+                  { value: 'plan', label: zh ? '规划' : 'Plan' },
+                ]}
+                onChange={(workMode) => props.onChange({ ...props.form, workMode })}
+                disabled={busy || Boolean(props.form.stageId)}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>{zh ? '权限模式' : 'Permission mode'}</span>
+              <ZeusSelect<NativePermissionMode>
+                size="regular"
+                ariaLabel={zh ? '权限模式' : 'Permission mode'}
+                value={props.form.permissionMode}
+                options={[
+                  { value: 'read-only', label: zh ? '只读' : 'Read only' },
+                  { value: 'auto', label: zh ? '自动' : 'Auto' },
+                  { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
+                ]}
+                onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
+                disabled={busy || Boolean(props.form.stageId)}
+                searchable={false}
+              />
+            </label>
+          </div>
+          {props.form.stageId ? (
+            <small className="task-model-push-stage-lock">
+              {zh
+                ? '本次使用任务阶段中设定的模型、速度和权限。若需调整，请返回任务详情修改尚未启动的阶段。'
+                : 'This run uses the model, speed, and permissions set for the task stage. To change them, return to the task details and edit a stage that has not started.'}
+            </small>
+          ) : null}
+
+          {props.onConnectModel && !modelSetupRequired ? (
+            <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
+              {zh ? '接入其他模型' : 'Connect another model'}
+            </Button>
+          ) : null}
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
@@ -1319,124 +1311,6 @@ export function TaskModelPushModal(props: {
             ) : null}
           </section>
 
-          <div className="task-model-push-config-grid">
-            <label>
-              <span>{zh ? '模型' : 'Model'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '模型' : 'Model'}
-                value={modelPresentation.selectedId || props.form.model}
-                options={modelPresentation.options}
-                triggerLabel={modelPresentation.triggerLabel}
-                onChange={onModelChange}
-                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
-                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
-              />
-            </label>
-            <label>
-              <span>Skill</span>
-              <SkillSelector
-                client={props.skillClient}
-                projectId={props.task.projectId}
-                value={props.form.skillId}
-                onChange={(skillId) => props.onChange({ ...props.form, skillId })}
-                language={props.language}
-                disabled={busy}
-                ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
-              />
-            </label>
-            {selectedModel?.supportedReasoningEfforts.length ? (
-              <label>
-                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                  value={props.form.effort}
-                  options={selectedModel.supportedReasoningEfforts.map((effort) => ({
-                    value: effort,
-                    label: effort,
-                  }))}
-                  onChange={(effort) => props.onChange({ ...props.form, effort })}
-                  disabled={busy || Boolean(props.form.stageId)}
-                  searchable={false}
-                />
-              </label>
-            ) : null}
-            <label>
-              <span>{zh ? '速度' : 'Speed'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '速度' : 'Speed'}
-                value={serviceTierSelectionValue(props.form.serviceTier)}
-                options={serviceTierOptions(selectedModel, props.language)}
-                onChange={(value) => {
-                  if (!selectedModel) return;
-                  const selection = serviceTierSelectionFromValue(value);
-                  props.onChange({
-                    ...props.form,
-                    serviceTier: selection,
-                    serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
-                  });
-                  void props.onServiceTierPreferenceChange(selectedModel, selection);
-                }}
-                disabled={!selectedModel || busy || Boolean(props.form.stageId)}
-                searchable={false}
-              />
-            </label>
-            {props.form.serviceTierDowngraded ? (
-              <p className="task-model-push-warning" role="status">
-                {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
-              </p>
-            ) : null}
-            <label>
-              <span>{zh ? '工作模式' : 'Work mode'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '工作模式' : 'Work mode'}
-                value={props.form.workMode}
-                options={[
-                  { value: 'default', label: zh ? '默认' : 'Default' },
-                  { value: 'plan', label: zh ? '规划' : 'Plan' },
-                ]}
-                onChange={(workMode) => props.onChange({ ...props.form, workMode })}
-                disabled={busy || Boolean(props.form.stageId)}
-                searchable={false}
-              />
-            </label>
-            <label>
-              <span>{zh ? '权限模式' : 'Permission mode'}</span>
-              <ZeusSelect<NativePermissionMode>
-                size="regular"
-                ariaLabel={zh ? '权限模式' : 'Permission mode'}
-                value={props.form.permissionMode}
-                options={[
-                  { value: 'read-only', label: zh ? '只读' : 'Read only' },
-                  { value: 'auto', label: zh ? '自动' : 'Auto' },
-                  { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
-                ]}
-                onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
-                disabled={busy || Boolean(props.form.stageId)}
-                searchable={false}
-              />
-            </label>
-          </div>
-          {props.form.stageId ? (
-            <small className="task-model-push-stage-lock">
-              {zh
-                ? '本次使用任务阶段中设定的模型、速度和权限。若需调整，请返回任务详情修改尚未启动的阶段。'
-                : 'This run uses the model, speed, and permissions set for the task stage. To change them, return to the task details and edit a stage that has not started.'}
-            </small>
-          ) : null}
-
-          <TaskPushCurrentConversationPicker
-            options={currentConversationOptions}
-            selectedIds={props.form.currentConversationIds}
-            busy={busy}
-            zh={zh}
-            onChange={(currentConversationIds) => props.onChange((current) => ({ ...current, currentConversationIds }))}
-          />
-
           <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
             <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
               {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
@@ -1465,40 +1339,43 @@ export function TaskModelPushModal(props: {
             />
           </section>
 
+          <TaskPushCurrentConversationPicker
+            options={currentConversationOptions}
+            selectedIds={props.form.currentConversationIds}
+            busy={busy}
+            zh={zh}
+            onChange={(currentConversationIds) => props.onChange((current) => ({ ...current, currentConversationIds }))}
+          />
+
           <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
           <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
 
           <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} previewAttachments={[...(props.capabilities?.attachmentPreviewSources ?? []), ...props.form.supplementalAttachments]} />
-
           {props.status === 'loading' ? (
             <p className="task-model-push-message">
-              {runtimeCapabilities
-                ? zh
-                  ? '模型已就绪；正在读取任务上下文和 Git 工作区…'
-                  : 'Models are ready; loading task context and the Git workspace…'
-                : zh
-                  ? '正在连接 AI 服务并读取可用模型…'
-                  : 'Connecting to the AI service and loading available models…'}
+              {runtimeCapabilities ? (zh ? '正在读取任务上下文、模型配置与工作目录…' : 'Loading task context, model configuration and working folder…') : zh ? '正在读取模型配置…' : 'Loading model configuration…'}
             </p>
           ) : null}
         </div>
 
         <footer className="task-model-push-footer">
           <small>
-            {codexLoginRequired
+            {modelSetupRequired
               ? zh
-                ? '尚未登录 Codex。请登录后继续创建对话。'
-                : 'Codex is not signed in. Sign in to continue creating the conversation.'
+                ? '接入完成后返回这里，再次确认才会开始。'
+                : 'After setup, return here and confirm again to start.'
               : zh
-                ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。'
-                : 'A new conversation will be created and opened; history remains unchanged.'}
+                ? '确认后创建会话，开始执行这个任务。'
+                : 'Confirm to create a conversation and start this task.'}
           </small>
           <span>
             <Button variant="secondary" size="regular" onClick={props.onClose} disabled={props.status === 'submitting'}>
               {zh ? '取消' : 'Cancel'}
             </Button>
             <Button
-              type="submit"
+              data-task-push-primary
+              type={modelSetupRequired && props.onConnectModel ? 'button' : 'submit'}
+              onClick={modelSetupRequired ? props.onConnectModel : undefined}
               variant="primary"
               size="regular"
               busy={busy}
@@ -1506,22 +1383,22 @@ export function TaskModelPushModal(props: {
                 busy ||
                 !props.capabilities ||
                 props.status === 'loading' ||
-                !props.form.model ||
-                !selectedModel ||
-                (props.form.workspaceMode === 'direct'
-                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                  : props.form.taskBranchMode === 'existing'
-                    ? !selectedEnvironment?.available
-                    : !discovery?.completedAt ||
-                      Boolean(props.form.repositorySelectionNeedsReview) ||
-                      repositories.length === 0 ||
-                      repositories.some((repository) => {
-                        const selection = props.form.repositorySelections[repository.id];
-                        return !selection?.sourceRef || !selection.branchName.trim();
-                      }))
+                (!modelSetupRequired && (!props.form.model || !selectedModel)) ||
+                (!modelSetupRequired &&
+                  (props.form.workspaceMode === 'direct'
+                    ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                    : props.form.taskBranchMode === 'existing'
+                      ? !selectedEnvironment?.available
+                      : !discovery?.completedAt ||
+                        Boolean(props.form.repositorySelectionNeedsReview) ||
+                        repositories.length === 0 ||
+                        repositories.some((repository) => {
+                          const selection = props.form.repositorySelections[repository.id];
+                          return !selection?.sourceRef || !selection.branchName.trim();
+                        })))
               }
             >
-              {props.status === 'submitting' ? (zh ? '正在创建…' : 'Creating…') : codexLoginRequired ? (zh ? '登录并继续' : 'Sign in and continue') : zh ? '创建新会话' : 'Create conversation'}
+              {props.status === 'submitting' ? (zh ? '正在推送…' : 'Pushing…') : modelSetupRequired ? (zh ? '连接模型' : 'Connect a model') : zh ? '推送任务' : 'Push task'}
             </Button>
           </span>
         </footer>

@@ -1063,7 +1063,10 @@ export interface CodexTaskPushCapabilities {
   currentConversationOptions: TaskPushParentContextOption['conversations'];
   parentContextOptions: TaskPushParentContextOption[];
   relatedContextOptions: TaskPushRelatedContextOption[];
-  preferredModel: string;
+  /** 未配置模型和目录查询失败必须如实传递给推送确认。 */
+  preferredModel: string | null;
+  available?: false;
+  availabilityReason?: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
   repositories: CodexTaskRepositoryCapability[];
@@ -1341,7 +1344,10 @@ export interface CodexConversationCapabilities {
   generationId: string;
   initializedAt: string;
   projectId: string;
-  preferredModel: string;
+  /** 未配置时为空，失效引用由界面提示重新选择。 */
+  preferredModel: string | null;
+  available?: false;
+  availabilityReason?: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
   /** 长任务执行宿主可能来自升级前版本，旧能力响应没有目标字段。 */

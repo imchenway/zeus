@@ -38,7 +38,8 @@ interface CodexProviderThreadAuthorityOptions {
 export interface CodexProviderThreadAuthorityApplication {
   /** 当前会话是否正在读取并恢复模型端状态。 */
   isRecovering(conversationId: string): boolean;
-  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean }): Promise<ProviderThreadAuthority>;
+  /** 共用身份校验；只读检查不恢复订阅或改变观察器。 */
+  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean; readOnly?: boolean }): Promise<ProviderThreadAuthority>;
   observe(conversationId: string, providerThreadId: string): void;
   queueChanged(conversationId: string): void;
   stopObserver(conversationId: string): void;
@@ -91,6 +92,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
 
   function requiresProviderTurnProjection(conversation: ZeusConversationWithMessagesRecord, providerStatus: CodexThreadRuntimeStatus): boolean {
     if (providerStatus.type === 'active') return true;
+    // 未知写入需要读取已有轮次寻找原提交身份，不能仅靠线程空闲推断未发送。
+    if (options.submissions.listByConversation(conversation.id).some((submission) => submission.submissionOutcome === 'outcome_unknown')) return true;
     const state = options.runStates.get(conversation.id) ?? options.inferRunState(conversation);
     if (state.type === 'active' || state.type === 'waiting') return true;
     // queued -> dispatching 只是 Zeus 已取得本地派发租约，并不代表 Provider 已接受轮次。
@@ -289,7 +292,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     return afterResume;
   }
 
-  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean } = {}): Promise<ProviderThreadAuthority> {
+  /** 串行核对线程状态，并按调用意图决定是否恢复实时观察。 */
+  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean; readOnly?: boolean } = {}): Promise<ProviderThreadAuthority> {
     if (closing) return Promise.reject(coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', '会话恢复已随执行宿主关闭而停止。'));
     const previous = authorityChains.get(conversation.id);
     const waitForPrevious = previous
@@ -298,7 +302,8 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
           () => undefined,
         )
       : Promise.resolve();
-    const authority = waitForPrevious.then(() => inspectUnserialized(options.requireConversation(conversation.id), context));
+    // 只读检查与执行共享身份串行边界，但不恢复订阅或启动观察器。
+    const authority = waitForPrevious.then(() => (input.readOnly ? readAndProject(options.requireConversation(conversation.id)) : inspectUnserialized(options.requireConversation(conversation.id), context)));
     authorityChains.set(conversation.id, authority);
     if (!previous) options.broadcast('conversation.queue.changed', { conversationId: conversation.id, queueDispatchRequested: false });
     void authority
@@ -310,6 +315,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
       .catch(() => undefined);
     return authority.then((result) => {
       assertOpen();
+      if (input.readOnly) return result;
       if (result.type === 'active' && input.observeActive !== false) {
         observe(conversation.id, requireString(options.requireConversation(conversation.id).providerThreadId, 'provider thread id'));
       } else if (result.type === 'idle') {

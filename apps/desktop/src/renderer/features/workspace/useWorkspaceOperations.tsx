@@ -1,4 +1,4 @@
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
@@ -218,6 +218,9 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setVisitedCodeWorkspaceModes,
     settingsWorkspaceCopy,
     snapshot,
+    taskModelPushEntry,
+    taskModelPushError,
+    taskModelPushTaskId,
     sourceWorkspaceDirty,
     taskBoardSnapshots,
     taskConversationReopenState,
@@ -256,6 +259,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     openTaskCreateModal,
     openTaskGitDelivery,
     openTaskModelPush,
+    retryTaskModelPushEntry,
     persistSidebarConversationPreferences,
     recordLocalError,
     recordTaskMutationVersion,
@@ -1937,8 +1941,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
           onOpenAiSettings={(section) => {
-            setSettingsCategory(section);
-            handleMainNavigate('settings');
+            window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
           onOpenComputerSettings={() => {
             setSettingsCategory('browser');
@@ -2004,8 +2007,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
           onOpenAiSettings={(section) => {
-            setSettingsCategory(section);
-            handleMainNavigate('settings');
+            window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
           onOpenComputerSettings={() => {
             setSettingsCategory('browser');
@@ -2063,8 +2065,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadSkills: props.nativeConversationClient?.loadSkills,
           onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
           onOpenAiSettings: (section) => {
-            setSettingsCategory(section);
-            handleMainNavigate('settings');
+            window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           },
           onOpenComputerSettings: () => {
             setSettingsCategory('browser');
@@ -2118,6 +2119,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
         conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
         modelPushOperation={taskDetailPaneModelPushView}
+        modelPushEntry={
+          taskModelPushTaskId === taskDetailPaneTask.id && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')
+            ? { checking: taskModelPushEntry === 'checking', error: taskModelPushEntry === 'error' ? taskModelPushError : null, onRetry: retryTaskModelPushEntry }
+            : undefined
+        }
         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
         onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
         onRetryModelPush={retryTaskModelPush}

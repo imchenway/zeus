@@ -28,8 +28,9 @@ export function ModalPortal(props: ModalPortalProps) {
       element.inert = true;
     }
 
+    // 原生折叠入口参与焦点循环，收起区域中的控件由可见性过滤排除。
     const focusableElements = () =>
-      [...root.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
+      [...root.querySelectorAll<HTMLElement>('button:not([disabled]), summary, a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
         (element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true',
       );
     const focusFirst = () => (root.querySelector<HTMLElement>('[autofocus]') ?? focusableElements()[0] ?? root).focus();
@@ -56,7 +57,7 @@ export function ModalPortal(props: ModalPortalProps) {
     if (event.key !== 'Tab') return;
     const root = rootRef.current;
     if (!root) return;
-    const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
+    const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), summary, a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
       (element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true',
     );
     if (focusable.length === 0) {

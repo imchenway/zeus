@@ -33,8 +33,8 @@ import {
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
   type CodeMapSettings,
-  type CodexConfigImportPreview,
   type CodexConfigImportResult,
+  type CodexConfigImportPreview,
   type CodexLegacyImportSnapshot,
   createEmptyDashboardSnapshot,
   type DashboardSnapshot,
@@ -64,6 +64,7 @@ import {
   type TaskManagementStatus,
   type TaskPageViewMode,
   type TaskRecord,
+  type TaskStageRecord,
   type TaskStatusFilter,
   type TaskTableColumnPreferences,
   type TaskTemplateRecord,
@@ -140,6 +141,7 @@ import {
   type TaskConversationReopenState,
   type TaskCreateFormState,
   type TaskModelPushNavigationTarget,
+  isTaskModelPushOriginCurrent,
   taskTableColumnPreferencesEqual,
   type TrackedTaskModelPushState,
 } from './workspaceSupport.js';
@@ -542,6 +544,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [taskCreateForm, setTaskCreateForm] = useState<TaskCreateFormState>(() => buildTaskCreateInitialForm(appShellSettings.appLanguage));
   const [taskCreateError, setTaskCreateError] = useState('');
   const [taskModelPushTaskId, setTaskModelPushTaskId] = useState<string | null>(null);
+  /** 入口检查与接入期间不展示确认页，失败保留在任务操作旁。 */
+  const [taskModelPushEntry, setTaskModelPushEntry] = useState<'checking' | 'choose' | 'custom' | 'confirmation' | 'error'>('confirmation');
+  /** 同步阻止入口重复打开，失败时允许按原阶段和工作面身份重查。 */
+  const taskModelPushEntryRef = useRef<{ taskId: string; stage?: TaskStageRecord; origin: TaskModelPushNavigationTarget; pending: boolean } | null>(null);
   const [taskModelPushCapabilities, setTaskModelPushCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
   const [taskModelPushServiceTierPreferences, setTaskModelPushServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [taskModelPushRuntimeCapabilities, setTaskModelPushRuntimeCapabilities] = useState<CodexConversationCapabilities | null>(null);
@@ -565,8 +571,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     supplementalAttachments: [],
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
-  const [taskModelPushConfigImportPreview, setTaskModelPushConfigImportPreview] = useState<CodexConfigImportPreview | null>(null);
-  const [taskModelPushConfigImportNeedsActivation, setTaskModelPushConfigImportNeedsActivation] = useState(false);
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPendingByTask, setTaskModelPushPendingByTask] = useState<Record<string, TrackedTaskModelPushState>>({});
@@ -583,17 +587,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const taskGitDeliveryConversationRef = useRef<(input: { taskId: string; conversationId: string }) => void>(() => undefined);
   const conversationNotificationRef = useRef<(input: { projectId: string; conversationId: string }) => void>(() => undefined);
   const taskModelPushCapabilityRequestRef = useRef(0);
-  const taskModelPushLoginRequestRef = useRef(0);
-  const taskModelPushLoginIdRef = useRef<string | null>(null);
-  useEffect(
-    () => () => {
-      // 工作面卸载后旧登录不可继续推送，也不可抢回窗口。
-      taskModelPushLoginRequestRef.current += 1;
-      const loginId = taskModelPushLoginIdRef.current;
-      if (loginId) void props.nativeConversationClient?.cancelCodexChatGptLogin(loginId).catch(() => undefined);
-    },
-    [props.nativeConversationClient],
-  );
   const taskModelPushEnvelopeRef = useRef(new Map<string, { fingerprint: string; request: StartTaskModelPushRequest }>());
   const taskModelPushDispatchingTaskIdsRef = useRef(new Set<string>());
   const taskModelPushDeferredDispatchingTaskIdsRef = useRef(new Set<string>());
@@ -872,6 +865,14 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     selectedConversationPresentation: selectedNativeConversationPresentation,
     taskDetailPaneTaskId,
   };
+  useEffect(() => {
+    if (!taskModelPushEntryRef.current || isTaskModelPushOriginCurrent(taskModelPushEntryRef.current.origin, taskModelPushNavigationRef.current)) return;
+    taskModelPushCapabilityRequestRef.current += 1;
+    taskModelPushEntryRef.current = null;
+    setTaskModelPushTaskId(null);
+    setTaskModelPushEntry('confirmation');
+    setTaskModelPushError(null);
+  }, [activeProjectId, activeNavTarget, activeProjectSection, taskDetailPaneTaskId]);
   const updateTaskModelPushPendingByTask = useCallback((update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): Record<string, TrackedTaskModelPushState> => {
     // ref 是首发操作的同步事实源；React state 只负责投影，不能再把较旧提交反写进 ref。
     const next = update(taskModelPushPendingByTaskRef.current);
@@ -1646,9 +1647,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setTaskManagementStatusReplacements,
     setTaskModelPushAnnouncement,
     setTaskModelPushCapabilities,
-    setTaskModelPushConfigImportNeedsActivation,
-    setTaskModelPushConfigImportPreview,
     setTaskModelPushError,
+    setTaskModelPushEntry,
     setTaskModelPushForm,
     setTaskModelPushRefreshingRepositoryId,
     setTaskModelPushRuntimeCapabilities,
@@ -1709,15 +1709,13 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskModelPushAnnouncement,
     taskModelPushCapabilities,
     taskModelPushCapabilityRequestRef,
-    taskModelPushConfigImportNeedsActivation,
-    taskModelPushConfigImportPreview,
     taskModelPushDeferredDispatchingTaskIdsRef,
     taskModelPushDispatchingTaskIdsRef,
     taskModelPushEnvelopeRef,
     taskModelPushError,
+    taskModelPushEntry,
+    taskModelPushEntryRef,
     taskModelPushForm,
-    taskModelPushLoginIdRef,
-    taskModelPushLoginRequestRef,
     taskModelPushNavigationRef,
     taskModelPushPendingByTask,
     taskModelPushPendingByTaskRef,

@@ -1,3 +1,4 @@
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -78,7 +79,6 @@ const labels = {
     error: '会话错误',
     legacy_readonly: '旧会话，只读',
     archive: '归档会话',
-    archiveUnavailable: '会话仍在运行、排队或等待处理，暂时不能归档',
     archiveLegacyUnavailable: '旧版只读会话无法与 Codex 线程同步归档',
     archiving: '正在归档',
     showMore: '展开更多',
@@ -101,7 +101,6 @@ const labels = {
     error: 'Thread error',
     legacy_readonly: 'Legacy, read-only',
     archive: 'Archive conversation',
-    archiveUnavailable: 'This conversation is running, queued, or waiting and cannot be archived yet',
     archiveLegacyUnavailable: 'Legacy read-only conversations cannot be archived together with their Codex thread',
     archiving: 'Archiving',
     showMore: 'Show more',
@@ -131,6 +130,10 @@ interface FlattenedProjectConversations {
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
+  /** 同一会话失败留在原行，下一次操作更新这一份反馈。 */
+  const [archiveError, setArchiveError] = useState<{ id: string; error: unknown } | null>(null);
+  /** 在绘制禁用态之前也阻止重复点击。 */
+  const archiveRequestRef = useRef<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   const organization = props.organization ?? 'flat';
   const flattenedGroups = props.groups
@@ -147,13 +150,16 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
-    if (!props.onArchiveConversation || archivingConversationId) return;
+    if (!props.onArchiveConversation || archiveRequestRef.current) return;
+    archiveRequestRef.current = conversation.id;
+    setArchiveError(null);
     setArchivingConversationId(conversation.id);
     try {
       await props.onArchiveConversation(conversation);
-    } catch {
-      // 错误已由上层统一展示，会话行保持原状便于用户重试。
+    } catch (error) {
+      setArchiveError({ id: conversation.id, error });
     } finally {
+      archiveRequestRef.current = null;
       setArchivingConversationId(null);
     }
   }
@@ -163,10 +169,9 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
       const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-      const archiveAvailable = conversationCanBeArchived(runtimeState, conversation);
-      const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
       const archiving = archivingConversationId === conversation.id;
-      const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
+      // 可否归档由服务端按当前状态判断；仅旧会话在入口禁用。
+      const archiveLabel = archiving ? copy.archiving : runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archive;
       return (
         <li className="session-conversation-tree-item" key={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
           <button
@@ -192,15 +197,23 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             <button
               type="button"
               className="session-conversation-archive-button"
-              aria-disabled={!archiveAvailable || archiving}
+              disabled={archiving || runtimeState === 'legacy_readonly'}
               aria-label={`${archiveLabel}: ${displayTitle}`}
               title={archiveLabel}
               onClick={() => {
-                if (archiveAvailable && !archiving) void archiveConversation(conversation);
+                if (!archiving) void archiveConversation(conversation);
               }}
             >
               {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
             </button>
+          ) : null}
+          {archiveError?.id === conversation.id ? (
+            <div className="session-conversation-archive-error" role="status">
+              <VisibleApplicationError error={archiveError.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+              <button type="button" onClick={() => props.onSelectConversation(conversation)}>
+                {props.language === 'zh-CN' ? '查看并处理' : 'View and resolve'}
+              </button>
+            </div>
           ) : null}
         </li>
       );
@@ -259,13 +272,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
 
 function conversationNavigationId(conversation: NativeConversationChoice): string {
   return conversation.navigationId ?? conversation.id;
-}
-
-export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState, conversation?: Pick<NativeConversationChoice, 'providerThreadId' | 'providerState'>): boolean {
-  if (runtimeState === 'ready' || runtimeState === 'paused' || runtimeState === 'error') return true;
-  // 从未建立 Provider 线程的本地队列可以由服务端取消后归档；已进入 binding/active
-  // 或拥有真实线程身份的会话仍维持禁用，避免把未知外部写入当成本地清理。
-  return conversation?.providerThreadId === null && conversation.providerState === 'unbound';
 }
 
 function ProjectConversationHeader(props: { project: ProjectConversationGroup; language: SessionUiLanguage; onStartConversation: (taskId: string) => void }) {

@@ -229,14 +229,9 @@ export class ConversationCapabilityQueryApplication {
     const models = mapConversationCapabilityModels(codexCapabilities, allowedConnectionModels);
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const configuredModel = this.ports.readConfiguredModel(project.id);
-    const preferredModel =
-      models.find((candidate) => candidate.id === connectionSelection.defaultModelRef && candidate.available !== false)?.id ??
-      resolveModelCapability(
-        models.filter((candidate) => candidate.available !== false),
-        configuredModel,
-      )?.id ??
-      models.find((candidate) => candidate.available !== false)?.id ??
-      models[0]!.id;
+    // 已配置的模型失效时保留原引用，禁止读取目录顺带切换模型。
+    const requestedModel = connectionSelection.defaultModelRef ?? configuredModel;
+    const preferredModel = requestedModel ? (resolveModelCapability(models, requestedModel)?.id ?? requestedModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),

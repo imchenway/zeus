@@ -82,6 +82,8 @@ export interface TaskDetailPaneContentProps {
   conversationsLoading?: boolean;
   conversationsError?: string | null;
   modelPushOperation?: { errorCause?: UserFacingErrorCause; canRetry?: boolean; status: 'submitting' | 'failed' | 'accepted'; error: string | null; conversationId?: string };
+  /** 接入检查保留在原推送按钮，读取失败可按原任务阶段重查。 */
+  modelPushEntry?: { checking: boolean; error: string | null; onRetry: () => void };
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
   onRetryModelPush?: (taskId: string) => void;
@@ -1344,6 +1346,11 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       </section>
 
       <section className="task-detail-action-rail" aria-label={props.copy.primaryActionsTitle}>
+        {props.modelPushEntry?.error ? (
+          <span className="task-detail-model-push-feedback is-failed" role="status">
+            <VisibleApplicationError error={props.modelPushEntry.error} language={zh ? 'zh-CN' : 'en'} />
+          </span>
+        ) : null}
         {props.modelPushOperation ? (
           <span className={`task-detail-model-push-feedback is-${props.modelPushOperation.status}`} role={modelPushFailed ? 'alert' : 'status'} aria-live={modelPushFailed ? 'assertive' : 'polite'} aria-atomic="true">
             <span>
@@ -1376,8 +1383,31 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </span>
         ) : null}
         <span className="task-detail-action-buttons">
-          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy || modelPushCreating} disabled={props.terminalReadOnly}>
-            {props.terminalReadOnly ? (zh ? '重新打开任务后可新建会话' : 'Reopen task to start a conversation') : modelPushCreating ? (zh ? '正在创建会话…' : 'Creating conversation…') : props.copy.pushNewConversation}
+          <Button
+            variant="primary"
+            size="regular"
+            className="task-detail-primary-action"
+            onClick={() => (props.modelPushEntry?.error ? props.modelPushEntry.onRetry() : props.onPushNewConversation(props.task.id))}
+            busy={props.busy || modelPushCreating || props.modelPushEntry?.checking}
+            disabled={props.terminalReadOnly}
+          >
+            {props.terminalReadOnly
+              ? zh
+                ? '重新打开任务后可新建会话'
+                : 'Reopen task to start a conversation'
+              : props.modelPushEntry?.checking
+                ? zh
+                  ? '正在检查模型…'
+                  : 'Checking models…'
+                : props.modelPushEntry?.error
+                  ? zh
+                    ? '重新检查'
+                    : 'Check again'
+                  : modelPushCreating
+                    ? zh
+                      ? '正在创建会话…'
+                      : 'Creating conversation…'
+                    : props.copy.pushNewConversation}
           </Button>
           {props.onOpenCodeDelivery ? (
             <Button variant="secondary" size="regular" className="task-detail-secondary-action" onClick={() => props.onOpenCodeDelivery?.(props.task.id)} busy={props.busy}>
