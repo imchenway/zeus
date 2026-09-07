@@ -47,6 +47,7 @@ interface SessionActivityGroupProps {
   onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
 }
 
+/** 活动组保留真实过程；单条无详情的整理记录直接显示，避免标题与明细重复。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
@@ -55,6 +56,16 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
   const detailItems = imageResources.length > 0 ? props.items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : props.items;
   const [open, setOpen] = useState(false);
   const GroupIcon = activityGroupIcon(props.items, liveItem);
+
+  // 单条整理只有在没有正文详情、资源或可加载结果时才省去折叠层。
+  const singleCompaction = props.items.length === 1 && normalizeType(props.items[0]!.type) === 'contextcompaction' && props.items[0]!.status !== 'failed' ? props.items[0]! : null;
+  if (singleCompaction && !activityItemDetail(singleCompaction) && !activityToolResult(singleCompaction) && singleCompaction.resources.length === 0) {
+    return (
+      <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={1} data-motion-active={props.motionActive || undefined}>
+        <ActivityLiveRow item={singleCompaction} language={props.language} />
+      </section>
+    );
+  }
 
   return (
     <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={props.items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
@@ -113,10 +124,14 @@ export function isLiveActivityItem(item: Pick<NativeSessionItemBuffer, 'status'>
   return item.status !== 'completed' && item.status !== 'failed';
 }
 
+/** 简洁活动行只在进行中播报；完成后的整理记录作为普通历史文字呈现。 */
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
+  // 状态播报跟随真实条目，回看已完成记录时不重复宣告进度。
+  const active = isLiveActivityItem(props.item);
+  // 沿用活动类型对应的现有图标。
   const Icon = activityItemIcon(props.item);
   return (
-    <p className="session-activity-live" role="status" aria-live="polite" aria-atomic="true">
+    <p className="session-activity-live" role={active ? 'status' : undefined} aria-live={active ? 'polite' : undefined} aria-atomic={active ? true : undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>

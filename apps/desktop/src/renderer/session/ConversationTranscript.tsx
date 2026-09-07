@@ -227,6 +227,7 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
   return callback ? stableCallback : undefined;
 }
 
+/** 会话正文、历史过程与当前状态共用原始事件，仅在展示时分配提示职责。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
@@ -376,7 +377,25 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
-  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds), [activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds]);
+  // 当前状态始终读取完整会话事件，不受活动列表的展示筛选影响。
+  const activeStatusKind = transcriptRunStatus(props.state);
+  // 创建中的会话尚未建立真实轮次时，由连接提示承担当前进度。
+  const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
+  // 创建失败时保留创建错误，不再显示独立运行状态。
+  const creationFailed = props.creationStatus?.state === 'failed';
+  // 真实轮次建立后，运行状态可以接管创建进度。
+  const realTurnStarted = Boolean(activeTurnId);
+  // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
+  const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
+  // 只有实际渲染的底部状态可以接管过程中的整理提示。
+  const showStandaloneActiveStatus = !props.historyOnly && Boolean(activeStatusKind) && !creationFailed && !(creatingSession && !realTurnStarted);
+  // 只筛选底部已承载的同轮进行中整理；完成、失败、历史及其他活动继续参与原有投影。
+  const transcriptRows = useMemo(() => {
+    // 此列表仅用于生成可见行，原始条目及身份不做删除或合并。
+    const visibleItems =
+      showStandaloneActiveStatus && activeStatusKind === 'compacting' ? items.filter((item) => item.turnId !== activeTurnId || normalizeItemType(item.type) !== 'contextcompaction' || item.status !== 'in_progress') : items;
+    return projectTranscriptRows(visibleItems, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds);
+  }, [activeStatusKind, activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds, showStandaloneActiveStatus]);
   const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const closedTurnChangeSetIds = useMemo(() => availableClosedTurnChangeSetIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
@@ -451,16 +470,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [props.state.turnsByProviderId, transcriptRows]);
   const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
-  const activeStatusKind = transcriptRunStatus(props.state);
   const unansweredQuestions = items.filter(
     (item) => item.turnId === activeTurnId && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && !item.payload.questionResponse && !asyncQuestionReply(item, props.state),
   );
-  const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
-  const creationFailed = props.creationStatus?.state === 'failed';
-  const realTurnStarted = Boolean(activeTurnId);
-  // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
-  const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
-  const showStandaloneActiveStatus = !props.historyOnly && Boolean(activeStatusKind) && !creationFailed && !(creatingSession && !realTurnStarted);
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
     .filter(isOptimisticMessageAwaitingReply)
@@ -1467,10 +1479,11 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ex
 
 /** 任务耗时仍单独显示；此处不把时间增长当作模型继续推进的证据。 */
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>> }): ReactNode {
+  // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
     starting: ['正在启动处理', 'Starting processing'],
     executing: ['正在执行', 'Executing'],
-    compacting: ['正在整理上下文', 'Compacting context'],
+    compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
     waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
     reconnecting: ['正在恢复连接，运行进度尚未确认', 'Reconnecting; progress is not yet confirmed'],
