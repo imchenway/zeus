@@ -4814,6 +4814,7 @@ a {
   white-space: nowrap;
 }
 .project-git-change-file-row {
+  padding-left: 8px;
   align-items: center;
   border-radius: 5px;
   display: flex;
@@ -4828,6 +4829,7 @@ a {
   background: var(--zeus-source-list-selected);
 }
 .project-git-change-file-row input {
+  flex-shrink: 0;
   height: 13px;
   margin: 0 6px 0 0;
   width: 13px;
@@ -4951,12 +4953,49 @@ a {
   min-height: 0;
   min-width: 0;
 }
+/* 主工作台和独立差异窗口共用分隔条，结构样式不依赖主窗口主题。 */
+.git-pane-separator {
+  position: relative;
+  z-index: 2;
+  background: var(--zeus-page-background, #f7f8fa);
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.git-pane-separator.is-x {
+  width: 6px;
+  min-height: 0;
+  cursor: col-resize;
+}
+.git-pane-separator.is-y {
+  height: 6px;
+  min-width: 0;
+  cursor: row-resize;
+}
+.git-pane-separator::after {
+  content: '';
+  position: absolute;
+  border-radius: 3px;
+  background: transparent;
+  transition: background 120ms;
+}
+.git-pane-separator.is-x::after {
+  inset: 0 2px;
+}
+.git-pane-separator.is-y::after {
+  inset: 2px 0;
+}
+.git-pane-separator:hover::after,
+.git-pane-separator:focus-visible::after,
+.git-pane-separator[data-dragging]::after {
+  background: var(--zeus-product-accent, #306cff);
+}
 .project-git-diff-side-head {
   background: var(--zeus-product-panel-muted);
   border-bottom: 1px solid var(--zeus-product-line);
   display: grid;
   flex: 0 0 30px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
 }
 .project-git-diff-side-head span {
   align-items: center;
@@ -4970,12 +5009,13 @@ a {
 }
 .project-git-diff-side-head span + span {
   border-left: 1px solid var(--zeus-product-line);
+  grid-column: 3;
 }
 .project-git-diff-side-scroll {
   display: grid;
   flex: 1;
   font: 11px/19px var(--zeus-font-mono);
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -20889,7 +20929,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .settings-sidebar-nav .settings-section-button {
   align-items: center;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px;
   min-block-size: 30px;
   inline-size: 100%;
@@ -20912,24 +20952,6 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .settings-sidebar-nav .settings-section-button.selected {
   background: var(--zeus-source-list-selected, oklch(91.8% 0.006 255));
   color: var(--zeus-settings-tab-selected-text, var(--zeus-product-text, oklch(23% 0.003 255)));
-}
-
-.macos-ai-app .settings-section-icon {
-  inline-size: 16px;
-  block-size: 16px;
-  border: 1.4px solid currentColor;
-  border-radius: 5px;
-  opacity: 0.74;
-  position: relative;
-}
-
-.macos-ai-app .settings-section-icon::after {
-  content: '';
-  position: absolute;
-  inset: 5px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.55;
 }
 
 .macos-ai-app .settings-section-label {

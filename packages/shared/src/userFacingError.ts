@@ -220,6 +220,14 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['共享目录重复或互相包含，请移除重复项或重叠的目录。', 'Shared folders are duplicated or contain one another. Remove duplicate or overlapping entries.'],
   ],
   [['ZEUS_GIT_COMMIT_REQUIRED'], ['请先选择要查看的提交。', 'Select a commit to view.']],
+  // 中止后的写入不会自动撤销，具体暂存位置等恢复信息保留在详情中。
+  [
+    ['ZEUS_GIT_CANCELLED'],
+    [
+      'Git 操作已中止。请查看详情中的恢复信息，并核对仓库和远端状态；已完成的改动不会自动撤销。',
+      'The Git operation was cancelled. Check the recovery details and verify the repository and remote state; completed changes are not automatically undone.',
+    ],
+  ],
   [
     ['ZEUS_GIT_REF_REQUIRED', 'ZEUS_GIT_BRANCH_REQUIRED'],
     ['请先选择分支。', 'Select a branch first.'],

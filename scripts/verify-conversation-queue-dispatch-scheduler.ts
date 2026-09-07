@@ -44,7 +44,7 @@ assertBehavior(!mustWaitForInProcessRuntimeTurn('codex', staleCodexTurn), 'Codex
 assertBehavior(mustWaitForInProcessRuntimeTurn('codex', activePiTurn), 'Pi 活动轮次结束前不得派发后续 Codex 队首。');
 assertBehavior(mustWaitForInProcessRuntimeTurn('pi', staleCodexTurn), 'Pi 队首遇到任意活动轮次时必须等待进程内终态事件。');
 assertBehavior(
-  formatVisibleApplicationError({ error: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'internal detail' }) === 'Zeus 专属 Codex 尚未登录。请先前往“设置 > AI CLI / Runtime”完成登录，再重试。',
+  formatVisibleApplicationError({ error: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'internal detail' }) === 'Zeus 专属 Codex 尚未登录。请在终端执行 CODEX_HOME=$HOME/.Zeus/providers/codex codex login 完成登录，再重试。',
   '已知且可操作的登录错误不得再降级成通用失败文案。',
 );
 const visibleSchedulerFailure = formatVisibleApplicationError({ code: 'ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED', message: 'internal detail' });

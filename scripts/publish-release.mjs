@@ -109,7 +109,7 @@ function collectPreflight(input) {
   const workflow = readReleaseWorkflow();
   const secretsRead = readActionSecretNames();
   const secretNames = secretsRead.names;
-  const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `${input.tag}.md`);
+  const releaseNotesPath = join(repositoryRoot, 'releases', `${input.tag}.md`);
   let packageVersion = null;
   let desktopVersion = null;
 
@@ -219,7 +219,7 @@ function buildPlan(preflight, input) {
     '## 受控写操作',
     '',
     `1. 仅在阻断项为空、APPLY_REMOTE=true 且确认值精确为 PUBLISH_${input.tag} 时继续。`,
-    '2. 以精确候选 SHA 触发 Release Workflow；Workflow 并行执行 typecheck 与正式打包。',
+    '2. 以精确候选 SHA 触发 Release Workflow；Workflow 并行执行 verify:publish 与正式打包。',
     `3. 所有阻塞作业通过后，由 Workflow 创建不可变标签 ${input.tag}、GitHub Release 并同步 Homebrew Tap。`,
     '4. 等待 Workflow 后读取 GitHub 资产服务端摘要并下载 manifest，核对 Release notes、SHA-256 与 Tap Cask。',
     '',
@@ -250,7 +250,7 @@ async function verifyPublishedRelease(input) {
   if (input.release.data.tagName !== input.tag || input.release.data.isDraft || input.release.data.isPrerelease) {
     throw new Error(`GitHub Release 状态不符合稳定版要求：tag=${input.release.data.tagName ?? 'missing'} draft=${input.release.data.isDraft} prerelease=${input.release.data.isPrerelease}`);
   }
-  const releaseNotesPath = join(repositoryRoot, 'docs', 'releases', `${input.tag}.md`);
+  const releaseNotesPath = join(repositoryRoot, 'releases', `${input.tag}.md`);
   const expectedNotes = normalizeText(readFileSync(releaseNotesPath, 'utf8'));
   const actualNotes = normalizeText(input.release.data.body ?? '');
   if (actualNotes !== expectedNotes) throw new Error('GitHub Release notes 与标签候选的仓库 Release notes 不一致。');

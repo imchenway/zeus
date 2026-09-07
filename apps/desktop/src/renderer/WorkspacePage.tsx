@@ -2,6 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
+import './agentdesk-theme.css';
 import type { WorkspacePageProps } from './features/workspace/workspaceContracts.js';
 import { useWorkspaceQueryState } from './features/workspace/useWorkspaceQueryState.js';
 import { useWorkspaceDomainActions } from './features/workspace/useWorkspaceDomainActions.js';

@@ -72,7 +72,10 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         completedSuccessfully = true;
         return result;
       } catch (error) {
-        if (!isLikelyLocalServerConnectionError(error) || !options.refreshConnection) throw error;
+        // 无回执保护的写请求结果未知时不能自动重放。
+        const method = (init?.method ?? 'GET').toUpperCase();
+        const replayable = method === 'GET' || method === 'HEAD' || new Headers(init?.headers).has('idempotency-key');
+        if (!replayable || !isLikelyLocalServerConnectionError(error) || !options.refreshConnection) throw error;
         // 一个逻辑请求最多刷新一次 Main 提供的端口/token，禁止在 context client 内自建重试循环。
         const refreshed = await options.refreshConnection();
         const result = await requestOnce<T>(refreshed, path, init, traceId, 2, options.onPerformanceSpan);

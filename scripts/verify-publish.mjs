@@ -179,6 +179,7 @@ if (formattedPaths.length > 0) {
 }
 
 runStep('ESLint', 'pnpm', ['lint']);
+runStep('架构边界检查', 'pnpm', ['verify:architecture']);
 runStep('TypeScript 类型检查', 'pnpm', ['typecheck']);
 runStep('生产构建', 'pnpm', ['build']);
 

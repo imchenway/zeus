@@ -18,6 +18,8 @@ import { buildGitCommandRequest, gitClientCommandTypes } from './gitCommandClien
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from './workspaceGitCommandClient.js';
 
 export interface GitApiClient {
+  loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
+  generateGitCommitMessage: (projectId: string, input: { repositoryName: string; stagedDiff: string; files: string[]; language: 'zh-CN' | 'en'; modelRef: string }) => Promise<{ message: string; model: string }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
   loadProjectGitStatus: (projectId: string) => Promise<GitStatusSummary>;
   loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
@@ -55,6 +57,8 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     return transport.request<ExecutedGitOperationResult>(`${projectGitPath(projectId)}/${operation}`, jsonRequest('POST', body));
   };
   return {
+    loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
+    generateGitCommitMessage: (projectId, input) => transport.request(`${projectGitPath(projectId)}/commit-message`, jsonRequest('POST', input)),
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => transport.request<GitStatusSummary>(`${projectGitPath(projectId)}/status`),
     loadProjectGitWorkbench: (projectId) => bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench`),

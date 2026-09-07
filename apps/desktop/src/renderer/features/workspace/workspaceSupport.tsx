@@ -262,6 +262,8 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'loadProjectGitWorkbench'
     | 'loadProjectGitCommit'
     | 'executeProjectGitAction'
+    | 'generateGitCommitMessage'
+    | 'loadGitCommitModels'
     | 'acknowledgeNativeConversationAttention'
     | 'loadTaskGitWorkspaces'
     | 'loadTaskGitWorkspaceIndex'

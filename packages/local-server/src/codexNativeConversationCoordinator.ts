@@ -889,7 +889,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       throw error;
     });
     if (!account || !account.requiresOpenaiAuth || account.signedIn) return;
-    throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
+    throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请在终端执行 CODEX_HOME=$HOME/.Zeus/providers/codex codex login 完成登录，再重试。');
   }
 
   async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model'>): Promise<CodexResponsesRuntime | null> {
