@@ -73,18 +73,16 @@ export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps,
       return (
         <main className="startup-failure-shell" data-theme="system" aria-label={copy.ariaLabel}>
           <section className="startup-failure-content">
-            <span className="startup-failure-mark" aria-hidden="true">
-              Z
-            </span>
+            <span className="startup-failure-mark" aria-hidden="true" />
             <h1>{copy.title}</h1>
             <p className="startup-failure-description">{copy.description}</p>
             <p className="startup-failure-log-hint">{copy.status}</p>
             <div className="startup-failure-actions">
-              <button className="startup-failure-button is-primary" type="button" onClick={() => void window.zeus?.restartAfterStartupFailure?.()}>
-                {copy.restart}
-              </button>
               <button className="startup-failure-button" type="button" onClick={() => void window.zeus?.exitAfterStartupFailure?.()}>
                 {copy.exit}
+              </button>
+              <button className="startup-failure-button is-primary" type="button" onClick={() => void window.zeus?.restartAfterStartupFailure?.()}>
+                {copy.restart}
               </button>
             </div>
           </section>

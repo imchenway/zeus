@@ -8,6 +8,8 @@ import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
 import { primePersistedSessionViewCache } from './session/sessionHotCache.js';
+// 启动失败可能早于工作台模块加载，恢复页样式必须随入口就绪。
+import './styles.css';
 
 /** 启动阶段尚未加载设置时采用中文；设置就绪后沿用用户选择。 */
 let startupLanguage: 'zh-CN' | 'en-US' = 'zh-CN';
@@ -530,6 +532,7 @@ function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<N
   renderStartupFailure(status);
 }
 
+/** 错误说明本身就是详情入口，使用原生折叠保留鼠标和键盘操作。 */
 function renderStartupFailure(error: unknown): void {
   const zh = startupLanguage === 'zh-CN';
   const failure = describeUserFacingError(error, startupLanguage);
@@ -547,32 +550,29 @@ function renderStartupFailure(error: unknown): void {
 
   const mark = document.createElement('span');
   mark.className = 'startup-failure-mark';
-  mark.textContent = 'Z';
   mark.setAttribute('aria-hidden', 'true');
 
   const title = document.createElement('h1');
   title.id = 'startup-failure-title';
   title.textContent = zh ? 'Zeus 无法启动' : 'Zeus could not start';
 
-  const description = document.createElement('p');
+  const details = document.createElement('details');
+  const description = document.createElement('summary');
   description.className = 'startup-failure-description';
   description.textContent = failure.message;
 
   const logHint = document.createElement('p');
   logHint.className = 'startup-failure-log-hint';
-  logHint.textContent = zh ? '重新启动会停止仍在运行的工作。请先根据错误原因处理问题。' : 'Restarting will stop any work that is still running. Address the cause of the error first.';
-  const details = document.createElement('details');
-  const summary = document.createElement('summary');
-  summary.textContent = zh ? '错误详情' : 'Error details';
+  logHint.textContent = zh ? '重启会中断仍在运行的工作。' : 'Restarting will interrupt any work still running.';
   const original = document.createElement('pre');
   original.textContent = failure.details;
   original.style.whiteSpace = 'pre-wrap';
   original.style.overflowWrap = 'anywhere';
-  details.append(summary, original);
+  details.append(description, original);
 
   const actions = document.createElement('div');
   actions.className = 'startup-failure-actions';
-  const restart = startupFailureButton(zh ? '停止工作并重启' : 'Stop work and restart', true);
+  const restart = startupFailureButton(zh ? '重新启动' : 'Restart', true);
   restart.onclick = async () => {
     restart.disabled = true;
     restart.textContent = zh ? '正在重启…' : 'Restarting…';
@@ -581,7 +581,7 @@ function renderStartupFailure(error: unknown): void {
     } catch (restartError) {
       reportApplicationError(restartError, { language: zh ? 'zh-CN' : 'en' });
       restart.disabled = false;
-      restart.textContent = zh ? '停止工作并重启' : 'Stop work and restart';
+      restart.textContent = zh ? '重新启动' : 'Restart';
     }
   };
   const exit = startupFailureButton(zh ? '退出 Zeus' : 'Quit Zeus', false);
@@ -594,8 +594,8 @@ function renderStartupFailure(error: unknown): void {
       exit.disabled = false;
     }
   };
-  actions.append(restart, exit);
-  content.append(mark, title, description, logHint, details, actions);
+  actions.append(exit, restart);
+  content.append(mark, title, details, actions, logHint);
   shell.append(content);
   root.replaceChildren(shell);
 }
