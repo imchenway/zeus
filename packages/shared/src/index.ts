@@ -480,6 +480,7 @@ export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';
 export * from './assistantMessage.js';
 export * from './sourceLanguage.js';
+export * from './thirdPartyTask.js';
 
 /** 禅道对象类型只从链接结构识别；Zeus 不会主动调用禅道接口。 */
 export type ZentaoLinkKind = 'bug' | 'story' | 'task';

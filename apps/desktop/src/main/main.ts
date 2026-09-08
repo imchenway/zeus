@@ -24,7 +24,7 @@ import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
 import { readSessionViewCache, writeSessionViewCache } from './sessionViewCache.js';
 import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
-import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
+import { extractThirdPartyTaskInfo, openThirdPartyTaskLogin } from './thirdPartyTaskExtract.js';
 import {
   createPersistedMainWindowState,
   defaultMainWindowSize,
@@ -2094,11 +2094,19 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
   ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
-  ipcMain.handle('zeus:zentao:parse-link', async (event, request: MainCommandRequest<string>) => {
+  // 登录页只可由受信任务窗口打开，且与读取任务使用同一浏览器会话。
+  ipcMain.handle('zeus:third-party-task:open-login', async (event, url: unknown) => {
+    /** 当前发起登录的 Zeus 窗口。 */
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('禅道任务解析来自不受信任窗口。');
-    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_zentao', async (url, command) => {
-      const result = typeof url === 'string' && url.trim() ? await extractZentaoTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('第三方登录来自不受信任窗口。');
+    if (typeof url !== 'string' || !browserHost?.getSettings().enabled) return false;
+    return openThirdPartyTaskLogin(requestingWindow, url);
+  });
+  ipcMain.handle('zeus:third-party-task:parse-link', async (event, request: MainCommandRequest<string>) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('第三方任务解析来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_third_party', async (url, command) => {
+      const result = typeof url === 'string' && url.trim() ? await extractThirdPartyTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
       // 无附件的成功解析也要生成可重放回执；附件路径已在首次写入前标记。
       await command.markWriteStarted();
       return result;

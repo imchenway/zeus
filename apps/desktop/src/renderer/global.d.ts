@@ -12,7 +12,7 @@ import type {
   ProjectSourceSearchResult,
   SaveProjectSourceFileInput,
   TrashProjectSourceEntryInput,
-  ZentaoTaskExtract,
+  ThirdPartyTaskExtract,
   ZeusBrowserApprovalDecision,
   ZeusBrowserCommand,
   ZeusBrowserConversationSnapshot,
@@ -206,7 +206,10 @@ declare global {
       ) => Promise<TaskInputResourceBridge[]>;
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openTaskAttachment: (path: string) => Promise<{ opened: boolean; error?: string }>;
-      parseZentaoTaskLink: (url: string) => Promise<ZentaoTaskExtract>;
+      /** 读取第三方任务详情，返回可编辑草稿。 */
+      parseThirdPartyTaskLink: (url: string) => Promise<ThirdPartyTaskExtract>;
+      /** 在共享登录状态的 Zeus 窗口打开来源页面。 */
+      openThirdPartyTaskLogin: (url: string) => Promise<boolean>;
       exportSettingsSnapshotToFile: (snapshot: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       importSettingsSnapshotFromFile: () => Promise<{
         imported: boolean;

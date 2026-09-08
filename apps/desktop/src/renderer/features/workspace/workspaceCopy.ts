@@ -260,19 +260,30 @@ export const languageCopy = {
       taskCreateDialogTitle: '创建任务',
       taskCreateTitleLabel: '任务标题',
       taskCreateTitlePlaceholder: '例如：修复任务表格列可见性',
-      taskCreateZentaoLinkLabel: '禅道链接',
-      taskCreateZentaoLinkPlaceholder: '粘贴禅道缺陷、需求或任务详情页链接',
-      taskCreateZentaoLinkHelp: '粘贴禅道链接以填入任务内容。受限页面需要先在设置中登录禅道。',
-      taskCreateZentaoParse: '解析并填入',
-      taskCreateZentaoParsing: '解析中…',
-      taskCreateZentaoApplied: (title: string, attachmentCount = 0, attachmentFailedCount = 0) =>
-        `已从禅道解析并填入：${title}${attachmentCount > 0 ? `；已带入 ${attachmentCount} 个附件` : attachmentFailedCount === 0 ? '；未发现可带入的附件' : ''}${attachmentFailedCount > 0 ? `；另有 ${attachmentFailedCount} 个附件下载失败` : ''}`,
-      taskCreateZentaoLoginRequired: '需要登录禅道才能读取内容。请在设置中配置禅道账号，或在 Zeus 内置浏览器中登录后重试；也可以手动填写任务信息。',
-      taskCreateZentaoCredentialMissing: '该禅道实例已配置但还没有保存密码，无法自动解析。请到设置中补全密码，或在内置浏览器登录后重试。',
-      taskCreateZentaoAuthFailed: '禅道账号密码验证失败，无法自动解析。请到设置中检查账号密码，或手动填写任务信息。',
-      taskCreateZentaoUnsupported: '不是可识别的禅道链接，请粘贴缺陷、需求或任务的详情页地址。',
-      taskCreateZentaoFailed: '解析失败：无法访问该页面，请检查网络或链接后重试。',
-      taskCreateZentaoOpenLink: '在浏览器中打开',
+      taskCreateThirdPartyLinkLabel: '从第三方创建',
+      taskCreateThirdPartyLinkPlaceholder: '粘贴 GitHub Issue、Jira 或禅道详情链接',
+      taskCreateThirdPartyLinkHelp: '读取标题和正文，确认后创建。GitHub、Jira 附件保留为链接；受限内容可在 Zeus 登录后重试。',
+      taskCreateThirdPartyParse: '解析并填入',
+      taskCreateThirdPartyParsing: '解析中…',
+      taskCreateThirdPartyApplied: (title: string, provider: string, attachmentCount = 0, attachmentFailedCount = 0) =>
+        `已从 ${provider === 'github' ? 'GitHub Issue' : provider === 'jira' ? 'Jira' : '禅道'} 填入：${title}${attachmentCount > 0 ? `；已带入 ${attachmentCount} 个附件` : provider !== 'zentao' ? '；附件保留为原文链接' : attachmentFailedCount === 0 ? '；未发现可带入的附件' : ''}${attachmentFailedCount > 0 ? `；另有 ${attachmentFailedCount} 个附件下载失败` : ''}`,
+      taskCreateThirdPartyLoginRequired: '需要登录或当前账号没有读取权限。请在 Zeus 中登录有权限的账号，回到这里重新解析。禅道也可在设置中配置账号。',
+      taskCreateThirdPartyCredentialMissing: '该禅道实例已配置但还没有保存密码，无法自动解析。请到设置中补全密码，或在内置浏览器登录后重试。',
+      taskCreateThirdPartyAuthFailed: '禅道账号密码验证失败，无法自动解析。请到设置中检查账号密码，或手动填写任务信息。',
+      taskCreateThirdPartyUnsupported: '请粘贴 GitHub Issue、Jira 工作项或禅道详情链接；不支持列表页和 Pull Request。',
+      /** 第三方读取失败按可行动原因解释，不把错误页面正文回显给用户。 */
+      taskCreateThirdPartyFailed: (reason?: string) =>
+        reason === 'not_found_or_no_access'
+          ? '工作项不存在或当前账号无权访问。请核对链接，或在 Zeus 登录后重试。'
+          : reason === 'rate_limited'
+            ? '第三方暂时限制了读取频率，请稍后重试。'
+            : reason === 'invalid_response'
+              ? '未能读取完整的工作项内容，请打开来源核对，或手动填写。'
+              : reason === 'timeout'
+                ? '读取超时，请检查网络后重试。'
+                : '读取失败，请检查网络与链接后重试。',
+      taskCreateThirdPartyOpenFailed: '无法打开登录窗口，请确认已在设置中启用内置浏览器后重试。',
+      taskCreateThirdPartyOpenLink: '在 Zeus 中打开并登录',
       taskCreateTypeLabel: '任务类型',
       taskCreateTypePlaceholder: '请选择类型',
       taskCreateTypeOptions: [
@@ -1732,19 +1743,30 @@ export const languageCopy = {
       taskCreateDialogTitle: 'Create task',
       taskCreateTitleLabel: 'Task title',
       taskCreateTitlePlaceholder: 'For example: Fix task table column visibility',
-      taskCreateZentaoLinkLabel: 'ZenTao link',
-      taskCreateZentaoLinkPlaceholder: 'Paste a ZenTao bug, story, or task detail link',
-      taskCreateZentaoLinkHelp: 'Paste a Zentao link to fill in the task. Sign in to Zentao in Settings to read restricted pages.',
-      taskCreateZentaoParse: 'Parse and fill',
-      taskCreateZentaoParsing: 'Parsing…',
-      taskCreateZentaoApplied: (title: string, attachmentCount = 0, attachmentFailedCount = 0) =>
-        `Filled from ZenTao: ${title}${attachmentCount > 0 ? `; imported ${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : attachmentFailedCount === 0 ? '; no importable attachments found' : ''}${attachmentFailedCount > 0 ? `; ${attachmentFailedCount} attachment${attachmentFailedCount === 1 ? '' : 's'} failed to download` : ''}`,
-      taskCreateZentaoLoginRequired: 'Sign in to ZenTao to read the content. Configure a ZenTao account in Settings, or sign in through the Zeus built-in browser; you can also fill the task manually.',
-      taskCreateZentaoCredentialMissing: 'This ZenTao instance is configured but has no saved password, so automatic parsing is unavailable. Add the password in Settings, or sign in through the built-in browser.',
-      taskCreateZentaoAuthFailed: 'ZenTao account verification failed, so automatic parsing is unavailable. Check the account and password in Settings, or fill the task manually.',
-      taskCreateZentaoUnsupported: 'This is not a recognizable ZenTao link. Paste a bug, story, or task detail page URL.',
-      taskCreateZentaoFailed: 'Parsing failed: the page could not be reached. Check your network or the link and try again.',
-      taskCreateZentaoOpenLink: 'Open in browser',
+      taskCreateThirdPartyLinkLabel: 'Create from a third party',
+      taskCreateThirdPartyLinkPlaceholder: 'Paste a GitHub Issue, Jira, or ZenTao detail link',
+      taskCreateThirdPartyLinkHelp: 'Read the title and body, then review and create. GitHub and Jira attachments remain links. Sign in through Zeus for restricted content.',
+      taskCreateThirdPartyParse: 'Parse and fill',
+      taskCreateThirdPartyParsing: 'Parsing…',
+      taskCreateThirdPartyApplied: (title: string, provider: string, attachmentCount = 0, attachmentFailedCount = 0) =>
+        `Filled from ${provider === 'github' ? 'GitHub Issue' : provider === 'jira' ? 'Jira' : 'ZenTao'}: ${title}${attachmentCount > 0 ? `; imported ${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : provider !== 'zentao' ? '; attachments remain source links' : attachmentFailedCount === 0 ? '; no importable attachments found' : ''}${attachmentFailedCount > 0 ? `; ${attachmentFailedCount} attachment${attachmentFailedCount === 1 ? '' : 's'} failed to download` : ''}`,
+      taskCreateThirdPartyLoginRequired: 'Sign in with an account that can access this item through Zeus, then return and retry. ZenTao credentials can also be configured in Settings.',
+      taskCreateThirdPartyCredentialMissing: 'This ZenTao instance is configured but has no saved password, so automatic parsing is unavailable. Add the password in Settings, or sign in through the built-in browser.',
+      taskCreateThirdPartyAuthFailed: 'ZenTao account verification failed, so automatic parsing is unavailable. Check the account and password in Settings, or fill the task manually.',
+      taskCreateThirdPartyUnsupported: 'Paste a GitHub Issue, Jira work item, or ZenTao detail link. Lists and pull requests are not supported.',
+      /** 英文界面与中文界面使用一致的错误分类。 */
+      taskCreateThirdPartyFailed: (reason?: string) =>
+        reason === 'not_found_or_no_access'
+          ? 'The item does not exist or your account cannot access it. Check the link or sign in through Zeus and retry.'
+          : reason === 'rate_limited'
+            ? 'The source is rate limiting requests. Try again later.'
+            : reason === 'invalid_response'
+              ? 'The full work item could not be read. Check the source or enter the task manually.'
+              : reason === 'timeout'
+                ? 'The request timed out. Check your connection and retry.'
+                : 'Could not read the item. Check your connection and link, then retry.',
+      taskCreateThirdPartyOpenFailed: 'Could not open the sign-in window. Check that the built-in browser is enabled in Settings and retry.',
+      taskCreateThirdPartyOpenLink: 'Open and sign in through Zeus',
       taskCreateTypeLabel: 'Task type',
       taskCreateTypePlaceholder: 'Choose a type',
       taskCreateTypeOptions: [
