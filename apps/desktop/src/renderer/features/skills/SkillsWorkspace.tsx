@@ -1,12 +1,11 @@
+import { FormDialog } from '../../ui/FormDialog.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
-import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { Button } from '../../ui/Button.js';
-import { ModalPortal } from '../../ui/ModalPortal.js';
+import { ExtensionSourceFields, emptyExtensionSource } from './ExtensionSourceFields.js';
 import type { SkillCatalog, SkillDescriptor, SkillInstallSource } from '../codex/codexContracts.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { SkillSelector, skillCatalogChangedEvent } from './SkillSelector.js';
@@ -14,6 +13,7 @@ import { readSkillWorkflowPreferences, skillWorkflowDefinitions, writeSkillWorkf
 
 type SkillsClient = Pick<NativeConversationAppClient, 'loadSkills' | 'installSkill' | 'removeSkill'>;
 
+/** 独立与内嵌技能页共用目录、安装弹窗和工作流默认设置。 */
 export function SkillsWorkspace(props: { client: SkillsClient | null; language: 'zh-CN' | 'en-US'; onChooseDirectory?: () => Promise<string | null>; embedded?: boolean }) {
   const zh = props.language === 'zh-CN';
   const [catalog, setCatalog] = useState<SkillCatalog | null>(null);
@@ -21,11 +21,10 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [installOpen, setInstallOpen] = useState(false);
-  const [installKind, setInstallKind] = useState<'local' | 'git'>('local');
-  const [localPath, setLocalPath] = useState('');
-  const [repositoryUrl, setRepositoryUrl] = useState('');
-  const [gitRef, setGitRef] = useState('');
-  const [subdirectory, setSubdirectory] = useState('');
+  /** 安装字段与插件安装共用，切换来源保留各自输入。 */
+  const [source, setSource] = useState(emptyExtensionSource);
+  /** 确认移除前只保存所选技能，不删除任何文件。 */
+  const [pendingRemoval, setPendingRemoval] = useState<SkillDescriptor | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -73,27 +72,26 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
     setInstallError(null);
   };
 
+  /** 安装成功后重新读取目录，失败时保留表单供修改。 */
   const submitInstall = async (event: FormEvent) => {
     event.preventDefault();
     if (!props.client || installing) return;
-    const source: SkillInstallSource =
-      installKind === 'local'
-        ? { kind: 'local', path: localPath.trim() }
+    /** 共用来源草稿转换为技能安装契约。 */
+    const installSource: SkillInstallSource =
+      source.kind === 'local'
+        ? { kind: 'local', path: source.path.trim() }
         : {
             kind: 'git',
-            repositoryUrl: repositoryUrl.trim(),
-            ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
-            ...(subdirectory.trim() ? { subdirectory: subdirectory.trim() } : {}),
+            repositoryUrl: source.repositoryUrl.trim(),
+            ...(source.ref.trim() ? { ref: source.ref.trim() } : {}),
+            ...(source.subdirectory.trim() ? { subdirectory: source.subdirectory.trim() } : {}),
           };
     setInstalling(true);
     setInstallError(null);
     try {
-      await props.client.installSkill(source);
+      await props.client.installSkill(installSource);
       setInstallOpen(false);
-      setLocalPath('');
-      setRepositoryUrl('');
-      setGitRef('');
-      setSubdirectory('');
+      setSource(emptyExtensionSource());
       await load(true);
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
     } catch (reason) {
@@ -103,14 +101,14 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
     }
   };
 
+  /** 用户确认后移除技能，并清理引用它的默认设置。 */
   const removeSkill = async (skill: SkillDescriptor) => {
     if (!props.client || removingId) return;
-    const confirmed = window.confirm(zh ? `移除 Skill“${skill.name}”？此操作会删除 Zeus 用户 Skill 目录中的对应文件。` : `Remove “${skill.name}”? This deletes its files from the Zeus user skills directory.`);
-    if (!confirmed) return;
     setRemovingId(skill.id);
     setError(null);
     try {
       await props.client.removeSkill(skill.id);
+      setPendingRemoval(null);
       for (const workflow of skillWorkflowDefinitions) {
         if (preferences[workflow.id] === skill.id) writeSkillWorkflowDefault(workflow.id, '');
       }
@@ -130,13 +128,12 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
   };
 
   return (
-    <section className="workspace-view skills-workspace" aria-label={zh ? 'Skill 管理' : 'Skill management'}>
+    <section className="workspace-view skills-workspace" aria-label={zh ? '技能管理' : 'Skill management'}>
       {!props.embedded ? (
         <header className="skills-workspace-header">
-          <span className="skills-workspace-kicker">ZEUS SKILLS</span>
           <div className="skills-workspace-title-row">
             <div>
-              <h1>{zh ? 'Skill 管理' : 'Skill management'}</h1>
+              <h1>{zh ? '技能管理' : 'Skill management'}</h1>
               <p>{zh ? '安装一次，在推送任务、代码审查和冲突处理时直接选择。' : 'Install once, then choose a skill in task push, code review, or conflict resolution.'}</p>
             </div>
             <span className="skills-workspace-actions">
@@ -146,11 +143,27 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
               </Button>
               <Button variant="primary" size="regular" onClick={() => setInstallOpen(true)} disabled={!props.client}>
                 <Plus aria-hidden="true" weight="bold" />
-                {zh ? '安装 Skill' : 'Install skill'}
+                {zh ? '安装技能' : 'Install skill'}
               </Button>
             </span>
           </div>
         </header>
+      ) : null}
+
+      {props.embedded ? (
+        <div className="skills-embedded-toolbar">
+          <span>{zh ? '选择技能供任务、审查和冲突处理使用。' : 'Choose skills for tasks, reviews, and conflict resolution.'}</span>
+          <div className="skills-workspace-actions">
+            <Button busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
+              <ArrowClockwise aria-hidden="true" />
+              {zh ? '刷新技能' : 'Refresh skills'}
+            </Button>
+            <Button variant="primary" onClick={() => setInstallOpen(true)} disabled={!props.client || installing}>
+              <Plus aria-hidden="true" />
+              {zh ? '安装技能' : 'Install skill'}
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       <section className="skills-workflow-defaults" aria-labelledby="skills-workflow-defaults-title">
@@ -185,7 +198,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
         <div className="skills-section-heading skills-catalog-heading">
           <div>
             <h2 id="skills-catalog-title">{zh ? '可用技能（Skill）' : 'Available skills'}</h2>
-            <p>{catalog ? `${catalog.skills.length} ${zh ? '项' : 'items'} · ${catalog.cwd}` : zh ? '读取技能目录' : 'Read the skills folder'}</p>
+            <p>{catalog ? `${catalog.skills.length} ${zh ? '项技能' : 'skills'}` : zh ? '读取技能目录' : 'Read the skills folder'}</p>
           </div>
           <input type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={zh ? '搜索名称、说明或路径' : 'Search name, description, or path'} aria-label={zh ? '搜索 Skill' : 'Search skills'} />
         </div>
@@ -226,7 +239,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
                       <small title={skill.path}>{skill.path}</small>
                     </span>
                     {skill.removable ? (
-                      <Button variant="danger" size="compact" busy={removingId === skill.id} disabled={Boolean(removingId)} onClick={() => void removeSkill(skill)}>
+                      <Button variant="danger" size="compact" busy={removingId === skill.id} disabled={Boolean(removingId)} onClick={() => setPendingRemoval(skill)}>
                         <Trash aria-hidden="true" weight="regular" />
                         {zh ? '移除' : 'Remove'}
                       </Button>
@@ -242,87 +255,55 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       </section>
 
       {installOpen ? (
-        <ModalPortal rootClassName="skill-install-portal-root" backdropClassName="skill-install-backdrop" dismissDisabled={installing} onDismiss={closeInstall}>
-          <form className="skill-install-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="skill-install-title" onSubmit={(event) => void submitInstall(event)}>
-            <header>
-              <div>
-                <span>ZEUS SKILL</span>
-                <h2 id="skill-install-title">{zh ? '安装自定义 Skill' : 'Install a custom skill'}</h2>
-              </div>
-              <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={closeInstall} disabled={installing}>
-                <X aria-hidden="true" />
-              </button>
-            </header>
-            <div className="skill-install-source-tabs" role="tablist" aria-label={zh ? '安装来源' : 'Install source'}>
-              <button type="button" role="tab" aria-selected={installKind === 'local'} className={installKind === 'local' ? 'is-active' : ''} onClick={() => setInstallKind('local')}>
-                {zh ? '本地目录' : 'Local directory'}
-              </button>
-              <button type="button" role="tab" aria-selected={installKind === 'git'} className={installKind === 'git' ? 'is-active' : ''} onClick={() => setInstallKind('git')}>
-                {zh ? 'Git 仓库' : 'Git repository'}
-              </button>
-            </div>
-            <div className="skill-install-fields">
-              {installKind === 'local' ? (
-                <label>
-                  <span>{zh ? 'Skill 目录或 SKILL.md' : 'Skill directory or SKILL.md'}</span>
-                  <span className="skill-install-path-control">
-                    <input value={localPath} onChange={(event) => setLocalPath(event.currentTarget.value)} placeholder="/absolute/path/to/skill" autoFocus />
-                    {props.onChooseDirectory ? (
-                      <Button
-                        variant="secondary"
-                        size="regular"
-                        onClick={() =>
-                          void props.onChooseDirectory!().then((path) => {
-                            if (path) setLocalPath(path);
-                          })
-                        }
-                        disabled={installing}
-                      >
-                        <FolderOpen aria-hidden="true" />
-                        {zh ? '选择' : 'Choose'}
-                      </Button>
-                    ) : null}
-                  </span>
-                </label>
-              ) : (
-                <>
-                  <label>
-                    <span>{zh ? '仓库地址' : 'Repository URL'}</span>
-                    <input value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.currentTarget.value)} placeholder="https://github.com/org/repo.git" autoFocus />
-                  </label>
-                  <div className="skill-install-grid">
-                    <label>
-                      <span>{zh ? '分支、标签或 ref（可选）' : 'Branch, tag, or ref (optional)'}</span>
-                      <input value={gitRef} onChange={(event) => setGitRef(event.currentTarget.value)} placeholder="main" />
-                    </label>
-                    <label>
-                      <span>{zh ? 'Skill 子目录（可选）' : 'Skill subdirectory (optional)'}</span>
-                      <input value={subdirectory} onChange={(event) => setSubdirectory(event.currentTarget.value)} placeholder="skills/my-skill" />
-                    </label>
-                  </div>
-                </>
-              )}
-              <p className="skill-install-security-note">
-                {zh
-                  ? '安装会复制文件并验证 SKILL.md，不会执行 Skill 脚本。真正选择使用时，Skill 指令和脚本将按当前工作流权限运行；请只安装你信任的来源。'
-                  : 'Installation copies files and validates SKILL.md without running scripts. Once selected, its instructions and scripts run with the workflow permissions, so install only trusted sources.'}
-              </p>
-              {installError ? (
-                <p className="skills-inline-error" role="alert">
-                  {installError}
-                </p>
-              ) : null}
-            </div>
-            <footer>
-              <Button variant="secondary" size="regular" onClick={closeInstall} disabled={installing}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button type="submit" variant="primary" size="regular" busy={installing} disabled={installing || (installKind === 'local' ? !localPath.trim() : !repositoryUrl.trim())}>
-                {installing ? (zh ? '正在安装…' : 'Installing…') : zh ? '安装' : 'Install'}
-              </Button>
-            </footer>
-          </form>
-        </ModalPortal>
+        <FormDialog
+          title={zh ? '安装技能' : 'Install skill'}
+          zh={zh}
+          busy={installing}
+          submitLabel={zh ? '安装' : 'Install'}
+          submitDisabled={source.kind === 'local' ? !source.path.trim() : !source.repositoryUrl.trim()}
+          onClose={closeInstall}
+          onSubmit={(event) => void submitInstall(event)}
+        >
+          <ExtensionSourceFields
+            source={source}
+            onSource={setSource}
+            zh={zh}
+            busy={installing}
+            localLabel={zh ? '技能目录或 SKILL.md' : 'Skill directory or SKILL.md'}
+            onChoosePath={
+              props.onChooseDirectory
+                ? async () => {
+                    /** 使用系统目录选择器返回的真实路径。 */
+                    const path = await props.onChooseDirectory!();
+                    if (path) setSource((current) => ({ ...current, path }));
+                  }
+                : undefined
+            }
+          />
+          <p className="zeus-form-description">
+            {zh ? '安装只复制和校验文件。使用时，指令与脚本会按工作流权限运行，请选择可信来源。' : 'Installation only copies and validates files. When used, instructions and scripts run with workflow permissions. Choose a trusted source.'}
+          </p>
+          {installError ? (
+            <p className="skills-inline-error" role="alert">
+              {installError}
+            </p>
+          ) : null}
+        </FormDialog>
+      ) : null}
+      {pendingRemoval ? (
+        <FormDialog
+          title={zh ? `移除“${pendingRemoval.name}”？` : `Remove “${pendingRemoval.name}”?`}
+          description={zh ? '将删除 Zeus 用户技能目录中的对应文件，并清除引用此技能的工作流默认设置。' : 'This deletes its files from the Zeus user skills directory and clears workflow defaults that reference it.'}
+          zh={zh}
+          busy={Boolean(removingId)}
+          danger
+          submitLabel={zh ? '移除技能' : 'Remove skill'}
+          onClose={() => setPendingRemoval(null)}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void removeSkill(pendingRemoval);
+          }}
+        />
       ) : null}
     </section>
   );
