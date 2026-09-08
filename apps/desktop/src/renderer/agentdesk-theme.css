@@ -251,20 +251,9 @@
   color: var(--agentdesk-accent-strong);
 }
 
-/* 控件风格沿用 AgentDesk：白色/深色玻璃、细边界、蓝色主操作。 */
-.macos-ai-app.zeus-shell :where(button, a, input, select, textarea) {
+/* 表单输入沿用主题颜色；按钮通过既有 Button 原语和主题变量管理外观，链接与内容控件保留自身样式。 */
+.macos-ai-app.zeus-shell :where(input, select, textarea) {
   border-color: var(--agentdesk-border);
-  color: var(--agentdesk-text);
-}
-
-.macos-ai-app.zeus-shell :where(button, a) {
-  background: var(--agentdesk-control);
-  box-shadow: var(--agentdesk-shadow-soft);
-}
-
-.macos-ai-app.zeus-shell :where(button, a):is(:hover, :focus-visible):not(:disabled) {
-  background: rgb(40 102 247 / 0.08);
-  border-color: rgb(40 102 247 / 0.38);
   color: var(--agentdesk-text);
 }
 
@@ -296,8 +285,8 @@
   color: var(--agentdesk-text-tertiary);
 }
 
-.macos-ai-app.zeus-shell :where(input, select, textarea):focus-visible,
-.macos-ai-app.zeus-shell :where(button, a):focus-visible {
+/* 输入框使用主题焦点环；按钮及内容控件的焦点反馈由各自组件负责。 */
+.macos-ai-app.zeus-shell :where(input, select, textarea):focus-visible {
   border-color: rgb(40 102 247 / 0.52);
   box-shadow:
     var(--agentdesk-shadow-soft),
@@ -1017,31 +1006,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell :is(.settings-section-nav, .project-settings-section-tabs, .project-git-tabs, .digital-employee-section-tabs, .automations-tabs) {
   gap: var(--agentdesk-space-1);
   padding: var(--agentdesk-space-1);
-}
-
-/* 默认按钮是白色玻璃；IM 设置页使用自己的平面控件规则，不再被通用材质覆盖。 */
-.macos-ai-app.zeus-shell
-  :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .menu-bar-usage-root)
-  button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not(
-    .project-workspace-mode-toolbar button
-  ):not([role='tab']):not([role='menuitem']):not([aria-pressed='true']):not(.is-active):not(.primary):not(.danger):not(:where(.im-robot-settings button)) {
-  min-block-size: 32px;
-  padding-inline: 12px;
-  border: 1px solid rgb(255 255 255 / 72%);
-  border-radius: var(--agentdesk-radius-control);
-  background: rgb(255 255 255 / 58%);
-  box-shadow: 0 6px 14px -12px rgb(29 72 113 / 48%);
-  color: var(--agentdesk-text-secondary);
-}
-
-.macos-ai-app.zeus-shell
-  :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar)
-  button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not([role='tab']):not(
-    [role='menuitem']
-  ):not([aria-pressed='true']):not(.is-active):hover:not(:disabled):not(:where(.im-robot-settings button)) {
-  background: rgb(255 255 255 / 78%);
-  border-color: rgb(40 102 247 / 36%);
-  color: var(--agentdesk-text);
 }
 
 .macos-ai-app.zeus-shell :is(.project-quick-action, .project-settings-button, .project-more-button, .project-add-button, .project-conversation-organization-button, .project-disclosure-button, [role='tab'], [role='menuitem']) {
