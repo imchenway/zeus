@@ -1498,12 +1498,14 @@ function liveProgressPayload(previous: Record<string, unknown> | undefined, inco
   return next;
 }
 
+/** 同一用户消息的实时与快照交接保留本地已确认的展示关联。 */
 function mergeStableUserMessagePresentation(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {
   const next = incoming ?? {};
   if (!previous) return next;
   return {
     ...next,
     ...(next.submissionId === undefined && previous.submissionId !== undefined ? { submissionId: previous.submissionId } : {}),
+    ...(next.questionAnswer === undefined && previous.questionAnswer !== undefined ? { questionAnswer: previous.questionAnswer } : {}),
     ...(next.taskPushLayout === undefined && previous.taskPushLayout !== undefined ? { taskPushLayout: previous.taskPushLayout } : {}),
     ...(next.attachments === undefined && previous.attachments !== undefined ? { attachments: previous.attachments } : {}),
   };

@@ -615,6 +615,8 @@ export interface NativeConversationActiveItemV2 {
   protocolFamily?: string | null;
   /** 该活动条目所属的稳定展示阶段。 */
   stageId?: string | null;
+  /** 活动问题从提交记录恢复答复，不要求同屏载入回答消息。 */
+  questionResponse?: AsyncQuestionResponse;
   text: NativeBoundedContentProjection;
   payload: NativeBoundedContentProjection;
   startedAt: string | null;

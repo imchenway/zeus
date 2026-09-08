@@ -820,6 +820,12 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['尚未确认上次操作是否已执行，Zeus 已暂停重复执行以避免重复处理。', 'Zeus has not confirmed whether the previous action ran and has paused repeated attempts to avoid duplicate work.', 'check'],
   ],
   [
+    ['ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT'],
+    ['这次操作与已有提交记录冲突，Zeus 已阻止重复执行。请刷新并查看原提交状态。', 'This action conflicts with an existing submission. Zeus blocked duplicate execution. Refresh and check the original submission.', 'check'],
+  ],
+  [['ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED'], ['该问题已有回答，本次未重复发送。请通过普通消息补充。', 'This question already has an answer. Nothing was sent again. Use a regular message to add more information.']],
+  [['ZEUS_ASYNC_QUESTION_TURN_ENDED'], ['原轮次已结束，回答未发送，草稿已保留。请明确选择作为新消息发送。', 'The original turn has ended. Your answer was not sent and the draft is preserved. Choose to send it as a new message.']],
+  [
     ['ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED'],
     ['尚未确认 AI 上次的处理是否已经结束，暂时不能继续。', 'Zeus has not confirmed that the AI’s previous work has ended, so it cannot continue yet.', 'check'],
   ],

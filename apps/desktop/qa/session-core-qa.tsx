@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { buildTaskPushLayout, describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
+import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
 import { MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
-import type { NativeConversationAttachment, NativeSessionItemBuffer } from '../src/renderer/session/sessionTypes.js';
+import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
+import { AsyncQuestionMessage, AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
+import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
+import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
 
 interface QaScene {
   query: string;
@@ -18,6 +21,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
   { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
   { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
   {
@@ -75,6 +79,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'questions') return <QuestionQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
   if (props.scene.query === 'copy') return <CopyErrorQa />;
   const items = props.scene.activities.map((_, index) => activity(props.scene, index));
@@ -103,6 +108,107 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 复用真实询问组件的手动验收入口，不连接或冒充真实模型。 */
+function QuestionQa() {
+  /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
+  const scenario = new URLSearchParams(window.location.search).get('case') ?? 'single';
+  /** 独立问题身份避免各场景草稿串用。 */
+  const identity = `qa-question-${scenario}`;
+  /** 答复送达通过按钮推进，以便观察接收和送达的区别。 */
+  const [delivery, setDelivery] = useState(scenario === 'delivered' ? 'resolved' : '');
+  /** 已接收的表单立即收起，可手动重新挂载检查草稿。 */
+  const [open, setOpen] = useState(true);
+  /** 次数与正文是浏览器交互检查的可见证据。 */
+  const [calls, setCalls] = useState(0);
+  /** 保存当前已接收的回答。 */
+  const [answers, setAnswers] = useState<Record<string, { answers: string[] }>>({ question_1: { answers: ['手动调整后，关闭再打开同一个任务的代码交付窗口'] } });
+  /** 与截图一致的长标题和选项，也覆盖只有自由输入的问题。 */
+  const questions = [
+    {
+      title: '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
+      ...(scenario === 'freeform' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
+    },
+    ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
+  ];
+  /** 活动问题携带答复记录，状态中刻意不放用户回答气泡。 */
+  const item: NativeSessionItemBuffer = {
+    key: identity,
+    conversationId: 'qa-questions',
+    threadId: 'qa-thread',
+    turnId: 'qa-turn',
+    itemId: identity,
+    providerItemId: identity,
+    type: 'agentMessage',
+    status: 'completed',
+    phase: 'prework',
+    text: questions.map((question) => question.title).join('\n'),
+    resources: [],
+    payload: { delivery: 'async', questions, ...(delivery ? { questionResponse: { status: delivery, answer: { providerItemId: identity, providerTurnId: 'qa-turn', answers } } } : {}) },
+  };
+  /** 只建立组件需要的会话状态，其余沿用生产初始值。 */
+  const state: NativeSessionState = {
+    ...createInitialSessionState(),
+    conversationId: item.conversationId,
+    activeTurnId: item.turnId,
+    items: { [identity]: item },
+    terminalTurnIds: scenario === 'closed' ? { [item.turnId]: 'completed' } : {},
+  };
+
+  /** 模拟有延迟的接收；失败场景必须保留真实表单中的选择和输入。 */
+  async function accept(_item: NativeSessionItemBuffer, nextAnswers: Record<string, { answers: string[] }>): Promise<void> {
+    setCalls((count) => count + 1);
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    if (scenario === 'failed') throw Object.assign(new Error('验收用提交失败'), { code: 'ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT' });
+    setAnswers(nextAnswers);
+    setDelivery('dispatching');
+  }
+
+  return (
+    <main className="macos-ai-app zeus-shell qa-page">
+      <style>{'.qa-page { display: block !important; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
+      <h1>PLAN 与异步询问共用表单验收</h1>
+      <nav aria-label="询问场景">
+        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered'].map((name) => (
+          <a key={name} href={`?questions&case=${name}`} style={{ marginRight: 16 }}>
+            {name}
+          </a>
+        ))}
+      </nav>
+      <p role="status">
+        提交次数：{calls}；送达状态：{delivery || '未提交'}
+      </p>
+      <button type="button" onClick={() => setOpen((value) => !value)}>
+        切换表单挂载
+      </button>
+      <button type="button" disabled={!delivery} onClick={() => setDelivery('resolved')}>
+        确认送达
+      </button>
+      <section className="workspace-detail-pane session-codex-parity-v1" style={{ maxWidth: 900, margin: '24px auto' }}>
+        <AsyncQuestionMessage item={item} state={state} language="zh-CN" onOpen={() => setOpen(true)} />
+        {open && !delivery ? (
+          <div className="session-interaction-dock">
+            {scenario === 'plan' || scenario === 'multiple' ? (
+              <RequestUserInputPanel
+                request={{ id: identity, expiresAt: null }}
+                questions={normalizeRequestQuestions({ payload: { questions: asyncMessageQuestions(item.payload).map((question) => ({ ...question, multiple: scenario === 'multiple' })) } })}
+                language="zh-CN"
+                autoFocus
+                onRespond={async (_id, response) => {
+                  await accept(item, response.answers as typeof answers);
+                  setOpen(false);
+                }}
+              />
+            ) : (
+              <AsyncQuestionPanel item={item} state={state} language="zh-CN" onAnswer={accept} onDismiss={() => setOpen(false)} />
+            )}
+          </div>
+        ) : null}
+      </section>
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }
@@ -287,7 +393,7 @@ function CopyErrorQa() {
               key={selected.id}
               item={item}
               submissionId="copy-submission"
-              language={language}
+              language={zh ? 'zh-CN' : 'en-US'}
               onRecoverQueue={check}
               onOpenAiSettings={(section) => setAction(section === 'runtime' ? '导航：设置 → AI 连接' : '导航：设置 → 模型供应商')}
               onReconnectCodex={() => setAction('请求连接 Codex；未重发消息')}

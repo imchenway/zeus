@@ -218,7 +218,7 @@ export function AsyncQuestionPanel(props: {
       autoFocus
       busy={status.pending}
       answerAttachmentsSupported={false}
-      confirmSelection
+      confirmSelection={closed}
       retainDraft
       submitLabel={closed ? (zh ? '作为新消息发送' : 'Send as new message') : zh ? '提交回答' : 'Submit answer'}
       onDismiss={props.onDismiss}

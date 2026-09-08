@@ -199,7 +199,6 @@
     .browser-toolbar,
     .settings-action-rail,
     .session-selection-toolbar,
-    .session-interaction-dock,
     .session-switch-target-dock,
     .zeus-action-rail,
     .zeus-mode-rail,
@@ -547,7 +546,6 @@
     .browser-toolbar,
     .settings-action-rail,
     .session-selection-toolbar,
-    .session-interaction-dock,
     .session-switch-target-dock,
     .zeus-action-rail,
     .zeus-mode-rail,
@@ -1008,8 +1006,7 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--agentdesk-space-2);
 }
 
-.macos-ai-app.zeus-shell
-  :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .settings-action-rail, .session-selection-toolbar, .session-interaction-dock, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
+.macos-ai-app.zeus-shell :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .settings-action-rail, .session-selection-toolbar, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
   gap: var(--agentdesk-space-2);
   padding-inline: var(--agentdesk-space-3);
 }
@@ -1019,12 +1016,12 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--agentdesk-space-1);
 }
 
-/* 默认按钮是白色玻璃；IM 设置页使用自己的平面控件规则，不再被通用材质覆盖。 */
+/* 默认按钮是白色玻璃；IM 设置页和询问表单由各自样式管理，避免覆盖选择、焦点和操作尺寸。 */
 .macos-ai-app.zeus-shell
   :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .menu-bar-usage-root)
   button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not(
     .project-workspace-mode-toolbar button
-  ):not([role='tab']):not([role='menuitem']):not([aria-pressed='true']):not(.is-active):not(.primary):not(.danger):not(:where(.im-robot-settings button)) {
+  ):not([role='tab']):not([role='menuitem']):not([aria-pressed='true']):not(.is-active):not(.primary):not(.danger):not(:where(.im-robot-settings button, .session-rui-request button)) {
   min-block-size: 32px;
   padding-inline: 12px;
   border: 1px solid rgb(255 255 255 / 72%);
@@ -1038,7 +1035,7 @@ body:has(.macos-ai-app.zeus-shell) {
   :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar)
   button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not([role='tab']):not(
     [role='menuitem']
-  ):not([aria-pressed='true']):not(.is-active):hover:not(:disabled):not(:where(.im-robot-settings button)) {
+  ):not([aria-pressed='true']):not(.is-active):hover:not(:disabled):not(:where(.im-robot-settings button, .session-rui-request button)) {
   background: rgb(255 255 255 / 78%);
   border-color: rgb(40 102 247 / 36%);
   color: var(--agentdesk-text);
@@ -2227,7 +2224,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .session-browser-preview-card,
     .browser-approval-card,
     .session-goal-panel,
-    .session-question-panel,
     .graph-qa-workbench,
     .graph-mermaid-preview,
     .graph-entity-workbench
