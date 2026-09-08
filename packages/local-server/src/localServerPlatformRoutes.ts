@@ -3096,6 +3096,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get('/api/zentao-instances', async () => ({ items: await zentaoCredentials.list() }));
 
+  // 密码查看沿用本机来源与令牌校验，不进入缓存、命令回执或审计明文。
+  server.get('/api/zentao-instances/:instanceId/password', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    /** 只有用户主动调用独立读取入口时才获取密码。 */
+    const password = await zentaoCredentials.revealPassword(request.params.instanceId);
+    appendAuditLog({ actorType: 'local_api', action: 'zentao.instance.password.viewed', resourceType: 'zentao_instance', resourceId: request.params.instanceId, payload: {} });
+    return { password };
+  });
+
   server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
 
   server.get('/api/projects/:projectId/model-selection', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {

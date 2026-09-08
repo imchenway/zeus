@@ -1126,190 +1126,6 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 设置页：左侧是导航轨，右侧是唯一内容面板；设置行按组排列，不再套整页卡片。 */
-.macos-ai-app.zeus-shell .settings-reference-shell {
-  background: rgb(255 255 255 / 38%);
-  border: 1px solid rgb(255 255 255 / 62%);
-  border-radius: var(--agentdesk-radius-surface);
-  box-shadow: var(--agentdesk-shadow-soft);
-  grid-template-columns: 224px minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  gap: 0;
-  overflow: hidden;
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-shell {
-  background: rgb(238 243 255 / 42%);
-  border-inline-end: 1px solid rgb(148 163 184 / 22%);
-  box-shadow: none;
-  gap: var(--agentdesk-space-3);
-  padding: 24px 12px 16px;
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-nav.settings-section-nav {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  gap: var(--agentdesk-space-4);
-  padding: 0;
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-group {
-  gap: var(--agentdesk-space-1);
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-group-title {
-  padding: 6px 10px 4px;
-  color: var(--agentdesk-text-tertiary);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-nav .settings-section-button {
-  min-block-size: 32px;
-  padding-inline: 10px;
-  border: 0;
-  border-radius: var(--agentdesk-radius-control);
-  background: transparent;
-  box-shadow: none;
-  color: var(--agentdesk-text-secondary);
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-nav .settings-section-button:hover:not(:disabled),
-.macos-ai-app.zeus-shell .settings-sidebar-nav .settings-section-button:focus-visible {
-  background: rgb(40 102 247 / 8%);
-  color: var(--agentdesk-text);
-}
-
-.macos-ai-app.zeus-shell .settings-sidebar-nav .settings-section-button[aria-selected='true'],
-.macos-ai-app.zeus-shell .settings-sidebar-nav .settings-section-button.selected {
-  background: rgb(40 102 247 / 14%);
-  color: var(--agentdesk-accent-strong);
-  font-weight: 650;
-}
-
-.macos-ai-app.zeus-shell .settings-return-button,
-.macos-ai-app.zeus-shell .settings-query-control {
-  block-size: var(--zeus-control-height);
-  min-block-size: var(--zeus-control-height);
-  border-radius: var(--zeus-control-radius);
-}
-
-.macos-ai-app.zeus-shell .settings-return-button {
-  background: transparent;
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .settings-query-control {
-  background: rgb(255 255 255 / 58%);
-  border-color: rgb(148 163 184 / 24%);
-}
-
-.macos-ai-app.zeus-shell .settings-reference-shell .settings-detail-pane {
-  background: transparent;
-  padding: 0;
-}
-
-.macos-ai-app.zeus-shell .settings-content-column,
-.macos-ai-app.zeus-shell .settings-reference-shell .settings-content-column:has(.deep-settings-pane) {
-  inline-size: min(820px, calc(100% - 64px));
-  max-inline-size: 820px;
-  padding-block: 28px 40px;
-}
-
-.macos-ai-app.zeus-shell .settings-reference-shell .settings-product-pane,
-.macos-ai-app.zeus-shell .settings-reference-shell .native-settings-pane,
-.macos-ai-app.zeus-shell .settings-product-section,
-.macos-ai-app.zeus-shell .settings-mode-pane {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .settings-reference-shell .settings-product-pane {
-  gap: 24px;
-}
-
-.macos-ai-app.zeus-shell .settings-product-section,
-.macos-ai-app.zeus-shell .settings-mode-pane {
-  gap: var(--agentdesk-space-3);
-}
-
-.macos-ai-app.zeus-shell .settings-mode-row {
-  gap: var(--agentdesk-space-3);
-}
-
-.macos-ai-app.zeus-shell .settings-mode-card {
-  min-block-size: 64px;
-  padding: 12px 14px;
-  border-radius: var(--agentdesk-radius-card);
-  background: var(--agentdesk-control);
-  border-color: rgb(148 163 184 / 24%);
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .settings-mode-card.selected {
-  background: rgb(40 102 247 / 11%);
-  border-color: rgb(40 102 247 / 42%);
-}
-
-.macos-ai-app.zeus-shell
-  .settings-reference-shell
-  .native-settings-pane
-  > :where(
-    .native-control-row,
-    .settings-config-row,
-    .settings-state-row,
-    .settings-secret-row,
-    .settings-matrix-row,
-    .settings-log-row,
-    .settings-audit-row,
-    .settings-danger-row,
-    .settings-data-portability-row,
-    .release-update-workbench
-  ) {
-  min-block-size: 58px;
-  padding-inline: 0;
-}
-
-.macos-ai-app.zeus-shell
-  .settings-reference-shell
-  .native-settings-pane
-  > :where(.native-control-row, .settings-config-row, .settings-state-row, .settings-secret-row, .settings-matrix-row, .settings-log-row, .settings-audit-row, .settings-danger-row, .settings-data-portability-row, .release-update-workbench)
-  + :where(
-    .native-control-row,
-    .settings-config-row,
-    .settings-state-row,
-    .settings-secret-row,
-    .settings-matrix-row,
-    .settings-log-row,
-    .settings-audit-row,
-    .settings-danger-row,
-    .settings-data-portability-row,
-    .release-update-workbench
-  ) {
-  border-block-start: 1px solid rgb(148 163 184 / 18%);
-}
-
-/* 设置页控件跟随主题底色，主操作使用品牌蓝。 */
-.macos-ai-app.zeus-shell .settings-reference-shell :is(button, input, select, textarea) {
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .settings-reference-shell :is(.settings-row-action-rail > button, .release-update-command-rail > :where(button, a), .native-control-slot > button, .native-settings-pane > button) {
-  min-block-size: var(--zeus-control-height);
-  block-size: var(--zeus-control-height);
-  border-radius: var(--zeus-control-radius);
-  background: var(--agentdesk-control);
-  border-color: rgb(148 163 184 / 24%);
-}
-
-.macos-ai-app.zeus-shell .settings-reference-shell :is(.settings-danger-row .settings-row-action-rail > button, .git-confirmation-risk-rail > button) {
-  background: rgb(224 72 82 / 10%);
-  border-color: rgb(224 72 82 / 28%);
-  color: #b4232d;
-}
-
 .macos-ai-app.zeus-shell .task-table-primary-toolbar {
   min-block-size: 68px;
   padding: 10px 12px;
@@ -1585,48 +1401,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row.selected {
   background: rgb(40 102 247 / 14%);
   border-color: rgb(40 102 247 / 28%);
-}
-
-/* 设置页顶部避开 macOS 交通灯；返回入口保持在安全区内并有足够点击高度。 */
-.macos-ai-app.zeus-shell .settings-sidebar-shell {
-  padding-block-start: calc(var(--zeus-hidden-titlebar-safe-top, 44px) + 24px) !important;
-  padding-inline: 16px !important;
-}
-
-.macos-ai-app.zeus-shell .settings-return-button {
-  min-block-size: 34px !important;
-  padding-inline: 10px !important;
-  border-radius: var(--agentdesk-radius-control) !important;
-  position: relative;
-  z-index: 2;
-}
-
-/* 工作模式使用左侧单选标识；右侧不再重复显示一个独立选中圆点。 */
-.macos-ai-app.zeus-shell .settings-mode-card {
-  grid-template-columns: 20px minmax(0, 1fr) !important;
-  gap: 12px !important;
-}
-
-.macos-ai-app.zeus-shell .settings-mode-icon {
-  inline-size: 18px !important;
-  block-size: 18px !important;
-  border: 1.5px solid rgb(100 116 139 / 62%) !important;
-  border-radius: 999px !important;
-  background: rgb(255 255 255 / 70%) !important;
-  opacity: 1 !important;
-  position: relative;
-}
-
-.macos-ai-app.zeus-shell .settings-mode-card.selected .settings-mode-icon {
-  border-color: var(--agentdesk-accent) !important;
-  background: var(--agentdesk-accent) !important;
-  box-shadow:
-    inset 0 0 0 4px rgb(255 255 255 / 88%),
-    0 0 0 2px rgb(40 102 247 / 12%);
-}
-
-.macos-ai-app.zeus-shell .settings-mode-radio {
-  display: none !important;
 }
 
 /* 任务页顶部工具区按内容收高，避免导航和状态筛选外框占用过多首屏空间。 */
@@ -2353,28 +2127,6 @@ body:has(.macos-ai-app.zeus-shell) {
   }
 }
 
-.macos-ai-app.zeus-shell .workspace-view-settings > .settings-detail-pane {
-  background: var(--zeus-card-background) !important;
-  background-image: none !important;
-  border-inline-start: 1px solid var(--zeus-card-border) !important;
-}
-
-/* 内容列保持开放布局，不再额外套一层卡片；输入控件使用实体白色提高对比度。 */
-.macos-ai-app.zeus-shell .workspace-view-settings .settings-content-column {
-  background: transparent !important;
-  color: var(--agentdesk-text) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-settings .settings-content-column :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
-  background: var(--zeus-card-background) !important;
-  border-color: var(--zeus-card-border-strong) !important;
-  color: var(--agentdesk-text) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-settings .settings-content-column :where(input, select, textarea)::placeholder {
-  color: var(--agentdesk-text-tertiary) !important;
-}
-
 /*
  * 窗口外壳去卡片化：应用根层和顶层工作面贴合原生窗口边界，
  * 让 macOS 的透明/振动材质成为唯一的窗口背景；内容卡片仍由各自组件承担。
@@ -2416,42 +2168,6 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none !important;
 }
 
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace,
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .workspace-view-settings.settings-reference-shell {
-  background: transparent !important;
-  background-image: none !important;
-}
-
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace {
-  padding: 0 !important;
-}
-
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .workspace-view-settings.settings-reference-shell {
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .workspace-view-settings.settings-reference-shell > .settings-detail-pane {
-  border-inline-start: 0 !important;
-}
-
-/* 设置页仅有一行两栏，长内容在各栏内滚动，不能继承旧导航布局的空白第二行。 */
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
-  flex: 1 1 0;
-  min-block-size: 0;
-  grid-template-rows: minmax(0, 1fr);
-  gap: 0;
-}
-
-.macos-ai-app.zeus-shell .settings-content-column {
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  min-inline-size: 0;
-}
-
 /* 表面色不能覆盖任务行的选择反馈。 */
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row.selected {
   background: color-mix(in srgb, var(--agentdesk-accent) 12%, var(--zeus-card-background)) !important;
@@ -2460,27 +2176,6 @@ body:has(.macos-ai-app.zeus-shell) {
 
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):hover {
   background: color-mix(in srgb, var(--agentdesk-accent) 4%, var(--zeus-card-background)) !important;
-}
-
-/* 窄窗口明确改为上下布局；导航限高，其余高度交给内容区。 */
-@media (max-width: 940px) {
-  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 34vh) minmax(0, 1fr);
-  }
-
-  .macos-ai-app.zeus-shell .settings-content-column,
-  .macos-ai-app.zeus-shell .settings-reference-shell .settings-content-column:has(.deep-settings-pane) {
-    inline-size: calc(100% - 32px);
-  }
-}
-
-@media (max-width: 640px) {
-  .macos-ai-app.zeus-shell .settings-mode-row,
-  .macos-ai-app.zeus-shell .settings-reference-shell .deep-settings-pane > .settings-archived-conversations-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
 }
 
 /* 项目搜索常驻标题行，容器统一处理边框与焦点，输入框不再叠加装饰。 */
@@ -2629,57 +2324,6 @@ body:has(.macos-ai-app.zeus-shell) {
 /* 空的反馈区域不占据两段间距；出现反馈时仍正常参与布局。 */
 .command-center-live:empty {
   display: none;
-}
-
-/* 功能模块沿用用量页的边界：页面不套卡，独立配置组使用一层卡片。 */
-.macos-ai-app.zeus-shell
-  .settings-reference-shell
-  :is(
-    .settings-product-pane > .native-settings-pane,
-    .settings-product-pane > .settings-product-section,
-    .settings-product-pane > .settings-mode-pane,
-    .settings-content-column > .settings-product-section,
-    .settings-content-column > .model-connections-settings,
-    .digital-employee-master-detail,
-    .memory-scope-controls,
-    .memory-editor
-  ) {
-  background: var(--zeus-card-background) !important;
-  border: 1px solid var(--zeus-card-border) !important;
-  border-radius: 16px;
-  box-shadow: var(--zeus-card-shadow-soft);
-  padding: 20px;
-  min-inline-size: 0;
-  box-sizing: border-box;
-}
-/* 远程接管作为独立模块，内层设置行继续使用平面分隔。 */
-.macos-ai-app.zeus-shell .settings-reference-shell .codex-remote-control-settings {
-  background: var(--zeus-card-background) !important;
-  border: 1px solid var(--zeus-card-border) !important;
-  border-radius: 16px;
-  box-shadow: var(--zeus-card-shadow-soft);
-  padding: 20px;
-  min-inline-size: 0;
-}
-.macos-ai-app.zeus-shell .settings-reference-shell .settings-product-pane {
-  gap: 24px;
-}
-@media (max-width: 640px) {
-  .macos-ai-app.zeus-shell
-    .settings-reference-shell
-    :is(
-      .settings-product-pane > .native-settings-pane,
-      .settings-product-pane > .settings-product-section,
-      .settings-product-pane > .settings-mode-pane,
-      .settings-content-column > .settings-product-section,
-      .settings-content-column > .model-connections-settings,
-      .digital-employee-master-detail,
-      .memory-scope-controls,
-      .memory-editor,
-      .codex-remote-control-settings
-    ) {
-    padding: 16px;
-  }
 }
 
 /* 应用标题位于侧栏窗口按钮下方，工作区导航从内容左边缘开始。 */

@@ -1,0 +1,1167 @@
+/* 设置独立工作面：导航与详情共用布局约束，先避开 56px 的窗口拖拽命中层。 */
+.macos-ai-app.zeus-shell.settings-dedicated-shell {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  --zeus-control-height: 34px;
+  --zeus-card-shadow-soft: none;
+  --zeus-card-shadow: none;
+}
+.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace {
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+  padding: 0 !important;
+}
+.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 0;
+  gap: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0;
+}
+
+/* 所有设置控件和分组在一个作用域内定义，避免各页面继续叠加卡片主题覆盖。 */
+.macos-ai-app.zeus-shell .settings-reference-shell {
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  line-height: 1.5;
+
+  &,
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  :where(h2, h3, h4, p, dl) {
+    margin: 0;
+  }
+  :where(h3, h4) {
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 1.5;
+  }
+  :where(small) {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  :where(input, button, select, textarea) {
+    font-family: inherit;
+  }
+  :where(button, input, select, textarea, summary):focus-visible {
+    outline: 2px solid var(--zeus-product-accent);
+    outline-offset: 2px;
+  }
+
+  .settings-sidebar-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-block-size: 0;
+    max-block-size: none;
+    padding: 64px 12px 20px;
+    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    background: var(--zeus-source-list-bg);
+    overflow: hidden;
+  }
+  .settings-return-button {
+    align-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-block-size: 32px;
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
+    color: var(--zeus-product-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .settings-query-field {
+    position: relative;
+    display: block;
+  }
+  .settings-query-field > svg {
+    position: absolute;
+    inline-size: 14px;
+    block-size: 14px;
+    inset: 10px auto auto 10px;
+    color: var(--zeus-product-muted);
+    pointer-events: none;
+  }
+  .settings-query-control {
+    box-sizing: border-box;
+    inline-size: 100%;
+    block-size: 34px;
+    padding: 0 10px 0 31px;
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 7px;
+    background: var(--zeus-card-background);
+    color: inherit;
+    font: inherit;
+  }
+  .settings-sidebar-nav.settings-section-nav {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+    min-block-size: 0;
+    inline-size: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow-y: auto;
+  }
+  .settings-sidebar-group {
+    display: grid;
+    gap: 3px;
+  }
+  .settings-sidebar-group-title {
+    padding: 0 10px 4px;
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    font-weight: 550;
+  }
+  .settings-sidebar-nav .settings-section-button {
+    display: flex;
+    align-items: center;
+    min-block-size: 34px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--zeus-product-text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .settings-sidebar-nav .settings-section-button:hover {
+    background: var(--zeus-source-list-hover);
+  }
+  .settings-sidebar-nav .settings-section-button[aria-selected='true'] {
+    background: var(--zeus-product-selected);
+    color: var(--zeus-product-accent);
+    font-weight: 600;
+  }
+
+  /* 安全间距放在滚动容器外，滚动后顶部按钮也不会进入窗口拖拽区。 */
+  .settings-detail-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-inline-size: 0;
+    min-block-size: 0;
+    margin-block-start: 56px;
+    padding: 0;
+    background: var(--zeus-card-background) !important;
+    border: 0;
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+  .settings-content-column {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    gap: 24px;
+    inline-size: 100%;
+    max-inline-size: 1160px;
+    min-inline-size: 0;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 18px 32px 48px;
+    align-self: start;
+  }
+  .settings-content-column > * {
+    min-inline-size: 0;
+  }
+  .settings-product-pane {
+    display: grid;
+    align-content: start;
+    gap: 28px;
+    padding: 0;
+  }
+  :where(.settings-product-pane, .settings-product-section, .native-settings-pane, .codex-usage-section, .memory-scope-controls, .codex-remote-control-settings) {
+    border: 0 !important;
+    border-radius: 0;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+  :where(.settings-product-section, .codex-usage-section, .codex-remote-control-settings) {
+    display: grid;
+    gap: 16px;
+    padding: 0;
+  }
+  .native-settings-pane {
+    display: block;
+    padding: 0;
+    overflow: visible;
+  }
+  .settings-page-title,
+  .memory-settings-header h2,
+  .command-center-header h2 {
+    color: var(--zeus-product-text);
+    font-size: 24px;
+    line-height: 1.35;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+    margin: 0;
+  }
+  :where(.settings-page-heading, .codex-usage-page-header, .memory-settings-header, .command-center-header, .model-connections-heading) {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 0;
+  }
+  :where(.settings-page-heading, .memory-settings-header, .command-center-header) > span {
+    display: grid;
+    gap: 7px;
+    min-inline-size: 0;
+  }
+  :where(.settings-page-heading, .memory-settings-header, .command-center-header) p {
+    color: var(--zeus-product-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .settings-section-heading {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+  }
+  .settings-section-heading > strong {
+    font-size: 15px;
+  }
+  .settings-section-heading > span {
+    color: var(--zeus-product-muted);
+    font-size: 13px;
+  }
+  .model-connections-heading {
+    display: flex;
+  }
+  .model-connections-heading > span {
+    display: grid;
+    gap: 5px;
+  }
+  .model-connections-heading strong {
+    color: var(--zeus-product-text);
+    font-size: 15px;
+  }
+
+  /* 原生按钮与已有 Button 共用尺寸；图标按钮和整行选择在下方声明对应布局。 */
+  .settings-content-column :where(button, a.settings-action) {
+    box-sizing: border-box;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    min-inline-size: 0;
+    min-block-size: 34px;
+    block-size: auto;
+    padding: 6px 12px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 7px;
+    box-shadow: none;
+    background: var(--zeus-card-background);
+    color: var(--zeus-product-text);
+    font-size: 13px;
+    font-weight: 550;
+    line-height: 20px;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 120ms,
+      border-color 120ms;
+  }
+  .settings-content-column :where(button):hover:not(:disabled) {
+    background: var(--zeus-control-bg-hover);
+  }
+  .settings-content-column :where(button):disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .settings-content-column [data-button-variant='primary'] {
+    background: var(--zeus-product-accent);
+    border-color: var(--zeus-product-accent);
+    color: white;
+  }
+  .settings-content-column [data-button-variant='primary']:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--zeus-product-accent) 88%, black);
+  }
+  .settings-content-column [data-button-variant='danger'],
+  .settings-content-column button.is-danger {
+    color: var(--zeus-danger-text);
+    border-color: color-mix(in srgb, var(--zeus-danger-text) 25%, transparent);
+    background: transparent;
+  }
+  .settings-content-column button > svg {
+    flex: 0 0 auto;
+    inline-size: 16px;
+    block-size: 16px;
+  }
+  .settings-content-column :where(input:not([type='checkbox']):not([type='radio']):not([type='color']), select, textarea) {
+    box-sizing: border-box;
+    min-inline-size: 0;
+    inline-size: 100%;
+    block-size: 34px;
+    min-block-size: 34px;
+    margin: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 7px;
+    background: var(--zeus-card-background);
+    color: var(--zeus-product-text);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 20px;
+  }
+  .settings-content-column textarea {
+    block-size: auto;
+    min-block-size: 88px;
+    resize: vertical;
+  }
+  .settings-content-column :where(input[type='checkbox'], input[type='radio']) {
+    inline-size: 16px;
+    block-size: 16px;
+    accent-color: var(--zeus-product-accent);
+    flex-shrink: 0;
+  }
+  .settings-content-column .zeus-select {
+    inline-size: 100%;
+    min-inline-size: 0;
+  }
+  .settings-content-column .zeus-select-trigger {
+    inline-size: 100%;
+    justify-content: space-between;
+    font-weight: 450;
+  }
+  .settings-content-column label:has(> input[type='checkbox']) {
+    align-items: center;
+  }
+  .settings-content-column button[aria-pressed='true'] {
+    color: var(--zeus-product-accent);
+    border-color: var(--zeus-product-accent);
+    background: var(--zeus-product-selected);
+  }
+  .settings-content-column .native-switch-input {
+    inline-size: 100%;
+    block-size: 100%;
+  }
+  .settings-switch-state {
+    position: relative;
+    display: inline-flex;
+    inline-size: 38px;
+    block-size: 24px;
+    flex: 0 0 38px;
+  }
+  .settings-switch-state .native-switch-track {
+    inline-size: 38px;
+    block-size: 24px;
+  }
+
+  /* 常规设置行固定说明与控件两列；运行环境等三列内容采用同一对齐线。 */
+  .native-control-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+    align-items: center;
+    gap: 24px;
+    min-block-size: 72px;
+    padding: 16px 0;
+    border: 0;
+  }
+  .native-control-row + .native-control-row {
+    border-block-start: 1px solid var(--zeus-product-line-soft);
+  }
+  :where(.native-control-copy, .settings-row-copy, .release-update-copy) {
+    display: grid;
+    gap: 4px;
+    min-inline-size: 0;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+  :where(.native-control-copy, .settings-row-copy, .release-update-copy) > strong {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .native-control-description {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .native-control-slot {
+    display: flex;
+    justify-content: flex-end;
+    min-inline-size: 0;
+  }
+  :where(.settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row) {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    min-block-size: 68px;
+    padding: 16px 0;
+    border: 0;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
+  }
+  .settings-row-field {
+    display: grid;
+    gap: 5px;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+  :where(.settings-row-action-rail, .release-update-command-rail) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    min-inline-size: 0;
+  }
+  .settings-row-action-rail:empty {
+    display: none;
+  }
+  .runtime-timeout-row .settings-row-action-rail {
+    min-inline-size: 96px;
+  }
+  .settings-state-row > em {
+    font-style: normal;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .settings-action-meta {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .settings-save-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-block-size: 34px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  :where(.settings-save-status[data-state='failed'], .settings-field-error) {
+    color: var(--zeus-danger-text);
+  }
+  .settings-field-note {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+
+  /* 高级内容以原生折叠组织，不再将只读技术详情置于主操作之前。 */
+  .settings-disclosure {
+    min-inline-size: 0;
+    border-block: 1px solid var(--zeus-product-line-soft);
+    padding: 0;
+  }
+  .settings-disclosure > summary {
+    padding: 16px 0;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .settings-disclosure > p {
+    margin-block-end: 16px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .settings-disclosure > :last-child:not(summary) {
+    margin-block-end: 16px;
+  }
+  .settings-permission-help dl {
+    display: grid;
+    gap: 14px;
+    padding-block-end: 12px;
+  }
+  .settings-permission-help dl > div {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr);
+    gap: 16px;
+  }
+  .settings-permission-help dt {
+    font-weight: 600;
+  }
+  .settings-permission-help dd {
+    margin: 0;
+    color: var(--zeus-product-muted);
+  }
+
+  /* 供应商、禅道共用主从布局；只框住可编辑工作区，不再重复套页面卡片。 */
+  .model-connections-layout {
+    grid-template-columns: 168px minmax(0, 1fr);
+    gap: 24px;
+    min-inline-size: 0;
+  }
+  .model-connection-list {
+    padding: 0 14px 0 0;
+    border: 0;
+    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    border-radius: 0;
+    background: transparent;
+    max-block-size: 560px;
+  }
+  .model-connection-list > button {
+    display: grid;
+    justify-content: stretch;
+    align-content: center;
+    gap: 2px;
+    inline-size: 100%;
+    block-size: auto;
+    min-block-size: 66px;
+    padding: 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    text-align: start;
+    white-space: normal;
+  }
+  .model-connection-list > button.selected {
+    background: var(--zeus-product-selected);
+  }
+  .model-connection-list > button strong {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-connection-list > button em {
+    font-size: 11px;
+    font-style: normal;
+  }
+  .model-connection-editor {
+    display: grid;
+    align-content: start;
+    gap: 18px;
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .model-connection-field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .model-connection-field-grid > label {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .model-connection-field-grid label > span:first-child {
+    font-size: 12px;
+    font-weight: 550;
+  }
+  .model-connection-wide-field {
+    grid-column: 1 / -1;
+  }
+  .model-setup-advanced {
+    padding: 0;
+    border: 0;
+  }
+  .model-setup-advanced > summary {
+    padding: 10px 0;
+    font-size: 12px;
+    color: var(--zeus-product-muted);
+    cursor: pointer;
+  }
+  .model-connection-enabled {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .model-definition-section {
+    display: grid;
+    gap: 12px;
+    min-inline-size: 0;
+    padding-block-start: 18px;
+    border-block-start: 1px solid var(--zeus-product-line-soft);
+  }
+  .model-definition-section > header {
+    display: grid;
+    gap: 12px;
+  }
+  .model-definition-section > header > span:first-child {
+    display: grid;
+    gap: 5px;
+  }
+  .model-add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .model-add-row > button {
+    flex: 0 0 auto;
+  }
+  .model-definition-list {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .model-definition-list:empty {
+    display: none;
+  }
+  .model-definition-card {
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none !important;
+  }
+  .model-definition-card + .model-definition-card {
+    border-block-start: 1px solid var(--zeus-product-line-soft) !important;
+  }
+  .model-definition-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    border: 0;
+  }
+  .model-definition-identity {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    gap: 10px;
+  }
+  .model-definition-identity strong {
+    font-size: 13px;
+  }
+  .model-definition-identity small {
+    font-size: 11px;
+  }
+  .model-definition-header .model-definition-remove {
+    min-inline-size: 28px;
+    min-block-size: 28px;
+    padding: 5px;
+    border: 0;
+  }
+  .model-definition-toggle {
+    flex: 0 0 auto;
+  }
+  .model-definition-details {
+    border-block-start: 1px solid var(--zeus-product-line-soft);
+    padding: 12px;
+  }
+  .model-route-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0;
+    gap: 12px;
+  }
+  .model-route-description {
+    padding: 10px 0;
+    margin: 0;
+    font-size: 12px;
+  }
+  .model-capability-summary {
+    gap: 14px;
+    padding: 12px 0;
+    border-block: 1px solid var(--zeus-product-line-soft);
+    background: transparent;
+  }
+  .model-capability-summary > div {
+    padding: 0;
+    border: 0;
+  }
+  .model-capability-summary dd {
+    font-size: 12px;
+  }
+  .model-capability-evidence {
+    padding: 10px 0 0;
+  }
+  .model-connection-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-block-start: 16px;
+    border-block-start: 1px solid var(--zeus-product-line-soft);
+  }
+  .model-connection-actions > [data-button-variant='danger'] {
+    margin-inline-start: auto;
+  }
+  .settings-secret-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-inline-size: 0;
+  }
+  .settings-secret-control > button {
+    flex: 0 0 34px;
+    padding: 6px;
+  }
+  .model-setup-account {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 20px;
+    padding: 0 0 22px;
+    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+  }
+  .model-setup-account > p {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    grid-column: 1 / -1;
+  }
+  .model-setup-account .model-setup-actions {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  /* 用量使用开放指标与可滚动表格，不用灰色空格填满末行。 */
+  .codex-usage-section {
+    gap: 18px;
+    padding-block-end: 24px;
+    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+  }
+  .codex-usage-section > header {
+    gap: 20px;
+    align-items: start;
+  }
+  .codex-usage-section > header strong {
+    font-size: 15px;
+  }
+  .codex-usage-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 20px 24px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 8px 0;
+  }
+  .codex-usage-metric-grid > div {
+    display: grid;
+    gap: 8px;
+    min-inline-size: 0;
+    min-block-size: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .codex-usage-metric-grid dt {
+    font-size: 12px;
+  }
+  .codex-usage-metric-grid dd {
+    font-size: 20px;
+    font-weight: 650;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+  .codex-usage-filters {
+    gap: 12px;
+  }
+  .codex-usage-heatmap > div {
+    max-inline-size: 100%;
+    overflow-x: auto;
+    padding-block: 3px;
+  }
+  .codex-usage-table-wrap {
+    display: grid;
+    gap: 10px;
+    overflow: visible;
+  }
+  .codex-usage-table-scroll {
+    overflow-x: auto;
+  }
+  .codex-usage-table-wrap table {
+    inline-size: 100%;
+    min-inline-size: 620px;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 12px;
+  }
+  .codex-usage-table-wrap :where(th, td) {
+    padding: 12px 8px;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .codex-usage-table-wrap thead th {
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .codex-usage-table-wrap th:first-child {
+    inline-size: 35%;
+    text-align: start;
+  }
+  .codex-usage-table-wrap tbody th {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .codex-usage-table-wrap :where(th, td):not(:first-child) {
+    text-align: end;
+  }
+
+  /* 记忆、任务和归档沿用行布局；空状态使用完整内容宽度。 */
+  .memory-settings-pane {
+    gap: 24px;
+  }
+  .memory-scope-controls {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 0 16px;
+    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+  }
+  .memory-scope-controls > button:last-child {
+    margin-inline-start: auto;
+  }
+  .memory-record,
+  .memory-editor,
+  .memory-tombstone-confirmation {
+    padding: 16px;
+    border: 1px solid var(--zeus-product-line-soft) !important;
+    border-radius: 8px;
+    background: transparent !important;
+    box-shadow: none;
+  }
+  .memory-record-list:empty {
+    display: none;
+  }
+  .memory-settings-pane > p[role='status'] {
+    padding: 28px 0;
+    color: var(--zeus-product-muted);
+  }
+  .memory-record-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .task-enum-order-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+  }
+  .task-enum-order-editor {
+    border-color: var(--zeus-product-line-soft);
+    border-radius: 8px;
+  }
+  .task-enum-order-editor > header {
+    background: transparent;
+    padding: 12px;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
+  }
+  .task-enum-order-editor li {
+    min-block-size: 40px;
+  }
+  .task-enum-order-actions button,
+  .task-status-config-actions button {
+    min-inline-size: 28px;
+    min-block-size: 28px;
+    padding: 4px;
+    border: 0;
+  }
+  .task-status-config-list {
+    border-color: var(--zeus-product-line-soft);
+    border-radius: 8px;
+    padding: 8px;
+  }
+  .task-status-config-color input {
+    flex: 0 0 38px;
+    inline-size: 38px;
+  }
+  .task-status-config-scope {
+    max-inline-size: 360px;
+  }
+  .settings-archived-conversations-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 24px 0 0;
+    border: 0;
+  }
+  .settings-archived-conversation-list {
+    display: grid;
+    gap: 0;
+    inline-size: 100%;
+  }
+  .settings-archived-conversation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 14px 0;
+    border: 0;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-radius: 0;
+  }
+  .settings-archived-conversation-copy {
+    display: grid;
+    gap: 4px;
+    min-inline-size: 0;
+  }
+  .settings-archived-conversation-copy strong {
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+  .settings-archived-conversation-item > button {
+    flex: 0 0 auto;
+  }
+  .settings-content-column .command-center {
+    padding: 0;
+    gap: 24px;
+  }
+  .command-definition-list {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .command-definition-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 18px 0;
+  }
+  .command-definition-leading {
+    inline-size: 28px;
+    block-size: 28px;
+    border-radius: 6px;
+  }
+  .command-definition-title strong {
+    font-size: 14px;
+  }
+  .command-definition-title :where(code, small) {
+    font-size: 11px;
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .command-definition-copy > span:not(.command-definition-title) {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .command-definition-copy > small {
+    font-size: 11px;
+  }
+  .command-definition-actions > button {
+    padding: 6px 8px;
+  }
+
+  /* 更新主操作与版本优先展示；安装包、签名等信息折叠但仍可查阅。 */
+  .release-update-workbench {
+    display: grid;
+    gap: 0;
+    padding: 0;
+  }
+  :where(.release-update-command-row, .release-update-version-row, .release-update-artifact-row) {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 20px;
+    padding: 20px 0;
+    border: 0;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
+  }
+  .release-update-field {
+    display: grid;
+    gap: 5px;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+  .release-update-command-rail > a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 34px;
+    box-sizing: border-box;
+    padding: 6px 12px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 7px;
+    color: var(--zeus-product-text);
+    font-size: 13px;
+    line-height: 20px;
+    text-decoration: none;
+  }
+  .legacy-import-heading {
+    align-items: start;
+    gap: 16px;
+  }
+  .legacy-import-heading h2 {
+    font-size: 15px;
+  }
+  .legacy-import-row {
+    padding: 12px 0;
+  }
+  .settings-runtime-advanced-field-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .settings-runtime-advanced-field {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .settings-runtime-advanced-field-list > small {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 1100px) {
+    .settings-content-column {
+      padding-inline: 24px;
+    }
+    .model-connections-layout {
+      grid-template-columns: 144px minmax(0, 1fr);
+      gap: 18px;
+    }
+    .model-setup-account {
+      grid-template-columns: 1fr;
+    }
+    .model-setup-account .model-setup-actions {
+      grid-row: auto;
+      grid-column: 1;
+      justify-content: flex-start;
+    }
+    :where(.settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row, .release-update-command-row, .release-update-version-row, .release-update-artifact-row) {
+      grid-template-columns: 180px minmax(0, 1fr);
+    }
+    :where(.settings-row-action-rail, .release-update-command-rail) {
+      grid-column: 2;
+      justify-content: flex-start;
+    }
+  }
+  @media (max-width: 880px) {
+    .model-connections-layout,
+    .model-connection-field-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .model-connection-list {
+      position: static;
+      display: flex;
+      gap: 6px;
+      max-block-size: none;
+      padding: 0 0 12px;
+      border: 0;
+      border-block-end: 1px solid var(--zeus-product-line-soft);
+      overflow-x: auto;
+    }
+    .model-connection-list > button {
+      flex: 0 0 136px;
+    }
+    .native-control-row {
+      grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+      gap: 16px;
+    }
+    .task-enum-order-grid {
+      grid-template-columns: 1fr;
+    }
+    .settings-section-heading > button {
+      flex: 0 0 auto;
+    }
+  }
+  @media (max-width: 640px) {
+    .settings-sidebar-shell {
+      padding: 64px 12px 12px;
+      max-block-size: 220px;
+      gap: 8px;
+    }
+    .settings-sidebar-nav.settings-section-nav {
+      flex-direction: row;
+      gap: 12px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .settings-sidebar-group {
+      display: contents;
+    }
+    .settings-sidebar-group-title {
+      display: none;
+    }
+    .settings-sidebar-nav .settings-section-button {
+      flex: 0 0 auto;
+    }
+    .settings-detail-pane {
+      margin-block-start: 0;
+    }
+    .settings-content-column {
+      padding: 20px 16px 40px;
+    }
+    :where(.native-control-row, .settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row, .release-update-command-row, .release-update-version-row, .release-update-artifact-row) {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .native-control-slot {
+      justify-content: flex-start;
+    }
+    :where(.settings-row-action-rail, .release-update-command-rail) {
+      grid-column: auto;
+    }
+    .settings-page-heading,
+    .memory-settings-header {
+      flex-wrap: wrap;
+    }
+    .model-route-controls,
+    .memory-editor,
+    .memory-record dl {
+      grid-template-columns: 1fr;
+    }
+    .command-definition-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .command-definition-leading {
+      display: none;
+    }
+    .command-definition-title {
+      flex-wrap: wrap;
+    }
+    .memory-record header {
+      flex-wrap: wrap;
+    }
+  }
+}
+
+/* 分页也用于供应商引导，因此不依赖设置侧栏容器。 */
+.macos-ai-app .settings-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 12px 4px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+.macos-ai-app .settings-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.macos-ai-app .settings-pagination :where(button, select) {
+  min-block-size: 32px;
+  font-size: 12px;
+}
+.macos-ai-app .settings-pagination select {
+  inline-size: auto;
+  padding-inline: 8px;
+}
+@media (max-width: 640px) {
+  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app.zeus-shell .settings-reference-shell :where(button, input, select, textarea) {
+    transition: none;
+  }
+}

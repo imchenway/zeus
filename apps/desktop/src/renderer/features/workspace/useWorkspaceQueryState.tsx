@@ -798,8 +798,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     if (props.initialMainNavTarget === 'settings-data') return 'data';
     if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'im';
     if (props.initialRuntimeSettings || props.initialRuntimeStatus) return 'runtime';
-    if (props.initialSecuritySecrets || props.initialSecurityAuditLogs?.length) return 'security';
-    if (props.initialGitConfirmation && props.initialMainNavTarget === 'settings') return 'git';
     if (props.initialReleaseStatus) return 'release';
     return 'general';
   });
