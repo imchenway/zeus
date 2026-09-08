@@ -1,6 +1,26 @@
+import { isSubmissionWaitingInQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.js';
 import { TranscriptRowMeasurementCache, TranscriptViewportLayout, transcriptViewportMaximumWindowRows, transcriptViewportMeasurementCacheLimit } from '../apps/desktop/src/renderer/session/transcriptViewportVirtualizer.js';
 import { rememberSessionHotState, sessionHotCacheByteLimit, sessionHotCacheEntryByteLimit, type SessionHotCache } from '../apps/desktop/src/renderer/session/sessionHotCache.js';
-import type { NativeSessionState } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import type { NativeSessionState, NativeQueuedSubmission, NativeQueueSnapshot } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+
+/** 普通发送已保存、模型尚未接手时的队首。 */
+const dispatchPendingSubmission: NativeQueuedSubmission = { id: 'pending-head', content: '普通发送', position: 1, status: 'queued', pausedReason: null };
+/** 复用真实队列状态核对提示与操作的展示条件。 */
+const dispatchPendingQueue: NativeQueueSnapshot = { state: { type: 'idle' }, waitReason: 'dispatch_pending', submissions: [dispatchPendingSubmission] };
+assertProbe(!isSubmissionWaitingInQueue(null, null), '队列确认前不得猜测排队状态。');
+assertProbe(!isSubmissionWaitingInQueue(dispatchPendingQueue, dispatchPendingSubmission), '空闲队首不得闪现排队提示和引导操作。');
+assertProbe(!isSubmissionWaitingInQueue({ ...dispatchPendingQueue, waitReason: undefined }, dispatchPendingSubmission), '缺少等待原因时仍须按空闲队首识别发送交接。');
+assertProbe(!isSubmissionWaitingInQueue({ ...dispatchPendingQueue, state: { type: 'dispatching', submissionId: dispatchPendingSubmission.id } }, dispatchPendingSubmission), '自身正在派发时不得显示排队操作。');
+assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, state: { type: 'dispatching', submissionId: 'earlier-message' } }, dispatchPendingSubmission), '前序消息正在派发时必须保留排队操作。');
+assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, state: { type: 'active', turnId: 'current-turn', phase: 'prework' }, waitReason: 'current_turn' }, dispatchPendingSubmission), '当前轮次执行中必须保留排队提示与引导入口。');
+assertProbe(
+  isSubmissionWaitingInQueue({ ...dispatchPendingQueue, submissions: [dispatchPendingSubmission, { ...dispatchPendingSubmission, id: 'earlier-message', position: 0 }] }, dispatchPendingSubmission),
+  '空闲时仍被前序消息阻塞的提交必须保留排队状态。',
+);
+assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, waitReason: 'conversation_restoring' }, dispatchPendingSubmission), '恢复中的真实等待不能隐藏。');
+assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, waitReason: 'plan_confirmation' }, dispatchPendingSubmission), '等待计划确认的队首不能隐藏。');
+assertProbe(isSubmissionWaitingInQueue(dispatchPendingQueue, { ...dispatchPendingSubmission, status: 'paused', pausedReason: 'user_confirmation' }), '已暂停消息必须保留后续处理入口。');
+assertProbe(!isSubmissionWaitingInQueue(dispatchPendingQueue, { ...dispatchPendingSubmission, providerTurnId: 'accepted-turn' }), '模型已接手的消息不得重新出现排队操作。');
 
 const rowCount = 100_000;
 const rowKeys = Array.from({ length: rowCount }, (_, index) => `row-${index}`);
@@ -65,6 +85,7 @@ console.log(
     {
       status: 'passed',
       observed: {
+        queuePresentationCases: 11,
         totalRows: rowCount,
         middleProjectedRows: middleProjection.renderedRowCount,
         middleProjectionSlots: middleProjection.slots.length,
