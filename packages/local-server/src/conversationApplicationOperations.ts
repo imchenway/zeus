@@ -1,7 +1,7 @@
 import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
-import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
+import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
 import {
   parseCanonicalRequestUserInputQuestions,
   renderTaskPushLayoutText,
@@ -2798,7 +2798,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         );
       } else if (body.source === 'conflict_resolution') {
         const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
-        const conflictPath = typeof body.conflictPath === 'string' ? body.conflictPath.trim() : '';
+        /** 从交付页传来的文件名必须原样进入 AI 准备流程。 */
+        const conflictPath = typeof body.conflictPath === 'string' ? body.conflictPath : '';
         const conflictContent = typeof body.conflictContent === 'string' ? body.conflictContent : null;
         const conflictFingerprintValue = (body as Record<string, unknown>).conflictFingerprint;
         const conflictFingerprint = typeof conflictFingerprintValue === 'string' ? conflictFingerprintValue.trim() : '';
@@ -2808,7 +2809,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (conflictContent.length > 2_000_000) throw nativeApiError('ZEUS_TASK_CONFLICT_TOO_LARGE', '当前冲突草稿过大，无法交给 AI 处理。');
         const resolved = resolveTaskIntegrationRequest(task.id, integrationId);
         if ('error' in resolved) throw nativeApiError(resolved.error.error, resolved.error.message);
-        if (resolved.project.id !== project.id || resolved.integration.state !== 'conflicted' || !resolved.integration.conflictFiles.includes(conflictPath)) {
+        // 冲突成员资格以现存 Git 工作区为准，不能继续拿旧记录中的显示转义路径校验。
+        if (
+          resolved.project.id !== project.id ||
+          resolved.integration.state !== 'conflicted' ||
+          !resolved.integration.integrationPath ||
+          !(await readTaskIntegrationConflictPaths(resolved.integration.integrationPath)).includes(conflictPath)
+        ) {
           throw nativeApiError('ZEUS_TASK_INTEGRATION_NOT_CONFLICTED', '当前合入没有这项待 AI 处理的冲突。');
         }
         const permissionMode = parseConversationPermissionMode(body.permissionMode);
