@@ -24,6 +24,7 @@ import {
   pushLocalBranch,
   pushTaskWorkspace,
   readTaskIntegrationConflict,
+  readTaskIntegrationConflictPaths,
   reclaimDeliveredTaskWorktree,
   reclaimTaskWorktree,
   refreshConflictTaskWorkspace,
@@ -97,6 +98,17 @@ export type GitIntegrationOperationDependencies = Record<string, any> & {
   taskWorkspaces: TaskWorkspaceRepository;
   tasks: TaskRepository;
 };
+
+/** 从现存工作区刷新未完成合入的冲突清单，避免继续使用持久记录中的转义路径或已解决路径。 */
+export async function readTaskIntegrationSnapshot(integration: ZeusTaskIntegrationRecord): Promise<ZeusTaskIntegrationRecord> {
+  if (integration.state !== 'conflicted' || !integration.integrationPath) return integration;
+  try {
+    return { ...integration, conflictFiles: await readTaskIntegrationConflictPaths(integration.integrationPath) };
+  } catch (error) {
+    // 单个历史工作区不可读时保留冲突和原因，不能误报已解决或阻断其他仓库的交付页。
+    return { ...integration, lastError: error instanceof Error ? error.message : '无法读取合入工作区的冲突清单。' };
+  }
+}
 
 export function createGitIntegrationOperations(dependencies: GitIntegrationOperationDependencies) {
   const {
@@ -1415,7 +1427,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     /** 使用目标当前提交建立并发基线，不将已删除的目标回退成来源提交。 */
     const targetHeadSha = await getGitBranchHead(repositoryPath, targetBranch);
     const active = taskIntegrations.findActive(workspace.id, targetBranch);
-    if (active) return workspaceGitResponse({ integration: active }, active.state === 'conflicted' ? 202 : 409);
+    if (active) return workspaceGitResponse({ integration: await readTaskIntegrationSnapshot(active) }, active.state === 'conflicted' ? 202 : 409);
     const integrationId = `task_integration_${createHash('sha256').update(`workspace_git_integration\0${workspace.id}\0${targetBranch}\0${operationIdentity}`).digest('hex').slice(0, 24)}`;
     const integration = taskIntegrations.create({ id: integrationId, projectId: project.id, taskId: task.id, workspaceId: workspace.id, targetBranch, targetHeadSha, taskHeadSha, mode, state: 'preparing' });
     await db.save();
@@ -1500,7 +1512,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
 
   async function executeTaskIntegrationConflictAiSession(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>, operationIdentity: string): Promise<WorkspaceGitRouteExecution> {
     const resolved = requirePreparedIntegration(opaque);
-    const path = typeof value.path === 'string' ? value.path.trim() : '';
+    /** 路径来自文件清单，保留文件名中的首尾空白。 */
+    const path = typeof value.path === 'string' ? value.path : '';
     if (!path) workspaceGitReject(400, 'ZEUS_GIT_PATH_REQUIRED', 'path is required');
     if (typeof value.content !== 'string') workspaceGitReject(400, 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', 'Conflict draft content is required.');
     const fingerprint = typeof value.fingerprint === 'string' ? value.fingerprint.trim() : '';
@@ -1544,7 +1557,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   async function executeTaskIntegrationConflictResolve(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>): Promise<WorkspaceGitRouteExecution> {
     const resolved = requirePreparedIntegration(opaque);
     if (!resolved.integration.integrationPath) workspaceGitReject(409, 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
-    const path = typeof value.path === 'string' ? value.path.trim() : '';
+    /** 保存时沿用读取时的原始路径，不能裁剪成另一个文件名。 */
+    const path = typeof value.path === 'string' ? value.path : '';
     if (!path) workspaceGitReject(400, 'ZEUS_GIT_PATH_REQUIRED', 'path is required');
     if (typeof value.content !== 'string') workspaceGitReject(400, 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', 'Resolved content is required.');
     try {
