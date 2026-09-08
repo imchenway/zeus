@@ -726,7 +726,16 @@ export class ConversationExecutionRepository {
         [input.acceptedAt, input.acceptedAt, target.id],
       );
       const timelineSequence = this.nextSequence(operation.conversationId, 'timeline_sequence');
-      const modelHistorySequence = this.nextSequence(operation.conversationId, 'model_history_sequence');
+      // 接纳与消息回显可能先后到达；同一提交共用一条用户历史。
+      const modelHistorySequence = this.appendModelHistory({
+        conversationId: operation.conversationId,
+        turnId: input.turnId,
+        segmentId: target.id,
+        role: 'user',
+        submissionId: operation.submissionId,
+        content: input.userHistoryContent,
+        confirmedAt: input.acceptedAt,
+      }).sequence;
       const eventSequence = this.nextSequence(operation.conversationId, 'sync_event_sequence');
       this.upsertAcceptedTurn({
         turnId: input.turnId,
@@ -768,13 +777,6 @@ export class ConversationExecutionRepository {
           input.acceptedAt,
         ],
       );
-      this.db.execute(
-        `INSERT INTO conversation_model_history
-         (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
-          reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-        [`conversation_model_history_${randomId(12)}`, operation.conversationId, modelHistorySequence, input.turnId, operation.submissionId, target.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
-      );
       this.resumeQueueBlockedByHead(operation.conversationId, input.acceptedAt);
       this.projectCurrentSegmentToLegacyConversation(target, input.acceptedAt);
       // Provider 接纳回执必须与业务接纳事实共用这次 COMMIT，避免再次产生双写窗口。
@@ -794,7 +796,16 @@ export class ConversationExecutionRepository {
       const segment = this.currentSegment(input.conversationId);
       if (!segment || segment.id !== input.segmentId || !segment.nativeSessionId) throw new Error('当前运行分段无法接受该提交。');
       const timelineSequence = this.nextSequence(input.conversationId, 'timeline_sequence');
-      const modelHistorySequence = this.nextSequence(input.conversationId, 'model_history_sequence');
+      // Provider 回显先落库时复用其历史，避免普通发送重复显示。
+      const modelHistorySequence = this.appendModelHistory({
+        conversationId: input.conversationId,
+        turnId: input.turnId,
+        segmentId: segment.id,
+        role: 'user',
+        submissionId: input.submissionId,
+        content: input.userHistoryContent,
+        confirmedAt: input.acceptedAt,
+      }).sequence;
       const eventSequence = this.nextSequence(input.conversationId, 'sync_event_sequence');
       this.upsertAcceptedTurn({
         turnId: input.turnId,
@@ -829,13 +840,6 @@ export class ConversationExecutionRepository {
           }),
           input.acceptedAt,
         ],
-      );
-      this.db.execute(
-        `INSERT INTO conversation_model_history
-         (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
-          reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?)`,
-        [`conversation_model_history_${randomId(12)}`, input.conversationId, modelHistorySequence, input.turnId, input.submissionId, segment.id, JSON.stringify(input.userHistoryContent), input.acceptedAt],
       );
       this.resumeQueueBlockedByHead(input.conversationId, input.acceptedAt);
       settleExternalReceipt?.();
@@ -986,6 +990,72 @@ export class ConversationExecutionRepository {
     return row ? mapSwitchOperation(row) : undefined;
   }
 
+  /** 已确认消息共用历史写入；只接受完整原生身份链，不把尚未发送的本地草稿变成模型事实。 */
+  confirmUserMessageHistory(messageId: string): ConversationModelHistoryRecord | null {
+    return this.db.transaction(() => {
+      /** 从完整消息取得正文和展示信息，避免使用有界 Provider 预览补历史。 */
+      const message = this.db.get<{
+        conversation_id: string;
+        content: string;
+        metadata_json: string;
+        provider_item_id: string;
+        created_at: string;
+        turn_id: string;
+        segment_id: string;
+        submission_id: string | null;
+        input_json: string | null;
+      }>(
+        `SELECT message.conversation_id, message.content, message.metadata_json, message.provider_item_id, message.created_at,
+                turn.id AS turn_id, segment.id AS segment_id,
+                submission.id AS submission_id, submission.input_json
+           FROM conversation_messages AS message
+           JOIN conversation_turns AS turn
+             ON turn.conversation_id = message.conversation_id AND turn.provider_thread_id = message.provider_thread_id
+            AND turn.provider_turn_id = message.provider_turn_id
+           JOIN conversation_runtime_segments AS segment
+             ON segment.conversation_id = message.conversation_id AND segment.native_session_id = message.provider_thread_id
+           LEFT JOIN conversation_submissions AS submission
+             ON submission.conversation_id = message.conversation_id AND submission.client_message_id = message.client_message_id
+            AND (submission.id = turn.client_submission_id OR submission.provider_turn_id = message.provider_turn_id)
+          WHERE message.id = ? AND message.role = 'user' AND message.provider_item_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM conversation_migration_mappings
+               WHERE source_kind = 'conversation_message' AND source_identity = message.id AND target_kind = 'model_history'
+            )
+          ORDER BY (submission.id = turn.client_submission_id) DESC, submission.created_at DESC, submission.id DESC LIMIT 1`,
+        [messageId],
+      );
+      if (!message) return null;
+      /** 原提交保存模型输入；完整消息保存用户所见正文及附件等展示内容。 */
+      const input = parseJsonRecord(message.input_json);
+      if (input.internalOperation === true) return null;
+      /** 展示元数据仅取已有用户内容字段，不把内部来源信息带入模型上下文。 */
+      const metadata = parseJsonRecord(message.metadata_json);
+      /** 实施计划等操作保留模型原文，同时继续显示已确认的短文案。 */
+      const text = typeof input.text === 'string' ? input.text : message.content;
+      /** 接纳、实时回显、恢复和升级都复用同一条确认历史。 */
+      const history = this.appendModelHistory({
+        conversationId: message.conversation_id,
+        turnId: message.turn_id,
+        segmentId: message.segment_id,
+        role: 'user',
+        submissionId: message.submission_id,
+        content: {
+          text,
+          ...(text !== message.content ? { displayText: message.content } : {}),
+          providerItemId: message.provider_item_id,
+          ...Object.fromEntries(['attachments', 'taskPushLayout', 'browserComments', 'conversationContext', 'questionAnswer'].filter((key) => metadata[key] !== undefined).map((key) => [key, metadata[key]])),
+        },
+        confirmedAt: message.created_at,
+      });
+      if (message.submission_id) {
+        this.db.execute(`UPDATE conversation_submissions SET model_history_sequence = COALESCE(model_history_sequence, ?) WHERE id = ?`, [history.sequence, message.submission_id]);
+      }
+      return history;
+    });
+  }
+
+  /** 写入确认历史；用户输入按提交或原生消息身份复用，正文相同的不同发送仍各自保留。 */
   appendModelHistory(input: {
     conversationId: string;
     turnId: string;
@@ -998,6 +1068,22 @@ export class ConversationExecutionRepository {
     capabilityLoss?: unknown;
     confirmedAt: string;
   }): ConversationModelHistoryRecord {
+    if (input.role === 'user') {
+      /** 本地提交或同轮原生消息均可确认身份；旧问题答复的原生身份保存在来源字段中。 */
+      const providerItemId = stringOrNull(parseJsonRecord(input.content).providerItemId) ?? stringOrNull(parseJsonRecord(input.reasoningSource).itemId);
+      /** 仅复用用户历史，不把同一提交的模型回复或工具活动合并进来。 */
+      const existing = this.db.get<ModelHistoryRow>(
+        `SELECT * FROM conversation_model_history
+          WHERE conversation_id = ? AND role = 'user'
+            AND (submission_id = ? OR (turn_id = ? AND segment_id = ? AND (
+              CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.providerItemId') END = ?
+              OR CASE WHEN json_valid(reasoning_source_json) THEN json_extract(reasoning_source_json, '$.itemId') END = ?
+            )))
+          ORDER BY sequence LIMIT 1`,
+        [input.conversationId, input.submissionId ?? null, input.turnId, input.segmentId, providerItemId, providerItemId],
+      );
+      if (existing) return mapModelHistory(existing);
+    }
     const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
     const id = `conversation_model_history_${randomId(12)}`;
     this.db.execute(
@@ -1543,6 +1629,43 @@ export class ConversationExecutionRepository {
     const row = this.db.get<PersistentWarningRow>(`SELECT * FROM conversation_persistent_warnings WHERE id = ?`, [id]);
     return row ? mapPersistentWarning(row) : undefined;
   }
+}
+
+/** 升级时只补有完整原文和精确身份的已确认用户消息，不改变发送状态或触发 Provider 重放。 */
+export function migrateConfirmedUserMessageHistory(db: ZeusDatabasePort): void {
+  /** 一次性补全标识；后续消息由共同保存入口维护。 */
+  const migrationId = '20260908_confirmed_user_message_history';
+  if (db.get(`SELECT 1 FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  db.transaction(() => {
+    /** 只扫描已有 Provider 确认、但没有用户历史的消息；历史匹配不依赖正文。 */
+    const messages = db.select<{ id: string }>(
+      `SELECT message.id FROM conversation_messages AS message
+         JOIN conversation_turns AS turn
+           ON turn.conversation_id = message.conversation_id AND turn.provider_thread_id = message.provider_thread_id
+          AND turn.provider_turn_id = message.provider_turn_id
+         LEFT JOIN conversation_submissions AS submission
+           ON submission.conversation_id = message.conversation_id AND submission.client_message_id = message.client_message_id
+          AND (submission.id = turn.client_submission_id OR submission.provider_turn_id = message.provider_turn_id)
+        WHERE message.role = 'user' AND message.source = 'codex_native' AND message.provider_item_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_model_history AS history
+             WHERE history.conversation_id = message.conversation_id AND history.turn_id = turn.id AND history.role = 'user'
+               AND (history.submission_id = submission.id
+                 OR CASE WHEN json_valid(history.reasoning_source_json) THEN json_extract(history.reasoning_source_json, '$.itemId') END = message.provider_item_id
+                 OR CASE WHEN json_valid(history.content_json) THEN json_extract(history.content_json, '$.providerItemId') END = message.provider_item_id)
+          )
+        ORDER BY message.created_at, message.id`,
+    );
+    /** 升级与实时保存复用同一身份、正文和附件投影。 */
+    const execution = new ConversationExecutionRepository(db);
+    for (const message of messages) execution.confirmUserMessageHistory(message.id);
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+      migrationId,
+      '补全已被 Provider 确认但未进入模型历史的用户消息',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      new Date().toISOString(),
+    ]);
+  });
 }
 
 function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): void {

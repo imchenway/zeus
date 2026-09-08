@@ -35,6 +35,8 @@ export class PortableConversationContextBuilder {
   build(conversationId: string, target: PortableContextTargetCapabilities): PortableConversationContext {
     const segments = new Map(this.execution.listSegments(conversationId).map((segment) => [segment.id, segment]));
     const history = this.execution.confirmedModelHistory(conversationId);
+    /** 补全的旧消息保留原发生时间；递增序号仍用于分页水位，不代表补全消息刚刚发出。 */
+    const confirmedAtBySequence = new Map(history.map((item) => [item.sequence, item.confirmedAt]));
     const capabilityLosses: PortableConversationContext['capabilityLosses'] = [];
     const entries: PortableHistoryEntry[] = [];
     const toolPairCounts = new Map<string, number>();
@@ -45,7 +47,7 @@ export class PortableConversationContextBuilder {
       if (!segment) continue;
       const parsed = parseJson(item.contentJson);
       const sourceRuntime = segment.runtimeKind;
-      if (item.reasoningSourceJson) {
+      if (item.role === 'assistant' && item.reasoningSourceJson) {
         if (!target.readableReasoningSummary) {
           capabilityLosses.push({ sequence: item.sequence, kind: 'hidden_reasoning_omitted', detail: '目标模型不接收可读思考摘要，已从便携历史省略。' });
           continue;
@@ -93,7 +95,7 @@ export class PortableConversationContextBuilder {
       capabilityLosses.push({ sequence: syntheticSequence, kind: 'dangling_tool_closed', detail: `工具调用 ${toolPairId} 缺少结果，已生成中断结果。` });
     }
 
-    entries.sort((left, right) => left.sequence - right.sequence || (left.role === 'tool' ? 1 : -1));
+    entries.sort((left, right) => confirmedAtBySequence.get(left.sequence)!.localeCompare(confirmedAtBySequence.get(right.sequence)!) || left.sequence - right.sequence || (left.role === 'tool' ? 1 : -1));
     return {
       conversationId,
       throughModelHistorySequence: history.at(-1)?.sequence ?? 0,

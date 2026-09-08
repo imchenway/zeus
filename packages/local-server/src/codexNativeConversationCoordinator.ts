@@ -1532,6 +1532,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
+  /** 保存已确认用户消息并同步历史，覆盖普通输入、计划操作、插话和 Provider 恢复。 */
   function persistProviderUserMessage(
     conversation: ZeusConversationWithMessagesRecord,
     itemPayload: Record<string, unknown>,
@@ -1551,7 +1552,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const stableMetadata = { ...existingMetadata };
     const taskPushLayout = submission ? readNativeSubmissionTaskPushLayout(submission) : null;
     delete stableMetadata.inputOrigin;
-    options.conversations.appendMessage({
+    /** 消息仓储会归并客户端身份与 Provider 别名，历史沿用归并后的完整记录。 */
+    const message = options.conversations.appendMessage({
       conversationId: conversation.id,
       role: 'user',
       content: projection.content,
@@ -1575,22 +1577,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
-    // 引导答复必须进入模型历史，才能在重启和分页后继续保留原问题关联。
-    const questionAnswer = submission ? parseJsonRecord(submission.inputJson).questionAnswer : null;
-    const segment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
-    const turn = options.turns.getByProvider(providerThreadId, providerTurnId);
-    if (submission && isSteeringSubmission(submission) && isRecord(questionAnswer) && segment && turn && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'userMessage')) {
-      options.execution.appendModelHistory({
-        conversationId: conversation.id,
-        turnId: turn.id,
-        segmentId: segment.id,
-        role: 'user',
-        submissionId: submission.id,
-        confirmedAt: createdAt,
-        content: { text: projection.content, providerItemId, questionAnswer },
-        reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'userMessage', readableSummary: false },
-      });
-    }
+    options.execution.confirmUserMessageHistory(message.id);
     flushServiceTierDowngradeNotice(submission);
     resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
     return clientMessageId;
