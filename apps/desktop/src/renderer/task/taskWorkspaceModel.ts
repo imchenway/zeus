@@ -107,8 +107,6 @@ export interface TaskWorkspaceFilters {
 
 export interface TaskWorkspaceViewModelInput extends TaskWorkspaceFilters {
   tasks: TaskRecord[];
-  viewMode?: TaskWorkspaceViewMode;
-  expandedTaskIds?: readonly string[];
   selectedTaskId?: string;
   selectedTaskIds?: readonly string[];
   runtimeAiAvailable?: boolean;
@@ -140,9 +138,6 @@ export interface TaskRowViewModel {
   action: TaskRowAction;
   runStatusConversationId: string | undefined;
   minHitArea: number;
-  depth: number;
-  hasChildren: boolean;
-  expanded: boolean;
   cells: Record<TaskTableColumnKey, TaskTableCellViewModel>;
 }
 
@@ -396,6 +391,7 @@ export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: T
   });
 }
 
+/** 从当前筛选、排序和选择状态生成任务列表，不再应用树形折叠偏好。 */
 export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput): TaskWorkspaceViewModel {
   const managementStatuses = input.managementStatuses?.length ? [...input.managementStatuses] : taskManagementStatuses;
   const filteredTasks = filterVisibleTasks(input.tasks, input.query, input.status, input.tag, {
@@ -404,24 +400,7 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
   });
   const columnPreferences = normalizeTaskTableColumnPreferences(input.taskTableColumns);
   const enumSortOrders = normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders, managementStatuses);
-  const taskById = new Map(input.tasks.map((task) => [task.id, task]));
-  const filteredTaskIds = new Set(filteredTasks.map((task) => task.id));
-  const hierarchyVisibleTaskIds = new Set(filteredTaskIds);
-  if ((input.viewMode ?? 'hierarchy') === 'hierarchy') {
-    for (const task of filteredTasks) {
-      let parentTaskId = task.parentTaskId ?? null;
-      const visited = new Set<string>();
-      while (parentTaskId && !visited.has(parentTaskId)) {
-        visited.add(parentTaskId);
-        const parent = taskById.get(parentTaskId);
-        if (!parent) break;
-        hierarchyVisibleTaskIds.add(parent.id);
-        parentTaskId = parent.parentTaskId ?? null;
-      }
-    }
-  }
-  const candidateTasks = (input.viewMode ?? 'hierarchy') === 'hierarchy' ? input.tasks.filter((task) => hierarchyVisibleTaskIds.has(task.id)) : filteredTasks;
-  const unsortedRows: TaskRowViewModel[] = candidateTasks.map((task) => {
+  const unsortedRows: TaskRowViewModel[] = filteredTasks.map((task) => {
     const taskConversations = input.taskConversations?.[task.id] ?? [];
     return {
       id: task.id,
@@ -431,16 +410,11 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
       action: 'open-detail',
       runStatusConversationId: resolveTaskAgentRunStatusConversation(taskConversations)?.id,
       minHitArea: 44,
-      depth: 0,
-      hasChildren: false,
-      expanded: false,
       cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, taskConversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage ?? 'zh-CN'),
     };
   });
-  const rows =
-    (input.viewMode ?? 'hierarchy') === 'hierarchy'
-      ? flattenHierarchyRows(unsortedRows, filteredTaskIds, input.expandedTaskIds ?? [], hasActiveTaskFilters(input), columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN')
-      : sortTaskRows(unsortedRows, columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN');
+  // 列表始终按筛选和排序展示全部匹配任务，不再读取折叠状态或补入未匹配的父任务。
+  const rows = sortTaskRows(unsortedRows, columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN');
   const visibleTasks = rows.map((row) => row.task);
   const visibleTaskIds = rows.map((row) => row.id);
   const selectedTaskIdSet = new Set(input.selectedTaskIds ?? []);
@@ -468,49 +442,6 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
     visibleColumns: columnPreferences.columnOrder.filter((columnKey) => visibleColumnSet.has(columnKey)),
     columnOrder: columnPreferences.columnOrder,
   };
-}
-
-function flattenHierarchyRows(
-  rows: TaskRowViewModel[],
-  matchedTaskIds: Set<string>,
-  expandedTaskIds: readonly string[],
-  hasFilters: boolean,
-  sort: TaskTableSortState,
-  enumSortOrders: TaskTableEnumSortOrders,
-  language: 'zh-CN' | 'en-US',
-): TaskRowViewModel[] {
-  const rowById = new Map(rows.map((row) => [row.id, row]));
-  const childrenByParentId = new Map<string, TaskRowViewModel[]>();
-  const roots: TaskRowViewModel[] = [];
-  for (const row of rows) {
-    const parentTaskId = row.task.parentTaskId;
-    if (!parentTaskId || !rowById.has(parentTaskId)) roots.push(row);
-    else childrenByParentId.set(parentTaskId, [...(childrenByParentId.get(parentTaskId) ?? []), row]);
-  }
-  const forcedExpandedIds = new Set<string>();
-  if (hasFilters) {
-    for (const matchedTaskId of matchedTaskIds) {
-      let parentTaskId = rowById.get(matchedTaskId)?.task.parentTaskId ?? null;
-      while (parentTaskId && rowById.has(parentTaskId)) {
-        forcedExpandedIds.add(parentTaskId);
-        parentTaskId = rowById.get(parentTaskId)?.task.parentTaskId ?? null;
-      }
-    }
-  }
-  const expandedIdSet = new Set(expandedTaskIds);
-  const flattened: TaskRowViewModel[] = [];
-  function appendSiblings(siblings: TaskRowViewModel[], depth: number): void {
-    for (const row of sortTaskRows(siblings, sort, enumSortOrders, language)) {
-      const children = childrenByParentId.get(row.id) ?? [];
-      row.depth = Math.min(depth, 2);
-      row.hasChildren = children.length > 0;
-      row.expanded = row.hasChildren && (expandedIdSet.has(row.id) || forcedExpandedIds.has(row.id));
-      flattened.push(row);
-      if (row.expanded) appendSiblings(children, depth + 1);
-    }
-  }
-  appendSiblings(roots, 0);
-  return flattened;
 }
 
 function sortTaskRows(rows: TaskRowViewModel[], sort: TaskTableSortState, enumSortOrders: TaskTableEnumSortOrders, language: 'zh-CN' | 'en-US'): TaskRowViewModel[] {

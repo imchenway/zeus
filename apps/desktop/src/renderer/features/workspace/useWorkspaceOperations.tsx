@@ -7,7 +7,7 @@ import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
+import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type AiRuntimeSession,
@@ -67,7 +67,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     codexConfigImportResult,
     conversationDraftOpen,
     currentProjectTasks,
-    expandedTaskIds,
     externalApiKeyInput,
     firstProjectId,
     genericShellCriticalConfirmed,
@@ -214,7 +213,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     taskPageViewMode,
     taskStatusFilter,
     taskTableLayoutDirty,
-    taskViewMode,
     taskWorkspaceCopy,
     telegramAllowedUserIdsInput,
     telegramNotificationChatIdsInput,
@@ -776,29 +774,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         await Promise.all([loadTaskBoard(projectId), props.onLoadTask ? props.onLoadTask(input.taskId).then(mergeTaskRecord) : Promise.resolve()]);
       }
       throw error;
-    }
-  }
-
-  async function saveTaskViewPreferences(input: { viewMode?: TaskWorkspaceViewMode; expandedTaskIds?: string[] }): Promise<void> {
-    if (!activeProjectId) return;
-    const nextSettings = normalizeRendererAppShellSettings({
-      ...appShellSettings,
-      taskViewModeByProject: {
-        ...(appShellSettings.taskViewModeByProject ?? {}),
-        [activeProjectId]: input.viewMode ?? taskViewMode,
-      },
-      taskExpandedIdsByProject: {
-        ...(appShellSettings.taskExpandedIdsByProject ?? {}),
-        [activeProjectId]: input.expandedTaskIds ?? expandedTaskIds,
-      },
-    });
-    setAppShellSettings(nextSettings);
-    if (!props.onSaveAppShellSettings) return;
-    try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
-      setAppShellSettings((currentSettings) => mergeAppShellSettingsSaveResponse({ currentSettings, savedSettings }));
-    } catch (error) {
-      recordLocalError('task-view-preference-save', error);
     }
   }
 
@@ -2147,7 +2122,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     saveTaskPageViewMode,
     saveTaskStatusFilter,
     saveTaskTableLayout,
-    saveTaskViewPreferences,
     saveTelegramBotToken,
     saveTelegramNotificationSettings,
     saveTelegramSecuritySettings,

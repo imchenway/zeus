@@ -1,4 +1,4 @@
-import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { isTaskPriority, type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
@@ -42,7 +42,6 @@ import {
   type TaskAgentRunStatus,
   type TaskBranchStatus,
   type TaskTableColumnDropPosition,
-  type TaskWorkspaceViewMode,
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
@@ -300,11 +299,9 @@ export interface TaskWorkspaceProps {
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
   pageViewMode: TaskPageViewMode;
-  viewMode: TaskWorkspaceViewMode;
   taskBoardSnapshot?: TaskBoardViewSnapshot | null;
   taskBoardLoading?: boolean;
   taskBoardError?: string | null;
-  expandedTaskIds?: readonly string[];
   onSearchChange: (value: string) => void;
   onStatusFilterChange: (value: TaskStatusFilter) => void;
   onTagFilterChange: (value: string) => void;
@@ -313,13 +310,11 @@ export interface TaskWorkspaceProps {
   onCreateTask: () => void;
   onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
   onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
-  onViewModeChange: (viewMode: TaskWorkspaceViewMode) => void;
   onPageViewModeChange: (viewMode: TaskPageViewMode) => void;
   onReloadTaskBoard?: () => void;
   onUpdateTaskBoard?: (settings: Partial<TaskBoardViewSettings>) => Promise<TaskBoardViewSnapshot>;
   onMoveTaskBoardTask?: (input: TaskBoardMoveRequest) => Promise<{ task: TaskRecord; board: TaskBoardViewSnapshot }>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
-  onToggleTaskExpanded: (taskId: string) => void;
   onToggleTaskSelection?: (taskId: string, selected: boolean) => void;
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
@@ -404,8 +399,6 @@ function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mix
 }
 
 export function TaskWorkspace(props: TaskWorkspaceProps) {
-  const [fieldSettingsOpen, setFieldSettingsOpen] = useState(false);
-  const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [boardSettingsSection, setBoardSettingsSection] = useState<TaskBoardSettingsSection | null>(null);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
@@ -417,18 +410,12 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   });
   const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
   const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);
-  const fieldSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const fieldSettingsPopoverRef = useRef<HTMLElement | null>(null);
-  const moreSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  /** 原生弹出层使用独立身份，浏览器负责顶层显示、外部点击和 Escape 关闭。 */
+  const fieldSettingsId = useId();
+  /** 更多动作与列设置分别关联各自的触发按钮。 */
+  const moreSettingsId = useId();
+  /** 执行动作后关闭原生弹出层。 */
   const moreSettingsPopoverRef = useRef<HTMLElement | null>(null);
-  const closeFieldSettings = useCallback((restoreFocus = true): void => {
-    setFieldSettingsOpen(false);
-    if (restoreFocus) fieldSettingsTriggerRef.current?.focus();
-  }, []);
-  const closeMoreSettings = useCallback((restoreFocus = true): void => {
-    setMoreSettingsOpen(false);
-    if (restoreFocus) moreSettingsTriggerRef.current?.focus();
-  }, []);
   const model = createTaskWorkspaceViewModel({
     tasks: props.tasks,
     query: props.searchQuery,
@@ -449,8 +436,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     taskTableColumns: props.taskTableColumns,
     taskTableEnumSortOrders: props.taskTableEnumSortOrders,
     appLanguage: props.appLanguage,
-    viewMode: props.viewMode,
-    expandedTaskIds: props.expandedTaskIds,
   });
   const boardSettings = props.taskBoardSnapshot?.settings;
   const boardFilterCount = countTaskBoardFilterRules(boardSettings?.filters);
@@ -526,7 +511,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
   const statusLineHelp = taskListLoading ? props.copy.taskListLoadingHelp : props.copy.taskListErrorHelp;
   const visibleTaskCountLabel = taskListLoading ? props.copy.taskListLoadingMeta : props.copy.taskListErrorRetry;
-  const batchViewActionLabel = isEnglishCopy ? 'Batch' : '批量';
   const columnViewActionLabel = isEnglishCopy ? 'Columns' : '列';
   const moreViewActionLabel = isEnglishCopy ? 'More' : '更多';
   const saveViewActionLabel = isEnglishCopy ? 'Save' : '保存';
@@ -546,15 +530,17 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     Object.entries(model.columnPreferences.columnWidths ?? {}).some(([columnKey, width]) => width !== defaultTaskTableColumnWidths[columnKey as TaskTableColumnKey]) ||
     Boolean(model.columnPreferences.sort.columnKey);
   const moreActionsAvailable = filtersHaveValue || columnsHaveCustomPreferences;
+  /** 清除筛选后收起更多动作。 */
   const handleMoreResetTaskFilters = () => {
     if (!filtersHaveValue) return;
     handleResetTaskFilters();
-    closeMoreSettings();
+    moreSettingsPopoverRef.current?.hidePopover();
   };
+  /** 恢复列偏好后收起更多动作。 */
   const handleMoreRestoreDefaultColumns = () => {
     if (!columnsHaveCustomPreferences) return;
     props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences());
-    closeMoreSettings();
+    moreSettingsPopoverRef.current?.hidePopover();
   };
   // 任务页首屏不默认选中第一行，避免固定灰底；但仍保留第一行作为键盘进入表格后的 roving focus 起点。
   const keyboardEntryTaskId = model.rows.find((row) => row.selected)?.task.id ?? model.rows[0]?.task.id;
@@ -563,58 +549,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     if (bulkStatusOptions.length === 0 || bulkStatusOptions.includes(bulkTargetStatus)) return;
     setBulkTargetStatus(bulkStatusOptions[0]);
   }, [bulkStatusOptions, bulkTargetStatus]);
-
-  useEffect(() => {
-    if (!fieldSettingsOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeFieldSettings(true);
-      }
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (fieldSettingsTriggerRef.current?.contains(target) || fieldSettingsPopoverRef.current?.contains(target)) return;
-      closeFieldSettings(true);
-    };
-
-    // 字段浮层遵循 Zeus popover 契约：Escape / 外部点击关闭，并把焦点还给触发器。
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('pointerdown', handlePointerDown);
-    };
-  }, [closeFieldSettings, fieldSettingsOpen]);
-
-  useEffect(() => {
-    if (moreSettingsOpen && !moreActionsAvailable) {
-      closeMoreSettings(false);
-      return;
-    }
-    if (!moreSettingsOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeMoreSettings(true);
-      }
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (moreSettingsTriggerRef.current?.contains(target) || moreSettingsPopoverRef.current?.contains(target)) return;
-      closeMoreSettings(true);
-    };
-
-    // 更多任务动作使用显式 popover，不恢复浏览器默认三角 chrome。
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('pointerdown', handlePointerDown);
-    };
-  }, [closeMoreSettings, moreActionsAvailable, moreSettingsOpen]);
 
   const handleListKeyboardNavigation = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (!(event.target instanceof HTMLElement)) return;
@@ -803,46 +737,19 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             ) : null}
             {props.pageViewMode === 'list' ? (
               <>
-                <div className="task-table-view-mode-segments" role="group" aria-label={isEnglishCopy ? 'List layout' : '列表排列方式'}>
-                  <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'hierarchy'} onClick={() => props.onViewModeChange('hierarchy')}>
-                    {isEnglishCopy ? 'Hierarchy' : '层级'}
-                  </button>
-                  <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'flat'} onClick={() => props.onViewModeChange('flat')}>
-                    {isEnglishCopy ? 'Flat' : '平铺'}
-                  </button>
-                </div>
-                <button
-                  className="task-table-view-pill task-table-view-bulk-pill"
-                  type="button"
-                  disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
-                  onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
-                >
-                  {batchViewActionLabel}
-                </button>
                 <div className="task-table-field-settings">
-                  {/* 字段配置属于低频视图偏好，在主工具条中只保留紧凑入口，并以 overlay 展开。 */}
+                  {/* 列设置保留紧凑入口，通过原生顶层弹出面板展开。 */}
                   <button
-                    ref={fieldSettingsTriggerRef}
                     className="task-table-view-pill task-table-view-pill-strong task-table-field-settings-trigger"
                     type="button"
                     aria-haspopup="dialog"
-                    aria-expanded={fieldSettingsOpen}
-                    aria-controls="task-table-field-settings-popover"
+                    popoverTarget={fieldSettingsId}
                     aria-label={props.copy.fieldSettingsAria}
                     title={props.copy.fieldSettingsAria}
-                    onClick={() => setFieldSettingsOpen((open) => !open)}
                   >
                     <span className="task-table-field-settings-label">{columnViewActionLabel}</span>
                   </button>
-                  <section
-                    ref={fieldSettingsPopoverRef}
-                    id="task-table-field-settings-popover"
-                    className="task-table-field-settings-popover"
-                    role="dialog"
-                    aria-label={props.copy.fieldSettingsAria}
-                    hidden={!fieldSettingsOpen}
-                    data-open={fieldSettingsOpen ? 'true' : 'false'}
-                  >
+                  <section id={fieldSettingsId} popover="auto" className="task-table-field-settings-popover" role="dialog" aria-label={props.copy.fieldSettingsAria}>
                     {/* 字段弹层是有边界的 popover：标题说明固定、字段列表独立滚动、底部恢复动作固定，避免在小分辨率下被裁切。 */}
                     <header className="task-table-field-settings-heading">
                       <strong>{props.copy.fieldSettingsAria}</strong>
@@ -889,32 +796,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   </button>
                 ) : (
                   <div className="task-table-more-settings">
-                    <button
-                      ref={moreSettingsTriggerRef}
-                      className="task-table-view-pill task-table-more-settings-trigger"
-                      type="button"
-                      aria-haspopup="menu"
-                      aria-expanded={moreSettingsOpen}
-                      aria-controls="task-table-more-settings-popover"
-                      disabled={!moreActionsAvailable}
-                      aria-disabled={!moreActionsAvailable}
-                      onClick={() => {
-                        if (!moreActionsAvailable) return;
-                        setMoreSettingsOpen((open) => !open);
-                      }}
-                    >
+                    <button className="task-table-view-pill task-table-more-settings-trigger" type="button" aria-haspopup="menu" popoverTarget={moreSettingsId} disabled={!moreActionsAvailable} aria-disabled={!moreActionsAvailable}>
                       {moreViewActionLabel}
                     </button>
                     {moreActionsAvailable ? (
-                      <section
-                        ref={moreSettingsPopoverRef}
-                        id="task-table-more-settings-popover"
-                        className="task-table-view-more-panel"
-                        role="menu"
-                        aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}
-                        hidden={!moreSettingsOpen}
-                        data-open={moreSettingsOpen ? 'true' : 'false'}
-                      >
+                      <section ref={moreSettingsPopoverRef} id={moreSettingsId} popover="auto" className="task-table-view-more-panel" role="menu" aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}>
                         {filtersHaveValue ? (
                           <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
                             <span>{props.copy.noResultsPrimaryAction}</span>
@@ -1281,24 +1167,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                                 }}
                               />
                             ) : columnKey === 'intent' ? (
-                              <span className="task-table-title-hierarchy" style={{ paddingInlineStart: `${row.depth * 22}px` }}>
-                                {props.viewMode === 'hierarchy' ? (
-                                  <button
-                                    type="button"
-                                    className="task-table-hierarchy-toggle"
-                                    aria-label={row.hasChildren ? (isEnglishCopy ? `${row.expanded ? 'Collapse' : 'Expand'} ${task.title}` : `${row.expanded ? '收起' : '展开'}${task.title}`) : undefined}
-                                    aria-expanded={row.hasChildren ? row.expanded : undefined}
-                                    disabled={!row.hasChildren}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      if (row.hasChildren) props.onToggleTaskExpanded(task.id);
-                                    }}
-                                  >
-                                    <span aria-hidden="true">{row.hasChildren ? (row.expanded ? '▾' : '▸') : '·'}</span>
-                                  </button>
-                                ) : null}
-                                <span className="task-table-title-text">{cell.primary}</span>
-                              </span>
+                              <span className="task-table-title-text">{cell.primary}</span>
                             ) : (
                               <strong>{cell.primary}</strong>
                             )}

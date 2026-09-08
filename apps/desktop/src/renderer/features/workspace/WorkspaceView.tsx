@@ -162,7 +162,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     currentProjectTasks,
     currentTaskConversationChoices,
     dataPortabilityStatusCopy,
-    expandedTaskIds,
     genericShellCriticalConfirmed,
     genericShellRisk,
     gitDiffCopy,
@@ -297,7 +296,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskTagFilter,
     taskTemplates,
     taskTerminalCleanupConfirmation,
-    taskViewMode,
     taskWorkspaceCopy,
     uiCopy,
     updatingTaskBusy,
@@ -413,7 +411,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     saveTaskPageViewMode,
     saveTaskStatusFilter,
     saveTaskTableLayout,
-    saveTaskViewPreferences,
     sendRuntimeInput,
     setRuntimeSessionFavorite,
     startCodexLegacyImport,
@@ -907,11 +904,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       listState={!props.snapshot ? 'loading' : 'ready'}
                       activeProjectId={activeProjectId}
                       pageViewMode={taskPageViewMode}
-                      viewMode={taskViewMode}
                       taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
                       taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
                       taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
-                      expandedTaskIds={expandedTaskIds}
                       onSearchChange={setTaskSearchQuery}
                       onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
                       onTagFilterChange={setTaskTagFilter}
@@ -920,17 +915,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       onCreateTask={() => openTaskCreateModal()}
                       onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
                       onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
-                      onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
                       onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
                       onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
                       onUpdateTaskBoard={updateTaskBoardSettings}
                       onMoveTaskBoardTask={moveTaskBoardTask}
                       onLoadTaskAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                      onToggleTaskExpanded={(taskId) =>
-                        void saveTaskViewPreferences({
-                          expandedTaskIds: expandedTaskIds.includes(taskId) ? expandedTaskIds.filter((id) => id !== taskId) : [...expandedTaskIds, taskId],
-                        })
-                      }
                       onToggleTaskSelection={toggleTaskSelection}
                       onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                       onClearTaskSelection={clearTaskSelection}
