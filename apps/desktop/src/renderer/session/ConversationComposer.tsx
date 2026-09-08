@@ -314,7 +314,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
     await setGoalObjective(argument, true);
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  /** 原文和格式预览共用发送条件；粘贴快捷键只在原文输入框处理。 */
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void {
     if (!goalInputActive) inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({
       key: event.key,

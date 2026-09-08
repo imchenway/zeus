@@ -19,7 +19,7 @@ export interface ConversationInputResourceHandlers {
   processing: boolean;
   dragging: boolean;
   handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void;
-  handlePasteShortcut(event: KeyboardEvent<HTMLTextAreaElement>): void;
+  handlePasteShortcut(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   handleDragEnter(event: DragEvent<HTMLElement>): void;
   handleDragOver(event: DragEvent<HTMLElement>): void;
   handleDragLeave(event: DragEvent<HTMLElement>): void;
@@ -113,7 +113,9 @@ export function useConversationInputResources(options: UseConversationInputResou
   );
 
   const handlePasteShortcut = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    (event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
+      // 格式预览只转发发送按键，不从阅读区域读取原生文本选区。
+      if (!(event.currentTarget instanceof HTMLTextAreaElement)) return;
       if (latest.current.disabled || event.key.toLocaleLowerCase() !== 'v' || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
       const generation = ++pasteGeneration.current;
       const selection = currentSelection(event.currentTarget);
