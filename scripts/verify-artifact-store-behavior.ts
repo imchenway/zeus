@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ArtifactStore, ArtifactStoreError, ZeusStorageWriteFaultError, createZeusDatabase, type ArtifactOwnerIdentity } from '../packages/storage/src/index.js';
+import { ArtifactStore, ArtifactStoreError, ConversationExecutionRepository, ZeusStorageWriteFaultError, createZeusDatabase, type ArtifactOwnerIdentity } from '../packages/storage/src/index.js';
+import { ManagedConversationToolResultStore } from '../packages/local-server/src/conversationPortableContext.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-artifact-store-probe-'));
 const observed: Record<string, unknown> = {};
@@ -10,11 +11,91 @@ try {
   await verifyCasAuthorizationAndGc();
   await verifyQuotaCompensation();
   await verifyExternalFaultBridge();
+  await verifyConversationToolResultReplay();
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
 }
 
 console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
+
+/** 在真实临时 SQLite 与 Artifact 文件上验证原文归档、完成回显和并发重复归档。 */
+async function verifyConversationToolResultReplay(): Promise<void> {
+  /** 独立数据库用于验证关闭重开后的稳定句柄。 */
+  const databasePath = join(probeRoot, 'tool-results.db');
+  /** 工具原件只落在本次探针的临时目录。 */
+  const artifactRoot = join(probeRoot, 'tool-artifacts');
+  /** 首次打开的数据库连接。 */
+  const database = await createZeusDatabase(databasePath);
+  /** 保存重启后仍需读取的原始句柄。 */
+  let originalHandle = '';
+  /** 超过投影上限的原文，确保回显不是完整原件。 */
+  const originalText = `${'完整工具结果\n'.repeat(4_096)}原文结尾`;
+  /** 同一真实调用的固定归档身份。 */
+  const input = { conversationId: 'tool-conversation', turnId: 'tool-turn', segmentId: 'tool-segment', toolPairId: 'tool-call', toolKind: 'other' as const, text: originalText, createdAt: '2026-09-08T03:05:17.586Z' };
+  try {
+    /** 使用产品中的真实存储实现，不替换数据库或文件写入。 */
+    const execution = new ConversationExecutionRepository(database);
+    /** 禁止探针触碰正式 Artifact。 */
+    const artifacts = new ArtifactStore(database, artifactRoot, undefined, { minimumFreeBytes: 0 });
+    /** 动态工具执行和完成通知共用的归档入口。 */
+    const store = new ManagedConversationToolResultStore(artifactRoot, execution, artifacts);
+    /** 首次执行保存完整原文。 */
+    const original = await store.store(input);
+    originalHandle = original.record.handle;
+    /** 完成事件只回显已经截断的模型投影。 */
+    const echoed = await store.store({ ...input, text: original.projection, createdAt: '2026-09-08T03:05:18.586Z' });
+    assertProbe(echoed.record.handle === originalHandle && echoed.projection === original.projection, '完成回显必须复用原句柄和原投影');
+    assertProbe(database.countRows('conversation_tool_results') === 1 && database.countRows('artifact_owners') === 1 && database.countRows('artifact_objects') === 1, '重复通知不得新增结果或 Artifact 引用');
+    assertProbe((await store.readPage({ conversationId: input.conversationId, handle: originalHandle, offset: originalText.length - 4 })).text === '原文结尾', '完成回显不能覆盖原件尾部');
+    assertProbe(execution.recordToolResult({ ...original.record, handle: 'duplicate-candidate' }).handle === originalHandle, '数据库插入冲突必须返回首次记录');
+    assertProbe(captureStorageFault(() => execution.recordToolResult({ ...original.record, toolPairId: 'another-call' }))?.includes('身份冲突'), '同一句柄不能属于另一调用');
+    for (const scope of [{ turnId: 'another-turn' }, { segmentId: 'another-segment' }]) {
+      assertProbe((await captureArtifactCode(() => store.store({ ...input, ...scope })))?.includes('身份冲突'), '跨轮次或分段的调用编号冲突必须拒绝');
+    }
+    assertProbe((await captureArtifactCode(() => store.readPage({ conversationId: 'another-conversation', handle: originalHandle })))?.includes('不属于当前'), '句柄不能被其他会话读取');
+    assertProbe((await store.store({ ...input, conversationId: 'another-conversation' })).record.handle !== originalHandle, '不同会话中的同名调用必须独立保存');
+
+    /** 两个存储实例同时首次归档，强制经过数据库唯一键裁定。 */
+    const concurrentStores = [store, new ManagedConversationToolResultStore(artifactRoot, new ConversationExecutionRepository(database), artifacts)];
+    /** 不同候选原文也必须返回唯一记录对应的投影。 */
+    const concurrent = await Promise.all(concurrentStores.map((candidate, index) => candidate.store({ ...input, toolPairId: 'concurrent-call', text: `${originalText}${index}` })));
+    assertProbe(
+      concurrent[0]!.record.handle === concurrent[1]!.record.handle && concurrent[0]!.projection === concurrent[1]!.projection && concurrent[0]!.projection.includes(concurrent[0]!.record.handle),
+      '并发归档不能返回悬空句柄或不同投影',
+    );
+
+    /** 最小 PNG 原件用于核对图片重入和图片序号隔离。 */
+    const imageUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9e0AAAAASUVORK5CYII=';
+    /** 同一图片的两个并发归档请求。 */
+    const images = await Promise.all(concurrentStores.map((candidate) => candidate.storeImage({ ...input, toolPairId: 'tool-call:image:0', imageUrl })));
+    assertProbe(images[0]!.record.handle === images[1]!.record.handle && images[0]!.projectionText === images[1]!.projectionText && images.every((image) => image.projectedImageUrl === imageUrl), '并发图片必须复用原件、句柄和投影说明');
+    assertProbe((await store.storeImage({ ...input, toolPairId: 'tool-call:image:1', imageUrl })).record.handle !== images[0]!.record.handle, '同一调用的不同图片序号不能合并');
+    assertProbe((await captureArtifactCode(() => store.storeImage({ ...input, imageUrl })))?.includes('类型不匹配'), '图片与文字不得共享同一结果编号');
+    /** 以另一张超过热投影上限的图片验证重入必须读取原件。 */
+    const largeImageUrl = `data:image/png;base64,${Buffer.concat([Buffer.from(imageUrl.split(',')[1]!, 'base64'), Buffer.alloc(800 * 1024)]).toString('base64')}`;
+    assertProbe((await store.storeImage({ ...input, toolPairId: 'tool-call:image:0', imageUrl: largeImageUrl })).projectedImageUrl === imageUrl, '原图句柄不能配上重入请求中的另一张图');
+    /** 超限图片只能通过显式原图读取获得内容。 */
+    const largeImage = await store.storeImage({ ...input, toolPairId: 'large-call:image:0', imageUrl: largeImageUrl });
+    assertProbe(largeImage.projectedImageUrl === null && (await store.storeImage({ ...input, toolPairId: 'large-call:image:0', imageUrl })).projectedImageUrl === null, '超限原图重入仍应保持有界热投影');
+    assertProbe((await store.readImage({ conversationId: input.conversationId, handle: largeImage.record.handle, detail: 'original' })).imageUrl === largeImageUrl, '原图读取必须保留完整内容');
+    assertProbe(database.countRows('artifact_owners') === database.countRows('conversation_tool_results'), '并发未采用的候选不能遗留 owner 引用');
+    assertProbe(database.get<{ count: number }>(`SELECT COUNT(*) AS count FROM artifact_retention_holds WHERE state = 'active'`)?.count === database.countRows('conversation_tool_results'), '并发未采用的候选不能遗留活动保留锁');
+    assertProbe(database.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check === 'ok', '工具结果账本必须完整');
+    observed.toolResultReplay = { originalRetained: true, concurrentText: true, concurrentImages: true, scopeIsolation: true, boundedImages: true, candidateReferencesReleased: true };
+  } finally {
+    await database.close();
+  }
+  /** 重开数据库排除仅靠进程内缓存去重的实现。 */
+  const reopened = await createZeusDatabase(databasePath);
+  try {
+    /** 新实例仍通过已保存的唯一键复用结果。 */
+    const store = new ManagedConversationToolResultStore(artifactRoot, new ConversationExecutionRepository(reopened), new ArtifactStore(reopened, artifactRoot, undefined, { minimumFreeBytes: 0 }));
+    assertProbe((await store.store({ ...input, text: '重启后的完成回显' })).record.handle === originalHandle, '重启后的回显必须复用旧句柄');
+    observed.toolResultReplayAfterReopen = true;
+  } finally {
+    await reopened.close();
+  }
+}
 
 async function verifyCasAuthorizationAndGc(): Promise<void> {
   const database = await createZeusDatabase(join(probeRoot, 'cas.db'));

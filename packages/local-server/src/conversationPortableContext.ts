@@ -213,7 +213,11 @@ export class ManagedConversationToolResultStore {
     this.root = resolve(root);
   }
 
+  /** 原始执行与完成通知共用首次归档，避免把 Provider 回显当作新的完整结果。 */
   async store(input: StoreConversationToolResultInput): Promise<{ record: ConversationToolResultRecord; projection: string }> {
+    /** 重复通知直接复用已保存的投影，不创建多余 Artifact 或随机句柄。 */
+    const existing = this.execution.getToolResultByPair(input);
+    if (existing) return { record: existing, projection: toolResultProjection(existing, false) };
     const handle = `conversation_tool_result_${randomId(32)}`;
     const artifactRef = await this.artifacts.putText({
       text: input.text,
@@ -235,7 +239,7 @@ export class ManagedConversationToolResultStore {
       createdAt: input.createdAt,
     });
     const projection = projectToolResult(input.toolKind, input.text, handle);
-    const record = this.execution.recordToolResult({
+    const record = this.recordToolResult({
       handle,
       conversationId: input.conversationId,
       turnId: input.turnId,
@@ -248,10 +252,14 @@ export class ManagedConversationToolResultStore {
       projectionJson: JSON.stringify({ text: projection, truncated: projection !== input.text, artifactRef }),
       createdAt: input.createdAt,
     });
-    return { record, projection };
+    return { record, projection: toolResultProjection(record, false) };
   }
 
+  /** 图片重复归档同样复用首次保存的原件与投影。 */
   async storeImage(input: StoreConversationToolImageInput): Promise<{ record: ConversationToolResultRecord; projectionText: string; projectedImageUrl: string | null }> {
+    /** 返回原件对应的图片，不能混用重入请求携带的另一张图片。 */
+    const existing = this.execution.getToolResultByPair(input);
+    if (existing) return this.storedImageProjection(existing);
     const parsed = parseManagedImageDataUrl(input.imageUrl);
     const handle = `conversation_tool_image_${randomId(32)}`;
     const artifactRef = await this.artifacts.putBytes({
@@ -277,7 +285,7 @@ export class ManagedConversationToolResultStore {
     const projectionText = projectedImageUrl
       ? `[Zeus 已将工具图片原件保存为 Artifact；句柄 ${handle}，当前调用仅携带有界热投影。]`
       : `[Zeus 已将 ${parsed.bytes.byteLength} 字节的工具图片保存为 Artifact；句柄 ${handle}。图片超过热投影上限，按需调用 zeus.read_conversation_tool_image(handle="${handle}", detail="original")。]`;
-    const record = this.execution.recordToolResult({
+    const record = this.recordToolResult({
       handle,
       conversationId: input.conversationId,
       turnId: input.turnId,
@@ -296,7 +304,29 @@ export class ManagedConversationToolResultStore {
       }),
       createdAt: input.createdAt,
     });
-    return { record, projectionText, projectedImageUrl };
+    return record.handle === handle ? { record, projectionText, projectedImageUrl } : this.storedImageProjection(record);
+  }
+
+  /** 数据库裁定并发归档的唯一结果，只解除本次未被采用的 Artifact 引用。 */
+  private recordToolResult(input: ConversationToolResultRecord): ConversationToolResultRecord {
+    /** 插入冲突时返回已保存的记录，而非本次生成的候选句柄。 */
+    const record = this.execution.recordToolResult(input);
+    if (record.handle !== input.handle) {
+      /** 仅释放候选 owner；已采用结果的原件与保留锁不受影响。 */
+      const artifactRef = toolResultArtifactRef(input.projectionJson)!;
+      this.artifacts.releaseOwnerHolds({ owner: artifactRef.owner, sha256: artifactRef.sha256 });
+      this.artifacts.detachOwner({ owner: artifactRef.owner, sha256: artifactRef.sha256 });
+    }
+    return record;
+  }
+
+  /** 从已保存图片重建有界热投影，确保句柄、说明和图片内容始终一致。 */
+  private async storedImageProjection(record: ConversationToolResultRecord): Promise<{ record: ConversationToolResultRecord; projectionText: string; projectedImageUrl: string | null }> {
+    /** 沿用首次保存的说明，保留其中稳定的原图读取句柄。 */
+    const projectionText = toolResultProjection(record, true);
+    /** 复用现有授权和完整性检查，超限原图仍不进入热投影。 */
+    const image = await this.readImage({ conversationId: record.conversationId, handle: record.handle });
+    return { record, projectionText, projectedImageUrl: image.imageUrl };
   }
 
   async readPage(input: { conversationId: string; handle: string; offset?: number; limit?: number }): Promise<{ text: string; offset: number; nextOffset: number | null; totalCharacters: number; sha256: string }> {
@@ -422,6 +452,16 @@ export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
       ],
     },
   ];
+}
+
+/** 只返回数据库采用的投影，防止暴露并发归档中未采用的候选句柄。 */
+function toolResultProjection(record: ConversationToolResultRecord, image: boolean): string {
+  /** 图片与文字不能共享同一个工具结果编号。 */
+  const projection = parseJson(record.projectionJson);
+  if (!projection || typeof projection !== 'object' || !('text' in projection) || typeof projection.text !== 'string' || record.mimeType.startsWith('image/') !== image) {
+    throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_KIND_MISMATCH', '已保存的工具结果投影类型不匹配。');
+  }
+  return projection.text;
 }
 
 function projectToolResult(kind: StoreConversationToolResultInput['toolKind'], text: string, handle: string): string {

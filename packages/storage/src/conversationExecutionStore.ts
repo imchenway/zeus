@@ -1165,10 +1165,19 @@ export class ConversationExecutionRepository {
     return this.processItemById(id)!;
   }
 
+  /** 同一工具调用只保存首个完整结果；后续完成通知复用其不可变句柄。 */
   recordToolResult(input: ConversationToolResultRecord): ConversationToolResultRecord {
+    /** 句柄不能被另一调用、轮次或内容重新占用。 */
     const existing = this.getToolResult(input.handle);
     if (existing) {
-      if (existing.conversationId !== input.conversationId || existing.sha256 !== input.sha256 || existing.relativePath !== input.relativePath) {
+      if (
+        existing.conversationId !== input.conversationId ||
+        existing.turnId !== input.turnId ||
+        existing.segmentId !== input.segmentId ||
+        existing.toolPairId !== input.toolPairId ||
+        existing.sha256 !== input.sha256 ||
+        existing.relativePath !== input.relativePath
+      ) {
         throw new Error(`工具结果句柄发生身份冲突：${input.handle}`);
       }
       return existing;
@@ -1177,10 +1186,21 @@ export class ConversationExecutionRepository {
       `INSERT INTO conversation_tool_results
        (handle, conversation_id, turn_id, segment_id, tool_pair_id, relative_path, sha256,
         byte_length, mime_type, projection_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversation_id, tool_pair_id) DO NOTHING`,
       [input.handle, input.conversationId, input.turnId, input.segmentId, input.toolPairId, input.relativePath, input.sha256, input.byteLength, input.mimeType, input.projectionJson, input.createdAt],
     );
-    return this.getToolResult(input.handle)!;
+    return this.getToolResultByPair(input)!;
+  }
+
+  /** 按会话和调用编号复用结果，同时拒绝跨轮次、跨运行分段的编号冲突。 */
+  getToolResultByPair(input: Pick<ConversationToolResultRecord, 'conversationId' | 'turnId' | 'segmentId' | 'toolPairId'>): ConversationToolResultRecord | undefined {
+    /** 唯一键覆盖正常重复通知和并发归档。 */
+    const row = this.db.get<ToolResultRow>(`SELECT * FROM conversation_tool_results WHERE conversation_id = ? AND tool_pair_id = ?`, [input.conversationId, input.toolPairId]);
+    if (row && (row.turn_id !== input.turnId || row.segment_id !== input.segmentId)) {
+      throw new Error(`工具结果调用编号发生身份冲突：${input.toolPairId}`);
+    }
+    return row ? mapToolResult(row) : undefined;
   }
 
   getToolResult(handle: string): ConversationToolResultRecord | undefined {
