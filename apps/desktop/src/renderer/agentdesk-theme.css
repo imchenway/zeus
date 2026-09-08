@@ -291,8 +291,6 @@
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
-    .extension-plugin-card,
-    .extension-marketplace-card,
     .im-connection-card,
     .codex-usage-section,
     .skills-workflow-defaults,
@@ -308,7 +306,7 @@
   background: var(--zeus-code-editor-bg);
 }
 
-.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .model-definition-card, .extension-plugin-card):is(:hover, :focus-within) {
+.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .model-definition-card):is(:hover, :focus-within) {
   border-color: rgb(40 102 247 / 0.32);
   box-shadow: 0 16px 32px -24px rgb(40 102 247 / 0.48);
 }
@@ -348,7 +346,6 @@
     .task-table-view-pill,
     .task-table-page-view-segments button,
     .task-table-view-mode-segments button,
-    .skill-install-source-tabs button,
     .extension-tabs button,
     .project-workspace-mode-toolbar button
   ) {
@@ -384,7 +381,7 @@
 }
 
 /* 下划线式 Tab 保持原有信息结构，只统一命中区圆角和品牌色。 */
-.macos-ai-app.zeus-shell :is(.project-git-tabs > button.is-active, .skill-install-source-tabs button.is-active, .extension-tabs button.is-active) {
+.macos-ai-app.zeus-shell :is(.project-git-tabs > button.is-active, .extension-tabs button.is-active) {
   color: var(--agentdesk-accent-strong);
 }
 
@@ -493,8 +490,6 @@
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
-    .extension-plugin-card,
-    .extension-marketplace-card,
     .im-connection-card,
     .codex-usage-section,
     .skills-workflow-defaults,
@@ -711,8 +706,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
-    .extension-plugin-card,
-    .extension-marketplace-card,
     .im-connection-card,
     .codex-usage-section,
     .skills-workflow-defaults,
@@ -1898,8 +1891,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
-    .extension-plugin-card,
-    .extension-marketplace-card,
     .im-connection-card,
     .codex-usage-section,
     .skills-workflow-defaults,
@@ -1951,7 +1942,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .digital-employee-section-tabs,
     .automations-tabs,
     .extension-tabs,
-    .skill-install-source-tabs,
     .browser-tabs,
     .menu-bar-usage-tabs,
     .task-table-status-segments,
@@ -2202,7 +2192,7 @@ body:has(.macos-ai-app.zeus-shell) {
   flex-shrink: 0;
 }
 /* 同类导航轨道统一为紧凑圆角容器，按钮与外边缘保持 4px 留白。 */
-.macos-ai-app.zeus-shell :is(.extension-tabs, .skill-install-source-tabs, .automations-tabs, .project-settings-section-tabs, .digital-employee-section-tabs) {
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs, .project-settings-section-tabs, .digital-employee-section-tabs) {
   border-radius: 12px;
   padding: 4px;
   gap: 4px;
@@ -2211,10 +2201,7 @@ body:has(.macos-ai-app.zeus-shell) {
   max-inline-size: 100%;
   flex-wrap: wrap;
 }
-.macos-ai-app.zeus-shell .skill-install-source-tabs {
-  margin-inline: 20px;
-}
-.macos-ai-app.zeus-shell :is(.extension-tabs, .skill-install-source-tabs) > button {
+.macos-ai-app.zeus-shell .extension-tabs > button {
   min-block-size: 32px;
   padding: 4px 12px;
   border: 0;
@@ -2222,11 +2209,11 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
   box-shadow: none;
 }
-.macos-ai-app.zeus-shell :is(.extension-tabs, .skill-install-source-tabs) > button.is-active {
+.macos-ai-app.zeus-shell .extension-tabs > button.is-active {
   background: color-mix(in srgb, var(--agentdesk-accent) 12%, var(--zeus-card-background));
   color: var(--agentdesk-accent-strong);
 }
-.macos-ai-app.zeus-shell :is(.extension-tabs, .skill-install-source-tabs) > button:hover:not(:disabled):not(.is-active) {
+.macos-ai-app.zeus-shell .extension-tabs > button:hover:not(:disabled):not(.is-active) {
   background: var(--zeus-page-background);
 }
 @media (max-width: 640px) {
