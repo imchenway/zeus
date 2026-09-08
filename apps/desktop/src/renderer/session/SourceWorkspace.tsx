@@ -23,11 +23,15 @@ export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePrev
 
 /** 会话资源共用的预览入口，源码交给可视区域渲染，图片与 Markdown 保持原有展示。 */
 export function SourceWorkspace(props: {
+  /** 文件标题与浏览器标签共用会话顶栏位置。 */
+  toolbarHost?: HTMLElement | null;
   preview: ConversationResourcePreview;
   viewMode: SourceWorkspaceViewMode;
   onViewModeChange: (viewMode: SourceWorkspaceViewMode) => void;
   language: SessionUiLanguage;
   fullWidth: boolean;
+  /** 窄窗口已经全宽，分栏按钮给出明确的不可用原因。 */
+  canSplit?: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
   onClose: () => void;
   comments?: ConversationCodeComment[];
@@ -106,43 +110,49 @@ export function SourceWorkspace(props: {
     setEditingCommentId(null);
   }
 
+  /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
+  const header = (
+    <header className="session-context-workspace-header">
+      <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
+        {props.preview.kind === 'image' ? <FileImage aria-hidden="true" weight="regular" /> : <FileCode aria-hidden="true" weight="regular" />}
+        <span>
+          <strong>{basename(displayPath)}</strong>
+          {displayPath !== basename(displayPath) ? <small title={displayPath}>{displayPath}</small> : null}
+        </span>
+      </span>
+      <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
+        {markdownPreview ? (
+          <>
+            <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={renderedMarkdown} onClick={() => props.onViewModeChange('preview')}>
+              {zh ? '预览' : 'Preview'}
+            </button>
+            <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={!renderedMarkdown} onClick={() => props.onViewModeChange('source')}>
+              {zh ? '源码' : 'Source'}
+            </button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
+          disabled={props.canSplit === false}
+          title={props.canSplit === false ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
+          onClick={() => props.onFullWidthChange(!props.fullWidth)}
+        >
+          {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
+        </button>
+        <button type="button" aria-label={zh ? '关闭源码预览' : 'Close source preview'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <X aria-hidden="true" />
+        </button>
+      </nav>
+    </header>
+  );
+
   return (
     <section
       className="session-context-workspace session-source-workspace"
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
-      <header className="session-context-workspace-header">
-        <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
-          {props.preview.kind === 'image' ? <FileImage aria-hidden="true" weight="regular" /> : <FileCode aria-hidden="true" weight="regular" />}
-          <span>
-            <strong>{basename(displayPath)}</strong>
-            <small title={displayPath}>{displayPath}</small>
-          </span>
-        </span>
-        <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
-          {markdownPreview ? (
-            <>
-              <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={renderedMarkdown} onClick={() => props.onViewModeChange('preview')}>
-                {zh ? '预览' : 'Preview'}
-              </button>
-              <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={!renderedMarkdown} onClick={() => props.onViewModeChange('source')}>
-                {zh ? '源码' : 'Source'}
-              </button>
-            </>
-          ) : null}
-          <button
-            type="button"
-            aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
-            title={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
-            onClick={() => props.onFullWidthChange(!props.fullWidth)}
-          >
-            {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-          </button>
-          <button type="button" aria-label={zh ? '关闭源码预览' : 'Close source preview'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <X aria-hidden="true" />
-          </button>
-        </nav>
-      </header>
+      {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
       <div className="session-source-meta" role="status">
         {props.preview.kind === 'image' ? (
           <>
