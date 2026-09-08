@@ -105,7 +105,8 @@ export class ProjectGitWorkbenchService {
     try {
       await beforeWrite(resolved.repository, action);
       signal?.throwIfAborted();
-      const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'pull' || action.type === 'update';
+      // 单独推送标签与分支推送共用凭据入口。
+      const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'push_tag' || action.type === 'pull' || action.type === 'update';
       const run = (env?: NodeJS.ProcessEnv) => executeProjectGitAction(resolved.repository.localPath, action, signal, env);
       const result = await (remoteAction ? withProjectGitAuthentication(run) : run()).catch((error: unknown) => {
         // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。

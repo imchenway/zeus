@@ -120,7 +120,9 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setEmployeeDraftState(null);
     setAutomationDraft({ ...emptyAutomationDraft });
     void loadProjectConfiguration();
-    return () => { configurationRevision.current += 1; };
+    return () => {
+      configurationRevision.current += 1;
+    };
   }, [loadProjectConfiguration]);
 
   const hasActiveExecutions = executions.some(executionIsActive);
@@ -245,7 +247,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       employeeDrafts.current.delete(record.id);
       setEmployees((items) => items.filter((employee) => employee.id !== record.id));
       setAutomations((items) => items.filter((automation) => automation.employeeId !== record.id));
-      setAutomationDraft((draft) => draft.employeeId === record.id ? { ...draft, employeeId: '' } : draft);
+      setAutomationDraft((draft) => (draft.employeeId === record.id ? { ...draft, employeeId: '' } : draft));
       if (selectedEmployeeId === record.id) {
         setSelectedEmployeeId(null);
         setEmployeeDraftState(null);

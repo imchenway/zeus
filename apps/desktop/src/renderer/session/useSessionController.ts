@@ -1,5 +1,5 @@
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
-import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
+import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -951,6 +951,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  /** 终态摘要通过读取动作补齐正文，不能重放已经去重的原始事件。 */
   function hydrateFullTerminalChangeSet(event: Extract<NativeConversationEvent, { type: 'conversation.turn.change_set.changed' }>): void {
     const summary = event.payload.changeSet;
     const load = options.client.loadTurnChangeSet;
@@ -958,20 +959,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const turnId = summary.providerTurnId || event.payload.turnId;
     const revision = summary.updatedAt;
     if (!turnId || !revision || fullChangeSetHydrationRevisions.get(turnId) === revision) return;
+    // 同一修订已有全文时，后续摘要不重复触发读取。
+    const loaded = state.changeSetsByProviderId[turnId];
+    if (loaded?.id === summary.id && loaded.contentProjection !== 'summary' && loaded.updatedAt >= revision) return;
     fullChangeSetHydrationRevisions.set(turnId, revision);
+    // 重连后旧请求不再拥有当前会话投影。
+    const generation = connectionToken;
     void load(options.projectId, options.conversationId, turnId)
       .then((changeSet) => {
-        if (disposed || fullChangeSetHydrationRevisions.get(turnId) !== revision || changeSet.id !== summary.id || changeSet.updatedAt < revision) return;
-        dispatch({
-          type: 'event_received',
-          event: {
-            ...event,
-            payload: { ...event.payload, changeSet },
-          },
-        });
+        if (disposed || generation !== connectionToken || fullChangeSetHydrationRevisions.get(turnId) !== revision || changeSet.id !== summary.id || changeSet.updatedAt < revision) return;
+        dispatch({ type: 'turn_change_set_loaded', changeSet });
       })
       .catch(() => {
         // 摘要卡仍是可读事实；完整 diff 可在下一次权威水合或后续终态事件中重试。
+      })
+      .finally(() => {
+        // 请求结束即释放去重占位，重连后仍能补齐同一修订。
         if (fullChangeSetHydrationRevisions.get(turnId) === revision) fullChangeSetHydrationRevisions.delete(turnId);
       });
   }
@@ -999,8 +1002,24 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return requests.length === snapshot.requests.length ? snapshot : { ...snapshot, requests };
   }
 
+  /** 回答消息不在首屏时，原问题携带的送达记录同样是已写入的证据。 */
   function envelopeHasProviderUserFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    return snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) || snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId);
+    return (
+      snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) ||
+      snapshot.items.some((item) => {
+        if (snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId) return true;
+        /** 只接受同一问题、轮次与发送方式的明确送达结果。 */
+        const response = item.payload.questionResponse as AsyncQuestionResponse | undefined;
+        return Boolean(
+          envelope.questionAnswer &&
+          response &&
+          ['resolved', 'completed'].includes(response.status) &&
+          response.answer?.providerItemId === envelope.questionAnswer.providerItemId &&
+          response.answer.providerTurnId === envelope.questionAnswer.providerTurnId &&
+          Boolean(response.answer.asNewMessage) === Boolean(envelope.questionAnswer.asNewMessage),
+        );
+      })
+    );
   }
 
   function matchingEnvelopeSubmissions(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): NativeQueuedSubmission[] {
@@ -1849,6 +1868,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
             throw error;
           }
           const reconciliation = await reconcileFailedSend(envelope);
+          // 冲突只核对原回答，不能把另一份回答伪装成本次发送成功或绕过重复写入保护。
+          if (envelope.questionAnswer && ['ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT', 'ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED'].includes(failure.code ?? '') && reconciliation.kind === 'durable') {
+            if (pendingSend) finalizeDurableEnvelope(pendingSend);
+            throw Object.assign(new Error('该问题已有回答，本次未重复发送。请通过普通消息补充。'), { code: 'ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED' });
+          }
           if (reconciliation.kind === 'durable') return reconciliation.acceptance;
           if (reconciliation.kind === 'terminal') {
             if (envelope.questionAnswer) throw error;
@@ -1879,7 +1903,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
           throw error;
         }
       },
-      () => reconcileAcceptedSend(),
+      () => {
+        // 回答接收后立即释放表单；后台继续核对送达，失败仍由原发送账本保留。
+        if (envelope.questionAnswer) {
+          void reconcileAcceptedSend();
+          return;
+        }
+        return reconcileAcceptedSend();
+      },
       false,
     );
   }
@@ -2215,7 +2246,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (currentChange?.loading) return;
     const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
     const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
-    const shouldLoadChange = Boolean(turn && v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
+    // 摘要只说明有变更，不能被当作已经加载全文；点击审阅时也允许按实时轮次重试。
+    const knownChangeSet = state.changeSetsByProviderId[pagingKey];
+    const shouldLoadChange = Boolean((v2Turn?.changeSetAvailable || knownChangeSet) && options.client.loadTurnChangeSet && (!knownChangeSet || knownChangeSet.contentProjection === 'summary'));
     if (!shouldLoadResources && !shouldLoadChange) {
       if (resources.loading) return;
       const merged = await attachV2ResourcesToSnapshot(current, resources.items);
@@ -2302,11 +2335,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
         })(),
       );
     }
-    if (shouldLoadChange && turn) {
+    if (shouldLoadChange) {
       loads.push(
         (async () => {
           try {
-            const changeSet = await options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id);
+            const changeSet = await options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn?.id ?? pagingKey);
             if (disposed || generation !== connectionToken) return;
             const latest = state.snapshot;
             if (!latest?.snapshotV2 || !latest.v2Paging) return;

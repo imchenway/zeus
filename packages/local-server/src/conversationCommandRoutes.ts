@@ -92,10 +92,12 @@ export function registerConversationCommandRoutes(options: {
     pauseGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
     resumeGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
     clearGoal(input: { conversationId: string }): Promise<GoalClearResult>;
-    restoreArchivedConversation(input: { conversationId: string }): Promise<unknown>;
+    restoreArchivedConversation(input: { conversationId: string; beforeExternalWrite?: () => void }): Promise<unknown>;
   };
-  archiveNativeConversation(conversation: ZeusConversationRecord): Promise<void>;
-  restoreNativeConversation(conversation: ZeusConversationRecord): Promise<void>;
+  /** 在具体执行器的实际外部动作前记录写出。 */
+  archiveNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
+  /** 纯本地恢复不记录外部写出。 */
+  restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
   isConversationIdle(conversation: ZeusConversationRecord): boolean;
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   goalCapability(conversation: ZeusConversationRecord): unknown;
@@ -292,8 +294,9 @@ export function registerConversationCommandRoutes(options: {
         destinationId: 'conversation-provider-thread',
         resourceId: conversation.id,
         beforeWrite: async () => assertTaskCanRestore(conversation),
-        invoke: async (): Promise<ProviderThreadRestoreResult> => {
-          await options.codex.restoreArchivedConversation({ conversationId: conversation.id });
+        manualExternalWriteStart: true,
+        invoke: async (beforeExternalWrite): Promise<ProviderThreadRestoreResult> => {
+          await options.codex.restoreArchivedConversation({ conversationId: conversation.id, beforeExternalWrite });
           const restored = options.conversations.getRecordById(conversation.id);
           if (!restored) throw notFound('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation not found');
           return { conversationId: restored.id, providerThreadId: restored.providerThreadId, providerState: restored.providerState };
@@ -330,15 +333,16 @@ export function registerConversationCommandRoutes(options: {
           parsed,
           destinationId: 'conversation-provider-lifecycle',
           resourceId: conversation.id,
+          manualExternalWriteStart: true,
           beforeWrite: async () => {
             requireProject(request.params.projectId);
             const current = requireConversation(request.params);
             if (action === 'restore') assertTaskCanRestore(current);
           },
-          invoke: async () => {
+          invoke: async (beforeExternalWrite) => {
             const current = requireConversation(request.params);
-            if (action === 'archive') await options.archiveNativeConversation(current);
-            else await options.restoreNativeConversation(current);
+            if (action === 'archive') await options.archiveNativeConversation(current, beforeExternalWrite);
+            else await options.restoreNativeConversation(current, beforeExternalWrite);
             return lifecycleResult(requireConversation(request.params));
           },
           isExplicitRejection: isConversationLifecycleExplicitRejection,

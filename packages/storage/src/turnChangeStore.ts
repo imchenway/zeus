@@ -244,8 +244,9 @@ export class TurnChangeFileRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /** 按事件首次捕获顺序读取；随机文件身份与各事件内部序号不能代表连续修改顺序。 */
   listByChangeSet(changeSetId: string): ZeusTurnChangeFileRecord[] {
-    return this.db.select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY source_index, id`, [changeSetId]).map((row) => this.mapRow(row));
+    return this.db.select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY created_at, rowid`, [changeSetId]).map((row) => this.mapRow(row));
   }
 
   private mapRow(row: DbTurnChangeFileRow): ZeusTurnChangeFileRecord {

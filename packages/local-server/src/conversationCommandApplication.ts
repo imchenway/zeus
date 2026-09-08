@@ -147,7 +147,9 @@ export class ConversationCommandApplication {
     resourceId: string;
     externalOperationId?: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+    /** 生命周期命令在实际外部动作前标记，纯本地归档不伪造外部写入。 */
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -166,7 +168,9 @@ export class ConversationCommandApplication {
     resourceId: string;
     externalOperationId?: string;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TResult>;
+    /** 由调用方把写入标记传到实际执行边界。 */
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TResult>;
     mutateAcceptedBusinessState?(result: TResult): void;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -187,11 +191,16 @@ export class ConversationCommandApplication {
     }
 
     let writeStarted = false;
-    try {
-      await input.beforeWrite?.();
+    /** 与派发命令共用标记时机约定，同一操作只记录一次。 */
+    const markExternalWriteStarted = () => {
+      if (writeStarted) return;
       this.options.deliveries.markExternalWriteStarted({ outboxId: preparation.outbox.id, occurredAt: this.options.now().toISOString() });
       writeStarted = true;
-      const result = await input.invoke();
+    };
+    try {
+      await input.beforeWrite?.();
+      if (!input.manualExternalWriteStart) markExternalWriteStarted();
+      const result = await input.invoke(markExternalWriteStarted);
       const evidence = externalEvidence(preparation.parsed, preparation.outbox.externalOperationId, result);
       assertBoundedReceiptEvidence(evidence);
       this.options.db.durableTransactionSync(() => {

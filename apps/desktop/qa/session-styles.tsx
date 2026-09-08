@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
+import '../src/renderer/agentdesk-theme.css';
 import './session-styles.css';
 import { sceneFromSearch, SessionQaApp } from './session-core-qa.js';
 

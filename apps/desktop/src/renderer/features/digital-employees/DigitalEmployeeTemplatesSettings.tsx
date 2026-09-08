@@ -49,7 +49,9 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
   useEffect(() => {
     void loadTemplates();
-    return () => { loadRevisionRef.current += 1; };
+    return () => {
+      loadRevisionRef.current += 1;
+    };
   }, [loadTemplates]);
 
   function rememberDraft(): void {
@@ -218,7 +220,17 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span>{zh ? '也可以创建自己的岗位、业务领域、Skill 和提示词组合。' : 'Or create a custom combination of role, domain, skills, and prompt.'}</span>
             </div>
           ) : (
-            <TemplateEditor draft={draft} models={capabilities?.models ?? []} skillClient={props.skillClient} language={props.language} readOnly={readOnly || busy} onChange={(next) => { setDraft(next); setSavedName(null); }} />
+            <TemplateEditor
+              draft={draft}
+              models={capabilities?.models ?? []}
+              skillClient={props.skillClient}
+              language={props.language}
+              readOnly={readOnly || busy}
+              onChange={(next) => {
+                setDraft(next);
+                setSavedName(null);
+              }}
+            />
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">

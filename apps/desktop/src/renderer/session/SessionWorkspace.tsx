@@ -2627,6 +2627,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                               turnId: changeSet.providerTurnId,
                               ...(fileId ? { initialFileId: fileId } : {}),
                             });
+                            // 审阅入口也负责重试尚未补齐的正文，不能只打开空白摘要。
+                            if (changeSet.contentProjection === 'summary') void actions.onLoadTurnArtifacts?.(changeSet.providerTurnId);
                           }
                         : undefined
                     }
@@ -2746,6 +2748,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           fullWidth={contextFullWidth}
                           onFullWidthChange={setContextFullWidth}
                           onClose={closeContextWorkspace}
+                          loading={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.loading}
+                          loadError={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.error}
+                          onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
                           onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                           onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
                           comments={props.state?.contextDraft.codeComments}
@@ -2926,15 +2931,15 @@ function NewConversationComposer(props: {
   });
   const [content, setContent] = useState(() => restoredDraft?.content ?? props.initialContent ?? '');
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(restoredDraft?.attachments ?? props.initialAttachments ?? [])]);
-  const [permissionMode, setPermissionMode] = useState<NativePermissionMode>(() => restoredDraft?.permissionMode ?? ('auto'));
-  const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>(() => restoredDraft?.collaborationMode ?? ('default'));
+  const [permissionMode, setPermissionMode] = useState<NativePermissionMode>(() => restoredDraft?.permissionMode ?? 'auto');
+  const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>(() => restoredDraft?.collaborationMode ?? 'default');
   /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
   const capabilitiesRevision = useCodexCapabilitiesRevision();
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
-  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? ({ type: 'standard' }));
+  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);

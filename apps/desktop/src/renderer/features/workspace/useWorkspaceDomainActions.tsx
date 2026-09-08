@@ -1,6 +1,5 @@
 import { type FormEvent, useCallback, useEffect } from 'react';
-import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ZentaoTaskExtract } from '@zeus/shared';
-import { openExternalHttpsUrlInMain } from '../../appShellBridge.js';
+import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
@@ -1677,7 +1676,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskCreateForm((current) => ({ ...current, priority }));
   }
 
-  function applyZentaoTaskExtract(extract: ZentaoTaskExtract): void {
+  /** 将确认可读的第三方字段填入草稿，保留手动填写的其他信息。 */
+  function applyThirdPartyTaskExtract(extract: ThirdPartyTaskExtract): void {
     if (extract.kind !== 'ok') return;
     // 只回填解析出的非空字段，保留用户已填写的父任务、优先级、标签和附件。
     setTaskCreateForm((current) => ({
@@ -1693,12 +1693,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskCreateError('');
   }
 
-  async function openZentaoLinkInBrowser(url: string): Promise<boolean> {
-    const opened = await openExternalHttpsUrlInMain({
-      zeus: typeof window === 'undefined' ? undefined : window.zeus,
-      url,
-    });
-    return opened.opened;
+  /** 登录必须与读取共用 Zeus 会话，系统浏览器的登录不会生效。 */
+  async function openThirdPartyLinkInBrowser(url: string): Promise<boolean> {
+    return typeof window !== 'undefined' && Boolean(await window.zeus?.openThirdPartyTaskLogin?.(url));
   }
 
   function mergeTaskCreateAttachments(attachments: TaskCreateAttachment[]): void {
@@ -1883,7 +1880,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client) return;
-    await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    try {
+      await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    } catch (error) {
+      /** 归档失败始终保留列表项；检查只核对已有状态，不再次归档或发送。 */
+      const language = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
+      reportApplicationError(error, {
+        language,
+        title: language === 'zh-CN' ? `归档未完成：${conversation.title}` : `Archive not completed: ${conversation.title}`,
+        action:
+          describeUserFacingError(error, language).action === 'check'
+            ? {
+                label: language === 'zh-CN' ? '检查状态' : 'Check status',
+                onClick: async () => {
+                  if (!(await selectNativeConversation(conversation))) return;
+                  await client.recoverNativeQueue(conversation.projectId, conversation.id, 'check');
+                },
+              }
+            : undefined,
+      });
+      return;
+    }
     removeConfirmedArchivedConversation(conversation.id, conversation.projectId, conversation.taskId ?? null, conversation.navigationId ?? conversation.id);
     void (conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId)).catch(() => undefined);
     void refreshArchivedConversations();
@@ -3284,7 +3301,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   return {
     acknowledgeNativeConversationAttention,
     addTaskCreateAttachments,
-    applyZentaoTaskExtract,
+    applyThirdPartyTaskExtract,
     archiveConversation,
     archiveGraphConversation,
     askGraph,
@@ -3319,7 +3336,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskDetailPane,
     openTaskGitDelivery,
     openTaskModelPush,
-    openZentaoLinkInBrowser,
+    openThirdPartyLinkInBrowser,
     persistCodeWorkspacePreference,
     persistSidebarConversationPreferences,
     prepareNewConversationDraft,

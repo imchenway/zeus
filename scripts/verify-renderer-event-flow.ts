@@ -2,6 +2,7 @@ import { createSessionController, type SessionControllerClient, sessionRealtimeB
 import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 
 const projectId = 'renderer-event-flow-project';
 const conversationId = 'renderer-event-flow-conversation';
@@ -126,7 +127,16 @@ class VerifierSocket {
 
 type EventPageLoader = SessionControllerClient['loadNativeConversationEvents'];
 
-function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, live = true, planImplementationRequests: NativePlanImplementationRequest[] = [], persistedDraft: string | null = null, sendFailure?: Error) {
+/** 复用真实会话控制器，外部输入由隔离事件与读取结果提供。 */
+function createHarness(
+  eventPageLoader?: EventPageLoader,
+  snapshotSequence = 0,
+  live = true,
+  planImplementationRequests: NativePlanImplementationRequest[] = [],
+  persistedDraft: string | null = null,
+  sendFailure?: Error,
+  changeSetLoader?: SessionControllerClient['loadTurnChangeSet'],
+) {
   let eventSink: ((event: NativeRealtimeEventEnvelope) => void) | null = null;
   let snapshotReads = 0;
   let sendCalls = 0;
@@ -136,6 +146,8 @@ function createHarness(eventPageLoader?: EventPageLoader, snapshotSequence = 0, 
   const requestedAfterSequences: number[] = [];
   const connectedAfterSequences: number[] = [];
   const client = {
+    /** 差异读取用于验证终态摘要补齐和用户重试。 */
+    loadTurnChangeSet: changeSetLoader,
     /** 模拟服务端一次返回同一事件进度下的结构和消息。 */
     async loadNativeConversationReadableSnapshot() {
       snapshotReads += 1;
@@ -987,21 +999,102 @@ async function verifyContiguousGapReplay() {
   };
 }
 
-const result = {
-  budget: sessionRealtimeBufferBudget,
-  truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
-  internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
-  processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
-  queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
-  snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
-  pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
-  idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
-  restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
-  activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
-  idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
-  renderDeltaOverflow: await verifyRenderDeltaOverflow(),
-  syncGapByteOverflow: await verifyGapByteOverflow(),
-  contiguousGapReplay: await verifyContiguousGapReplay(),
-};
+/** 重放实际故障链：摘要事件先消费，全文稍后到达，资源旧页随后返回。 */
+async function verifyTurnChangeReviewHydration() {
+  // 不可撤销的变更仍有权威差异正文可供审阅。
+  const full: TurnChangeSet = {
+    id: 'review-change-set',
+    projectId,
+    conversationId,
+    turnId: 'review-local-turn',
+    providerTurnId: 'review-turn',
+    state: 'unavailable',
+    contentProjection: 'full',
+    files: [
+      {
+        id: 'review-file',
+        oldPath: 'example.ts',
+        newPath: 'example.ts',
+        changeType: 'modified',
+        addedLines: 1,
+        deletedLines: 1,
+        unifiedDiff: '@@ -1 +1 @@\n-before\n+after\n',
+        preHash: null,
+        postHash: null,
+        reversible: false,
+        unavailableReason: '快照缺失',
+      },
+    ],
+    unifiedDiff: '',
+    fileCount: 1,
+    addedLines: 1,
+    deletedLines: 1,
+    preImageDigest: null,
+    postImageDigest: null,
+    unavailableReason: '快照缺失',
+    conflict: null,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+  };
+  // 实时通知只有摘要，不重复传输正文。
+  const summary: TurnChangeSet = { ...full, contentProjection: 'summary', files: full.files.map((file) => ({ ...file, unifiedDiff: '' })) };
+  for (const failFirstRead of [false, true]) {
+    // 计数确认正常终态读取一次，失败后明确重试一次。
+    let reads = 0;
+    // 使用同一控制器覆盖自动水合与审阅入口的读取路径。
+    const harness = createHarness(undefined, 0, true, [], null, undefined, async () => {
+      reads += 1;
+      if (failFirstRead && reads === 1) throw new Error('隔离的读取失败');
+      return full;
+    });
+    try {
+      await harness.controller.start();
+      // 保留早于实时摘要的资源页基准，复现异步覆盖顺序。
+      const staleSnapshot = harness.controller.getState().snapshot!;
+      harness.emit(conversationEvent(1, 'conversation.turn.change_set.changed', { turnId: full.providerTurnId, changeSetId: full.id, changeSet: summary }));
+      await waitUntil(() => reads === 1, '变更集自动读取');
+      if (failFirstRead) await harness.controller.loadTurnArtifacts(full.providerTurnId);
+      await waitUntil(() => harness.controller.getState().changeSetsByProviderId[full.providerTurnId]?.contentProjection === 'full', '差异全文合入');
+      // 分页和重复摘要不能清空正文，按需读取也不能推进实时序号。
+      let state = sessionReducer(harness.controller.getState(), { type: 'snapshot_v2_page_merged', snapshot: staleSnapshot });
+      state = sessionReducer(state, { type: 'event_received', event: conversationEvent(2, 'conversation.turn.change_set.changed', { changeSet: summary }) });
+      assert(state.changeSetsByProviderId[full.providerTurnId]?.files[0]?.unifiedDiff === full.files[0]!.unifiedDiff, '旧资源页和同修订摘要不得清空已加载正文。');
+      assert(state.snapshot?.changeSets?.[0]?.contentProjection === 'full', '完整差异必须同时保存到快照。');
+      assert(harness.controller.getDiagnostics().lastAppliedSyncEventSequence === 1, '差异读取不得制造实时事件序号。');
+      // 新修订先到时，旧全文迟到也不能把撤销状态改回去。
+      const newer = { ...summary, state: 'undone' as const, updatedAt: '2026-08-21T00:00:01.000Z' };
+      state = sessionReducer(state, { type: 'event_received', event: conversationEvent(3, 'conversation.turn.change_set.changed', { changeSet: newer }) });
+      state = sessionReducer(state, { type: 'turn_change_set_loaded', changeSet: full });
+      assert(state.changeSetsByProviderId[full.providerTurnId]?.state === 'undone', '旧全文不得覆盖新修订。');
+      assert(reads === (failFirstRead ? 2 : 1), '正常加载和失败重试的读取次数必须有界。');
+    } finally {
+      harness.controller.dispose();
+    }
+  }
+  return { automaticHydration: true, reviewRetry: true, summaryAndPagePreservation: true, staleRevisionRejected: true };
+}
+
+/** 审阅专项可独立运行，避免无关历史探针的既有失败遮蔽结果。 */
+const turnChangeReview = await verifyTurnChangeReviewHydration();
+/** 默认仍执行既有全量入口；专项参数只缩小本地验收范围。 */
+const result = process.argv.includes('--change-review-only')
+  ? { turnChangeReview }
+  : {
+      turnChangeReview,
+      budget: sessionRealtimeBufferBudget,
+      truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
+      internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
+      processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
+      queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
+      snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
+      pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
+      idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
+      restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
+      activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
+      idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
+      renderDeltaOverflow: await verifyRenderDeltaOverflow(),
+      syncGapByteOverflow: await verifyGapByteOverflow(),
+      contiguousGapReplay: await verifyContiguousGapReplay(),
+    };
 
 process.stdout.write(`${JSON.stringify(result)}\n`);

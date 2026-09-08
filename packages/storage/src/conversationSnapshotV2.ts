@@ -263,6 +263,8 @@ export interface ConversationSnapshotV2ActiveItem {
   protocolFamily?: string | null;
   /** 同一 Assistant 响应内摘要、思考与工具共享的展示阶段。 */
   stageId?: string | null;
+  /** 问题自身携带已有答复，避免用户回答落在首屏范围之外时重新弹出。 */
+  questionResponse?: AsyncQuestionResponse;
   text: BoundedContentProjection;
   payload: BoundedContentProjection;
   startedAt: string | null;
@@ -1438,6 +1440,8 @@ export class ConversationSnapshotV2Repository {
       payload_preview: string;
       payload_bytes: number;
       projection_truncated: number;
+      /** 从完整投影识别问题，不依赖可能截断的预览。 */
+      delivery: string | null;
       protocol_family: string | null;
       stage_id: string | null;
       started_at: string | null;
@@ -1449,6 +1453,7 @@ export class ConversationSnapshotV2Repository {
               length(CAST(text_projection AS BLOB)) AS text_bytes,
               substr(payload_projection_json, 1, ?) AS payload_preview,
               length(CAST(payload_projection_json AS BLOB)) AS payload_bytes,
+              CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.delivery') ELSE NULL END AS delivery,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.protocolFamily') ELSE NULL END AS protocol_family,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.stageId') ELSE NULL END AS stage_id,
               projection_truncated, started_at, completed_at, updated_at
@@ -1479,6 +1484,7 @@ export class ConversationSnapshotV2Repository {
         phase: row.phase,
         protocolFamily: row.protocol_family,
         stageId: row.stage_id,
+        ...(row.item_type === 'agentMessage' && row.delivery === 'async' ? { questionResponse: this.questionResponse(conversationId, row.provider_item_id, turnId) } : {}),
         text: activeItemProjection(row.text_preview, row.text_bytes, row.projection_truncated === 1),
         payload: activeItemProjection(row.payload_preview, row.payload_bytes, row.projection_truncated === 1),
         startedAt: row.started_at,

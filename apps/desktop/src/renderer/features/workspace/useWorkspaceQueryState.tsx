@@ -814,15 +814,19 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     }
     let cancelled = false;
     setReleaseLoadState('loading');
-    void Promise.all([props.onLoadReleaseStatus(), props.onLoadReleaseUpdateStatus()]).then(([status, update]) => {
-      if (cancelled) return;
-      setReleaseStatus(status);
-      setReleaseUpdateStatus(update);
-      setReleaseLoadState('ready');
-    }).catch(() => {
-      if (!cancelled) setReleaseLoadState('failed');
-    });
-    return () => { cancelled = true; };
+    void Promise.all([props.onLoadReleaseStatus(), props.onLoadReleaseUpdateStatus()])
+      .then(([status, update]) => {
+        if (cancelled) return;
+        setReleaseStatus(status);
+        setReleaseUpdateStatus(update);
+        setReleaseLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseLoadState('failed');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeNavTarget, settingsCategory, props.onLoadReleaseStatus, props.onLoadReleaseUpdateStatus, props.initialReleaseStatus, props.initialReleaseUpdateStatus, releaseLoadRevision]);
   const setSettingsCategory = props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory;
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);

@@ -802,6 +802,10 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_CONVERSATION_ARCHIVE_ACTIVE'], ['AI 仍在处理这段对话，因此暂时不能归档。请等待处理结束，或先停止当前处理。', 'The AI is still working on this conversation. Wait for it to finish or stop the current work before archiving.']],
   [['ZEUS_NATIVE_CONVERSATION_IN_PROGRESS'], ['会话中仍有未结束的处理，暂时不能归档。请查看会话中的处理状态。', 'This conversation still has unfinished work and cannot be archived yet. Check its current status.']],
   [
+    ['ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED'],
+    ['暂时无法确认上次处理是否结束，尚未归档。请检查会话状态。', 'The conversation has not been archived because its previous work could not be confirmed as finished. Check the conversation status.', 'check'],
+  ],
+  [
     ['ZEUS_CONVERSATION_NOT_FOUND', 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND'],
     ['找不到这段会话。它可能已被移除，请返回会话列表确认。', 'This conversation could not be found. It may have been removed; check the conversation list.'],
   ],
@@ -815,6 +819,12 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', 'ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'ZEUS_CONVERSATION_COMMAND_OUTCOME_UNKNOWN', 'ZEUS_CONVERSATION_DISPATCH_COMMAND_OUTCOME_UNKNOWN', 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED'],
     ['尚未确认上次操作是否已执行，Zeus 已暂停重复执行以避免重复处理。', 'Zeus has not confirmed whether the previous action ran and has paused repeated attempts to avoid duplicate work.', 'check'],
   ],
+  [
+    ['ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT'],
+    ['这次操作与已有提交记录冲突，Zeus 已阻止重复执行。请刷新并查看原提交状态。', 'This action conflicts with an existing submission. Zeus blocked duplicate execution. Refresh and check the original submission.', 'check'],
+  ],
+  [['ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED'], ['该问题已有回答，本次未重复发送。请通过普通消息补充。', 'This question already has an answer. Nothing was sent again. Use a regular message to add more information.']],
+  [['ZEUS_ASYNC_QUESTION_TURN_ENDED'], ['原轮次已结束，回答未发送，草稿已保留。请明确选择作为新消息发送。', 'The original turn has ended. Your answer was not sent and the draft is preserved. Choose to send it as a new message.']],
   [
     ['ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED'],
     ['尚未确认 AI 上次的处理是否已经结束，暂时不能继续。', 'Zeus has not confirmed that the AI’s previous work has ended, so it cannot continue yet.', 'check'],
@@ -896,7 +906,7 @@ export function redactUserFacingErrorDetails(value: string): string {
     .slice(0, 2000);
 }
 
-/** 优先解释会话读取失败，其余错误使用最内层已知原因；未知原因不伪装成网络故障。 */
+/** 优先解释读取失败或归档尚未完成，其余错误使用最内层已知原因。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
   const chain: UserFacingErrorCause[] = [];
@@ -904,7 +914,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   // 已解释过的字符串仍可切换语言，避免再次格式化时丢失原因。
   const translated = explanations.find(([, copy]) => copy[0] === root.message || copy[1] === root.message)?.[1];
   // 发送后核对可能包住读取失败，仍优先解释刷新状态，底层原因继续完整保留在详情中。
-  const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED');
+  const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED' || item.code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED');
   // 只改变解释优先级，不改变下方对发送结果未知的保护。
   const explanationChain = readFailure ? [readFailure] : [...chain].reverse();
   const match = explanationChain.flatMap((item) => explanations.filter(([codes]) => codes.includes(item.message) || (item.code && codes.includes(item.code))))[0]?.[1] ?? translated;

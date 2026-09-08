@@ -461,9 +461,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           });
         }
         await Promise.all([loadDirectory(parentPath(oldPath), true), loadDirectory(operationParent, true)]);
-        setNotice(operation.kind === 'rename'
-          ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`)
-          : (zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`));
+        setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
         if (

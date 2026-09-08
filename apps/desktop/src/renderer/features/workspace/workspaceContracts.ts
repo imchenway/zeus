@@ -1,5 +1,5 @@
 import type { MermaidDiagramExportFile, PlantUmlDiagramExportFile } from '../graph/diagramExport.js';
-import { type ZentaoTaskExtract } from '@zeus/shared';
+import { type ThirdPartyTaskExtract } from '@zeus/shared';
 import type { NativeConversationAttachment, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
 import {
@@ -145,7 +145,7 @@ export type WorkspacePageProps = {
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
   onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
-  onParseZentaoTaskLink?: (url: string) => Promise<ZentaoTaskExtract>;
+  onParseThirdPartyTaskLink?: (url: string) => Promise<ThirdPartyTaskExtract>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft, idempotencyKey: string) => Promise<DashboardSnapshot>;

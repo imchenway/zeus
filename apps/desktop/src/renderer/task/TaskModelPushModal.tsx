@@ -661,7 +661,7 @@ export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilit
   };
 }
 
-/** 按模型、补充信息和工作区组织推送配置，复用原有资源与分支处理。 */
+/** 左栏配置任务内容，右栏配置工作区，两栏复用原有资源与分支处理。 */
 export function TaskModelPushModal(props: {
   open: boolean;
   language: 'zh-CN' | 'en-US';
@@ -688,10 +688,15 @@ export function TaskModelPushModal(props: {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
-  /** 接入过程中表单状态保留，返回时恢复同一任务的阅读位置。 */
+  /** 窄窗口由正文统一滚动，接入模型返回后恢复原位置。 */
   const bodyRef = useRef<HTMLDivElement>(null);
-  const readingPositionRef = useRef({ taskId: props.task?.id, scrollTop: 0, focusSelector: '[data-task-push-primary]' });
-  if (readingPositionRef.current.taskId !== props.task?.id) readingPositionRef.current = { taskId: props.task?.id, scrollTop: 0, focusSelector: '[data-task-push-primary]' };
+  /** 宽窗口左栏独立滚动，不给任务预览增加内部滚动层。 */
+  const mainRef = useRef<HTMLDivElement>(null);
+  /** 工作区独立保存阅读位置，避免左栏阅读带动分支配置。 */
+  const workspaceRef = useRef<HTMLElement>(null);
+  /** 阅读位置只属于当前任务，使用引用保存以避免滚动时重新渲染。 */
+  const readingPositionRef = useRef({ taskId: props.task?.id, scrollTop: 0, mainScrollTop: 0, workspaceScrollTop: 0, focusSelector: '[data-task-push-primary]' });
+  if (readingPositionRef.current.taskId !== props.task?.id) readingPositionRef.current = { taskId: props.task?.id, scrollTop: 0, mainScrollTop: 0, workspaceScrollTop: 0, focusSelector: '[data-task-push-primary]' };
   useEffect(() => {
     if (!props.open) return;
     /** 接入返回后恢复触发位置；原控件不存在时回到确认操作。 */
@@ -701,6 +706,8 @@ export function TaskModelPushModal(props: {
       const target = form?.querySelector<HTMLElement>(readingPositionRef.current.focusSelector) ?? form?.querySelector<HTMLElement>('[data-task-push-primary]');
       target?.focus({ preventScroll: true });
       if (bodyRef.current) bodyRef.current.scrollTop = readingPositionRef.current.scrollTop;
+      if (mainRef.current) mainRef.current.scrollTop = readingPositionRef.current.mainScrollTop;
+      if (workspaceRef.current) workspaceRef.current.scrollTop = readingPositionRef.current.workspaceScrollTop;
     });
     return () => window.cancelAnimationFrame(frame);
   }, [props.open, props.task?.id]);
@@ -840,168 +847,205 @@ export function TaskModelPushModal(props: {
             readingPositionRef.current.scrollTop = event.currentTarget.scrollTop;
           }}
         >
-          <div className="task-model-push-toolbar">
-            <strong id="task-model-push-model-heading">{zh ? '模型选择' : 'Model selection'}</strong>
-            {props.onConnectModel && !modelSetupRequired ? (
-              <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
-                {zh ? '接入其他模型' : 'Connect another model'}
-              </Button>
-            ) : null}
-          </div>
-          {props.error || supplementalResourceError || repositoryRefreshError ? (
-            <div className="task-flow-feedback" role="status">
-              <VisibleApplicationError error={props.error ?? supplementalResourceError ?? repositoryRefreshError} language={zh ? 'zh-CN' : 'en'} />
-              {props.error && props.onRetryModels ? (
-                <Button variant="secondary" size="compact" onClick={props.onRetryModels} disabled={busy || props.status === 'loading'}>
-                  {zh ? '重新检查' : 'Check again'}
+          <div
+            ref={mainRef}
+            className="task-model-push-main"
+            role="region"
+            aria-label={zh ? '任务内容与模型配置' : 'Task content and model configuration'}
+            tabIndex={0}
+            onScroll={(event) => {
+              readingPositionRef.current.mainScrollTop = event.currentTarget.scrollTop;
+            }}
+          >
+            <div className="task-model-push-toolbar">
+              <strong id="task-model-push-model-heading">{zh ? '模型选择' : 'Model selection'}</strong>
+              {props.onConnectModel && !modelSetupRequired ? (
+                <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
+                  {zh ? '接入其他模型' : 'Connect another model'}
                 </Button>
               ) : null}
             </div>
-          ) : null}
-          {modelSetupRequired ? (
-            <p className="task-flow-feedback" role="status">
-              {zh ? '连接一个可用模型后即可推送。当前任务与填写内容会保留。' : 'Connect an available model to push. Your task and entered details will be preserved.'}
-            </p>
-          ) : null}
-          <div className="task-model-push-config-grid" role="group" aria-labelledby="task-model-push-model-heading">
-            <label className="task-model-push-model-field">
-              <span>{zh ? '模型' : 'Model'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '模型' : 'Model'}
-                value={props.form.model}
-                options={modelPresentation.options}
-                triggerLabel={selectedModel ? modelPresentation.triggerLabel : props.form.model || (zh ? '选择或接入模型' : 'Choose or connect a model')}
-                onChange={onModelChange}
-                disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
-                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
-              />
-            </label>
-            {selectedModel?.supportedReasoningEfforts.length ? (
-              <label className="task-model-push-effort-field">
-                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+            {props.error || supplementalResourceError || repositoryRefreshError ? (
+              <div className="task-flow-feedback" role="status">
+                <VisibleApplicationError error={props.error ?? supplementalResourceError ?? repositoryRefreshError} language={zh ? 'zh-CN' : 'en'} />
+                {props.error && props.onRetryModels ? (
+                  <Button variant="secondary" size="compact" onClick={props.onRetryModels} disabled={busy || props.status === 'loading'}>
+                    {zh ? '重新检查' : 'Check again'}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {modelSetupRequired ? (
+              <p className="task-flow-feedback" role="status">
+                {zh ? '连接一个可用模型后即可推送。当前任务与填写内容会保留。' : 'Connect an available model to push. Your task and entered details will be preserved.'}
+              </p>
+            ) : null}
+            <div className="task-model-push-config-grid" role="group" aria-labelledby="task-model-push-model-heading">
+              <label className="task-model-push-model-field">
+                <span>{zh ? '模型' : 'Model'}</span>
                 <ZeusSelect
                   size="regular"
-                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                  value={props.form.effort}
-                  options={selectedModel.supportedReasoningEfforts.map((effort) => ({
-                    value: effort,
-                    label: effort,
-                  }))}
-                  onChange={(effort) => props.onChange({ ...props.form, effort })}
+                  ariaLabel={zh ? '模型' : 'Model'}
+                  value={props.form.model}
+                  options={modelPresentation.options}
+                  triggerLabel={selectedModel ? modelPresentation.triggerLabel : props.form.model || (zh ? '选择或接入模型' : 'Choose or connect a model')}
+                  onChange={onModelChange}
+                  disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
+                  searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                  emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+                />
+              </label>
+              {selectedModel?.supportedReasoningEfforts.length ? (
+                <label className="task-model-push-effort-field">
+                  <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                    value={props.form.effort}
+                    options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                      value: effort,
+                      label: effort,
+                    }))}
+                    onChange={(effort) => props.onChange({ ...props.form, effort })}
+                    disabled={busy || Boolean(props.form.stageId)}
+                    searchable={false}
+                  />
+                </label>
+              ) : null}
+              <label>
+                <span>{zh ? '速度' : 'Speed'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '速度' : 'Speed'}
+                  value={serviceTierSelectionValue(props.form.serviceTier)}
+                  options={serviceTierOptions(selectedModel, props.language)}
+                  onChange={(value) => {
+                    if (!selectedModel) return;
+                    const selection = serviceTierSelectionFromValue(value);
+                    props.onChange({
+                      ...props.form,
+                      serviceTier: selection,
+                      serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
+                    });
+                    void props.onServiceTierPreferenceChange(selectedModel, selection);
+                  }}
+                  disabled={!selectedModel || busy || Boolean(props.form.stageId)}
+                  searchable={false}
+                />
+              </label>
+              <label>
+                <span>Skill</span>
+                <SkillSelector
+                  client={props.skillClient}
+                  projectId={props.task.projectId}
+                  value={props.form.skillId}
+                  onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+                  language={props.language}
+                  disabled={busy}
+                  ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
+                />
+              </label>
+              <label>
+                <span>{zh ? '工作模式' : 'Work mode'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '工作模式' : 'Work mode'}
+                  value={props.form.workMode}
+                  options={[
+                    { value: 'default', label: zh ? '默认' : 'Default' },
+                    { value: 'plan', label: zh ? '规划' : 'Plan' },
+                  ]}
+                  onChange={(workMode) => props.onChange({ ...props.form, workMode })}
                   disabled={busy || Boolean(props.form.stageId)}
                   searchable={false}
                 />
               </label>
+              <label>
+                <span>{zh ? '权限模式' : 'Permission mode'}</span>
+                <ZeusSelect<NativePermissionMode>
+                  size="regular"
+                  ariaLabel={zh ? '权限模式' : 'Permission mode'}
+                  value={props.form.permissionMode}
+                  options={[
+                    { value: 'read-only', label: zh ? '只读' : 'Read only' },
+                    { value: 'auto', label: zh ? '自动' : 'Auto' },
+                    { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
+                  ]}
+                  onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
+                  disabled={busy || Boolean(props.form.stageId)}
+                  searchable={false}
+                />
+              </label>
+            </div>
+            {props.form.serviceTierDowngraded ? (
+              <p className="task-model-push-warning" role="status">
+                {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
+              </p>
             ) : null}
-            <label>
-              <span>{zh ? '速度' : 'Speed'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '速度' : 'Speed'}
-                value={serviceTierSelectionValue(props.form.serviceTier)}
-                options={serviceTierOptions(selectedModel, props.language)}
-                onChange={(value) => {
-                  if (!selectedModel) return;
-                  const selection = serviceTierSelectionFromValue(value);
-                  props.onChange({
-                    ...props.form,
-                    serviceTier: selection,
-                    serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
-                  });
-                  void props.onServiceTierPreferenceChange(selectedModel, selection);
-                }}
-                disabled={!selectedModel || busy || Boolean(props.form.stageId)}
-                searchable={false}
-              />
-            </label>
-            <label>
-              <span>Skill</span>
-              <SkillSelector
-                client={props.skillClient}
-                projectId={props.task.projectId}
-                value={props.form.skillId}
-                onChange={(skillId) => props.onChange({ ...props.form, skillId })}
+            {props.form.stageId ? (
+              <small className="task-model-push-stage-lock">
+                {zh
+                  ? '本次使用任务阶段中设定的模型、速度和权限。若需调整，请返回任务详情修改尚未启动的阶段。'
+                  : 'This run uses the model, speed, and permissions set for the task stage. To change them, return to the task details and edit a stage that has not started.'}
+              </small>
+            ) : null}
+
+            <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
+              <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
+                {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
+              </label>
+              <TaskPushSupplementalAttachmentCards
+                attachments={props.form.supplementalAttachments}
                 language={props.language}
                 disabled={busy}
-                ariaLabel={zh ? '推送任务使用的 Skill' : 'Skill for task push'}
+                onRemove={(attachment) => {
+                  const identity = taskPushSupplementalAttachmentIdentity(attachment);
+                  props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
+                }}
+                onRestoreText={inputResources.restorePastedText}
+                onError={setSupplementalResourceError}
               />
-            </label>
-            <label>
-              <span>{zh ? '工作模式' : 'Work mode'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '工作模式' : 'Work mode'}
-                value={props.form.workMode}
-                options={[
-                  { value: 'default', label: zh ? '默认' : 'Default' },
-                  { value: 'plan', label: zh ? '规划' : 'Plan' },
-                ]}
-                onChange={(workMode) => props.onChange({ ...props.form, workMode })}
-                disabled={busy || Boolean(props.form.stageId)}
-                searchable={false}
+              <textarea
+                ref={supplementalTextareaRef}
+                id="task-model-push-supplement-input"
+                value={props.form.supplementalInfo}
+                maxLength={20_000}
+                onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
+                onPaste={inputResources.handlePaste}
+                onKeyDown={inputResources.handlePasteShortcut}
+                disabled={busy}
+                placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
               />
-            </label>
-            <label>
-              <span>{zh ? '权限模式' : 'Permission mode'}</span>
-              <ZeusSelect<NativePermissionMode>
-                size="regular"
-                ariaLabel={zh ? '权限模式' : 'Permission mode'}
-                value={props.form.permissionMode}
-                options={[
-                  { value: 'read-only', label: zh ? '只读' : 'Read only' },
-                  { value: 'auto', label: zh ? '自动' : 'Auto' },
-                  { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
-                ]}
-                onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
-                disabled={busy || Boolean(props.form.stageId)}
-                searchable={false}
-              />
-            </label>
+            </section>
+
+            <TaskPushCurrentConversationPicker
+              options={currentConversationOptions}
+              selectedIds={props.form.currentConversationIds}
+              busy={busy}
+              zh={zh}
+              onChange={(currentConversationIds) => props.onChange((current) => ({ ...current, currentConversationIds }))}
+            />
+
+            <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
+            <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
+
+            <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} previewAttachments={[...(props.capabilities?.attachmentPreviewSources ?? []), ...props.form.supplementalAttachments]} />
+            {props.status === 'loading' ? (
+              <p className="task-model-push-message">
+                {runtimeCapabilities ? (zh ? '正在读取任务上下文、模型配置与工作目录…' : 'Loading task context, model configuration and working folder…') : zh ? '正在读取模型配置…' : 'Loading model configuration…'}
+              </p>
+            ) : null}
           </div>
-          {props.form.serviceTierDowngraded ? (
-            <p className="task-model-push-warning" role="status">
-              {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
-            </p>
-          ) : null}
-          {props.form.stageId ? (
-            <small className="task-model-push-stage-lock">
-              {zh
-                ? '本次使用任务阶段中设定的模型、速度和权限。若需调整，请返回任务详情修改尚未启动的阶段。'
-                : 'This run uses the model, speed, and permissions set for the task stage. To change them, return to the task details and edit a stage that has not started.'}
-            </small>
-          ) : null}
 
-          <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
-            <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
-              {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
-            </label>
-            <TaskPushSupplementalAttachmentCards
-              attachments={props.form.supplementalAttachments}
-              language={props.language}
-              disabled={busy}
-              onRemove={(attachment) => {
-                const identity = taskPushSupplementalAttachmentIdentity(attachment);
-                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
-              }}
-              onRestoreText={inputResources.restorePastedText}
-              onError={setSupplementalResourceError}
-            />
-            <textarea
-              ref={supplementalTextareaRef}
-              id="task-model-push-supplement-input"
-              value={props.form.supplementalInfo}
-              maxLength={20_000}
-              onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
-              onPaste={inputResources.handlePaste}
-              onKeyDown={inputResources.handlePasteShortcut}
-              disabled={busy}
-              placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
-            />
-          </section>
-
-          <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
+          <section
+            ref={workspaceRef}
+            className="task-model-push-workspace"
+            aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}
+            tabIndex={0}
+            onScroll={(event) => {
+              readingPositionRef.current.workspaceScrollTop = event.currentTarget.scrollTop;
+            }}
+          >
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
               <small>{zh ? '直接修改项目文件，或使用独立分支与工作目录（worktree）' : 'Edit project files directly, or use a separate branch and working folder (worktree)'}</small>
@@ -1347,24 +1391,6 @@ export function TaskModelPushModal(props: {
               </small>
             ) : null}
           </section>
-
-          <TaskPushCurrentConversationPicker
-            options={currentConversationOptions}
-            selectedIds={props.form.currentConversationIds}
-            busy={busy}
-            zh={zh}
-            onChange={(currentConversationIds) => props.onChange((current) => ({ ...current, currentConversationIds }))}
-          />
-
-          <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
-          <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
-
-          <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} previewAttachments={[...(props.capabilities?.attachmentPreviewSources ?? []), ...props.form.supplementalAttachments]} />
-          {props.status === 'loading' ? (
-            <p className="task-model-push-message">
-              {runtimeCapabilities ? (zh ? '正在读取任务上下文、模型配置与工作目录…' : 'Loading task context, model configuration and working folder…') : zh ? '正在读取模型配置…' : 'Loading model configuration…'}
-            </p>
-          ) : null}
         </div>
 
         <footer className="task-model-push-footer">

@@ -108,7 +108,12 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
             <input autoFocus value={text} disabled={busy} onChange={(event) => setText(event.currentTarget.value)} />
           </label>
         ) : null}
-        {props.value.messageField ? <label>{props.value.messageField}<textarea value={message} disabled={busy} onChange={(event) => setMessage(event.currentTarget.value)} /></label> : null}
+        {props.value.messageField ? (
+          <label>
+            {props.value.messageField}
+            <textarea value={message} disabled={busy} onChange={(event) => setMessage(event.currentTarget.value)} />
+          </label>
+        ) : null}
         {error ? <p role="alert">{error}</p> : null}
         <footer>
           <Button variant="secondary" disabled={busy} onClick={props.onClose}>

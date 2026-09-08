@@ -763,18 +763,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!conversation) throw nativeApiError('ZEUS_CONVERSATION_NOT_FOUND', '会话不存在。');
     return toNativeQueueApiSnapshot(conversation);
   }
-  async function archiveNativeConversation(conversation: ZeusConversationRecord): Promise<void> {
+  /** 按执行器路由归档，实际外部动作负责记录写出标记。 */
+  async function archiveNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void> {
     if (conversation.agentKind === 'pi') {
-      await piNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+      await piNativeCoordinator.archiveConversation({ conversationId: conversation.id, beforeExternalWrite });
       return;
     }
     if (conversation.agentKind !== null && conversation.agentKind !== 'codex') {
       throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `Agent ${conversation.agentKind} does not support native conversation archive.`);
     }
-    await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+    await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id, beforeExternalWrite });
   }
 
-  async function restoreNativeConversation(conversation: ZeusConversationRecord): Promise<void> {
+  /** 纯本地恢复不提前记录外部写入。 */
+  async function restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void> {
     if (conversation.agentKind === 'pi') {
       await piNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
       return;
@@ -782,7 +784,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (conversation.agentKind !== null && conversation.agentKind !== 'codex') {
       throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `Agent ${conversation.agentKind} does not support native conversation restore.`);
     }
-    await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
+    await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id, beforeExternalWrite });
   }
 
   function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean } = {}) {
@@ -3381,6 +3383,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     await db.save();
   }
 
+  /** 原生错误共用状态码与脱敏原因出口，保留归档门禁的可处理信息。 */
   function sendNativeConversationApiError(reply: FastifyReply, error: unknown) {
     const code = isNativeApiRecord(error) && typeof error.code === 'string' ? error.code : 'ZEUS_NATIVE_CONVERSATION_API_ERROR';
     const message = error instanceof Error ? error.message : String(error);
@@ -3395,6 +3398,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           code.includes('NOT_ACTIVE') ||
           code.includes('NOT_INTERRUPTED') ||
           code.includes('IN_PROGRESS') ||
+          code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ||
           code.includes('MISMATCH') ||
           code.includes('EXCEEDS_POLICY') ||
           code.includes('EXCEEDS_REQUEST') ||
@@ -3407,7 +3411,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')
           ? 400
           : 500;
-    return reply.code(statusCode).send({ error: code, message, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') ? { recoveryRequired: true } : {}) });
+    return reply
+      .code(statusCode)
+      .send({ error: code, message, cause: userFacingErrorCause(error).cause, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') || code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ? { recoveryRequired: true } : {}) });
   }
 
   function parseProjectGitAction(value: unknown): ProjectGitAction {
@@ -3426,7 +3432,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'rename_branch':
         return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
       case 'create_tag':
-        return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '' };
+        // 网页入口保留与桌面入口相同的标签说明和定向推送参数。
+        return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '', message: stringValue('message') };
+      case 'push_tag':
+        return { type: 'push_tag', tagName: stringValue('tagName') ?? '', remote: stringValue('remote') ?? '' };
       case 'delete_tag':
         return { type: 'delete_tag', tagName: stringValue('tagName') ?? '' };
       case 'stage':

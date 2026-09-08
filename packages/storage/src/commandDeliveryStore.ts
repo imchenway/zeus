@@ -692,6 +692,19 @@ export class CommandDeliveryRepository {
     return row ? this.get(row.command_id) : undefined;
   }
 
+  /** 区分没有账本、明确未写出及已写出或未收口的 Provider 命令。 */
+  providerWriteStatus(resourceId: string): 'absent' | 'unwritten' | 'written_or_unknown' {
+    // ponytail: 低频归档按资源扫描账本；数据量影响归档延迟时再增加资源索引。
+    /** 派发准备时间不是发送证据；只有所有尝试都明确未执行时才能认定安全。 */
+    const evidence = this.db.get<{ attempts: number; uncertain: number | null }>(
+      `SELECT COUNT(*) AS attempts,
+              MAX(CASE WHEN state <> 'resolved' OR outcome NOT IN ('failed_before_write', 'explicitly_rejected') THEN 1 ELSE 0 END) AS uncertain
+         FROM command_outbox WHERE resource_id = ? AND destination_kind IN ('provider_session', 'provider_turn')`,
+      [boundedIdentity(resourceId, 'resourceId')],
+    );
+    return !evidence?.attempts ? 'absent' : evidence.uncertain ? 'written_or_unknown' : 'unwritten';
+  }
+
   getByOperationIdentity(operationIdentity: string): CommandDeliverySnapshot | undefined {
     const receipt = this.receiptByOperationIdentity(boundedIdentity(operationIdentity, 'operationIdentity'));
     return receipt ? this.get(receipt.commandId) : undefined;

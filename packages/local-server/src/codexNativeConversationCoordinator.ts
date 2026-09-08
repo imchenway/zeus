@@ -1917,7 +1917,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (input.intent === 'check') {
       // 未绑定线程时没有外部事实可读；不得为检查创建线程或准备工作目录。
       if (conversation.providerThreadId) {
-        await providerThreadAuthority.inspect(conversation, contextFromConversation(conversation), { readOnly: true });
+        await providerThreadAuthority.inspect(conversation, null, { readOnly: true });
         await persist();
       }
       return toQueueSnapshot(conversation.id);
@@ -1975,13 +1975,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return toQueueSnapshot(conversation.id);
   }
 
+  /** 先核对真实执行状态；仅在实际归档 Provider 时标记外部写入。 */
   async function archiveConversation(input: ArchiveConversationInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
     if (conversation.archived) return toQueueSnapshot(conversation.id);
-    if (await archiveUnboundConversationLocally(options, conversation, () => (runStates.delete(conversation.id), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
-    assertConversationCanBeArchived(conversation);
-    await ensureGenerationReconciled([conversation.id]);
+    /** 内存中正在准备的派发也必须阻止本地归档，不能只看尚未绑定的记录。 */
+    const state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    if (!conversation.providerThreadId) {
+      if (state.type === 'dispatching' || state.type === 'active' || state.type === 'waiting') assertConversationCanBeArchived(conversation);
+      if (await archiveUnboundConversationLocally(options, conversation, () => (runStates.delete(conversation.id), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
+      assertConversationCanBeArchived(conversation);
+      throw archiveStateUnconfirmed(coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Missing provider thread id.'));
+    }
+    if (conversation.providerState !== 'archived') {
+      try {
+        // 检查只读取已有线程，不恢复订阅、不创建线程，也不触发排队消息继续发送。
+        await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) });
+        await providerThreadAuthority.inspect(conversation, null, { readOnly: true });
+        await persist();
+      } catch (error) {
+        throw archiveStateUnconfirmed(error);
+      }
+    }
+    assertOpen();
     conversation = requireConversation(input.conversationId);
     if (conversation.archived) return toQueueSnapshot(conversation.id);
     assertConversationCanBeArchived(conversation);
@@ -1993,7 +2010,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         threadId: providerThreadId,
         commandKey: `archive:${providerThreadId}:${conversation.stageUpdatedAt}`,
         requestIdentity: { threadId: providerThreadId },
-        invoke: (traceIdentity) => options.manager.archiveThread({ threadId: providerThreadId, traceIdentity }),
+        invoke: (traceIdentity) => {
+          input.beforeExternalWrite?.();
+          return options.manager.archiveThread({ threadId: providerThreadId, traceIdentity });
+        },
       });
     }
     let archivedThreadPath: string | undefined;
@@ -2030,7 +2050,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return toQueueSnapshot(conversation.id);
   }
 
+  /** 核对失败保留底层原因，不把读取失败描述成已发送归档。 */
+  function archiveStateUnconfirmed(cause: unknown): Error {
+    return Object.assign(coordinatorError('ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED', '暂时无法确认上次处理是否结束，尚未归档。'), { cause });
+  }
+
+  /** 未知送达和停止结果优先保留，确认结束后才能归档。 */
   function assertConversationCanBeArchived(conversation: ZeusConversationWithMessagesRecord): void {
+    if (
+      providerStopRecovery.hasPendingEvidence(conversation.id) ||
+      options.submissions.listByConversation(conversation.id).some((submission) => submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown')
+    ) {
+      throw archiveStateUnconfirmed(coordinatorError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '执行结果尚未确认。'));
+    }
     const pendingRequest = options.requests.listByConversation(conversation.id).find((request) => request.status === 'pending');
     const unfinishedTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
     const pendingSubmission = options.submissions
@@ -2063,10 +2095,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
+  /** 本地恢复不触碰 Provider；外部恢复先检查身份，再标记实际动作。 */
   async function restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
     if (await restoreUnboundConversationLocally(options, conversation, () => (runStates.set(conversation.id, { type: 'idle' }), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
+    if (!conversation.providerThreadId) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', '缺少可核对的会话身份，尚未恢复。');
+    input.beforeExternalWrite?.();
     if (conversation.providerState === 'archived') {
       await ensureGenerationReconciled([conversation.id]);
       conversation = requireConversation(input.conversationId);

@@ -24,19 +24,10 @@ import { openLocalLogDirectory } from './localLogDirectory.js';
 import { openExternalHttpsUrl } from './externalOpen.js';
 import { readSessionViewCache, writeSessionViewCache } from './sessionViewCache.js';
 import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
-import { extractZentaoTaskInfo } from './zentaoTaskExtract.js';
-import {
-  createPersistedMainWindowState,
-  defaultMainWindowSize,
-  findSavedWindowDisplay,
-  minimumMainWindowSize,
-  type PersistedMainWindowState,
-  readPersistedMainWindowState,
-  type ResolvedMainWindowState,
-  resolveMainWindowState,
-  writePersistedMainWindowState,
-} from './windowState.js';
-import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
+import { extractThirdPartyTaskInfo, openThirdPartyTaskLogin } from './thirdPartyTaskExtract.js';
+import { defaultMainWindowSize, findSavedWindowDisplay, minimumMainWindowSize, type PersistedMainWindowState, readPersistedMainWindowState, type ResolvedMainWindowState, resolveMainWindowState } from './windowState.js';
+import { waitForSavedWindowDisplay } from './windowRestoration.js';
+import { createPersistentWindow } from './persistentWindow.js';
 import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
   buildTaskAttachmentPreviewDataUrl,
@@ -95,8 +86,6 @@ let menuBarUsageWindowBlurTimer: ReturnType<typeof setTimeout> | undefined;
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
 const projectGitDiffWindows = new Set<BrowserWindow>();
 const taskGitDeliveryTaskByWindowId = new Map<number, string>();
-const taskGitDeliveryWindowSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
-const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
 type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none';
 const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
@@ -164,9 +153,6 @@ let appShellSettings: MainAppShellSettings = {
   openAtLoginEnabled: false,
 };
 const manualWindowDragStates = new Map<number, { pointerX: number; pointerY: number; windowX: number; windowY: number }>();
-const windowStateSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
-const windowStateActivationTimers = new Map<number, ReturnType<typeof setTimeout>>();
-const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const taskTableLayoutDirtyWindowIds = new Set<number>();
 const unsavedChangeKeysByWindow = new Map<number, Set<string>>();
 const sensitiveRequestDraftIdsByWindow = new Map<number, Set<string>>();
@@ -235,8 +221,6 @@ function requestUpgradeHandoffQuit(targetExecutionHostProtocolVersion: number, a
 
 const storageRecoveryRestart = new StorageRecoveryRestartCoordinator();
 const execFile = promisify(execFileCallback);
-const windowStateSaveDelayMs = 250;
-const windowStateActivationDelayMs = 500;
 const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
@@ -473,125 +457,6 @@ function mainWindowStatePath(): string {
   return join(app.getPath('userData'), 'main-window-state.json');
 }
 
-function taskGitDeliveryWindowStatePath(): string {
-  return join(app.getPath('userData'), 'task-git-delivery-window-state.json');
-}
-
-function persistTaskGitDeliveryWindowState(window: BrowserWindow): boolean {
-  if (window.isDestroyed()) return false;
-  const bounds = window.getNormalBounds();
-  const state = createPersistedMainWindowState({
-    bounds,
-    display: screen.getDisplayMatching(bounds),
-    isMaximized: window.isMaximized(),
-    isFullScreen: window.isFullScreen(),
-  });
-  if (!state || !writePersistedMainWindowState(taskGitDeliveryWindowStatePath(), state)) return false;
-  taskGitDeliveryWindowPersistenceGates.get(window.id)?.markPersisted();
-  return true;
-}
-
-function flushTaskGitDeliveryWindowState(window: BrowserWindow): void {
-  const timer = taskGitDeliveryWindowSaveTimers.get(window.id);
-  if (timer) clearTimeout(timer);
-  taskGitDeliveryWindowSaveTimers.delete(window.id);
-  if (!taskGitDeliveryWindowPersistenceGates.get(window.id)?.shouldPersist()) return;
-  persistTaskGitDeliveryWindowState(window);
-}
-
-function scheduleTaskGitDeliveryWindowStateSave(window: BrowserWindow): void {
-  if (!taskGitDeliveryWindowPersistenceGates.get(window.id)?.recordChange()) return;
-  const pendingTimer = taskGitDeliveryWindowSaveTimers.get(window.id);
-  if (pendingTimer) clearTimeout(pendingTimer);
-  const timer = setTimeout(() => {
-    taskGitDeliveryWindowSaveTimers.delete(window.id);
-    persistTaskGitDeliveryWindowState(window);
-  }, windowStateSaveDelayMs);
-  timer.unref();
-  taskGitDeliveryWindowSaveTimers.set(window.id, timer);
-}
-
-function registerTaskGitDeliveryWindowStatePersistence(window: BrowserWindow): void {
-  const gate = createWindowStatePersistenceGate();
-  taskGitDeliveryWindowPersistenceGates.set(window.id, gate);
-  const scheduleSave = () => scheduleTaskGitDeliveryWindowStateSave(window);
-  window.on('move', scheduleSave);
-  window.on('resize', scheduleSave);
-  window.on('maximize', scheduleSave);
-  window.on('unmaximize', scheduleSave);
-  window.on('enter-full-screen', scheduleSave);
-  window.on('leave-full-screen', scheduleSave);
-  window.on('close', () => flushTaskGitDeliveryWindowState(window));
-  const timer = setTimeout(() => {
-    if (!window.isDestroyed()) gate.activate();
-  }, windowStateActivationDelayMs);
-  timer.unref();
-}
-
-function persistMainWindowState(window: BrowserWindow): boolean {
-  if (window.isDestroyed()) return false;
-  const bounds = window.getNormalBounds();
-  const display = screen.getDisplayMatching(bounds);
-  const state = createPersistedMainWindowState({
-    bounds,
-    display,
-    isMaximized: window.isMaximized(),
-    isFullScreen: window.isFullScreen(),
-  });
-  if (!state || !writePersistedMainWindowState(mainWindowStatePath(), state)) return false;
-  windowStatePersistenceGates.get(window.id)?.markPersisted();
-  return true;
-}
-
-function flushMainWindowState(window: BrowserWindow): void {
-  const timer = windowStateSaveTimers.get(window.id);
-  if (timer) clearTimeout(timer);
-  windowStateSaveTimers.delete(window.id);
-  if (!windowStatePersistenceGates.get(window.id)?.shouldPersist()) return;
-  persistMainWindowState(window);
-}
-
-function scheduleMainWindowStateSave(window: BrowserWindow): void {
-  if (!windowStatePersistenceGates.get(window.id)?.recordChange()) return;
-  const pendingTimer = windowStateSaveTimers.get(window.id);
-  if (pendingTimer) clearTimeout(pendingTimer);
-  const timer = setTimeout(() => {
-    windowStateSaveTimers.delete(window.id);
-    persistMainWindowState(window);
-  }, windowStateSaveDelayMs);
-  timer.unref();
-  windowStateSaveTimers.set(window.id, timer);
-}
-
-function registerMainWindowStatePersistence(window: BrowserWindow): void {
-  windowStatePersistenceGates.set(window.id, createWindowStatePersistenceGate());
-  const scheduleSave = () => scheduleMainWindowStateSave(window);
-  window.on('move', scheduleSave);
-  window.on('resize', scheduleSave);
-  window.on('maximize', scheduleSave);
-  window.on('unmaximize', scheduleSave);
-  window.on('enter-full-screen', scheduleSave);
-  window.on('leave-full-screen', scheduleSave);
-  window.on('close', (event) => {
-    flushMainWindowState(window);
-    if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
-    event.preventDefault();
-    pendingTaskTableLayoutWindowCloseIds.add(window.id);
-    window.webContents.send('zeus:unsaved-changes-close-requested');
-  });
-}
-
-function activateMainWindowStatePersistence(window: BrowserWindow): void {
-  const pendingTimer = windowStateActivationTimers.get(window.id);
-  if (pendingTimer) clearTimeout(pendingTimer);
-  const timer = setTimeout(() => {
-    windowStateActivationTimers.delete(window.id);
-    if (!window.isDestroyed()) windowStatePersistenceGates.get(window.id)?.activate();
-  }, windowStateActivationDelayMs);
-  timer.unref();
-  windowStateActivationTimers.set(window.id, timer);
-}
-
 async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined): Promise<ResolvedMainWindowState> {
   const displays = screen.getAllDisplays();
   const requestedTestDisplayId = process.env.ZEUS_TEST_DISPLAY_ID;
@@ -704,7 +569,8 @@ async function openProjectGitDiffWindow(
   const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
   const width = Math.min(workArea.width, Math.max(900, Math.round(workArea.width * 0.84)));
   const height = Math.min(workArea.height, Math.max(620, Math.round(workArea.height * 0.82)));
-  const window = new BrowserWindow({
+  /** 差异窗口复用统一的偏好恢复与关闭保存。 */
+  const { window, reveal } = createPersistentWindow('project-git-diff-window-state.json', {
     x: Math.round(workArea.x + (workArea.width - width) / 2),
     y: Math.round(workArea.y + (workArea.height - height) / 2),
     width,
@@ -742,7 +608,7 @@ async function openProjectGitDiffWindow(
   });
   configureWindowSecurity(window, rendererUrl);
   window.once('ready-to-show', () => {
-    window.show();
+    reveal();
     window.focus();
   });
   await window.loadURL(rendererUrl);
@@ -765,24 +631,21 @@ function broadcastTaskGitDeliveryCurrentContext(context: TaskGitDeliveryCurrentC
   }
 }
 
-function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): { bounds: Electron.Rectangle; isMaximized: boolean; isFullScreen: boolean } {
-  const persisted = readPersistedMainWindowState(taskGitDeliveryWindowStatePath());
-  if (persisted) {
-    const resolved = resolveMainWindowState(persisted, screen.getAllDisplays(), screen.getDisplayMatching(parent.getBounds()));
-    return { bounds: resolved.bounds, isMaximized: resolved.isMaximized, isFullScreen: resolved.isFullScreen };
-  }
-  const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
+/** 无记录时在主窗口所在屏幕内居中打开交付窗口。 */
+function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): Electron.Rectangle {
+  /** 原显示器不可用时，回退到当前主窗口所在的显示器。 */
+  const display = screen.getDisplayMatching(parent.getBounds());
+  /** 首次打开保留屏幕边缘空间，不超过可见工作区。 */
+  const workArea = display.workArea;
+  /** 三栏交付内容所需的初始宽度。 */
   const width = Math.min(workArea.width, Math.max(Math.min(taskGitDeliveryMinimumSize.width, workArea.width), Math.round(workArea.width * 0.9)));
+  /** 初始高度随屏幕工作区缩放。 */
   const height = Math.min(workArea.height, Math.max(Math.min(taskGitDeliveryMinimumSize.height, workArea.height), Math.round(workArea.height * 0.9)));
   return {
-    bounds: {
-      x: Math.round(workArea.x + (workArea.width - width) / 2),
-      y: Math.round(workArea.y + (workArea.height - height) / 2),
-      width,
-      height,
-    },
-    isMaximized: false,
-    isFullScreen: false,
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+    width,
+    height,
   };
 }
 
@@ -801,11 +664,13 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     return { opened: true, reused: true, taskId };
   }
 
-  const restored = initialTaskGitDeliveryWindowBounds(parent);
-  const window = new BrowserWindow({
-    ...restored.bounds,
-    minWidth: Math.min(taskGitDeliveryMinimumSize.width, restored.bounds.width),
-    minHeight: Math.min(taskGitDeliveryMinimumSize.height, restored.bounds.height),
+  /** 首次打开时的默认边界，历史偏好由共用入口覆盖。 */
+  const defaultBounds = initialTaskGitDeliveryWindowBounds(parent);
+  /** 每类窗口分别记忆，任务之间共用交付窗口偏好。 */
+  const { window, reveal } = createPersistentWindow('task-git-delivery-window-state.json', {
+    ...defaultBounds,
+    minWidth: taskGitDeliveryMinimumSize.width,
+    minHeight: taskGitDeliveryMinimumSize.height,
     parent,
     modal: false,
     title: appShellSettings.appLanguage === 'zh-CN' ? '代码交付 · Zeus' : 'Code Delivery · Zeus',
@@ -827,12 +692,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
   });
   taskGitDeliveryWindows.set(taskId, window);
   taskGitDeliveryTaskByWindowId.set(window.id, taskId);
-  registerTaskGitDeliveryWindowStatePersistence(window);
   window.on('closed', () => {
-    const timer = taskGitDeliveryWindowSaveTimers.get(window.id);
-    if (timer) clearTimeout(timer);
-    taskGitDeliveryWindowSaveTimers.delete(window.id);
-    taskGitDeliveryWindowPersistenceGates.delete(window.id);
     taskGitDeliveryTaskByWindowId.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
     if (taskGitDeliveryWindows.get(taskId) === window) taskGitDeliveryWindows.delete(taskId);
@@ -841,9 +701,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     if (isMainFrame && errorCode !== -3) console.warn(`Zeus 代码交付窗口加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
   });
   window.once('ready-to-show', () => {
-    if (restored.isMaximized) window.maximize();
-    if (restored.isFullScreen) window.setFullScreen(true);
-    revealTaskGitDeliveryWindow(window);
+    reveal(() => revealTaskGitDeliveryWindow(window));
     window.webContents.send('zeus:task-git-delivery:current-context', currentTaskGitDeliveryContext);
   });
   const rendererUrl = rendererEntryUrl('task-git-delivery', { taskId });
@@ -865,33 +723,38 @@ async function createWindow(): Promise<void> {
     return;
   }
 
-  const persistedWindowState = windows.size === 0 ? readPersistedMainWindowState(mainWindowStatePath()) : undefined;
+  const persistedWindowState = readPersistedMainWindowState(mainWindowStatePath());
   const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
   traceApplicationStartup('window_state_ready');
-  const window = new BrowserWindow({
-    ...restoredWindowState.bounds,
-    // ZEUS-0240：询问与授权的输入、目标和操作必须保持同行，640px 是仍可完整操作的主窗口下限。
-    minWidth: 640,
-    minHeight: 560,
-    title: desktopDisplayName(),
-    // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 16 },
-    // 使用 macOS 原生振动材质作为网页的透底，Renderer 里的半透明面板才能真正形成玻璃效果。
-    transparent: true,
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
-    backgroundColor: '#00000000',
-    show: false,
-    webPreferences: {
-      preload: join(desktopRoot(), 'dist/preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
+  /** 主窗口与所有可调整工作窗口共用偏好管理。 */
+  const { window, reveal } = createPersistentWindow(
+    'main-window-state.json',
+    {
+      ...restoredWindowState.bounds,
+      // ZEUS-0240：询问与授权的输入、目标和操作必须保持同行，640px 是仍可完整操作的主窗口下限。
+      minWidth: 640,
+      minHeight: 560,
+      title: desktopDisplayName(),
+      // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 14, y: 16 },
+      // 使用 macOS 原生振动材质作为网页的透底，Renderer 里的半透明面板才能真正形成玻璃效果。
+      transparent: true,
+      vibrancy: 'under-window',
+      visualEffectState: 'active',
+      backgroundColor: '#00000000',
+      show: false,
+      webPreferences: {
+        preload: join(desktopRoot(), 'dist/preload/index.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+      },
     },
-  });
+    restoredWindowState,
+  );
   traceApplicationStartup('browser_window_created');
   window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
@@ -899,7 +762,12 @@ async function createWindow(): Promise<void> {
   });
   browserHost?.registerWindow(window);
 
-  registerMainWindowStatePersistence(window);
+  window.on('close', (event) => {
+    if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
+    event.preventDefault();
+    pendingTaskTableLayoutWindowCloseIds.add(window.id);
+    window.webContents.send('zeus:unsaved-changes-close-requested');
+  });
 
   rendererBootstrapMonitor.watch(window);
 
@@ -931,13 +799,6 @@ async function createWindow(): Promise<void> {
   const sourceWatcherKey = window.webContents.id;
   window.on('closed', () => {
     browserHost?.unregisterWindow(window);
-    const timer = windowStateSaveTimers.get(window.id);
-    if (timer) clearTimeout(timer);
-    windowStateSaveTimers.delete(window.id);
-    const activationTimer = windowStateActivationTimers.get(window.id);
-    if (activationTimer) clearTimeout(activationTimer);
-    windowStateActivationTimers.delete(window.id);
-    windowStatePersistenceGates.delete(window.id);
     taskTableLayoutDirtyWindowIds.delete(window.id);
     unsavedChangeKeysByWindow.delete(window.id);
     sensitiveRequestDraftIdsByWindow.delete(window.id);
@@ -967,13 +828,8 @@ async function createWindow(): Promise<void> {
   const revealMainWindowOnce = () => {
     if (didRevealMainWindow) return;
     didRevealMainWindow = true;
-    const placement = applyRestoredMainWindowPlacement({
-      window,
-      restored: restoredWindowState,
-      getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
-      reveal: () => revealMainWindow(window),
-    });
-    activateMainWindowStatePersistence(window);
+    /** 共用入口负责恢复与保存，主窗口额外保留启动落屏日志。 */
+    const placement = reveal(() => revealMainWindow(window));
     console.info(
       'Zeus main window restoration',
       JSON.stringify({
@@ -2090,11 +1946,19 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
   ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
-  ipcMain.handle('zeus:zentao:parse-link', async (event, request: MainCommandRequest<string>) => {
+  // 登录页只可由受信任务窗口打开，且与读取任务使用同一浏览器会话。
+  ipcMain.handle('zeus:third-party-task:open-login', async (event, url: unknown) => {
+    /** 当前发起登录的 Zeus 窗口。 */
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('禅道任务解析来自不受信任窗口。');
-    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_zentao', async (url, command) => {
-      const result = typeof url === 'string' && url.trim() ? await extractZentaoTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('第三方登录来自不受信任窗口。');
+    if (typeof url !== 'string' || !browserHost?.getSettings().enabled) return false;
+    return openThirdPartyTaskLogin(requestingWindow, url);
+  });
+  ipcMain.handle('zeus:third-party-task:parse-link', async (event, request: MainCommandRequest<string>) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('第三方任务解析来自不受信任窗口。');
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_third_party', async (url, command) => {
+      const result = typeof url === 'string' && url.trim() ? await extractThirdPartyTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
       // 无附件的成功解析也要生成可重放回执；附件路径已在首次写入前标记。
       await command.markWriteStarted();
       return result;
@@ -2928,7 +2792,6 @@ async function initializeApplication(): Promise<void> {
       parentPid: process.pid,
       mainCommandLedger: activeMainCommandLedger,
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
-      qaMode: isTestDistribution() && process.env.ZEUS_COMPUTER_QA_MODE === '1',
     });
     computerHost.registerIpc();
     const nativeAutomationHost = createNativeAutomationHost({ browser: browserHost, computer: computerHost, externalBrowser: externalBrowserHost });

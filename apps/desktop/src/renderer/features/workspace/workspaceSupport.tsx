@@ -2,13 +2,13 @@ import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type Keyboa
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
   defaultTaskManagementStatusConfig,
-  extractZentaoTaskLink,
+  extractThirdPartyTaskLink,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
   type ProjectCodeWorkspacePreference,
   type TaskManagementStatusConfig,
   type TaskManagementStatusDefinition,
-  type ZentaoTaskExtract,
+  type ThirdPartyTaskExtract,
 } from '@zeus/shared';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
@@ -1621,9 +1621,9 @@ export function TaskCreateModal(props: {
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
   onReadClipboardResources: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
-  onParseZentaoLink: (url: string) => Promise<ZentaoTaskExtract>;
-  onApplyZentaoTaskInfo: (info: ZentaoTaskExtract) => void;
-  onOpenZentaoLink: (url: string) => Promise<boolean>;
+  onParseThirdPartyLink: (url: string) => Promise<ThirdPartyTaskExtract>;
+  onApplyThirdPartyTaskInfo: (info: ThirdPartyTaskExtract) => void;
+  onOpenThirdPartyLink: (url: string) => Promise<boolean>;
   onAddAttachments: (attachments: TaskCreateAttachment[]) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -1633,23 +1633,29 @@ export function TaskCreateModal(props: {
 }) {
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
-  const [zentaoLinkInput, setZentaoLinkInput] = useState('');
-  const [zentaoParsing, setZentaoParsing] = useState(false);
-  const [zentaoHint, setZentaoHint] = useState<{ tone: 'ok' | 'error'; text: string; openUrl?: string } | null>(null);
-  const lastAutoParsedUrlRef = useRef('');
+  /** 当前草稿的第三方来源链接。 */
+  const [thirdPartyLinkInput, setThirdPartyLinkInput] = useState('');
+  /** 读取期间锁定草稿，避免提交或编辑与异步回填竞争。 */
+  const [thirdPartyParsing, setThirdPartyParsing] = useState(false);
+  /** 读取结果和可恢复的登录入口。 */
+  const [thirdPartyHint, setThirdPartyHint] = useState<{ tone: 'ok' | 'error'; text: string; openUrl?: string } | null>(null);
+  /** 仅当前弹窗的请求可回填；关闭、重开和卸载都会使旧请求失效。 */
+  const thirdPartyRequestRef = useRef<symbol | null>(null);
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   useEffect(() => {
     if (props.open) {
-      setZentaoLinkInput('');
-      setZentaoParsing(false);
-      setZentaoHint(null);
-      lastAutoParsedUrlRef.current = '';
+      setThirdPartyLinkInput('');
+      setThirdPartyParsing(false);
+      setThirdPartyHint(null);
     }
+    return () => {
+      thirdPartyRequestRef.current = null;
+    };
   }, [props.open]);
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
-  const interactionBusy = props.busy || resourcesBusy;
+  const interactionBusy = props.busy || resourcesBusy || thirdPartyParsing;
 
   function handleTaskCreateModalKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
     if (event.key === 'Escape' && !interactionBusy) {
@@ -1699,45 +1705,63 @@ export function TaskCreateModal(props: {
     }
   }
 
-  async function handleZentaoLinkParse(rawUrl: string): Promise<void> {
+  /** 读取一次完整链接，只有当前草稿仍持有该请求时才填入。 */
+  async function handleThirdPartyLinkParse(rawUrl: string): Promise<void> {
+    /** 保留用户输入供失败后核对和重试。 */
     const url = rawUrl.trim();
-    if (!url || interactionBusy) return;
-    lastAutoParsedUrlRef.current = url;
-    setZentaoParsing(true);
-    setZentaoHint(null);
+    if (!url || interactionBusy || thirdPartyRequestRef.current) return;
+    /** 同步占用请求身份，阻止同一轮事件内的重复解析。 */
+    const request = Symbol();
+    thirdPartyRequestRef.current = request;
+    setThirdPartyParsing(true);
+    setThirdPartyHint(null);
     try {
-      const result = await props.onParseZentaoLink(url);
+      /** 来源详情通过主进程校验后才允许进入草稿。 */
+      const result = await props.onParseThirdPartyLink(url);
+      if (thirdPartyRequestRef.current !== request) return;
       if (result.kind === 'ok') {
-        props.onApplyZentaoTaskInfo(result);
-        setZentaoHint({ tone: 'ok', text: props.copy.taskCreateZentaoApplied(result.title || result.objectId, result.attachments.length, result.attachmentFailedCount) });
+        props.onApplyThirdPartyTaskInfo(result);
+        setThirdPartyHint({ tone: 'ok', text: props.copy.taskCreateThirdPartyApplied(result.title || result.objectId, result.provider, result.attachments.length, result.attachmentFailedCount) });
       } else if (result.kind === 'login_required') {
-        // 外部打开只接受 HTTPS；内网 HTTP 禅道不提供跳转按钮，避免点了没反应。
-        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoLoginRequired, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+        setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyLoginRequired, openUrl: result.sourceUrl });
       } else if (result.kind === 'unsupported') {
-        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoUnsupported });
+        setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyUnsupported });
       } else if (result.kind === 'failed' && result.cause === 'credential_missing') {
-        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoCredentialMissing, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+        setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyCredentialMissing, openUrl: result.sourceUrl });
       } else if (result.kind === 'failed' && result.cause === 'auth_failed') {
-        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoAuthFailed, ...(url.startsWith('https://') ? { openUrl: url } : {}) });
+        setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyAuthFailed, openUrl: result.sourceUrl });
       } else {
-        setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoFailed });
+        setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyFailed(result.reason), ...(result.reason === 'not_found_or_no_access' || result.reason === 'invalid_response' ? { openUrl: result.sourceUrl } : {}) });
       }
     } catch {
-      setZentaoHint({ tone: 'error', text: props.copy.taskCreateZentaoFailed });
+      if (thirdPartyRequestRef.current === request) setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyFailed() });
     } finally {
-      setZentaoParsing(false);
+      if (thirdPartyRequestRef.current === request) {
+        thirdPartyRequestRef.current = null;
+        setThirdPartyParsing(false);
+      }
     }
   }
 
+  /** 打开失败要留在当前草稿明确提示，不能让登录按钮静默失效。 */
+  async function handleThirdPartyLogin(url: string): Promise<void> {
+    try {
+      if (await props.onOpenThirdPartyLink(url)) return;
+    } catch {
+      // 主进程不可用或窗口加载失败时使用相同的可恢复提示。
+    }
+    setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyOpenFailed, openUrl: url });
+  }
+
   async function handleTaskCreateClipboardPaste(event: ReactClipboardEvent<HTMLFormElement>): Promise<void> {
-    // 标题栏直接粘贴禅道链接时，自动转入链接解析并填入，不把链接当作标题正文。
+    // 标题栏直接粘贴第三方详情链接时，自动转入链接读取。
     if (!interactionBusy && event.target instanceof HTMLInputElement && event.target.id === 'task-create-title-input') {
-      const pastedLink = extractZentaoTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
+      const pastedLink = extractThirdPartyTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
       if (pastedLink) {
         event.preventDefault();
         pasteShortcutFallbackTokenRef.current += 1;
-        setZentaoLinkInput(pastedLink);
-        void handleZentaoLinkParse(pastedLink);
+        setThirdPartyLinkInput(pastedLink);
+        void handleThirdPartyLinkParse(pastedLink);
         return;
       }
     }
@@ -1815,7 +1839,7 @@ export function TaskCreateModal(props: {
         aria-describedby={describedBy}
         onPaste={handleTaskCreateClipboardPaste}
         onSubmit={(event) => {
-          if (resourcesBusy) {
+          if (interactionBusy) {
             event.preventDefault();
             return;
           }
@@ -2010,26 +2034,32 @@ export function TaskCreateModal(props: {
             </>
           ) : null}
           <div className="task-create-options">
-            <div className="task-create-field task-create-zentao-field">
-              <span id="task-create-zentao-label">{props.copy.taskCreateZentaoLinkLabel}</span>
-              <div className="task-create-zentao-row">
+            <div className="task-create-field task-create-third-party-field">
+              <span id="task-create-third-party-label">{props.copy.taskCreateThirdPartyLinkLabel}</span>
+              <div className="task-create-third-party-row">
                 <input
-                  id="task-create-zentao-input"
-                  className="task-create-title-input task-create-zentao-input"
-                  value={zentaoLinkInput}
-                  placeholder={props.copy.taskCreateZentaoLinkPlaceholder}
-                  aria-labelledby="task-create-zentao-label"
+                  id="task-create-third-party-input"
+                  className="task-create-title-input task-create-third-party-input"
+                  value={thirdPartyLinkInput}
+                  placeholder={props.copy.taskCreateThirdPartyLinkPlaceholder}
+                  aria-labelledby="task-create-third-party-label"
                   onChange={(event) => {
-                    const nextValue = event.currentTarget.value;
-                    setZentaoLinkInput(nextValue);
-                    // 粘贴完整链接后自动解析，手动逐字输入时在 URL 完整后才触发。
-                    const pastedLink = extractZentaoTaskLink(nextValue);
-                    if (pastedLink && pastedLink !== lastAutoParsedUrlRef.current) void handleZentaoLinkParse(pastedLink);
+                    setThirdPartyLinkInput(event.currentTarget.value);
+                    setThirdPartyHint(null);
+                  }}
+                  onPaste={(event) => {
+                    /** 仅粘贴完整链接才自动读取，逐字输入由按钮或回车确认。 */
+                    const pastedLink = extractThirdPartyTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
+                    if (!pastedLink || interactionBusy) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setThirdPartyLinkInput(pastedLink);
+                    void handleThirdPartyLinkParse(pastedLink);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !interactionBusy) {
                       event.preventDefault();
-                      void handleZentaoLinkParse(zentaoLinkInput);
+                      void handleThirdPartyLinkParse(thirdPartyLinkInput);
                     }
                   }}
                   disabled={interactionBusy}
@@ -2037,25 +2067,25 @@ export function TaskCreateModal(props: {
                 <Button
                   variant="secondary"
                   size="regular"
-                  className="task-create-zentao-parse-button"
-                  busy={zentaoParsing}
-                  disabled={interactionBusy || zentaoParsing || !zentaoLinkInput.trim()}
-                  onClick={() => void handleZentaoLinkParse(zentaoLinkInput)}
+                  className="task-create-third-party-parse-button"
+                  busy={thirdPartyParsing}
+                  disabled={interactionBusy || thirdPartyParsing || !thirdPartyLinkInput.trim()}
+                  onClick={() => void handleThirdPartyLinkParse(thirdPartyLinkInput)}
                 >
-                  {zentaoParsing ? props.copy.taskCreateZentaoParsing : props.copy.taskCreateZentaoParse}
+                  {thirdPartyParsing ? props.copy.taskCreateThirdPartyParsing : props.copy.taskCreateThirdPartyParse}
                 </Button>
               </div>
-              <small className={`task-create-zentao-hint${zentaoHint ? ` task-create-zentao-hint-${zentaoHint.tone}` : ''}`} role={zentaoHint ? 'status' : undefined}>
-                {zentaoHint
+              <small className={`task-create-third-party-hint${thirdPartyHint ? ` task-create-third-party-hint-${thirdPartyHint.tone}` : ''}`} role={thirdPartyHint ? 'status' : undefined}>
+                {thirdPartyHint
                   ? [
-                      zentaoHint.text,
-                      zentaoHint.openUrl ? (
-                        <button key="open" type="button" className="task-create-zentao-open-button" onClick={() => void props.onOpenZentaoLink(zentaoHint.openUrl as string)} disabled={interactionBusy}>
-                          {props.copy.taskCreateZentaoOpenLink}
+                      thirdPartyHint.text,
+                      thirdPartyHint.openUrl ? (
+                        <button key="open" type="button" className="task-create-third-party-open-button" onClick={() => void handleThirdPartyLogin(thirdPartyHint.openUrl as string)} disabled={interactionBusy}>
+                          {props.copy.taskCreateThirdPartyOpenLink}
                         </button>
                       ) : null,
                     ]
-                  : props.copy.taskCreateZentaoLinkHelp}
+                  : props.copy.taskCreateThirdPartyLinkHelp}
               </small>
             </div>
             <div className="task-create-field task-create-priority-field">

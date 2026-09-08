@@ -3,8 +3,6 @@ import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 
-export const CONVERSATION_LONG_PASTE_THRESHOLD = PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
-
 interface UseConversationInputResourcesOptions {
   /** 附件处理失败跟随当前页面语言。 */
   language: ApplicationErrorLanguage;
@@ -106,7 +104,8 @@ export function useConversationInputResources(options: UseConversationInputResou
         return;
       }
       const text = safelyReadData(event.clipboardData, 'text/plain');
-      if (text.length < CONVERSATION_LONG_PASTE_THRESHOLD) return;
+      // 粘贴时读取共享门槛，避免打包分块循环加载时把尚未初始化的值复制为常量。
+      if (text.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD) return;
       event.preventDefault();
       materializeLongText(text, currentSelection(event.currentTarget));
     },

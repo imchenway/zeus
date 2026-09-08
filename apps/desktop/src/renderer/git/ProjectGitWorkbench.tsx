@@ -443,11 +443,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       });
     const newBranch = (baseRef: string) => form(label('新建分支…', 'New branch…'), label('分支名称', 'Branch name'), (branchName) => ({ type: 'create_branch', branchName, baseRef, smart: true }));
     if (target.kind === 'file' || target.kind === 'directory' || target.kind === 'stage') {
-      const files = repository.snapshot.fileStatuses.filter((file) => !subtree || subtree.repositoryId !== repository.id || file.path === subtree.path || file.path.startsWith(`${subtree.path}/`)).filter(
-        (file) =>
-          (target.kind === 'stage' || file.path === target.ref || (target.kind === 'directory' && file.path.startsWith(`${target.ref}/`))) &&
-          (target.stage === 'staged' ? file.indexStatus !== ' ' && file.indexStatus !== '?' : file.workingTreeStatus !== ' ' || file.indexStatus === '?'),
-      );
+      const files = repository.snapshot.fileStatuses
+        .filter((file) => !subtree || subtree.repositoryId !== repository.id || file.path === subtree.path || file.path.startsWith(`${subtree.path}/`))
+        .filter(
+          (file) =>
+            (target.kind === 'stage' || file.path === target.ref || (target.kind === 'directory' && file.path.startsWith(`${target.ref}/`))) &&
+            (target.stage === 'staged' ? file.indexStatus !== ' ' && file.indexStatus !== '?' : file.workingTreeStatus !== ' ' || file.indexStatus === '?'),
+        );
       const paths = files.map((file) => file.path);
       action(target.stage === 'staged' ? label('取消暂存', 'Unstage') : label('暂存', 'Stage'), { type: target.stage === 'staged' ? 'unstage' : 'stage', paths }, undefined, false, !paths.length);
       if (target.kind === 'file') items.push({ label: label('查看差异', 'View diff'), run: () => openDiffWindow(repository, target.ref, { stage: target.stage }) });
@@ -515,17 +517,25 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       items.push({ label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: revision, comparisonMode: 'current' }) });
       action(label('检出此版本…', 'Checkout revision…'), { type: 'checkout_revision', revision, smart: true }, label('进入游离 HEAD 状态，现有修改由 Smart Stash 保护。', 'Enter detached HEAD. Smart Stash protects local changes.'));
       newBranch(revision);
-      items.push({ label: label('创建附注标签…', 'Create annotated tag…'), disabled: busy !== null, run: () => setMenuConfirmation({
-        title: label('创建附注标签', 'Create annotated tag'), description: `${repository.name} · ${revision}`,
-        field: label('标签名称', 'Tag name'), messageField: label('标签说明（可选，默认使用标签名称）', 'Tag message (optional, defaults to tag name)'),
-        run: async (tagName, message) => (await execute(repository, { type: 'create_tag', tagName, revision, message }, label('创建附注标签', 'Create annotated tag'))) === 'completed',
-      }) });
+      items.push({
+        label: label('创建附注标签…', 'Create annotated tag…'),
+        disabled: busy !== null,
+        run: () =>
+          setMenuConfirmation({
+            title: label('创建附注标签', 'Create annotated tag'),
+            description: `${repository.name} · ${revision}`,
+            field: label('标签名称', 'Tag name'),
+            messageField: label('标签说明（可选，默认使用标签名称）', 'Tag message (optional, defaults to tag name)'),
+            run: async (tagName, message) => (await execute(repository, { type: 'create_tag', tagName, revision, message }, label('创建附注标签', 'Create annotated tag'))) === 'completed',
+          }),
+      });
       if (target.kind === 'tag') {
-        for (const remote of repository.snapshot.remotes) action(
-          label(`推送此标签到 ${remote}…`, `Push this tag to ${remote}…`),
-          { type: 'push_tag', tagName: target.ref, remote },
-          label(`仅推送标签 ${target.ref} 到 ${remote}，不会覆盖已有远程标签。`, `Push only ${target.ref} to ${remote}, without overwriting an existing remote tag.`),
-        );
+        for (const remote of repository.snapshot.remotes)
+          action(
+            label(`推送此标签到 ${remote}…`, `Push this tag to ${remote}…`),
+            { type: 'push_tag', tagName: target.ref, remote },
+            label(`仅推送标签 ${target.ref} 到 ${remote}，不会覆盖已有远程标签。`, `Push only ${target.ref} to ${remote}, without overwriting an existing remote tag.`),
+          );
       }
       if (target.kind === 'tag') action(label('删除本地标签…', 'Delete local tag…'), { type: 'delete_tag', tagName: target.ref }, label('仅删除本地标签，不删除远程标签。', 'Delete the local tag only.'), true);
       items.push({ label: target.kind === 'tag' ? label('复制标签名', 'Copy tag name') : label('复制提交哈希', 'Copy commit hash'), run: () => copy(target.ref) });
@@ -1612,9 +1622,7 @@ function GitLogSurface(props: {
         <div className="project-git-commit-scroll">
           <CommitGraph commits={props.commits.map(({ commit }) => commit)} />
           <div className="project-git-commit-rows">
-            {props.commits.length === 0 ? (
-              <p role="status">{props.zh ? '当前列表没有匹配的提交，请调整搜索条件或选择其他分支。' : 'No matching commits in this list. Adjust the search or choose another branch.'}</p>
-            ) : null}
+            {props.commits.length === 0 ? <p role="status">{props.zh ? '当前列表没有匹配的提交，请调整搜索条件或选择其他分支。' : 'No matching commits in this list. Adjust the search or choose another branch.'}</p> : null}
             {props.commits.map(({ repository, commit }) => {
               const selected = repository.id === props.selectedRepository?.id && commit.hash === props.selectedCommitHash;
               return (

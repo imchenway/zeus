@@ -114,7 +114,9 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
     <section className="project-model-settings" aria-label={zh ? '项目可用模型' : 'Project models'}>
       <header className="project-model-settings-heading">
         <h2>{zh ? '项目可用模型' : 'Project models'}</h2>
-        <p>{zh ? '选择额外模型供应商提供的模型供此项目使用。Codex 模型由 AI 连接提供，不受此列表限制。' : 'Choose models from additional providers for this project. Codex models come from AI connections and are not restricted by this list.'}</p>
+        <p>
+          {zh ? '选择额外模型供应商提供的模型供此项目使用。Codex 模型由 AI 连接提供，不受此列表限制。' : 'Choose models from additional providers for this project. Codex models come from AI connections and are not restricted by this list.'}
+        </p>
       </header>
       <div className="project-model-settings-toolbar">
         <label className="project-model-search-field">
@@ -135,7 +137,11 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       </div>
       <div className="project-model-settings-body">
         {status === 'loading' ? <small>{zh ? '正在读取模型…' : 'Loading models…'}</small> : null}
-        {status === 'failed' ? <button type="button" onClick={() => setLoadRevision((current) => current + 1)}>{zh ? '重新读取模型配置' : 'Reload model configuration'}</button> : null}
+        {status === 'failed' ? (
+          <button type="button" onClick={() => setLoadRevision((current) => current + 1)}>
+            {zh ? '重新读取模型配置' : 'Reload model configuration'}
+          </button>
+        ) : null}
         {status === 'ready' && presentation.models.length === 0 ? (
           <small>{zh ? '暂无可用的额外供应商模型，可到系统设置的“模型供应商”添加或检查配置。' : 'No additional provider models are available. Add or check configurations under Model providers in system settings.'}</small>
         ) : null}
@@ -160,7 +166,10 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
               {unavailableRefs.map((ref) => (
                 <label key={ref}>
                   <input type="checkbox" checked onChange={() => toggleModel(ref, false)} />
-                  <span><strong>{modelLabel(ref)}</strong><small>{ref === selection.defaultModelRef ? (zh ? '默认模型 · 不可用' : 'Default model · Unavailable') : (zh ? '不可用' : 'Unavailable')}</small></span>
+                  <span>
+                    <strong>{modelLabel(ref)}</strong>
+                    <small>{ref === selection.defaultModelRef ? (zh ? '默认模型 · 不可用' : 'Default model · Unavailable') : zh ? '不可用' : 'Unavailable'}</small>
+                  </span>
                 </label>
               ))}
             </section>
@@ -189,7 +198,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
               />
             </label>
           ) : (
-            <small>{unavailableDefaultLabel ? `${zh ? '默认模型：' : 'Default model: '}${unavailableDefaultLabel}` : (zh ? '当前未选择可用模型。' : 'No project model is selected.')}</small>
+            <small>{unavailableDefaultLabel ? `${zh ? '默认模型：' : 'Default model: '}${unavailableDefaultLabel}` : zh ? '当前未选择可用模型。' : 'No project model is selected.'}</small>
           )}
           {message ? <small role="status">{message}</small> : null}
         </span>
