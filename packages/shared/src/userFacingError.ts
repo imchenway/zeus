@@ -759,6 +759,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [['ZEUS_COMPUTER_SCREEN_LOCKED'], ['电脑已锁定或当前桌面不可用，AI 暂时不能操作应用。解锁并返回桌面后再继续。', 'The computer is locked or the desktop is unavailable. Unlock it and return to the desktop before continuing.']],
   [['ZEUS_COMPUTER_ELEMENT_STALE'], ['目标应用的内容已变化。需要重新读取页面后才能操作。', 'The target app’s content has changed. It must be read again before the action can continue.']],
+  [['ZEUS_COMPUTER_TARGET_UNAVAILABLE'], ['无法确认要操作的控件，本次动作尚未执行。需要重新读取目标窗口。', 'The target control could not be identified. The action has not run; inspect the target window again.']],
+  [
+    ['ZEUS_COMPUTER_ACTION_CHANGED'],
+    ['操作目标、内容或授权状态已变化，本次动作尚未执行。需要重新读取窗口并确认实际操作。', 'The action target, contents, or authorization has changed. The action has not run; inspect the window and confirm the actual action again.'],
+  ],
   [
     ['ZEUS_COMPUTER_SELF_CONTROL_BLOCKED', 'ZEUS_COMPUTER_ZEUS_CONTROL_BLOCKED'],
     ['AI 不能代替你操作 Zeus 的授权窗口。请由你直接确认或拒绝。', 'The AI cannot operate Zeus approval windows on your behalf. Approve or decline the request yourself.'],
