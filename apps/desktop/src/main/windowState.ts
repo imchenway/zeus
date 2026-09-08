@@ -137,7 +137,12 @@ export function findSavedWindowDisplay(persisted: PersistedMainWindowState, disp
  * 恢复窗口时优先找回原显示器，并按原显示器工作区偏移重建位置。
  * 显示器已移除时回退主屏居中；分辨率或排列变化时把窗口完整夹在可见工作区内。
  */
-export function resolveMainWindowState(persisted: PersistedMainWindowState | undefined, displays: readonly WindowDisplaySnapshot[], primaryDisplay: WindowDisplaySnapshot): ResolvedMainWindowState {
+export function resolveMainWindowState(
+  persisted: PersistedMainWindowState | undefined,
+  displays: readonly WindowDisplaySnapshot[],
+  primaryDisplay: WindowDisplaySnapshot,
+  minimumSize: WindowSize = minimumMainWindowSize,
+): ResolvedMainWindowState {
   const normalizedPrimary = normalizeDisplay(primaryDisplay);
   const availableDisplays = displays.map(normalizeDisplay).filter((display): display is WindowDisplaySnapshot => Boolean(display));
   const primary = normalizedPrimary ?? availableDisplays[0];
@@ -153,7 +158,7 @@ export function resolveMainWindowState(persisted: PersistedMainWindowState | und
 
   if (!persisted) {
     return {
-      bounds: centerWindow(defaultMainWindowSize, primary.workArea),
+      bounds: centerWindow(defaultMainWindowSize, primary.workArea, minimumSize),
       isMaximized: false,
       isFullScreen: false,
       targetDisplayId: String(primary.id),
@@ -164,16 +169,16 @@ export function resolveMainWindowState(persisted: PersistedMainWindowState | und
 
   const displayMatch = findSavedWindowDisplay(persisted, availableDisplays);
   const targetDisplay = displayMatch?.display ?? primary;
-  const size = fitWindowSize(persisted.bounds, targetDisplay.workArea);
+  const size = fitWindowSize(persisted.bounds, targetDisplay.workArea, minimumSize);
   const desiredPosition = displayMatch
     ? {
         x: targetDisplay.workArea.x + (persisted.bounds.x - persisted.display.workArea.x),
         y: targetDisplay.workArea.y + (persisted.bounds.y - persisted.display.workArea.y),
       }
-    : centerWindow(size, targetDisplay.workArea);
+    : centerWindow(size, targetDisplay.workArea, minimumSize);
 
   return {
-    bounds: clampWindowToWorkArea({ ...desiredPosition, ...size }, targetDisplay.workArea),
+    bounds: clampWindowToWorkArea({ ...desiredPosition, ...size }, targetDisplay.workArea, minimumSize),
     isMaximized: persisted.isMaximized,
     isFullScreen: persisted.isFullScreen,
     targetDisplayId: String(targetDisplay.id),
@@ -308,15 +313,18 @@ function isUsableDisplayId(id: string): boolean {
   return id !== '-1' && id !== '-10';
 }
 
-function fitWindowSize(bounds: Pick<WindowBounds, 'width' | 'height'>, workArea: WindowBounds): Pick<WindowBounds, 'width' | 'height'> {
+/** 按各类窗口自身的最小尺寸限制恢复大小，同时保证窗口不超出当前屏幕。 */
+function fitWindowSize(bounds: Pick<WindowBounds, 'width' | 'height'>, workArea: WindowBounds, minimumSize: WindowSize): Pick<WindowBounds, 'width' | 'height'> {
   return {
-    width: Math.min(workArea.width, Math.max(minimumMainWindowSize.width, bounds.width)),
-    height: Math.min(workArea.height, Math.max(minimumMainWindowSize.height, bounds.height)),
+    width: Math.min(workArea.width, Math.max(minimumSize.width, bounds.width)),
+    height: Math.min(workArea.height, Math.max(minimumSize.height, bounds.height)),
   };
 }
 
-function centerWindow(size: Pick<WindowBounds, 'width' | 'height'>, workArea: WindowBounds): WindowBounds {
-  const fitted = fitWindowSize(size, workArea);
+/** 在可见工作区居中，并遵守当前窗口类型的最小尺寸。 */
+function centerWindow(size: Pick<WindowBounds, 'width' | 'height'>, workArea: WindowBounds, minimumSize: WindowSize): WindowBounds {
+  /** 先限制尺寸，再计算中心位置。 */
+  const fitted = fitWindowSize(size, workArea, minimumSize);
   return {
     x: Math.round(workArea.x + (workArea.width - fitted.width) / 2),
     y: Math.round(workArea.y + (workArea.height - fitted.height) / 2),
@@ -324,8 +332,10 @@ function centerWindow(size: Pick<WindowBounds, 'width' | 'height'>, workArea: Wi
   };
 }
 
-function clampWindowToWorkArea(bounds: WindowBounds, workArea: WindowBounds): WindowBounds {
-  const size = fitWindowSize(bounds, workArea);
+/** 屏幕布局变化后将整个窗口收回可见工作区。 */
+function clampWindowToWorkArea(bounds: WindowBounds, workArea: WindowBounds, minimumSize: WindowSize): WindowBounds {
+  /** 使用窗口自身的下限，避免把差异窗口强行恢复成主窗口的最小高度。 */
+  const size = fitWindowSize(bounds, workArea, minimumSize);
   return {
     x: clamp(bounds.x, workArea.x, workArea.x + workArea.width - size.width),
     y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - size.height),

@@ -1,4 +1,5 @@
-import { BrowserWindow, net, screen, session } from 'electron';
+import { type BrowserWindow, net, screen, session } from 'electron';
+import { createPersistentWindow } from './persistentWindow.js';
 import { parseThirdPartyTaskUrl, type ThirdPartyTaskExtract, type ThirdPartyTaskLink } from '@zeus/shared';
 import { browserPartition } from './browserHost.js';
 import { readBoundedZentaoResponse } from './zentaoApi.js';
@@ -199,7 +200,7 @@ export async function openThirdPartyTaskLogin(parent: BrowserWindow, rawUrl: str
   /** 使用独立滚动页面，窄屏也不越出显示器。 */
   const height = Math.min(bounds.height, 800);
   /** 第三方网页只能使用沙箱浏览器能力，不继承 Zeus 的预加载脚本。 */
-  const login = new BrowserWindow({
+  const { window: login, reveal } = createPersistentWindow('third-party-task-login-window-state.json', {
     parent,
     show: false,
     x: Math.round(bounds.x + (bounds.width - width) / 2),
@@ -223,7 +224,7 @@ export async function openThirdPartyTaskLogin(parent: BrowserWindow, rawUrl: str
     if (!safeSourceUrl(url)) event.preventDefault();
   });
   // 登录窗口尽早可见，让用户看到真实来源及加载状态；登录完成后回到草稿重试。
-  login.show();
+  reveal();
   try {
     await login.loadURL(link.url);
     return true;
