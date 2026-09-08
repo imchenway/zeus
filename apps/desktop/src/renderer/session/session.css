@@ -2646,16 +2646,6 @@
   }
 }
 
-.session-codex-parity-v1 .session-computer-stop {
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-computer-stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--session-danger) 8%, transparent);
-  border-color: color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
-  color: var(--session-danger);
-}
-
 /* 非图片资源需要同时容纳文件名和打开方式；用户消息附件还需覆盖自身的紧凑图片列宽。 */
 .session-codex-parity-v1 .session-resource-card-list[data-layout='files'],
 .session-codex-parity-v1 .session-resource-card-list[data-layout='mixed'],
