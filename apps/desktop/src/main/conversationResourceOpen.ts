@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget, ZeusBrowserSettings } from '@zeus/shared';
@@ -356,22 +356,31 @@ async function editorAvailable(editor: EditorTargetDescriptor, services: Convers
   return results.some(Boolean);
 }
 
+/** 外部编辑器打开前核实行号，读取量受流缓冲区限制。 */
 async function validateLocation(path: string, line: number | undefined): Promise<void> {
   if (!line) return;
-  const bytes = await readFile(path);
-  if (bytes.includes(0)) {
-    throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_LOCATION_INVALID', 'A source line cannot be opened in a binary file.');
+  /** 逐块检查二进制和换行，不为外部打开复制、解码或拆分整个大文件。 */
+  let lineCount = 0;
+  /** CRLF 即使跨越读取块也只计一次；单独 CR 同样属于换行。 */
+  let previousCarriageReturn = false;
+  /** 末尾换行不是额外空行，空文件仍按一行处理。 */
+  let endsWithNewline = true;
+  for await (const chunk of createReadStream(path)) {
+    /** 流未设置编码，保留原始字节以完整检查二进制内容。 */
+    const bytes = chunk as Buffer;
+    if (bytes.includes(0)) {
+      throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_LOCATION_INVALID', 'A source line cannot be opened in a binary file.');
+    }
+    for (const byte of bytes) {
+      if (byte === 13 || (byte === 10 && !previousCarriageReturn)) lineCount += 1;
+      previousCarriageReturn = byte === 13;
+      endsWithNewline = byte === 10 || byte === 13;
+    }
   }
-  const lineCount = sourceLineCount(bytes.toString('utf8'));
+  lineCount = Math.max(1, lineCount + (endsWithNewline ? 0 : 1));
   if (line > lineCount) {
     throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_LOCATION_INVALID', `Requested source line ${line} exceeds the file length ${lineCount}.`);
   }
-}
-
-function sourceLineCount(content: string): number {
-  const normalized = content.replace(/\r\n?/gu, '\n');
-  if (normalized === '') return 1;
-  return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n').length;
 }
 
 function normalizeLocation(value: unknown): { line?: number; column?: number; endLine?: number } | null {

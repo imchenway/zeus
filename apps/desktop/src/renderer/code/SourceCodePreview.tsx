@@ -189,7 +189,7 @@ class CommentMarker extends GutterMarker {
 }
 
 /** 编辑器只挂载评论容器，React 门户继续持有评论组件与草稿。 */
-class CommentWidget extends WidgetType {
+export class CommentWidget extends WidgetType {
   /** 保存 React 拥有的节点，不在滚出可视区域时销毁评论状态。 */
   constructor(private readonly element: HTMLElement) {
     super();

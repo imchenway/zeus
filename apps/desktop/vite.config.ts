@@ -70,7 +70,7 @@ export default defineConfig({
             {
               name: 'renderer-runtime',
               // 源码预览与高亮重模块必须保留为动态入口；renderer-runtime 若吞入它们，Vite 会重新在首屏预加载全部语法解析器。
-              test: /src[\\/]renderer[\\/](?!code[\\/](?:CodeEditor|SourceCodePreview|sourceLanguageRegistry|syntaxHighlightRuntime)\.(?:ts|tsx)$)/u,
+              test: /src[\\/]renderer[\\/](?!code[\\/](?:CodeEditor|CodeDiffView|ConflictCodeEditor|SourceCodePreview|sourceLanguageRegistry)\.(?:ts|tsx)$)/u,
               priority: 10,
             },
           ],

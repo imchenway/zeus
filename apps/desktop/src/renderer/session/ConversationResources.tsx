@@ -116,7 +116,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         onClick={() => setPreviewOpen(true)}
       >
         {previewUrl ? (
-          <img src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
+          <img decoding="async" src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
         ) : (
           <span className="session-resource-image-placeholder" role="status">
             <FileImage aria-hidden="true" weight="duotone" />
@@ -328,7 +328,7 @@ function ConversationImagePreview(
         }}
       >
         {preview ? (
-          <img src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
+          <img decoding="async" src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
         ) : (
           <span className={props.placeholderClassName} role="status">
             {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
@@ -415,7 +415,7 @@ function ConversationImagePreviewDialog(props: { previewUrl: string; label: stri
         </header>
         <div className="task-attachment-zoom-stage">
           {props.previewUrl ? (
-            <img className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} />
+            <img decoding="async" className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} />
           ) : props.loading ? (
             <p className="task-attachment-zoom-state" role="status" aria-live="polite">
               <span className="task-attachment-preview-spinner" aria-hidden="true" />

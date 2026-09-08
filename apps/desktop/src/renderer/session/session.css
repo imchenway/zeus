@@ -2001,7 +2001,6 @@
 }
 
 .session-codex-parity-v1 .session-source-comment-gutter .session-code-comment-add:hover,
-.session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-row:hover .session-code-comment-add,
 .session-codex-parity-v1 .session-code-comment-add:focus-visible {
   background: #171717;
   color: #fff;
@@ -7822,18 +7821,6 @@
   min-block-size: 0;
 }
 
-/* 两侧为评论按钮和独立行号预留同等宽度，代码继续按交付页规则换行。 */
-.session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-row {
-  grid-template-columns: 64px minmax(0, 1fr) 64px minmax(0, 1fr);
-}
-
-.session-codex-parity-v1 .session-turn-diff-table .line-number {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding-inline: 3px;
-}
-
 .session-codex-parity-v1 .session-turn-diff-table .session-code-comment-add {
   flex: 0 0 20px;
   inline-size: 20px;
@@ -11547,4 +11534,10 @@
   .session-codex-parity-v1 .session-recovered-request-options em {
     grid-column: 2;
   }
+}
+
+/* 文件 Markdown 预览跳过屏幕外区块的布局与绘制，仍保留全文选择和页内查找。 */
+.session-source-markdown-scroll .markdown-renderer > .node-slot {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }

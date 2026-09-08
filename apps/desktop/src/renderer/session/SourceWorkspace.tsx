@@ -159,7 +159,7 @@ export function SourceWorkspace(props: {
       </div>
       <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
         {props.preview.kind === 'image' ? (
-          <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} />
+          <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} decoding="async" />
         ) : renderedMarkdown ? (
           <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
         ) : (

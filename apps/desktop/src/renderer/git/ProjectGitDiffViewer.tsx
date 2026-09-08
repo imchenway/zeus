@@ -1,19 +1,16 @@
-import { GitPaneSeparator } from './GitPaneSeparator.js';
-import { useEffect, useMemo, useRef, useState, type UIEvent as ReactUIEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
-import type { DashboardClient, GitDiffHunk, GitDiffLine, GitDiffSummary } from '../apiClient.js';
+import type { DashboardClient, GitDiffSummary } from '../apiClient.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLine } from '../code/SyntaxHighlightedCode.js';
+/** 与会话和交付共用按可视区域渲染的差异视图。 */
+const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
 import '../styles.css';
 import '../ui/primitives.css';
 
 type DiffViewMode = 'side-by-side' | 'unified';
-type DiffSide = { lineNumber: number | null; content: string; tone: 'context' | 'addition' | 'deletion' | 'empty'; highlightKey?: string };
-type AlignedDiffRow = { key: string; metadata?: string; left?: DiffSide; right?: DiffSide };
-
 export function ProjectGitDiffWindow(props: {
   client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff'>;
   projectId: string;
@@ -116,15 +113,7 @@ export function ProjectGitDiffWindow(props: {
 
 export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
-  const leftPaneRef = useRef<HTMLDivElement>(null);
-  const rightPaneRef = useRef<HTMLDivElement>(null);
-  const syncingVerticalScrollRef = useRef(false);
   const file = props.diff?.fileDiffs[0] ?? null;
-  const alignedRows = useMemo(() => (file ? file.hunks.flatMap((hunk, index) => alignHunk(hunk, index)) : []), [file]);
-  const leftHighlightInput = useMemo(() => buildGitDiffHighlightInput(file?.hunks ?? [], 'left'), [file]);
-  const rightHighlightInput = useMemo(() => buildGitDiffHighlightInput(file?.hunks ?? [], 'right'), [file]);
-  const leftHighlights = useSyntaxHighlightedSegments(file?.oldPath ?? '', leftHighlightInput.contents);
-  const rightHighlights = useSyntaxHighlightedSegments(file?.newPath ?? '', rightHighlightInput.contents);
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
@@ -143,163 +132,22 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
           </button>
         </span>
       </header>
-      {mode === 'side-by-side' ? (
-        <div className="project-git-diff-side-by-side">
+      <div className="project-git-diff-side-by-side">
+        {mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">
             <span title={oldPath}>{oldPath}</span>
             <span title={newPath}>{newPath}</span>
           </div>
-          <div className="project-git-diff-side-scroll">
-            <div ref={leftPaneRef} className="project-git-diff-side-pane" onScroll={(event) => syncVerticalScroll(event, rightPaneRef.current, syncingVerticalScrollRef)}>
-              {alignedRows.map((row) =>
-                row.metadata ? (
-                  <div key={row.key} className="project-git-diff-side-metadata">
-                    {row.metadata}
-                  </div>
-                ) : (
-                  <DiffSideCell key={row.key} side={row.left ?? emptySide()} highlighted={highlightedGitDiffLine(row.left, leftHighlightInput, leftHighlights)} />
-                ),
-              )}
-            </div>
-            <GitPaneSeparator name="diff" label={props.zh ? '调整左右代码宽度' : 'Resize diff columns'} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" />
-            <div ref={rightPaneRef} className="project-git-diff-side-pane" onScroll={(event) => syncVerticalScroll(event, leftPaneRef.current, syncingVerticalScrollRef)}>
-              {alignedRows.map((row) =>
-                row.metadata ? (
-                  <div key={row.key} className="project-git-diff-side-metadata">
-                    {row.metadata}
-                  </div>
-                ) : (
-                  <DiffSideCell key={row.key} side={row.right ?? emptySide()} highlighted={highlightedGitDiffLine(row.right, rightHighlightInput, rightHighlights)} />
-                ),
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="project-git-diff-unified">
-          {file.hunks.flatMap((hunk, hunkIndex) => [
-            <span key={`${hunk.header}:header`} className="is-metadata">
-              {hunk.header}
-            </span>,
-            ...hunk.lines.map((line, index) => {
-              const key = `${hunkIndex}:${index}`;
-              const input = line.type === 'deletion' ? leftHighlightInput : rightHighlightInput;
-              const highlights = line.type === 'deletion' ? leftHighlights : rightHighlights;
-              return (
-                <span key={`${hunk.header}:${index}`} className={`is-${line.type}`}>
-                  <i>{line.oldLineNumber ?? ''}</i>
-                  <i>{line.newLineNumber ?? ''}</i>
-                  <code>
-                    <span aria-hidden="true">{line.type === 'addition' ? '+' : line.type === 'deletion' ? '-' : ' '}</span>
-                    <SyntaxHighlightedLine line={highlightedGitDiffLineByKey(key, line.content, input, highlights)} />
-                  </code>
-                </span>
-              );
-            }),
-          ])}
-        </div>
-      )}
+        ) : null}
+        <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+          <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
+        </Suspense>
+      </div>
     </section>
   );
 }
 
-function syncVerticalScroll(event: ReactUIEvent<HTMLDivElement>, target: HTMLDivElement | null, syncingRef: { current: boolean }) {
-  if (!target || syncingRef.current || target.scrollTop === event.currentTarget.scrollTop) return;
-  syncingRef.current = true;
-  target.scrollTop = event.currentTarget.scrollTop;
-  requestAnimationFrame(() => {
-    syncingRef.current = false;
-  });
-}
-
-function DiffSideCell(props: { side: DiffSide; highlighted: HighlightedLine }) {
-  return (
-    <span className={`project-git-diff-side-cell is-${props.side.tone}`}>
-      <i>{props.side.lineNumber ?? ''}</i>
-      <code>
-        <SyntaxHighlightedLine line={props.highlighted} empty="" />
-      </code>
-    </span>
-  );
-}
-
-function alignHunk(hunk: GitDiffHunk, hunkIndex: number): AlignedDiffRow[] {
-  const rows: AlignedDiffRow[] = [{ key: `${hunkIndex}:metadata`, metadata: hunk.header }];
-  let cursor = 0;
-  while (cursor < hunk.lines.length) {
-    const line = hunk.lines[cursor]!;
-    if (line.type === 'context') {
-      const highlightKey = `${hunkIndex}:${cursor}`;
-      rows.push({ key: highlightKey, left: sideFromLine(line, 'context', 'old', highlightKey), right: sideFromLine(line, 'context', 'new', highlightKey) });
-      cursor += 1;
-      continue;
-    }
-    if (line.type === 'metadata') {
-      rows.push({ key: `${hunkIndex}:${cursor}`, metadata: line.content });
-      cursor += 1;
-      continue;
-    }
-    const deleted: Array<{ line: GitDiffLine; index: number }> = [];
-    const added: Array<{ line: GitDiffLine; index: number }> = [];
-    const blockStart = cursor;
-    while (cursor < hunk.lines.length && hunk.lines[cursor]!.type !== 'context' && hunk.lines[cursor]!.type !== 'metadata') {
-      const changed = hunk.lines[cursor]!;
-      if (changed.type === 'deletion') deleted.push({ line: changed, index: cursor });
-      if (changed.type === 'addition') added.push({ line: changed, index: cursor });
-      cursor += 1;
-    }
-    const count = Math.max(deleted.length, added.length);
-    for (let index = 0; index < count; index += 1) {
-      rows.push({
-        key: `${hunkIndex}:${blockStart}:${index}`,
-        left: deleted[index] ? sideFromLine(deleted[index]!.line, 'deletion', 'old', `${hunkIndex}:${deleted[index]!.index}`) : emptySide(),
-        right: added[index] ? sideFromLine(added[index]!.line, 'addition', 'new', `${hunkIndex}:${added[index]!.index}`) : emptySide(),
-      });
-    }
-  }
-  return rows;
-}
-
-function sideFromLine(line: GitDiffLine, tone: DiffSide['tone'], side: 'old' | 'new', highlightKey: string): DiffSide {
-  return { lineNumber: side === 'old' ? line.oldLineNumber : line.newLineNumber, content: line.content, tone, highlightKey };
-}
-
-function emptySide(): DiffSide {
-  return { lineNumber: null, content: '', tone: 'empty' };
-}
-
-interface GitDiffHighlightInput {
-  contents: string[];
-  positions: Map<string, { segment: number; line: number }>;
-}
-
-function buildGitDiffHighlightInput(hunks: GitDiffHunk[], side: 'left' | 'right'): GitDiffHighlightInput {
-  const contents: string[] = [];
-  const positions = new Map<string, { segment: number; line: number }>();
-  hunks.forEach((hunk, hunkIndex) => {
-    const segment = contents.length;
-    const segmentLines: string[] = [];
-    hunk.lines.forEach((line, lineIndex) => {
-      const belongsToSide = line.type === 'context' || (side === 'left' ? line.type === 'deletion' : line.type === 'addition');
-      if (!belongsToSide) return;
-      positions.set(`${hunkIndex}:${lineIndex}`, { segment, line: segmentLines.length });
-      segmentLines.push(line.content);
-    });
-    contents.push(segmentLines.join('\n'));
-  });
-  return { contents, positions };
-}
-
-function highlightedGitDiffLine(side: DiffSide | undefined, input: GitDiffHighlightInput, highlights: HighlightedLine[][]): HighlightedLine {
-  return side ? highlightedGitDiffLineByKey(side.highlightKey, side.content, input, highlights) : [];
-}
-
-function highlightedGitDiffLineByKey(key: string | undefined, content: string, input: GitDiffHighlightInput, highlights: HighlightedLine[][]): HighlightedLine {
-  const position = key ? input.positions.get(key) : undefined;
-  return (position ? highlights[position.segment]?.[position.line] : null) ?? (content ? [{ text: content }] : []);
-}
-
-function selectFileDiff(diff: GitDiffSummary, filePath: string): GitDiffSummary {
-  const selected = diff.fileDiffs.find((file) => file.newPath === filePath || file.oldPath === filePath);
-  return selected ? { ...diff, files: [filePath], fileDiffs: [selected] } : { ...diff, files: [], fileDiffs: [] };
+/** 独立差异窗口只把选中文件交给代码视图。 */
+function selectFileDiff(diff: GitDiffSummary, path: string): GitDiffSummary {
+  return { ...diff, fileDiffs: diff.fileDiffs.filter((file) => file.newPath === path || file.oldPath === path) };
 }

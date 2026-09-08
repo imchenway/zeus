@@ -1,0 +1,76 @@
+/* 所有差异入口共用可视区域布局，长行横向滚动以保持两侧行号对齐。 */
+.code-diff-view {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  overflow: hidden;
+}
+.code-diff-view.is-resizable {
+  grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
+}
+.code-diff-view.is-unified {
+  grid-template-columns: minmax(0, 1fr);
+}
+.code-diff-view > .project-source-code-editor {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-inline-end: 1px solid var(--zeus-product-line-soft);
+}
+.code-diff-view .cm-lineNumbers {
+  /* 编辑器基础样式以 important 固定 gutter 布局，差异只显示原文件行号。 */
+  display: none !important;
+}
+.code-diff-view .cm-content {
+  padding-block: 0 32px;
+}
+.code-diff-view .cm-gutterElement {
+  line-height: 20px;
+}
+.code-diff-line-number {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 54px;
+  min-height: 20px;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+.code-diff-view.is-unified .code-diff-line-number > span {
+  min-width: 42px;
+  text-align: right;
+}
+.code-diff-line.is-addition,
+.code-diff-view > :last-of-type .code-diff-line.is-replacement {
+  background: color-mix(in srgb, #2d9d5c 14%, transparent);
+}
+.code-diff-line.is-deletion,
+.code-diff-view > :first-of-type .code-diff-line.is-replacement {
+  background: color-mix(in srgb, #d14b4b 14%, transparent);
+}
+.code-diff-line.is-header,
+.code-diff-line.is-metadata,
+.code-diff-line.is-empty {
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-muted);
+}
+.code-diff-annotation {
+  overflow: hidden;
+  white-space: normal;
+}
+.code-diff-annotation > div {
+  display: flow-root;
+}
+/* 差异表本身填满父级剩余空间，不让全部文档高度撑开会话布局。 */
+.code-diff-host {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden !important;
+}
+.session-codex-parity-v1 .code-diff-line-number:hover .session-code-comment-add {
+  background: #171717;
+  color: #fff;
+}
