@@ -271,6 +271,7 @@ async function renderWithClient(
             onExportPatchFile={(patch) => window.zeus?.exportPatchToFile?.(patch) ?? Promise.resolve({ saved: false, filePath: null })}
             onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
             onLoadReleaseStatus={() => client.loadReleaseStatus()}
+            onLoadReleaseUpdateStatus={() => client.loadReleaseUpdateStatus()}
             onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
             onLoadRuntimeSettings={() => client.settings.loadRuntimeSettings()}
             onSaveRuntimeSettings={(input) => client.settings.saveRuntimeSettings(input)}

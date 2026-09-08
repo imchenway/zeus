@@ -1,3 +1,4 @@
+import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
@@ -88,7 +89,7 @@ function requestProjectGitWorkbench(client: ProjectGitWorkbenchProps['client'], 
   const request = client
     .loadProjectGitWorkbench(projectId)
     .then((snapshot) => {
-      entry.snapshot = snapshot;
+      if (entry.request === request) entry.snapshot = snapshot;
       return snapshot;
     })
     .finally(() => {
@@ -120,7 +121,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [commitOpen, setCommitOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
   const [menuConfirmation, setMenuConfirmation] = useState<GitMenuConfirmation | null>(null);
-  const [commitDrafts, setCommitDrafts] = useState<Record<string, string>>({});
+  const [commitDrafts, setCommitDrafts] = useGitCommitDrafts(props.project.id);
   const [commitModels, setCommitModels] = useState<Array<{ id: string; label: string }>>([]);
   const [commitModelRef, setCommitModelRef] = useState('');
   const [commitModelsLoading, setCommitModelsLoading] = useState(true);
@@ -173,6 +174,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [newBranchBase, setNewBranchBase] = useState('');
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [busy, setBusy] = useState<BusyState>(null);
+  const actionBusyRef = useRef(false);
   const [operationRecords, setOperationRecords] = useState<OperationRecord[]>([]);
   const [pushResults, setPushResults] = useState<Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>>([]);
   const requestVersionRef = useRef(0);
@@ -227,11 +229,19 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }
 
   useEffect(() => {
-    if (!snapshot) void loadWorkbench();
+    // 缓存仅用于首屏，进入页面和回到应用时都重新读取外部 Git 变化。
+    const refresh = () => {
+      if (document.visibilityState === 'visible' && !actionBusyRef.current) void loadWorkbench();
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
     return () => {
       requestVersionRef.current += 1;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
     };
-  }, [props.client, props.project.id, snapshot]);
+  }, [props.client, props.project.id]);
 
   useEffect(() => {
     if (snapshot?.projectId === props.project.id) projectGitWorkbenchCacheEntry(props.client, props.project.id).snapshot = snapshot;
@@ -317,6 +327,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }
 
   async function execute(repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string): Promise<ExecutionOutcome> {
+    if (actionBusyRef.current) return null;
+    actionBusyRef.current = true;
+    requestVersionRef.current += 1;
+    projectGitWorkbenchCacheEntry(props.client, props.project.id).request = null;
     const started = performance.now();
     setBusy({ repositoryId: repository.id, action: action.type });
     setError(null);
@@ -325,6 +339,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     operationErrorsByRepositoryRef.current = previousOperationErrors;
     try {
       const response = await props.client.executeProjectGitAction(props.project.id, repository.id, action);
+      setLoadState('ready');
       setSnapshot((current) =>
         current
           ? {
@@ -353,6 +368,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       addOperationRecord(repository, action.type, label, 'error', message, performance.now() - started);
       return null;
     } finally {
+      actionBusyRef.current = false;
       setBusy(null);
     }
   }
@@ -1585,6 +1601,9 @@ function GitLogSurface(props: {
         <div className="project-git-commit-scroll">
           <CommitGraph commits={props.commits.map(({ commit }) => commit)} />
           <div className="project-git-commit-rows">
+            {props.commits.length === 0 ? (
+              <p role="status">{props.zh ? '当前列表没有匹配的提交，请调整搜索条件或选择其他分支。' : 'No matching commits in this list. Adjust the search or choose another branch.'}</p>
+            ) : null}
             {props.commits.map(({ repository, commit }) => {
               const selected = repository.id === props.selectedRepository?.id && commit.hash === props.selectedCommitHash;
               return (

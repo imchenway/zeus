@@ -54,6 +54,12 @@ export function ModalPortal(props: ModalPortalProps) {
   }, []);
 
   function containKeyboardFocus(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!props.dismissDisabled) props.onDismiss?.();
+      return;
+    }
     if (event.key !== 'Tab') return;
     const root = rootRef.current;
     if (!root) return;

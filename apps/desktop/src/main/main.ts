@@ -1600,8 +1600,7 @@ function setupIpc(): void {
       if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.content !== 'string' || !input.expectedRevision || typeof input.expectedRevision.sha256 !== 'string') {
         throw new TypeError('项目源码保存请求无效。');
       }
-      await command.markWriteStarted();
-      return workspace.saveFile(input);
+      return workspace.saveFile(input, () => command.markWriteStarted());
     });
   });
   ipcMain.handle('zeus:project-source:create-entry', async (event, request: MainCommandRequest<CreateProjectSourceEntryInput>) => {
@@ -1610,8 +1609,7 @@ function setupIpc(): void {
       if (!input || typeof input.projectId !== 'string' || typeof input.parentRelativePath !== 'string' || typeof input.name !== 'string' || (input.kind !== 'file' && input.kind !== 'directory')) {
         throw new TypeError('项目源码新建请求无效。');
       }
-      await command.markWriteStarted();
-      const entry = await workspace.createEntry(input);
+      const entry = await workspace.createEntry(input, () => command.markWriteStarted());
       auditProjectSourceStructure('create', input.projectId, entry.relativePath);
       return entry;
     });
@@ -1622,8 +1620,7 @@ function setupIpc(): void {
       if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.targetParentRelativePath !== 'string' || typeof input.targetName !== 'string') {
         throw new TypeError('项目源码移动请求无效。');
       }
-      await command.markWriteStarted();
-      const entry = await workspace.moveEntry(input);
+      const entry = await workspace.moveEntry(input, () => command.markWriteStarted());
       auditProjectSourceStructure('move', input.projectId, input.relativePath, entry.relativePath);
       return entry;
     });
@@ -1632,8 +1629,7 @@ function setupIpc(): void {
     const workspace = requireProjectSourceWorkspace(event);
     return activeMainCommandLedger().execute(request, 'desktop.project_source.trash_entry', async (input, command) => {
       if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码删除请求无效。');
-      await command.markWriteStarted();
-      const result = await workspace.trashEntry(input.projectId, input.relativePath);
+      const result = await workspace.trashEntry(input.projectId, input.relativePath, () => command.markWriteStarted());
       auditProjectSourceStructure('trash', input.projectId, input.relativePath);
       return result;
     });

@@ -20,8 +20,8 @@ export function electronDistDirName(version, arch) {
   return `electron-v${version}-darwin-${arch}`;
 }
 
-/** 日常产物默认使用测试身份，正式发布必须显式选择。 */
-export function packagedAppPathForArch(arch, variant = 'test', requestedOutputRoot) {
+/** 日常统一生成 Zeus.app，DMG 由显式发布流程生成。 */
+export function packagedAppPathForArch(arch, variant = 'release', requestedOutputRoot) {
   const outputRoot = requestedOutputRoot ?? (variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist'));
   const appName = variant === 'test' ? 'Zeus Test.app' : 'Zeus.app';
   return join(outputRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', appName);
@@ -206,12 +206,9 @@ export async function packageMac({ dmg = false } = {}) {
   }
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
   /** 未指定身份时始终使用测试包。 */
-  const variant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'test';
+  const variant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'release';
   if (variant !== 'test' && variant !== 'release') {
     throw new Error(`Zeus package:mac 不支持打包身份：${variant}。`);
-  }
-  if (variant === 'release' && process.env.ZEUS_RELEASE_BUILD !== '1') {
-    throw new Error('生产身份 Zeus.app 只能由正式发布链路生成；日常开发与验收请使用 pnpm package:mac 生成 Zeus Test.app。');
   }
   /** 测试配置只覆盖应用身份，其余打包规则继承正式配置。 */
   const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';

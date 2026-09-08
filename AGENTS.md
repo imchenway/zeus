@@ -9,10 +9,9 @@
 
 ## 开发与安装
 
-- 日常打包和真实运行验收使用 `Zeus Test.app`，bundle ID 为 `dev.hypha.zeus.test`，并使用独立用户数据目录。
-- `pnpm package:mac` 默认生成测试应用，不生成 DMG。`pnpm dev` 保留为源码运行入口，使用独立的 development 数据和凭据。
+- 日常打包和真实运行验收使用 `Zeus.app`，验收可使用独立用户数据目录。dist 下只保留一个主应用，统一输出到 `dist/mac-arm64/Zeus.app`；不得按任务创建打包目录。仅在用户要求或集中验收时打包，不为每个小改动单独打包。
+- `pnpm package:mac` 默认生成 Zeus.app，不生成 DMG。`pnpm dev` 保留为源码运行入口，使用独立的 development 数据和凭据。
 - 只有用户明确要求正式 DMG 或正式发布时，才执行 `pnpm package:mac:release` 或正式发布流程生成 DMG；不得因日常开发、构建或验收请求自动生成 DMG。
-- 生产身份 `Zeus.app` 只由显式发布链路生成，发布候选只作结构、签名、DMG 和清单校验，不作为真实界面验收包启动。
 - 不因修改代码自动覆盖 `/Applications` 中已安装的应用；不自动迁移、覆盖或删除正式用户数据。打包前确认目标产物未运行。
 - 静态、构建、打包和真实运行结果分别记录，不把产物校验当成运行验收。
 
