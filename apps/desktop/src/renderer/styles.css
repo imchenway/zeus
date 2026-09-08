@@ -27300,23 +27300,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .model-setup-actions small {
   font-size: 12px;
 }
-.macos-ai-app .session-conversation-archive-error {
-  grid-column: 1 / -1;
-  padding: 10px 12px;
-  margin: 4px 6px 10px;
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 8px;
-  background: var(--zeus-product-panel);
-  font-size: 12px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.macos-ai-app .session-conversation-archive-error > button {
-  display: block;
-  margin-block-start: 8px;
-  min-block-size: 28px;
-  color: var(--zeus-product-text);
-}
 @media (max-width: 850px) {
   .macos-ai-app .project-start-steps {
     grid-template-columns: 1fr;

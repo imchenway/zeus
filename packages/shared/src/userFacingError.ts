@@ -802,6 +802,10 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_CONVERSATION_ARCHIVE_ACTIVE'], ['AI 仍在处理这段对话，因此暂时不能归档。请等待处理结束，或先停止当前处理。', 'The AI is still working on this conversation. Wait for it to finish or stop the current work before archiving.']],
   [['ZEUS_NATIVE_CONVERSATION_IN_PROGRESS'], ['会话中仍有未结束的处理，暂时不能归档。请查看会话中的处理状态。', 'This conversation still has unfinished work and cannot be archived yet. Check its current status.']],
   [
+    ['ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED'],
+    ['暂时无法确认上次处理是否结束，尚未归档。请检查会话状态。', 'The conversation has not been archived because its previous work could not be confirmed as finished. Check the conversation status.', 'check'],
+  ],
+  [
     ['ZEUS_CONVERSATION_NOT_FOUND', 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND'],
     ['找不到这段会话。它可能已被移除，请返回会话列表确认。', 'This conversation could not be found. It may have been removed; check the conversation list.'],
   ],
@@ -894,7 +898,7 @@ export function redactUserFacingErrorDetails(value: string): string {
     .slice(0, 2000);
 }
 
-/** 优先解释会话读取失败，其余错误使用最内层已知原因；未知原因不伪装成网络故障。 */
+/** 优先解释读取失败或归档尚未完成，其余错误使用最内层已知原因。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
   const chain: UserFacingErrorCause[] = [];
@@ -902,7 +906,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   // 已解释过的字符串仍可切换语言，避免再次格式化时丢失原因。
   const translated = explanations.find(([, copy]) => copy[0] === root.message || copy[1] === root.message)?.[1];
   // 发送后核对可能包住读取失败，仍优先解释刷新状态，底层原因继续完整保留在详情中。
-  const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED');
+  const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED' || item.code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED');
   // 只改变解释优先级，不改变下方对发送结果未知的保护。
   const explanationChain = readFailure ? [readFailure] : [...chain].reverse();
   const match = explanationChain.flatMap((item) => explanations.filter(([codes]) => codes.includes(item.message) || (item.code && codes.includes(item.code))))[0]?.[1] ?? translated;

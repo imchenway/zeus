@@ -1,4 +1,5 @@
 import {
+  type CommandDeliveryRepository,
   type ConversationExecutionRepository,
   type ConversationRepository,
   type ConversationServerRequestRepository,
@@ -8,6 +9,7 @@ import {
   type ZeusDatabase,
 } from '@zeus/storage';
 
+/** 本地归档同时核对业务记录与真实写出账本。 */
 interface UnboundConversationArchivePorts {
   db: ZeusDatabase;
   conversations: ConversationRepository;
@@ -15,25 +17,38 @@ interface UnboundConversationArchivePorts {
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   execution: ConversationExecutionRepository;
+  /** 真实 Provider 子命令证据，避免把丢失身份当作从未发送。 */
+  commandDeliveries: CommandDeliveryRepository;
 
   broadcast(type: string, payload: Record<string, unknown>): void;
 
   now?: () => string;
 }
 
+/** 状态可能停留在失败或暂停；只有完整证据确认从未外发才允许纯本地处理。 */
+function canArchiveUnboundConversationLocally(ports: UnboundConversationArchivePorts, conversation: ZeusConversationWithMessagesRecord): boolean {
+  if (conversation.providerThreadId || conversation.nativeSessionId || conversation.providerThreadPath || conversation.nativeSessionPath || !['unbound', 'failed', 'paused'].includes(conversation.providerState)) return false;
+  if (ports.requests.listByConversation(conversation.id).length > 0) return false;
+  if (ports.turns.listByConversation(conversation.id).some((turn) => turn.providerThreadId || turn.providerTurnId || turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting')) return false;
+  if (ports.execution.listSegments(conversation.id).some((segment) => segment.nativeSessionId)) return false;
+  if (ports.commandDeliveries.providerWriteStatus(conversation.id) === 'written_or_unknown') return false;
+  return ports.submissions.listByConversation(conversation.id).every((submission) => {
+    if (submission.providerTurnId || submission.targetProviderTurnId || submission.acceptedAt || submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown') return false;
+    /** 派发租约也会写 dispatchedAt，必须用对应提交的真实命令回执区分发送前失败。 */
+    const writeStatus = ports.commandDeliveries.providerWriteStatus(submission.id);
+    if (writeStatus === 'written_or_unknown' || (submission.dispatchedAt && writeStatus !== 'unwritten')) return false;
+    return ['queued', 'paused', 'failed', 'cancelled', 'deleted'].includes(submission.status);
+  });
+}
+
 /** 只收口从未建立 Provider 身份的本地队列；任何已外发迹象都交回常规 Provider 归档链路。 */
 export async function archiveUnboundConversationLocally(ports: UnboundConversationArchivePorts, conversation: ZeusConversationWithMessagesRecord, onArchived: () => void): Promise<boolean> {
-  if (conversation.providerThreadId || conversation.providerState !== 'unbound') return false;
-  if (ports.requests.listByConversation(conversation.id).some((request) => request.status === 'pending')) return false;
-  if (ports.turns.listByConversation(conversation.id).some((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting')) return false;
-  const submissions = ports.submissions.listByConversation(conversation.id);
-  const locallyCancellable = submissions.every((submission) => {
-    if (submission.status === 'completed' || submission.status === 'resolved' || submission.status === 'cancelled' || submission.status === 'deleted') return true;
-    return !submission.providerTurnId && (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed');
-  });
-  if (!locallyCancellable) return false;
+  if (!canArchiveUnboundConversationLocally(ports, conversation)) return false;
 
+  /** 本次归档与确定未发送内容的收口使用同一时间。 */
   const archivedAt = ports.now?.() ?? new Date().toISOString();
+  /** 检查与本地写入之间不让出执行权，避免新派发穿过归档边界。 */
+  const submissions = ports.submissions.listByConversation(conversation.id);
   ports.db.transaction(() => {
     for (const submission of submissions) {
       if ((submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) continue;
@@ -43,7 +58,7 @@ export async function archiveUnboundConversationLocally(ports: UnboundConversati
         reason: 'submission_cancelled',
         occurredAt: archivedAt,
       });
-      ports.submissions.updateStatus(submission.id, 'cancelled', { resolvedAt: archivedAt, updatedAt: archivedAt });
+      ports.submissions.updateStatus(submission.id, 'cancelled', { resolvedAt: archivedAt, updatedAt: archivedAt, preserveError: true });
     }
     ports.conversations.archive(conversation.id);
   });
@@ -60,7 +75,7 @@ export async function archiveUnboundConversationLocally(ports: UnboundConversati
 
 /** 未绑定会话没有 Provider 或 worktree 恢复动作；只恢复本地归档标记，避免伪造外部写入。 */
 export async function restoreUnboundConversationLocally(ports: UnboundConversationArchivePorts, conversation: ZeusConversationWithMessagesRecord, onRestored: () => void): Promise<boolean> {
-  if (!conversation.archived || conversation.providerThreadId || conversation.providerState !== 'unbound') return false;
+  if (!conversation.archived || !canArchiveUnboundConversationLocally(ports, conversation)) return false;
   ports.conversations.restore(conversation.id);
   onRestored();
   await ports.db.save();

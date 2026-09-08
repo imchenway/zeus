@@ -39,7 +39,7 @@ export interface CodexProviderThreadAuthorityApplication {
   /** 当前会话是否正在读取并恢复模型端状态。 */
   isRecovering(conversationId: string): boolean;
   /** 共用身份校验；只读检查不恢复订阅或改变观察器。 */
-  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input?: { observeActive?: boolean; readOnly?: boolean }): Promise<ProviderThreadAuthority>;
+  inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext | null, input?: { observeActive?: boolean; readOnly?: boolean }): Promise<ProviderThreadAuthority>;
   observe(conversationId: string, providerThreadId: string): void;
   queueChanged(conversationId: string): void;
   stopObserver(conversationId: string): void;
@@ -293,7 +293,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   }
 
   /** 串行核对线程状态，并按调用意图决定是否恢复实时观察。 */
-  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext, input: { observeActive?: boolean; readOnly?: boolean } = {}): Promise<ProviderThreadAuthority> {
+  function inspect(conversation: ZeusConversationWithMessagesRecord, context: ConversationDispatchContext | null, input: { observeActive?: boolean; readOnly?: boolean } = {}): Promise<ProviderThreadAuthority> {
     if (closing) return Promise.reject(coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', '会话恢复已随执行宿主关闭而停止。'));
     const previous = authorityChains.get(conversation.id);
     const waitForPrevious = previous
@@ -303,7 +303,12 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
         )
       : Promise.resolve();
     // 只读检查与执行共享身份串行边界，但不恢复订阅或启动观察器。
-    const authority = waitForPrevious.then(() => (input.readOnly ? readAndProject(options.requireConversation(conversation.id)) : inspectUnserialized(options.requireConversation(conversation.id), context)));
+    const authority = waitForPrevious.then(() => {
+      // 只读核对仅需已有线程身份，不能要求准备下一次发送的上下文。
+      if (input.readOnly) return readAndProject(options.requireConversation(conversation.id));
+      if (!context) throw coordinatorError('ZEUS_NATIVE_CONTEXT_UNAVAILABLE', 'Native conversation dispatch context is unavailable.');
+      return inspectUnserialized(options.requireConversation(conversation.id), context);
+    });
     authorityChains.set(conversation.id, authority);
     if (!previous) options.broadcast('conversation.queue.changed', { conversationId: conversation.id, queueDispatchRequested: false });
     void authority
