@@ -1649,8 +1649,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
-  const [computerStopBusy, setComputerStopBusy] = useState(false);
-  const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
@@ -1702,15 +1700,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useApplicationErrorDialog(serviceTierPreferenceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
-  useApplicationErrorDialog(computerStopError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  const computerControlIdentity = props.conversation?.nativeSession?.id
-    ? {
-        conversationId: props.conversation.id,
-        sessionId: props.conversation.nativeSession.id,
-      }
-    : null;
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
   useEffect(() => {
     if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) {
@@ -2436,25 +2425,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </div>
           </div>
           <div className="session-thread-header-actions">
-            {!legacy && computerControlIdentity && window.zeus?.stopComputerUse ? (
-              <button
-                type="button"
-                className="session-browser-toggle session-computer-stop"
-                disabled={computerStopBusy}
-                aria-busy={computerStopBusy || undefined}
-                title={props.language === 'zh-CN' ? '立即停止电脑操作' : 'Stop computer actions now'}
-                onClick={() => {
-                  setComputerStopBusy(true);
-                  setComputerStopError(null);
-                  void window.zeus!.stopComputerUse!(computerControlIdentity)
-                    .catch((error) => setComputerStopError(error))
-                    .finally(() => setComputerStopBusy(false));
-                }}
-              >
-                <X aria-hidden="true" weight="bold" />
-                <span>{props.language === 'zh-CN' ? '停止控制' : 'Stop control'}</span>
-              </button>
-            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
