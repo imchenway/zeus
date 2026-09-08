@@ -196,17 +196,27 @@ export function applyConflictSideAction(document: ConflictDocument, blockId: str
   return replaceBlock(document, index, resolution.text, nextBlock);
 }
 
-export function applyConflictDocumentEdit(document: ConflictDocument, nextContent: string): ConflictDocument {
-  if (nextContent === document.visibleContent) return document;
-  const before = document.visibleContent;
-  let prefix = 0;
-  while (prefix < before.length && prefix < nextContent.length && before[prefix] === nextContent[prefix]) prefix += 1;
-  let beforeEnd = before.length;
-  let nextEnd = nextContent.length;
-  while (beforeEnd > prefix && nextEnd > prefix && before[beforeEnd - 1] === nextContent[nextEnd - 1]) {
-    beforeEnd -= 1;
-    nextEnd -= 1;
-  }
+/** 编辑器提供实际变更范围，不再扫描全文寻找前后相同部分。 */
+export function applyConflictDocumentEdit(document: ConflictDocument, nextContent: string, change: { from: number; to: number; insertedLength: number }): ConflictDocument {
+  /** 编辑偏移来自当前文档，仍拒绝过期或越界的编辑范围。 */
+  if (
+    !Number.isInteger(change.from) ||
+    !Number.isInteger(change.to) ||
+    !Number.isInteger(change.insertedLength) ||
+    change.from < 0 ||
+    change.to < change.from ||
+    change.to > document.visibleContent.length ||
+    change.insertedLength < 0 ||
+    nextContent.length !== document.visibleContent.length + change.insertedLength - (change.to - change.from)
+  )
+    throw new Error('冲突编辑范围与当前文件不一致，请重新打开文件。');
+  /** 旧文档中实际受影响的范围。 */
+  const prefix = change.from;
+  const beforeEnd = change.to;
+  /** 替换片段在新文档中的结束位置。 */
+  const nextEnd = prefix + change.insertedLength;
+  /** 等内容替换不改变冲突状态，只比较本次编辑片段。 */
+  if (change.to - change.from === change.insertedLength && document.visibleContent.slice(prefix, beforeEnd) === nextContent.slice(prefix, nextEnd)) return document;
   const affected = document.blocks.filter((block) => block.visibleStart < beforeEnd && block.visibleEnd > prefix);
   const insertionAtBlockStart = beforeEnd === prefix && document.blocks.some((block) => block.visibleStart === prefix && block.visibleEnd > prefix);
   if (insertionAtBlockStart) {
@@ -215,8 +225,10 @@ export function applyConflictDocumentEdit(document: ConflictDocument, nextConten
   }
 
   const delta = nextEnd - beforeEnd;
+  /** 多个冲突一起被修改时按身份查找，避免重复扫描已影响的块。 */
+  const affectedIds = new Set(affected.map((block) => block.id));
   const blocks = document.blocks.map((block) => {
-    if (affected.some((candidate) => candidate.id === block.id)) {
+    if (affectedIds.has(block.id)) {
       return { ...block, status: 'manual' as const, combinationError: false };
     }
     if (block.visibleStart >= beforeEnd) {
@@ -235,7 +247,7 @@ export function applyConflictDocumentEdit(document: ConflictDocument, nextConten
       if (index === firstIndex) {
         return { ...block, visibleStart: replacementStart, visibleEnd: replacementEnd, visibleText: nextContent.slice(replacementStart, replacementEnd), status: 'manual' as const };
       }
-      if (block.visibleStart >= first.visibleStart && block.visibleEnd <= last.visibleEnd && affected.some((candidate) => candidate.id === block.id)) {
+      if (block.visibleStart >= first.visibleStart && block.visibleEnd <= last.visibleEnd && affectedIds.has(block.id)) {
         return { ...block, visibleStart: replacementEnd, visibleEnd: replacementEnd, visibleText: '', status: 'manual' as const };
       }
       return block;

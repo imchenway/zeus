@@ -1,3 +1,4 @@
+import { TextFilePreview } from '../code/TextFilePreview.js';
 import { useEffect, useState } from 'react';
 import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 import type { TaskApiClient } from '../features/tasks/taskApiClient.js';
@@ -238,7 +239,7 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
               {zh ? '关闭' : 'Close'}
             </Button>
           </span>
-          <pre>{openedDeliverable.content}</pre>
+          <TextFilePreview id={openedDeliverable.id} title={openedDeliverable.title} content={openedDeliverable.content} />
         </section>
       ) : null}
     </section>

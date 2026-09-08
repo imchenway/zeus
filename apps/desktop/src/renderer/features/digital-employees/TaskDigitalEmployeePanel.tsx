@@ -1,3 +1,4 @@
+import { TextFilePreview } from '../../code/TextFilePreview.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -1059,7 +1060,7 @@ function DecisionDialog(props: {
                 <strong>{deliverable.title}</strong>
                 <p>{deliverable.summary}</p>
               </span>
-              {deliverableContent ? <pre className="task-work-deliverable-content">{deliverableContent}</pre> : <p>{deliverableContentError ?? (zh ? '正在读取正式交付物…' : 'Loading formal deliverable…')}</p>}
+              {deliverableContent ? <TextFilePreview id={deliverable.id} title={deliverable.title} content={deliverableContent} /> : <p>{deliverableContentError ?? (zh ? '正在读取正式交付物…' : 'Loading formal deliverable…')}</p>}
               <label>
                 <span>{zh ? '要求修改' : 'Request changes'}</span>
                 <textarea rows={4} maxLength={4_000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder={zh ? '说明必须修改的内容…' : 'Describe the required changes…'} />
