@@ -2932,7 +2932,6 @@ async function initializeApplication(): Promise<void> {
       parentPid: process.pid,
       mainCommandLedger: activeMainCommandLedger,
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
-      qaMode: isTestDistribution() && process.env.ZEUS_COMPUTER_QA_MODE === '1',
     });
     computerHost.registerIpc();
     const nativeAutomationHost = createNativeAutomationHost({ browser: browserHost, computer: computerHost, externalBrowser: externalBrowserHost });
