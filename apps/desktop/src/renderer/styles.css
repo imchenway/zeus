@@ -23488,10 +23488,77 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: var(--zeus-product-muted);
 }
 
-.macos-ai-app .task-detail-git-actions {
+/* 详情中的次级操作并排显示，窄容器内自然换行。 */
+.macos-ai-app .task-detail-git-actions,
+.macos-ai-app .task-detail-project-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 低频项目设置留在详情底部，原生折叠保留键盘交互，当前归属仅作次要提示。 */
+.macos-ai-app .task-detail-project-settings {
+  display: block;
+}
+
+.macos-ai-app .task-detail-project-settings > summary {
+  align-items: center;
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  min-block-size: 30px;
+  list-style: none;
+}
+
+.macos-ai-app .task-detail-project-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.macos-ai-app .task-detail-project-settings > summary::before {
+  border-block-start: 1.5px solid currentColor;
+  border-inline-end: 1.5px solid currentColor;
+  content: '';
+  flex: 0 0 5px;
+  block-size: 5px;
+  margin-inline: 3px;
+  transform: rotate(45deg);
+}
+
+.macos-ai-app .task-detail-project-settings[open] > summary::before {
+  transform: rotate(135deg);
+}
+
+.macos-ai-app .task-detail-project-settings > summary:hover {
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-detail-project-settings > summary:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .task-detail-project-settings > summary > span {
+  flex-shrink: 0;
+}
+
+.macos-ai-app .task-detail-project-settings > summary > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 展开后限制选择器宽度，操作按钮沿用详情已有的换行布局。 */
+.macos-ai-app .task-detail-project-settings-content {
+  display: grid;
+  gap: 8px;
+  padding-block-start: 8px;
+}
+
+.macos-ai-app .task-detail-project-settings-content > .zeus-select {
+  inline-size: min(100%, 320px);
 }
 
 .macos-ai-app .task-detail-git-action-help {
