@@ -13,16 +13,15 @@ export function asyncQuestionReply(item: NativeSessionItemBuffer, state: NativeS
   });
 }
 
-/** 只按原轮次和问题身份关联回答；原问题未载入时保留完整消息正文。 */
-export function asyncQuestionAnswerHistory(item: NativeSessionItemBuffer, state: NativeSessionState): AnsweredRequestHistoryProps['request'] | undefined {
+/** 优先使用服务端随答复提供的完整题目，未补齐时按身份查找已加载原题。 */
+export function asyncQuestionAnswerHistory(item: NativeSessionItemBuffer, items: readonly NativeSessionItemBuffer[]): AnsweredRequestHistoryProps['request'] | undefined {
   /** 只读取用户消息携带的结构化回答，不从正文猜测问答关系。 */
   const answer = item.payload.questionAnswer as AsyncQuestionAnswer | undefined;
-  if (itemRole(item) !== 'user' || !answer || typeof answer.providerItemId !== 'string' || typeof answer.providerTurnId !== 'string') return undefined;
+  if (itemRole(item) !== 'user' || !answer || typeof answer.providerItemId !== 'string' || typeof answer.providerTurnId !== 'string' || ['failed', 'cancelled', 'deleted'].includes(item.status)) return undefined;
   /** 同名问题或另一轮次不能借用当前答案。 */
-  const question = Object.values(state.items).find((candidate) => candidate.turnId === answer.providerTurnId && (candidate.providerItemId ?? candidate.itemId) === answer.providerItemId && itemRole(candidate) === 'assistant');
-  if (!question) return undefined;
+  const question = answer.questions ? undefined : items.find((candidate) => candidate.turnId === answer.providerTurnId && (candidate.providerItemId ?? candidate.itemId) === answer.providerItemId && itemRole(candidate) === 'assistant');
   /** 沿用表单的题目与答案校验，无法可靠还原时继续展示原消息。 */
-  const questions = asyncMessageQuestions(question.payload);
+  const questions = answer.questions ?? (question ? asyncMessageQuestions(question.payload) : []);
   if (questions.length === 0 || validateCanonicalRequestUserInputAnswers({ questions }, answer.answers) || Object.keys(answer.answers).length === 0) return undefined;
   return { payload: { questions }, response: { answers: answer.answers }, containsSecret: false };
 }

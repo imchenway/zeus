@@ -1,4 +1,4 @@
-import { assistantMessageMetadata, type AssistantMessageMetadata, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
+import { assistantMessageMetadata, asyncMessageQuestions, type AssistantMessageMetadata, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import {
   conversationSnapshotV2StructureGeneration,
@@ -1663,7 +1663,7 @@ export class ConversationSnapshotV2Repository {
       reasoningSummary: row.reasoning_summary === 1,
       phase: row.assistant_phase,
       ...(row.role === 'assistant' && row.assistant_phase !== 'plan' && row.reasoning_summary !== 1 ? { assistantMessage: assistantMessageMetadata(parseJsonRecordOrNull(row.assistant_metadata_json) ?? {}, row.assistant_phase) } : {}),
-      ...(row.question_answer_json ? { questionAnswer: JSON.parse(row.question_answer_json) as AsyncQuestionAnswer } : {}),
+      ...(row.question_answer_json ? { questionAnswer: this.questionAnswer(conversationId, row.question_answer_json) } : {}),
       ...(row.role === 'assistant' && row.provider_item_id && parseJsonRecordOrNull(row.assistant_metadata_json)?.delivery === 'async' ? { questionResponse: this.questionResponse(conversationId, row.provider_item_id, row.turn_id) } : {}),
       protocolFamily: row.protocol_family,
       stageId: row.stage_id,
@@ -1692,6 +1692,24 @@ export class ConversationSnapshotV2Repository {
       ),
       toolResult: row.tool_pair_id ? (toolResults.get(row.tool_pair_id) ?? null) : null,
     }));
+  }
+
+  /** 旧提交只保存答案身份；按原消息身份补齐题目，不依赖当前历史页或改写旧数据。 */
+  private questionAnswer(conversationId: string, answerJson: string): AsyncQuestionAnswer {
+    /** 新提交已由服务端保存核对过的原题。 */
+    const answer = JSON.parse(answerJson) as AsyncQuestionAnswer;
+    if (answer.questions?.length) return answer;
+    /** 原题必须同时属于同一会话、Provider 轮次和消息。 */
+    const source = this.db.get<{ metadata_json: string }>(
+      `SELECT metadata_json FROM conversation_messages
+        WHERE conversation_id = ? AND provider_turn_id = ? AND provider_item_id = ?
+          AND role = 'assistant' AND json_valid(metadata_json)
+        LIMIT 1`,
+      [conversationId, answer.providerTurnId, answer.providerItemId],
+    );
+    /** 缺失权威原题时保留已有答案，不从正文拆分或猜测题目。 */
+    const questions = source ? asyncMessageQuestions(parseJsonRecordOrNull(source.metadata_json) ?? {}) : [];
+    return { ...answer, ...(questions.length ? { questions } : {}) };
   }
 
   /** 仅按问题、轮次和会话身份关联现有提交，不扫描正文或猜测回答。 */
