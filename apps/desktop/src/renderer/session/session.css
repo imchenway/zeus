@@ -1272,6 +1272,33 @@
   opacity: 0.55;
 }
 
+/* 异步回答入口统一使用轻量底色按钮，历史和底部提醒共用同一套交互。 */
+.session-codex-parity-v1 :is(.session-async-question, .session-async-question-reminder) .session-message-delivery-actions {
+  align-items: center;
+  color: var(--session-text-muted);
+  font-size: 12px;
+  gap: 10px;
+}
+
+.session-codex-parity-v1 :is(.session-async-question, .session-async-question-reminder) .session-message-delivery-actions button {
+  background: var(--session-selected);
+  border-color: transparent;
+  border-radius: 8px;
+  color: var(--session-text);
+  font-weight: 550;
+  padding: 5px 12px;
+}
+
+/* 鼠标悬停与键盘焦点保持可见，避免弱化边框后难以辨认可操作区域。 */
+.session-codex-parity-v1 :is(.session-async-question, .session-async-question-reminder) .session-message-delivery-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--session-text) 12%, var(--session-canvas));
+}
+
+.session-codex-parity-v1 :is(.session-async-question, .session-async-question-reminder) .session-message-delivery-actions button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
 .session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] {
   background: color-mix(in srgb, var(--session-danger) 3%, var(--session-canvas));
   border: 1px solid color-mix(in srgb, var(--session-danger) 18%, var(--session-line-soft));
@@ -3818,7 +3845,8 @@
   animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
 }
 
-.session-codex-parity-v1 .session-thread-item-user {
+/* 结构化回答沿用正文列宽和询问卡片；普通消息继续使用右侧气泡。 */
+.session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
   align-self: flex-end;
   background: var(--session-selected);
   border-radius: 14px;
@@ -6247,7 +6275,7 @@
     padding-inline-start: 126px;
   }
 
-  .session-codex-parity-v1 .session-thread-item-user {
+  .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
     margin-inline-end: 0 !important;
     max-inline-size: 88%;
   }
@@ -9012,8 +9040,8 @@
 }
 
 /* 用户中途引导仍是用户消息；进入当前轮次的网格过程区后继续保持右对齐。 */
-.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user,
-.session-codex-parity-v1 .session-live-turn-row > .session-thread-item-user {
+.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user:not([data-question-answer]),
+.session-codex-parity-v1 .session-live-turn-row > .session-thread-item-user:not([data-question-answer]) {
   justify-self: end;
   margin-inline: 0 !important;
 }

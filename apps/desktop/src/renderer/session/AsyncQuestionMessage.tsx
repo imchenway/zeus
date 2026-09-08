@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { asyncMessageQuestions, classifyAssistantMessage, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
+import { asyncMessageQuestions, classifyAssistantMessage, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
+import type { AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { clearRuiDraft, normalizeRequestQuestions, RequestUserInputPanel } from './PendingRequestSurface.js';
 import { itemRole, ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
@@ -10,6 +11,20 @@ export function asyncQuestionReply(item: NativeSessionItemBuffer, state: NativeS
     const answer = candidate.payload.questionAnswer as AsyncQuestionAnswer | undefined;
     return itemRole(candidate) === 'user' && answer?.providerItemId === (item.providerItemId ?? item.itemId) && answer.providerTurnId === item.turnId && !['failed', 'cancelled', 'deleted'].includes(candidate.status);
   });
+}
+
+/** 只按原轮次和问题身份关联回答；原问题未载入时保留完整消息正文。 */
+export function asyncQuestionAnswerHistory(item: NativeSessionItemBuffer, state: NativeSessionState): AnsweredRequestHistoryProps['request'] | undefined {
+  /** 只读取用户消息携带的结构化回答，不从正文猜测问答关系。 */
+  const answer = item.payload.questionAnswer as AsyncQuestionAnswer | undefined;
+  if (itemRole(item) !== 'user' || !answer || typeof answer.providerItemId !== 'string' || typeof answer.providerTurnId !== 'string') return undefined;
+  /** 同名问题或另一轮次不能借用当前答案。 */
+  const question = Object.values(state.items).find((candidate) => candidate.turnId === answer.providerTurnId && (candidate.providerItemId ?? candidate.itemId) === answer.providerItemId && itemRole(candidate) === 'assistant');
+  if (!question) return undefined;
+  /** 沿用表单的题目与答案校验，无法可靠还原时继续展示原消息。 */
+  const questions = asyncMessageQuestions(question.payload);
+  if (questions.length === 0 || validateCanonicalRequestUserInputAnswers({ questions }, answer.answers) || Object.keys(answer.answers).length === 0) return undefined;
+  return { payload: { questions }, response: { answers: answer.answers }, containsSecret: false };
 }
 
 /** 答案草稿和底部选择共用原会话、轮次与问题身份，不依赖时间线行键。 */

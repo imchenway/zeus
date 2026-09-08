@@ -12,7 +12,8 @@ import { ConversationComposerAttachments } from './ConversationComposerAttachmen
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface AnsweredRequestHistoryProps {
-  request: NativePendingRequest;
+  /** 回显只需要问题和答案，不依赖同步请求的生命周期。 */
+  request: Pick<NativePendingRequest, 'payload' | 'response' | 'containsSecret'>;
   language: SessionUiLanguage;
 }
 
@@ -129,7 +130,8 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && (entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null);
           return (
             <section key={entry.question.id}>
-              <small>{entry.question.header || `${index + 1}`}</small>
+              {/* 标题与问题相同时只保留正文，避免异步题目重复显示。 */}
+              {entry.question.header !== entry.question.question ? <small>{entry.question.header || `${index + 1}`}</small> : null}
               <strong>{entry.question.question}</strong>
               {entry.question.options.length > 0 || showSelfAuthoredRow ? (
                 <ul className="session-answered-request-options">
@@ -284,7 +286,8 @@ export function isAnsweredUserInputRequest(request: NativePendingRequest): boole
   return request.status === 'resolved' && request.response !== null && (request.type === 'userInput' || request.type === 'request_user_input') && normalizeRequestQuestions(request).length > 0;
 }
 
-function answeredQuestions(request: NativePendingRequest): AnsweredQuestion[] {
+/** 同步询问与异步回答共用选项、自填内容及敏感内容的展示规则。 */
+function answeredQuestions(request: AnsweredRequestHistoryProps['request']): AnsweredQuestion[] {
   const questions = normalizeRequestQuestions(request);
   const visibleAnswers = request.containsSecret ? nonSecretAnswers(request.response) : canonicalAnswers(request.response);
   const visibleAttachments = request.containsSecret ? {} : canonicalAnswerAttachments(request.response);

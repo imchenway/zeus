@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, type UserFacingErrorCause } from '@zeus/shared';
-import { MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
+import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
+import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
@@ -11,7 +11,7 @@ import { TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
 import type { ConversationCodeComment, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
-import { AsyncQuestionMessage, AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
+import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
 import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
 
@@ -119,18 +119,25 @@ export function SessionQaApp(props: { scene: QaScene }) {
 
 /** 复用真实询问组件的手动验收入口，不连接或冒充真实模型。 */
 function QuestionQa() {
+  /** 同一真实组件入口覆盖语言、主题和窄分栏。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 语言只控制展示，不改变问题与答案内容。 */
+  const language = parameters.has('en') ? 'en-US' : 'zh-CN';
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
-  const scenario = new URLSearchParams(window.location.search).get('case') ?? 'single';
+  const scenario = parameters.get('case') ?? 'single';
   /** 独立问题身份避免各场景草稿串用。 */
   const identity = `qa-question-${scenario}`;
   /** 答复送达通过按钮推进，以便观察接收和送达的区别。 */
-  const [delivery, setDelivery] = useState(scenario === 'delivered' ? 'resolved' : '');
+  const [delivery, setDelivery] = useState(parameters.has('pending') ? 'dispatching' : scenario === 'delivered' || parameters.has('answered') ? 'resolved' : '');
   /** 已接收的表单立即收起，可手动重新挂载检查草稿。 */
   const [open, setOpen] = useState(true);
   /** 次数与正文是浏览器交互检查的可见证据。 */
   const [calls, setCalls] = useState(0);
   /** 保存当前已接收的回答。 */
-  const [answers, setAnswers] = useState<Record<string, { answers: string[] }>>({ question_1: { answers: ['手动调整后，关闭再打开同一个任务的代码交付窗口'] } });
+  const [answers, setAnswers] = useState<Record<string, { answers: string[] }>>({
+    question_1: { answers: [scenario === 'freeform' || parameters.has('custom') ? '不需要你测\n请继续完成样式优化，并保留长文本换行。' : '手动调整后，关闭再打开同一个任务的代码交付窗口'] },
+    ...(scenario === 'multi' ? { question_2: { answers: ['上次的屏幕'] } } : {}),
+  });
   /** 与截图一致的长标题和选项，也覆盖只有自由输入的问题。 */
   const questions = [
     {
@@ -139,7 +146,7 @@ function QuestionQa() {
     },
     ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
   ];
-  /** 活动问题携带答复记录，状态中刻意不放用户回答气泡。 */
+  /** 活动问题携带答复账本；ledger 参数单独覆盖未载入用户回答的历史。 */
   const item: NativeSessionItemBuffer = {
     key: identity,
     conversationId: 'qa-questions',
@@ -154,12 +161,30 @@ function QuestionQa() {
     resources: [],
     payload: { delivery: 'async', questions, ...(delivery ? { questionResponse: { status: delivery, answer: { providerItemId: identity, providerTurnId: 'qa-turn', answers } } } : {}) },
   };
+  /** 合成用户消息经过完整生产时间线，检查回答卡片及消息操作。 */
+  const reply: NativeSessionItemBuffer = {
+    ...item,
+    key: `${identity}-reply`,
+    itemId: `${identity}-reply`,
+    providerItemId: delivery === 'resolved' ? `${identity}-reply` : undefined,
+    type: 'userMessage',
+    phase: 'user',
+    status: delivery === 'resolved' ? 'completed' : 'steering',
+    optimistic: delivery !== 'resolved',
+    text: formatAsyncQuestionAnswer(asyncMessageQuestions(item.payload), answers),
+    payload: { delivery: 'steer_now', questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers } },
+  };
+  /** 单独保留账本模式，避免只验同一页同时有问答的情况。 */
+  const showReply = Boolean(delivery) && !parameters.has('ledger');
   /** 只建立组件需要的会话状态，其余沿用生产初始值。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: item.conversationId,
     activeTurnId: item.turnId,
-    items: { [identity]: item },
+    transportState: 'ready',
+    conversationState: 'active_prework',
+    items: { ...(parameters.has('orphan') ? {} : { [identity]: item }), ...(showReply ? { [reply.key]: reply } : {}) },
+    itemOrder: [...(parameters.has('orphan') ? [] : [identity]), ...(showReply ? [reply.key] : [])],
     terminalTurnIds: scenario === 'closed' ? { [item.turnId]: 'completed' } : {},
   };
 
@@ -174,7 +199,7 @@ function QuestionQa() {
 
   return (
     <main className="macos-ai-app zeus-shell qa-page">
-      <style>{'.qa-page { display: block !important; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
+      <style>{'.qa-page { display: block !important; box-sizing: border-box; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
       <h1>PLAN 与异步询问共用表单验收</h1>
       <nav aria-label="询问场景">
         {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered'].map((name) => (
@@ -192,15 +217,19 @@ function QuestionQa() {
       <button type="button" disabled={!delivery} onClick={() => setDelivery('resolved')}>
         确认送达
       </button>
-      <section className="workspace-detail-pane session-codex-parity-v1" style={{ maxWidth: 900, margin: '24px auto' }}>
-        <AsyncQuestionMessage item={item} state={state} language="zh-CN" onOpen={() => setOpen(true)} />
+      <section
+        className={`workspace-detail-pane session-codex-parity-v1 theme-${parameters.has('dark') ? 'dark' : 'light'}`}
+        data-theme={parameters.has('dark') ? 'dark' : 'light'}
+        style={{ maxWidth: parameters.has('narrow') ? 360 : 900, margin: '24px auto' }}
+      >
+        <ConversationTranscript state={state} language={language} transcriptHydrated onOpenAsyncQuestion={() => setOpen(true)} />
         {open && !delivery ? (
           <div className="session-interaction-dock">
             {scenario === 'plan' || scenario === 'multiple' ? (
               <RequestUserInputPanel
                 request={{ id: identity, expiresAt: null }}
                 questions={normalizeRequestQuestions({ payload: { questions: asyncMessageQuestions(item.payload).map((question) => ({ ...question, multiple: scenario === 'multiple' })) } })}
-                language="zh-CN"
+                language={language}
                 autoFocus
                 onRespond={async (_id, response) => {
                   await accept(item, response.answers as typeof answers);
@@ -208,7 +237,7 @@ function QuestionQa() {
                 }}
               />
             ) : (
-              <AsyncQuestionPanel item={item} state={state} language="zh-CN" onAnswer={accept} onDismiss={() => setOpen(false)} />
+              <AsyncQuestionPanel item={item} state={state} language={language} onAnswer={accept} onDismiss={() => setOpen(false)} />
             )}
           </div>
         ) : null}
