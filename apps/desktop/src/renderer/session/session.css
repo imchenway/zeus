@@ -1974,7 +1974,7 @@
 }
 
 .session-codex-parity-v1 .session-source-line:hover .session-code-comment-add,
-.session-codex-parity-v1 .session-diff-line:hover .session-code-comment-add,
+.session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-row:hover .session-code-comment-add,
 .session-codex-parity-v1 .session-code-comment-add:focus-visible {
   background: #171717;
   color: #fff;
@@ -5132,7 +5132,7 @@
 
 /* 稍后回答入口贴近普通输入框，仍处于消息滚动区之外。 */
 .session-codex-parity-v1 .session-async-question-reminder {
-    margin-block-end: 8px;
+  margin-block-end: 8px;
 }
 
 /* 同步与异步询问共用底部内部尺寸。 */
@@ -7573,8 +7573,7 @@
   object-fit: contain;
 }
 
-.session-codex-parity-v1 .session-source-scroll pre,
-.session-codex-parity-v1 .session-turn-diff-content pre {
+.session-codex-parity-v1 .session-source-scroll pre {
   color: var(--session-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
@@ -7584,13 +7583,11 @@
   padding-block: 12px 28px;
 }
 
-.session-codex-parity-v1 .session-source-scroll code,
-.session-codex-parity-v1 .session-turn-diff-content code {
+.session-codex-parity-v1 .session-source-scroll code {
   display: block;
 }
 
-.session-codex-parity-v1 .session-source-line,
-.session-codex-parity-v1 .session-diff-line {
+.session-codex-parity-v1 .session-source-line {
   display: flex;
   min-block-size: 20px;
   white-space: pre;
@@ -7693,7 +7690,7 @@
   flex: 0 0 34px;
   gap: 10px;
   justify-content: space-between;
-  min-inline-size: max-content;
+  min-inline-size: 0;
   padding-inline: 12px;
   position: sticky;
   inset-block-start: 0;
@@ -7701,6 +7698,11 @@
 }
 
 .session-codex-parity-v1 .session-turn-diff-content > header strong {
+  /* 长路径让出操作区，保证分栏时仍能切换预览。 */
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 570;
 }
@@ -7713,6 +7715,7 @@
 .session-codex-parity-v1 .session-turn-diff-content > header > span {
   align-items: center;
   display: flex;
+  flex: 0 0 auto;
   gap: 8px;
 }
 
@@ -7747,37 +7750,69 @@
   color: var(--session-text);
 }
 
+/* 审核预览切换沿用文件操作按钮，仅为当前视图提供选中反馈。 */
+.session-codex-parity-v1 .session-turn-diff-open-file[aria-pressed='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+  font-weight: 610;
+}
+
 .session-codex-parity-v1 .session-turn-diff-open-file svg {
   block-size: 14px;
   inline-size: 14px;
 }
 
-.session-codex-parity-v1 .session-diff-line {
-  padding-inline-end: 24px;
+/* 审核与交付共用双栏差异组件；列标题留在代码滚动区之外。 */
+.session-codex-parity-v1 .session-turn-diff-table {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-diff-line[data-kind='added'] {
-  background: color-mix(in oklab, rgb(16 151 72) 13%, transparent);
-}
-
-.session-codex-parity-v1 .session-diff-line[data-kind='deleted'] {
-  background: color-mix(in oklab, rgb(214 53 53) 12%, transparent);
-}
-
-.session-codex-parity-v1 .session-diff-line[data-kind='hunk'] {
-  background: color-mix(in oklab, var(--session-accent) 12%, transparent);
-  color: var(--session-accent);
-}
-
-.session-codex-parity-v1 .session-diff-line[data-kind='meta'] {
+.session-codex-parity-v1 .session-turn-diff-side-labels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 0 0 auto;
+  border-block-end: 1px solid var(--session-line);
+  background: var(--session-canvas);
   color: var(--session-text-muted);
+  font-size: 11px;
 }
 
-.session-codex-parity-v1 .session-diff-line-sign {
-  color: var(--session-text-muted);
-  flex: 0 0 28px;
-  text-align: center;
-  user-select: none;
+.session-codex-parity-v1 .session-turn-diff-side-labels > span {
+  padding: 6px 12px;
+  border-inline-end: 1px solid var(--session-line);
+}
+
+.session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-table {
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+/* 两侧为评论按钮和独立行号预留同等宽度，代码继续按交付页规则换行。 */
+.session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-row {
+  grid-template-columns: 64px minmax(0, 1fr) 64px minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-turn-diff-table .line-number {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-inline: 3px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-table .session-code-comment-add {
+  flex: 0 0 20px;
+  inline-size: 20px;
+}
+
+/* 评论宽度跟随所在一侧，避免沿用单栏源码的左侧缩进挤压正文。 */
+.session-codex-parity-v1 .session-turn-diff-table :is(.session-code-comment-panel, .session-saved-code-comment) {
+  inline-size: calc(100% - 12px);
+  margin: 6px;
+  padding: 10px;
 }
 
 .session-codex-parity-v1 .session-diff-line-number {
@@ -7785,10 +7820,10 @@
   background: transparent;
   border: 0;
   color: var(--session-text-muted);
-  flex: 0 0 54px;
+  flex: 1 1 auto;
   font: inherit;
   min-block-size: 20px;
-  padding: 0 10px 0 0;
+  padding: 0 3px 0 0;
   text-align: end;
   user-select: none;
 }

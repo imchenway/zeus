@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -14,16 +14,20 @@ import {
   type ConversationCodeComment,
   type ConversationCodeCommentPosition,
   type ConversationCodeCommentSide,
+  type ConversationResourcePreview,
   type TurnChangeFile,
   type TurnChangeSet,
   type TurnChangeSetOperationResult,
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLine } from '../code/SyntaxHighlightedCode.js';
+import { TaskGitDiffTable } from '../task/TaskGitDiffTable.js';
+import type { TaskGitFileDiff } from './sessionTypes.js';
 
 type ChangeAction = 'undo' | 'reapply';
+/** 沿用审核页的差异渲染上限，避免超大补丁阻塞界面。 */
 const maximumRenderedDiffLines = 2_000;
 
 /** 文件摘要始终允许进入审阅；正文缺失时由既有读取入口补齐。 */
@@ -143,6 +147,8 @@ export function TurnDiffWorkspace(props: {
   onLoad?: () => void;
   onOperate?: (changeSet: TurnChangeSet, action: ChangeAction) => Promise<TurnChangeSetOperationResult>;
   onOpenFile?: (file: TurnChangeFile, line?: number) => void | Promise<void>;
+  /** 读取当前工作区文件全文，保留现有路径授权与文件大小限制。 */
+  onLoadPreview?: (changeSet: TurnChangeSet, file: TurnChangeFile) => Promise<ConversationResourcePreview>;
   comments?: ConversationCodeComment[];
   onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
@@ -161,13 +167,16 @@ export function TurnDiffWorkspace(props: {
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
   const action = availableAction(changeSet);
   const activeFile = changeSet.files.find((file) => file.id === activeFileId) ?? changeSet.files[0] ?? null;
-  const diff = useMemo(() => diffLines(activeFile?.unifiedDiff ?? ''), [activeFile?.unifiedDiff]);
+  /** 审核默认显示差异；只有 Markdown 文件才提供当前全文预览。 */
+  const [viewMode, setViewMode] = useState<'diff' | 'preview'>('diff');
+  /** 文件类型按当前状态的路径判断；已删除文件仍可进入预览查看不可用原因。 */
+  const markdownFile = /\.(?:md|markdown|mdx)$/iu.test((changeSet.state === 'undone' ? activeFile?.oldPath : activeFile?.newPath) ?? activeFile?.oldPath ?? activeFile?.newPath ?? '');
+  /** 普通文件与没有读取能力的页面始终展示原始差异。 */
+  const renderedMarkdown = markdownFile && Boolean(props.onLoadPreview) && viewMode === 'preview';
+  /** 将本轮补丁转换为交付页共用的双栏数据，避免重复维护布局与高亮。 */
+  const diff = useMemo(() => turnFileDiff(activeFile), [activeFile]);
   const activePath = activeFile ? commentPath(activeFile) : null;
   const comments = (props.comments ?? []).filter((comment) => comment.position.path === activePath);
-  const leftHighlightInput = useMemo(() => buildDiffHighlightInput(diff.lines, 'left'), [diff.lines]);
-  const rightHighlightInput = useMemo(() => buildDiffHighlightInput(diff.lines, 'right'), [diff.lines]);
-  const leftHighlights = useSyntaxHighlightedSegments(activeFile?.oldPath ?? activePath ?? '', leftHighlightInput.contents);
-  const rightHighlights = useSyntaxHighlightedSegments(activeFile?.newPath ?? activePath ?? '', rightHighlightInput.contents);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -222,6 +231,86 @@ export function TurnDiffWorkspace(props: {
     } catch (openError) {
       setError(openError);
     }
+  }
+
+  /** 评论始终使用所在侧的行号；只有当前工作区存在的一侧允许打开源码。 */
+  function renderLineNumber(line: number, side: ConversationCodeCommentSide): ReactNode {
+    /** 撤销后工作区恢复旧文件，其余稳定状态按新文件定位。 */
+    const currentSide = changeSet.state === 'undone' || changeSet.state === 'reapplying' ? 'left' : 'right';
+    return (
+      <>
+        {activePath && props.onCommentsChange ? (
+          <button
+            type="button"
+            className="session-code-comment-add"
+            aria-label={zh ? `评论${side === 'left' ? '旧' : '新'}文件第 ${line} 行` : `Comment on ${side === 'left' ? 'old' : 'new'} line ${line}`}
+            onClick={(event) => {
+              /** 跨侧点击不延续选择，避免混用旧文件与新文件行号。 */
+              const useRange = event.shiftKey && rangeStart?.side === side;
+              /** 反向选择仍按递增顺序保存起点。 */
+              const startLine = useRange ? Math.min(rangeStart.line, line) : line;
+              /** 评论挂在选择范围的末行。 */
+              const endLine = useRange ? Math.max(rangeStart.line, line) : line;
+              setRangeStart({ line, side });
+              setEditingCommentId(null);
+              setDraftPosition({ path: activePath, line: endLine, side, ...(startLine !== endLine ? { startLine, startSide: side } : {}) });
+            }}
+          >
+            +
+          </button>
+        ) : null}
+        {side === currentSide && activeFile && props.onOpenFile ? (
+          <button type="button" className="session-diff-line-number" aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`} onClick={() => void openFile(activeFile, line)}>
+            {line}
+          </button>
+        ) : (
+          <span className="session-diff-line-number">{line}</span>
+        )}
+      </>
+    );
+  }
+
+  /** 将已保存评论和编辑草稿放在各自的旧／新文件行下，保留原有评论操作。 */
+  function renderLineComments(line: number, side: ConversationCodeCommentSide): ReactNode {
+    /** 同号的左右两行不能共享评论。 */
+    const lineComments = comments.filter((comment) => comment.position.line === line && comment.position.side === side);
+    /** 草稿只属于当前路径下的一个行位置。 */
+    const draftHere = draftPosition?.line === line && draftPosition.side === side && draftPosition.path === activePath;
+    if (!lineComments.length && !draftHere) return null;
+    return (
+      <>
+        {lineComments.map((comment) =>
+          editingCommentId === comment.id ? (
+            <CodeCommentPanel
+              key={comment.id}
+              language={props.language}
+              position={comment.position}
+              comment={comment}
+              onCancel={() => setEditingCommentId(null)}
+              onSave={(body) => saveComment(comment.position, body, comment.id)}
+              onDelete={() => {
+                props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                setEditingCommentId(null);
+              }}
+            />
+          ) : (
+            <span key={comment.id} className="session-saved-code-comment">
+              <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+              <span>{comment.body}</span>
+              <span className="session-saved-code-comment-actions">
+                <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                  {zh ? '编辑' : 'Edit'}
+                </button>
+                <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                  {zh ? '删除' : 'Delete'}
+                </button>
+              </span>
+            </span>
+          ),
+        )}
+        {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+      </>
+    );
   }
 
   return (
@@ -288,6 +377,16 @@ export function TurnDiffWorkspace(props: {
                 <strong title={displayPath(activeFile)}>{displayPath(activeFile)}</strong>
                 <span>
                   <small>{localizedChangeType(activeFile, props.language)}</small>
+                  {markdownFile && props.onLoadPreview ? (
+                    <>
+                      <button type="button" className="session-turn-diff-open-file" aria-pressed={!renderedMarkdown} onClick={() => setViewMode('diff')}>
+                        {zh ? '差异' : 'Diff'}
+                      </button>
+                      <button type="button" className="session-turn-diff-open-file" aria-pressed={renderedMarkdown} onClick={() => setViewMode('preview')}>
+                        {zh ? '预览' : 'Preview'}
+                      </button>
+                    </>
+                  ) : null}
                   {props.onOpenFile ? (
                     <button type="button" className="session-turn-diff-open-file" onClick={() => void openFile(activeFile)}>
                       <FileCode aria-hidden="true" />
@@ -296,120 +395,54 @@ export function TurnDiffWorkspace(props: {
                   ) : null}
                 </span>
               </header>
-              {diff.truncated ? (
-                <p className="session-turn-diff-truncated" role="status">
-                  {zh ? `差异过大，仅显示前 ${maximumRenderedDiffLines} 行（共 ${diff.totalLines} 行）。` : `Diff is too large; showing the first ${maximumRenderedDiffLines} of ${diff.totalLines} lines.`}
-                </p>
-              ) : null}
-              {changeSet.contentProjection === 'summary' ? (
-                <p className="session-turn-diff-empty" role="status">
-                  {props.loading
-                    ? zh
-                      ? '正在加载差异正文…'
-                      : 'Loading diff…'
-                    : props.loadError
-                      ? zh
-                        ? '差异正文加载失败，请重试。'
-                        : 'Could not load the diff. Please retry.'
-                      : zh
-                        ? '差异正文尚未加载。'
-                        : 'The diff has not been loaded yet.'}
-                  {props.onLoad ? (
-                    <button type="button" disabled={props.loading} onClick={props.onLoad}>
-                      {zh ? '加载差异' : 'Load diff'}
-                    </button>
-                  ) : null}
-                </p>
-              ) : !activeFile.unifiedDiff ? (
-                <p className="session-turn-diff-empty" role="status">
-                  {zh ? '此文件没有可显示的文本差异。' : 'This file has no displayable text diff.'}
-                </p>
+              {renderedMarkdown && props.onLoadPreview ? (
+                busy || ['capturing', 'undoing', 'reapplying'].includes(changeSet.state) ? (
+                  <p className="session-turn-diff-empty" role="status">
+                    {zh ? '正在更新文件，完成后显示预览…' : 'Updating file. Preview will load when finished…'}
+                  </p>
+                ) : (
+                  <TurnChangeMarkdownPreview key={`${changeSet.id}:${activeFile.id}:${changeSet.state}:${changeSet.updatedAt}`} language={props.language} loadPreview={() => props.onLoadPreview!(changeSet, activeFile)} />
+                )
               ) : (
-                <pre>
-                  <code>
-                    {diff.lines.map((line, index) => {
-                      const position = activePath ? commentPosition(activePath, line) : null;
-                      const lineComments = position ? comments.filter((comment) => comment.position.line === position.line && comment.position.side === position.side) : [];
-                      const draftHere = Boolean(position && draftPosition?.line === position.line && draftPosition.side === position.side);
-                      const highlightedLine = highlightedDiffLine(line, index, leftHighlightInput, leftHighlights, rightHighlightInput, rightHighlights);
-                      return (
-                        <Fragment key={`${index}:${line.text}`}>
-                          <span className="session-diff-line" data-kind={line.kind}>
-                            {position && props.onCommentsChange ? (
-                              <button
-                                type="button"
-                                className="session-code-comment-add"
-                                aria-label={zh ? `评论${position.side === 'left' ? '旧' : '新'}文件第 ${position.line} 行` : `Comment on ${position.side === 'left' ? 'old' : 'new'} line ${position.line}`}
-                                onClick={(event) => {
-                                  const useRange = event.shiftKey && rangeStart?.side === position.side;
-                                  const startLine = useRange ? Math.min(rangeStart.line, position.line) : position.line;
-                                  const endLine = useRange ? Math.max(rangeStart.line, position.line) : position.line;
-                                  setRangeStart({ line: position.line, side: position.side });
-                                  setEditingCommentId(null);
-                                  setDraftPosition({ path: position.path, line: endLine, side: position.side, ...(startLine !== endLine ? { startLine, startSide: position.side } : {}) });
-                                }}
-                              >
-                                +
-                              </button>
-                            ) : (
-                              <span className="session-code-comment-spacer" aria-hidden="true" />
-                            )}
-                            <span className="session-diff-line-sign" aria-hidden="true">
-                              {line.sign}
-                            </span>
-                            {lineNumberForState(line, changeSet.state) && props.onOpenFile ? (
-                              <button
-                                type="button"
-                                className="session-diff-line-number"
-                                aria-label={zh ? `在源码中打开第 ${lineNumberForState(line, changeSet.state)} 行` : `Open source at line ${lineNumberForState(line, changeSet.state)}`}
-                                onClick={() => void openFile(activeFile, lineNumberForState(line, changeSet.state) ?? undefined)}
-                              >
-                                {lineNumberLabel(line)}
-                              </button>
-                            ) : (
-                              <span className="session-diff-line-number" aria-hidden="true">
-                                {lineNumberLabel(line)}
-                              </span>
-                            )}
-                            <span>
-                              <SyntaxHighlightedLine line={highlightedLine} />
-                            </span>
-                          </span>
-                          {lineComments.map((comment) =>
-                            editingCommentId === comment.id ? (
-                              <CodeCommentPanel
-                                key={comment.id}
-                                language={props.language}
-                                position={comment.position}
-                                comment={comment}
-                                onCancel={() => setEditingCommentId(null)}
-                                onSave={(body) => saveComment(comment.position, body, comment.id)}
-                                onDelete={() => {
-                                  props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
-                                  setEditingCommentId(null);
-                                }}
-                              />
-                            ) : (
-                              <span key={comment.id} className="session-saved-code-comment">
-                                <strong>{zh ? '本地评论' : 'Local comment'}</strong>
-                                <span>{comment.body}</span>
-                                <span className="session-saved-code-comment-actions">
-                                  <button type="button" onClick={() => setEditingCommentId(comment.id)}>
-                                    {zh ? '编辑' : 'Edit'}
-                                  </button>
-                                  <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
-                                    {zh ? '删除' : 'Delete'}
-                                  </button>
-                                </span>
-                              </span>
-                            ),
-                          )}
-                          {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
-                        </Fragment>
-                      );
-                    })}
-                  </code>
-                </pre>
+                <>
+                  {diff.truncated ? (
+                    <p className="session-turn-diff-truncated" role="status">
+                      {zh ? `差异过大，仅显示前 ${maximumRenderedDiffLines} 行（共 ${diff.totalLines} 行）。` : `Diff is too large; showing the first ${maximumRenderedDiffLines} of ${diff.totalLines} lines.`}
+                    </p>
+                  ) : null}
+                  {changeSet.contentProjection === 'summary' ? (
+                    <p className="session-turn-diff-empty" role="status">
+                      {props.loading
+                        ? zh
+                          ? '正在加载差异正文…'
+                          : 'Loading diff…'
+                        : props.loadError
+                          ? zh
+                            ? '差异正文加载失败，请重试。'
+                            : 'Could not load the diff. Please retry.'
+                          : zh
+                            ? '差异正文尚未加载。'
+                            : 'The diff has not been loaded yet.'}
+                      {props.onLoad ? (
+                        <button type="button" disabled={props.loading} onClick={props.onLoad}>
+                          {zh ? '加载差异' : 'Load diff'}
+                        </button>
+                      ) : null}
+                    </p>
+                  ) : !activeFile.unifiedDiff ? (
+                    <p className="session-turn-diff-empty" role="status">
+                      {zh ? '此文件没有可显示的文本差异。' : 'This file has no displayable text diff.'}
+                    </p>
+                  ) : (
+                    <div className="session-turn-diff-table">
+                      <div className="session-turn-diff-side-labels">
+                        <span title={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span>
+                        <span title={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span>
+                      </div>
+                      <TaskGitDiffTable diff={diff.fileDiff} hasSelection zh={zh} renderLineNumber={renderLineNumber} renderLineComments={renderLineComments} />
+                    </div>
+                  )}
+                </>
               )}
             </>
           ) : (
@@ -421,15 +454,73 @@ export function TurnDiffWorkspace(props: {
   );
 }
 
-function commentPath(file: TurnChangeFile): string {
-  return file.newPath ?? file.oldPath ?? 'unknown';
+/** 按所选文件和变更状态独立加载，切走后丢弃旧结果，失败可重试。 */
+function TurnChangeMarkdownPreview(props: {
+  /** 沿用会话界面语言。 */
+  language: SessionUiLanguage;
+  /** 只读取文件，不打开外部应用或切换审核工作区。 */
+  loadPreview: () => Promise<ConversationResourcePreview>;
+}) {
+  /** 使用现有中英文界面文案。 */
+  const zh = props.language === 'zh-CN';
+  /** 保存已读取的文本；空文件同样属于成功结果。 */
+  const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'source' }> | null>(null);
+  /** 保存真实读取错误，交给既有错误展示组件解释。 */
+  const [error, setError] = useState<unknown>(null);
+  /** 只有显式重试才增加读取次数。 */
+  const [attempt, setAttempt] = useState(0);
+  /** 回调身份变化不重复读取；组件的键负责文件与变更状态隔离。 */
+  const loadPreviewRef = useRef(props.loadPreview);
+  loadPreviewRef.current = props.loadPreview;
+
+  useEffect(() => {
+    /** 卸载或重试后不再应用之前的异步结果。 */
+    let active = true;
+    setPreview(null);
+    setError(null);
+    void (async () => {
+      try {
+        /** 文件读取接口也支持图片，Markdown 预览只接受文本。 */
+        const result = await loadPreviewRef.current();
+        if (result.kind !== 'source') throw new Error(zh ? '此文件无法作为 Markdown 文本预览。' : 'This file cannot be previewed as Markdown text.');
+        if (active) setPreview(result);
+      } catch (loadError) {
+        if (active) setError(loadError);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [attempt, zh]);
+
+  return (
+    <>
+      <p className="session-turn-diff-truncated" role="status">
+        {zh ? '当前文件内容；本轮增删请查看“差异”。' : 'Current file content. See Diff for this turn’s changes.'}
+        {preview?.truncated ? (zh ? ' 预览已截断。' : ' Preview truncated.') : null}
+      </p>
+      {error ? (
+        <div className="session-turn-diff-empty" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          <button type="button" className="session-turn-diff-open-file" onClick={() => setAttempt((value) => value + 1)}>
+            {zh ? '重试预览' : 'Retry preview'}
+          </button>
+        </div>
+      ) : preview ? (
+        <div className="session-source-markdown-scroll" aria-label={zh ? 'Markdown 预览' : 'Markdown preview'}>
+          {preview.content ? <ConversationMarkdown text={preview.content} streamId={`turn-preview:${preview.resource.id}`} phase="final" language={props.language} /> : <p role="status">{zh ? '文件内容为空。' : 'This file is empty.'}</p>}
+        </div>
+      ) : (
+        <p className="session-turn-diff-empty" role="status">
+          {zh ? '正在加载 Markdown 预览…' : 'Loading Markdown preview…'}
+        </p>
+      )}
+    </>
+  );
 }
 
-function commentPosition(path: string, line: DisplayDiffLine): ConversationCodeCommentPosition | null {
-  if (line.kind === 'deleted' && line.oldLine !== null) return { path, line: line.oldLine, side: 'left' };
-  if (line.newLine !== null) return { path, line: line.newLine, side: 'right' };
-  if (line.oldLine !== null) return { path, line: line.oldLine, side: 'left' };
-  return null;
+function commentPath(file: TurnChangeFile): string {
+  return file.newPath ?? file.oldPath ?? 'unknown';
 }
 
 function nearbyDiffHunk(diff: string, position: ConversationCodeCommentPosition): string | undefined {
@@ -496,111 +587,53 @@ function localizedChangeType(file: TurnChangeFile, language: SessionUiLanguage):
   return labels[file.changeType];
 }
 
-interface DisplayDiffLine {
-  kind: 'added' | 'deleted' | 'hunk' | 'meta' | 'context';
-  sign: string;
-  text: string;
-  oldLine: number | null;
-  newLine: number | null;
-}
-
-interface DiffHighlightInput {
-  contents: string[];
-  positions: Map<number, { segment: number; line: number }>;
-}
-
-function buildDiffHighlightInput(lines: DisplayDiffLine[], side: ConversationCodeCommentSide): DiffHighlightInput {
-  const contents: string[] = [];
-  const positions = new Map<number, { segment: number; line: number }>();
-  let segment = -1;
-  let segmentLine = 0;
-  lines.forEach((line, index) => {
-    if (line.kind === 'hunk') {
-      segment = contents.length;
-      segmentLine = 0;
-      contents.push('');
-      return;
+/** 解析本轮补丁的原始行号并沿用渲染上限，输出交付页已有的差异数据结构。 */
+function turnFileDiff(file: TurnChangeFile | null): { fileDiff: TaskGitFileDiff | null; totalLines: number; truncated: boolean } {
+  if (!file) return { fileDiff: null, totalLines: 0, truncated: false };
+  /** 末尾换行不是额外的代码行；只规范化传输中的换行符。 */
+  const rawLines = file.unifiedDiff.replace(/\r\n?/gu, '\n').split('\n');
+  if (rawLines.at(-1) === '') rawLines.pop();
+  /** 路径与变更统计使用会话已记录的文件信息。 */
+  const fileDiff: TaskGitFileDiff = {
+    oldPath: file.oldPath ?? '',
+    newPath: file.newPath ?? '',
+    changeType: file.changeType === 'binary' ? 'modified' : file.changeType,
+    addedLines: file.addedLines,
+    deletedLines: file.deletedLines,
+    hunks: [],
+  };
+  /** 当前补丁片段之外的路径与索引元信息不计入代码行。 */
+  let hunk: TaskGitFileDiff['hunks'][number] | null = null;
+  /** 左侧行号只随上下文和删除行前进。 */
+  let oldLine = 0;
+  /** 右侧行号只随上下文和新增行前进。 */
+  let newLine = 0;
+  for (const raw of rawLines.slice(0, maximumRenderedDiffLines)) {
+    if (raw.startsWith('diff ') || raw.startsWith('index ')) {
+      hunk = null;
+      continue;
     }
-    const belongsToSide = line.kind === 'context' || (side === 'left' ? line.kind === 'deleted' : line.kind === 'added');
-    if (!belongsToSide) return;
-    if (segment < 0) {
-      segment = contents.length;
-      segmentLine = 0;
-      contents.push('');
+    if (raw.startsWith('@@')) {
+      /** 省略行数等价于一行，显式零行必须保留。 */
+      const match = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/u.exec(raw);
+      hunk = null;
+      if (!match) continue;
+      oldLine = Number(match[1]);
+      newLine = Number(match[3]);
+      hunk = { header: raw, oldStart: oldLine, oldLines: Number(match[2] ?? 1), newStart: newLine, newLines: Number(match[4] ?? 1), lines: [] };
+      fileDiff.hunks.push(hunk);
+      continue;
     }
-    positions.set(index, { segment, line: segmentLine });
-    contents[segment] = `${contents[segment]}${segmentLine > 0 ? '\n' : ''}${line.text}`;
-    segmentLine += 1;
-  });
-  return { contents, positions };
-}
-
-function highlightedDiffLine(line: DisplayDiffLine, index: number, leftInput: DiffHighlightInput, leftHighlights: HighlightedLine[][], rightInput: DiffHighlightInput, rightHighlights: HighlightedLine[][]): HighlightedLine {
-  const input = line.kind === 'deleted' ? leftInput : rightInput;
-  const highlights = line.kind === 'deleted' ? leftHighlights : rightHighlights;
-  const position = input.positions.get(index);
-  return (position ? highlights[position.segment]?.[position.line] : null) ?? (line.text ? [{ text: line.text }] : []);
-}
-
-/** 按补丁片段计算行号，正文中的连续加减号不能当作文件路径头。 */
-function diffLines(diff: string): {
-  lines: DisplayDiffLine[];
-  totalLines: number;
-  truncated: boolean;
-} {
-  let oldLine: number | null = null;
-  let newLine: number | null = null;
-  const rawLines = diff.split('\n');
-  const truncated = rawLines.length > maximumRenderedDiffLines;
-  const lines = rawLines.slice(0, maximumRenderedDiffLines).map((line) => {
-    if (((line.startsWith('+++') || line.startsWith('---')) && oldLine === null && newLine === null) || line.startsWith('diff ') || line.startsWith('index ')) {
-      oldLine = null;
-      newLine = null;
-      return { kind: 'meta' as const, sign: '', text: line, oldLine: null, newLine: null };
+    if (!hunk) continue;
+    if (raw.startsWith('+')) {
+      hunk.lines.push({ type: 'addition', content: raw.slice(1), oldLineNumber: null, newLineNumber: newLine++ });
+    } else if (raw.startsWith('-')) {
+      hunk.lines.push({ type: 'deletion', content: raw.slice(1), oldLineNumber: oldLine++, newLineNumber: null });
+    } else if (raw.startsWith(' ')) {
+      hunk.lines.push({ type: 'context', content: raw.slice(1), oldLineNumber: oldLine++, newLineNumber: newLine++ });
+    } else if (raw.startsWith('\\ No newline at end of file')) {
+      hunk.lines.push({ type: 'metadata', content: raw, oldLineNumber: null, newLineNumber: null });
     }
-    if (line.startsWith('@@')) {
-      const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/u.exec(line);
-      oldLine = match ? Number(match[1]) : null;
-      newLine = match ? Number(match[2]) : null;
-      return { kind: 'hunk' as const, sign: '', text: line, oldLine: null, newLine: null };
-    }
-    if (line.startsWith('+')) {
-      const currentNewLine = newLine;
-      if (newLine !== null) newLine += 1;
-      return { kind: 'added' as const, sign: '+', text: line.slice(1), oldLine: null, newLine: currentNewLine };
-    }
-    if (line.startsWith('-')) {
-      const currentOldLine = oldLine;
-      if (oldLine !== null) oldLine += 1;
-      return { kind: 'deleted' as const, sign: '−', text: line.slice(1), oldLine: currentOldLine, newLine: null };
-    }
-    if (line.startsWith('\\ No newline at end of file')) {
-      return { kind: 'meta' as const, sign: '', text: line, oldLine: null, newLine: null };
-    }
-    const currentOldLine = oldLine;
-    const currentNewLine = newLine;
-    if (oldLine !== null) oldLine += 1;
-    if (newLine !== null) newLine += 1;
-    return {
-      kind: 'context' as const,
-      sign: ' ',
-      text: line.startsWith(' ') ? line.slice(1) : line,
-      oldLine: currentOldLine,
-      newLine: currentNewLine,
-    };
-  });
-  return { lines, totalLines: rawLines.length, truncated };
-}
-
-function lineNumberForState(line: DisplayDiffLine, state: TurnChangeSet['state']): number | null {
-  if (state === 'undone' || state === 'reapplying') return line.oldLine;
-  return line.newLine;
-}
-
-function lineNumberLabel(line: DisplayDiffLine): string {
-  if (line.oldLine === null && line.newLine === null) return '';
-  if (line.oldLine === line.newLine) return String(line.newLine);
-  if (line.oldLine === null) return String(line.newLine);
-  if (line.newLine === null) return String(line.oldLine);
-  return `${line.oldLine} ${line.newLine}`;
+  }
+  return { fileDiff, totalLines: rawLines.length, truncated: rawLines.length > maximumRenderedDiffLines };
 }

@@ -7,6 +7,9 @@ import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdo
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
+import { TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
+import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
+import type { ConversationCodeComment, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionMessage, AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -21,6 +24,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
   { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
   { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
@@ -79,6 +83,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'review') return <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
   if (props.scene.query === 'copy') return <CopyErrorQa />;
@@ -432,6 +437,146 @@ function CopyErrorQa() {
         </Button>
       </nav>
       <ApplicationErrorDialogHost language={language} />
+    </main>
+  );
+}
+
+/** 在既有验收入口运行真实审核组件；仅模拟文件读取与撤销结果。 */
+function MarkdownReviewQa() {
+  /** 通过查询参数覆盖窄分栏、深色和英文场景。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 保持与实际会话一致的语言类型。 */
+  const language = parameters.has('en') ? 'en-US' : 'zh-CN';
+  /** 预览中的慢响应同时覆盖快速切换文件后的结果隔离。 */
+  const [reads, setReads] = useState(0);
+  /** 记录真实行号回调，核对撤销前后的左右定位。 */
+  const [openedLine, setOpenedLine] = useState('');
+  /** 每个失败样本第一次报错，显式重试后恢复读取。 */
+  const failed = useRef(false);
+  /** 全宽切换复用审核页真实按钮。 */
+  const [fullWidth, setFullWidth] = useState(!parameters.has('narrow'));
+  /** 本地评论保留在预览切换期间。 */
+  const [comments, setComments] = useState<ConversationCodeComment[]>([]);
+  /** 固定验收文件不依赖用户工作区或外部服务。 */
+  const [changeSet, setChangeSet] = useState<TurnChangeSet>(() => ({
+    id: 'qa-review',
+    projectId: 'qa-project',
+    conversationId: 'qa-conversation',
+    turnId: 'qa-turn',
+    providerTurnId: 'qa-turn',
+    state: 'applied',
+    fileCount: 5,
+    addedLines: 10,
+    deletedLines: 5,
+    unifiedDiff: '',
+    preImageDigest: null,
+    postImageDigest: null,
+    unavailableReason: null,
+    conflict: null,
+    createdAt: '2026-09-08T00:00:00Z',
+    updatedAt: '2026-09-08T00:00:00Z',
+    files: ['docs/TASK_20260908_002_可逆界面操作速度实测.md', 'docs/第二份.MARKDOWN', 'docs/重试.mdx', 'docs/空文件.md', 'src/index.ts'].map((path, index) => ({
+      id: String(index),
+      oldPath: path,
+      newPath: path,
+      changeType: 'modified',
+      addedLines: 2,
+      deletedLines: 1,
+      unifiedDiff:
+        index === 4
+          ? "diff --git a/src/index.ts b/src/index.ts\nindex 123..456 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -10,3 +10,4 @@\n export function demo() {\n-  const value = 'old';\n+  const value = 'new';\n+  const extra = true;\n }\n@@ -30 +31 @@\n---old marker\n\\ No newline at end of file\n+++new marker\n\\ No newline at end of file\n"
+          : `@@ -1,2 +1,3 @@\n # 审核样例\n-旧内容\n+新内容\n+第二行`,
+      preHash: null,
+      postHash: null,
+      reversible: true,
+      unavailableReason: null,
+    })),
+  }));
+  return (
+    <main className={`macos-ai-app ${parameters.has('dark') ? 'theme-dark' : ''}`} data-theme={parameters.has('dark') ? 'dark' : 'light'}>
+      <p role="status">
+        Markdown 审核验收 · 读取次数：{reads} · 打开位置：{openedLine || '无'}
+      </p>
+      <div className="session-codex-parity-v1" style={{ display: 'flex', width: fullWidth ? '100%' : 640, maxWidth: '100%', height: 'calc(100vh - 64px)' }}>
+        {parameters.has('delivery') ? (
+          <TaskGitDiffTable
+            hasSelection
+            zh={language === 'zh-CN'}
+            diff={{
+              oldPath: 'src/index.ts',
+              newPath: 'src/index.ts',
+              changeType: 'modified',
+              addedLines: 1,
+              deletedLines: 1,
+              hunks: [
+                {
+                  header: '@@ -1,2 +1,2 @@',
+                  oldStart: 1,
+                  oldLines: 2,
+                  newStart: 1,
+                  newLines: 2,
+                  lines: [
+                    { type: 'context', content: 'export const demo = true;', oldLineNumber: 1, newLineNumber: 1 },
+                    { type: 'deletion', content: 'const value = 1;', oldLineNumber: 2, newLineNumber: null },
+                    { type: 'addition', content: 'const value = 2;', oldLineNumber: null, newLineNumber: 2 },
+                  ],
+                },
+              ],
+            }}
+          />
+        ) : (
+          <TurnDiffWorkspace
+            changeSet={changeSet}
+            language={language}
+            fullWidth={fullWidth}
+            onFullWidthChange={setFullWidth}
+            onClose={() => setReads(0)}
+            comments={comments}
+            onCommentsChange={setComments}
+            onOpenFile={(file, line) => setOpenedLine(`${file.newPath ?? file.oldPath}:${line ?? '全文'}`)}
+            onOperate={async (current, action) => {
+              /** 模拟持久状态更新，让预览经过与产品相同的刷新边界。 */
+              const next = { ...current, state: action === 'undo' ? ('undone' as const) : ('applied' as const), updatedAt: new Date().toISOString() };
+              setChangeSet(next);
+              return { changeSet: next, auditEventId: null };
+            }}
+            onLoadPreview={async (current, file) => {
+              setReads((value) => value + 1);
+              await new Promise((resolve) => setTimeout(resolve, file.id === '0' ? 1500 : 100));
+              if (file.id === '2' && !failed.current) {
+                failed.current = true;
+                throw new Error('预览文件读取失败，请重试。');
+              }
+              /** 全文包含补丁外上下文，便于辨认完整预览和差异片段。 */
+              const content =
+                file.id === '3'
+                  ? ''
+                  : `# ${file.id === '1' ? '第二份文档' : 'Zeus Test 本轮实测'}\n\n${current.state === 'undone' ? '撤销后的内容' : '当前完整内容'}，含补丁外的开头段落。\n\n## 操作统计\n\n| 流程 | 操作调用秒 | 读取调用秒 |\n| --- | ---: | ---: |\n| 自动化 → 扩展管理 | 0.258 | 0.820 |\n| 搜索 → 清空 | 0.180 | 0.296 |\n\n正文中的 \`Date.now()\` 应当保持行内显示。\n\n- 保留差异审核\n- 支持 Markdown 预览\n\n\`\`\`ts\nconst elapsed = Date.now();\n\`\`\`\n\n> 结束语：完整文档可正常阅读。`;
+              return {
+                kind: 'source',
+                content,
+                language: 'markdown',
+                lineCount: content.split('\n').length,
+                truncated: false,
+                resource: {
+                  id: file.id,
+                  projectId: current.projectId,
+                  conversationId: current.conversationId,
+                  turnId: current.turnId,
+                  itemId: file.id,
+                  kind: 'file',
+                  presentation: 'inline',
+                  displayName: file.newPath!,
+                  projectRelativePath: file.newPath!,
+                  iconKind: 'markdown',
+                  createdAt: current.createdAt,
+                  updatedAt: current.updatedAt,
+                },
+              };
+            }}
+          />
+        )}
+      </div>
     </main>
   );
 }

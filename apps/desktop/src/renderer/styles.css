@@ -18525,6 +18525,12 @@ body[data-surface='project-git-diff'] #root {
   white-space: nowrap;
 }
 
+/* 行评论占据对应侧的行号与代码两列，另一侧仍保留对齐位置。 */
+.macos-ai-app .task-git-review-diff-row > .task-git-review-diff-annotation {
+  grid-column: span 2;
+  padding: 0;
+}
+
 .macos-ai-app .task-git-review-diff-row.is-addition > :nth-child(3),
 .macos-ai-app .task-git-review-diff-row.is-addition > :nth-child(4) {
   background: color-mix(in srgb, #2d9d5c 14%, transparent);
