@@ -189,7 +189,6 @@
     .project-source-toolbar,
     .project-git-toolbar,
     .runtime-log-toolbar,
-    .browser-toolbar,
     .settings-action-rail,
     .session-selection-toolbar,
     .session-switch-target-dock,
@@ -351,7 +350,7 @@
   border-radius: var(--agentdesk-radius-tab);
 }
 
-.macos-ai-app.zeus-shell :is([role='tab'][aria-selected='true'], .task-work-cockpit-header nav button.is-active) {
+.macos-ai-app.zeus-shell :is([role='tab'][aria-selected='true']:where(:not(.browser-tab)), .task-work-cockpit-header nav button.is-active) {
   color: var(--agentdesk-accent-strong);
 }
 
@@ -383,7 +382,7 @@
   color: var(--agentdesk-accent-strong);
 }
 
-.macos-ai-app.zeus-shell :is(.project-source-tab.active, .browser-tab-shell.selected) {
+.macos-ai-app.zeus-shell .project-source-tab.active {
   background: color-mix(in srgb, var(--agentdesk-accent) 7%, var(--agentdesk-surface-strong));
   border-color: color-mix(in srgb, var(--agentdesk-accent) 25%, var(--agentdesk-border));
 }
@@ -430,7 +429,6 @@
     .project-source-toolbar,
     .project-git-toolbar,
     .runtime-log-toolbar,
-    .browser-toolbar,
     .settings-action-rail,
     .session-selection-toolbar,
     .session-switch-target-dock,
@@ -705,7 +703,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(218 233 247 / 44%);
 }
 
-.macos-ai-app.zeus-shell :where(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar) {
+.macos-ai-app.zeus-shell :where(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar) {
   padding: 8px 10px;
   background: rgb(255 255 255 / 44%);
 }
@@ -802,7 +800,7 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--agentdesk-space-2);
 }
 
-.macos-ai-app.zeus-shell :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .settings-action-rail, .session-selection-toolbar, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
+.macos-ai-app.zeus-shell :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .settings-action-rail, .session-selection-toolbar, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
   gap: var(--agentdesk-space-2);
   padding-inline: var(--agentdesk-space-3);
 }
@@ -1333,7 +1331,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .project-source-toolbar,
     .project-git-toolbar,
     .runtime-log-toolbar,
-    .browser-toolbar,
     .command-run-log-toolbar,
     .task-table-primary-toolbar,
     .project-source-code-editor,
@@ -1357,7 +1354,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .digital-employee-section-tabs,
     .automations-tabs,
     .extension-tabs,
-    .browser-tabs,
     .menu-bar-usage-tabs,
     .task-table-status-segments,
     .task-table-page-view-segments
