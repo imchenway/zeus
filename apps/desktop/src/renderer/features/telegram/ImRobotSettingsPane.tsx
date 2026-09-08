@@ -302,9 +302,9 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   return (
-    <section className="settings-product-pane im-robot-settings" aria-label={zh ? 'IM 机器人' : 'IM Bots'}>
+    <section className="settings-product-pane im-robot-settings" aria-label={zh ? 'IM 接入' : 'IM Integrations'}>
       <header className="im-page-heading">
-        <h2 className="settings-page-title">{zh ? 'IM 机器人' : 'IM Bots'}</h2>
+        <h2 className="settings-page-title">{zh ? 'IM 接入' : 'IM Integrations'}</h2>
         <p>{zh ? '在聊天中交办任务，随时查看项目进展。' : 'Delegate tasks in chat and follow your project’s progress.'}</p>
       </header>
 
@@ -314,24 +314,6 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
           <strong>Telegram</strong>
           <span>{zh ? '私聊机器人' : 'Private chat bot'}</span>
         </div>
-        {snapshot?.channels.some((channel) => channel.availability === 'unsupported') ? (
-          <details className="im-platform-directory">
-            <summary>
-              {zh ? '更多平台' : 'More platforms'}
-              <CaretDown aria-hidden="true" />
-            </summary>
-            <div className="im-platform-options">
-              <p>{zh ? '以下平台暂未支持，当前可通过 Telegram 接入。' : 'These platforms are not supported yet. Connect with Telegram for now.'}</p>
-              <ul>
-                {snapshot.channels
-                  .filter((channel) => channel.availability === 'unsupported')
-                  .map((channel) => (
-                    <li key={channel.id}>{channel.name}</li>
-                  ))}
-              </ul>
-            </div>
-          </details>
-        ) : null}
       </div>
 
       {!props.client || error ? (
@@ -368,31 +350,37 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
                 <div className="im-form-grid">
                   <label className="im-form-field">
                     <span>{zh ? '绑定项目' : 'Project'}</span>
-                    <select
-                      value={projectId}
-                      onChange={(event) => {
-                        setProjectId(event.currentTarget.value);
-                        setPresetKey('zeus_default');
-                      }}
-                      disabled={busy || !options.length}
-                    >
-                      {!options.length ? <option value="">{zh ? '暂无可绑定项目' : 'No projects available'}</option> : null}
-                      {options.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
+                    <span className="im-select-control">
+                      <select
+                        value={projectId}
+                        onChange={(event) => {
+                          setProjectId(event.currentTarget.value);
+                          setPresetKey('zeus_default');
+                        }}
+                        disabled={busy || !options.length}
+                      >
+                        {!options.length ? <option value="">{zh ? '暂无可绑定项目' : 'No projects available'}</option> : null}
+                        {options.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                      <CaretDown aria-hidden="true" />
+                    </span>
                   </label>
                   <label className="im-form-field">
                     <span>{zh ? '智能体配置' : 'Agent settings'}</span>
-                    <select value={presetKey} onChange={(event) => setPresetKey(event.currentTarget.value)} disabled={busy || !presetOptions.length}>
-                      {presetOptions.map((preset) => (
-                        <option key={agentPresetKey(preset.ref)} value={agentPresetKey(preset.ref)}>
-                          {preset.name}
-                        </option>
-                      ))}
-                    </select>
+                    <span className="im-select-control">
+                      <select value={presetKey} onChange={(event) => setPresetKey(event.currentTarget.value)} disabled={busy || !presetOptions.length}>
+                        {presetOptions.map((preset) => (
+                          <option key={agentPresetKey(preset.ref)} value={agentPresetKey(preset.ref)}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </select>
+                      <CaretDown aria-hidden="true" />
+                    </span>
                   </label>
                 </div>
                 {!options.length ? <p className="im-field-hint">{zh ? '请先在 Zeus 中添加项目，再回来连接机器人。' : 'Add a project in Zeus before connecting your bot.'}</p> : null}
@@ -638,18 +626,21 @@ function ConnectionCard(props: {
             <strong>{props.zh ? '智能体配置' : 'Agent settings'}</strong>
             <small>{props.zh ? '用于新对话和新任务；进行中的对话保持原配置。' : 'Applies to new conversations and tasks. Ongoing conversations keep their settings.'}</small>
           </span>
-          <select value={props.presetKey} onChange={(event) => props.onPresetChange(event.currentTarget.value)} disabled={props.busy || !project?.presets.length}>
-            {!project?.presets.some((preset) => agentPresetKey(preset.ref) === props.presetKey) ? (
-              <option value={props.presetKey} disabled>
-                {props.connection.agentPresetName}
-              </option>
-            ) : null}
-            {project?.presets.map((preset) => (
-              <option key={agentPresetKey(preset.ref)} value={agentPresetKey(preset.ref)}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
+          <span className="im-select-control">
+            <select value={props.presetKey} onChange={(event) => props.onPresetChange(event.currentTarget.value)} disabled={props.busy || !project?.presets.length}>
+              {!project?.presets.some((preset) => agentPresetKey(preset.ref) === props.presetKey) ? (
+                <option value={props.presetKey} disabled>
+                  {props.connection.agentPresetName}
+                </option>
+              ) : null}
+              {project?.presets.map((preset) => (
+                <option key={agentPresetKey(preset.ref)} value={agentPresetKey(preset.ref)}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <CaretDown aria-hidden="true" />
+          </span>
         </label>
         <label className="im-setting-row im-approval-row">
           <ShieldCheck aria-hidden="true" />
