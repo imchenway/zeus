@@ -6849,7 +6849,8 @@ body[data-surface='project-git-diff'] #root {
   --zeus-control-focus: 0 0 0 2px oklch(28% 0.004 255 / 0.18);
 }
 
-.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(button, input, select, textarea, a) {
+/* 工作区表单外观只作用于标准按钮与输入控件，内容中的拖动、复制和链接不继承操作按钮尺寸。 */
+.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button'], input, select, textarea) {
   border-radius: var(--zeus-control-radius, 7px);
   color: var(--zeus-control-text);
   font: inherit;
@@ -6862,7 +6863,7 @@ body[data-surface='project-git-diff'] #root {
     box-shadow 120ms ease-out;
 }
 
-.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(button, a) {
+.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button']) {
   align-items: center;
   appearance: none;
   background: var(--zeus-control-bg);
@@ -6879,7 +6880,7 @@ body[data-surface='project-git-diff'] #root {
   transform: none;
 }
 
-.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(button, a):hover:not(:disabled) {
+.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button']):hover:not(:disabled) {
   background: var(--zeus-control-bg-hover);
   border-color: var(--zeus-control-border-hover);
   box-shadow: none;
@@ -6887,7 +6888,7 @@ body[data-surface='project-git-diff'] #root {
   transform: none;
 }
 
-.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(button, a):active:not(:disabled) {
+.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button']):active:not(:disabled) {
   background: var(--zeus-control-bg-active);
   border-color: var(--zeus-control-border-hover);
   box-shadow: none;
