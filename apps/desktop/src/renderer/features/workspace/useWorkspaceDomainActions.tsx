@@ -129,6 +129,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -533,6 +534,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
+        if (event.type === 'codex.models.changed') {
+          // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
+          if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+          return;
+        }
         if (event.type === 'codex.rpc.retrying') {
           const operationIdentity = typeof event.payload.operationIdentity === 'string' ? event.payload.operationIdentity : null;
           const method = typeof event.payload.method === 'string' ? event.payload.method : null;
@@ -652,6 +658,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         statusSyncGeneration += 1;
         clearStatusSyncRetry();
         if (state === 'connected') {
+          // 断线期间可能错过目录事件，连接恢复后补读当前快照。
+          window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
           statusSyncAttempt = 0;
           synchronizeActiveProjectConversationStatus();
           clearStatusSnapshotTimer();
@@ -683,6 +691,34 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     reconcileNativeConversationProjectionStates,
     updateTaskModelPushPendingByTask,
   ]);
+
+  useEffect(() => {
+    /** 后台同步只替换目录，不重建任务表单或覆盖用户选择。 */
+    const client = props.nativeConversationClient;
+    const projectId = loadedTaskModelPushCapabilities?.projectId ?? taskModelPushRuntimeCapabilities?.projectId;
+    if (!taskModelPushTaskId || !projectId || !client?.loadCodexConversationCapabilities) return;
+    /** 关闭弹窗、切换任务或新一轮读取后丢弃迟到结果。 */
+    let disposed = false;
+    let requestSequence = 0;
+    const refresh = (): void => {
+      const sequence = ++requestSequence;
+      const request = taskModelPushCapabilityRequestRef.current;
+      void client.loadCodexConversationCapabilities!(projectId)
+        .then((capabilities) => {
+          if (disposed || sequence !== requestSequence || request !== taskModelPushCapabilityRequestRef.current) return;
+          setTaskModelPushRuntimeCapabilities(capabilities);
+          setTaskModelPushCapabilities((current) => (current?.taskId === taskModelPushTaskId && current.projectId === projectId ? { ...current, models: capabilities.models, preferredModel: capabilities.preferredModel } : current));
+        })
+        .catch((error: unknown) => {
+          if (!disposed && sequence === requestSequence) recordLocalError('task-model-catalog-refresh', error);
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      disposed = true;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [props.nativeConversationClient, taskModelPushTaskId, loadedTaskModelPushCapabilities?.projectId, taskModelPushRuntimeCapabilities?.projectId]);
 
   const taskDetailPaneTaskSource = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
   const taskDetailPaneTask = taskDetailPaneTaskSource ? projectTaskModelPushManagementStatus(taskDetailPaneTaskSource) : undefined;

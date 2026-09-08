@@ -48,6 +48,8 @@ type RuntimeActivationInput = {
   remoteControl?: boolean;
   providerEnvironment?: Record<string, string>;
   responsesProvider?: CodexResponsesModelProvider | null;
+  /** 手动订阅登录要求本次新连接取得远端目录后再接替旧连接。 */
+  requireFreshModels?: boolean;
 };
 
 function sameResponsesProvider(left: CodexResponsesModelProvider | null, right: CodexResponsesModelProvider | null): boolean {
@@ -136,6 +138,8 @@ export function createCodexRuntimeGenerationManager(
     toolRuntimeCodexHome?: string;
     runtimeEnvironment?: Record<string, string>;
     providerVersionProbe?: (commandPath: string) => Promise<string | null>;
+    /** 目录检查间隔；官方组件仍自行决定是否需要联网。 */
+    modelCatalogRefreshIntervalMs?: number;
   } = {},
 ): CodexAppServerManager {
   const entries = new Set<RuntimeEntry>();
@@ -153,6 +157,32 @@ export function createCodexRuntimeGenerationManager(
   let activationChain: Promise<unknown> = Promise.resolve();
   let activationSequence = 0;
   let remoteControlEnabled = false;
+  /** 只有当前连接定期读取目录，旧连接继续完成既有任务。 */
+  let modelCatalogTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 后台每五分钟检查一次；登录和账号变化仍触发及时检查。 */
+  const modelCatalogRefreshIntervalMs = Math.max(100, options.modelCatalogRefreshIntervalMs ?? 5 * 60_000);
+
+  /** 合并登录通知和定时检查，关闭时不再派生后台请求。 */
+  function scheduleModelCatalogRefresh(delayMs = modelCatalogRefreshIntervalMs): void {
+    if (preparingForShutdown) return;
+    if (modelCatalogTimer) clearTimeout(modelCatalogTimer);
+    modelCatalogTimer = setTimeout(() => {
+      modelCatalogTimer = null;
+      const entry = activeEntry;
+      if (!entry || entry.manager.getState().type !== 'ready') {
+        scheduleModelCatalogRefresh();
+        return;
+      }
+      void entry.manager
+        .refreshModels()
+        .catch(() => undefined)
+        .finally(() => {
+          // 新连接或账号通知已经安排了更早检查时，保留已有计划。
+          if (!modelCatalogTimer && !preparingForShutdown) scheduleModelCatalogRefresh();
+        });
+    }, delayMs);
+    modelCatalogTimer.unref();
+  }
 
   function requireActiveEntry(): RuntimeEntry {
     if (!activeEntry || preparingForShutdown) throw managerError('ZEUS_CODEX_NOT_READY', 'Codex runtime generation manager is not ready.');
@@ -246,6 +276,7 @@ export function createCodexRuntimeGenerationManager(
     entry.activationSequence = ++activationSequence;
     if (requestedRemoteControl) remoteControlEnabled = true;
     if (previous && previous !== entry) void tryDrain(previous);
+    if (previous !== entry || !modelCatalogTimer) scheduleModelCatalogRefresh(1_000);
   }
 
   function serializeThreadHandoff<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
@@ -351,6 +382,11 @@ export function createCodexRuntimeGenerationManager(
 
   function forwardEvent(entry: RuntimeEntry, event: CodexAppServerEvent): void | Promise<void> {
     rememberGeneration(entry, event.generationId);
+    if (event.method === 'zeus/models/updated') {
+      const state = entry.manager.getState();
+      if (state.type === 'ready') entry.capabilities = state.capabilities;
+    }
+    if (entry === activeEntry && (event.method === 'account/updated' || event.method === 'account/login/completed')) scheduleModelCatalogRefresh(100);
     const params = isRecord(event.params) ? event.params : {};
     const threadId = typeof params.threadId === 'string' ? params.threadId : null;
     if (threadId) bindThread(entry, threadId);
@@ -571,6 +607,10 @@ export function createCodexRuntimeGenerationManager(
   }
 
   return {
+    /** 主动目录读取沿用当前连接，不切换正在执行任务的运行身份。 */
+    refreshModels() {
+      return requireActiveEntry().manager.refreshModels();
+    },
     ensureReady(input) {
       return enqueueActivation(input);
     },
@@ -806,12 +846,16 @@ export function createCodexRuntimeGenerationManager(
     },
     async prepareForShutdown() {
       preparingForShutdown = true;
+      if (modelCatalogTimer) clearTimeout(modelCatalogTimer);
+      modelCatalogTimer = null;
       await Promise.all([...entries].map((entry) => entry.manager.prepareForShutdown()));
     },
     close() {
       if (closePromise) return closePromise;
       closePromise = (async () => {
         preparingForShutdown = true;
+        if (modelCatalogTimer) clearTimeout(modelCatalogTimer);
+        modelCatalogTimer = null;
         await Promise.all([...entries].map((entry) => entry.manager.close()));
         for (const entry of entries) {
           entry.unsubscribe();

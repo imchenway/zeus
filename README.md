@@ -57,6 +57,8 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 版本更新内容见 [GitHub Releases](https://github.com/imchenway/zeus/releases)。
 
+在 Zeus 内使用 Codex 订阅登录后，会等待本次模型目录同步完成；同步失败会单独提示原因。日常运行每五分钟检查模型目录，账号变化会提前检查。在所使用的 Codex 运行组件仍与官方服务兼容时，账号已开放的新模型会随目录更新进入可选列表，无需反复登录。Zeus 当前仍通过本机 Codex 运行组件调用模型；目录自动更新不代表任意旧版 CLI 都支持未来的新模型。自动更新保留现有模型选择，实际可用范围以官方对该账号开放的目录为准。
+
 ## 开发与验证
 
 使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。

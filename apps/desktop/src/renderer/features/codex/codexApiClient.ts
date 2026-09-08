@@ -105,7 +105,7 @@ export interface CodexApiClient {
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
   inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
   importCodexConfig: () => Promise<CodexConfigImportResult>;
-  activateCodexConfig: () => Promise<CodexConfigActivationResult>;
+  activateCodexConfig: (input?: { syncSubscriptionModels?: boolean }) => Promise<CodexConfigActivationResult>;
   loadSkills: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
   installSkill: (source: SkillInstallSource, projectId?: string) => Promise<SkillInstallResult>;
   removeSkill: (skillId: string, projectId?: string) => Promise<{ removed: true; skillId: string; name: string }>;
@@ -338,13 +338,13 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       });
       return transport.request<CodexConfigImportResult>('/api/codex-config/import', { method: 'POST', body: JSON.stringify(body) });
     },
-    activateCodexConfig: async () => {
+    activateCodexConfig: async (input = {}) => {
       const body = await buildCodexPublicCommandRequest({
         commandType: codexPublicClientCommandTypes.configurationActivate,
         scopeKind: 'provider_configuration',
         scopeId: codexPublicClientScopeIds.configuration,
         operationPrefix: 'codex_configuration_activate',
-        value: {},
+        value: input,
       });
       /** 服务端完成模型目录与容量握手后才发布更新，失败时不宣告可用。 */
       const activation = await transport.request<CodexConfigActivationResult>('/api/codex-config/activate', {

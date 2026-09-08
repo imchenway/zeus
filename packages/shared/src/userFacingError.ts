@@ -782,6 +782,15 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_CODEX_LOGIN_TIMED_OUT'], ['登录等待超时，配置已保留。请重新登录。', 'Sign-in timed out. Your configuration is preserved; try again.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_FAILED'], ['这次 Codex 登录未完成，请重新登录；具体原因可查看详情。', 'This Codex sign-in did not complete. Sign in again and check the details for the cause.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_UNAVAILABLE'], ['这次 Codex 登录已失效，请重新发起登录。', 'This Codex sign-in is no longer available. Start a new sign-in.', 'sign_in']],
+  [['ZEUS_CODEX_MODEL_SYNC_FAILED'], ['账号已登录，但订阅模型尚未同步成功。请检查网络和模型来源配置后重试。', 'Signed in, but subscription models have not synced. Check the network and model source configuration, then retry.', 'retry']],
+  [
+    ['ZEUS_CODEX_MODEL_CATALOG_FIXED'],
+    [
+      '账号已登录，但固定的本地模型名单阻止了订阅模型更新。请取消 model_catalog_json 配置后重试。',
+      'Signed in, but a fixed local model catalog prevents subscription model updates. Remove the model_catalog_json override and retry.',
+      'retry',
+    ],
+  ],
   [['ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED'], ['无法打开官方登录页，请检查系统浏览器后重试。', 'Could not open the official sign-in page. Check your system browser and retry.', 'sign_in']],
   [['ZEUS_CODEX_CONFIG_ACTIVATION_REQUIRED'], ['配置已导入，但尚未启用。请重试启用。', 'Configuration was imported but is not active. Retry activation.', 'settings']],
   [

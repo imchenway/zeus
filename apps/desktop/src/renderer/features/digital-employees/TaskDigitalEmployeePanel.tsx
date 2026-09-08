@@ -18,6 +18,7 @@ import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type { DigitalEmployeeRecord, TaskWorkConversationRequestRecord, TaskWorkDecisionRecord, TaskWorkDeliverableRecord, TaskWorkItemRecord, TaskWorkManagementProjection, TaskWorkPreview } from './digitalEmployeeContracts.js';
 import { errorMessage, formatDateTime, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import './digitalEmployees.css';
 
 export type TaskDigitalEmployeeSkillClient = Pick<NativeConversationAppClient, 'loadSkills'>;
@@ -481,6 +482,8 @@ function TaskEmployeeRunDialog(props: {
   const previewVersion = useRef(0);
   const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const loadCapabilitiesRef = useRef(props.onLoadCapabilities);
+  /** 后台目录读取与弹窗初始化共用代次，防止旧列表回写。 */
+  const modelRevisionRef = useRef(0);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -502,6 +505,8 @@ function TaskEmployeeRunDialog(props: {
   useEffect(() => {
     if (!agentEntrypoint) return;
     let active = true;
+    /** 初始请求仍负责工作区选择，目录通知仅替换模型能力。 */
+    const modelRevision = ++modelRevisionRef.current;
     setCapabilityError(null);
     const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current() : props.client.loadDigitalEmployeeCapabilities();
     void request
@@ -509,10 +514,10 @@ function TaskEmployeeRunDialog(props: {
         if (!active) return;
         const taskCapabilities = 'repositories' in nextCapabilities ? nextCapabilities : null;
         const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities) : ({ mode: 'create' } as const);
-        setCapabilities(taskCapabilities);
+        if (modelRevision === modelRevisionRef.current) setCapabilities(taskCapabilities);
         setWorkspaceMode(initialWorkspace?.mode === 'create' ? 'create' : initialWorkspace ? 'continue' : null);
         setWorkspaceTarget(initialWorkspace?.mode === 'existing' ? `environment:${initialWorkspace.environmentId}` : initialWorkspace?.mode === 'local' ? `local:${initialWorkspace.branchName}` : '');
-        setModels(nextCapabilities.models);
+        if (modelRevision === modelRevisionRef.current) setModels(nextCapabilities.models);
         setConfig((current) => {
           if (current.model) return current;
           const model =
@@ -535,6 +540,31 @@ function TaskEmployeeRunDialog(props: {
       active = false;
     };
   }, [agentEntrypoint, props.client, zh]);
+
+  useEffect(() => {
+    if (!agentEntrypoint) return;
+    /** 更新目录时保留工作区、运行参数、资料与预览。 */
+    let disposed = false;
+    const refreshModels = (): void => {
+      const revision = ++modelRevisionRef.current;
+      const request = loadCapabilitiesRef.current ? loadCapabilitiesRef.current() : props.client.loadDigitalEmployeeCapabilities();
+      void request
+        .then((next: CodexTaskPushCapabilities | Awaited<ReturnType<typeof props.client.loadDigitalEmployeeCapabilities>>) => {
+          if (disposed || revision !== modelRevisionRef.current) return;
+          setModels(next.models);
+          setCapabilities((current) => (current ? { ...current, models: next.models, ...('repositories' in next ? { preferredModel: next.preferredModel } : {}) } : 'repositories' in next ? next : null));
+        })
+        .catch(() => {
+          // 临时读取失败不影响当前准备，后续目录通知会再次同步。
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    return () => {
+      disposed = true;
+      modelRevisionRef.current += 1;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    };
+  }, [agentEntrypoint, props.client, props.taskId]);
 
   useEffect(() => {
     const workspace =
