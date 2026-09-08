@@ -1,688 +1,716 @@
-.macos-ai-app .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
-  inline-size: min(1040px, calc(100% - 56px));
-  max-inline-size: 1040px;
+/* IM 设置独立控制内容宽度，以实际内容列宽度适配窄窗口和设置侧栏。 */
+.macos-ai-app.zeus-shell .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
+  inline-size: min(900px, calc(100% - 64px));
+  max-inline-size: 900px;
+  container-type: inline-size;
 }
 
-.macos-ai-app .im-robot-settings {
-  --im-accent: oklch(66% 0.19 42);
-  --im-accent-strong: oklch(58% 0.22 40);
-  --im-green: oklch(56% 0.15 150);
-  gap: 18px;
-}
-
-.macos-ai-app .im-page-heading {
+/* 局部视觉规则覆盖通用控件材质，避免旧页面的阴影和多层卡片回流。 */
+.macos-ai-app.zeus-shell .im-robot-settings {
+  /* 品牌蓝只用于 Telegram 标识。 */
+  --im-brand: #229ed9;
+  /* 可交互控件沿用应用强调色，兼容深浅主题。 */
+  --im-accent: var(--zeus-control-accent, #2866f7);
+  /* 正常连接使用带文字的绿色状态。 */
+  --im-online: #169963;
   display: grid;
-  gap: 3px;
-}
-
-.macos-ai-app .im-page-heading .settings-page-title {
-  font-size: 24px;
-  line-height: 30px;
-  margin: 0;
-}
-
-.macos-ai-app .im-page-kicker {
-  color: var(--im-accent-strong);
-  font-size: 12px;
-  font-weight: 720;
-  letter-spacing: 0.06em;
-}
-
-.macos-ai-app .im-page-heading p {
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  line-height: 18px;
-  margin: 2px 0 0;
-}
-
-.macos-ai-app .im-safety-bar {
-  align-items: center;
-  background: var(--zeus-product-panel-muted, oklch(97% 0.002 255));
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 11px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 24px;
-  min-block-size: 42px;
-  padding: 8px 14px;
-}
-
-.macos-ai-app .im-safety-bar > span {
-  align-items: center;
-  color: var(--zeus-product-muted);
-  display: inline-flex;
-  font-size: 12px;
-  gap: 8px;
-  min-inline-size: 0;
-}
-
-.macos-ai-app .im-safety-bar i,
-.macos-ai-app .im-health-pill i {
-  background: var(--im-green);
-  border-radius: 999px;
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--im-green), transparent 86%);
-  block-size: 7px;
-  flex: 0 0 auto;
-  inline-size: 7px;
-}
-
-.macos-ai-app .im-state-message {
-  align-items: flex-start;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 9px;
-  display: flex;
-  font-size: 12px;
-  gap: 8px;
-  line-height: 17px;
-  padding: 9px 11px;
-}
-
-.macos-ai-app .im-state-message > svg {
-  block-size: 17px;
-  flex: 0 0 auto;
-  inline-size: 17px;
-}
-
-.macos-ai-app .im-state-message.danger {
-  background: var(--zeus-danger-bg, oklch(96.5% 0.024 28));
-  border-color: var(--zeus-product-danger-line, oklch(83% 0.055 24));
-  color: var(--zeus-danger-text, oklch(42% 0.095 28));
-}
-
-.macos-ai-app .im-state-message.success {
-  background: color-mix(in oklab, var(--im-green), transparent 92%);
-  border-color: color-mix(in oklab, var(--im-green), transparent 67%);
-  color: color-mix(in oklab, var(--im-green), black 24%);
-}
-
-.macos-ai-app .im-settings-layout {
-  align-items: start;
-  background: color-mix(in oklab, var(--zeus-source-list-bg), transparent 46%);
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 13px;
-  display: grid;
-  grid-template-columns: 188px minmax(0, 1fr);
-  min-block-size: 520px;
-  overflow: hidden;
-}
-
-.macos-ai-app .im-channel-list {
-  align-self: stretch;
-  border-inline-end: 1px solid var(--zeus-product-line);
-  display: grid;
-  gap: 5px;
-  padding: 14px 11px;
-}
-
-.macos-ai-app .im-channel-list > button {
-  align-items: center;
-  background: var(--zeus-solid-surface-bg);
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 10px;
-  color: var(--zeus-product-text);
-  display: grid;
-  font-size: 12px;
-  font-weight: 610;
-  gap: 8px;
-  grid-template-columns: 28px minmax(0, 1fr);
-  min-block-size: 43px;
-  padding: 6px 9px;
-  text-align: start;
-}
-
-.macos-ai-app .im-channel-list > button:hover,
-.macos-ai-app .im-channel-list > button:focus-visible {
-  background: var(--zeus-control-bg-hover);
-  border-color: var(--zeus-control-border-hover);
-}
-
-.macos-ai-app .im-channel-list > button.selected {
-  background: color-mix(in oklab, var(--im-accent), transparent 91%);
-  border-color: color-mix(in oklab, var(--im-accent), white 32%);
-  color: var(--im-accent-strong);
-}
-
-.macos-ai-app .im-channel-list > button small {
-  color: var(--zeus-product-muted);
-  font-size: 9px;
-  font-weight: 500;
-  grid-column: 2;
-  line-height: 10px;
-  margin-block-start: -6px;
-}
-
-.macos-ai-app .im-channel-icon {
-  align-items: center;
-  background: oklch(61% 0.19 242);
-  border-radius: 8px;
-  color: white;
-  display: inline-flex;
-  justify-content: center;
-  block-size: 28px;
-  inline-size: 28px;
-}
-
-.macos-ai-app .im-channel-icon > svg {
-  block-size: 18px;
-  inline-size: 18px;
-}
-
-.macos-ai-app .im-channel-icon.large {
-  block-size: 50px;
-  border-radius: 14px;
-  inline-size: 50px;
-}
-
-.macos-ai-app .im-channel-icon.large > svg {
-  block-size: 30px;
-  inline-size: 30px;
-}
-
-.macos-ai-app .channel-wechat,
-.macos-ai-app .channel-whatsapp {
-  background: oklch(68% 0.19 148);
-}
-.macos-ai-app .channel-feishu {
-  background: oklch(63% 0.22 255);
-}
-.macos-ai-app .channel-dingtalk {
-  background: oklch(60% 0.23 256);
-}
-.macos-ai-app .channel-wecom {
-  background: oklch(64% 0.16 220);
-}
-.macos-ai-app .channel-qq {
-  background: oklch(54% 0.22 259);
-}
-.macos-ai-app .channel-slack {
-  background: oklch(34% 0.12 326);
-}
-.macos-ai-app .channel-telegram {
-  background: oklch(65% 0.16 235);
-}
-.macos-ai-app .channel-discord {
-  background: oklch(58% 0.19 279);
-}
-.macos-ai-app .channel-ai_office {
-  background: oklch(47% 0.16 265);
-}
-
-.macos-ai-app .im-channel-detail {
-  display: grid;
-  gap: 16px;
-  min-inline-size: 0;
-  padding: 18px;
-}
-
-.macos-ai-app .im-empty-state {
-  align-items: center;
-  align-self: center;
-  color: var(--zeus-product-muted);
-  display: flex;
-  flex-direction: column;
-  font-size: 12px;
-  gap: 10px;
-  justify-self: center;
-  line-height: 18px;
-  max-inline-size: 360px;
-  padding: 70px 20px;
-  text-align: center;
-}
-
-.macos-ai-app .im-empty-state strong {
-  color: var(--zeus-product-text);
-  font-size: 15px;
-}
-
-.macos-ai-app .im-connect-wizard,
-.macos-ai-app .im-pairing-panel,
-.macos-ai-app .im-connection-section {
-  display: grid;
-  gap: 14px;
-}
-
-.macos-ai-app .im-section-title {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-}
-
-.macos-ai-app .im-section-icon,
-.macos-ai-app .im-bot-avatar {
-  align-items: center;
-  background: var(--im-accent);
-  border-radius: 9px;
-  color: white;
-  display: inline-flex;
-  flex: 0 0 auto;
-  justify-content: center;
-  block-size: 34px;
-  inline-size: 34px;
-}
-
-.macos-ai-app .im-section-icon > svg,
-.macos-ai-app .im-bot-avatar > svg {
-  block-size: 20px;
-  inline-size: 20px;
-}
-
-.macos-ai-app .im-section-title > span:last-child,
-.macos-ai-app .im-bot-identity,
-.macos-ai-app .im-health-copy {
-  display: grid;
-  gap: 1px;
-  min-inline-size: 0;
-}
-
-.macos-ai-app .im-section-title strong,
-.macos-ai-app .im-connection-heading strong,
-.macos-ai-app .im-bot-identity strong {
+  gap: 24px;
   color: var(--zeus-product-text);
   font-size: 13px;
-  font-weight: 670;
-}
+  line-height: 1.6;
+  font-weight: 400;
 
-.macos-ai-app .im-section-title small,
-.macos-ai-app .im-connection-heading small,
-.macos-ai-app .im-bot-identity code,
-.macos-ai-app .im-health-copy small {
-  color: var(--zeus-product-muted);
-  font-family: inherit;
-  font-size: 11px;
-  line-height: 15px;
-}
-
-.macos-ai-app .im-step-list {
-  display: grid;
-  gap: 12px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.macos-ai-app .im-step-list > li {
-  align-items: end;
-  background: var(--zeus-solid-surface-bg);
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 11px;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 22px repeat(2, minmax(0, 1fr));
-  padding: 12px;
-}
-
-.macos-ai-app .im-step-number {
-  align-items: center;
-  align-self: center;
-  background: color-mix(in oklab, var(--im-accent), transparent 88%);
-  border-radius: 999px;
-  color: var(--im-accent-strong);
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 700;
-  justify-content: center;
-  block-size: 22px;
-  inline-size: 22px;
-}
-
-.macos-ai-app .im-form-field,
-.macos-ai-app .im-card-field {
-  display: grid;
-  gap: 5px;
-  min-inline-size: 0;
-}
-
-.macos-ai-app .im-form-field > span,
-.macos-ai-app .im-card-field > span > strong,
-.macos-ai-app .im-approval-toggle strong {
-  color: var(--zeus-product-text);
-  font-size: 11px;
-  font-weight: 620;
-}
-
-.macos-ai-app .im-form-field input,
-.macos-ai-app .im-form-field select,
-.macos-ai-app .im-card-field select {
-  background: var(--zeus-control-bg);
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 8px;
-  color: var(--zeus-product-text);
-  inline-size: 100%;
-  min-block-size: 32px;
-  padding-inline: 9px;
-}
-
-.macos-ai-app .im-token-field,
-.macos-ai-app .im-legacy-token-choice {
-  grid-column: 2;
-}
-
-.macos-ai-app .im-legacy-token-choice,
-.macos-ai-app .im-approval-toggle {
-  align-items: center;
-  display: flex;
-  gap: 9px;
-}
-
-.macos-ai-app .im-legacy-token-choice > span,
-.macos-ai-app .im-approval-toggle > span,
-.macos-ai-app .im-card-field > span {
-  display: grid;
-  flex: 1;
-  gap: 2px;
-}
-
-.macos-ai-app .im-legacy-token-choice small,
-.macos-ai-app .im-approval-toggle small,
-.macos-ai-app .im-card-field small {
-  color: var(--zeus-product-muted);
-  font-size: 10px;
-  line-height: 14px;
-}
-
-.macos-ai-app :where(.im-primary-action, .im-secondary-action, .im-danger-action) {
-  align-items: center;
-  border-radius: 8px;
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 640;
-  gap: 6px;
-  justify-content: center;
-  min-block-size: 32px;
-  padding: 0 11px;
-  text-decoration: none;
-}
-
-.macos-ai-app .im-primary-action {
-  background: var(--im-accent);
-  border: 1px solid var(--im-accent);
-  color: white;
-}
-
-.macos-ai-app .im-primary-action:hover:not(:disabled),
-.macos-ai-app .im-primary-action:focus-visible {
-  background: var(--im-accent-strong);
-  border-color: var(--im-accent-strong);
-}
-
-.macos-ai-app .im-primary-action > svg {
-  block-size: 16px;
-  inline-size: 16px;
-}
-
-.macos-ai-app .im-secondary-action,
-.macos-ai-app .im-danger-action {
-  background: var(--zeus-control-bg);
-  border: 1px solid var(--zeus-control-border);
-  color: var(--zeus-product-text);
-}
-
-.macos-ai-app .im-danger-action {
-  border-color: var(--zeus-product-danger-line);
-  color: var(--zeus-danger-text);
-}
-
-.macos-ai-app .im-pairing-panel {
-  background: var(--zeus-solid-surface-bg);
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 11px;
-  padding: 14px;
-}
-
-.macos-ai-app .im-pairing-content {
-  align-items: center;
-  display: grid;
-  gap: 18px;
-  grid-template-columns: 154px minmax(0, 1fr);
-}
-
-.macos-ai-app .im-qr-frame {
-  align-items: center;
-  background: white;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 10px;
-  display: flex;
-  justify-content: center;
-  padding: 7px;
-}
-
-.macos-ai-app .im-qr-frame img {
-  block-size: auto;
-  display: block;
-  inline-size: 100%;
-}
-
-.macos-ai-app .im-qr-frame > svg {
-  block-size: 72px;
-  color: var(--zeus-product-muted);
-  inline-size: 72px;
-}
-
-.macos-ai-app .im-pairing-copy {
-  align-items: start;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.macos-ai-app .im-pairing-copy > strong {
-  color: var(--zeus-product-text);
-  font-size: 14px;
-}
-
-.macos-ai-app .im-pairing-copy > span {
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.macos-ai-app .im-connection-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.macos-ai-app .im-connection-heading > span:first-child {
-  align-items: baseline;
-  display: flex;
-  gap: 8px;
-}
-
-.macos-ai-app .im-health-pill {
-  align-items: center;
-  color: var(--zeus-product-muted);
-  display: inline-flex;
-  font-size: 11px;
-  gap: 7px;
-}
-
-.macos-ai-app .im-health-pill.offline i {
-  background: var(--zeus-product-muted);
-  box-shadow: none;
-}
-
-.macos-ai-app .im-connection-card {
-  background: var(--zeus-solid-surface-bg);
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 12px;
-  display: grid;
-  overflow: hidden;
-}
-
-.macos-ai-app .im-connection-card > header {
-  align-items: center;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 38px minmax(0, 1fr) minmax(190px, auto);
-  padding: 13px 14px;
-}
-
-.macos-ai-app .im-bot-avatar {
-  background: oklch(65% 0.16 235);
-  block-size: 38px;
-  inline-size: 38px;
-}
-
-.macos-ai-app .im-health-copy {
-  justify-items: end;
-  text-align: end;
-}
-
-.macos-ai-app .im-health-copy strong {
-  color: var(--zeus-product-muted);
-  font-size: 10px;
-  font-weight: 560;
-}
-
-.macos-ai-app .im-binding-facts {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0 14px 12px;
-}
-
-.macos-ai-app .im-binding-facts > div {
-  background: var(--zeus-product-panel-muted);
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 8px;
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-}
-
-.macos-ai-app .im-binding-facts dt {
-  color: var(--zeus-product-muted);
-  font-size: 10px;
-}
-
-.macos-ai-app .im-binding-facts dd {
-  color: var(--zeus-product-text);
-  font-size: 11px;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.macos-ai-app .im-card-field,
-.macos-ai-app .im-approval-toggle {
-  align-items: center;
-  border-block-start: 1px solid var(--zeus-product-line);
-  display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 42%);
-  padding: 11px 14px;
-}
-
-.macos-ai-app .im-approval-toggle {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.macos-ai-app .im-approval-toggle input[role='switch'] {
-  accent-color: var(--im-accent);
-  block-size: 18px;
-  inline-size: 34px;
-}
-
-.macos-ai-app .im-connection-card > footer {
-  align-items: center;
-  border-block-start: 1px solid var(--zeus-product-line);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  justify-content: flex-end;
-  padding: 10px 14px;
-}
-
-.macos-ai-app .im-log-list {
-  border-block-start: 1px solid var(--zeus-product-line);
-  display: grid;
-  gap: 7px;
-  max-block-size: 220px;
-  overflow: auto;
-  padding: 11px 14px;
-}
-
-.macos-ai-app .im-log-list > div {
-  align-items: baseline;
-  display: grid;
-  font-size: 10px;
-  gap: 7px;
-  grid-template-columns: 108px 135px minmax(0, 1fr);
-}
-
-.macos-ai-app .im-log-list :where(time, code) {
-  color: var(--zeus-product-muted);
-  font-size: inherit;
-}
-
-.macos-ai-app .im-log-list .error > span {
-  color: var(--zeus-danger-text);
-}
-
-@media (max-width: 860px) {
-  .macos-ai-app .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
-    inline-size: min(680px, calc(100% - 28px));
+  /* 标题与说明保持开放排版，无前缀标签和外层面板。 */
+  .im-page-heading {
+    display: grid;
+    gap: 8px;
+  }
+  .settings-page-title {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 680;
+    line-height: 1.3;
+    letter-spacing: -0.025em;
+  }
+  p,
+  h3,
+  h4 {
+    margin: 0;
+  }
+  h3 {
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 1.5;
+  }
+  h4 {
+    font-size: 13px;
+    font-weight: 620;
+  }
+  .im-page-heading p,
+  .im-section-title p {
+    color: var(--zeus-product-muted);
+  }
+  :where(svg) {
+    inline-size: 20px;
+    block-size: 20px;
+    flex-shrink: 0;
   }
 
-  .macos-ai-app .im-settings-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .macos-ai-app .im-channel-list {
-    border-block-end: 1px solid var(--zeus-product-line);
-    border-inline-end: 0;
+  /* 平台栏只突出可用入口；其他平台以原生展开目录展示，不伪造品牌图标。 */
+  .im-platform-bar {
     display: flex;
-    overflow-x: auto;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-block: 2px 16px;
+    border-block-end: 1px solid var(--zeus-product-line);
   }
-
-  .macos-ai-app .im-channel-list > button {
-    flex: 0 0 142px;
+  .im-platform-identity {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
   }
-}
-
-@media (max-width: 580px) {
-  .macos-ai-app .im-safety-bar {
-    align-items: flex-start;
-    flex-direction: column;
+  .im-platform-identity strong {
+    font-size: 15px;
+    font-weight: 630;
   }
-
-  .macos-ai-app .im-channel-detail {
-    padding: 12px;
+  .im-platform-identity > span:last-child {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
   }
-
-  .macos-ai-app .im-step-list > li,
-  .macos-ai-app .im-pairing-content,
-  .macos-ai-app .im-card-field,
-  .macos-ai-app .im-connection-card > header {
-    align-items: stretch;
-    grid-template-columns: minmax(0, 1fr);
+  .im-telegram-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    inline-size: 30px;
+    block-size: 30px;
+    border-radius: 50%;
+    background: var(--im-brand);
+    color: #fff;
   }
-
-  .macos-ai-app .im-step-number {
+  .im-telegram-mark svg {
+    color: #fff;
+    inline-size: 20px;
+    block-size: 20px;
+  }
+  .im-platform-directory {
+    margin-inline-start: auto;
+  }
+  .im-platform-directory summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-block-size: 32px;
+    color: var(--zeus-product-muted);
+    cursor: pointer;
+    list-style: none;
+    border-radius: 6px;
+    padding-inline: 6px;
+  }
+  .im-platform-directory summary::-webkit-details-marker {
     display: none;
   }
-
-  .macos-ai-app .im-token-field,
-  .macos-ai-app .im-legacy-token-choice {
-    grid-column: auto;
+  .im-platform-directory summary svg {
+    inline-size: 14px;
+    block-size: 14px;
+    transition: transform 120ms ease;
+  }
+  .im-platform-directory[open] {
+    flex-basis: 100%;
+  }
+  .im-platform-directory[open] summary {
+    justify-content: flex-end;
+  }
+  .im-platform-directory[open] summary svg {
+    transform: rotate(180deg);
+  }
+  .im-platform-options {
+    padding: 12px 0 0;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-platform-options ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+    padding: 12px 0 0;
+    margin: 0;
+    list-style: none;
+  }
+  .im-platform-options li {
+    color: var(--zeus-product-text);
   }
 
-  .macos-ai-app .im-qr-frame {
-    justify-self: center;
-    inline-size: 154px;
+  /* 反馈独立出现，加载失败不再同时显示正在加载。 */
+  .im-state-message {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 10px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .im-state-message.danger {
+    background: var(--zeus-danger-bg);
+    border-color: var(--zeus-product-danger-line);
+    color: var(--zeus-danger-text);
+  }
+  .im-state-message.success {
+    background: color-mix(in srgb, var(--im-online) 8%, transparent);
+    color: var(--zeus-product-text);
+  }
+  .im-state-message.success svg {
+    color: var(--im-online);
+  }
+  .im-empty-state {
+    padding-block: 40px;
+    color: var(--zeus-product-muted);
+    text-align: center;
   }
 
-  .macos-ai-app .im-health-copy {
+  /* 账号只保留一层概览边框，身份、健康信息与访问范围在同一面上。 */
+  .im-connection-section {
+    display: grid;
+    gap: 28px;
+    min-inline-size: 0;
+  }
+  .im-account-overview {
+    padding: 24px;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 14px;
+    background: var(--zeus-card-background, var(--zeus-solid-surface-bg));
+  }
+  .im-account-heading {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+  }
+  .im-account-heading .im-telegram-mark {
+    inline-size: 52px;
+    block-size: 52px;
+  }
+  .im-account-heading .im-telegram-mark svg {
+    inline-size: 32px;
+    block-size: 32px;
+  }
+  .im-bot-identity {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+  .im-bot-identity h3 {
+    font-size: 24px;
+    font-weight: 660;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+  }
+  .im-bot-identity > span {
+    color: var(--zeus-product-muted);
+  }
+  .im-connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--zeus-product-muted);
+  }
+  .im-connection-status i {
+    inline-size: 7px;
+    block-size: 7px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--zeus-product-muted);
+  }
+  .im-connection-status.online {
+    color: var(--zeus-product-text);
+  }
+  .im-connection-status.online i {
+    background: var(--im-online);
+  }
+  .im-health-detail {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    margin-block: 20px 16px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-health-detail p {
+    flex: 1 1 280px;
+    overflow-wrap: anywhere;
+  }
+  .im-health-detail > span {
+    margin-inline-start: auto;
+  }
+  .im-binding-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    margin: 0;
+    padding-block-start: 20px;
+    border-block-start: 1px solid var(--zeus-product-line);
+  }
+  .im-binding-facts > div {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 4px 12px;
+    align-content: start;
+  }
+  .im-binding-facts > div + div {
+    border-inline-start: 1px solid var(--zeus-product-line);
+    padding-inline-start: 24px;
+  }
+  .im-binding-facts svg {
+    grid-row: span 2;
+    align-self: center;
+    color: var(--zeus-product-muted);
+    inline-size: 24px;
+    block-size: 24px;
+  }
+  .im-binding-facts dt {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-binding-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+  .im-masked-id {
+    color: var(--zeus-product-muted);
+  }
+
+  /* 设置采用平面分隔行，控件有固定触达尺寸且长文案可以自然换行。 */
+  .im-connection-settings {
+    min-inline-size: 0;
+  }
+  .im-connection-settings > h3 {
+    margin-block-end: 4px;
+  }
+  .im-setting-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding-block: 20px;
+    border-block-end: 1px solid var(--zeus-product-line);
+  }
+  .im-setting-row > svg {
+    align-self: start;
+    margin-block-start: 2px;
+    color: var(--zeus-product-muted);
+  }
+  .im-setting-copy {
+    display: grid;
+    gap: 5px;
+    min-inline-size: 0;
+  }
+  .im-setting-copy strong {
+    font-size: 13px;
+    font-weight: 620;
+  }
+  .im-setting-copy small {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.65;
+  }
+  .im-preset-row select {
+    inline-size: 250px;
+    max-inline-size: 100%;
+  }
+  /* 原生下拉箭头被全局重置隐藏，在此恢复平台自带的选择提示。 */
+  select {
+    appearance: auto;
+  }
+  .im-access-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding-block-start: 16px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-access-note svg {
+    inline-size: 16px;
+    block-size: 16px;
+    margin-block-start: 2px;
+  }
+
+  /* 原生复选框保留键盘与辅助技术语义，仅重绘滑动开关外观。 */
+  input.im-switch {
+    appearance: none;
+    position: relative;
+    inline-size: 38px;
+    block-size: 22px;
+    min-block-size: 22px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 999px;
+    background: var(--zeus-product-panel-muted);
+    cursor: pointer;
+    box-shadow: none;
+    transition: background 120ms ease;
+  }
+  input.im-switch::before {
+    content: '';
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-start: 2px;
+    inline-size: 16px;
+    block-size: 16px;
+    border-radius: 50%;
+    background: var(--zeus-product-muted);
+    transition:
+      transform 120ms ease,
+      background 120ms ease;
+  }
+  input.im-switch:checked {
+    background: var(--im-accent);
+    border-color: var(--im-accent);
+  }
+  input.im-switch:checked::before {
+    transform: translateX(16px);
+    background: #fff;
+  }
+  input.im-switch::after {
+    content: none;
+  }
+
+  /* 操作使用现有 Button 的忙碌和禁用语义，局部去除玻璃渐变与阴影。 */
+  :is(.im-primary-action, .im-secondary-action, .im-danger-action) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-block-size: 34px;
+    padding: 6px 12px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--zeus-product-text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 550;
+    line-height: 1.5;
+    text-decoration: none;
+    box-shadow: none;
+    cursor: pointer;
+  }
+  :is(.im-primary-action, .im-secondary-action, .im-danger-action) svg {
+    inline-size: 17px;
+    block-size: 17px;
+  }
+  .im-primary-action {
+    background: var(--im-accent);
+    border-color: var(--im-accent);
+    color: #fff;
+  }
+  .im-danger-action {
+    border-color: transparent;
+    color: var(--zeus-danger-text);
+    padding-inline: 0;
+  }
+  :is(.im-secondary-action, .im-danger-action):hover:not(:disabled),
+  .im-platform-directory summary:hover {
+    background: var(--zeus-control-bg-hover);
+    color: var(--zeus-product-text);
+  }
+  .im-primary-action:hover:not(:disabled) {
+    background: var(--zeus-control-accent-hover, #1f59ed);
+    border-color: var(--zeus-control-accent-hover, #1f59ed);
+    color: #fff;
+  }
+  .im-danger-action:hover:not(:disabled) {
+    color: var(--zeus-danger-text);
+  }
+  :is(button, input, select):disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  :is(button, a, input, select, summary):focus-visible {
+    outline: 2px solid var(--im-accent);
+    outline-offset: 3px;
+    box-shadow: none;
+  }
+  .im-connection-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .im-connection-actions > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  /* 首次接入按两步纵向排列，不再把步骤和字段逐层装进卡片。 */
+  .im-connect-wizard,
+  .im-pairing-panel {
+    display: grid;
+    gap: 24px;
+  }
+  .im-section-title {
+    display: grid;
+    gap: 6px;
+  }
+  .im-step-list {
+    display: grid;
+    gap: 24px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .im-step-list > li {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 14px;
+  }
+  .im-step-list > li + li {
+    border-block-start: 1px solid var(--zeus-product-line);
+    padding-block-start: 24px;
+  }
+  .im-step-number {
+    display: grid;
+    place-items: center;
+    inline-size: 26px;
+    block-size: 26px;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 50%;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-step-body {
+    display: grid;
     justify-items: start;
-    text-align: start;
+    gap: 12px;
+    min-inline-size: 0;
+  }
+  .im-step-body > :is(.im-form-field, .im-form-grid) {
+    inline-size: 100%;
+  }
+  .im-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .im-form-field {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .im-form-field > span {
+    font-size: 12px;
+    font-weight: 550;
+  }
+  :is(.im-form-field, .im-setting-row) :is(input:not([type='checkbox']), select) {
+    min-inline-size: 0;
+    min-block-size: 36px;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: var(--zeus-solid-surface-bg);
+    color: var(--zeus-product-text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 450;
+    line-height: 1.5;
+    box-shadow: none;
+  }
+  .im-form-field :is(input, select) {
+    inline-size: 100%;
+  }
+  .im-field-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .im-field-hint svg {
+    inline-size: 15px;
+    block-size: 15px;
+    margin-block-start: 2px;
+  }
+  .im-legacy-token-choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .im-legacy-token-choice > span {
+    display: grid;
+    gap: 4px;
+  }
+  .im-legacy-token-choice strong {
+    font-size: 12px;
+    font-weight: 550;
+  }
+  .im-legacy-token-choice small {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
   }
 
-  .macos-ai-app .im-log-list > div {
-    grid-template-columns: minmax(0, 1fr);
+  /* 配对信息与账号概览区分；过期二维码淡化且旧跳转入口移除。 */
+  .im-pairing-panel {
+    padding: 24px;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 14px;
+  }
+  .im-pairing-content {
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+  }
+  .im-qr-frame {
+    display: grid;
+    place-items: center;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 10px;
+    aspect-ratio: 1;
+  }
+  .im-qr-frame img {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+  }
+  .im-qr-frame > svg {
+    inline-size: 72px;
+    block-size: 72px;
+    color: #747b85;
+  }
+  .im-qr-frame.is-expired {
+    opacity: 0.3;
+  }
+  .im-pairing-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .im-pairing-copy > strong {
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+  .im-pairing-copy > span {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+
+  /* 脱敏日志按需展开，长消息不撑开页面。 */
+  .im-log-list {
+    display: grid;
+    gap: 12px;
+    max-block-size: 280px;
+    overflow: auto;
+    border-block-start: 1px solid var(--zeus-product-line);
+    padding-block-start: 16px;
+    font-size: 12px;
+    user-select: text;
+  }
+  .im-log-list[hidden] {
+    display: none;
+  }
+  .im-log-list > p,
+  .im-log-list time,
+  .im-log-list code {
+    color: var(--zeus-product-muted);
+  }
+  .im-log-list > div {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    gap: 4px 16px;
+    overflow-wrap: anywhere;
+  }
+  .im-log-list > div > span {
+    grid-column: 2;
+  }
+  .im-log-list code {
+    font-size: 11px;
+  }
+  .im-log-list .error > span {
+    color: var(--zeus-danger-text);
   }
 }
 
+/* 响应实际设置内容宽度，侧栏展开时也不会挤压下拉框和配对信息。 */
+@container (max-width: 640px) {
+  .macos-ai-app.zeus-shell .im-robot-settings {
+    .im-preset-row {
+      grid-template-columns: 20px minmax(0, 1fr);
+    }
+    .im-preset-row select {
+      grid-column: 2;
+      inline-size: 100%;
+    }
+    .im-health-detail > span {
+      margin-inline-start: 0;
+    }
+  }
+}
+@container (max-width: 440px) {
+  .macos-ai-app.zeus-shell .im-robot-settings {
+    .im-account-overview,
+    .im-pairing-panel {
+      padding: 16px;
+    }
+    .im-account-heading {
+      gap: 12px;
+    }
+    .im-bot-identity h3 {
+      font-size: 20px;
+    }
+    .im-account-heading .im-telegram-mark {
+      inline-size: 42px;
+      block-size: 42px;
+    }
+    .im-connection-status {
+      grid-column: 2;
+    }
+    .im-binding-facts,
+    .im-form-grid,
+    .im-pairing-content {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .im-binding-facts > div + div {
+      padding-inline-start: 0;
+      border-inline-start: 0;
+    }
+    .im-qr-frame {
+      inline-size: 160px;
+      justify-self: center;
+    }
+    .im-log-list > div {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .im-log-list > div > span {
+      grid-column: auto;
+    }
+    .im-connection-actions {
+      align-items: flex-start;
+      flex-direction: column-reverse;
+    }
+  }
+}
+@media (max-width: 640px) {
+  .macos-ai-app.zeus-shell .settings-reference-shell .settings-content-column:has(.im-robot-settings) {
+    inline-size: calc(100% - 32px);
+  }
+}
+/* 用户减少动态效果时关闭开关与展开箭头的过渡。 */
 @media (prefers-reduced-motion: reduce) {
-  .macos-ai-app .im-robot-settings * {
-    scroll-behavior: auto;
+  .macos-ai-app.zeus-shell .im-robot-settings :is(.im-switch, .im-switch::before, summary svg) {
+    transition: none;
   }
 }

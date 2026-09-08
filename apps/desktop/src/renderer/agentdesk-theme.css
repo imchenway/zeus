@@ -1019,12 +1019,12 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--agentdesk-space-1);
 }
 
-/* 默认按钮是白色玻璃，只有明确的主操作才使用品牌蓝；标签和图标入口保持透明。 */
+/* 默认按钮是白色玻璃；IM 设置页使用自己的平面控件规则，不再被通用材质覆盖。 */
 .macos-ai-app.zeus-shell
   :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar, .menu-bar-usage-root)
   button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not(
     .project-workspace-mode-toolbar button
-  ):not([role='tab']):not([role='menuitem']):not([aria-pressed='true']):not(.is-active):not(.primary):not(.danger) {
+  ):not([role='tab']):not([role='menuitem']):not([aria-pressed='true']):not(.is-active):not(.primary):not(.danger):not(:where(.im-robot-settings button)) {
   min-block-size: 32px;
   padding-inline: 12px;
   border: 1px solid rgb(255 255 255 / 72%);
@@ -1038,7 +1038,7 @@ body:has(.macos-ai-app.zeus-shell) {
   :is(.task-table-workbench, .workspace-detail-pane, .settings-detail-pane, .project-detail-pane, .project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .browser-toolbar)
   button:not(.project-quick-action):not(.project-settings-button):not(.project-more-button):not(.project-add-button):not(.project-conversation-organization-button):not(.project-disclosure-button):not([role='tab']):not(
     [role='menuitem']
-  ):not([aria-pressed='true']):not(.is-active):hover:not(:disabled) {
+  ):not([aria-pressed='true']):not(.is-active):hover:not(:disabled):not(:where(.im-robot-settings button)) {
   background: rgb(255 255 255 / 78%);
   border-color: rgb(40 102 247 / 36%);
   color: var(--agentdesk-text);
