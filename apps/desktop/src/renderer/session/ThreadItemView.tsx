@@ -21,6 +21,7 @@ import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
 import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
+import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -134,6 +135,8 @@ const copy = {
 
 export interface ThreadItemViewProps {
   item: NativeSessionItemBuffer;
+  /** 异步回答复用询问历史卡片，消息操作与真实送达状态仍由本组件保留。 */
+  questionAnswer?: AnsweredRequestHistoryProps['request'];
   language: SessionUiLanguage;
   assistantLabel?: string;
   isLatest?: boolean;
@@ -569,6 +572,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}
+      data-question-answer={Boolean(props.questionAnswer) || undefined}
       data-queued-submission={props.queuedSubmissionId || undefined}
       data-motion-active={props.motionActive || undefined}
       data-motion-block="markdown"
@@ -616,6 +620,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             </button>
           </footer>
         </form>
+      ) : props.questionAnswer ? (
+        <AnsweredRequestHistory request={props.questionAnswer} language={props.language} />
       ) : recoveredRequestUserInput ? (
         <RecoveredRequestUserInputItem item={props.item} language={props.language} />
       ) : role === 'error' ? (

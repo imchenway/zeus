@@ -1,4 +1,4 @@
-import { AsyncQuestionMessage } from './AsyncQuestionMessage.js';
+import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
 import { classifyAssistantMessage } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
@@ -1377,6 +1377,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
+        questionAnswer={asyncQuestionAnswerHistory(row.item, options.props.state)}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}
         isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
