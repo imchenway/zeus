@@ -68,7 +68,6 @@ interface CreateComputerHostOptions {
   parentPid: number;
   mainCommandLedger: () => MainCommandLedger;
   readOnlyValidation?: boolean;
-  qaMode?: boolean;
   now?: () => string;
 }
 
@@ -342,7 +341,6 @@ export class ComputerHost implements BrowserAutomationPort {
         LANG: process.env.LANG ?? 'zh_CN.UTF-8',
         ZEUS_COMPUTER_ARTIFACT_ROOT: this.artifactRoot,
         ZEUS_PARENT_PID: String(this.options.parentPid),
-        ZEUS_COMPUTER_QA_MODE: this.options.qaMode ? '1' : '0',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -58,7 +58,6 @@ private final class ComputerService {
     private let inputSource = CGEventSource(stateID: .privateState)
     private let artifactRoot: URL
     private let parentPid: pid_t
-    private let qaMode: Bool
     private let encoder = JSONSerialization.self
 
     init() {
@@ -66,7 +65,6 @@ private final class ComputerService {
         let root = environment["ZEUS_COMPUTER_ARTIFACT_ROOT"] ?? NSTemporaryDirectory()
         artifactRoot = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
         parentPid = pid_t(Int32(environment["ZEUS_PARENT_PID"] ?? "-1") ?? -1)
-        qaMode = environment["ZEUS_COMPUTER_QA_MODE"] == "1"
         inputSource?.userData = Int64(ProcessInfo.processInfo.processIdentifier)
         inputSource?.localEventsSuppressionInterval = 0
     }
@@ -366,21 +364,19 @@ private final class ComputerService {
         throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行；Zeus 不会为 Computer Use 在后台启动应用：\(value)")
     }
 
+    /** 允许独立测试实例；当前宿主、控制服务和正式实例仍不可控制，保护自身审批。 */
     private func rejectSelf(_ app: NSRunningApplication) throws {
         if app.processIdentifier == parentPid || app.processIdentifier == ProcessInfo.processInfo.processIdentifier || ["dev.hypha.zeus.helper.computer", "dev.hypha.zeus.test.helper.computer"].contains(app.bundleIdentifier ?? "") {
             throw ServiceFailure(code: "ZEUS_COMPUTER_SELF_CONTROL_BLOCKED", message: "当前 Zeus 实例不能控制自身或自身审批界面。")
         }
-        if let bundleId = app.bundleIdentifier, bundleId == "dev.hypha.zeus" || bundleId == "dev.hypha.zeus.test" {
-            if !(qaMode && bundleId == "dev.hypha.zeus.test") {
-                throw ServiceFailure(code: "ZEUS_COMPUTER_ZEUS_CONTROL_BLOCKED", message: "Zeus 实例默认不能控制其他 Zeus 或审批界面；仅独立 Test 身份可在显式 QA 模式下被控制。")
-            }
+        if app.bundleIdentifier == "dev.hypha.zeus" {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_ZEUS_CONTROL_BLOCKED", message: "不能控制正式 Zeus 实例；请使用独立的 Zeus Test 实例进行验收。")
         }
     }
 
+    /** 应用列表与读取、点击、输入共用相同的实例边界。 */
     private func canControl(_ app: NSRunningApplication) -> Bool {
-        if app.processIdentifier == parentPid || app.processIdentifier == ProcessInfo.processInfo.processIdentifier || ["dev.hypha.zeus.helper.computer", "dev.hypha.zeus.test.helper.computer"].contains(app.bundleIdentifier ?? "") { return false }
-        guard let bundleId = app.bundleIdentifier, bundleId == "dev.hypha.zeus" || bundleId == "dev.hypha.zeus.test" else { return true }
-        return qaMode && bundleId == "dev.hypha.zeus.test"
+        (try? rejectSelf(app)) != nil
     }
 
     private func requireAccessibility() throws {
