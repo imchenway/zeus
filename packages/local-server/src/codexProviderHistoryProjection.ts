@@ -243,10 +243,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     });
   }
 
+  /** 在既有分页预算内同步新增轮次，并补齐已确认轮次的正文缺口。 */
   async function reconcileProviderTurnsSinceCheckpoint(conversation: ZeusConversationWithMessagesRecord, input: { priority?: 'control' } = {}): Promise<void> {
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const checkpoint = await ensureProviderSyncCheckpoint(conversation, input);
     const checkpointBoundaryTurnId = checkpoint.lastSyncedTurnId ?? checkpoint.baselineTurnId;
+    /** 旧同步已推进水位但漏写正文时，按原生轮次身份重新读取全文，不把有界预览当正文。 */
+    const repairTurnIds = new Set(options.providerItems.listTurnsMissingMessageHistory(conversation.id, providerThreadId));
+    /** 尚未在 Provider 分页中找到的历史缺口；同样受既有页数和轮次预算约束。 */
+    const remainingRepairTurnIds = new Set(repairTurnIds);
     const turnsDescending: CodexTurnSnapshot[] = [];
     const seenTurnIds = new Set<string>();
     const seenCursors = new Set<string>();
@@ -267,6 +272,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         if (seenTurnIds.has(turn.id)) continue;
         seenTurnIds.add(turn.id);
         turnsDescending.push(turn);
+        remainingRepairTurnIds.delete(turn.id);
       }
       if (checkpointBoundaryTurnId) checkpointIndex = turnsDescending.findIndex((turn) => turn.id === checkpointBoundaryTurnId);
       cursor = page.nextCursor;
@@ -274,7 +280,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         if (seenCursors.has(cursor)) throw coordinatorError('ZEUS_NATIVE_SYNC_CURSOR_INVALID', 'Provider turn pagination repeated one cursor.');
         seenCursors.add(cursor);
       }
-      if (cursor && checkpointIndex < 0 && (pageCount >= providerHistoryReconcilePageLimit || turnsDescending.length >= providerHistoryReconcileTurnLimit)) {
+      if (cursor && (checkpointIndex < 0 || remainingRepairTurnIds.size > 0) && (pageCount >= providerHistoryReconcilePageLimit || turnsDescending.length >= providerHistoryReconcileTurnLimit)) {
         recordProviderSyncAudit({
           conversationId: conversation.id,
           providerThreadId,
@@ -304,7 +310,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         });
         throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_BUDGET_EXCEEDED', 'Provider history reconciliation exceeded its bounded page budget; historical boundaries will not be guessed.');
       }
-    } while (cursor && (!checkpointBoundaryTurnId || checkpointIndex < 0));
+    } while (cursor && (!checkpointBoundaryTurnId || checkpointIndex < 0 || remainingRepairTurnIds.size > 0));
 
     if (checkpointBoundaryTurnId && checkpointIndex < 0) {
       const occurredAt = now();
@@ -337,7 +343,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_MISSING', 'Provider history no longer contains the last synchronized turn; historical boundaries will not be guessed.');
     }
 
-    const eligibleDescending = checkpointBoundaryTurnId ? turnsDescending.slice(0, checkpointIndex + 1) : turnsDescending;
+    if (remainingRepairTurnIds.size > 0) {
+      throw coordinatorError('ZEUS_NATIVE_HISTORY_CONTENT_UNAVAILABLE', '原生会话中找不到待补齐的历史轮次，无法恢复完整正文；已保留现有记录。');
+    }
+
+    const eligibleDescending = turnsDescending.filter((turn, index) => !checkpointBoundaryTurnId || index <= checkpointIndex || repairTurnIds.has(turn.id));
     const localTurns = new Map(
       options.turns
         .listByConversation(conversation.id)
@@ -542,6 +552,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     return turn;
   }
 
+  /** 按原生条目身份同步摄取状态、确认正文及可展开的处理过程。 */
   function projectProviderSnapshotItem(
     conversation: ZeusConversationWithMessagesRecord,
     turn: ZeusConversationTurnRecord,
@@ -596,6 +607,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       existing.textContent === completedProjection.textContent &&
       existing.payloadJson === JSON.stringify(completedProjection.payload)
     ) {
+      projectSnapshotItemContent(conversation, turn, existing, completedProjection, timestamp);
       return false;
     }
     const item = itemTerminal
@@ -629,22 +641,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           startedAt: existing?.startedAt ?? turn.startedAt,
           updatedAt: timestamp,
         });
-    if (itemTerminal && item.itemType === 'plan' && item.textContent.trim()) {
-      if (!turn.planJson) options.turns.updatePlan(turn.id, { explanation: item.textContent.trim(), steps: [] }, timestamp);
-      const executionSegment = options.execution.segmentByNativeSession(providerThreadId, conversation.id);
-      if (executionSegment && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'plan')) {
-        options.execution.appendModelHistory({
-          conversationId: conversation.id,
-          turnId: turn.id,
-          segmentId: executionSegment.id,
-          role: 'assistant',
-          content: { type: 'plan', text: item.textContent },
-          submissionId: turn.clientSubmissionId,
-          reasoningSource: { provider: 'codex', itemId: providerItemId, itemType: 'plan', readableSummary: false },
-          confirmedAt: timestamp,
-        });
-      }
-    }
+    projectSnapshotItemContent(conversation, turn, item, completedProjection, timestamp);
     let durableClientMessageId: string | null = null;
     if (item.itemType === 'userMessage' && userMessageProjection) {
       durableClientMessageId = persistProviderUserMessage(conversation, presentedItemPayload, userMessageProjection, providerTurnId, providerThreadId, providerItemId, timestamp);
@@ -689,6 +686,41 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       itemResources,
     });
     return true;
+  }
+
+  /** 历史同步与实时消息使用相同的确认历史、过程仓储；摄取去重不能跳过展示记录的补齐。 */
+  function projectSnapshotItemContent(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, item: ZeusConversationItemRecord, projection: ReturnType<typeof completedItemProjection>, timestamp: string): void {
+    /** 只写入此原生会话已确认的运行分段，不为历史内容建立新的执行权限。 */
+    const segment = options.execution.segmentByNativeSession(item.providerThreadId, conversation.id);
+    if (!segment) return;
+    processProjector.projectNativeItem({
+      conversationId: conversation.id,
+      turnId: turn.id,
+      segment,
+      providerItemId: item.providerItemId,
+      itemType: item.itemType,
+      status: item.status,
+      payload: projection.payload,
+      text: projection.textContent,
+      occurredAt: item.completedAt ?? item.startedAt ?? timestamp,
+    });
+    if (item.status === 'in_progress' || (item.itemType !== 'agentMessage' && item.itemType !== 'plan')) return;
+    if (item.itemType === 'plan') {
+      if (!projection.textContent.trim()) return;
+      if (!turn.planJson) options.turns.updatePlan(turn.id, { explanation: projection.textContent.trim(), steps: [] }, timestamp);
+    }
+    if (options.execution.modelHistoryByProviderItem(conversation.id, item.providerItemId, item.itemType)) return;
+    options.execution.appendModelHistory({
+      conversationId: conversation.id,
+      turnId: turn.id,
+      segmentId: segment.id,
+      role: 'assistant',
+      content: item.itemType === 'plan' ? { type: 'plan', text: projection.textContent } : { text: projection.textContent, providerItemId: item.providerItemId, assistantMessage: assistantMessageMetadata(projection.payload, item.phase) },
+      submissionId: turn.clientSubmissionId,
+      reasoningSource: { provider: 'codex', itemId: item.providerItemId, itemType: item.itemType, readableSummary: false },
+      // 与同批同步的用户消息沿用摄取时刻；远端结束时间可能早于本地用户消息确认时间。
+      confirmedAt: item.updatedAt,
+    });
   }
 
   /**
