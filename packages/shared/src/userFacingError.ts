@@ -273,6 +273,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['共享目录和嵌套仓库中的文件不能随上层仓库提交。请到所属仓库中提交。', 'Files in shared folders or nested repositories cannot be committed with the parent repository. Commit them in their own repository.'],
   ],
   [['ZEUS_TASK_MERGE_COMMIT_INCOMPLETE'], ['合并提交必须包含本次合并的全部修改，请选择所有相关文件。', 'A merge commit must include all changes from the merge. Select all relevant files.']],
+  [['ZEUS_TASK_COMMIT_SELECTION_CHANGED'], ['所选文件状态已变化，本次未提交。请刷新代码交付页后重新选择文件。', 'The selected files have changed. Nothing was committed. Refresh code delivery and select the files again.', 'check']],
   [['ZEUS_TASK_REMOTE_DIVERGED'], ['远端分支包含本地尚未取得的提交，推送已停止。请先拉取并处理分支差异。', 'The remote branch has commits missing locally, so the push stopped. Pull and reconcile the branches first.']],
   [
     ['ZEUS_TASK_REMOTE_VERIFICATION_FAILED'],

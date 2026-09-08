@@ -1178,6 +1178,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
       message: (typeof value.message === 'string' ? value.message.trim() : '') || buildTaskCommitMessageSuggestion({ taskType: task.taskType, taskCode: task.taskCode, taskTitle: task.title }),
       selectedPaths,
+    }).catch((error: unknown) => {
+      // 仅此错误保证发生在格式化和 Git 写入前；其他失败仍保留结果未知保护。
+      if (taskGitErrorCode(error) === 'ZEUS_TASK_COMMIT_SELECTION_CHANGED') workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : '所选文件状态已变化，请刷新代码交付页。');
+      throw error;
     });
     const review = await readTaskWorkspaceReview(workspace);
     return workspaceGitResponse({ workspace: { ...workspace, headSha: result.headSha, state: 'ready', lastError: null }, result, review }, 200, () => {
