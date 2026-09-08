@@ -440,7 +440,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     // provider_turn_id 对 steer 只表示目标轮次，不能反向证明该消息已经被 Provider 接收。
     const matchedSubmission = (existingOwnerConfirmed ? existingOwnedSubmission : undefined) ?? providerMatchedSubmission;
     const clientSubmissionId = (existingOwnerConfirmed ? existingTurn?.clientSubmissionId : null) ?? providerMatchedSubmission?.id ?? null;
-    const status = classification === 'active' ? 'running' : classification;
+    /** 周期补同步不能把本实例仍待回答或审批的轮次改回普通运行态。 */
+    const pendingRequest =
+      classification === 'active' && existingTurn
+        ? options.requests.listByConversation(conversation.id).find((request) => request.turnId === existingTurn.id && request.status === 'pending' && request.transportGenerationId === options.manager.generationForThread(providerThreadId))
+        : undefined;
+    const status = classification === 'active' ? (pendingRequest ? 'waiting' : 'running') : classification;
     const wasTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
     const stateChanged = !existingTurn || existingTurn.status !== status;
     const turnProjectionChanged = !existingTurn || existingTurn.status !== status || existingTurn.clientSubmissionId !== clientSubmissionId || existingTurn.startedAt !== startedAt || existingTurn.completedAt !== completedAt;
@@ -479,15 +484,20 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {
         options.submissions.updateStatus(matchedSubmission.id, 'active', { providerTurnId: providerTurn.id, dispatchedAt: startedAt });
       }
-      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: conversation.providerModel, providerState: 'active' });
-      runStates.set(conversation.id, { type: 'active', turnId: providerTurn.id, phase: 'prework' });
+      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: conversation.providerModel, providerState: pendingRequest ? 'waiting' : 'active' });
+      runStates.set(
+        conversation.id,
+        pendingRequest
+          ? { type: 'waiting', turnId: providerTurn.id, requestId: pendingRequest.id, reason: pendingRequest.requestKind === 'request_user_input' ? 'user_input' : 'approval' }
+          : { type: 'active', turnId: providerTurn.id, phase: 'prework' },
+      );
       if (stateChanged) {
         options.broadcast('conversation.turn.started', {
           conversationId: conversation.id,
           providerThreadId,
           providerTurnId: providerTurn.id,
           ...(turn.clientSubmissionId ? { submissionId: turn.clientSubmissionId } : {}),
-          status: 'running',
+          status,
           startedAt,
         });
       }
