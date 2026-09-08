@@ -274,6 +274,32 @@ export class ConversationProviderItemRepository {
     return this.db.select<ProviderItemRow>(`SELECT * FROM conversation_provider_item_states WHERE conversation_id = ? ORDER BY updated_at, id`, [conversationId]).map(mapRow);
   }
 
+  /** 找出正文已摄取但未进入确认历史的已结束轮次，供 Provider 分页读取原文后补齐。 */
+  listTurnsMissingMessageHistory(conversationId: string, providerThreadId: string): string[] {
+    return this.db
+      .select<{ provider_turn_id: string }>(
+        `SELECT DISTINCT item.provider_turn_id
+           FROM conversation_provider_item_states AS item
+           JOIN conversation_turns AS turn ON turn.id = item.turn_id
+          WHERE item.conversation_id = ? AND item.provider_thread_id = ?
+            AND item.item_type = 'agentMessage' AND item.status = 'completed'
+            AND turn.status IN ('completed', 'interrupted', 'failed')
+            AND EXISTS (
+              SELECT 1 FROM conversation_runtime_segments AS segment
+               WHERE segment.conversation_id = item.conversation_id AND segment.native_session_id = item.provider_thread_id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM conversation_model_history AS history
+               WHERE history.conversation_id = item.conversation_id AND history.turn_id = item.turn_id
+                 AND history.role = 'assistant' AND json_valid(history.reasoning_source_json)
+                 AND json_extract(history.reasoning_source_json, '$.itemId') = item.provider_item_id
+                 AND json_extract(history.reasoning_source_json, '$.itemType') = 'agentMessage'
+            )`,
+        [conversationId, providerThreadId],
+      )
+      .map((row) => row.provider_turn_id);
+  }
+
   /** 仅供一次性资源迁移读取，避免启动时把全部历史 Provider item 载入内存。 */
   listCompletedFinalAnswersWithMarkdownImages(): ZeusConversationItemRecord[] {
     return this.db
