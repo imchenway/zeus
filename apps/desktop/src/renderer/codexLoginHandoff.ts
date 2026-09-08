@@ -42,7 +42,7 @@ export async function completeCodexLoginHandoff(input: CodexLoginHandoffInput): 
 
 /** 共享官方登录流程；所有入口都通过当前请求身份隔离取消和迟到回执。 */
 export async function authenticateCodexWithBrowser(input: {
-  client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'cancelCodexChatGptLogin' | 'loadCodexAccount' | 'activateCodexConfig'>;
+  client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'loadCodexChatGptLoginStatus' | 'cancelCodexChatGptLogin' | 'loadCodexAccount' | 'activateCodexConfig'>;
   isCurrent: () => boolean;
   onLoginId: (loginId: string | null) => void;
   /** 认证完成后仍需等待当前账号的模型目录与容量就绪。 */
@@ -65,16 +65,22 @@ export async function authenticateCodexWithBrowser(input: {
     const deadline = Date.now() + 5 * 60_000;
     while (Date.now() < deadline) {
       if (!input.isCurrent()) return;
-      const account = await input.client.loadCodexAccount();
+      /** 已有账号可能仍在线，只有同一登录编号的完成通知才允许结束等待。 */
+      const status = await input.client.loadCodexChatGptLoginStatus(login);
       if (!input.isCurrent()) return;
-      // 选择订阅登录时，API Key 或免认证供应商不能伪装成订阅登录成功。
-      if (account.signedIn && account.accountType === 'chatgpt') {
+      if (status.generationId !== login.generationId || status.loginId !== login.loginId) throw new Error('ZEUS_CODEX_LOGIN_UNAVAILABLE');
+      if (status.status === 'failed') throw new Error('ZEUS_CODEX_LOGIN_FAILED', { cause: status.error });
+      if (status.status === 'succeeded') {
         loginId = null;
         input.onLoginId(null);
         // 登录前的运行实例冻结了未认证目录；复用现有代际切换，保留旧实例正在执行的轮次。
         input.onPreparingModels();
         await input.client.activateCodexConfig();
         if (!input.isCurrent()) return;
+        /** 新实例重新读取真实账号，避免登录前的账号缓存进入成功反馈。 */
+        const account = await input.client.loadCodexAccount();
+        if (!input.isCurrent()) return;
+        if (!account.signedIn || account.accountType !== 'chatgpt') throw new Error('ZEUS_CODEX_LOGIN_REQUIRED');
         await completeCodexLoginHandoff({
           isCurrent: input.isCurrent,
           showSuccess: () => input.showSuccess(account),

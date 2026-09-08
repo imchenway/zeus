@@ -780,6 +780,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [['ZEUS_CODEX_NOT_READY'], ['Codex 服务尚未就绪。请在“设置 → 模型供应商”中重新连接后再试。', 'Codex is not ready. Reconnect under Settings → Model providers and try again.', 'model_settings']],
   [['ZEUS_CODEX_LOGIN_TIMED_OUT'], ['登录等待超时，配置已保留。请重新登录。', 'Sign-in timed out. Your configuration is preserved; try again.', 'sign_in']],
+  [['ZEUS_CODEX_LOGIN_FAILED'], ['这次 Codex 登录未完成，请重新登录；具体原因可查看详情。', 'This Codex sign-in did not complete. Sign in again and check the details for the cause.', 'sign_in']],
+  [['ZEUS_CODEX_LOGIN_UNAVAILABLE'], ['这次 Codex 登录已失效，请重新发起登录。', 'This Codex sign-in is no longer available. Start a new sign-in.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED'], ['无法打开官方登录页，请检查系统浏览器后重试。', 'Could not open the official sign-in page. Check your system browser and retry.', 'sign_in']],
   [['ZEUS_CODEX_CONFIG_ACTIVATION_REQUIRED'], ['配置已导入，但尚未启用。请重试启用。', 'Configuration was imported but is not active. Retry activation.', 'settings']],
   [

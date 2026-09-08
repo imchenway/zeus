@@ -2948,6 +2948,22 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
   });
 
+  /** 查询本次授权的官方完成结果；不会启动进程或重新发起登录。 */
+  server.get('/api/codex/account/login/:loginId', async (request: FastifyRequest<{ Params: { loginId: string }; Querystring: { generationId?: string } }>, reply) => {
+    /** 登录身份只接受有界非空文本，避免把无效请求误当成等待中。 */
+    const { loginId } = request.params;
+    /** 运行实例编号防止重新启动后的旧页面认领新登录。 */
+    const { generationId } = request.query;
+    if (!loginId.trim() || loginId.length > 200 || typeof generationId !== 'string' || !generationId.trim() || generationId.length > 200) {
+      return reply.code(400).send({ error: 'ZEUS_CODEX_LOGIN_ID_INVALID', message: '登录编号和运行实例编号无效。' });
+    }
+    try {
+      return await codexAppServerManager.readChatGptLoginStatus({ loginId, generationId });
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
   // 被动查看用量只能读取现有运行时或持久缓存，不得为了展示统计而启动外部 Codex。
   server.get('/api/codex/usage-summary', async () => codexUsageService.readSummary());
 

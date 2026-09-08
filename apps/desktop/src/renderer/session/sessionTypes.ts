@@ -1048,6 +1048,14 @@ export interface CodexChatGptLogin {
   authUrl: string;
 }
 
+/** 与当前账号状态分开表达本次网页登录是否完成。 */
+export interface CodexChatGptLoginStatus {
+  generationId: string;
+  loginId: string;
+  status: 'pending' | 'succeeded' | 'failed';
+  error: string | null;
+}
+
 export interface CodexTaskPushCapabilities {
   /** 本地仓库发现与模型加载分别表达；完成后的空清单才表示没有仓库。 */
   repositoryDiscovery: import('@zeus/shared').ProjectRepositoryDiscovery;

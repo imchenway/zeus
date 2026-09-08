@@ -3,6 +3,7 @@ import type {
   BatchTaskWorkspaceResponse,
   CodexAccountSnapshot,
   CodexChatGptLogin,
+  CodexChatGptLoginStatus,
   CodexTaskPushCapabilities,
   CodexTaskRepositoryCapability,
   NativeOperationAcceptance,
@@ -39,6 +40,8 @@ export interface CodexApiClient {
   loadUsageOverview: () => Promise<UsageOverviewSnapshot>;
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
+  /** 只读取指定实例和登录编号对应的结果。 */
+  loadCodexChatGptLoginStatus: (login: Pick<CodexChatGptLogin, 'generationId' | 'loginId'>) => Promise<CodexChatGptLoginStatus>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
   startTaskModelPush: (
     taskId: string,
@@ -173,6 +176,8 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       });
       return transport.request<CodexChatGptLogin>('/api/codex/account/login/chatgpt', { method: 'POST', body: JSON.stringify(body) });
     },
+    /** 查询官方完成通知，不用上次登录留下的账号快照替代。 */
+    loadCodexChatGptLoginStatus: (login) => transport.request<CodexChatGptLoginStatus>(`/api/codex/account/login/${encodeURIComponent(login.loginId)}?generationId=${encodeURIComponent(login.generationId)}`),
     cancelCodexChatGptLogin: async (loginId) => {
       const body = await buildCodexPublicCommandRequest({
         commandType: codexPublicClientCommandTypes.accountLoginCancel,

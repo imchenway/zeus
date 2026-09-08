@@ -177,6 +177,14 @@ export interface CodexChatGptLogin {
   authUrl: string;
 }
 
+/** 本次网页登录的结果，只接受同一运行实例的官方完成通知。 */
+export interface CodexChatGptLoginStatus {
+  generationId: string;
+  loginId: string;
+  status: 'pending' | 'succeeded' | 'failed';
+  error: string | null;
+}
+
 export type CodexSandboxPolicy = { type: 'readOnly'; networkAccess: false } | { type: 'workspaceWrite'; writableRoots: string[]; networkAccess: boolean } | { type: 'dangerFullAccess' };
 export type CodexReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none';
 
@@ -456,6 +464,8 @@ export interface CodexAppServerManager {
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
+  /** 查询指定登录尝试，不用已有账号状态推断新的授权已经完成。 */
+  readChatGptLoginStatus(input: { generationId: string; loginId: string }): Promise<CodexChatGptLoginStatus>;
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
@@ -636,6 +646,15 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const accountReadInFlight = new Map<string, Promise<CodexAccountSnapshot>>();
   const accountRateLimitsReadInFlight = new Map<string, Promise<CodexAccountRateLimitsSnapshot>>();
   const accountUsageReadInFlight = new Map<string, Promise<CodexAccountUsageSnapshot>>();
+  /** 仅保留最近的登录状态，不保存授权地址或账号凭据。 */
+  const chatGptLoginStatuses = new Map<string, CodexChatGptLoginStatus>();
+
+  /** 有界保留完成通知，兼容通知早于登录启动回包的情况。 */
+  function rememberChatGptLoginStatus(status: CodexChatGptLoginStatus): void {
+    chatGptLoginStatuses.set(status.loginId, status);
+    // ponytail: 仅保留最近 32 次登录；需要更长查询窗口时再按过期时间清理。
+    if (chatGptLoginStatuses.size > 32) chatGptLoginStatuses.delete(chatGptLoginStatuses.keys().next().value!);
+  }
 
   function currentGenerationId(): string {
     if (state.type === 'idle' || state.type === 'closed') throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server is not ready.');
@@ -652,6 +671,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     eventSequence = 0;
     diagnosticSequence = 0;
     eventReplayBuffer.length = 0;
+    chatGptLoginStatuses.clear();
     pendingInterrupts.clear();
     startedTurns.clear();
     state = { type: 'starting', generationId };
@@ -1040,7 +1060,19 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const resolvedRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
       if (resolvedRequestId !== null) serverRequests.delete(serverRequestKey(generationId, resolvedRequestId));
     }
-    if (message.method === 'account/updated') {
+    if (message.method === 'account/login/completed') {
+      /** null 编号属于其他认证方式；旧编号不能完成当前网页登录。 */
+      const params = isRecord(message.params) ? message.params : {};
+      if (typeof params.loginId === 'string' && params.loginId && typeof params.success === 'boolean') {
+        rememberChatGptLoginStatus({
+          generationId,
+          loginId: params.loginId,
+          status: params.success ? 'succeeded' : 'failed',
+          error: typeof params.error === 'string' ? summarizeStderr(params.error) : null,
+        });
+      }
+    }
+    if (message.method === 'account/updated' || message.method === 'account/login/completed') {
       lastAccountSnapshot = null;
       lastAccountRateLimitsSnapshot = null;
       lastAccountUsageSnapshot = null;
@@ -1277,9 +1309,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       accountUsageReadInFlight.set(capabilities.generationId, request);
       return request;
     },
+    /** 先启动官方授权，完成通知可能在启动回包之前到达。 */
     async startChatGptLogin() {
+      /** 授权固定在已就绪的运行实例上。 */
       const capabilities = await awaitCapabilities();
-      return parseChatGptLogin(
+      /** 登录编号由 Provider 提供，已收到的完成结果不能被覆盖为等待中。 */
+      const login = parseChatGptLogin(
         await rpc(capabilities.generationId, 'account/login/start', {
           type: 'chatgpt',
           // Zeus 自己轮询权威登录状态并回到原窗口；不让托管成功页把本次流程收口到 ChatGPT。
@@ -1288,6 +1323,19 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         }),
         capabilities.generationId,
       );
+      if (!chatGptLoginStatuses.has(login.loginId)) rememberChatGptLoginStatus({ generationId: login.generationId, loginId: login.loginId, status: 'pending', error: null });
+      return login;
+    },
+    /** 只读查询当前实例记录的本次结果，进程切换后不得复用旧结果。 */
+    async readChatGptLoginStatus(input) {
+      /** 实例身份与登录编号一起隔离旧通知和迟到查询。 */
+      const capabilities = await awaitCapabilities();
+      /** 未记录或已过期的编号不能伪装成待完成登录。 */
+      const status = chatGptLoginStatuses.get(input.loginId);
+      if (capabilities.generationId !== input.generationId || status?.generationId !== input.generationId) {
+        throw managerError('ZEUS_CODEX_LOGIN_UNAVAILABLE', '这次 Codex 登录已失效，请重新发起登录。');
+      }
+      return { ...status };
     },
     async cancelChatGptLogin(input) {
       const capabilities = await awaitCapabilities();
@@ -1706,6 +1754,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         externalAgentImportListeners.clear();
         rpcRetryListeners.clear();
         eventReplayBuffer.length = 0;
+        chatGptLoginStatuses.clear();
         serverRequests.clear();
         pendingInterrupts.clear();
         startedTurns.clear();
