@@ -65,7 +65,11 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 - `pnpm verify:publish`：本地与 CI 共用的检查入口，执行冲突、格式、Lint、架构边界、类型和构建检查，不发布。
 - `pnpm package:mac`：默认只生成独立身份 `Zeus Test.app`，输出到 `dist/test/mac-arm64/`（Intel 为 `dist/test/mac/`）；运行验收使用独立用户数据目录。
 - `pnpm package:mac:release`：生成正式 DMG；仅在明确需要安装包或发布时执行。
+- `pnpm package:clean`：预览 `dist`、`dist/test` 中的旧安装包；加 `--apply` 执行清理。沿用 `ZEUS_PACKAGE_OUTPUT_DIR` 可指定单个输出目录。
 - `pnpm verify:release`：正式发布候选的检查、打包和产物校验；不自动安装或发布。
+
+打包与产物校验成功后，自动清理当前输出目录中同一身份、架构的旧安装包；每种身份、架构保留最新实际版本的 DMG、ZIP 及配套文件。
+清理只处理符合 Zeus 命名规则的普通文件，保留 App、其他文件和目录。优点是避免历次安装包无限累积；需要长期留存旧包时，请先移出构建输出目录。
 
 日常改动按影响范围执行检查；行为变化补充真实运行证据。既有专项探针按需使用，不默认全量运行。
 开启 Computer Use 后可控制另一个独立的 Zeus Test 实例，无需额外 QA 模式；当前宿主、控制服务和正式 Zeus 实例仍禁止控制，敏感操作仍需用户确认。多个 Test 同时运行时使用应用绝对路径指定目标。
