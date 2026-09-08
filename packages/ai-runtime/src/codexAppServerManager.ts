@@ -21,7 +21,7 @@ import {
   parseExternalAgentConfigImportResponse,
   parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import { expandCliSearchPath } from './cliSearchPath.js';
+import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 import { type CodexModelBudgetEvidence, resolveCodexModelBudgetSnapshot } from './codexModelBudgetSnapshot.js';
 
 export type {
@@ -642,7 +642,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     return state.generationId;
   }
 
-  function start(command: string): Promise<CodexCapabilitiesSnapshot> {
+  /** 使用与版本检测一致的程序环境；直接创建的管理器也支持终端安装目录。 */
+  async function start(command: string): Promise<CodexCapabilitiesSnapshot> {
+    /** 上层已解析时直接复用；独立调用只在启动时读取终端目录。 */
+    const searchPath = runtimeEnvironment.PATH ?? (await resolveCliSearchPath());
+    if (preparingForShutdown || state.type === 'closed') throw managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.');
     const generationId = makeGenerationId();
     requestSequence = 0;
     eventSequence = 0;
@@ -656,7 +660,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...process.env,
       ...providerEnvironment,
       ...runtimeEnvironment,
-      PATH: expandCliSearchPath(),
+      PATH: expandCliSearchPath(searchPath),
       ...(codexHome === null ? {} : { CODEX_HOME: codexHome }),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };

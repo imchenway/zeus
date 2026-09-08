@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { AppShellSettings, CodexConfigImportPreview } from '../apiClient.js';
 import type { CodexAccountSnapshot } from '../session/sessionTypes.js';
 import { authenticateCodexWithBrowser } from '../codexLoginHandoff.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError, modelSetupRequestedEvent } from '../ui/ApplicationErrorDialog.js';
 import { ModelConnectionsSettingsPane } from './ModelConnectionsSettingsPane.js';
 import {
   browserNativeConversationStartStorage,
@@ -46,8 +47,8 @@ export function useModelSetup(input: {
   const targetRef = useRef<TaskModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
   const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
-  /** 当前步骤只展示脱敏后的可恢复错误。 */
-  const [error, setError] = useState<string | null>(null);
+  /** 普通提示保留原文；失败保留脱敏原因，供统一错误出口展示摘要和详情。 */
+  const [error, setError] = useState<string | UserFacingErrorCause | null>(null);
   /** 账号事实来自现有认证接口，不由引导完成状态推断。 */
   const [account, setAccount] = useState<CodexAccountSnapshot | null>(null);
   /** 区分未查询与已确认未登录。 */
@@ -164,7 +165,7 @@ export function useModelSetup(input: {
       setCustomVisited(false);
     } catch (failure) {
       if (!isCurrent()) return;
-      setError(formatVisibleApplicationError(failure, zh ? 'zh-CN' : 'en'));
+      setError(userFacingErrorCause(failure));
       throw failure;
     } finally {
       if (isCurrent()) setOperation('idle');
@@ -201,7 +202,7 @@ export function useModelSetup(input: {
     /** 记录本次操作身份，忽略取消后的迟到回执。 */
     const request = ++requestRef.current;
     setStep('codex');
-    setOperation('authenticating');
+    setOperation('inspecting');
     setError(null);
     try {
       await authenticateCodexWithBrowser({
@@ -209,6 +210,7 @@ export function useModelSetup(input: {
         isCurrent: () => requestRef.current === request,
         onLoginId: (loginId) => {
           loginIdRef.current = loginId;
+          if (loginId) setOperation('authenticating');
         },
         onPreparingModels: () => setOperation('activating'),
         showSuccess: (value) => {
@@ -224,7 +226,7 @@ export function useModelSetup(input: {
     } catch (failure) {
       if (requestRef.current !== request) return;
       setOperation('idle');
-      setError(modelSetupLoginError(failure, zh));
+      setError(userFacingErrorCause(failure));
     }
   }
 
@@ -254,7 +256,7 @@ export function useModelSetup(input: {
         setStep('config');
       } else setError(zh ? '没有可导入的配置，可以直接登录。' : 'No configuration to import. You can sign in directly.');
     } catch (failure) {
-      if (requestRef.current === request) setError(modelSetupLoginError(failure, zh));
+      if (requestRef.current === request) setError(userFacingErrorCause(failure));
     } finally {
       if (requestRef.current === request) setOperation('idle');
     }
@@ -299,7 +301,7 @@ export function useModelSetup(input: {
     } catch (failure) {
       if (requestRef.current !== request) return;
       setOperation('idle');
-      setError(modelSetupLoginError(failure, zh));
+      setError(userFacingErrorCause(failure));
     }
   }
 
@@ -316,11 +318,11 @@ export function useModelSetup(input: {
       if (requestRef.current !== request) return;
       setAccount(value);
       setAccountChecked(true);
-    } catch {
+    } catch (failure) {
       if (requestRef.current !== request) return;
       setAccount(null);
       setAccountChecked(false);
-      setError(zh ? '当前 Codex 服务尚未连接，无法确认账号状态。可以点击订阅登录。' : 'Codex is not connected, so account status cannot be confirmed. You can sign in with your subscription.');
+      setError(userFacingErrorCause(failure));
     } finally {
       if (requestRef.current === request) setOperation('idle');
     }
@@ -400,7 +402,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           {zh ? '重新选择接入方式' : 'Choose connection method'}
         </Button>
       </div>
-      {!controller.step && controller.error ? <p role="status">{controller.error}</p> : null}
+      {!controller.step && controller.error ? <p role="status">{typeof controller.error === 'string' ? controller.error : <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />}</p> : null}
     </section>
   );
 }
@@ -546,7 +548,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
           ) : null}
           {c.error ? (
             <p className="model-setup-error" role="alert">
-              {c.error}
+              {typeof c.error === 'string' ? c.error : <VisibleApplicationError error={c.error} language={zh ? 'zh-CN' : 'en'} />}
             </p>
           ) : null}
         </div>
@@ -573,12 +575,4 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
       </section>
     </ModalPortal>
   );
-}
-
-/** 认证失败使用明确且不包含密钥或授权地址的提示。 */
-function modelSetupLoginError(error: unknown, zh: boolean): string {
-  if (error instanceof Error && error.message === 'ZEUS_CODEX_LOGIN_TIMED_OUT') return zh ? '登录等待超时，配置已保留。请重新登录。' : 'Sign-in timed out. Your configuration is preserved; try again.';
-  if (error instanceof Error && error.message === 'ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED') return zh ? '无法打开官方登录页，请检查系统浏览器后重试。' : 'Could not open the official sign-in page. Check your system browser and retry.';
-  if (error instanceof Error && error.message === 'ZEUS_CODEX_CONFIG_ACTIVATION_REQUIRED') return zh ? '配置已导入，但尚未启用。请重试启用。' : 'Configuration was imported but is not active. Retry activation.';
-  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
