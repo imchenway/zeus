@@ -2680,12 +2680,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
                     <div className="session-browser-pane">
-                      {contextWorkspace.kind === 'browser' && actions.onStageBrowserComments ? (
+                      {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
+                      {contextWorkspace.kind === 'browser' ? (
                         <BrowserWorkspace
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
-                          disabled={interactionReadOnly || nonResumableNative}
+                          disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
                           suspended={browserResizing || quickActionsPopoverOpen}
                           expanded={contextFullWidth}
                           onClose={closeContextWorkspace}
@@ -2695,7 +2696,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             setContextFullWidth(false);
                           }}
                           onStageComments={async (prepared) => {
-                            await actions.onStageBrowserComments?.(prepared);
+                            // 能力切换期间保留网页与批注，不能把缺少发送回调当成已成功暂存。
+                            if (!actions.onStageBrowserComments) return;
+                            await actions.onStageBrowserComments(prepared);
                             closeContextWorkspace({ focusComposer: true });
                           }}
                         />
