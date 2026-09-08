@@ -7,7 +7,7 @@ import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from './terminalOutput.js';
 import { buildTaskPushPrompt, type TaskPushPromptInput } from '@zeus/shared';
-import { expandCliSearchPath } from './cliSearchPath.js';
+import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
 export * from './codexAppServerProtocol.js';
@@ -171,9 +171,14 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
   const adapter = AI_CLI_ADAPTERS.find((candidate) => candidate.id === adapterId);
   if (!adapter) throw new Error(`AI CLI adapter not found: ${adapterId}`);
   const checkedAt = options.now?.() ?? new Date().toISOString();
-  const findCommand = options.findCommand ?? findCommandOnPath;
+  /** 每次主动检测只读取一次终端目录，版本与能力检测共同使用，兼容依赖 Node 的入口。 */
+  const searchPath = options.findCommand && options.runCommand ? undefined : await resolveCliSearchPath();
+  /** 显式注入的检测接口继续拥有自己的运行环境。 */
+  const findCommand = options.findCommand ?? ((command) => findCommandOnPath(command, searchPath));
+  /** 程序查找成功不能替代其解释器可运行；所有探针沿用同一搜索目录。 */
+  const runCommand = options.runCommand ?? ((commandPath, args) => runCommandOnce(commandPath, args, searchPath));
   const configuredCommandPath = options.commandPath?.trim();
-  const commandPath = configuredCommandPath ? await resolveConfiguredCommandPath(configuredCommandPath, adapter.command) : await findCommand(adapter.command);
+  const commandPath = configuredCommandPath ? await resolveConfiguredCommandPath(configuredCommandPath) : await findCommand(adapter.command);
   const status: AiCliStatus = commandPath
     ? {
         ...adapter,
@@ -200,10 +205,10 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
       modelConfiguration: 'user-configured',
     };
   }
-  const probe = await runAdapterVersionProbe(commandPath, options.runCommand ?? runCommandOnce);
+  const probe = await runAdapterVersionProbe(commandPath, runCommand);
   const version = extractVersion(probe.stdout || probe.stderr);
   const authStatus = detectAuthStatus(`${probe.stdout}\n${probe.stderr}`);
-  const capabilityProbe = adapter.id === 'codex' && probe.exitCode === 0 ? await runAdapterCapabilityProbe(commandPath, options.runCommand ?? runCommandOnce) : null;
+  const capabilityProbe = adapter.id === 'codex' && probe.exitCode === 0 ? await runAdapterCapabilityProbe(commandPath, runCommand) : null;
   const compatible = probe.exitCode === 0 && (adapter.id !== 'codex' || capabilityProbe?.exitCode === 0);
   return {
     ...status,
@@ -430,8 +435,10 @@ const RUNTIME_PROCESS_IDENTITY_ENV = 'ZEUS_RUNTIME_PROCESS_IDENTITY_TOKEN';
 const RUNTIME_STOP_TERM_GRACE_MS = 500;
 const RUNTIME_STOP_KILL_WAIT_MS = 5_000;
 
-async function findCommandOnPath(command: string): Promise<string | null> {
-  const pathEntries = expandCliSearchPath().split(delimiter).filter(Boolean);
+/** 在与实际启动一致的目录中查找程序，保留搜索顺序。 */
+async function findCommandOnPath(command: string, searchPath?: string): Promise<string | null> {
+  /** 已解析的终端目录包含版本管理器安装路径。 */
+  const pathEntries = expandCliSearchPath(searchPath).split(delimiter).filter(Boolean);
   for (const entry of pathEntries) {
     const candidate = resolve(entry, command);
     try {
@@ -441,36 +448,18 @@ async function findCommandOnPath(command: string): Promise<string | null> {
       // 继续检查 PATH 中下一个目录。
     }
   }
-  return findCommandFromLoginShell(command);
+  return null;
 }
 
-async function resolveConfiguredCommandPath(commandPath: string, expectedCommand: string, requireExpectedBasename = false): Promise<string | null> {
-  if (!isAbsolute(commandPath) || (requireExpectedBasename && basename(commandPath) !== expectedCommand)) return null;
+/** 显式程序路径必须是可执行的绝对路径，不替换用户选择。 */
+async function resolveConfiguredCommandPath(commandPath: string): Promise<string | null> {
+  if (!isAbsolute(commandPath)) return null;
   try {
     await access(commandPath, constants.X_OK);
     return await realpath(commandPath);
   } catch {
     return null;
   }
-}
-
-async function findCommandFromLoginShell(command: string): Promise<string | null> {
-  if (!AI_CLI_ADAPTER_COMMAND_BASENAMES.has(command)) return null;
-  const shellPath = process.env.SHELL?.trim();
-  if (!shellPath || !isAbsolute(shellPath)) return null;
-  try {
-    await access(shellPath, constants.X_OK);
-  } catch {
-    return null;
-  }
-  const result = await runCommandOnce(shellPath, ['-lic', `command -v ${command}`]);
-  if (result.exitCode !== 0) return null;
-  const candidates = result.stdout
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => isAbsolute(line));
-  const candidate = candidates.at(-1);
-  return candidate ? resolveConfiguredCommandPath(candidate, command, true) : null;
 }
 
 async function runAdapterVersionProbe(commandPath: string, runCommand: (commandPath: string, args: string[]) => Promise<AiCliProbeResult>): Promise<AiCliProbeResult> {
@@ -497,9 +486,11 @@ async function runAdapterCapabilityProbe(commandPath: string, runCommand: (comma
   }
 }
 
-function runCommandOnce(commandPath: string, args: string[]): Promise<AiCliProbeResult> {
+/** 程序探针使用已经解析的终端搜索目录，避免可执行入口找不到 Node。 */
+function runCommandOnce(commandPath: string, args: string[], searchPath?: string): Promise<AiCliProbeResult> {
   return new Promise((resolveProbe) => {
-    const child = nodeSpawn(commandPath, args, { shell: false });
+    /** 只补齐程序搜索路径，保留调用方既有环境。 */
+    const child = nodeSpawn(commandPath, args, { shell: false, env: { ...process.env, PATH: expandCliSearchPath(searchPath) } });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timeout = setTimeout(() => {

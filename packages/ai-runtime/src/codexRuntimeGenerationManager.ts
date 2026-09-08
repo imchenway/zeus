@@ -13,6 +13,7 @@ import {
 import { spawn as nodeSpawn } from 'node:child_process';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { resolveCliSearchPath } from './cliSearchPath.js';
 
 interface RuntimeEntry {
   manager: CodexAppServerManager;
@@ -464,12 +465,17 @@ export function createCodexRuntimeGenerationManager(
       return capabilities;
     }
 
-    const providerVersionFallback = await (options.providerVersionProbe ?? probeCodexProviderVersion)(input.commandPath);
+    /** 每个新运行实例只解析一次终端路径；版本与实际启动使用相同环境。 */
+    const runtimeEnvironment = { ...options.runtimeEnvironment, PATH: await resolveCliSearchPath(options.runtimeEnvironment?.PATH) };
+    if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
+    /** 版本必须来自实际使用的程序，不让 Finder 缺少 PATH 造成版本证据丢失。 */
+    const providerVersionFallback = await (options.providerVersionProbe ? options.providerVersionProbe(input.commandPath) : probeCodexProviderVersion(input.commandPath, runtimeEnvironment));
+    if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const appServerFlags = [...nodeReplToolRuntimeFlags(options.codexHome, options.toolRuntimeCodexHome), ...responsesProviderFlags(requestedResponsesProvider)];
     const manager = createCodexAppServerManager({
       ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
-      ...(options.runtimeEnvironment ? { runtimeEnvironment: options.runtimeEnvironment } : {}),
+      runtimeEnvironment,
       ...(appServerFlags.length > 0 ? { appServerFlags } : {}),
       providerVersionFallback,
     });
@@ -822,9 +828,10 @@ export function createCodexRuntimeGenerationManager(
 }
 
 /** initialize 已不稳定携带 serverInfo；只读执行同一二进制的 --version，不按路径或文件名猜版本。 */
-function probeCodexProviderVersion(commandPath: string): Promise<string | null> {
+function probeCodexProviderVersion(commandPath: string, runtimeEnvironment: Record<string, string>): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = nodeSpawn(commandPath, ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    /** 版本探针与同一运行实例共用 Codex 和解释器的搜索目录。 */
+    const child = nodeSpawn(commandPath, ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtimeEnvironment } });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let settled = false;

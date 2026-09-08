@@ -300,10 +300,9 @@ export function registerCodexPublicCommandRoutes(options: {
         parsed,
         destinationId: 'codex:account',
         resourceId: codexPublicCommandScopeIds.account,
-        invoke: async () => {
-          await options.account.ensureReady();
-          return options.account.startLogin();
-        },
+        // 启动运行环境尚未发送登录请求，失败应保留为外部操作开始前失败。
+        beforeWrite: () => options.account.ensureReady(),
+        invoke: () => options.account.startLogin(),
       });
       return executed.result;
     } catch (error) {
@@ -325,8 +324,9 @@ export function registerCodexPublicCommandRoutes(options: {
         parsed: { ...parsed, input: { loginId } },
         destinationId: 'codex:account',
         resourceId: loginId,
+        // 取消同样先准备运行环境，只有真正调用取消接口才标记外部操作已开始。
+        beforeWrite: () => options.account.ensureReady(),
         invoke: async () => {
-          await options.account.ensureReady();
           await options.account.cancelLogin(loginId);
           return { cancelled: true as const };
         },

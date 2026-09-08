@@ -766,6 +766,18 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED'], ['恢复对话时发现这条消息尚未发送，请选择发送或取消。', 'This message was not sent before the conversation was restored. Choose to send or cancel it.']],
   [['ZEUS_CODEX_LOGIN_REQUIRED'], ['尚未登录 Codex，无法使用该服务。请在“设置 → AI 连接”中登录。', 'Codex is not signed in. Sign in under Settings → AI connections to use this service.', 'sign_in']],
   [
+    ['ZEUS_CODEX_DEPENDENCY_UNAVAILABLE'],
+    [
+      '无法启动本机 Codex，订阅登录和模型连接暂不可用。请查看错误详情，并按官方安装指引安装或修复 Codex 后重新登录。',
+      'Codex could not start on this computer, so subscription sign-in and model connections are unavailable. See the error details and official installation guide, then install or repair Codex and sign in again.',
+      'settings',
+    ],
+  ],
+  [['ZEUS_CODEX_NOT_READY'], ['Codex 服务尚未就绪。请在“设置 → 模型供应商”中重新连接后再试。', 'Codex is not ready. Reconnect under Settings → Model providers and try again.', 'model_settings']],
+  [['ZEUS_CODEX_LOGIN_TIMED_OUT'], ['登录等待超时，配置已保留。请重新登录。', 'Sign-in timed out. Your configuration is preserved; try again.', 'sign_in']],
+  [['ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED'], ['无法打开官方登录页，请检查系统浏览器后重试。', 'Could not open the official sign-in page. Check your system browser and retry.', 'sign_in']],
+  [['ZEUS_CODEX_CONFIG_ACTIVATION_REQUIRED'], ['配置已导入，但尚未启用。请重试启用。', 'Configuration was imported but is not active. Retry activation.', 'settings']],
+  [
     ['ZEUS_CODEX_PROVIDER_CREDENTIAL_UNAVAILABLE', 'ZEUS_MODEL_CONNECTION_CREDENTIAL_UNAVAILABLE', 'ZEUS_MODEL_CONNECTION_API_KEY_REQUIRED'],
     ['AI 服务的登录信息或 API 密钥不可用。请检查对应的模型连接设置。', 'The AI service credentials or API key are unavailable. Check the model connection settings.', 'model_settings'],
   ],
