@@ -589,6 +589,13 @@ export function createCodexRuntimeGenerationManager(
     async startChatGptLogin() {
       return requireActiveEntry().manager.startChatGptLogin();
     },
+    /** 登录结果归属于启动授权的实例，不能跟随当前活动实例漂移。 */
+    async readChatGptLoginStatus(input) {
+      /** 已退出的实例无法继续接收授权返回，要求用户重新发起。 */
+      const entry = entryForGeneration(input.generationId);
+      if (!entry) throw managerError('ZEUS_CODEX_LOGIN_UNAVAILABLE', '这次 Codex 登录已失效，请重新发起登录。');
+      return entry.manager.readChatGptLoginStatus(input);
+    },
     async cancelChatGptLogin(input) {
       await requireActiveEntry().manager.cancelChatGptLogin(input);
     },

@@ -17,7 +17,7 @@ export function expandCliSearchPath(pathValue = process.env.PATH ?? ''): string 
   return Array.from(new Set(entries)).join(delimiter);
 }
 
-/** 首次启动读取用户终端的搜索目录，让检测、版本查询和实际运行使用同一环境。 */
+/** 使用用户终端当前的搜索顺序，让检测、版本查询和实际运行选中同一程序。 */
 export async function resolveCliSearchPath(pathValue = process.env.PATH ?? ''): Promise<string> {
   /** 终端不可用时仍沿用既有环境和常见安装目录。 */
   const fallbackPath = expandCliSearchPath(pathValue);
@@ -35,7 +35,8 @@ export async function resolveCliSearchPath(pathValue = process.env.PATH ?? ''): 
     });
     /** 仅接纳绝对目录，避免终端中的相对路径把工作目录当成程序来源。 */
     const shellDirectories = (stdout.split('\0').at(-2) ?? '').split(delimiter).filter(isAbsolute);
-    return expandCliSearchPath([pathValue, ...shellDirectories].join(delimiter));
+    // 图形应用继承的旧目录只能补充到末尾，否则升级 CLI 后仍会优先启动残留的旧版本。
+    return expandCliSearchPath([...shellDirectories, pathValue].join(delimiter));
   } catch {
     // 终端配置错误或读取超时不能阻塞已有程序；实际启动仍会返回准确错误。
     return fallbackPath;
