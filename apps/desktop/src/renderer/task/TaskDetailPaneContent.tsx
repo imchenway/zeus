@@ -1,7 +1,7 @@
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
-import { type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
+import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
@@ -66,6 +66,10 @@ export interface TaskDetailPaneCopy {
 }
 
 export interface TaskDetailPaneContentProps {
+  /** 可选择的项目来自当前工作区快照。 */
+  projects: ProjectRecord[];
+  /** 复制先打开可编辑草稿，提交后才创建独立任务。 */
+  onCopyTask: (task: TaskRecord) => void;
   language: 'zh-CN' | 'en-US';
   task: TaskRecord;
   allTasks: TaskRecord[];
@@ -632,6 +636,83 @@ function TaskImmediateSelect<T extends string>(props: {
   );
 }
 
+/** 所属项目修改需明确提交，并展示关系解除的影响；失败保留目标便于调整。 */
+function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'projects' | 'language' | 'busy' | 'onUpdateTaskContent' | 'onCopyTask'>) {
+  /** 默认保持当前项目，仅按钮提交时执行修改。 */
+  const [projectId, setProjectId] = useState(props.task.projectId);
+  /** 防止重复点击和复制尚未完成的移动。 */
+  const [saving, setSaving] = useState(false);
+  /** 具体失败原因在当前操作下展示。 */
+  const [error, setError] = useState('');
+  /** 跟随应用的语言设置。 */
+  const zh = props.language === 'zh-CN';
+
+  /** 保存经过现有串行编辑队列，冲突时提示用户检查最新任务。 */
+  async function moveTask(): Promise<void> {
+    if (saving || props.busy || projectId === props.task.projectId) return;
+    setSaving(true);
+    setError('');
+    try {
+      /** 服务端会在同一事务内完成编号、关系和归属修改。 */
+      const result = await props.onUpdateTaskContent(props.task.id, { projectId, expectedUpdatedAt: props.task.updatedAt ?? '' });
+      if (result.kind === 'conflict') setError(zh ? '任务已被修改，请检查最新内容后重新移动。' : 'The task changed. Review the latest content before moving again.');
+    } catch (cause) {
+      setError(
+        cause instanceof ZeusApiError && cause.error === 'ZEUS_TASK_PROJECT_CHANGE_UNAVAILABLE'
+          ? zh
+            ? '此任务已有会话或执行资源，无法直接修改项目。请使用“复制到其他项目”保留原任务的执行历史。'
+            : 'This task has conversations or execution resources. Copy it to another project to preserve its history.'
+          : taskEditErrorMessage(cause, zh ? '修改项目失败，请重试。' : 'Could not change the project. Try again.', zh ? 'zh-CN' : 'en'),
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="task-detail-block" aria-label={zh ? '所属项目' : 'Project'}>
+      <label className="task-detail-relationship-control">
+        <span>{zh ? '所属项目' : 'Project'}</span>
+        <select
+          value={projectId}
+          onChange={(event) => {
+            setProjectId(event.currentTarget.value);
+            setError('');
+          }}
+          disabled={props.busy || saving}
+        >
+          {props.projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {projectId !== props.task.projectId ? (
+        <p className="task-flow-context">
+          {zh
+            ? '移动后使用目标项目的新编号与初始状态，解除原项目内的父子和关联关系。子任务留在原项目。'
+            : 'Moving assigns a new project number and initial status, and removes parent, child and related-task links. Child tasks stay in the original project.'}
+        </p>
+      ) : null}
+      <div className="task-detail-section-heading">
+        <Button variant="secondary" size="compact" busy={saving} disabled={props.busy || projectId === props.task.projectId} onClick={() => void moveTask()}>
+          {saving ? (zh ? '正在移动…' : 'Moving…') : zh ? '移动到此项目' : 'Move to project'}
+        </Button>
+        <Button variant="secondary" size="compact" disabled={props.busy || saving} onClick={() => props.onCopyTask(props.task)}>
+          {zh ? '复制到其他项目' : 'Copy to another project'}
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="task-inline-edit-feedback is-error">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** 展示任务详情及其内容、项目和执行操作。 */
 export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const zh = props.language === 'zh-CN';
   const editCopy = taskEditCopies[props.language];
@@ -1054,6 +1135,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </strong>
         </span>
       </section>
+
+      <TaskProjectActions
+        key={`${props.task.id}:${props.task.projectId}`}
+        task={props.task}
+        projects={props.projects}
+        language={props.language}
+        busy={props.busy}
+        onUpdateTaskContent={props.onUpdateTaskContent}
+        onCopyTask={props.onCopyTask}
+      />
 
       <TaskDigitalEmployeePanel
         taskId={props.task.id}

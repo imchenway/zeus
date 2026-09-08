@@ -278,6 +278,8 @@ export interface LoadTasksRequest {
 }
 
 export interface UpdateTaskRequest {
+  /** 修改任务归属时传入目标项目。 */
+  projectId?: string;
   expectedUpdatedAt: string;
   title?: string;
   taskType?: TaskType;

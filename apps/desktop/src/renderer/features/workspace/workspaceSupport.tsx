@@ -143,6 +143,10 @@ export type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 export type TaskCreateAttachment = TaskAttachmentView;
 export type TaskCreateAttachmentCandidate = TaskAttachmentCandidate;
 export type TaskCreateFormState = {
+  /** 草稿提交目标，与当前浏览的项目独立。 */
+  projectId: string;
+  /** 复制草稿显示专用标题；保存仍走普通创建命令。 */
+  copiedFromTaskId: string | null;
   parentTaskId: string | null;
   title: string;
   taskType: TaskType | '';
@@ -1224,6 +1228,8 @@ export function buildDefaultTaskDraft(appLanguage: AppLanguage): { title: string
 export function buildTaskCreateInitialForm(_appLanguage: AppLanguage): TaskCreateFormState {
   void _appLanguage;
   return {
+    projectId: '',
+    copiedFromTaskId: null,
     title: '',
     parentTaskId: null,
     taskType: '',
@@ -1606,8 +1612,10 @@ export function TaskCreateFieldAttachments(props: {
 
 export function TaskCreateModal(props: {
   open: boolean;
-  /** 当前项目作为任务上下文始终可见。 */
-  projectName?: string;
+  /** 可创建任务的项目列表，复制和新建共用目标选择。 */
+  projects: ProjectRecord[];
+  /** 切换项目时由上层解除原项目的父任务选择。 */
+  onProjectChange: (projectId: string) => void;
   copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
   form: TaskCreateFormState;
   error?: string;
@@ -1849,7 +1857,7 @@ export function TaskCreateModal(props: {
       >
         <header className="task-create-modal-header">
           <strong id="task-create-modal-title" className="task-create-modal-heading">
-            {props.copy.taskCreateDialogTitle}
+            {props.form.copiedFromTaskId ? (props.copy.taskCountPrefix === 'Tasks' ? 'Copy task' : '复制任务') : props.copy.taskCreateDialogTitle}
           </strong>
           <button type="button" className="task-create-modal-close" aria-label={props.copy.taskCreateClose} onClick={props.onClose} disabled={interactionBusy}>
             ×
@@ -1857,10 +1865,24 @@ export function TaskCreateModal(props: {
         </header>
         <div className="task-create-modal-body">
           <p className="task-flow-context">
-            {props.projectName}
-            {props.projectName ? ' · ' : ''}
-            {props.copy.taskCountPrefix === 'Tasks' ? 'Describe the task. Choose a model when you push.' : '先描述任务，推送时再选择模型。'}
+            {props.form.copiedFromTaskId
+              ? props.copy.taskCountPrefix === 'Tasks'
+                ? 'Copy content, tags and attachments into a new task. History and relationships stay with the original.'
+                : '复制正文、标签和附件为新任务，原任务的执行历史和任务关系保留在原处。'
+              : props.copy.taskCountPrefix === 'Tasks'
+                ? 'Describe the task. Choose a model when you push.'
+                : '先描述任务，推送时再选择模型。'}
           </p>
+          <label className="task-create-field">
+            <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Target project' : '目标项目'}</span>
+            <select value={props.form.projectId} onChange={(event) => props.onProjectChange(event.currentTarget.value)} disabled={interactionBusy} required>
+              {props.projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="task-create-field task-create-title-field">
             <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
             <input

@@ -28,6 +28,8 @@ export type TaskRuntimeCommandAction = 'run' | 'pause' | 'continue' | 'cancel';
 export type EmptyTaskRuntimeCommandInput = Record<string, never>;
 
 export interface UpdateTaskContentCommandInput {
+  /** 用户选择的目标项目；省略时保持当前归属。 */
+  projectId?: string;
   expectedUpdatedAt?: string;
   title?: string;
   taskType?: TaskType;

@@ -257,6 +257,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     openGraphView,
     openTaskConversation,
     openTaskCreateModal,
+    openTaskCopyModal,
     openTaskGitDelivery,
     openTaskModelPush,
     retryTaskModelPushEntry,
@@ -2101,6 +2102,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       <TaskDetailPaneContent
         language={appShellSettings.appLanguage}
         task={taskDetailPaneTask}
+        projects={snapshot.projects}
+        onCopyTask={openTaskCopyModal}
         allTasks={currentProjectTasks}
         events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
         copy={taskWorkspaceCopy}

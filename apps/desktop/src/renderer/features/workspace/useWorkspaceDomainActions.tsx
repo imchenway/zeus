@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect } from 'react';
-import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
+import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
@@ -57,7 +57,7 @@ import {
   updateTaskModelPushDraft,
   updateTaskModelPushRetryProgress,
 } from '../../task/TaskModelPushPendingWorkspace.js';
-import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
+import { parseTaskAttachments, type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
@@ -818,6 +818,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         const nextSnapshot = await props.onUpdateTask?.(taskId, { ...input, expectedUpdatedAt });
         if (!nextSnapshot) throw new Error('Task update handler returned no dashboard snapshot.');
         const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
+        if (input.projectId && updatedTask.projectId === input.projectId) {
+          // 移动成功后打开目标项目，并一次刷新解除关系的其他任务。
+          setSnapshot(nextSnapshot);
+          setProjectDetail(nextSnapshot.projects.find((project) => project.id === updatedTask.projectId));
+          activeProjectIdRef.current = updatedTask.projectId;
+        }
         recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
         refreshOpenTaskEvents(taskId);
         setActionState('idle');
@@ -1493,7 +1499,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (selectedCreatedProject) {
         setActiveNavTarget('projects');
         setActiveProjectSection('tasks');
-        openTaskCreateModal();
+        openTaskCreateModal(null, selectedCreatedProject.id);
       }
     } catch (error) {
       setProjectCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
@@ -1605,19 +1611,22 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function createProjectTaskFromDraft(draft: TaskCreateDraft): Promise<boolean> {
-    if (!props.onCreateTaskDraft || !activeProjectId) return false;
+  /** 新建与复制共用提交身份，目标项目参与去重以免重试落入错误项目。 */
+  async function createProjectTaskFromDraft(draft: TaskCreateDraft, projectId = activeProjectId): Promise<boolean> {
+    if (!props.onCreateTaskDraft || !projectId) return false;
     const previousTaskIds = new Set(snapshot.tasks.map((task) => task.id));
     setActionState('creating-task');
     try {
-      const signature = JSON.stringify(draft);
+      const signature = JSON.stringify({ projectId, draft });
       const previousIdentity = taskCreationIdentityRef.current;
       const identity = previousIdentity?.signature === signature ? previousIdentity : { signature, idempotencyKey: createSessionOperationId() };
       taskCreationIdentityRef.current = identity;
-      const nextSnapshot = await props.onCreateTaskDraft(activeProjectId, draft, identity.idempotencyKey);
-      const createdTask = selectCreatedProjectTask(nextSnapshot, previousTaskIds, activeProjectId);
+      const nextSnapshot = await props.onCreateTaskDraft(projectId, draft, identity.idempotencyKey);
+      const createdTask = selectCreatedProjectTask(nextSnapshot, previousTaskIds, projectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
+        setProjectDetail(nextSnapshot.projects.find((project) => project.id === projectId));
+        activeProjectIdRef.current = projectId;
         // 弹窗提交成功后才落真实任务；只清搜索和标签并打开详情，不覆盖用户按项目记住的状态筛选。
         setConversationDraftOpen(false);
         setTaskSearchQuery('');
@@ -1626,25 +1635,52 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setActiveProjectSection('tasks');
         setTaskDetailPaneTaskId(createdTask.id);
         if (props.onLoadTaskEvents) {
-          setTaskEvents(await props.onLoadTaskEvents(createdTask.id));
+          // 已创建成功后，事件读取失败不能让用户重复创建任务。
+          void props
+            .onLoadTaskEvents(createdTask.id)
+            .then(setTaskEvents)
+            .catch((error: unknown) => recordLocalError('task-event-refresh', error));
         }
       }
       setActionState('idle');
       taskCreationIdentityRef.current = null;
       return true;
     } catch (error) {
-      setTaskCreateError(taskWorkspaceCopy.taskCreateSubmitFailed);
+      setTaskCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       recordLocalError('renderer-action', error);
       setActionState('idle');
       return false;
     }
   }
 
-  function openTaskCreateModal(parentTaskId: string | null = null): void {
+  /** 初始化草稿时冻结目标项目，支持项目刚创建但界面尚未重绘的情况。 */
+  function openTaskCreateModal(parentTaskId: string | null = null, projectId = activeProjectId): void {
     taskCreateReturnFocusRef.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), parentTaskId });
+    setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), projectId: projectId ?? '', parentTaskId });
     setTaskCreateError('');
     setTaskCreateModalOpen(true);
+  }
+
+  /** 复制仅预填可编辑内容，目标选择和保存沿用新建任务流程。 */
+  function openTaskCopyModal(task: TaskRecord): void {
+    openTaskCreateModal();
+    setActiveProjectSection('tasks');
+    setTaskCreateForm({
+      ...buildTaskCreateInitialForm(appShellSettings.appLanguage),
+      projectId: snapshot.projects.find((project) => project.id !== task.projectId)?.id ?? task.projectId,
+      copiedFromTaskId: task.id,
+      title: task.title,
+      taskType: task.taskType,
+      description: task.description ?? '',
+      defectCurrentState: task.defectCurrentState ?? '',
+      defectExpectedOutcome: task.defectExpectedOutcome ?? '',
+      defectReproductionSteps: task.defectReproductionSteps ?? '',
+      optimizationCurrentState: task.optimizationCurrentState ?? '',
+      optimizationExpectedOutcome: task.optimizationExpectedOutcome ?? '',
+      priority: isTaskPriority(task.priority) ? task.priority : 'p3',
+      tags: (task.tags ?? []).join(', '),
+      attachments: parseTaskAttachments(task.sourceContextJson),
+    });
   }
 
   function closeTaskCreateModal(): void {
@@ -1772,7 +1808,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       }
       return;
     }
-    const created = await createProjectTaskFromDraft(normalized.draft);
+    const created = await createProjectTaskFromDraft(normalized.draft, taskCreateForm.projectId);
     if (created) closeTaskCreateModal();
   }
 
@@ -3330,6 +3366,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskConversation,
     openTaskConversationDrawer,
     openTaskCreateModal,
+    openTaskCopyModal,
     openTaskDetailPane,
     openTaskGitDelivery,
     openTaskModelPush,
