@@ -1622,6 +1622,11 @@ a {
   padding: clamp(28px, 5vw, 64px) clamp(24px, 6vw, 88px) 72px;
 }
 
+/* 扩展页统一承载纵向滚动，避免后面的通用工作区裁剪规则覆盖它。 */
+.macos-ai-app .workspace-view.skills-workspace {
+  overflow-y: auto;
+}
+
 .macos-ai-app .skills-workspace-header,
 .macos-ai-app .skills-workflow-defaults,
 .macos-ai-app .skills-catalog {
@@ -1991,6 +1996,8 @@ a {
 }
 
 .macos-ai-app .extensions-workspace > .skills-workspace {
+  /* 嵌入的技能列表随内容展开，只由外层扩展页滚动。 */
+  block-size: max-content;
   background: transparent;
   overflow: visible;
   padding: 0;
@@ -18899,11 +18906,16 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-branch > header strong {
+  /* 名称使用剩余宽度，避免长分支名连带压缩复选框。 */
+  flex: 1;
   overflow-wrap: anywhere;
 }
 
 .macos-ai-app .task-git-delivery-branch > header > span {
   display: flex;
+  /* 长分支名只挤压名称区域，当前会话标记与复制按钮保持单行。 */
+  flex-shrink: 0;
+  white-space: nowrap;
   align-items: center;
   gap: 5px;
 }
