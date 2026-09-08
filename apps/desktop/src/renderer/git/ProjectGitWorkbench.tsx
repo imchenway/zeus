@@ -1615,7 +1615,7 @@ function GitLogSurface(props: {
       </aside>
       <main className="project-git-commit-list">
         <header className="project-git-list-header">
-          <span>{props.zh ? '图谱 / 提交信息' : 'Graph / Commit message'}</span>
+          <span>{props.zh ? '提交关系 / 提交信息' : 'History / Commit message'}</span>
           <span>{props.zh ? '作者' : 'Author'}</span>
           <span>{props.zh ? '日期' : 'Date'}</span>
         </header>

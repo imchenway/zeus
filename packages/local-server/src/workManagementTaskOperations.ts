@@ -106,7 +106,6 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       publishRealtimeEvent(type: string, payload: Record<string, unknown>): void;
       taskStatusEventTitle(status: TaskStatus): string;
       shouldEnqueueTelegram(status: TaskStatus): boolean;
-      scheduleGraphCompletion(task: ZeusTaskRecord): void | Promise<void>;
     },
   ) {}
 
@@ -124,7 +123,6 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     this.recordStatusChanged(existing, updated, 'task.status.patch', context);
     this.options.afterCommit(() => {
       this.options.publishRealtimeEvent('task.status.changed', statusRealtimePayload(updated, existing.status, nextStatus, 'task.status.patch'));
-      if (nextStatus === 'completed') return this.options.scheduleGraphCompletion(updated);
     });
     return {
       result: updated,

@@ -13,7 +13,6 @@ export interface CreateProjectCommandInput {
   note?: string;
   defaultModel?: unknown;
   defaultWorkMode?: unknown;
-  defaultTaskPrompt?: unknown;
 }
 
 export interface UpdateProjectCommandInput {
@@ -54,9 +53,9 @@ export class WorkManagementProjectOperations {
   create(input: CreateProjectCommandInput, projectId: string, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
     if (!input?.name || !input.localPath) throw routeError(400, 'ZEUS_INVALID_PROJECT', 'Project name and localPath are required');
     const localPath = requireReadableProjectDirectory(input.localPath);
-    const initialDefaults = normalizeProjectConfig('pending-project', { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode, defaultTaskPrompt: input.defaultTaskPrompt }, createDefaultProjectConfig('pending-project'));
+    const initialDefaults = normalizeProjectConfig('pending-project', { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode }, createDefaultProjectConfig('pending-project'));
     if (!initialDefaults) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
-    const projectConfig = normalizeProjectConfig(projectId, { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode, defaultTaskPrompt: input.defaultTaskPrompt }, detectProjectConfigFromLocalFiles(projectId, localPath));
+    const projectConfig = normalizeProjectConfig(projectId, { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode }, detectProjectConfigFromLocalFiles(projectId, localPath));
     if (!projectConfig) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
     const project = this.ports.projects.create({ id: projectId, name: input.name, localPath, description: input.description, note: input.note });
     this.ports.saveProjectConfig(project.id, { ...projectConfig, projectId: project.id });

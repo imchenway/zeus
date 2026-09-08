@@ -36,7 +36,6 @@ export interface ZeusProjectRecord {
   description: string | null;
   note: string | null;
   defaultTemplateId: string | null;
-  scanStatus: 'not_scanned' | 'scanning' | 'completed' | 'failed';
   createdAt: string;
   updatedAt: string;
 }
@@ -669,14 +668,13 @@ export class ProjectRepository {
       description: input.description ?? null,
       note: input.note ?? null,
       defaultTemplateId: null,
-      scanStatus: 'not_scanned',
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     this.db.execute(
-      `INSERT INTO projects (id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [record.id, record.name, record.slug, record.localPath, record.description, record.note, record.defaultTemplateId, record.scanStatus, record.createdAt, record.updatedAt],
+      `INSERT INTO projects (id, name, slug, local_path, description, note, default_template_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.name, record.slug, record.localPath, record.description, record.note, record.defaultTemplateId, record.createdAt, record.updatedAt],
     );
     return record;
   }
@@ -689,7 +687,7 @@ export class ProjectRepository {
     const query = options.query?.trim().toLowerCase();
     const projects = this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at
+        `SELECT id, name, slug, local_path, description, note, default_template_id, created_at, updated_at
        FROM projects WHERE archived = 0 AND deleted_at IS NULL ORDER BY created_at ASC`,
       )
       .map(mapProjectRow)
@@ -702,7 +700,7 @@ export class ProjectRepository {
 
   getById(projectId: string): ZeusProjectRecord | undefined {
     const row = this.db.get<DbProjectRow>(
-      `SELECT id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at
+      `SELECT id, name, slug, local_path, description, note, default_template_id, created_at, updated_at
        FROM projects WHERE id = ? AND deleted_at IS NULL`,
       [projectId],
     );
@@ -744,33 +742,11 @@ export class ProjectRepository {
   private findByLocalPath(localPath: string, excludeProjectId?: string): ZeusProjectRecord | undefined {
     return this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at
+        `SELECT id, name, slug, local_path, description, note, default_template_id, created_at, updated_at
        FROM projects WHERE deleted_at IS NULL ORDER BY created_at ASC`,
       )
       .map(mapProjectRow)
       .find((project) => project.id !== excludeProjectId && normalizeProjectLocalPath(project.localPath) === localPath);
-  }
-
-  updateScanStatus(projectId: string, scanStatus: ZeusProjectRecord['scanStatus']): ZeusProjectRecord {
-    const timestamp = nowIso();
-    // 扫描状态只记录真实扫描生命周期，不提前写入 completed，避免 UI 误判图谱已可用。
-    this.db.execute(`UPDATE projects SET scan_status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [scanStatus, timestamp, projectId]);
-    const updated = this.getById(projectId);
-    if (!updated) {
-      throw new Error(`Zeus project not found: ${projectId}`);
-    }
-    return updated;
-  }
-
-  recoverInterruptedScans(activeProjectIds: readonly string[] = []): number {
-    const timestamp = nowIso();
-    const activeIds = activeProjectIds.filter((id) => typeof id === 'string' && id.length > 0);
-    const activeFilter = activeIds.length > 0 ? ` AND id NOT IN (${activeIds.map(() => '?').join(', ')})` : '';
-    const interrupted = this.db.select<{ id: string }>(`SELECT id FROM projects WHERE scan_status = 'scanning' AND deleted_at IS NULL${activeFilter}`, activeIds);
-    if (interrupted.length === 0) return 0;
-    // 扫描是进程内任务；无本进程所有权的 scanning 只能来自上次异常退出或旧版本崩溃残留，恢复为 failed 让用户可以重试。
-    this.db.execute(`UPDATE projects SET scan_status = 'failed', updated_at = ? WHERE scan_status = 'scanning' AND deleted_at IS NULL${activeFilter}`, [timestamp, ...activeIds]);
-    return interrupted.length;
   }
 
   prepareArchive(projectId: string): ProjectArchiveConfirmation {
@@ -830,7 +806,7 @@ export class ProjectRepository {
   listArchived(): ZeusProjectRecord[] {
     return this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at
+        `SELECT id, name, slug, local_path, description, note, default_template_id, created_at, updated_at
        FROM projects WHERE archived = 1 AND deleted_at IS NULL ORDER BY updated_at DESC`,
       )
       .map(mapProjectRow);
@@ -1120,7 +1096,7 @@ export class TaskRepository {
       const allowTests = input.allowTests ?? existing.allowTests;
       const allowGitCommit = input.allowGitCommit ?? existing.allowGitCommit;
       const previousSourceContext = parseTaskSourceContextJson(existing.sourceContextJson);
-      // 跨项目只沿用附件，原项目的图谱、执行者及目录配置不进入目标项目。
+      // 跨项目只沿用附件，原项目的来源上下文、执行者及目录配置不进入目标项目。
       const baseSourceContext = projectChanged ? { attachments: previousSourceContext.attachments ?? [] } : previousSourceContext;
       const sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...baseSourceContext, attachments: input.attachments } : baseSourceContext;
       const sourceContextJson = JSON.stringify(sourceContext);
@@ -1213,21 +1189,6 @@ export class TaskRepository {
       }
       return { task: updated, changedFields, ...resultBase };
     });
-  }
-
-  updateSourceContext(taskId: string, sourceContext: Record<string, unknown>): ZeusTaskRecord {
-    const existing = this.getById(taskId);
-    if (!existing) {
-      throw new Error(`Zeus task not found: ${taskId}`);
-    }
-    const timestamp = nextIsoTimestamp(existing.updatedAt);
-    // 图谱关联会持续补充任务来源上下文，单独更新 source_context_json，避免误改标题、描述和状态。
-    this.db.execute(`UPDATE tasks SET source_context_json = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [JSON.stringify(sourceContext), timestamp, taskId]);
-    const updated = this.getById(taskId);
-    if (!updated) {
-      throw new Error(`Zeus task not found: ${taskId}`);
-    }
-    return updated;
   }
 
   updateTags(taskId: string, tags: string[]): ZeusTaskRecord {
@@ -2146,7 +2107,6 @@ interface DbProjectRow {
   description: string | null;
   note: string | null;
   default_template_id: string | null;
-  scan_status: ZeusProjectRecord['scanStatus'];
   created_at: string;
   updated_at: string;
 }
@@ -2302,7 +2262,6 @@ function mapProjectRow(row: DbProjectRow): ZeusProjectRecord {
     description: row.description,
     note: row.note,
     defaultTemplateId: row.default_template_id,
-    scanStatus: row.scan_status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

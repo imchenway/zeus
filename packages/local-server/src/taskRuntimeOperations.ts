@@ -1,4 +1,4 @@
-import { type AiRuntimeLogEntry, type AiRuntimeSession, createNonCodexAiCliAdapterInvocation, isNonCodexAiCliAdapterId } from '@zeus/ai-runtime';
+import { type AiRuntimeLogEntry, type AiRuntimeSession, isNonCodexAiCliAdapterId } from '@zeus/ai-runtime';
 import {
   buildTaskPushLayout,
   isTaskAttachmentField,
@@ -20,7 +20,6 @@ import { createTelegramBotMessageClient, createTelegramLongPollingClient, create
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative, sep } from 'node:path';
-import { type GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
 import { isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import type { NativeConversationAttachment } from './index.js';
 import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
@@ -31,18 +30,6 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TaskRuntimeOperationDependencies = Record<string, any>;
-
-interface GraphQuestionAnswer {
-  projectId: string;
-  question: string;
-  answer: string;
-  sessionId: string | null;
-  conversationId?: string | null;
-  sources: {
-    nodes: GraphViewSnapshot['nodes'];
-    edges: GraphViewSnapshot['edges'];
-  };
-}
 
 export interface InspectedTaskPushAttachment {
   option: TaskPushParentAttachmentOption;
@@ -102,9 +89,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     platformMutableState,
     projects,
     publishRealtimeEvent,
-    readCurrentGraphSummaryForProject,
     readGitDiff,
-    readProjectConfig,
     readTelegramToken,
     recordTaskEvent,
     redactSensitiveText,
@@ -112,13 +97,12 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     resolveResponsesRuntime,
     resolveTaskManagementStatusConfigForProject,
     runtimeSessions,
-    searchCurrentGraphNodesForProject,
     taskAttachmentRoot,
     taskPushContentAttachmentFields,
     taskStatusEventTitle,
     tasks,
     telegramCommandRouteError,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     trustedConversationAttachmentRoots,
   } = dependencies;
   function resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null {
@@ -805,7 +789,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       }
       return {
         task: updated,
-        conversation: toGraphConversationHistoryItem(conversation),
+        conversation: toConversationHistoryItem(conversation),
         ...(effect.operationStatus === 'queued' ? { queued: true as const, reason: 'Codex native dispatch is pending.' } : {}),
       };
     }
@@ -847,7 +831,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       });
     }
     db.afterCommit(() => publishRuntimeSessionEvent('runtime.session.created', effect.session, { source: effect.eventType, conversationId: runningConversation.id }));
-    return { task: updated, runtimeSession: effect.session, conversation: toGraphConversationHistoryItem(runningConversation) };
+    return { task: updated, runtimeSession: effect.session, conversation: toConversationHistoryItem(runningConversation) };
   }
 
   async function startTaskNativeConversation(project: ZeusProjectRecord, task: ZeusTaskRecord, eventType: string, eventTitle: string, instruction?: string, operationIdentity?: string) {
@@ -899,7 +883,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       },
     });
     await db.save();
-    return { task: nextTask, conversation: toGraphConversationHistoryItem(conversation), nativeOperation: operation, ...(operation.status === 'queued' ? { queued: true as const, reason: 'Codex native dispatch is pending.' } : {}) };
+    return { task: nextTask, conversation: toConversationHistoryItem(conversation), nativeOperation: operation, ...(operation.status === 'queued' ? { queued: true as const, reason: 'Codex native dispatch is pending.' } : {}) };
   }
 
   function stopRunningTaskRuntimeSessions(taskId: string): number {
@@ -1172,205 +1156,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return [`Runtime 日志已导出：${task.title} (${task.id})`, `会话 ${sessions.length} 个 · 日志 ${logCount} 行`, `文件：${exportPath}`].join('\n');
   }
 
-  async function formatTelegramGraphAsk(projectRef: string | undefined, question: string): Promise<string> {
-    if (!projectRef || !question.trim()) return '请提供项目和问题：/ask <project> <question>';
-    const project = findProjectByRef(projectRef);
-    if (!project) return `未找到项目：${projectRef}`;
-    const answer = await answerProjectGraphQuestion(project, question.trim());
-    const sourceLines = [
-      ...answer.sources.nodes.slice(0, 5).map((node) => {
-        const lineStart = typeof node.metadata.lineStart === 'number' ? `:${node.metadata.lineStart}` : '';
-        return `- 节点 ${node.name} (${node.nodeType}) 来源 ${node.sourceRef}${lineStart}`;
-      }),
-      ...answer.sources.edges.slice(0, 3).map((edge) => `- 关系 ${edge.edgeType} 来源 ${edge.sourceRef} confidence ${edge.confidence}`),
-    ];
-    return [
-      `图谱问答回答：${project.name}`,
-      `问题：${answer.question}`,
-      `回答：${answer.answer}`,
-      answer.sessionId ? `Runtime 会话：${answer.sessionId}` : 'Runtime 会话：未启动，来源不足以判断。',
-      '来源：',
-      ...(sourceLines.length > 0 ? sourceLines : ['- 未命中真实图谱节点或边']),
-    ].join('\n');
-  }
-
-  async function answerProjectGraphQuestion(project: ZeusProjectRecord, question: string, parentOperationIdentity?: string): Promise<GraphQuestionAnswer> {
-    const childIdentity = parentOperationIdentity ? stableGraphQuestionChildIdentity(parentOperationIdentity) : null;
-    const { summary } = readCurrentGraphSummaryForProject(project);
-    if (summary.nodeCount === 0) {
-      return createInsufficientGraphAnswer(project.id, question, `不足以判断：项目 ${project.name} 尚未扫描出真实代码图谱。`, childIdentity?.conversationId);
-    }
-    const { result } = searchCurrentGraphNodesForProject(project, question, undefined, undefined, '0');
-    if (result.nodes.length === 0 && result.edges.length === 0) {
-      return createInsufficientGraphAnswer(project.id, question, '不足以判断：未命中真实图谱节点或边，请换用源码文件名、模块名、函数名或接口名提问。', childIdentity?.conversationId);
-    }
-    const nodes = result.nodes.slice(0, 5);
-    const edges = result.edges.slice(0, 3);
-    const projectConfig = readProjectConfig(project.id);
-    const prompt = buildGraphQuestionPrompt(project, question, nodes, edges, projectConfig);
-    const adapterId = platformMutableState.runtimeSettings.defaultAdapterId;
-    if (adapterId === 'codex') {
-      const operation = await codexNativeCoordinator.startEphemeralConversation({
-        ...(childIdentity ? { conversationId: childIdentity.conversationId, submissionId: childIdentity.submissionId } : {}),
-        projectId: project.id,
-        projectLocalPath: project.localPath,
-        title: `图谱问答：${question.slice(0, 48)}`,
-        prompt,
-        model: await resolveCodexModel(project),
-        idempotencyKey: childIdentity?.providerIdempotencyKey ?? randomUUID(),
-        clientUserMessageId: childIdentity?.clientUserMessageId ?? randomUUID(),
-      });
-      if (operation.status !== 'active' || !operation.providerTurnId) {
-        throw Object.assign(new Error('Codex native graph provider dispatch failed.'), { code: 'ZEUS_CODEX_EPHEMERAL_DISPATCH_FAILED' });
-      }
-      const completed = await codexNativeCoordinator.waitForTurnResult({
-        conversationId: operation.conversationId,
-        providerTurnId: operation.providerTurnId,
-        timeoutMs: platformMutableState.runtimeSettings.executionTimeoutSeconds * 1_000,
-      });
-      return {
-        projectId: project.id,
-        question,
-        answer: completed.answer || '不足以判断：Codex native turn 未返回可用回答。',
-        sessionId: null,
-        conversationId: operation.conversationId,
-        sources: { nodes, edges },
-      };
-    }
-    if (!isNonCodexAiCliAdapterId(adapterId)) {
-      throw new Error(`AI CLI adapter not found: ${String(adapterId)}`);
-    }
-    const invocation = createNonCodexAiCliAdapterInvocation(adapterId, prompt, {
-      // 图谱问答同样属于项目内 AI Runtime，优先使用项目默认模型。
-      model: projectConfig.defaultModel ?? platformMutableState.runtimeSettings.adapterModels[adapterId],
-      defaultArgs: platformMutableState.runtimeSettings.adapterDefaultArgs[adapterId] ?? [],
-      commandPath: platformMutableState.runtimeSettings.adapterCliPaths[adapterId],
-    });
-    const session = await aiRuntimeManager.startSession({
-      ...(childIdentity ? { id: childIdentity.runtimeSessionId } : {}),
-      projectId: project.id,
-      command: invocation.command,
-      args: invocation.args,
-      cwd: project.localPath,
-      env: buildRuntimeProcessEnv(),
-    });
-    await waitForRuntimeSessionExit(session.id, platformMutableState.runtimeSettings.executionTimeoutSeconds * 1_000);
-    await db.save();
-    const answer = collectRuntimeAnswer(session.id);
-    return {
-      projectId: project.id,
-      question,
-      answer: answer || '不足以判断：AI Runtime 未返回可用回答。',
-      sessionId: session.id,
-      ...(childIdentity ? { conversationId: childIdentity.conversationId } : {}),
-      sources: { nodes, edges },
-    };
-  }
-
-  function createInsufficientGraphAnswer(projectId: string, question: string, answer: string, conversationId?: string): GraphQuestionAnswer {
-    return {
-      projectId,
-      question,
-      answer,
-      sessionId: null,
-      ...(conversationId ? { conversationId } : {}),
-      sources: { nodes: [], edges: [] },
-    };
-  }
-
-  function stableGraphQuestionChildIdentity(parentOperationIdentity: string): {
-    conversationId: string;
-    submissionId: string;
-    runtimeSessionId: string;
-    providerIdempotencyKey: string;
-    clientUserMessageId: string;
-  } {
-    const derive = (kind: string): string => createHash('sha256').update(`${parentOperationIdentity}\0${kind}`).digest('hex').slice(0, 24);
-    return {
-      conversationId: `conversation_graph_${derive('conversation')}`,
-      submissionId: `conversation_submission_graph_${derive('submission')}`,
-      runtimeSessionId: `graph-session-${derive('runtime-session')}`,
-      providerIdempotencyKey: `graph-question:${derive('provider-operation')}`,
-      clientUserMessageId: `graph-client-${derive('client-message')}`,
-    };
-  }
-
-  /** 将图谱问答沉淀为可追溯对话；只保存真实问题、真实回答和真实来源 ID，不生成任何伪上下文。 */
-  function persistGraphQuestionConversation(answer: GraphQuestionAnswer): void {
-    if (answer.conversationId) {
-      const nativeConversation = conversations.getById(answer.conversationId);
-      if (nativeConversation?.transportKind === 'codex_native') {
-        conversations.updateRuntimeState(nativeConversation.id, { status: 'closed', summary: answer.answer.slice(0, 240) });
-        return;
-      }
-    }
-    const createdAt = new Date().toISOString();
-    const conversation = conversations.create({
-      ...(answer.conversationId ? { id: answer.conversationId } : {}),
-      projectId: answer.projectId,
-      sessionId: answer.sessionId ?? undefined,
-      title: `图谱问答：${answer.question.slice(0, 48)}`,
-      summary: answer.answer.slice(0, 240),
-      status: 'closed',
-    });
-    conversations.appendMessage({
-      conversationId: conversation.id,
-      role: 'user',
-      content: answer.question,
-      source: 'graph_question',
-      metadata: { projectId: answer.projectId },
-      createdAt,
-    });
-    conversations.appendMessage({
-      conversationId: conversation.id,
-      role: 'assistant',
-      content: answer.answer,
-      source: 'graph_answer',
-      metadata: {
-        projectId: answer.projectId,
-        sessionId: answer.sessionId,
-        sourceNodeIds: answer.sources.nodes.map((node) => node.id),
-        sourceEdgeIds: answer.sources.edges.map((edge) => edge.id),
-      },
-      createdAt: new Date(Date.parse(createdAt) + 1).toISOString(),
-    });
-  }
-
-  function buildGraphQuestionPrompt(project: ZeusProjectRecord, question: string, nodes: GraphViewSnapshot['nodes'], edges: GraphViewSnapshot['edges'], projectConfig = readProjectConfig(project.id)): string {
-    const sourceContext = {
-      graphQuestion: question,
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        type: node.nodeType,
-        name: node.name,
-        qualifiedName: node.qualifiedName,
-        sourceRef: node.sourceRef,
-        lineStart: node.metadata.lineStart,
-        lineEnd: node.metadata.lineEnd,
-      })),
-      edges: edges.map((edge) => ({
-        id: edge.id,
-        type: edge.edgeType,
-        sourceNodeId: edge.sourceNodeId,
-        targetNodeId: edge.targetNodeId,
-        sourceRef: edge.sourceRef,
-        confidence: edge.confidence,
-      })),
-    };
-    return [
-      '你是 Zeus 本地优先 AI 研发工作台中的 AI Runtime。',
-      '只能基于真实仓库、真实日志、真实错误输出行动；信息不足时先说明缺口，不要编造结果。',
-      `项目：${project.name}`,
-      `项目路径：${project.localPath}`,
-      `任务：图谱问答：${question}`,
-      '任务描述：基于 Zeus 真实代码图谱回答用户问题。回答必须带来源；如果来源不足，明确说“不足以判断”。',
-      `来源上下文：${JSON.stringify(sourceContext)}`,
-      `项目默认工作模式：${projectConfig.defaultWorkMode}`,
-      ...(projectConfig.defaultTaskPrompt.trim() ? [`项目默认任务提示词：${projectConfig.defaultTaskPrompt.trim()}`] : []),
-      '执行要求：请仅基于 sourceContext 中的真实图谱节点和边回答，保留文件路径、行号、节点或关系来源；不要编造未出现的模块、接口、表或任务记录。',
-    ].join('\n');
-  }
-
   async function waitForRuntimeSessionExit(sessionId: string, timeoutMs: number): Promise<void> {
     if (await aiRuntimeManager.waitForSessionCompletion(sessionId, timeoutMs)) return;
     // 超时后必须先请求停止并等待 close 排空；仍不退出时再强制结束，禁止留下后台耗能进程。
@@ -1499,12 +1284,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     collectRecentTaskRuntimeLogRows,
     formatTelegramTaskLogs,
     exportTelegramTaskLogs,
-    formatTelegramGraphAsk,
-    answerProjectGraphQuestion,
-    createInsufficientGraphAnswer,
-    stableGraphQuestionChildIdentity,
-    persistGraphQuestionConversation,
-    buildGraphQuestionPrompt,
     waitForRuntimeSessionExit,
     collectRuntimeAnswer,
     formatTelegramTaskDiff,

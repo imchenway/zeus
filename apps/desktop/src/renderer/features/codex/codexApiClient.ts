@@ -24,7 +24,7 @@ import type {
 import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageOverviewSnapshot } from '@zeus/shared';
 import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot, SkillCatalog, SkillInstallResult, SkillInstallSource } from './codexContracts.js';
 import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPublicClientScopeIds } from './codexPublicCommandClient.js';
-import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from '../conversations/graphConversationCommandClient.js';
+import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
 import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTransport.js';
 
@@ -190,8 +190,8 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     },
     startTaskModelPush: async (taskId, input, lifecycle) => {
       const { idempotencyKey, ...body } = input;
-      const commandBody = await buildGraphConversationCommandRequest({
-        commandType: graphConversationClientCommandTypes.taskConversationCreate,
+      const commandBody = await buildConversationStartCommandRequest({
+        commandType: conversationStartClientCommandTypes.taskConversationCreate,
         scopeKind: 'task',
         scopeId: taskId,
         operationSeed: idempotencyKey,

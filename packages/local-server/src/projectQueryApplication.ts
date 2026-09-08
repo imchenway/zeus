@@ -7,18 +7,11 @@ export interface ProjectQueryGitReadEffectPort {
   readOverviewStatus(project: ZeusProjectRecord): Promise<GitStatusSummary & { limitation?: string }>;
 }
 
-export interface ProjectGraphSummary {
-  nodeCount: number;
-  edgeCount: number;
-  viewCount: number;
-}
-
 interface ProjectQueryPorts {
   projects: Pick<ProjectRepository, 'search' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'listByProject'>;
   sharedPaths: Pick<ProjectSharedPathRepository, 'listByProject'>;
   readConfig(projectId: string): ProjectConfigSnapshot;
-  readGraphSummary(project: ZeusProjectRecord): ProjectGraphSummary;
   git: ProjectQueryGitReadEffectPort;
 }
 
@@ -42,21 +35,11 @@ export class ProjectQueryApplication {
     return this.ports.readConfig(this.requireProject(projectId).id);
   }
 
-  readScanStatus(projectId: string): { projectId: string; scanStatus: ZeusProjectRecord['scanStatus']; graph: ProjectGraphSummary } {
-    const project = this.requireProject(projectId);
-    return {
-      projectId: project.id,
-      scanStatus: project.scanStatus,
-      graph: this.ports.readGraphSummary(project),
-    };
-  }
-
   async readOverview(projectId: string): Promise<Record<string, unknown>> {
     const project = this.requireProject(projectId);
     const projectTasks = this.ports.tasks.listByProject(project.id);
     return {
       project,
-      graph: this.ports.readGraphSummary(project),
       git: await this.ports.git.readOverviewStatus(project),
       tasks: {
         total: projectTasks.length,

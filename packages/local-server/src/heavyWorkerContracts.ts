@@ -1,19 +1,6 @@
-import type { ProjectScanResult } from '@zeus/code-indexer';
 import type { GitDiffSummary, GitStatusSummary } from '@zeus/git-core';
-import type { ProjectGraph } from '@zeus/graph-engine';
 
 export const heavyWorkerProtocolVersion = 1 as const;
-
-export interface CodeMapHeavyWorkerInput {
-  protocolVersion: typeof heavyWorkerProtocolVersion;
-  jobId: string;
-  kind: 'code_map_scan';
-  rootPath: string;
-  projectName: string;
-  ignoreDirectories: string[];
-  additionalFiles: Array<{ absolutePath: string; relativePath: string }>;
-  maxResultBytes: number;
-}
 
 export interface GitDiffHeavyWorkerInput {
   protocolVersion: typeof heavyWorkerProtocolVersion;
@@ -31,7 +18,7 @@ export interface GitStatusHeavyWorkerInput {
   maxResultBytes: number;
 }
 
-export type HeavyWorkerInput = CodeMapHeavyWorkerInput | GitDiffHeavyWorkerInput | GitStatusHeavyWorkerInput;
+export type HeavyWorkerInput = GitDiffHeavyWorkerInput | GitStatusHeavyWorkerInput;
 
 export interface HeavyWorkerResultRef {
   jobId: string;
@@ -39,12 +26,6 @@ export interface HeavyWorkerResultRef {
   resultType: HeavyWorkerInput['kind'];
   sha256: string;
   byteLength: number;
-}
-
-export interface CodeMapHeavyWorkerResult {
-  scan: ProjectScanResult;
-  graph: ProjectGraph;
-  resultRef: HeavyWorkerResultRef;
 }
 
 export interface GitDiffHeavyWorkerResult {
@@ -57,9 +38,9 @@ export interface GitStatusHeavyWorkerResult {
   resultRef: HeavyWorkerResultRef & { resultType: 'git_status' };
 }
 
-export type HeavyWorkerResult = CodeMapHeavyWorkerResult | GitDiffHeavyWorkerResult | GitStatusHeavyWorkerResult;
+export type HeavyWorkerResult = GitDiffHeavyWorkerResult | GitStatusHeavyWorkerResult;
 
-export type HeavyWorkerProgressStage = 'worker_started' | 'source_indexed' | 'graph_built' | 'git_process_started' | 'git_projection_built';
+export type HeavyWorkerProgressStage = 'worker_started' | 'git_process_started' | 'git_projection_built';
 
 export type HeavyWorkerMessage =
   | {

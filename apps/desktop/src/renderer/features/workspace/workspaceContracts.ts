@@ -1,4 +1,3 @@
-import type { MermaidDiagramExportFile, PlantUmlDiagramExportFile } from '../graph/diagramExport.js';
 import { type ThirdPartyTaskExtract } from '@zeus/shared';
 import type { NativeConversationAttachment, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 import { type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
@@ -10,7 +9,6 @@ import {
   type AiRuntimeTerminalEvent,
   type AiRuntimeTerminalSnapshot,
   type AppShellSettings,
-  type CodeMapSettings,
   type CodexConfigActivationResult,
   type CodexConfigImportPreview,
   type CodexConfigImportResult,
@@ -26,13 +24,7 @@ import {
   type GitDiffSummary,
   type GitOperationConfirmation,
   type GitPatchExport,
-  type GraphConversationHistoryItem,
-  type GraphConversationHistoryPage,
-  type GraphNeighborhood,
-  type GraphQuestionAnswer,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  type GraphViewType,
+  type ConversationHistoryItem,
   type HighRiskGitOperation,
   type ImportLocalBusinessDataResult,
   type ImportLocalSettingsRequest,
@@ -82,27 +74,10 @@ import {
   type TaskRuntimeControlHandlerResult,
 } from './workspaceSupport.js';
 export type WorkspacePageProps = {
+  /** 读取已有会话正文，供历史会话展示使用。 */
+  onLoadLegacyConversation?: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
   snapshot?: DashboardSnapshot;
   executionHostTransition?: ExecutionHostTransition;
-  onScanCurrentGraph?: () => Promise<DashboardSnapshot>;
-  onLoadGraphView?: (viewType?: GraphViewType) => Promise<GraphViewSnapshot>;
-  onLoadGraphNeighborhood?: (nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
-  onSearchGraph?: (query: string, nodeType?: string, edgeType?: string, minConfidence?: number) => Promise<GraphSearchResult>;
-  onScanProjectGraph?: (projectId: string) => Promise<DashboardSnapshot>;
-  onLoadProjectGraphView?: (projectId: string, viewType?: GraphViewType) => Promise<GraphViewSnapshot>;
-  onLoadProjectGraphNeighborhood?: (projectId: string, nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
-  onSearchProjectGraph?: (projectId: string, query: string, nodeType?: string, edgeType?: string, minConfidence?: number) => Promise<GraphSearchResult>;
-  onAskGraph?: (projectId: string, question: string) => Promise<GraphQuestionAnswer>;
-  onLoadGraphConversations?: (
-    projectId: string,
-    input?: {
-      query?: string;
-      limit?: number;
-      offset?: number;
-      archived?: boolean;
-    },
-  ) => Promise<GraphConversationHistoryPage>;
-  onLoadGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onSendConversationMessage?: (projectId: string, conversationId: string, content: string) => Promise<SendConversationMessageResult>;
   nativeConversationClient?: NativeConversationAppClient;
   commandClient?: DashboardClient;
@@ -110,9 +85,6 @@ export type WorkspacePageProps = {
   initialNativeProjectConversationChoices?: NativeProjectConversationChoicesSnapshot[];
   initialSelectedNativeConversationId?: string;
   onSubscribeRealtimeEvents?: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void) => (() => void) | void;
-  onArchiveGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
-  onRestoreGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
-  onCreateTaskFromGraphConversation?: (projectId: string, conversationId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onChooseProjectDirectory?: () => Promise<string | null>;
   onCreateCurrentProject?: (request: CreateProjectRequest) => Promise<DashboardSnapshot>;
   onLoadProjects?: (query?: string) => Promise<ProjectRecord[]>;
@@ -160,8 +132,7 @@ export type WorkspacePageProps = {
   onContinueTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
   onCancelTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRetryTask?: (taskId: string) => Promise<DashboardSnapshot>;
-  onCreateTaskFromGraphNode?: (nodeId: string, projectId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
-  onOpenGraphSource?: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
+  onOpenSource?: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
     opened: boolean;
     filePath: string | null;
     lineStart?: number | null;
@@ -170,14 +141,10 @@ export type WorkspacePageProps = {
   onLoadGitDiff?: () => Promise<GitDiffSummary>;
   onExportGitPatch?: () => Promise<GitPatchExport>;
   onExportPatchFile?: (patch: GitPatchExport) => Promise<{ saved: boolean; filePath: string | null }>;
-  onExportMermaidDiagramFile?: (payload: MermaidDiagramExportFile) => Promise<{ saved: boolean; filePath: string | null }>;
-  onExportPlantUmlDiagramFile?: (payload: PlantUmlDiagramExportFile) => Promise<{ saved: boolean; filePath: string | null }>;
   initialRuntimeStatus?: RuntimeStatusSnapshot;
   onLoadRuntimeStatus?: () => Promise<RuntimeStatusSnapshot>;
   onLoadRuntimeSettings?: () => Promise<RuntimeSettings>;
   onSaveRuntimeSettings?: (input: RuntimeSettings) => Promise<RuntimeSettings>;
-  onLoadCodeMapSettings?: () => Promise<CodeMapSettings>;
-  onSaveCodeMapSettings?: (input: CodeMapSettings) => Promise<CodeMapSettings>;
   onLoadAppShellSettings?: () => Promise<AppShellSettings>;
   onLoadCodexLegacyImports?: () => Promise<CodexLegacyImportSnapshot>;
   onStartCodexLegacyImport?: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
@@ -185,11 +152,6 @@ export type WorkspacePageProps = {
   onImportCodexConfig?: () => Promise<CodexConfigImportResult>;
   onActivateCodexConfig?: () => Promise<CodexConfigActivationResult>;
   onSaveAppShellSettings?: (input: AppShellSettingsSavePayload) => Promise<AppShellSettings>;
-  onClearLocalCaches?: () => Promise<{
-    cleared: boolean;
-    clearedCaches: Array<'code-index' | 'graph-view' | 'layout'>;
-    clearedAt: string;
-  }>;
   onExportLocalSettings?: () => Promise<LocalSettingsExportSnapshot>;
   onImportLocalSettings?: (input: ImportLocalSettingsRequest) => Promise<ImportLocalSettingsResult>;
   onExportLocalBusinessData?: () => Promise<LocalBusinessDataSnapshot>;
@@ -270,10 +232,6 @@ export type WorkspacePageProps = {
   initialTaskTemplates?: TaskTemplateRecord[];
   initialArchivedProjects?: ProjectRecord[];
   initialArchivedTasks?: TaskRecord[];
-  initialGraphView?: GraphViewSnapshot;
-  initialGraphProjectId?: string;
-  initialGraphAnswer?: GraphQuestionAnswer;
-  initialGraphConversations?: GraphConversationHistoryItem[];
   initialRuntimeSessions?: AiRuntimeSession[];
   initialRuntimeLogs?: AiRuntimeLogEntry[];
   initialRuntimeAdapters?: AiRuntimeAdapterDescriptor[];
@@ -282,7 +240,6 @@ export type WorkspacePageProps = {
   initialRuntimeGenericShellCommand?: string;
   initialSecuritySecrets?: SecuritySecretsSnapshot;
   initialRuntimeConfirmation?: RuntimeOperationConfirmation;
-  initialCodeMapSettings?: CodeMapSettings;
   initialProjectConfig?: ProjectConfig;
   initialProjectDatabaseSecret?: ProjectDatabaseSecretSnapshot;
   initialAppShellSettings?: AppShellSettings;

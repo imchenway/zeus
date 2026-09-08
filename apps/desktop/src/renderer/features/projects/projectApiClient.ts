@@ -1,3 +1,4 @@
+import type { ProjectOverview } from './projectContracts.js';
 import type {
   CreateProjectRequest,
   LoadProjectsRequest,
@@ -16,6 +17,8 @@ import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } f
 import type { ProjectRepositoryDiscovery } from '@zeus/shared';
 
 export interface ProjectApiClient {
+  loadProjectOverview: (projectId: string) => Promise<ProjectOverview>;
+
   /** 接纳后台本地仓库发现，立即返回状态，不等待扫描。 */
   refreshProjectRepositories: (projectId: string) => Promise<ProjectRepositoryDiscovery>;
   loadProjects: (input?: LoadProjectsRequest) => Promise<ProjectRecord[]>;
@@ -41,6 +44,8 @@ export interface ProjectApiClient {
 /** 项目上下文的公开查询/命令映射；路径和 HTTP method 不再泄漏给页面 controller。 */
 export function createProjectApiClient(transport: LocalApiTransport): ProjectApiClient {
   return {
+    loadProjectOverview: (projectId) => transport.request<ProjectOverview>(`/api/projects/${projectId}/overview`),
+
     refreshProjectRepositories: async (projectId) => {
       // 请求信封在网络重连时复用，同一次刷新不会重复接纳。
       const body = await buildWorkManagementCommandRequest({

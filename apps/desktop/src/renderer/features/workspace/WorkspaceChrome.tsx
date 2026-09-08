@@ -1,3 +1,4 @@
+import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -16,7 +17,6 @@ import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/Spi
 import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
 import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
-import { GraphIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/Graph';
 import { TerminalWindowIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../../session/ProjectConversationTree.js';
@@ -28,9 +28,8 @@ import { ModalPortal } from '../../ui/ModalPortal.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
-import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type CodeMapSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
+import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, type GenericShellCommandRisk } from './workspaceFormatters.js';
-import { handleSourceListKeyboardNavigation } from '../graph/GraphCanvas.js';
 import {
   controlBusyProps,
   defaultProjectNameFromLocalPath,
@@ -301,14 +300,12 @@ export function ProjectWorkspaceModeToolbar(props: {
     tasks: zh ? '任务' : 'Tasks',
     git: 'Git',
     source: zh ? '源码' : 'Source',
-    graph: zh ? '图谱' : 'Graph',
     commands: zh ? '命令' : 'Commands',
   };
   const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
     tasks: <WorkspaceTasksIcon aria-hidden="true" />,
     git: <WorkspaceGitIcon aria-hidden="true" />,
     source: <WorkspaceSourceIcon aria-hidden="true" />,
-    graph: <WorkspaceGraphIcon aria-hidden="true" />,
     commands: <WorkspaceCommandsIcon aria-hidden="true" />,
   };
   return (
@@ -1027,15 +1024,11 @@ export function formatRuntimeTerminalEnv(env: RuntimeSettings['terminalEnv']): s
 export interface ProjectConfigFormState {
   defaultModel: string;
   defaultWorkMode: ProjectConfig['defaultWorkMode'];
-  defaultTaskPrompt: string;
-  scanIgnoreDirectories: string;
-  indexScope: ProjectConfig['scan']['indexScope'];
   languagePrimary: string;
   languageAdditional: string;
   packageManagers: string;
   manifestPaths: string;
   databaseConnectionName: string;
-  databaseSchemaPaths: string;
   telegramAlias: string;
   allowShell: boolean;
   allowGitWrite: boolean;
@@ -1049,11 +1042,6 @@ export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectI
     serviceTierPreferences: config?.serviceTierPreferences ?? [],
     defaultModel: config?.defaultModel ?? null,
     defaultWorkMode: config?.defaultWorkMode ?? 'plan',
-    defaultTaskPrompt: config?.defaultTaskPrompt ?? '',
-    scan: {
-      ignoreDirectories: config?.scan?.ignoreDirectories ?? ['node_modules', 'dist', '.tmp', 'coverage'],
-      indexScope: config?.scan?.indexScope ?? 'project',
-    },
     language: {
       primary: config?.language?.primary ?? 'typescript',
       additional: config?.language?.additional ?? [],
@@ -1068,7 +1056,6 @@ export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectI
     },
     database: {
       connectionName: config?.database?.connectionName ?? null,
-      schemaPaths: config?.database?.schemaPaths ?? [],
     },
     telegram: {
       alias: config?.telegram?.alias ?? null,
@@ -1085,30 +1072,21 @@ export function toProjectConfigForm(config?: ProjectConfig): ProjectConfigFormSt
     projectId: '',
     defaultModel: null,
     defaultWorkMode: 'plan',
-    defaultTaskPrompt: '',
-    scan: {
-      ignoreDirectories: ['node_modules', 'dist', '.tmp', 'coverage'],
-      indexScope: 'project',
-    },
     language: { primary: 'typescript', additional: [] },
     dependencies: { packageManagers: [], manifestPaths: [] },
     vcs: { isGitRepository: false, gitRoot: null },
-    database: { connectionName: null, schemaPaths: [] },
+    database: { connectionName: null },
     telegram: { alias: null },
     security: { allowShell: false, allowGitWrite: false },
   };
   return {
     defaultModel: normalized.defaultModel ?? '',
     defaultWorkMode: normalized.defaultWorkMode,
-    defaultTaskPrompt: normalized.defaultTaskPrompt,
-    scanIgnoreDirectories: normalized.scan.ignoreDirectories.join(', '),
-    indexScope: normalized.scan.indexScope,
     languagePrimary: normalized.language.primary,
     languageAdditional: normalized.language.additional.join(', '),
     packageManagers: normalized.dependencies.packageManagers.join(', '),
     manifestPaths: normalized.dependencies.manifestPaths.join(', '),
     databaseConnectionName: redactDatabaseConnectionName(normalized.database.connectionName),
-    databaseSchemaPaths: normalized.database.schemaPaths.join(', '),
     telegramAlias: normalized.telegram.alias ?? '',
     allowShell: normalized.security.allowShell,
     allowGitWrite: normalized.security.allowGitWrite,
@@ -1154,12 +1132,7 @@ export function formatProjectDependencies(form: ProjectConfigFormState, copy: Re
 
 export function formatProjectDatabase(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
   const connectionName = redactDatabaseConnectionName(form.databaseConnectionName) || copy.unsetConnectionName;
-  const schemaPaths = parseProjectConfigList(form.databaseSchemaPaths).join(', ') || copy.unsetSchemaPaths;
-  return `${connectionName} · ${schemaPaths}`;
-}
-
-export function formatProjectDatabaseHelp(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
-  return isExternalDatabaseUri(form.databaseConnectionName) ? copy.externalDatabaseHelp : copy.localSchemaHelp;
+  return connectionName;
 }
 
 export function isExternalDatabaseUri(value: string | null | undefined): boolean {
@@ -1219,29 +1192,6 @@ export function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): R
     adapterCliPaths: settings?.adapterCliPaths ?? defaultSettings.adapterCliPaths,
     terminalEnv: settings?.terminalEnv ?? defaultSettings.terminalEnv,
     shell: { ...defaultSettings.shell, ...settings?.shell },
-  };
-}
-
-export function normalizeCodeMapSettings(settings?: Partial<CodeMapSettings>): CodeMapSettings {
-  const defaultSettings: CodeMapSettings = {
-    defaultScanScope: 'project',
-    defaultIgnoreDirectories: ['node_modules', 'dist', '.tmp', 'coverage'],
-    maxCallChainDepth: 3,
-    showLowConfidenceEdges: false,
-    layoutAlgorithm: 'hierarchical',
-    graphCacheStrategy: 'sqlite',
-    tableRelationInference: 'foreign_key_and_name',
-    aiSummaryEnabled: false,
-    incrementalScanEnabled: true,
-    performanceMonitoringEnabled: false,
-    moduleFlowManualNotes: '',
-  };
-  return {
-    ...defaultSettings,
-    ...settings,
-    defaultIgnoreDirectories: Array.isArray(settings?.defaultIgnoreDirectories) ? settings.defaultIgnoreDirectories : defaultSettings.defaultIgnoreDirectories,
-    maxCallChainDepth: typeof settings?.maxCallChainDepth === 'number' ? settings.maxCallChainDepth : defaultSettings.maxCallChainDepth,
-    moduleFlowManualNotes: typeof settings?.moduleFlowManualNotes === 'string' ? settings.moduleFlowManualNotes : defaultSettings.moduleFlowManualNotes,
   };
 }
 

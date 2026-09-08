@@ -84,6 +84,5 @@ export function createEmptyDashboardSnapshot(): DashboardSnapshot {
       remoteBranches: [],
       recentCommits: [],
     },
-    graph: { nodeCount: 0, edgeCount: 0, viewCount: 0 },
   };
 }

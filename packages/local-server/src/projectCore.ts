@@ -1,6 +1,5 @@
 /** Local Server 的项目配置领域规则。 */
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
-export type ProjectIndexScope = 'project' | 'src' | 'custom';
 export type ProjectServiceTierPreference = 'standard' | 'priority';
 
 export interface ProjectModelServiceTierPreference {
@@ -14,11 +13,6 @@ export interface ProjectConfigSnapshot {
   defaultModel: string | null;
   serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultWorkMode: ProjectWorkMode;
-  defaultTaskPrompt: string;
-  scan: {
-    ignoreDirectories: string[];
-    indexScope: ProjectIndexScope;
-  };
   language: {
     primary: string;
     additional: string[];
@@ -33,7 +27,6 @@ export interface ProjectConfigSnapshot {
   };
   database: {
     connectionName: string | null;
-    schemaPaths: string[];
   };
   telegram: {
     alias: string | null;
@@ -48,17 +41,13 @@ export interface UpdateProjectConfigBody {
   defaultModel?: unknown;
   serviceTierPreferences?: unknown;
   defaultWorkMode?: unknown;
-  defaultTaskPrompt?: unknown;
-  scan?: { ignoreDirectories?: unknown; indexScope?: unknown };
   language?: { primary?: unknown; additional?: unknown };
   dependencies?: { packageManagers?: unknown; manifestPaths?: unknown };
   vcs?: { isGitRepository?: unknown; gitRoot?: unknown };
-  database?: { connectionName?: unknown; schemaPaths?: unknown };
+  database?: { connectionName?: unknown };
   telegram?: { alias?: unknown };
   security?: { allowShell?: unknown; allowGitWrite?: unknown };
 }
-
-const defaultProjectIgnoreDirectories = ['node_modules', 'dist', '.tmp', 'coverage'];
 
 /**
  * 生成设计书约定的项目默认配置；默认值只表达用户偏好，不声明任何外部工具已经可用。
@@ -69,15 +58,10 @@ export function createDefaultProjectConfig(projectId: string): ProjectConfigSnap
     defaultModel: null,
     serviceTierPreferences: [],
     defaultWorkMode: 'plan',
-    defaultTaskPrompt: '',
-    scan: {
-      ignoreDirectories: [...defaultProjectIgnoreDirectories],
-      indexScope: 'project',
-    },
     language: { primary: 'typescript', additional: [] },
     dependencies: { packageManagers: [], manifestPaths: [] },
     vcs: { isGitRepository: false, gitRoot: null },
-    database: { connectionName: null, schemaPaths: [] },
+    database: { connectionName: null },
     telegram: { alias: null },
     security: { allowShell: false, allowGitWrite: false },
   };
@@ -92,28 +76,22 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   const raw = value as UpdateProjectConfigBody;
   const defaultModel = normalizeOptionalSingleLine(raw.defaultModel, 80, fallback.defaultModel);
   const serviceTierPreferences = normalizeProjectModelServiceTierPreferences(raw.serviceTierPreferences, fallback.serviceTierPreferences);
-  const defaultTaskPrompt = normalizeSingleLineText(raw.defaultTaskPrompt, 600, fallback.defaultTaskPrompt);
-  const scanIgnoreDirectories = normalizeProjectIgnoreDirectories(raw.scan?.ignoreDirectories, fallback.scan.ignoreDirectories);
   const languagePrimary = normalizeIdentifierText(raw.language?.primary, fallback.language.primary);
   const languageAdditional = normalizeIdentifierList(raw.language?.additional, fallback.language.additional);
   const packageManagers = normalizeIdentifierList(raw.dependencies?.packageManagers, fallback.dependencies.packageManagers);
   const manifestPaths = normalizeSafeRelativePathList(raw.dependencies?.manifestPaths, fallback.dependencies.manifestPaths);
   const vcs = normalizeVcsConfig(raw.vcs, fallback.vcs);
   const connectionName = normalizeOptionalSingleLine(raw.database?.connectionName, 80, fallback.database.connectionName);
-  const schemaPaths = normalizeSafeRelativePathList(raw.database?.schemaPaths, fallback.database.schemaPaths);
   const telegramAlias = normalizeOptionalSingleLine(raw.telegram?.alias, 80, fallback.telegram.alias);
   if (
     (defaultModel === null && raw.defaultModel !== undefined && raw.defaultModel !== null) ||
     serviceTierPreferences === null ||
-    defaultTaskPrompt === null ||
-    scanIgnoreDirectories === null ||
     languagePrimary === null ||
     languageAdditional === null ||
     packageManagers === null ||
     manifestPaths === null ||
     vcs === null ||
     (connectionName === null && raw.database?.connectionName !== undefined && raw.database.connectionName !== null) ||
-    schemaPaths === null ||
     (telegramAlias === null && raw.telegram?.alias !== undefined && raw.telegram.alias !== null)
   )
     return null;
@@ -122,15 +100,10 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
     defaultModel,
     serviceTierPreferences,
     defaultWorkMode: isProjectWorkMode(raw.defaultWorkMode) ? raw.defaultWorkMode : fallback.defaultWorkMode,
-    defaultTaskPrompt,
-    scan: {
-      ignoreDirectories: scanIgnoreDirectories,
-      indexScope: isProjectIndexScope(raw.scan?.indexScope) ? raw.scan.indexScope : fallback.scan.indexScope,
-    },
     language: { primary: languagePrimary, additional: languageAdditional },
     dependencies: { packageManagers, manifestPaths },
     vcs,
-    database: { connectionName, schemaPaths },
+    database: { connectionName },
     telegram: { alias: telegramAlias },
     security: {
       allowShell: typeof raw.security?.allowShell === 'boolean' ? raw.security.allowShell : fallback.security.allowShell,
@@ -189,14 +162,6 @@ function normalizeOptionalSingleLine(value: unknown, maxLength: number, fallback
   return text;
 }
 
-function normalizeSingleLineText(value: unknown, maxLength: number, fallback: string): string | null {
-  if (value === undefined) return fallback;
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  if (text.length > maxLength || hasControlCharacter(text)) return null;
-  return text;
-}
-
 function normalizeIdentifierText(value: unknown, fallback: string): string | null {
   if (value === undefined) return fallback;
   if (typeof value !== 'string') return null;
@@ -218,24 +183,6 @@ function normalizeIdentifierList(value: unknown, fallback: string[]): string[] |
     }
   }
   return items;
-}
-
-function normalizeProjectIgnoreDirectories(value: unknown, fallback: string[]): string[] | null {
-  if (value === undefined) return fallback;
-  if (!Array.isArray(value) || value.length > 30) return null;
-  const seen = new Set<string>();
-  const directories: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') return null;
-    const directory = item.trim();
-    if (!directory || directory.startsWith('/') || directory.includes('..') || directory.includes('\\') || hasControlCharacter(directory) || directory.length > 80) return null;
-    if (!/^[A-Za-z0-9._@-]+$/.test(directory)) return null;
-    if (!seen.has(directory)) {
-      seen.add(directory);
-      directories.push(directory);
-    }
-  }
-  return directories;
 }
 
 function normalizeSafeRelativePathList(value: unknown, fallback: string[]): string[] | null {
@@ -260,13 +207,21 @@ function isProjectWorkMode(value: unknown): value is ProjectWorkMode {
   return value === 'plan' || value === 'develop' || value === 'review' || value === 'debug';
 }
 
-function isProjectIndexScope(value: unknown): value is ProjectIndexScope {
-  return value === 'project' || value === 'src' || value === 'custom';
-}
-
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.charCodeAt(0);
     return code < 32 || code === 127;
   });
+}
+
+/** 阻止数据库连接密码进入普通项目设置。 */
+export function hasDatabaseUriPassword(value: string | null | undefined): boolean {
+  const text = value?.trim();
+  if (!text || !/^(?:postgresql?|mysql|mariadb):/iu.test(text)) return false;
+  try {
+    return Boolean(new URL(text).password);
+  } catch {
+    // URI 格式不完整时也按 user:password@ 形态拦截，避免敏感信息落入本地设置表。
+    return /:\/\/[^:@\s]+:[^@\s]+@/u.test(text);
+  }
 }

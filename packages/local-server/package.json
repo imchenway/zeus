@@ -69,22 +69,6 @@
       "types": "./dist/runtimeQueryRoutes.d.ts",
       "import": "./dist/runtimeQueryRoutes.js"
     },
-    "./code-intelligence-query-application": {
-      "types": "./dist/codeIntelligenceQueryApplication.d.ts",
-      "import": "./dist/codeIntelligenceQueryApplication.js"
-    },
-    "./code-intelligence-query-routes": {
-      "types": "./dist/codeIntelligenceQueryRoutes.d.ts",
-      "import": "./dist/codeIntelligenceQueryRoutes.js"
-    },
-    "./code-intelligence-graph-store": {
-      "types": "./dist/codeIntelligenceGraphStore.d.ts",
-      "import": "./dist/codeIntelligenceGraphStore.js"
-    },
-    "./code-intelligence-graph-cache": {
-      "types": "./dist/codeIntelligenceGraphCache.d.ts",
-      "import": "./dist/codeIntelligenceGraphCache.js"
-    },
     "./codex-native-conversation-policy": {
       "types": "./dist/codexNativeConversationPolicy.d.ts",
       "import": "./dist/codexNativeConversationPolicy.js"
@@ -189,9 +173,7 @@
     "@fastify/websocket": "^11.0.1",
     "@modelcontextprotocol/client": "^2.0.0",
     "@zeus/ai-runtime": "workspace:*",
-    "@zeus/code-indexer": "workspace:*",
     "@zeus/git-core": "workspace:*",
-    "@zeus/graph-engine": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/storage": "workspace:*",
     "fastify": "^5.4.0"

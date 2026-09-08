@@ -5,20 +5,6 @@ import type { TaskEventRecord, TaskRecord, TaskTableColumnPreferences, TaskTable
 import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../telegram/telegramContracts.js';
 import type { NetworkProxySettings } from '@zeus/shared';
 
-export interface CodeMapSettings {
-  defaultScanScope: 'project' | 'src' | 'custom';
-  defaultIgnoreDirectories: string[];
-  maxCallChainDepth: number;
-  showLowConfidenceEdges: boolean;
-  layoutAlgorithm: 'hierarchical' | 'force' | 'dagre';
-  graphCacheStrategy: 'sqlite' | 'memory' | 'disabled';
-  tableRelationInference: 'foreign_key_and_name' | 'foreign_key_only' | 'name_only' | 'disabled';
-  aiSummaryEnabled: boolean;
-  incrementalScanEnabled: boolean;
-  performanceMonitoringEnabled: boolean;
-  moduleFlowManualNotes: string;
-}
-
 export interface AppShellSettings {
   /** 完全退出并重开应用后使用的网络代理。 */
   networkProxy?: NetworkProxySettings;
@@ -59,12 +45,6 @@ export interface AppShellSettings {
     exportSupported: boolean;
     redactsSecrets: boolean;
   };
-  cache: {
-    codeIndex: boolean;
-    graphView: boolean;
-    layout: boolean;
-  };
-  lastCacheClearAt: string | null;
 }
 
 /** 与服务端局部更新保持一致，省略的偏好保留原值。 */
@@ -97,12 +77,6 @@ export type UpdateAppShellSettingsRequest = Partial<
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 };
 
-export interface ClearLocalCachesResult {
-  cleared: boolean;
-  clearedCaches: Array<'code-index' | 'graph-view' | 'layout'>;
-  clearedAt: string;
-}
-
 export interface LocalSettingsExportSnapshot {
   app: 'Zeus';
   schemaVersion: 1;
@@ -113,7 +87,6 @@ export interface LocalSettingsExportSnapshot {
   settings: {
     appShell: AppShellSettings;
     runtime: RuntimeSettings;
-    codeMap: CodeMapSettings;
     telegramNotification: TelegramNotificationSettings;
     telegramSecurity: TelegramSecuritySettings;
   };
@@ -124,7 +97,6 @@ export interface ImportLocalSettingsRequest {
   settings: {
     appShell?: UpdateAppShellSettingsRequest;
     runtime?: RuntimeSettings;
-    codeMap?: CodeMapSettings;
     telegramNotification?: TelegramNotificationSettings;
     telegramSecurity?: TelegramSecuritySettings;
   };

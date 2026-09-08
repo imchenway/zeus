@@ -37,24 +37,6 @@ export interface CreateUserTaskInput {
   allowGitCommit?: boolean;
 }
 
-export interface CreateTaskFromGraphNodeInput {
-  projectId?: string;
-  intent?: string;
-}
-
-export interface CreateProjectGraphTaskInput {
-  intent?: string;
-}
-
-export interface LinkGraphNodeInput {
-  nodeId?: string;
-  reason?: string;
-}
-
-export interface CreateTaskFromGraphConversationInput {
-  intent?: string;
-}
-
 export type WorkManagementCommandActor = CommandActor;
 
 export class WorkManagementRouteError extends Error {
@@ -81,10 +63,6 @@ export function registerWorkManagementCoreCommandRoutes(options: {
   createUserTask(input: CreateUserTaskInput, taskId: string, context: CoreRouteContext): unknown;
   createTaskTemplate(input: CreateTaskTemplateInput, templateId: string, context: CoreRouteContext): unknown;
   createTaskFromTemplate(templateId: string, input: CreateTaskFromTemplateInput, taskId: string, context: CoreRouteContext): unknown;
-  createTaskFromGraphConversation(projectId: string, conversationId: string, input: CreateTaskFromGraphConversationInput, taskId: string, context: CoreRouteContext): unknown;
-  createTaskFromGraphNode(projectId: string | null, nodeId: string, input: CreateTaskFromGraphNodeInput | CreateProjectGraphTaskInput, taskId: string, context: CoreRouteContext): unknown;
-  createTaskFromGraphView(projectId: string, viewId: string, input: CreateProjectGraphTaskInput, taskId: string, context: CoreRouteContext): unknown;
-  linkTaskGraphNode(taskId: string, input: LinkGraphNodeInput, context: CoreRouteContext): unknown;
   afterTaskBoardUpdated?(result: unknown): void;
   afterTaskRetried?(result: unknown): void;
 }): void {
@@ -155,67 +133,6 @@ export function registerWorkManagementCoreCommandRoutes(options: {
       commandType: workManagementCommandTypes.taskFromTemplateCreate,
       destinationId: 'work-management-task-template-application',
       mutate: (parsed) => options.createTaskFromTemplate(request.params.templateId, parsed.input, parsed.operationIdentity, contextOf(parsed)),
-    }),
-  );
-
-  options.server.post(
-    '/api/projects/:projectId/conversations/:conversationId/tasks',
-    async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string }; Body: WorkManagementMutationRequest<CreateTaskFromGraphConversationInput> }>, reply) =>
-      executeTaskCreationRoute<CreateTaskFromGraphConversationInput>({
-        application: options.application,
-        reply,
-        value: request.body,
-        commandType: workManagementCommandTypes.taskFromGraphConversationCreate,
-        destinationId: 'work-management-graph-task-application',
-        mutate: (parsed) => options.createTaskFromGraphConversation(request.params.projectId, request.params.conversationId, parsed.input, parsed.operationIdentity, contextOf(parsed)),
-      }),
-  );
-
-  options.server.post('/api/graph/nodes/:nodeId/tasks', async (request: FastifyRequest<{ Params: { nodeId: string }; Body: WorkManagementMutationRequest<CreateTaskFromGraphNodeInput> }>, reply) =>
-    executeTaskCreationRoute<CreateTaskFromGraphNodeInput>({
-      application: options.application,
-      reply,
-      value: request.body,
-      commandType: workManagementCommandTypes.taskFromGraphNodeCreate,
-      destinationId: 'work-management-graph-task-application',
-      mutate: (parsed) => options.createTaskFromGraphNode(parsed.input.projectId ?? null, request.params.nodeId, parsed.input, parsed.operationIdentity, contextOf(parsed)),
-    }),
-  );
-
-  options.server.post('/api/projects/:projectId/graph/nodes/:nodeId/create-task', async (request: FastifyRequest<{ Params: { projectId: string; nodeId: string }; Body: WorkManagementMutationRequest<CreateProjectGraphTaskInput> }>, reply) =>
-    executeTaskCreationRoute<CreateProjectGraphTaskInput>({
-      application: options.application,
-      reply,
-      value: request.body,
-      commandType: workManagementCommandTypes.taskFromGraphNodeCreate,
-      destinationId: 'work-management-graph-task-application',
-      mutate: (parsed) => options.createTaskFromGraphNode(request.params.projectId, request.params.nodeId, parsed.input, parsed.operationIdentity, contextOf(parsed)),
-    }),
-  );
-
-  options.server.post('/api/projects/:projectId/graph/views/:viewId/create-task', async (request: FastifyRequest<{ Params: { projectId: string; viewId: string }; Body: WorkManagementMutationRequest<CreateProjectGraphTaskInput> }>, reply) =>
-    executeTaskCreationRoute<CreateProjectGraphTaskInput>({
-      application: options.application,
-      reply,
-      value: request.body,
-      commandType: workManagementCommandTypes.taskFromGraphViewCreate,
-      destinationId: 'work-management-graph-task-application',
-      mutate: (parsed) => options.createTaskFromGraphView(request.params.projectId, request.params.viewId, parsed.input, parsed.operationIdentity, contextOf(parsed)),
-    }),
-  );
-
-  options.server.post('/api/tasks/:taskId/link-graph-node', async (request: FastifyRequest<{ Params: { taskId: string }; Body: WorkManagementMutationRequest<LinkGraphNodeInput> }>, reply) =>
-    executeCoreRoute<LinkGraphNodeInput>({
-      application: options.application,
-      reply,
-      value: request.body,
-      commandType: workManagementCommandTypes.taskGraphNodeLink,
-      scopeKind: 'task',
-      expectedScopeId: () => request.params.taskId,
-      validateExpectedRevision: (parsed) => parsed.command.expectedRevision === null,
-      destinationId: 'work-management-graph-task-application',
-      resourceId: () => request.params.taskId,
-      mutate: (parsed) => options.linkTaskGraphNode(request.params.taskId, parsed.input, contextOf(parsed)),
     }),
   );
 }

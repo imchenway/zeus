@@ -95,9 +95,6 @@
   --zeus-code-editor-gutter: rgb(238 243 255 / 0.84);
   --zeus-code-editor-active-line: rgb(40 102 247 / 0.07);
   --zeus-code-editor-selection: rgb(40 102 247 / 0.18);
-  --zeus-graph-canvas-bg: rgb(248 250 255 / 0.82);
-  --zeus-graph-canvas-line: var(--agentdesk-border);
-  --zeus-graph-canvas-source-bg: rgb(238 243 255 / 0.74);
   --zeus-scrollbar-thumb: rgb(100 116 139 / 0.24);
   --zeus-scrollbar-thumb-hover: rgb(40 102 247 / 0.38);
   --zeus-scrollbar-thumb-active: rgb(40 102 247 / 0.52);
@@ -126,8 +123,6 @@
   --zeus-code-editor-gutter: rgb(18 22 39 / 0.9);
   --zeus-code-editor-active-line: rgb(40 102 247 / 0.14);
   --zeus-code-editor-selection: rgb(40 102 247 / 0.32);
-  --zeus-graph-canvas-bg: rgb(24 28 47 / 0.84);
-  --zeus-graph-canvas-source-bg: rgb(18 22 39 / 0.84);
   --zeus-scrollbar-thumb: rgb(148 163 184 / 0.28);
   --zeus-scrollbar-thumb-hover: rgb(123 160 255 / 0.46);
   --zeus-scrollbar-thumb-active: rgb(123 160 255 / 0.62);
@@ -156,8 +151,6 @@
     --zeus-code-editor-gutter: rgb(18 22 39 / 0.9);
     --zeus-code-editor-active-line: rgb(40 102 247 / 0.14);
     --zeus-code-editor-selection: rgb(40 102 247 / 0.32);
-    --zeus-graph-canvas-bg: rgb(24 28 47 / 0.84);
-    --zeus-graph-canvas-source-bg: rgb(18 22 39 / 0.84);
     --zeus-scrollbar-thumb: rgb(148 163 184 / 0.28);
     --zeus-scrollbar-thumb-hover: rgb(123 160 255 / 0.46);
     --zeus-scrollbar-thumb-active: rgb(123 160 255 / 0.62);
@@ -295,8 +288,6 @@
     .session-resource-card,
     .session-quick-actions-card,
     .session-turn-change-card,
-    .graph-canvas,
-    .graph-mermaid-preview,
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
@@ -312,11 +303,7 @@
   box-shadow: var(--agentdesk-shadow-soft);
 }
 
-.macos-ai-app.zeus-shell :where(.graph-canvas, .graph-mermaid-preview) {
-  background: var(--zeus-graph-canvas-bg);
-}
-
-.macos-ai-app.zeus-shell :where(.graph-canvas-svg, .project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane) {
+.macos-ai-app.zeus-shell :where(.project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane) {
   border-color: var(--agentdesk-border);
   background: var(--zeus-code-editor-bg);
 }
@@ -334,7 +321,6 @@
   backdrop-filter: saturate(165%) blur(22px);
 }
 
-/* 状态和图谱采用 AgentDesk 的低饱和语义色，保留原有含义。 */
 .macos-ai-app.zeus-shell :where(.status-success, [data-status='success'], [data-state='completed'], [data-state='succeeded']) {
   color: #16804b;
 }
@@ -362,7 +348,6 @@
     .task-table-view-pill,
     .task-table-page-view-segments button,
     .task-table-view-mode-segments button,
-    .graph-view-selector-row button,
     .skill-install-source-tabs button,
     .extension-tabs button,
     .project-workspace-mode-toolbar button
@@ -489,7 +474,7 @@
   border-radius: var(--agentdesk-radius-glass);
 }
 
-.macos-ai-app.zeus-shell :where(.workspace-drawer, .workspace-drawer-content, .product-drawer-pane, .conversation-drawer-shell, .task-detail-floating-drawer, .task-conversation-drawer, .project-drawer, .code-map-floating-surface) {
+.macos-ai-app.zeus-shell :where(.workspace-drawer, .workspace-drawer-content, .product-drawer-pane, .conversation-drawer-shell, .task-detail-floating-drawer, .task-conversation-drawer, .project-drawer) {
   border-radius: var(--agentdesk-radius-surface);
 }
 
@@ -505,8 +490,6 @@
     .session-turn-change-card,
     .browser-approval-card,
     .session-browser-preview-card,
-    .graph-canvas,
-    .graph-mermaid-preview,
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
@@ -533,10 +516,7 @@
     .session-switch-target-dock,
     .zeus-action-rail,
     .zeus-mode-rail,
-    .zeus-decision-rail,
-    .graph-focus-toolbar,
-    .graph-qa-history-toolbar,
-    .graph-qa-toolbar-command-rail
+    .zeus-decision-rail
   ) {
   border-radius: var(--agentdesk-radius-tab-rail);
 }
@@ -565,7 +545,6 @@
     .task-git-current-conversation-badge,
     .skill-list-managed-badge,
     .im-health-pill,
-    .graph-detail-type-pill,
     .session-context-draft-chip,
     .session-browser-comment-chip,
     .task-status-chip,
@@ -729,8 +708,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .session-resource-card,
     .session-quick-actions-card,
     .session-turn-change-card,
-    .graph-canvas,
-    .graph-mermaid-preview,
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
@@ -788,7 +765,6 @@ body:has(.macos-ai-app.zeus-shell) {
   color: #b36b10;
 }
 
-/* 任务、源码和图谱页面共享同一层级：页面工作面、工具条、内容列表。 */
 .macos-ai-app.zeus-shell
   :where(.task-management-navigation, .project-repository-workbench, .project-code-workbench, .project-settings-shell, .settings-product-pane, .native-settings-pane, .command-center, .skills-workspace, .automations-workspace) {
   color: var(--agentdesk-text);
@@ -862,7 +838,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(255 255 255 / 44%);
 }
 
-.macos-ai-app.zeus-shell :where(.project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane, .graph-canvas-svg) {
+.macos-ai-app.zeus-shell :where(.project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane) {
   border-color: rgb(255 255 255 / 48%);
   border-radius: 12px;
   background: rgb(215 231 246 / 58%);
@@ -1000,17 +976,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 .macos-ai-app.zeus-shell
-  :is(
-    .zeus-button[data-button-variant='primary'],
-    button.primary,
-    button[data-variant='primary'],
-    .button-primary,
-    [class*='-primary-action'],
-    [class*='-primary-button'],
-    .session-send-button,
-    .graph-qa-ask-button,
-    .menu-bar-usage-primary-action
-  ) {
+  :is(.zeus-button[data-button-variant='primary'], button.primary, button[data-variant='primary'], .button-primary, [class*='-primary-action'], [class*='-primary-button'], .session-send-button, .menu-bar-usage-primary-action) {
   min-block-size: 32px;
   padding-inline: 14px;
   border-radius: var(--agentdesk-radius-control);
@@ -1695,8 +1661,6 @@ body:has(.macos-ai-app.zeus-shell) {
   --zeus-product-canvas: transparent;
   --zeus-code-editor-bg: rgb(255 255 255 / 26%);
   --zeus-code-editor-gutter: rgb(255 255 255 / 18%);
-  --zeus-graph-canvas-bg: rgb(255 255 255 / 22%);
-  --zeus-graph-canvas-source-bg: rgb(255 255 255 / 16%);
   background: rgb(255 255 255 / 10%) !important;
   background-image: none !important;
 }
@@ -1708,8 +1672,6 @@ body:has(.macos-ai-app.zeus-shell) {
   --zeus-product-canvas: transparent;
   --zeus-code-editor-bg: rgb(15 23 42 / 42%);
   --zeus-code-editor-gutter: rgb(15 23 42 / 34%);
-  --zeus-graph-canvas-bg: rgb(15 23 42 / 36%);
-  --zeus-graph-canvas-source-bg: rgb(15 23 42 / 30%);
   background: rgb(15 23 42 / 28%) !important;
   background-image: none !important;
 }
@@ -1722,8 +1684,6 @@ body:has(.macos-ai-app.zeus-shell) {
     --zeus-product-canvas: transparent;
     --zeus-code-editor-bg: rgb(15 23 42 / 42%);
     --zeus-code-editor-gutter: rgb(15 23 42 / 34%);
-    --zeus-graph-canvas-bg: rgb(15 23 42 / 36%);
-    --zeus-graph-canvas-source-bg: rgb(15 23 42 / 30%);
     background: rgb(15 23 42 / 28%) !important;
     background-image: none !important;
   }
@@ -1756,12 +1716,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background-image: none !important;
 }
 
-.macos-ai-app.zeus-shell :where(.graph-canvas, .graph-mermaid-preview) {
-  background: var(--zeus-graph-canvas-bg) !important;
-  background-image: none !important;
-}
-
-.macos-ai-app.zeus-shell :where(.project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane, .graph-canvas-svg) {
+.macos-ai-app.zeus-shell :where(.project-source-code-editor, .project-git-diff-viewer, .runtime-log-stream, .xterm-runtime-pane) {
   background: var(--zeus-code-editor-bg) !important;
   background-image: none !important;
 }
@@ -1839,8 +1794,6 @@ body:has(.macos-ai-app.zeus-shell) {
   --zeus-product-list: var(--zeus-card-background);
   --zeus-code-editor-bg: var(--zeus-card-background);
   --zeus-code-editor-gutter: var(--zeus-page-background);
-  --zeus-graph-canvas-bg: var(--zeus-card-background);
-  --zeus-graph-canvas-source-bg: var(--zeus-page-background);
   --agentdesk-shadow: var(--zeus-card-shadow);
   --agentdesk-shadow-soft: var(--zeus-card-shadow-soft);
   background: var(--zeus-page-background) !important;
@@ -1867,8 +1820,6 @@ body:has(.macos-ai-app.zeus-shell) {
   --zeus-product-list: var(--zeus-card-background);
   --zeus-code-editor-bg: var(--zeus-card-background);
   --zeus-code-editor-gutter: var(--zeus-page-background);
-  --zeus-graph-canvas-bg: var(--zeus-card-background);
-  --zeus-graph-canvas-source-bg: var(--zeus-page-background);
   --agentdesk-shadow: var(--zeus-card-shadow);
   --agentdesk-shadow-soft: var(--zeus-card-shadow-soft);
   background: var(--zeus-page-background) !important;
@@ -1896,8 +1847,6 @@ body:has(.macos-ai-app.zeus-shell) {
     --zeus-product-list: var(--zeus-card-background);
     --zeus-code-editor-bg: var(--zeus-card-background);
     --zeus-code-editor-gutter: var(--zeus-page-background);
-    --zeus-graph-canvas-bg: var(--zeus-card-background);
-    --zeus-graph-canvas-source-bg: var(--zeus-page-background);
     --agentdesk-shadow: var(--zeus-card-shadow);
     --agentdesk-shadow-soft: var(--zeus-card-shadow-soft);
     background: var(--zeus-page-background) !important;
@@ -1961,10 +1910,7 @@ body:has(.macos-ai-app.zeus-shell) {
     .session-turn-change-card,
     .session-browser-preview-card,
     .browser-approval-card,
-    .session-goal-panel,
-    .graph-qa-workbench,
-    .graph-mermaid-preview,
-    .graph-entity-workbench
+    .session-goal-panel
   ) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
@@ -1987,9 +1933,7 @@ body:has(.macos-ai-app.zeus-shell) {
     .project-source-code-editor,
     .project-git-diff-viewer,
     .runtime-log-stream,
-    .xterm-runtime-pane,
-    .graph-canvas,
-    .graph-canvas-svg
+    .xterm-runtime-pane
   ) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;

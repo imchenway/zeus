@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { CodexAccountSnapshot, CodexAppServerEvent, CodexAppServerManager, CodexCapabilitiesSnapshot, CodexThreadSnapshot, CodexTurnSnapshot, CodexTurnStartInput } from '@zeus/ai-runtime';
 import { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import { conversationDispatchInputSha256 } from '../packages/local-server/src/conversationDispatchCommandApplication.js';
-import { graphConversationInputSha256 } from '../packages/local-server/src/graphConversationCommandApplication.js';
+import { conversationStartInputSha256 } from '../packages/local-server/src/conversationStartCommandApplication.js';
 import { createZeusDataLayout, startZeusLocalServer, type RunningZeusLocalServer } from '../packages/local-server/src/index.js';
 import { workManagementInputSha256 } from '../packages/local-server/src/workManagementCommandApplication.js';
 
@@ -68,7 +68,7 @@ try {
       scopeId: projectId,
       operationIdentity: `conversation_${randomUUID().replaceAll('-', '')}`,
       input: firstConversationInput,
-      inputSha256: graphConversationInputSha256(firstConversationInput),
+      inputSha256: conversationStartInputSha256(firstConversationInput),
     }),
   });
   assertBehavior(firstConversation.status === 202, `首轮会话接纳失败：${firstConversation.status} ${JSON.stringify(firstConversation.body)}`);

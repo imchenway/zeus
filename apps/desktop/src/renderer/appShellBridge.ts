@@ -10,13 +10,13 @@ export interface MainAppShellSettingsChange {
   openAtLoginEnabled: boolean;
 }
 
-export interface GraphSourceOpenRequest {
+export interface SourceOpenRequest {
   projectRoot?: string;
   sourceRef: string;
   lineStart?: number;
 }
 
-export interface GraphSourceOpenResult {
+export interface SourceOpenResult {
   opened: boolean;
   filePath: string | null;
   lineStart?: number | null;
@@ -61,7 +61,7 @@ export interface AppShellBridgeWindow {
     onTaskTableLayoutCloseRequested?: (listener: () => void) => () => void;
     getRequestingWindowForeground?: () => Promise<{ foreground: boolean }>;
     onRequestingWindowForegroundChanged?: (listener: (foreground: boolean) => void) => () => void;
-    openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
+    openSource?: (source: SourceOpenRequest) => Promise<SourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
     activateRequestingWindow?: () => Promise<RequestingWindowActivationResult>;
     getAutomaticUpdateIndicator?: () => Promise<AutomaticUpdateIndicatorState | null>;
@@ -93,15 +93,15 @@ export async function notifyMainAppShellSettingsChanged(input: { zeus: AppShellB
   return input.zeus.notifyAppShellSettingsChanged(input.settings);
 }
 
-/** 从 Renderer 请求 Electron Main 打开图谱来源文件；非 Electron 环境返回 no-op，供浏览器预览安全降级。 */
-export async function openGraphSourceInMain(input: { zeus: AppShellBridgeWindow['zeus']; source: GraphSourceOpenRequest }): Promise<GraphSourceOpenResult> {
-  if (!input.zeus?.openGraphSource)
+/** 从 Renderer 请求 Electron Main 打开源码文件；非 Electron 环境返回 no-op，供浏览器预览安全降级。 */
+export async function openSourceInMain(input: { zeus: AppShellBridgeWindow['zeus']; source: SourceOpenRequest }): Promise<SourceOpenResult> {
+  if (!input.zeus?.openSource)
     return {
       opened: false,
       filePath: null,
       lineStart: input.source.lineStart ?? null,
     };
-  return input.zeus.openGraphSource(input.source);
+  return input.zeus.openSource(input.source);
 }
 
 /** Renderer 先拒绝非 HTTPS/含凭据 URL；Main 进程仍会独立复验后才打开系统浏览器。 */

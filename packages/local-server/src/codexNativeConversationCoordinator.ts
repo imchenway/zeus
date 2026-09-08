@@ -45,7 +45,6 @@ import type {
   RestoreArchivedConversationInput,
   SendQueuedNowInput,
   SnoozeNativeRequestInput,
-  StartNativeEphemeralConversationInput,
   StartProjectConversationInput,
   StartTaskConversationInput,
   SteerNativeMessageInput,
@@ -120,7 +119,6 @@ export type { CreateCodexNativeConversationCoordinatorOptions } from './codexNat
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
   /** 供快照与实时投影读取实际恢复阶段。 */
   isRecovering(conversationId: string): boolean;
-  startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation>;
   waitForTurnResult(input: WaitForNativeTurnResultInput): Promise<NativeTurnResult>;
   /** 仅依据已持久的终态轮次和精确消息身份收口历史提交，不连接 Provider。 */
   reconcilePersistedTerminalSubmissions(): Promise<number>;
@@ -954,52 +952,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     now,
   });
-
-  async function startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation> {
-    assertOpen();
-    await assertCodexAccountReady(null, input.model);
-    const context: ConversationDispatchContext = {
-      projectId: input.projectId,
-      projectLocalPath: resolve(input.projectLocalPath),
-      taskId: null,
-      model: input.model,
-      modelSourceId: null,
-      ...(input.effort ? { effort: input.effort } : {}),
-      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
-      allowCodeChanges: false,
-      allowTests: false,
-      allowGitCommit: false,
-      permissionMode: 'read-only',
-      workMode: 'default',
-      ephemeral: true,
-    };
-    const conversation = options.conversations.create({
-      ...(input.conversationId ? { id: input.conversationId } : {}),
-      projectId: input.projectId,
-      title: input.title,
-      summary: input.prompt.slice(0, 240),
-      status: 'starting',
-      transportKind: 'codex_native',
-      providerId: 'codex',
-      providerModel: input.model,
-      providerState: 'unbound',
-      permissionMode: 'read-only',
-      collaborationMode: 'default',
-    });
-    contexts.set(conversation.id, context);
-    runStates.set(conversation.id, { type: 'idle' });
-    const submission = createSubmission(conversation.id, input.prompt, input, context);
-    await persist();
-    const operation = await dispatchSubmission(conversation, submission);
-    if (operation.status === 'queued') {
-      await closeEphemeralConversation(conversation.id, null, 'cancelled', { code: 'ZEUS_CODEX_EPHEMERAL_DISPATCH_PENDING' }, false);
-      throw coordinatorError('ZEUS_CODEX_EPHEMERAL_DISPATCH_PENDING', 'Codex native Graph question did not start immediately.');
-    }
-    if (operation.status === 'recovery_required') {
-      throw coordinatorError('ZEUS_CODEX_EPHEMERAL_DISPATCH_FAILED', 'Codex native Graph provider dispatch failed.');
-    }
-    return operation;
-  }
 
   function waitForTurnResult(input: WaitForNativeTurnResultInput): Promise<NativeTurnResult> {
     assertOpen();
@@ -3341,7 +3293,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     isRecovering,
     startTaskConversation,
     startProjectConversation,
-    startEphemeralConversation,
     waitForTurnResult,
     submitMessage,
     dispatchQueuedMessage,
@@ -3372,7 +3323,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     close(input = { mode: 'final' }) {
       if (input.mode === 'handoff') {
         if (finalizationPromise) return finalizationPromise;
-        return beginHandoff(coordinatorError('ZEUS_CODEX_SERVER_RESTARTING', 'The local server is restarting; retry the Graph request after reconnecting.'));
+        return beginHandoff(coordinatorError('ZEUS_CODEX_SERVER_RESTARTING', '本地服务正在重启，请在重新连接后检查会话状态。'));
       }
       if (finalizationPromise) return finalizationPromise;
       finalizationPromise = (async () => {

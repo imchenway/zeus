@@ -453,7 +453,7 @@ export function isReadOnlyValidationExternalRead(path: string): boolean {
   const blockedPatterns = [
     /^\/api\/(?:codex|provider-runtime|runtime|telegram|model-connections|models\/catalog|zentao-instances|usage-overview|release)(?:\/|$)/u,
     /^\/api\/security\/(?:secrets|reset)(?:\/|$)/u,
-    /^\/api\/(?:git|code-map)(?:\/|$)/u,
+    /^\/api\/git(?:\/|$)/u,
     /^\/api\/skills(?:\/|$)/u,
     /^\/api\/projects\/[^/]+\/(?:git|database\/secret|model-selection|scan-status|codex-task-push-capabilities|codex-conversation-capabilities)(?:\/|$)/u,
     /^\/api\/tasks\/[^/]+\/(?:diff|git-workspaces|integrations)(?:\/|$)/u,

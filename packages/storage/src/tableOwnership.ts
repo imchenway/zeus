@@ -1,15 +1,4 @@
-export const storageTableOwnerIds = [
-  'storage_platform',
-  'integration_platform',
-  'agent_runtime',
-  'memory_governance',
-  'work_management',
-  'conversation_orchestration',
-  'execution_assets',
-  'code_intelligence',
-  'projection_indexer',
-  'cache_manager',
-] as const;
+export const storageTableOwnerIds = ['storage_platform', 'integration_platform', 'agent_runtime', 'memory_governance', 'work_management', 'conversation_orchestration', 'execution_assets', 'projection_indexer', 'cache_manager'] as const;
 
 export type StorageTableOwnerId = (typeof storageTableOwnerIds)[number];
 
@@ -189,12 +178,6 @@ const ownershipGroups = [
       'artifact_storage_faults',
     ],
   },
-  {
-    owner: 'code_intelligence',
-    documentationOwnerLabel: '代码智能',
-    authorityClass: 'D',
-    tables: ['code_symbols', 'project_nodes', 'project_edges', 'graph_views'],
-  },
 ] as const satisfies ReadonlyArray<{
   owner: StorageTableOwnerId;
   documentationOwnerLabel: string;
@@ -209,17 +192,7 @@ export const storageTableOwnership: readonly StorageTableOwnershipRecord[] = own
 
 /** 可删除重建的独立派生数据库表；不得与 Core 92 表或其备份边界混为一谈。 */
 export const storageAuxiliaryTableOwnership: readonly StorageAuxiliaryTableOwnershipRecord[] = [
-  ...[
-    'projection_metadata',
-    'conversation_search_documents',
-    'conversation_search_fts',
-    'conversation_turn_documents',
-    'conversation_projection_watermarks',
-    'graph_node_documents',
-    'graph_edge_documents',
-    'code_symbol_documents',
-    'projection_gaps',
-  ].map(
+  ...['projection_metadata', 'conversation_search_documents', 'conversation_search_fts', 'conversation_turn_documents', 'conversation_projection_watermarks'].map(
     (table): StorageAuxiliaryTableOwnershipRecord => ({
       database: 'projection_index',
       table,

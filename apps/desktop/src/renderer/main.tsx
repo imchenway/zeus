@@ -3,7 +3,7 @@ import { Profiler, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient, type ExecutionHostTransition, type ReadOnlyValidationIdentity, ZeusApiError } from './apiClient.js';
-import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
+import { openSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
@@ -38,7 +38,7 @@ async function renderWithClient(
     client.settings.loadAppShellSettings(),
     bootstrap?.sessionViewCache ?? Promise.resolve(null),
   ]);
-  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = appModule;
+  const { App, buildProjectDirectoryResolution, buildTemplateTaskDraft } = appModule;
   primePersistedSessionViewCache(sessionViewCache);
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
@@ -135,14 +135,6 @@ async function renderWithClient(
             onParseThirdPartyTaskLink={(url) => window.zeus?.parseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
             onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
             onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
-            onCreateTaskFromGraphNode={async (nodeId, projectId, idempotencyKey) => {
-              await client.createTaskFromGraphNode(nodeId, {
-                projectId,
-                intent: buildGraphNodeTaskIntent(appShellSettings.appLanguage),
-                idempotencyKey,
-              });
-              return client.loadDashboard();
-            }}
             onCreateTaskFromTemplate={async (templateId, projectId, idempotencyKey) => {
               const templateTaskDraft = buildTemplateTaskDraft(appShellSettings.appLanguage);
               await client.createTaskFromTemplate(templateId, {
@@ -237,34 +229,10 @@ async function renderWithClient(
               await client.tasks.retryTask(taskId);
               return client.loadDashboard();
             }}
-            onScanCurrentGraph={async () => {
-              await client.scanCurrentGraph();
-              return client.loadDashboard();
-            }}
-            onLoadGraphView={(viewType) => client.loadGraphView(viewType ?? 'architecture')}
-            onLoadGraphNeighborhood={(nodeId, depth) => client.loadGraphNeighborhood(nodeId, depth)}
-            onSearchGraph={(query, nodeType, edgeType, minConfidence) => client.searchGraph({ query, nodeType, edgeType, minConfidence })}
-            onScanProjectGraph={async (projectId) => {
-              await client.scanProject(projectId);
-              return client.loadDashboard();
-            }}
-            onLoadProjectGraphView={(projectId, viewType) => client.loadProjectGraphView(projectId, viewType ?? 'architecture')}
-            onLoadProjectGraphNeighborhood={(projectId, nodeId, depth) => client.loadProjectGraphNeighborhood(projectId, nodeId, depth)}
-            onSearchProjectGraph={(projectId, query, nodeType, edgeType, minConfidence) => client.searchProjectGraph(projectId, { query, nodeType, edgeType, minConfidence })}
-            onAskGraph={(projectId, question) => client.askGraph(projectId, { question })}
-            onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
-            onLoadGraphConversation={(projectId, conversationId) => client.loadGraphConversation(projectId, conversationId)}
+            onLoadLegacyConversation={(projectId, conversationId) => client.loadLegacyConversation(projectId, conversationId)}
             onSendConversationMessage={(projectId, conversationId, content) => client.sendConversationMessage(projectId, conversationId, content)}
             onSubscribeRealtimeEvents={(onEvent, onConnectionState) => client.subscribeEvents(onEvent, onConnectionState)}
-            onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
-            onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
-            onCreateTaskFromGraphConversation={async (projectId, conversationId, idempotencyKey) => {
-              await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage), idempotencyKey });
-              return client.loadDashboard();
-            }}
-            onOpenGraphSource={(source) => openGraphSourceInMain({ zeus: window.zeus, source })}
-            onExportMermaidDiagramFile={(payload) => window.zeus?.exportMermaidDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
-            onExportPlantUmlDiagramFile={(payload) => window.zeus?.exportPlantUmlDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
+            onOpenSource={(source) => openSourceInMain({ zeus: window.zeus, source })}
             onLoadTaskTemplates={(projectId) => client.loadTaskTemplates(projectId)}
             onLoadGitDiff={() => client.git.loadGitDiff()}
             onExportGitPatch={() => client.git.exportGitPatch()}
@@ -275,8 +243,6 @@ async function renderWithClient(
             onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
             onLoadRuntimeSettings={() => client.settings.loadRuntimeSettings()}
             onSaveRuntimeSettings={(input) => client.settings.saveRuntimeSettings(input)}
-            onLoadCodeMapSettings={() => client.settings.loadCodeMapSettings()}
-            onSaveCodeMapSettings={(input) => client.settings.saveCodeMapSettings(input)}
             onLoadAppShellSettings={() => client.settings.loadAppShellSettings()}
             onSaveAppShellSettings={(input) => client.settings.saveAppShellSettings(input)}
             onLoadCodexLegacyImports={() => client.loadCodexLegacyImports()}
@@ -284,7 +250,6 @@ async function renderWithClient(
             onInspectCodexConfigImport={() => client.inspectCodexConfigImport()}
             onImportCodexConfig={() => client.importCodexConfig()}
             onActivateCodexConfig={() => client.activateCodexConfig()}
-            onClearLocalCaches={() => client.settings.clearLocalCaches()}
             onExportLocalSettings={() => client.settings.exportLocalSettings()}
             onImportLocalSettings={(input) => client.settings.importLocalSettings(input)}
             onExportLocalBusinessData={() => client.exportLocalBusinessData()}

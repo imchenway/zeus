@@ -8,12 +8,6 @@
       "path": "packages/storage"
     },
     {
-      "path": "packages/code-indexer"
-    },
-    {
-      "path": "packages/graph-engine"
-    },
-    {
       "path": "packages/local-server"
     },
     {
