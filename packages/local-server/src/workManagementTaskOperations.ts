@@ -455,9 +455,13 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     return restored;
   }
 
+  /** 更新内容或所属项目，统一保留并发校验、事件、审计和实时通知。 */
   updateTask(taskId: string, input: UpdateTaskContentCommandInput, context: WorkManagementTaskCommandContext): ZeusTaskRecord {
     const existing = this.requireTask(taskId);
     requireExpectedUpdatedAt(input.expectedUpdatedAt);
+    if (input.projectId !== undefined && (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 256)) throw routeError(400, 'ZEUS_INVALID_TASK_PROJECT', '请选择有效的目标项目。');
+    /** 归属改变后使用目标项目的初始状态，避免沿用未配置的状态标识。 */
+    const targetManagementStatus = input.projectId && input.projectId !== existing.projectId ? this.options.resolveManagementStatusConfig(this.requireProject(input.projectId).id).roles.defaultStatusId : undefined;
     if (input.title !== undefined && typeof input.title !== 'string') throw routeError(400, 'ZEUS_INVALID_TASK_TITLE', 'Task title must be a string.');
     if (typeof input.title === 'string' && !input.title.trim()) throw routeError(400, 'ZEUS_TASK_TITLE_REQUIRED', 'Task title is required.');
     if (input.taskType !== undefined && !isTaskType(input.taskType)) throw routeError(400, 'ZEUS_INVALID_TASK_TYPE', 'Task type must be requirement, defect or optimization.');
@@ -483,6 +487,8 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       throw routeError(400, 'ZEUS_INVALID_TASK_PERMISSIONS', 'allowCodeChanges, allowTests and allowGitCommit must be booleans when provided');
     }
     const result = this.options.tasks.updateContent(existing.id, {
+      projectId: input.projectId,
+      managementStatus: targetManagementStatus,
       expectedUpdatedAt: input.expectedUpdatedAt!,
       title: input.title,
       taskType: input.taskType,
@@ -507,6 +513,9 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       title: '任务内容已更新',
       payload: {
         changedFields: result.changedFields,
+        ...(result.task.projectId !== existing.projectId
+          ? { previousProjectId: existing.projectId, projectId: result.task.projectId, previousTaskCode: existing.taskCode, taskCode: result.task.taskCode, detachedTaskIds: result.detachedTaskIds }
+          : {}),
         tagCount: { before: result.tagCountBefore, after: result.tagCountAfter },
         attachmentCount: { before: result.attachmentCountBefore, after: result.attachmentCountAfter },
         previousUpdatedAt: result.previousUpdatedAt,
@@ -522,6 +531,17 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       attachmentCountAfter: result.attachmentCountAfter,
     });
     this.publishTaskUpdated(result.task, result.changedFields);
+    if (result.task.projectId !== existing.projectId) {
+      for (const detachedId of result.detachedTaskIds) {
+        /** 关系的另一端也可能在其他窗口中打开。 */
+        const detached = this.options.tasks.getById(detachedId);
+        if (detached) this.publishTaskUpdated(detached, ['relationships']);
+      }
+      this.options.afterCommit(() => {
+        this.options.publishRealtimeEvent('task.board.updated', { projectId: existing.projectId, reason: 'project-change' });
+        this.options.publishRealtimeEvent('task.board.updated', { projectId: result.task.projectId, reason: 'project-change' });
+      });
+    }
     return result.task;
   }
 

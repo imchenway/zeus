@@ -405,6 +405,7 @@ export interface UpdateTaskInput {
 }
 
 export type TaskEditableField =
+  | 'projectId'
   | 'title'
   | 'taskType'
   | 'description'
@@ -422,6 +423,10 @@ export type TaskEditableField =
   | 'allowGitCommit';
 
 export interface UpdateTaskContentInput extends UpdateTaskInput {
+  /** 修改归属时由业务层解析目标项目的初始状态。 */
+  projectId?: string;
+  /** 仅跨项目时使用，不作为普通内容编辑入口。 */
+  managementStatus?: TaskManagementStatus;
   expectedUpdatedAt: string;
   priority?: TaskPriority;
   tags?: string[];
@@ -430,6 +435,8 @@ export interface UpdateTaskContentInput extends UpdateTaskInput {
 }
 
 export interface UpdateTaskContentResult {
+  /** 跨项目时解除关系的其他任务，用于刷新打开的列表和详情。 */
+  detachedTaskIds: string[];
   task: ZeusTaskRecord;
   changedFields: TaskEditableField[];
   tagCountBefore: number;
@@ -845,8 +852,12 @@ export class TaskRepository {
     return (row?.sequence ?? 0) + 1;
   }
 
+  /** 新建及复制任务都只允许落到仍可用的项目中。 */
   create(input: CreateTaskInput): ZeusTaskRecord {
     return this.db.transaction(() => {
+      if (!this.db.get(`SELECT id FROM projects WHERE id = ? AND archived = 0 AND deleted_at IS NULL`, [input.projectId])) {
+        throw Object.assign(new Error('目标项目不存在或已归档。'), { code: 'ZEUS_PROJECT_NOT_FOUND', statusCode: 404 });
+      }
       const timestamp = nowIso();
       const taskSequence = this.nextTaskSequence(input.projectId);
       const parentTaskId = input.parentTaskId ?? null;
@@ -1042,6 +1053,7 @@ export class TaskRepository {
     return updated;
   }
 
+  /** 内容与项目归属在同一事务内更新，避免编号、关系和正文部分成功。 */
   updateContent(taskId: string, input: UpdateTaskContentInput): UpdateTaskContentResult {
     return this.db.transaction(() => {
       const existing = this.getById(taskId);
@@ -1050,6 +1062,42 @@ export class TaskRepository {
       }
       if (existing.updatedAt !== input.expectedUpdatedAt) {
         throwTaskEditConflict(taskId, existing.updatedAt);
+      }
+
+      /** 目标项目仅接受未删除且未归档的记录。 */
+      const projectId = input.projectId ?? existing.projectId;
+      /** 跨项目必须重新分配项目编号并解除原项目的关联。 */
+      const projectChanged = projectId !== existing.projectId;
+      /** 被解除关系的任务也需要推进编辑时间，阻止旧表单恢复跨项目关系。 */
+      const detachedTaskIds = new Set<string>();
+      if (projectChanged) {
+        if (!this.db.get(`SELECT id FROM projects WHERE id = ? AND archived = 0 AND deleted_at IS NULL`, [projectId])) {
+          throw Object.assign(new Error('目标项目不存在或已归档。'), { code: 'ZEUS_PROJECT_NOT_FOUND', statusCode: 404 });
+        }
+        // 执行记录绑定原项目环境；包含归档历史，避免恢复会话时进入错误仓库。
+        for (const table of [
+          'conversations',
+          'runtime_sessions',
+          'task_workspaces',
+          'task_environments',
+          'task_integrations',
+          'git_snapshots',
+          'git_changes',
+          'task_work_items',
+          'digital_employee_executions',
+          'task_stage_attempts',
+          'task_stage_deliverables',
+        ]) {
+          if (this.db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [table]) && this.db.get(`SELECT task_id FROM ${table} WHERE task_id = ? LIMIT 1`, [taskId])) {
+            throw Object.assign(new Error('此任务已有会话或执行资源，无法直接修改项目。请使用“复制到其他项目”，保留原任务的执行历史。'), { code: 'ZEUS_TASK_PROJECT_CHANGE_UNAVAILABLE' });
+          }
+        }
+        if (existing.status === 'running' || existing.status === 'paused') {
+          throw Object.assign(new Error('此任务仍在执行中，请使用“复制到其他项目”。'), { code: 'ZEUS_TASK_PROJECT_CHANGE_UNAVAILABLE' });
+        }
+        for (const child of this.listDirectChildren(taskId)) detachedTaskIds.add(child.id);
+        for (const relatedId of existing.relatedTaskIds) detachedTaskIds.add(relatedId);
+        if (existing.parentTaskId) detachedTaskIds.add(existing.parentTaskId);
       }
 
       const title = input.title === undefined ? existing.title : input.title.trim();
@@ -1072,9 +1120,12 @@ export class TaskRepository {
       const allowTests = input.allowTests ?? existing.allowTests;
       const allowGitCommit = input.allowGitCommit ?? existing.allowGitCommit;
       const previousSourceContext = parseTaskSourceContextJson(existing.sourceContextJson);
-      const sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...previousSourceContext, attachments: input.attachments } : previousSourceContext;
+      // 跨项目只沿用附件，原项目的图谱、执行者及目录配置不进入目标项目。
+      const baseSourceContext = projectChanged ? { attachments: previousSourceContext.attachments ?? [] } : previousSourceContext;
+      const sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...baseSourceContext, attachments: input.attachments } : baseSourceContext;
       const sourceContextJson = JSON.stringify(sourceContext);
       const changedFields: TaskEditableField[] = [];
+      if (projectChanged) changedFields.push('projectId');
       if (title !== existing.title) changedFields.push('title');
       if (taskType !== existing.taskType) changedFields.push('taskType');
       if (description !== existing.description) changedFields.push('description');
@@ -1092,6 +1143,7 @@ export class TaskRepository {
       if (allowGitCommit !== existing.allowGitCommit) changedFields.push('allowGitCommit');
 
       const resultBase = {
+        detachedTaskIds: [...detachedTaskIds],
         tagCountBefore: existing.tags.length,
         tagCountAfter: tags.length,
         attachmentCountBefore: countTaskAttachmentReferences(previousSourceContext),
@@ -1103,13 +1155,34 @@ export class TaskRepository {
       }
 
       const timestamp = nextIsoTimestamp(existing.updatedAt);
+      /** 在同一事务中分配目标项目编号，保留任务内部身份和原有事件。 */
+      const taskSequence = projectChanged ? this.nextTaskSequence(projectId) : existing.taskSequence;
+      if (projectChanged) {
+        for (const detachedId of detachedTaskIds) {
+          /** 关系端点各自使用单调编辑时间，保留其他父子关系。 */
+          const detached = this.getById(detachedId);
+          if (detached) this.db.execute(`UPDATE tasks SET parent_task_id = CASE WHEN parent_task_id = ? THEN NULL ELSE parent_task_id END, updated_at = ? WHERE id = ?`, [taskId, nextIsoTimestamp(detached.updatedAt), detachedId]);
+        }
+        this.db.execute(`DELETE FROM task_relations WHERE left_task_id = ? OR right_task_id = ?`, [taskId, taskId]);
+        this.db.execute(`DELETE FROM task_board_positions WHERE task_id = ?`, [taskId]);
+        this.db.execute(`UPDATE task_board_views SET revision = revision + 1, updated_at = ? WHERE project_id IN (?, ?)`, [timestamp, existing.projectId, projectId]);
+      }
       this.db.execute(
         `UPDATE tasks
-         SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?,
+         SET project_id = ?, task_sequence = ?, task_code = ?, parent_task_id = ?, management_status = ?, status = ?, template_id = ?, created_from = ?,
+             title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?,
              optimization_current_state = ?, optimization_expected_outcome = ?, priority = ?, tags_json = ?, source_context_json = ?,
              allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ?
          WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`,
         [
+          projectId,
+          taskSequence,
+          projectChanged ? formatTaskCode(taskSequence!) : existing.taskCode,
+          projectChanged ? null : existing.parentTaskId,
+          projectChanged ? (input.managementStatus ?? 'todo') : existing.managementStatus,
+          projectChanged ? 'ready' : existing.status,
+          projectChanged ? null : existing.templateId,
+          projectChanged ? 'user' : existing.createdFrom,
           title,
           taskType,
           description,

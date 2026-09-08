@@ -921,11 +921,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     />
                   )}
                   <TaskCreateModal
-                    projectName={selectedProject?.name}
+                    projects={snapshot.projects}
+                    onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
                     open={taskCreateModalOpen}
                     copy={taskWorkspaceCopy}
                     form={taskCreateForm}
-                    parentTasks={currentProjectTasks.filter((task) => taskHierarchyDepth(task, currentProjectTasks) < 3)}
+                    parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
                     error={taskCreateError}
                     busy={creatingTaskBusy}
                     titleInputRef={taskCreateTitleInputRef}
