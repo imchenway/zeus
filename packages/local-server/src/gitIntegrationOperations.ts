@@ -1362,6 +1362,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return workspaceGitResponse(await resolveTaskPushRepositoryCapability(project, task, repository, true, { context: repositoryContext, clean }));
   }
 
+  /** 将任务成果合入所选本地分支；未指定时沿用检出来源，写入前验证目标仍然存在。 */
   async function executeTaskWorkspaceIntegration(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>, operationIdentity: string): Promise<WorkspaceGitRouteExecution> {
     const { task, project, workspace } = requirePreparedWorkspace(opaque);
     if (workspace.state === 'discarded') workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_CLOSED', 'Discarded task branches cannot be merged.');
@@ -1371,6 +1372,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const repository = await getGitRepositoryContext(repositoryPath);
     if (!repository.isRepository) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', 'Project repository is unavailable.');
+    /** 合入目标只能是已有本地命名分支，不能把任务分支自身或任意 Git 引用当作目标。 */
+    const targetBranch = typeof value.targetBranch === 'string' ? value.targetBranch.trim() : workspace.sourceBranch;
+    if (!targetBranch || targetBranch === workspace.branchName) workspaceGitReject(400, 'ZEUS_TARGET_BRANCH_INVALID', '请选择与任务分支不同的本地目标分支。');
+    if (!repository.localBranches.includes(targetBranch)) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', '所选目标分支在本地不存在，请刷新后重新选择。');
     if (workspace.worktreePath) {
       const taskReview = await readTaskWorkspaceReview(workspace);
       if (taskReview.conflictFiles.length > 0) workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve task workspace conflicts before merging.');
@@ -1405,15 +1410,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       }
       await db.save();
     }
-    const requestedTargetBranch = typeof value.targetBranch === 'string' ? value.targetBranch.trim() : '';
-    const targetBranch = workspace.sourceBranch;
-    if (requestedTargetBranch && requestedTargetBranch !== targetBranch) workspaceGitReject(400, 'ZEUS_TARGET_BRANCH_INVALID', 'Code delivery can only merge into the recorded source branch.');
-    if (!targetBranch || targetBranch === 'detached') workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', 'The recorded source branch is unavailable.');
     const mode = value.mode === 'squash' ? 'squash' : 'merge';
     const taskHeadSha = await getGitBranchHead(repositoryPath, workspace.branchName);
-    const localTargetHeadSha = await getGitBranchHead(repositoryPath, targetBranch).catch(() => null);
-    const targetHeadSha = localTargetHeadSha ?? workspace.sourceHeadSha;
-    const targetRef = localTargetHeadSha ? undefined : targetHeadSha;
+    /** 使用目标当前提交建立并发基线，不将已删除的目标回退成来源提交。 */
+    const targetHeadSha = await getGitBranchHead(repositoryPath, targetBranch);
     const active = taskIntegrations.findActive(workspace.id, targetBranch);
     if (active) return workspaceGitResponse({ integration: active }, active.state === 'conflicted' ? 202 : 409);
     const integrationId = `task_integration_${createHash('sha256').update(`workspace_git_integration\0${workspace.id}\0${targetBranch}\0${operationIdentity}`).digest('hex').slice(0, 24)}`;
@@ -1425,7 +1425,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         projectSlug: project.slug,
         integrationId: integration.id,
         targetBranch,
-        ...(targetRef ? { targetRef } : {}),
         taskBranch: workspace.branchName,
         mode,
         commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
@@ -1612,15 +1611,16 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return workspaceGitResponse({ integration: updated, result: finalized });
   }
 
+  /** 仅在用户单独推送时，将已完成合入记录中的目标分支推送至该仓库远端。 */
   async function executeTaskIntegrationPush(opaque: WorkspaceGitPreparedOpaque): Promise<WorkspaceGitRouteExecution> {
     const { task, project, integration, workspace } = requirePreparedIntegration(opaque);
-    if (integration.state !== 'merged' || integration.targetBranch !== workspace.sourceBranch) {
-      workspaceGitReject(409, 'ZEUS_TASK_INTEGRATION_NOT_MERGED', 'Merge the task branch into its source branch before pushing.');
+    if (integration.state !== 'merged') {
+      workspaceGitReject(409, 'ZEUS_TASK_INTEGRATION_NOT_MERGED', '请先完成所选目标分支的本地合入，再执行推送。');
     }
     if (!workspace.remoteName) workspaceGitReject(409, 'ZEUS_TASK_GIT_REMOTE_UNAVAILABLE', 'This repository has no Git remote. Configure a remote before pushing.');
     const result = await pushLocalBranch({ repositoryPath: workspace.repositoryPath || project.localPath, remoteName: workspace.remoteName, branchName: integration.targetBranch });
     return workspaceGitResponse({ integration, workspace, result }, 200, () => {
-      recordTaskEvent({ taskId: task.id, eventType: 'task.git_integration.source_pushed', title: '来源分支已推送', payload: { integrationId: integration.id, workspaceId: workspace.id, ...result } });
+      recordTaskEvent({ taskId: task.id, eventType: 'task.git_integration.source_pushed', title: `目标分支 ${integration.targetBranch} 已推送`, payload: { integrationId: integration.id, workspaceId: workspace.id, ...result } });
       appendAuditLog({
         actorType: 'local_api',
         action: 'task.git_integration.push_source',
