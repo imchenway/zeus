@@ -2000,7 +2000,7 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-source-line:hover .session-code-comment-add,
+.session-codex-parity-v1 .session-source-comment-gutter .session-code-comment-add:hover,
 .session-codex-parity-v1 .session-turn-diff-table .task-git-review-diff-row:hover .session-code-comment-add,
 .session-codex-parity-v1 .session-code-comment-add:focus-visible {
   background: #171717;
@@ -7594,41 +7594,51 @@
   object-fit: contain;
 }
 
-.session-codex-parity-v1 .session-source-scroll pre {
+/* 源码由编辑器只渲染可视区域，滚动高度不再依赖全文页面节点。 */
+.session-codex-parity-v1 .session-source-scroll:has(> .session-source-code-preview) {
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-source-code-preview,
+.session-codex-parity-v1 .session-source-code-preview .cm-editor {
+  block-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-source-code-preview .cm-scroller {
   color: var(--session-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 20px;
-  margin: 0;
-  min-inline-size: max-content;
+  overflow: auto;
+}
+
+.session-codex-parity-v1 .session-source-code-preview .cm-content {
   padding-block: 12px 28px;
 }
 
-.session-codex-parity-v1 .session-source-scroll code {
-  display: block;
+.session-codex-parity-v1 .session-source-code-preview .cm-line {
+  padding-inline: 0 24px;
 }
 
-.session-codex-parity-v1 .session-source-line {
-  display: flex;
-  min-block-size: 20px;
-  white-space: pre;
-}
-
-.session-codex-parity-v1 .session-source-line[data-selected='true'] {
+.session-codex-parity-v1 .session-source-code-preview .cm-line[data-selected='true'] {
   background: color-mix(in oklab, var(--session-accent) 15%, transparent);
   box-shadow: inset 2px 0 0 var(--session-accent);
 }
 
-.session-codex-parity-v1 .session-source-line-number {
+.session-codex-parity-v1 .session-source-code-preview .cm-gutters {
+  background: var(--session-code);
+  border: 0;
   color: var(--session-text-muted);
-  flex: 0 0 52px;
-  padding-inline-end: 12px;
-  text-align: end;
-  user-select: none;
 }
 
-.session-codex-parity-v1 .session-source-line-code {
-  padding-inline-end: 24px;
+.session-codex-parity-v1 .session-source-code-preview .cm-lineNumbers .cm-gutterElement {
+  min-inline-size: 52px;
+  padding-inline: 0 12px;
+}
+
+.session-codex-parity-v1 .session-source-comment-gutter .session-code-comment-add {
+  color: var(--session-text-muted);
 }
 
 .session-codex-parity-v1 .session-turn-diff-error {
