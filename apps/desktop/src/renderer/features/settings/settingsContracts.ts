@@ -3,6 +3,7 @@ import type { ProjectRecord } from '../projects/projectContracts.js';
 import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
 import type { TaskEventRecord, TaskRecord, TaskTableColumnPreferences, TaskTableEnumSortOrders, TaskTemplateRecord } from '../tasks/taskContracts.js';
 import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../telegram/telegramContracts.js';
+import type { NetworkProxySettings } from '@zeus/shared';
 
 export interface CodeMapSettings {
   defaultScanScope: 'project' | 'src' | 'custom';
@@ -19,6 +20,8 @@ export interface CodeMapSettings {
 }
 
 export interface AppShellSettings {
+  /** 完全退出并重开应用后使用的网络代理。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -68,6 +71,8 @@ export type UpdateAppShellSettingsRequest = Pick<
   AppShellSettings,
   'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'
 > & {
+  /** 省略时保留当前代理，兼容其他设置的局部保存。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */

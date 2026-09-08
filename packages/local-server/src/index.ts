@@ -21,6 +21,9 @@ import { type ProjectGraph } from '@zeus/graph-engine';
 import { type ProjectConfigSnapshot } from './projectCore.js';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
+import { normalizeNetworkProxySettings } from '@zeus/shared';
+import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
+export { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
 import {
   cloneTaskManagementStatusConfig,
   type ReadOnlyValidationDescriptor,
@@ -918,6 +921,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
+  /** 固定本次宿主的生效值；后台任务继续运行时，重新开窗也不得提前切换浏览器代理。 */
+  const activeNetworkProxy = normalizeNetworkProxySettings(appShellSettings.networkProxy);
+  applyNetworkProxyAtStartup(activeNetworkProxy);
+  // 只读端点沿用本地 API 的认证；保存仍走既有设置命令，不增加独立写入口。
+  server.get('/api/settings/network-proxy', async () => activeNetworkProxy);
   if (newDatabase) {
     appShellSettings = { ...appShellSettings, modelSetupStatus: 'pending' };
     settings.setJson(appShellSettingsKey, appShellSettings);

@@ -38,7 +38,7 @@ import {
   readTaskClipboardFileReferencesFromClipboard,
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
-import { type BrowserHost, createBrowserHost } from './browserHost.js';
+import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
 import { type ComputerHost, createComputerHost } from './computerHost.js';
 import { createNativeAutomationHost } from './nativeAutomationHost.js';
 import { type ExternalBrowserHost, createExternalBrowserHost } from './externalBrowserHost.js';
@@ -56,7 +56,8 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { applyNetworkProxyAtStartup, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { networkProxyLoopbackBypass, normalizeNetworkProxySettings } from '@zeus/shared';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
@@ -2842,6 +2843,8 @@ async function initializeApplication(): Promise<void> {
       },
     });
     traceApplicationStartup('local_server_ready');
+    // 读取宿主实际生效值；后台宿主仍在工作时，保存的新设置留待完整退出后统一启用。
+    await initializeNetworkProxy(localServerRuntime.config);
     if (!readOnlyValidationDescriptor) {
       projectSourceWorkspace = new ProjectSourceWorkspaceService({
         loadProjectRoot: loadProjectRootForSourceWorkspace,
@@ -3275,6 +3278,29 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   void requestMainWindow();
 });
+
+/** Main、内置浏览器和系统网络会话在业务界面开放前使用宿主的同一份代理。 */
+async function initializeNetworkProxy(config: { baseUrl: string; apiToken: string }): Promise<void> {
+  /** 本机设置读取有界等待，失败时不把手动代理误降级为直连。 */
+  const response = await fetch(`${config.baseUrl}/api/settings/network-proxy`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10_000) });
+  // 旧宿主交接期间尚不支持代理配置，保持旧宿主的网络行为。
+  if (response.status === 404) return;
+  if (!response.ok) throw new Error('无法读取当前生效的网络代理配置。');
+  /** 只接受与设置保存相同的合法配置。 */
+  const settings = normalizeNetworkProxySettings(await response.json());
+  applyNetworkProxyAtStartup(settings);
+  if (settings.mode === 'default') return;
+  /** Chromium 使用分号和方括号 IPv6，域名后缀保持与 NO_PROXY 一致。 */
+  const bypass = [networkProxyLoopbackBypass, settings.bypass]
+    .filter(Boolean)
+    .join(',')
+    .split(',')
+    .map((host) => (host === '::1' ? '[::1]' : host.startsWith('.') ? `*${host}` : host))
+    .join(';');
+  /** 默认保留系统设置，直连与手动模式均显式覆盖所有 Zeus 会话。 */
+  const proxy: Electron.ProxyConfig = settings.mode === 'direct' ? { mode: 'direct' } : { mode: 'fixed_servers', proxyRules: settings.url, proxyBypassRules: bypass };
+  await Promise.all([app.setProxy(proxy), session.defaultSession.setProxy(proxy), session.fromPartition(browserPartition).setProxy(proxy)]);
+}
 
 async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: string }): Promise<MainAppShellSettings> {
   try {

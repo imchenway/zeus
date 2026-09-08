@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
 import { createCommandValidation } from './commandApplicationPrimitives.js';
+import { NetworkProxySettingsError } from '@zeus/shared';
 
 export const settingsCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
@@ -319,6 +320,8 @@ export function settingsCommandInputSha256(input: unknown): string {
 }
 
 export function settingsCommandHttpError(error: unknown, redactSensitiveText: (value: string) => { text: string }): { statusCode: number; body: Record<string, unknown> } {
+  // 地址校验失败属于输入错误，不能记作保存服务异常。
+  if (error instanceof NetworkProxySettingsError) return { statusCode: 400, body: { error: error.code, message: error.message } };
   if (error instanceof SettingsCommandApplicationError) {
     return { statusCode: error.statusCode, body: { error: error.code, message: boundedErrorMessage(error.message, redactSensitiveText), recoveryRequired: error.recoveryRequired } };
   }
