@@ -337,6 +337,8 @@ export interface ConnectedSessionWorkspaceProps {
   quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
+  /** 交付状态变化后刷新环境卡片中的 Git 快照。 */
+  taskGitDeliveryRevision?: number;
   onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
   onOpenProjectCommands?: SessionWorkspaceActions['onOpenProjectCommands'];
@@ -712,6 +714,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       historyOnly={historySnapshotOnly}
       projectPersistedPlans
       quickActionsSuppressed={props.quickActionsSuppressed}
+      taskGitDeliveryRevision={props.taskGitDeliveryRevision}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
@@ -1401,6 +1404,8 @@ export interface SessionWorkspaceProps {
   historyOnly?: boolean;
   /** 历史入口的稳定身份；续聊后仍用于补齐旧轮次的持久化计划。 */
   projectPersistedPlans?: boolean;
+  /** 交付状态变化后刷新环境卡片中的 Git 快照。 */
+  taskGitDeliveryRevision?: number;
   quickActionsSuppressed?: boolean;
   taskManagementStatusChangeBusy?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
@@ -2459,6 +2464,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 onLoadCapabilities={actions.onLoadCapabilities}
                 onLoadSkills={actions.onLoadSkills}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
+                taskGitDeliveryRevision={props.taskGitDeliveryRevision}
                 onOpenTaskDetail={actions.onOpenTaskDetail}
                 onOpenGitReview={actions.onOpenTaskGitReview}
                 onOpenGitDelivery={actions.onOpenTaskGitDelivery}

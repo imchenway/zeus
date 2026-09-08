@@ -47,6 +47,8 @@ interface SessionQuickActionsCardProps {
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
+  /** 交付通知使当前会话的 Git 快照失效。 */
+  taskGitDeliveryRevision?: number;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
@@ -77,7 +79,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const loadedWorkspaceKeyRef = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
   const [hasPersistentSpace, setHasPersistentSpace] = useState(false);
   const [showAllSources, setShowAllSources] = useState(false);
@@ -153,38 +154,44 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setWorkspaces(null);
     setWorkspaceState('idle');
     setWorkspaceError(null);
-    loadedWorkspaceKeyRef.current = null;
   }, [props.conversation.id]);
 
   useEffect(() => {
     if (!cardVisible || !taskId || !props.onLoadTaskWorkspaces) return;
-    const workspaceKey = `${props.conversation.id}:${taskId}`;
-    if (loadedWorkspaceKeyRef.current === workspaceKey) return;
-    loadedWorkspaceKeyRef.current = workspaceKey;
+    /** 固定本次订阅的读取入口，切换会话后旧请求不得回写。 */
+    const loadWorkspaces = props.onLoadTaskWorkspaces;
+    /** 隐藏卡片或切换读取范围后，丢弃尚未结束的读取结果。 */
     let active = true;
-    let settled = false;
-    setWorkspaceState('loading');
-    setWorkspaceError(null);
-    void props
-      .onLoadTaskWorkspaces(taskId)
-      .then((snapshot) => {
-        settled = true;
-        if (!active) return;
-        setWorkspaces(snapshot);
-        setWorkspaceState('ready');
-      })
-      .catch((error: unknown) => {
-        settled = true;
-        if (!active) return;
-        loadedWorkspaceKeyRef.current = null;
-        setWorkspaceState('error');
-        setWorkspaceError(error);
-      });
+    /** 只接收最近一次读取，避免返回窗口触发的并发请求覆盖新状态。 */
+    let requestRevision = 0;
+    /** 重新打开、交付变化、回合切换和返回窗口时读取真实 Git 状态。 */
+    const refreshWorkspaces = (): void => {
+      if (document.visibilityState === 'hidden') return;
+      /** 当前请求的顺序，用于拒绝迟到的旧结果和旧错误。 */
+      const revision = ++requestRevision;
+      setWorkspaceState('loading');
+      setWorkspaceError(null);
+      void loadWorkspaces(taskId)
+        .then((snapshot) => {
+          if (!active || revision !== requestRevision) return;
+          setWorkspaces(snapshot);
+          setWorkspaceState('ready');
+        })
+        .catch((error: unknown) => {
+          if (!active || revision !== requestRevision) return;
+          setWorkspaceState('error');
+          setWorkspaceError(error);
+        });
+    };
+    refreshWorkspaces();
+    window.addEventListener('focus', refreshWorkspaces);
+    document.addEventListener('visibilitychange', refreshWorkspaces);
     return () => {
       active = false;
-      if (!settled && loadedWorkspaceKeyRef.current === workspaceKey) loadedWorkspaceKeyRef.current = null;
+      window.removeEventListener('focus', refreshWorkspaces);
+      document.removeEventListener('visibilitychange', refreshWorkspaces);
     };
-  }, [cardVisible, props.conversation.id, props.onLoadTaskWorkspaces, taskId]);
+  }, [cardVisible, props.conversation.id, props.conversation.workspaceId, props.onLoadTaskWorkspaces, props.state.activeTurnId, props.taskGitDeliveryRevision, taskId]);
 
   useEffect(() => {
     if (!open) return;
@@ -401,19 +408,23 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <span className="session-quick-actions-copy">
                   <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
                   <small>
-                    {dirty
+                    {workspaceState === 'loading'
                       ? zh
-                        ? `${changes.files} 个文件待提交`
-                        : `${changes.files} files to commit`
-                      : workspace?.sourceBranch
-                        ? `${workspace.branchName} → ${workspace.sourceBranch}`
-                        : workspaceState === 'loading'
+                        ? '正在读取 Git 状态…'
+                        : 'Loading Git status…'
+                      : workspaceState === 'error'
+                        ? zh
+                          ? 'Git 状态读取失败'
+                          : 'Failed to load Git status'
+                        : dirty
                           ? zh
-                            ? '正在读取 Git 状态…'
-                            : 'Loading Git status…'
-                          : zh
-                            ? '查看、提交、合入与推送'
-                            : 'Review, commit, merge, and push'}
+                            ? `${changes.files} 个文件待提交`
+                            : `${changes.files} files to commit`
+                          : workspace?.sourceBranch
+                            ? `${workspace.branchName} → ${workspace.sourceBranch}`
+                            : zh
+                              ? '查看、提交、合入与推送'
+                              : 'Review, commit, merge, and push'}
                   </small>
                 </span>
                 <ArrowSquareOut aria-hidden="true" weight="regular" />

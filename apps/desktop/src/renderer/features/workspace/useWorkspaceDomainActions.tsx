@@ -607,7 +607,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           void refreshArchivedConversations();
         }
         if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
-          setTaskGitDeliveryRevision((current) => current + 1);
           taskGitDeliveryChangedRef.current(event.payload.taskId);
         }
         if (event.type === 'task.board.updated' && typeof event.payload.projectId === 'string') {
@@ -2096,6 +2095,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   taskGitDeliveryChangedRef.current = (taskId) => {
+    // 独立交付窗口、服务端通知和返回内嵌交付页共用同一快照失效入口。
+    setTaskGitDeliveryRevision((current) => current + 1);
     void Promise.all([refreshNativeConversationChoices(taskId), props.onLoadTaskEvents && taskDetailPaneTaskId === taskId ? props.onLoadTaskEvents(taskId).then(setTaskEvents) : Promise.resolve()]).catch((error: unknown) =>
       recordLocalError('task-git-delivery-projection-refresh', error),
     );
@@ -2360,6 +2361,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const closedTaskId = taskGitReviewState?.taskId ?? null;
     setTaskGitReviewState(null);
     if (closedTaskId) {
+      setTaskGitDeliveryRevision((current) => current + 1);
       void refreshNativeConversationChoices(closedTaskId);
       refreshOpenTaskEvents(closedTaskId);
     }

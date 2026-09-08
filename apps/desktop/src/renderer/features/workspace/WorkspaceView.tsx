@@ -286,6 +286,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskDetailPaneTaskId,
     taskDetailPresentation,
     taskGitDeliveryRevision,
+    taskGitDeliveryChangedRef,
     taskGitMergeTaskId,
     taskGitReviewState,
     taskModelPushAnnouncement,
@@ -1010,7 +1011,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     : Promise.resolve()
                 }
                 onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
-                onClose={() => setTaskGitMergeTaskId(null)}
+                onClose={() => {
+                  // 关闭后再刷新共享快照，避免提交过程中重置交付弹窗的文件选择。
+                  if (taskGitMergeTaskId) taskGitDeliveryChangedRef.current(taskGitMergeTaskId);
+                  setTaskGitMergeTaskId(null);
+                }}
               />
               {taskDetailPaneTask && taskDetailPresentation === 'side_peek' ? (
                 <WorkspaceDrawer
