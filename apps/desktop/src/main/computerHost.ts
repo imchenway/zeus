@@ -242,7 +242,9 @@ export class ComputerHost implements BrowserAutomationPort {
     } catch (error) {
       return computerText(error instanceof Error ? error.message : String(error), false);
     }
-    const operation = this.operationTail.then(() => this.invokeSerial(input, generation));
+    // 排队与实际执行分别计时，避免把调度等待归因于界面操作。
+    const queuedAt = performance.now();
+    const operation = this.operationTail.then(() => this.invokeSerial(input, generation, queuedAt));
     this.operationTail = operation.then(
       () => undefined,
       () => undefined,
@@ -251,7 +253,8 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   /** 与文件、浏览器工具独立，仅串行执行桌面工具。 */
-  private async invokeSerial(input: BrowserAutomationToolCall, generation: number): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+  private async invokeSerial(input: BrowserAutomationToolCall, generation: number, queuedAt: number): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    const startedAt = performance.now();
     try {
       this.assertControlAllowed(input, generation);
       await this.ensureService();
@@ -262,18 +265,33 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.ensureSensitiveActionApproval(input);
       this.assertControlAllowed(input, generation);
       const serviceArguments = this.prepareServiceArguments(input);
+      // 动作一旦发出就不能继续使用旧索引；只有实际回读成功才能恢复缓存。
+      if (!['get_app_state', 'list_apps'].includes(input.tool)) this.latestElements.clear();
+      const serviceStartedAt = performance.now();
       const result = await this.callService(input.tool, serviceArguments);
+      const serviceFinishedAt = performance.now();
       this.assertControlAllowed(input, generation);
-      if (input.tool === 'get_app_state') this.rememberAppState(input.arguments, result);
-      else if (!['list_apps'].includes(input.tool)) this.latestElements.clear();
-      const { textValue, image } = await this.projectResult(result);
+      if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result);
+      // 先缓存完整控件供审批使用，再裁剪模型投影，安全判断不依赖紧凑摘要。
+      const { textValue, image } = await this.projectResult(result, input.arguments.full_output === true);
+      if (isRecord(textValue)) {
+        textValue.diagnostics = {
+          ...asRecord(textValue.diagnostics),
+          host_queue_ms: startedAt - queuedAt,
+          host_prepare_ms: serviceStartedAt - startedAt,
+          host_service_ms: serviceFinishedAt - serviceStartedAt,
+          host_projection_ms: performance.now() - serviceFinishedAt,
+          host_total_ms: performance.now() - queuedAt,
+        };
+      }
       this.assertControlAllowed(input, generation);
       this.scheduleIdleStop();
       return {
-        contentItems: [{ type: 'inputText', text: JSON.stringify(textValue, null, 2) }, ...(image ? [{ type: 'inputImage' as const, imageUrl: image }] : [])],
+        contentItems: [{ type: 'inputText', text: JSON.stringify(textValue) }, ...(image ? [{ type: 'inputImage' as const, imageUrl: image }] : [])],
         success: true,
       };
     } catch (error) {
+      if (input.tool !== 'list_apps') this.latestElements.clear();
       this.scheduleIdleStop();
       const record = isRecord(error) ? error : {};
       const code = typeof record.code === 'string' ? record.code : 'ZEUS_COMPUTER_OPERATION_FAILED';
@@ -682,11 +700,11 @@ export class ComputerHost implements BrowserAutomationPort {
     const args: Record<string, unknown> = { ...input.arguments, _control_session_id: this.controlOwner?.id };
     const app = typeof args.app === 'string' ? args.app : '';
     const snapshot = app ? this.latestElements.get(app) : undefined;
-    if (input.tool === 'get_app_state') {
+    if (input.tool === 'get_app_state' || args.wait_for !== undefined) {
       if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot.generation;
       if (args.disableDiff === true) delete args.previous_snapshot_generation;
       args._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
-      return args;
+      if (args.include_screenshot === undefined) args.include_screenshot = input.tool === 'get_app_state' && !snapshot;
     }
     if (typeof args.element_index === 'number' && args.snapshot_generation === undefined) {
       if (!snapshot) throw Object.assign(new Error('element_index 没有当前 AX 快照，请重新调用 get_app_state。'), { code: 'ZEUS_COMPUTER_ELEMENT_STALE' });
@@ -695,7 +713,42 @@ export class ComputerHost implements BrowserAutomationPort {
     return args;
   }
 
-  private async projectResult(result: unknown): Promise<{ textValue: unknown; image: string | null }> {
+  /** 默认只投影一份紧凑树或更小的差异；完整原始快照仍留在宿主缓存。 */
+  private compactResult(result: Record<string, unknown>): Record<string, unknown> {
+    if (!Array.isArray(result.elements)) return { ...result };
+    /** 保留空 value、禁用和安全字段；省略几何信息及可由默认值还原的属性。 */
+    const compactElement = (element: Record<string, unknown>): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(element).filter(
+          ([key, value]) => key !== 'frame' && !(key !== 'value' && value === '') && !(key === 'enabled' && value === true) && !(['focused', 'secure'].includes(key) && value === false) && !(key === 'description' && value === element.title),
+        ),
+      );
+    const projected = { ...result };
+    const elements = result.elements.filter(isRecord).map(compactElement);
+    delete projected.text;
+    delete projected.diff;
+    projected.elements = elements;
+    // 差异缺失、不完整或比整树更大时直接返回整树，不让模型补读分页。
+    const diff = asRecord(result.diff);
+    if (diff.available === true && diff.truncated === false) {
+      const compactDiff = {
+        previous_generation: diff.previous_generation,
+        current_generation: diff.current_generation,
+        added: Array.isArray(diff.added) ? diff.added.filter(isRecord).map(compactElement) : [],
+        changed: Array.isArray(diff.changed) ? diff.changed.filter(isRecord).map((change) => compactElement(asRecord(change.after))) : [],
+        removed: Array.isArray(diff.removed) ? diff.removed.filter(isRecord).map((element) => element.element_index) : [],
+      };
+      if (JSON.stringify(compactDiff).length < JSON.stringify(elements).length) {
+        delete projected.elements;
+        projected.diff = compactDiff;
+      }
+    }
+    return projected;
+  }
+
+  /** 截图产物校验与模型投影共用一个出口，既不暴露文件路径也不重复传树。 */
+  private async projectResult(result: unknown, fullOutput = false): Promise<{ textValue: unknown; image: string | null }> {
+    if (isRecord(result) && !fullOutput) result = this.compactResult(result);
     if (!isRecord(result) || !isRecord(result.screenshot)) return { textValue: result, image: null };
     const screenshot = result.screenshot;
     const artifactPath = typeof screenshot.artifactPath === 'string' ? resolve(screenshot.artifactPath) : '';
@@ -721,6 +774,8 @@ export class ComputerHost implements BrowserAutomationPort {
           frame: screenshot.frame,
           scale: screenshot.scale,
           captured_at: screenshot.captured_at,
+          frame_confirmed_at: screenshot.frame_confirmed_at,
+          after_ax_read: screenshot.after_ax_read,
         },
       },
       image: `data:image/png;base64,${data.toString('base64')}`,
