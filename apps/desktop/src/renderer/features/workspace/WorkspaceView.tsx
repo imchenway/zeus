@@ -457,11 +457,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskManagementStatusConfigDraft,
     workspaceDrawerPortalStyle,
   } = operations;
-  /** 接入上下文随当前确认页失效，关闭或切换任务后旧回执不再生效。 */
+  /** 任务详情也可从会话页打开；接入上下文仍由原工作面身份约束，关闭或切换后旧回执失效。 */
   const modelSetupTask = snapshot.tasks.find((task) => task.id === taskModelPushTaskId);
   const taskModelSetupContext: TaskModelSetupContext | undefined =
     modelSetupTask &&
-    activeNavTarget === 'projects' &&
+    (activeNavTarget === 'projects' || activeNavTarget === 'conversations') &&
     modelSetupTask.projectId === activeProjectId &&
     (!state.taskModelPushEntryRef.current || isTaskModelPushOriginCurrent(state.taskModelPushEntryRef.current.origin, state.taskModelPushNavigationRef.current))
       ? {
