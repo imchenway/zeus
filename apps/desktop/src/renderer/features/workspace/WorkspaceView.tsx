@@ -12,6 +12,7 @@ import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from '../../settings/LegacyChatImportSettings.js';
 import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
+import { NetworkProxySettingsFields } from '../../settings/NetworkProxySettingsFields.js';
 import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
 import { ZentaoSettingsPane } from '../../settings/ZentaoSettingsPane.js';
@@ -1789,6 +1790,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </span>
                           </span>
                         </NativeControlRow>
+                        <NetworkProxySettingsFields
+                          language={appShellSettings.appLanguage}
+                          value={appShellSettings.networkProxy}
+                          disabled={loadingRuntimeBusy}
+                          onChange={(networkProxy) => setAppShellSettings((current) => ({ ...current, networkProxy }))}
+                        />
                         <NativeControlRow title={settingsWorkspaceCopy.saveSettingsTitle} description={settingsWorkspaceCopy.saveSettingsDescription}>
                           <button type="button" onClick={saveAppShellSettings} disabled={!props.onSaveAppShellSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.save}

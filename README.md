@@ -61,6 +61,8 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 版本更新内容见 [GitHub Releases](https://github.com/imchenway/zeus/releases)。
 
+网络代理位于“设置 → 通用”，可保持默认、强制直连或填写 HTTP/HTTPS 代理地址及绕过列表。保存后等待任务结束，完全退出并重新打开 Zeus 生效；仅关闭窗口或保留后台任务不会切换代理。默认模式保留系统与启动环境；手动模式不支持 SOCKS 或地址内账号密码，本机回环请求始终直连。
+
 ## 开发与验证
 
 使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。

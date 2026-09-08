@@ -3,6 +3,7 @@ import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
 import { listAiCliAdapters, parseModelRef, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
+import { normalizeNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
 
 interface TelegramNotificationSettingsSnapshot {
   enabled: boolean;
@@ -396,6 +397,8 @@ export function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
 }
 
 export interface AppShellSettingsSnapshot {
+  /** 完全退出并重开应用后使用的网络代理。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -442,6 +445,8 @@ export interface AppShellSettingsSnapshot {
 }
 
 export interface UpdateAppShellSettingsBody {
+  /** 省略时保留当前代理；显式提交和导入均经过相同校验。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -667,6 +672,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
   const appLanguage: AppLanguage = value?.appLanguage === 'en-US' ? 'en-US' : 'zh-CN';
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
+    networkProxy: normalizeNetworkProxySettings(value?.networkProxy),
     appLanguage,
     appearance,
     webviewDebugEnabled: value?.webviewDebugEnabled === true,
@@ -719,6 +725,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
   return normalizeAppShellSettings(
     {
       ...current,
+      networkProxy: input.networkProxy === undefined ? current.networkProxy : normalizeNetworkProxySettings(input.networkProxy),
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
       webviewDebugEnabled: typeof input.webviewDebugEnabled === 'boolean' ? input.webviewDebugEnabled : current.webviewDebugEnabled,

@@ -643,7 +643,29 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
 }
 
 function workerEnvironment(generationId: string): NodeJS.ProcessEnv {
-  const allowed = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR', 'NODE_ENV', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'ELECTRON_RUN_AS_NODE'];
+  // Node 原生代理开关与大小写变量一起传递，确保隔离工作进程真正使用同一代理。
+  const allowed = [
+    'PATH',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'TZ',
+    'TMPDIR',
+    'NODE_ENV',
+    'HTTPS_PROXY',
+    'HTTP_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'https_proxy',
+    'http_proxy',
+    'all_proxy',
+    'no_proxy',
+    'NODE_USE_ENV_PROXY',
+    'SSL_CERT_FILE',
+    'SSL_CERT_DIR',
+    'NODE_EXTRA_CA_CERTS',
+    'ELECTRON_RUN_AS_NODE',
+  ];
   const environment: NodeJS.ProcessEnv = { ZEUS_PI_WORKER_GENERATION_ID: generationId };
   for (const key of allowed) {
     const value = process.env[key];

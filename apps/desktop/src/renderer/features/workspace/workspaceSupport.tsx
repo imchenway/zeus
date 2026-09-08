@@ -566,6 +566,7 @@ export type GraphNodeTaskFeedback = 'idle' | 'creating' | 'created' | 'failed';
 export type GraphSourceOpenFeedback = 'idle' | 'opening' | 'opened' | 'failed';
 export type AppShellSettingsSavePayload = Pick<
   AppShellSettings,
+  | 'networkProxy'
   | 'appLanguage'
   | 'appearance'
   | 'webviewDebugEnabled'
@@ -1008,6 +1009,8 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
   const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
   const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
   return {
+    // 代理草稿随通用设置保存；其他偏好更新继续携带原值。
+    networkProxy: settings.networkProxy,
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
     webviewDebugEnabled: settings.webviewDebugEnabled,
