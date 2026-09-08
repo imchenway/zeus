@@ -459,12 +459,18 @@ export interface RecoverNativeQueueInput {
   intent: 'check' | 'continue';
 }
 
+/** 恢复先校验本地身份，再执行外部动作。 */
 export interface RestoreArchivedConversationInput {
   conversationId: string;
+  /** 第一次实际外部动作前记录父命令写出标记。 */
+  beforeExternalWrite?: () => void;
 }
 
+/** 归档使用执行证据门禁，实际 Provider 调用前才记录写出。 */
 export interface ArchiveConversationInput {
   conversationId: string;
+  /** 纯本地归档不会调用此标记。 */
+  beforeExternalWrite?: () => void;
 }
 
 export interface InterruptNativeTurnInput {

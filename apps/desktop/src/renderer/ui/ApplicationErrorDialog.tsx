@@ -13,6 +13,10 @@ export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
   /** 用户主动查看详情时直接展开，避免再次寻找入口。 */
   showDetails?: boolean;
+  /** 显示本次失败的操作与对象，避免用户混淆会话。 */
+  title?: string;
+  /** 由业务场景提供真实处理入口，错误窗口不猜测恢复操作。 */
+  action?: { label: string; onClick: () => void | Promise<void> };
 }
 
 interface ApplicationErrorEntry {
@@ -26,6 +30,8 @@ interface ApplicationErrorEntry {
   code: string | null;
   /** 当前条目是否由查看详情按钮打开。 */
   showDetails: boolean;
+  /** 保留当前错误对应的处理动作。 */
+  action?: ApplicationErrorOptions['action'];
 }
 
 const listeners = new Set<() => void>();
@@ -115,12 +121,13 @@ export function reportApplicationError(error: unknown, options: ApplicationError
   const entry: ApplicationErrorEntry = {
     id: nextErrorId++,
     language,
-    title: copy.title,
+    title: options.title ?? copy.title,
     summary: formatVisibleApplicationError(error, language),
     showDetails: options.showDetails === true,
     details,
-    dedupeKey: detailsBody,
+    dedupeKey: `${options.title ?? copy.title}\n${detailsBody}`,
     code,
+    action: options.action,
   };
   const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
   if (duplicate && options.showDetails) {
@@ -204,6 +211,22 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
               }}
             >
               {current.language === 'zh-CN' ? '连接模型' : 'Connect a model'}
+            </Button>
+          ) : null}
+          {current.action ? (
+            <Button
+              variant="primary"
+              size="regular"
+              onClick={() => {
+                /** 先关闭当前反馈，避免重复点击；失败继续使用统一错误出口。 */
+                const action = current.action;
+                dismissCurrentError();
+                void Promise.resolve()
+                  .then(() => action?.onClick())
+                  .catch((error: unknown) => reportApplicationError(error, { language: current.language, title: current.title }));
+              }}
+            >
+              {current.action.label}
             </Button>
           ) : null}
           <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>

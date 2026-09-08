@@ -1,4 +1,3 @@
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -130,8 +129,6 @@ interface FlattenedProjectConversations {
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
-  /** 同一会话失败留在原行，下一次操作更新这一份反馈。 */
-  const [archiveError, setArchiveError] = useState<{ id: string; error: unknown } | null>(null);
   /** 在绘制禁用态之前也阻止重复点击。 */
   const archiveRequestRef = useRef<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
@@ -149,15 +146,13 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
+  /** 列表只显示归档进度，业务操作负责统一错误反馈。 */
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     if (!props.onArchiveConversation || archiveRequestRef.current) return;
     archiveRequestRef.current = conversation.id;
-    setArchiveError(null);
     setArchivingConversationId(conversation.id);
     try {
       await props.onArchiveConversation(conversation);
-    } catch (error) {
-      setArchiveError({ id: conversation.id, error });
     } finally {
       archiveRequestRef.current = null;
       setArchivingConversationId(null);
@@ -206,14 +201,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             >
               {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
             </button>
-          ) : null}
-          {archiveError?.id === conversation.id ? (
-            <div className="session-conversation-archive-error" role="status">
-              <VisibleApplicationError error={archiveError.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-              <button type="button" onClick={() => props.onSelectConversation(conversation)}>
-                {props.language === 'zh-CN' ? '查看并处理' : 'View and resolve'}
-              </button>
-            </div>
           ) : null}
         </li>
       );

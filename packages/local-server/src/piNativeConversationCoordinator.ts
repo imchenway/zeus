@@ -1969,12 +1969,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
-  async function archiveConversation(input: { conversationId: string }): Promise<void> {
+  /** 本地门禁通过后，插件关闭前才标记外部副作用。 */
+  async function archiveConversation(input: { conversationId: string; beforeExternalWrite?: () => void }): Promise<void> {
     const conversation = requirePiConversation(input.conversationId);
     if (conversation.archived) return;
     assertConversationCanBeArchived(conversation);
     const runtimeContext = conversation.nativeSessionId ? contexts.get(conversation.nativeSessionId) : undefined;
-    if (runtimeContext) await options.plugins?.closeConversation({ conversationId: conversation.id, cwd: runtimeContext.cwd, model: runtimeContext.model, reason: 'archive' });
+    if (runtimeContext && options.plugins) {
+      input.beforeExternalWrite?.();
+      await options.plugins.closeConversation({ conversationId: conversation.id, cwd: runtimeContext.cwd, model: runtimeContext.model, reason: 'archive' });
+    }
     options.conversations.archive(conversation.id);
     if (conversation.nativeSessionId) contexts.delete(conversation.nativeSessionId);
     await options.db.save();

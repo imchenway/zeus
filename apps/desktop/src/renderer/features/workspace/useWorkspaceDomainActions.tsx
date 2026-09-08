@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect } from 'react';
-import { type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ZentaoTaskExtract } from '@zeus/shared';
+import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ZentaoTaskExtract } from '@zeus/shared';
 import { openExternalHttpsUrlInMain } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
@@ -1880,7 +1880,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client) return;
-    await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    try {
+      await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    } catch (error) {
+      /** 归档失败始终保留列表项；检查只核对已有状态，不再次归档或发送。 */
+      const language = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
+      reportApplicationError(error, {
+        language,
+        title: language === 'zh-CN' ? `归档未完成：${conversation.title}` : `Archive not completed: ${conversation.title}`,
+        action:
+          describeUserFacingError(error, language).action === 'check'
+            ? {
+                label: language === 'zh-CN' ? '检查状态' : 'Check status',
+                onClick: async () => {
+                  if (!(await selectNativeConversation(conversation))) return;
+                  await client.recoverNativeQueue(conversation.projectId, conversation.id, 'check');
+                },
+              }
+            : undefined,
+      });
+      return;
+    }
     removeConfirmedArchivedConversation(conversation.id, conversation.projectId, conversation.taskId ?? null, conversation.navigationId ?? conversation.id);
     void (conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId)).catch(() => undefined);
     void refreshArchivedConversations();

@@ -2,7 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
-import { CommandDeliveryRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import {
+  CommandDeliveryRepository,
+  ConversationRepository,
+  ConversationExecutionRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ConversationServerRequestRepository,
+  ProjectRepository,
+  createZeusDatabase,
+} from '../packages/storage/src/index.js';
+import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from '../packages/local-server/src/unboundConversationArchiveApplication.js';
+import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import {
   ConversationCommandApplication,
   conversationCommandTypes,
@@ -209,6 +220,109 @@ try {
         invoke: async () => ({ status: 'must-not-run' }),
       }),
     );
+    /** 在真实临时数据库核对本地归档、找回和外部写出分界，不调用真实 Provider。 */
+    const conversations = new ConversationRepository(db);
+    /** 本地失败内容和送达不明内容共用真实提交仓储。 */
+    const submissions = new ConversationSubmissionRepository(db);
+    /** 隔离项目只用于归档生命周期验证。 */
+    const project = new ProjectRepository(db).create({ name: '归档行为探针', localPath: probeRoot });
+    /** 复用生产归档应用所需的存储与事件端口。 */
+    const archivePorts = {
+      db,
+      conversations,
+      submissions,
+      turns: new ConversationTurnRepository(db),
+      requests: new ConversationServerRequestRepository(db),
+      execution: new ConversationExecutionRepository(db),
+      commandDeliveries: deliveries,
+      broadcast: () => undefined,
+    };
+    for (const scenario of ['unbound', 'failed', 'paused', 'preflight', 'unknown', 'prepared', 'accepted', 'active'] as const) {
+      /** 失败与暂停的空身份会话也必须按实际写出证据判断。 */
+      const conversation = conversations.create({ projectId: project.id, title: scenario, transportKind: 'codex_native', providerState: scenario === 'unbound' || scenario === 'paused' ? scenario : 'failed' });
+      /** 保留原始错误，验证归档不会删除排队内容的诊断信息。 */
+      const submission = submissions.createOrGet({
+        conversationId: conversation.id,
+        idempotencyKey: scenario,
+        requestHash: 'b'.repeat(64),
+        clientMessageId: scenario,
+        kind: 'message',
+        requestedDelivery: 'queue',
+        status: scenario === 'active' ? 'active' : 'failed',
+        input: { text: '保留的消息' },
+        error: { code: 'ZEUS_PROBE_ORIGINAL', message: '原始错误' },
+        createdAt: new Date().toISOString(),
+        ...(scenario === 'preflight' ? { dispatchedAt: new Date().toISOString() } : {}),
+      });
+      if (['preflight', 'unknown', 'prepared', 'accepted'].includes(scenario)) {
+        /** 模拟真实提交子命令，而非外层归档命令的提前标记。 */
+        const delivery = deliveries.acceptAndPrepare({
+          envelope: {
+            ...commandRequest({ commandId: `provider_archive_probe_${scenario}`, commandType: conversationCommandTypes.archive, conversationId: conversation.id, operationIdentity: scenario, input: {} }).command,
+            commandType: 'provider.codex.thread.start',
+          },
+          requestSha256: 'b'.repeat(64),
+          destinationKind: 'provider_session',
+          destinationId: 'codex:session',
+          resourceId: submission.id,
+          occurredAt: new Date().toISOString(),
+        });
+        if (scenario === 'unknown' || scenario === 'accepted') deliveries.markProviderWriteStarted({ outboxId: delivery.outbox.id, occurredAt: new Date().toISOString() });
+        if (scenario !== 'prepared')
+          deliveries.recordOutcome({
+            outboxId: delivery.outbox.id,
+            outcome: scenario === 'preflight' ? 'failed_before_write' : scenario === 'accepted' ? 'accepted' : 'outcome_unknown_after_write',
+            providerId: 'codex',
+            nativeSessionId: scenario === 'accepted' ? 'thread-archive-probe' : null,
+            evidence: { scenario },
+            occurredAt: new Date().toISOString(),
+          });
+      }
+      if (scenario === 'unknown') db.execute("UPDATE conversation_submissions SET submission_outcome = 'outcome_unknown' WHERE id = ?", [submission.id]);
+      /** 使用生产命令应用验证本地归档无需外部写出标记。 */
+      const parsed = parsedRequest(application, { commandId: `local_archive_probe_${scenario}`, commandType: conversationCommandTypes.archive, conversationId: conversation.id, operationIdentity: `local-archive-${scenario}`, input: {} });
+      /** 安全场景由真实归档应用完成，其余保留现场。 */
+      const archived = await application.executeExternal({
+        parsed,
+        destinationId: 'conversation-provider-lifecycle',
+        resourceId: conversation.id,
+        manualExternalWriteStart: true,
+        invoke: async () => archiveUnboundConversationLocally(archivePorts, conversations.getById(conversation.id)!, () => undefined),
+      });
+      /** 仅本地未发送及有确切写前失败回执的场景允许归档。 */
+      const expected = ['unbound', 'failed', 'paused', 'preflight'].includes(scenario);
+      assertProbe(archived.result === expected && conversations.getById(conversation.id)?.archived === expected, `归档门禁错误：${scenario}`);
+      assertProbe(deliveries.get(parsed.command.commandId)?.attempts.at(-1)?.providerWriteStartedAt === null, '本地归档不得产生外部写出标记');
+      assertProbe(submissions.getById(submission.id)?.errorJson?.includes('ZEUS_PROBE_ORIGINAL'), '归档必须保留原始错误');
+      if (expected) {
+        assertProbe(submissions.getById(submission.id)?.status === 'cancelled', '已归档会话中的未发送内容必须停止派发');
+        assertProbe(await restoreUnboundConversationLocally(archivePorts, conversations.getById(conversation.id)!, () => undefined), '本地归档后必须能找回');
+        assertProbe(!conversations.getById(conversation.id)?.archived && submissions.getById(submission.id)?.status === 'cancelled', '找回不能自动重发原排队内容');
+      }
+      observed[`archive_${scenario}`] = archived.result;
+    }
+    for (const started of [false, true]) {
+      /** 同一个底层错误在写前和写后必须形成不同的耐久结果。 */
+      const parsed = externalRequest(application, `manual-${started}`);
+      /** 写后异常仅报告结果未知，禁止自动重放。 */
+      const code = await captureAsyncCode(() =>
+        application.executeExternal({
+          parsed,
+          destinationId: 'conversation-provider-lifecycle',
+          resourceId: parsed.command.scope.id,
+          manualExternalWriteStart: true,
+          invoke: async (markWriteStarted) => {
+            if (started) markWriteStarted();
+            throw Object.assign(new Error('缺少会话身份'), { code: 'ZEUS_NATIVE_PROVIDER_EVENT_INVALID' });
+          },
+        }),
+      );
+      assertProbe(code === (started ? 'ZEUS_CONVERSATION_COMMAND_OUTCOME_UNKNOWN' : 'ZEUS_NATIVE_PROVIDER_EVENT_INVALID'), '写出标记必须对应真实执行阶段');
+      assertProbe(deliveries.get(parsed.command.commandId)?.attempts.at(-1)?.outcome === (started ? 'outcome_unknown_after_write' : 'failed_before_write'), '写前失败不得保存为结果未知');
+    }
+    /** 底层结果未知不能覆盖本次“尚未归档”的准确提示。 */
+    const archiveError = describeUserFacingError({ code: 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED', message: '尚未归档', cause: { code: 'ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', message: '送达未知' } });
+    assertProbe(archiveError.message.includes('尚未归档') && archiveError.action === 'check' && archiveError.outcomeUnconfirmed, '归档反馈须保留检查入口与未知结果保护');
     observed.quickCheck = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
     assertProbe(
