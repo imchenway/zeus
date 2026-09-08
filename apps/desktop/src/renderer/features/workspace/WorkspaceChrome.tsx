@@ -13,11 +13,11 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
-import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
+import { ListChecksIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
 import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
-import { GraphIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/Graph';
-import { TerminalWindowIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
+import { TreeStructureIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/TreeStructure';
+import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../../session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
@@ -289,6 +289,7 @@ export function ProjectRenameDialog(props: {
   return surface;
 }
 
+/** 项目主导航统一图标尺寸与字重，并让图标和文案作为整体居中。 */
 export function ProjectWorkspaceModeToolbar(props: {
   project: ProjectRecord;
   section: ProjectWorkspaceSection;
@@ -296,7 +297,9 @@ export function ProjectWorkspaceModeToolbar(props: {
   language: AppLanguage;
   onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
 }) {
+  /** 导航文案跟随当前应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
     git: 'Git',
@@ -304,19 +307,23 @@ export function ProjectWorkspaceModeToolbar(props: {
     graph: zh ? '图谱' : 'Graph',
     commands: zh ? '命令' : 'Commands',
   };
+  /** 同一套线性图标保持一致的视觉重量。 */
   const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
-    tasks: <WorkspaceTasksIcon aria-hidden="true" />,
-    git: <WorkspaceGitIcon aria-hidden="true" />,
-    source: <WorkspaceSourceIcon aria-hidden="true" />,
-    graph: <WorkspaceGraphIcon aria-hidden="true" />,
-    commands: <WorkspaceCommandsIcon aria-hidden="true" />,
+    tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
+    git: <WorkspaceGitIcon size={18} weight="regular" aria-hidden="true" />,
+    source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
+    graph: <WorkspaceGraphIcon size={18} weight="regular" aria-hidden="true" />,
+    commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
   };
   return (
     <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
+          /** 当前工作区与源码子模式共同决定选中态。 */
           const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          /** 当前入口文案。 */
           const label = labels[item.id];
+          /** 读屏和提示保留快捷键说明。 */
           const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
           return (
             <button
@@ -330,7 +337,7 @@ export function ProjectWorkspaceModeToolbar(props: {
               onClick={() => props.onOpen(item.section, item.codeMode)}
             >
               <span aria-hidden="true">{icons[item.id]}</span>
-              {label}
+              <span className="project-workspace-mode-label">{label}</span>
             </button>
           );
         })}

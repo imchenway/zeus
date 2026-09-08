@@ -361,7 +361,6 @@
     .task-table-status-segment,
     .task-table-view-pill,
     .task-table-page-view-segments button,
-    .task-table-view-mode-segments button,
     .graph-view-selector-row button,
     .skill-install-source-tabs button,
     .extension-tabs button,
@@ -374,7 +373,7 @@
   color: var(--agentdesk-accent-strong);
 }
 
-.macos-ai-app.zeus-shell :is(.project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs, .task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments) {
+.macos-ai-app.zeus-shell :is(.project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs, .task-table-status-segments, .task-table-page-view-segments) {
   border-radius: var(--agentdesk-radius-tab-rail);
   background: color-mix(in srgb, var(--agentdesk-accent) 6%, var(--agentdesk-surface-inset));
   border-color: var(--agentdesk-border);
@@ -387,8 +386,7 @@
     .automations-tabs button[aria-current='page'],
     .task-table-status-segment[aria-pressed='true'],
     .task-table-view-pill[aria-pressed='true'],
-    .task-table-page-view-segments button[aria-pressed='true'],
-    .task-table-view-mode-segments button[aria-pressed='true']
+    .task-table-page-view-segments button[aria-pressed='true']
   ) {
   background: color-mix(in srgb, var(--agentdesk-accent) 14%, var(--agentdesk-surface-strong));
   border-color: color-mix(in srgb, var(--agentdesk-accent) 32%, var(--agentdesk-border));
@@ -406,79 +404,6 @@
 .macos-ai-app.zeus-shell :is(.project-source-tab.active, .browser-tab-shell.selected) {
   background: color-mix(in srgb, var(--agentdesk-accent) 7%, var(--agentdesk-surface-strong));
   border-color: color-mix(in srgb, var(--agentdesk-accent) 25%, var(--agentdesk-border));
-}
-
-/* 项目主导航采用 AgentDesk 的“玻璃轨 + 选中胶囊”表达，保留原有入口和顺序。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  align-self: center;
-  block-size: 34px;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--agentdesk-border);
-  border-radius: var(--agentdesk-radius-surface);
-  background: color-mix(in srgb, var(--agentdesk-surface-strong) 88%, var(--agentdesk-accent-soft));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 42%),
-    var(--agentdesk-shadow-soft);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 26px;
-  align-self: center;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--agentdesk-radius-tab);
-  background: transparent;
-  box-shadow: none;
-  color: var(--agentdesk-text-secondary);
-  font-size: 12px;
-  font-weight: 650;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button + button::before {
-  position: absolute;
-  inset-block: 5px;
-  inset-inline-start: -2px;
-  inline-size: 1px;
-  background: var(--agentdesk-border);
-  content: '';
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover,
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:focus-visible {
-  background: var(--agentdesk-accent-soft);
-  border-color: color-mix(in srgb, var(--agentdesk-accent) 25%, var(--agentdesk-border));
-  color: var(--agentdesk-text);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active {
-  border-bottom-color: transparent;
-  border-color: color-mix(in srgb, var(--agentdesk-accent) 20%, var(--agentdesk-border));
-  background: color-mix(in srgb, var(--agentdesk-accent) 13%, var(--agentdesk-surface-strong));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 44%),
-    0 5px 12px -10px rgb(40 102 247 / 0.58);
-  color: var(--agentdesk-accent-strong);
-  font-weight: 700;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active::after {
-  display: none;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:is(.is-active, :hover, :focus-visible)::before,
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:is(.is-active, :hover, :focus-visible) + button::before {
-  opacity: 0;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button span {
-  color: currentcolor;
 }
 
 /*
@@ -660,52 +585,6 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: 0 14px 14px;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  flex-basis: 48px;
-  margin-block: 10px 10px;
-  padding-inline: 14px;
-  border: 1px solid rgb(255 255 255 / 66%);
-  border-radius: 18px;
-  background: rgb(255 255 255 / 46%);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 68%),
-    0 12px 28px -24px rgb(37 86 132 / 48%);
-  -webkit-backdrop-filter: saturate(175%) blur(24px);
-  backdrop-filter: saturate(175%) blur(24px);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar > strong {
-  color: var(--agentdesk-text);
-  font-size: 13px;
-  font-weight: 760;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  block-size: 36px;
-  padding: 3px;
-  border-radius: 12px;
-  background: rgb(255 255 255 / 44%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 58%);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 28px;
-  padding-inline: 11px;
-  border-radius: 9px;
-  color: var(--agentdesk-text-secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active {
-  background: rgb(207 217 229 / 74%);
-  border-color: rgb(255 255 255 / 70%);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 68%),
-    0 5px 12px -10px rgb(36 71 106 / 48%);
-  color: var(--agentdesk-text);
-}
-
 .macos-ai-app.zeus-shell .workspace-view {
   border: 1px solid rgb(255 255 255 / 62%);
   border-radius: 20px;
@@ -846,7 +725,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border-color: rgb(40 102 247 / 24%);
 }
 
-.macos-ai-app.zeus-shell :where(.task-filter-control-row, .task-filter-option-row, .task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments) {
+.macos-ai-app.zeus-shell :where(.task-filter-control-row, .task-filter-option-row, .task-table-status-segments, .task-table-page-view-segments) {
   border-color: rgb(255 255 255 / 58%);
   background: rgb(213 230 246 / 62%);
 }
@@ -875,29 +754,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell :where(.project-sidebar-search-row, .project-quick-actions) {
   border-color: rgb(255 255 255 / 52%);
   background: rgb(255 255 255 / 34%);
-}
-
-.macos-ai-app.zeus-shell
-  :where(.task-table-status-segment[aria-pressed='true'], .task-table-view-pill[aria-pressed='true'], .task-table-page-view-segments button[aria-pressed='true'], .task-table-view-mode-segments button[aria-pressed='true']) {
-  background: linear-gradient(180deg, #4f82ff, #2866f7);
-  border-color: rgb(40 102 247 / 72%);
-  color: #fff;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 7px 16px -13px rgb(40 102 247 / 84%);
-}
-
-/* 组件原生样式的选择器更具体，这里用同等明确的选择器确保蓝色选中态真正落地。 */
-.macos-ai-app.zeus-shell .task-table-status-segment[aria-pressed='true'],
-.macos-ai-app.zeus-shell .task-table-view-pill[aria-pressed='true'],
-.macos-ai-app.zeus-shell .task-table-page-view-segments button[aria-pressed='true'],
-.macos-ai-app.zeus-shell .task-table-view-mode-segments button[aria-pressed='true'] {
-  background: linear-gradient(180deg, #4f82ff, #2866f7);
-  border-color: rgb(40 102 247 / 72%);
-  color: #fff;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 7px 16px -13px rgb(40 102 247 / 84%);
 }
 
 .macos-ai-app.zeus-shell .task-table-workbench {
@@ -947,14 +803,6 @@ body:has(.macos-ai-app.zeus-shell) {
 
 .macos-ai-app.zeus-shell .project-sidebar-item,
 .macos-ai-app.zeus-shell .project-sidebar-conversations {
-  gap: var(--agentdesk-space-1);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  gap: var(--agentdesk-space-4);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
   gap: var(--agentdesk-space-1);
 }
 
@@ -1117,60 +965,12 @@ body:has(.macos-ai-app.zeus-shell) {
   border-radius: var(--zeus-control-radius);
 }
 
-.macos-ai-app.zeus-shell :is(.task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments) {
+.macos-ai-app.zeus-shell :is(.task-table-status-segments, .task-table-page-view-segments) {
   background: rgb(229 235 252 / 62%);
   border: 1px solid rgb(148 163 184 / 22%);
   border-radius: var(--agentdesk-radius-tab-rail);
   gap: 2px;
   padding: 2px;
-}
-
-/* 设置页：左侧是导航轨，右侧是唯一内容面板；设置行按组排列，不再套整页卡片。 */
-.macos-ai-app.zeus-shell .task-table-primary-toolbar {
-  min-block-size: 68px;
-  padding: 10px 12px;
-  column-gap: var(--agentdesk-space-3);
-  row-gap: var(--agentdesk-space-2);
-  background: rgb(255 255 255 / 48%);
-  border: 1px solid rgb(255 255 255 / 66%);
-  border-radius: var(--agentdesk-radius-card);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 36%);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-toolbar-search input {
-  block-size: var(--zeus-control-height);
-  border: 1px solid rgb(148 163 184 / 22%);
-  border-radius: var(--zeus-control-radius);
-  background: rgb(255 255 255 / 72%);
-  text-align: start;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segments {
-  min-block-size: var(--zeus-control-height);
-  background: rgb(229 235 252 / 54%);
-  border: 1px solid rgb(148 163 184 / 20%);
-  border-radius: var(--agentdesk-radius-tab-rail);
-  padding: 2px;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment {
-  min-block-size: 28px;
-  border-radius: 6px;
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-view-actions {
-  gap: var(--agentdesk-space-2);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-view-pill {
-  min-block-size: var(--zeus-control-height);
-  border-radius: var(--zeus-control-radius);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button {
-  min-block-size: var(--zeus-control-height);
-  border-radius: var(--zeus-control-radius);
 }
 
 .macos-ai-app.zeus-shell .task-table-header {
@@ -1206,127 +1006,6 @@ body:has(.macos-ai-app.zeus-shell) {
   min-block-size: 28px;
 }
 
-/* 顶部项目导航只保留一层容器：内层选项卡回到平面布局，避免玻璃卡片套卡片。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  min-block-size: 30px;
-  padding: 0;
-  gap: 4px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 30px;
-  padding-inline: 12px;
-  border: 0;
-  border-radius: var(--zeus-control-radius);
-  background: transparent;
-  box-shadow: none;
-  color: var(--agentdesk-text-secondary);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover,
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:focus-visible {
-  background: rgb(40 102 247 / 8%);
-  color: var(--agentdesk-text);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active {
-  background: rgb(40 102 247 / 14%);
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--agentdesk-accent-strong);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button::before,
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button::after {
-  display: none;
-}
-
-/* 状态筛选采用独立按钮节奏，去掉包住所有按钮的连续胶囊。 */
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segments {
-  min-block-size: 48px !important;
-  display: inline-flex !important;
-  inline-size: max-content;
-  gap: 12px !important;
-  padding: 8px 10px !important;
-  background: rgb(255 255 255 / 46%) !important;
-  border: 1px solid rgb(255 255 255 / 70%) !important;
-  border-radius: var(--agentdesk-radius-card) !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 42%),
-    0 8px 18px -16px rgb(37 86 132 / 52%);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment {
-  min-block-size: 32px !important;
-  flex: 0 0 auto;
-  padding-inline: 14px;
-  border: 1px solid rgb(148 163 184 / 22%) !important;
-  border-radius: var(--zeus-control-radius);
-  background: rgb(255 255 255 / 82%) !important;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 50%);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment:hover,
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment:focus-visible {
-  border-color: rgb(40 102 247 / 28%);
-  background: rgb(255 255 255 / 88%);
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment[aria-pressed='true'] {
-  border-color: rgb(40 102 247 / 62%);
-  background: linear-gradient(180deg, #4f82ff, #2866f7);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 5px 12px -10px rgb(40 102 247 / 78%);
-  color: #fff;
-}
-
-/* 任务页按 AgentDesk 的层级组织：一条 Tab 轨道 + 一张主表面，表格行保持完整卡片。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  min-block-size: 58px;
-  padding-inline: 10px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  min-block-size: 44px;
-  gap: 6px;
-  padding: 4px;
-  background: rgb(255 255 255 / 48%);
-  border: 1px solid rgb(255 255 255 / 72%);
-  border-radius: var(--agentdesk-radius-surface);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 48%),
-    0 8px 18px -16px rgb(37 86 132 / 54%);
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 36px;
-  min-inline-size: 90px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--agentdesk-radius-tab);
-  background: transparent;
-  color: var(--agentdesk-text-secondary);
-  font-size: 14px;
-  font-weight: 680;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active {
-  background: rgb(207 217 229 / 78%);
-  color: var(--agentdesk-text);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 54%);
-}
-
 .macos-ai-app.zeus-shell .workspace-view-project-tasks > .task-management-detail-pane {
   padding: 14px 16px 18px;
 }
@@ -1340,30 +1019,6 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 44%),
     var(--agentdesk-shadow-soft);
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-primary-toolbar {
-  gap: 12px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks :is(.task-table-page-view-segments, .task-table-view-mode-segments) {
-  min-block-size: 40px;
-  gap: 6px;
-  padding: 4px;
-  background: rgb(255 255 255 / 48%);
-  border: 1px solid rgb(255 255 255 / 70%);
-  border-radius: var(--agentdesk-radius-surface);
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks :is(.task-table-page-view-segments, .task-table-view-mode-segments) .task-table-view-pill {
-  min-block-size: 32px;
-  padding-inline: 12px;
-  border: 0;
-  border-radius: var(--agentdesk-radius-tab);
 }
 
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-header {
@@ -1403,241 +1058,6 @@ body:has(.macos-ai-app.zeus-shell) {
   border-color: rgb(40 102 247 / 28%);
 }
 
-/* 任务页顶部工具区按内容收高，避免导航和状态筛选外框占用过多首屏空间。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  block-size: 48px !important;
-  flex: 0 0 48px !important;
-  min-block-size: 48px !important;
-  margin-block: 6px !important;
-  padding-inline: 10px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  block-size: 38px !important;
-  min-block-size: 38px !important;
-  padding: 3px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 30px !important;
-  padding-block: 4px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar {
-  min-block-size: 0 !important;
-  row-gap: 8px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segments {
-  min-block-size: 40px !important;
-  padding-block: 4px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment {
-  min-block-size: 30px !important;
-}
-
-/* 对齐 AgentDesk 实际实现：Tab 轨道使用 p-1（4px），按钮使用 py-2（8px），外层不再额外撑高。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  block-size: auto !important;
-  flex: 0 0 auto !important;
-  min-block-size: 0 !important;
-  margin-block: 4px !important;
-  padding-block: 4px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  block-size: auto !important;
-  min-block-size: 0 !important;
-  padding: 4px !important;
-  gap: 6px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 32px !important;
-  padding-block: 8px !important;
-  padding-inline: 12px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segments {
-  min-block-size: 0 !important;
-  padding: 4px 6px !important;
-  gap: 6px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment {
-  min-block-size: 32px !important;
-  padding-block: 8px !important;
-}
-
-/* AgentDesk 控件基准：顶部 Tab 使用 p-1/gap-1.5，筛选按钮沿用同一节奏。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
-  block-size: auto !important;
-  flex: 0 0 auto !important;
-  min-block-size: 0 !important;
-  margin-block: 4px !important;
-  padding-block: 4px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
-  align-self: center !important;
-  block-size: auto !important;
-  min-block-size: 0 !important;
-  gap: 6px !important;
-  padding: 4px !important;
-  border-radius: 16px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  min-block-size: 36px !important;
-  min-inline-size: 90px !important;
-  padding: 8px 12px !important;
-  border-radius: 12px !important;
-  line-height: 20px !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active {
-  background: linear-gradient(180deg, #4f82ff, #2866f7) !important;
-  border-color: rgb(40 102 247 / 72%) !important;
-  color: #fff !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 7px 16px -13px rgb(40 102 247 / 84%) !important;
-}
-
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active :where(span, svg) {
-  color: #fff !important;
-  fill: currentColor !important;
-  stroke: currentColor !important;
-}
-
-/* 状态筛选与顶部 Tab 共用 4px 外间距、6px 按钮间距和 12px 按钮圆角。 */
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segments {
-  min-block-size: 0 !important;
-  gap: 6px !important;
-  padding: 4px !important;
-  border-radius: 16px !important;
-  background: rgb(255 255 255 / 48%) !important;
-  border-color: rgb(255 255 255 / 72%) !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment {
-  min-block-size: 36px !important;
-  padding: 8px 12px !important;
-  border-radius: 12px !important;
-  line-height: 20px !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment[aria-pressed='true'] {
-  background: linear-gradient(180deg, #4f82ff, #2866f7) !important;
-  border-color: rgb(40 102 247 / 72%) !important;
-  color: #fff !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 7px 16px -13px rgb(40 102 247 / 84%) !important;
-}
-
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment[aria-pressed='true'] :where(span, svg) {
-  color: #fff !important;
-  fill: currentColor !important;
-  stroke: currentColor !important;
-}
-
-/* 右侧视图操作对应 AgentDesk TrendChart 的单层胶囊：p-0.5、gap-1、按钮 py-1。 */
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions {
-  gap: 4px !important;
-  padding: 2px !important;
-  border: 1px solid rgb(255 255 255 / 70%) !important;
-  border-radius: 999px !important;
-  background: rgb(255 255 255 / 48%) !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 48%),
-    0 8px 18px -16px rgb(37 86 132 / 54%) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions :is(.task-table-page-view-segments, .task-table-view-mode-segments) {
-  min-block-size: 0 !important;
-  gap: 4px !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill {
-  min-block-size: 28px !important;
-  padding: 4px 10px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  line-height: 20px !important;
-  background: transparent !important;
-  color: var(--agentdesk-text-secondary) !important;
-  box-shadow: none !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill:hover:not(:disabled),
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill:focus-visible {
-  background: rgb(40 102 247 / 10%) !important;
-  color: var(--agentdesk-text) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill[aria-pressed='true'] {
-  background: linear-gradient(180deg, #4f82ff, #2866f7) !important;
-  color: #fff !important;
-  box-shadow: 0 7px 16px -13px rgb(40 102 247 / 84%) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill[aria-pressed='true'] :where(span, svg) {
-  color: #fff !important;
-  fill: currentColor !important;
-  stroke: currentColor !important;
-}
-
-/* 右侧是多个筛选维度：列表/看板、层级/平铺分别保留独立胶囊，维度之间只用 6px 间距连接。 */
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions {
-  gap: 6px !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions :is(.task-table-page-view-segments, .task-table-view-mode-segments) {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 4px !important;
-  padding: 2px !important;
-  border: 1px solid rgb(255 255 255 / 70%) !important;
-  border-radius: 999px !important;
-  background: rgb(255 255 255 / 48%) !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 48%),
-    0 8px 18px -16px rgb(37 86 132 / 54%) !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions :is(.task-table-field-settings, .task-table-more-settings) {
-  display: inline-flex !important;
-  align-items: center !important;
-  background: transparent !important;
-  border: 0 !important;
-  padding: 0 !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions > .task-table-view-pill,
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions :is(.task-table-field-settings, .task-table-more-settings) > .task-table-view-pill {
-  min-block-size: 28px !important;
-  padding: 4px 10px !important;
-  border: 1px solid rgb(255 255 255 / 70%) !important;
-  border-radius: 999px !important;
-  background: rgb(255 255 255 / 48%) !important;
-  color: var(--agentdesk-text-secondary) !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 40%),
-    0 8px 18px -16px rgb(37 86 132 / 54%) !important;
-}
-
 /* 工作区和工具栏限制在窗口内，任务列超出的宽度交给列表横向滚动。 */
 .macos-ai-app.zeus-shell .workspace-view-project-tasks,
 .macos-ai-app.zeus-shell .workspace-view-project-tasks > .task-management-detail-pane,
@@ -1648,11 +1068,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-workbench > .task-list-workbench.task-list-protagonist {
   min-inline-size: 0 !important;
   max-inline-size: 100% !important;
-}
-
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-primary-toolbar {
-  grid-template-columns: minmax(0, min(280px, 30%)) minmax(0, 1fr) max-content !important;
-  overflow: hidden !important;
 }
 
 @media (min-width: 761px) {
@@ -1766,18 +1181,18 @@ body:has(.macos-ai-app.zeus-shell) {
   background-image: none !important;
 }
 
-.macos-ai-app.zeus-shell :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments, .settings-sidebar-shell) {
+.macos-ai-app.zeus-shell :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .settings-sidebar-shell) {
   background: rgb(255 255 255 / 22%) !important;
   background-image: none !important;
 }
 
-.macos-ai-app.zeus-shell.theme-dark :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments, .settings-sidebar-shell, .ai-sidebar, .zeus-sidebar) {
+.macos-ai-app.zeus-shell.theme-dark :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .settings-sidebar-shell, .ai-sidebar, .zeus-sidebar) {
   background: rgb(15 23 42 / 26%) !important;
   background-image: none !important;
 }
 
 @media (prefers-color-scheme: dark) {
-  .macos-ai-app.zeus-shell.theme-system :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .task-table-view-mode-segments, .settings-sidebar-shell, .ai-sidebar, .zeus-sidebar) {
+  .macos-ai-app.zeus-shell.theme-system :where(.task-filter-control-row, .task-table-status-segments, .task-table-page-view-segments, .settings-sidebar-shell, .ai-sidebar, .zeus-sidebar) {
     background: rgb(15 23 42 / 26%) !important;
     background-image: none !important;
   }
@@ -2011,8 +1426,7 @@ body:has(.macos-ai-app.zeus-shell) {
     .browser-tabs,
     .menu-bar-usage-tabs,
     .task-table-status-segments,
-    .task-table-page-view-segments,
-    .task-table-view-mode-segments
+    .task-table-page-view-segments
   ) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
@@ -2020,70 +1434,177 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: var(--zeus-card-shadow-soft) !important;
 }
 
-/* 状态筛选按钮各自留出 6px 节奏，选中态保持蓝底白字，避免文字消失。 */
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-status-segment:not([aria-pressed='true']) {
-  background: var(--zeus-card-background) !important;
-  border-color: var(--zeus-card-border) !important;
-  box-shadow: var(--zeus-card-shadow-soft) !important;
-  color: var(--agentdesk-text-secondary) !important;
+/* 项目主导航使用扁平按钮，图标与文字作为整体水平、垂直居中。 */
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar {
+  flex: 0 0 auto;
+  min-block-size: 0;
+  margin-block: 4px;
+  padding: 4px 10px;
+  border: 0;
 }
 
-/* 右侧是独立的多个筛选维度：父级保持透明，每个维度单独成组。 */
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions {
-  gap: 6px !important;
-  padding: 0 !important;
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav {
+  align-self: center;
+  align-items: center;
+  flex-wrap: wrap;
+  block-size: auto;
+  min-block-size: 0;
+  gap: 4px;
+  padding: 0;
+  background: transparent !important;
   border: 0 !important;
+  box-shadow: none !important;
+}
+
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-inline-size: 90px;
+  min-block-size: 36px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--agentdesk-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button span {
+  color: inherit;
+}
+
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button svg {
+  display: block;
+  inline-size: 18px;
+  block-size: 18px;
+  flex: 0 0 auto;
+}
+
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button::before,
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button::after {
+  display: none;
+}
+
+/* 搜索、状态和视图操作同排，空间不足时自然换行，列表滚动不影响弹出层。 */
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-primary-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-block-size: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-toolbar-search {
+  flex: 0 1 280px;
+  inline-size: 280px;
+  max-inline-size: 100%;
+}
+
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-toolbar-search input {
+  block-size: 32px;
+  border-radius: 6px;
+  box-shadow: none;
+  text-align: start;
+}
+
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segments, .task-table-page-view-segments) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  min-block-size: 0;
+  max-inline-size: 100%;
+  gap: 4px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0;
   background: transparent !important;
   box-shadow: none !important;
+  overflow: visible;
 }
 
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions :is(.task-table-page-view-segments, .task-table-view-mode-segments) {
-  background: var(--zeus-card-background) !important;
-  border: 1px solid var(--zeus-card-border) !important;
-  box-shadow: var(--zeus-card-shadow-soft) !important;
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-view-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-inline-start: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions > .task-table-view-pill,
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-field-settings > .task-table-view-pill,
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-more-settings > .task-table-view-pill {
-  background: var(--zeus-card-background) !important;
-  border-color: var(--zeus-card-border) !important;
-  box-shadow: var(--zeus-card-shadow-soft) !important;
-  color: var(--agentdesk-text-secondary) !important;
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill, .task-table-new-task-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-block-size: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--agentdesk-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
 }
 
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-view-actions .task-table-view-pill[aria-pressed='true'] {
-  background: linear-gradient(180deg, #4f82ff, #2866f7) !important;
-  border-color: rgb(40 102 247 / 72%) !important;
-  color: #fff !important;
-  box-shadow: 0 7px 16px -13px rgb(40 102 247 / 84%) !important;
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover,
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill):hover:not(:disabled) {
+  background: var(--zeus-source-list-hover);
+  color: var(--agentdesk-text);
 }
 
-/* 新任务是任务页唯一的主操作，使用高对比品牌蓝，避免被通用白色控件样式冲淡。 */
-.macos-ai-app.zeus-shell .task-table-new-task-button {
-  background: linear-gradient(180deg, #4f82ff, #2866f7) !important;
-  border-color: rgb(40 102 247 / 72%) !important;
-  color: #fff !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    0 8px 18px -12px rgb(40 102 247 / 82%) !important;
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active,
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill)[aria-pressed='true'],
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-field-settings, .task-table-more-settings):has(> :popover-open) > button {
+  background: var(--agentdesk-accent-soft);
+  color: var(--agentdesk-accent-strong);
+  box-shadow: none;
 }
 
-.macos-ai-app.zeus-shell .task-table-new-task-button:hover:not(:disabled),
-.macos-ai-app.zeus-shell .task-table-new-task-button:focus-visible {
-  background: linear-gradient(180deg, #3f75fa, #1f59ed) !important;
-  border-color: #1f59ed !important;
-  color: #fff !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 28%),
-    0 10px 20px -12px rgb(31 89 237 / 86%) !important;
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button {
+  background: var(--agentdesk-accent);
+  color: #fff;
 }
 
-.macos-ai-app.zeus-shell .task-table-new-task-button:disabled {
-  background: #b9c7e8 !important;
-  border-color: #b9c7e8 !important;
-  color: rgb(255 255 255 / 88%) !important;
-  box-shadow: none !important;
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button:hover:not(:disabled) {
+  background: var(--agentdesk-accent-strong);
+}
+
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button:disabled {
+  opacity: 0.5;
+}
+
+/* 扁平按钮仍保留独立的键盘焦点轮廓。 */
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:focus-visible,
+.macos-ai-app.zeus-shell .task-table-primary-toolbar button:focus-visible {
+  outline: 2px solid var(--agentdesk-accent);
+  outline-offset: 2px;
+}
+
+/* 原生弹出层进入浏览器顶层，自动关联触发按钮并在窗口边缘调整方向。 */
+.macos-ai-app.zeus-shell :is(.task-table-field-settings-popover, .task-table-view-more-panel)[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 8px 0;
+  position-area: bottom span-left;
+  position-try-fallbacks: flip-inline, flip-block;
+  max-block-size: min(420px, calc(100dvh - 32px));
+  background: var(--zeus-card-background);
+  color: var(--agentdesk-text);
+}
+
+.macos-ai-app.zeus-shell :is(.task-table-field-settings-popover, .task-table-view-more-panel)[popover]:not(:popover-open) {
+  display: none;
 }
 
 /* 工具条已经位于主卡片内部，保持透明可以避免出现白卡套白卡。 */

@@ -14,15 +14,7 @@ import { useGitFeatureController } from '../git/useGitFeatureController.js';
 import { useProjectFeatureController } from '../projects/useProjectFeatureController.js';
 import { useSettingsFeatureController } from '../settings/useSettingsFeatureController.js';
 import { useTaskFeatureController } from '../tasks/useTaskFeatureController.js';
-import {
-  defaultTaskTableEnumSortOrders,
-  filterVisibleTasks,
-  normalizeTaskTableColumnPreferences,
-  resolveTaskManagementStatus,
-  taskAgentRunStatusFromConversation,
-  taskAgentRunStatusFromSession,
-  type TaskWorkspaceViewMode,
-} from '../../task/taskWorkspaceModel.js';
+import { defaultTaskTableEnumSortOrders, filterVisibleTasks, normalizeTaskTableColumnPreferences, resolveTaskManagementStatus, taskAgentRunStatusFromConversation, taskAgentRunStatusFromSession } from '../../task/taskWorkspaceModel.js';
 import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
 import type { StorageRecoveryFaultState } from '../../storageRecoveryError.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
@@ -832,8 +824,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const activeProjectId = selectedProject?.id ?? firstProjectId;
   const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
   const taskPageViewMode: TaskPageViewMode = activeProjectId ? (appShellSettings.taskPageViewByProject?.[activeProjectId] ?? 'list') : 'list';
-  const taskViewMode: TaskWorkspaceViewMode = activeProjectId ? (appShellSettings.taskViewModeByProject?.[activeProjectId] ?? 'hierarchy') : 'hierarchy';
-  const expandedTaskIds = activeProjectId ? (appShellSettings.taskExpandedIdsByProject?.[activeProjectId] ?? []) : [];
   const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
   const [taskTableLayoutDraft, setTaskTableLayoutDraft] = useState<{ projectId?: string; preferences: TaskTableColumnPreferences }>(() => ({
     projectId: selectedProject?.id ?? props.snapshot?.projects[0]?.id,
@@ -1384,7 +1374,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     currentTaskConversationChoices,
     dataPortabilityStatusCopy,
     executingGitOperationBusy,
-    expandedTaskIds,
     externalApiKeyInput,
     firstProjectId,
     genericShellCriticalConfirmed,
@@ -1761,7 +1750,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskTagFilter,
     taskTemplates,
     taskTerminalCleanupConfirmation,
-    taskViewMode,
     taskWorkspaceCopy,
     telegramAllowedUserIdsInput,
     telegramNotificationChatIdsInput,
