@@ -1,6 +1,5 @@
 import { type FormEvent, useCallback, useEffect } from 'react';
-import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ZentaoTaskExtract } from '@zeus/shared';
-import { openExternalHttpsUrlInMain } from '../../appShellBridge.js';
+import { describeUserFacingError, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
@@ -1674,7 +1673,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskCreateForm((current) => ({ ...current, priority }));
   }
 
-  function applyZentaoTaskExtract(extract: ZentaoTaskExtract): void {
+  /** 将确认可读的第三方字段填入草稿，保留手动填写的其他信息。 */
+  function applyThirdPartyTaskExtract(extract: ThirdPartyTaskExtract): void {
     if (extract.kind !== 'ok') return;
     // 只回填解析出的非空字段，保留用户已填写的父任务、优先级、标签和附件。
     setTaskCreateForm((current) => ({
@@ -1690,12 +1690,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskCreateError('');
   }
 
-  async function openZentaoLinkInBrowser(url: string): Promise<boolean> {
-    const opened = await openExternalHttpsUrlInMain({
-      zeus: typeof window === 'undefined' ? undefined : window.zeus,
-      url,
-    });
-    return opened.opened;
+  /** 登录必须与读取共用 Zeus 会话，系统浏览器的登录不会生效。 */
+  async function openThirdPartyLinkInBrowser(url: string): Promise<boolean> {
+    return typeof window !== 'undefined' && Boolean(await window.zeus?.openThirdPartyTaskLogin?.(url));
   }
 
   function mergeTaskCreateAttachments(attachments: TaskCreateAttachment[]): void {
@@ -3301,7 +3298,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   return {
     acknowledgeNativeConversationAttention,
     addTaskCreateAttachments,
-    applyZentaoTaskExtract,
+    applyThirdPartyTaskExtract,
     archiveConversation,
     archiveGraphConversation,
     askGraph,
@@ -3336,7 +3333,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskDetailPane,
     openTaskGitDelivery,
     openTaskModelPush,
-    openZentaoLinkInBrowser,
+    openThirdPartyLinkInBrowser,
     persistCodeWorkspacePreference,
     persistSidebarConversationPreferences,
     prepareNewConversationDraft,

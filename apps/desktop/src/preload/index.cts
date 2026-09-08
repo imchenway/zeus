@@ -249,7 +249,10 @@ contextBridge.exposeInMainWorld('zeus', {
     invokeMainCommand('zeus:save-task-pasted-attachments', 'desktop.task_resources.save_pasted', 'artifact', 'task-input-resources', attachments),
   getTaskAttachmentPreview: (path: string) => ipcRenderer.invoke('zeus:get-task-attachment-preview', path),
   openTaskAttachment: (path: string) => ipcRenderer.invoke('zeus:open-task-attachment', path),
-  parseZentaoTaskLink: (url: string) => invokeMainCommand('zeus:zentao:parse-link', 'desktop.task_resources.import_zentao', 'artifact', 'task-input-resources', url),
+  /** 将第三方详情读取为可确认的任务草稿。 */
+  parseThirdPartyTaskLink: (url: string) => invokeMainCommand('zeus:third-party-task:parse-link', 'desktop.task_resources.import_third_party', 'artifact', 'task-input-resources', url),
+  /** 使用内置浏览器会话打开独立登录窗口。 */
+  openThirdPartyTaskLogin: (url: string) => ipcRenderer.invoke('zeus:third-party-task:open-login', url),
   exportSettingsSnapshotToFile: (snapshot: unknown) => ipcRenderer.invoke('zeus:export-settings-snapshot', snapshot),
   importSettingsSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-settings-snapshot'),
   importBusinessDataSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-business-data-snapshot'),

@@ -320,7 +320,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   } = state;
   const {
     addTaskCreateAttachments,
-    applyZentaoTaskExtract,
+    applyThirdPartyTaskExtract,
     archiveConversation,
     authorizeTaskCreateFiles,
     changedFiles,
@@ -341,7 +341,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openTaskConversationDrawer,
     openTaskCreateModal,
     openTaskDetailPane,
-    openZentaoLinkInBrowser,
+    openThirdPartyLinkInBrowser,
     persistCodeWorkspacePreference,
     prepareNewConversationDraft,
     readTaskCreateClipboardResources,
@@ -936,9 +936,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onAuthorizeFiles={authorizeTaskCreateFiles}
                     onMaterializeResources={materializeTaskCreateResources}
                     onReadClipboardResources={readTaskCreateClipboardResources}
-                    onParseZentaoLink={(url) => props.onParseZentaoTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
-                    onApplyZentaoTaskInfo={applyZentaoTaskExtract}
-                    onOpenZentaoLink={openZentaoLinkInBrowser}
+                    onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                    onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
+                    onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
                     onAddAttachments={addTaskCreateAttachments}
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}

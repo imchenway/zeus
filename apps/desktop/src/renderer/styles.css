@@ -20124,8 +20124,8 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .task-create-attachment-picker:focus-visible,
 .macos-ai-app .task-create-attachment-row button:focus-visible,
 .macos-ai-app .task-create-title-input:focus-visible,
-.macos-ai-app .task-create-zentao-input:focus-visible,
-.macos-ai-app .task-create-zentao-open-button:focus-visible,
+.macos-ai-app .task-create-third-party-input:focus-visible,
+.macos-ai-app .task-create-third-party-open-button:focus-visible,
 .macos-ai-app .task-create-description-input:focus-visible,
 .macos-ai-app .task-create-tags-input:focus-visible {
   outline: 0;
@@ -20147,23 +20147,23 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   min-inline-size: 0;
 }
 
-.macos-ai-app .task-create-zentao-row {
+.macos-ai-app .task-create-third-party-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
 }
 
-.macos-ai-app .task-create-zentao-input {
+.macos-ai-app .task-create-third-party-input {
   min-inline-size: 0;
 }
 
-.macos-ai-app .task-create-zentao-parse-button {
+.macos-ai-app .task-create-third-party-parse-button {
   min-block-size: 34px;
   white-space: nowrap;
 }
 
-.macos-ai-app .task-create-zentao-hint {
+.macos-ai-app .task-create-third-party-hint {
   margin: 0;
   color: var(--zeus-product-muted);
   font-size: 12px;
@@ -20174,15 +20174,15 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   flex-wrap: wrap;
 }
 
-.macos-ai-app .task-create-zentao-hint-ok {
+.macos-ai-app .task-create-third-party-hint-ok {
   color: var(--zeus-success-text, #267a4c);
 }
 
-.macos-ai-app .task-create-zentao-hint-error {
+.macos-ai-app .task-create-third-party-hint-error {
   color: var(--zeus-danger-text);
 }
 
-.macos-ai-app .task-create-zentao-open-button {
+.macos-ai-app .task-create-third-party-open-button {
   border: 0;
   background: transparent;
   padding: 0;
@@ -20195,7 +20195,7 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   cursor: pointer;
 }
 
-.macos-ai-app .task-create-zentao-open-button:hover {
+.macos-ai-app .task-create-third-party-open-button:hover {
   opacity: 0.82;
 }
 
@@ -27243,7 +27243,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   padding-block-start: 16px;
   border-block-start: 1px solid var(--zeus-product-line-soft);
 }
-.macos-ai-app .task-create-options > .task-create-zentao-field,
+.macos-ai-app .task-create-options > .task-create-third-party-field,
 .macos-ai-app .task-create-options > .task-create-tags-field {
   grid-column: 1 / -1;
 }
