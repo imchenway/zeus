@@ -1,5 +1,5 @@
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
-import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
+import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -1002,8 +1002,24 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return requests.length === snapshot.requests.length ? snapshot : { ...snapshot, requests };
   }
 
+  /** 回答消息不在首屏时，原问题携带的送达记录同样是已写入的证据。 */
   function envelopeHasProviderUserFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    return snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) || snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId);
+    return (
+      snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) ||
+      snapshot.items.some((item) => {
+        if (snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId) return true;
+        /** 只接受同一问题、轮次与发送方式的明确送达结果。 */
+        const response = item.payload.questionResponse as AsyncQuestionResponse | undefined;
+        return Boolean(
+          envelope.questionAnswer &&
+          response &&
+          ['resolved', 'completed'].includes(response.status) &&
+          response.answer?.providerItemId === envelope.questionAnswer.providerItemId &&
+          response.answer.providerTurnId === envelope.questionAnswer.providerTurnId &&
+          Boolean(response.answer.asNewMessage) === Boolean(envelope.questionAnswer.asNewMessage),
+        );
+      })
+    );
   }
 
   function matchingEnvelopeSubmissions(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): NativeQueuedSubmission[] {
@@ -1852,6 +1868,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
             throw error;
           }
           const reconciliation = await reconcileFailedSend(envelope);
+          // 冲突只核对原回答，不能把另一份回答伪装成本次发送成功或绕过重复写入保护。
+          if (envelope.questionAnswer && ['ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT', 'ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED'].includes(failure.code ?? '') && reconciliation.kind === 'durable') {
+            if (pendingSend) finalizeDurableEnvelope(pendingSend);
+            throw Object.assign(new Error('该问题已有回答，本次未重复发送。请通过普通消息补充。'), { code: 'ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED' });
+          }
           if (reconciliation.kind === 'durable') return reconciliation.acceptance;
           if (reconciliation.kind === 'terminal') {
             if (envelope.questionAnswer) throw error;
@@ -1882,7 +1903,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
           throw error;
         }
       },
-      () => reconcileAcceptedSend(),
+      () => {
+        // 回答接收后立即释放表单；后台继续核对送达，失败仍由原发送账本保留。
+        if (envelope.questionAnswer) {
+          void reconcileAcceptedSend();
+          return;
+        }
+        return reconcileAcceptedSend();
+      },
       false,
     );
   }

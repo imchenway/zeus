@@ -174,6 +174,7 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
       text: item.text.preview,
       payload: {
         ...(recordValue(parsedPayload) ?? {}),
+        ...(item.questionResponse ? { questionResponse: item.questionResponse } : {}),
         protocolFamily: item.protocolFamily ?? null,
         stageId: item.stageId ?? null,
         v2ContentKind: 'active_item',
