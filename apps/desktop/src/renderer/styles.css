@@ -22273,6 +22273,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: flex;
   gap: 0;
   justify-items: stretch;
+  /* 分隔线跨出列边缘，保留完整拖动命中区；标题按钮内部仍自行截断文字。 */
+  overflow: visible;
   padding: 0;
   position: relative;
 }
