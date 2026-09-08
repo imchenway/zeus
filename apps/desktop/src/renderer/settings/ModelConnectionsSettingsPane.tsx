@@ -49,10 +49,23 @@ export function ModelConnectionsSettingsPane(props: {
   /** 首次引导在编辑器内选择新项目默认模型。 */
   onComplete?: (modelRef: string) => Promise<void>;
   onBusyChange?: (busy: boolean) => void;
-  /** 当前任务只启用当前项目模型，不调整其他项目或全局默认。 */
-  completionScope?: 'project' | 'new_projects';
+  /** 当前任务或对话只启用当前项目模型，不调整其他项目或全局默认。 */
+  completionScope?: 'project' | 'conversation' | 'new_projects';
 }) {
   const zh = props.language === 'zh-CN';
+  /** 可见标签和读屏名称共用当前接入范围文案。 */
+  const completionModelLabel =
+    props.completionScope === 'conversation'
+      ? zh
+        ? '本次对话模型'
+        : 'Model for this conversation'
+      : props.completionScope === 'project'
+        ? zh
+          ? '本次任务模型'
+          : 'Model for this task'
+        : zh
+          ? '新项目默认模型'
+          : 'Default model for new projects';
   const [connections, setConnections] = useState<ModelConnectionRecord[]>([]);
   const [draft, setDraft] = useState<ModelConnectionDraft>(() => emptyDraft());
   const [newModelId, setNewModelId] = useState('');
@@ -526,22 +539,20 @@ export function ModelConnectionsSettingsPane(props: {
           ) : null}
           {props.onComplete ? (
             <label className="model-setup-default-model">
-              <span>{props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}
-                value={defaultModelRef}
-                onChange={setDefaultModelRef}
-                options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))}
-              />
+              <span>{completionModelLabel}</span>
+              <ZeusSelect size="regular" ariaLabel={completionModelLabel} value={defaultModelRef} onChange={setDefaultModelRef} options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))} />
               <small>
-                {props.completionScope === 'project'
+                {props.completionScope === 'conversation'
                   ? zh
-                    ? '仅为当前项目启用。接入后返回确认，不会开始执行。'
-                    : 'Enable for this project only. Return to confirmation without starting the task.'
-                  : zh
-                    ? '只影响之后新建的项目。'
-                    : 'Only affects new projects.'}{' '}
+                    ? '仅为当前项目启用。接入后返回草稿，确认后再发送。'
+                    : 'Enable for this project only. Return to your draft to review and send.'
+                  : props.completionScope === 'project'
+                    ? zh
+                      ? '仅为当前项目启用。接入后返回确认，不会开始执行。'
+                      : 'Enable for this project only. Return to confirmation without starting the task.'
+                    : zh
+                      ? '只影响之后新建的项目。'
+                      : 'Only affects new projects.'}{' '}
                 {zh ? '模型目录可用不代表实际调用成功。' : 'A model listing does not verify actual calls.'}
               </small>
             </label>

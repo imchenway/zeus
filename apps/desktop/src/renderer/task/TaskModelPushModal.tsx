@@ -26,7 +26,7 @@ import { useConversationInputResources } from '../session/useConversationInputRe
 import { ConversationPendingAttachmentImages } from '../session/ConversationResources.js';
 import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
-import { resolveModelCapability } from '../session/modelSelection.js';
+import { hasAvailableConversationModel, resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -68,9 +68,7 @@ export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'err
 
 /** 入口只根据已读取的账号和项目目录选择下一步，不替换模型或启动执行。 */
 export function resolveTaskModelPushEntry(capabilities: CodexConversationCapabilities, hasConfiguredProvider: boolean): 'confirmation' | 'choose' | 'custom' {
-  /** 未就绪占位账号不能视为无需登录的可用 Codex。 */
-  const codexReady = capabilities.codexAccount.generationId !== 'codex-unavailable' && (!capabilities.codexAccount.requiresOpenaiAuth || capabilities.codexAccount.signedIn);
-  if (capabilities.models.some((model) => model.available !== false && (model.agentKind === 'pi' || model.sourceId !== 'codex' || codexReady))) return 'confirmation';
+  if (hasAvailableConversationModel(capabilities)) return 'confirmation';
   return hasConfiguredProvider ? 'custom' : 'choose';
 }
 

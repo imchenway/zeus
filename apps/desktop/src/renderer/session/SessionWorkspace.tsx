@@ -75,11 +75,12 @@ import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
-import { resolveModelCapability } from './modelSelection.js';
+import { hasAvailableConversationModel, resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { modelSetupRequestedEvent, reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
@@ -2961,6 +2962,9 @@ function NewConversationComposer(props: {
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
+  /** 接入结果只属于原草稿，切换项目或卸载时取消。 */
+  const modelSetupRequestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => modelSetupRequestRef.current?.abort(), [props.owner?.projectId]);
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
@@ -3030,6 +3034,8 @@ function NewConversationComposer(props: {
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
   const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
+  /** 空目录和未登录的订阅目录均允许点击发送进入接入引导。 */
+  const needsModelSetup = Boolean(capabilities && !hasAvailableConversationModel(capabilities));
   const goalAvailable = Boolean(capabilities?.goals?.supported && capabilities?.goals?.enabled && selectedModel?.agentKind !== 'pi');
   const goalInputActive = goalInputOpen && goalAvailable;
   const goalCount = [...goalObjective.trim()].length;
@@ -3081,7 +3087,31 @@ function NewConversationComposer(props: {
     const submittedContent = overrides.content ?? structured.promptText;
     const submittedDisplayText = overrides.content === undefined ? structured.displayText : overrides.content;
     const submittedGoal = (overrides.goalObjective ?? (goalInputActive ? goalObjective : '')).trim();
-    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || !selectedModel || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
+    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || (!selectedModel && !needsModelSetup) || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
+    if (needsModelSetup) {
+      setLocalError(null);
+      modelSetupRequestRef.current?.abort();
+      /** 同一次接入只刷新此项目和此草稿，不自动创建会话或发送消息。 */
+      const request = new AbortController();
+      modelSetupRequestRef.current = request;
+      /** 显式选中的供应商模型加入项目后，刷新目录并预选供用户确认。 */
+      const conversationContext: ConversationModelSetupContext = {
+        projectId: props.owner.projectId,
+        signal: request.signal,
+        onComplete: async (reference) => {
+          /** 读取最新目录；失败保留引导和全部草稿内容。 */
+          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId);
+          if (request.signal.aborted) return;
+          /** 订阅登录优先选用可用的订阅模型，自定义接入遵循用户明确选择。 */
+          const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
+          if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+          setCapabilities(refreshed);
+          setSelectedModelId(model.id);
+        },
+      };
+      window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { conversationContext } }));
+      return;
+    }
     if (submittedGoal && structured.expertMentions.length > 0) {
       setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
       return;
@@ -3388,7 +3418,15 @@ function NewConversationComposer(props: {
                 className="session-send-button"
                 aria-label={goalInputActive ? copy.createGoal : copy.send}
                 onClick={() => void submit(goalInputActive ? { content: content.trim() ? content : goalObjective, goalObjective } : {})}
-                disabled={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || !props.owner || !selectedModel || (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0)}
+                disabled={
+                  submitting ||
+                  executionContextBusy ||
+                  capabilitiesLoading ||
+                  inputResources.processing ||
+                  !props.owner ||
+                  (!selectedModel && !needsModelSetup) ||
+                  (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0)
+                }
                 aria-busy={submitting || undefined}
               >
                 {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
