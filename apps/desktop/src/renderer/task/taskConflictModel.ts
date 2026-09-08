@@ -217,12 +217,10 @@ export function applyConflictDocumentEdit(document: ConflictDocument, nextConten
   const nextEnd = prefix + change.insertedLength;
   /** 等内容替换不改变冲突状态，只比较本次编辑片段。 */
   if (change.to - change.from === change.insertedLength && document.visibleContent.slice(prefix, beforeEnd) === nextContent.slice(prefix, nextEnd)) return document;
-  const affected = document.blocks.filter((block) => block.visibleStart < beforeEnd && block.visibleEnd > prefix);
-  const insertionAtBlockStart = beforeEnd === prefix && document.blocks.some((block) => block.visibleStart === prefix && block.visibleEnd > prefix);
-  if (insertionAtBlockStart) {
-    const block = document.blocks.find((candidate) => candidate.visibleStart === prefix && candidate.visibleEnd > prefix);
-    if (block) affected.push(block);
-  }
+  /** 空结果处的输入也属于冲突处理；连续追加保留同一块的手工状态。 */
+  const affected = document.blocks.filter((block) =>
+    beforeEnd === prefix || block.visibleStart === block.visibleEnd ? block.visibleStart <= beforeEnd && block.visibleEnd >= prefix : block.visibleStart < beforeEnd && block.visibleEnd > prefix,
+  );
 
   const delta = nextEnd - beforeEnd;
   /** 多个冲突一起被修改时按身份查找，避免重复扫描已影响的块。 */
@@ -241,8 +239,10 @@ export function applyConflictDocumentEdit(document: ConflictDocument, nextConten
     const first = affected.reduce((candidate, block) => (block.visibleStart < candidate.visibleStart ? block : candidate));
     const last = affected.reduce((candidate, block) => (block.visibleEnd > candidate.visibleEnd ? block : candidate));
     const firstIndex = blocks.findIndex((block) => block.id === first.id);
-    const replacementStart = first.visibleStart;
-    const replacementEnd = replacementStart + (nextEnd - prefix + (prefix - replacementStart));
+    /** 保留本次输入未覆盖的前后文，后续选入或移除不会遗留旧冲突尾部。 */
+    const replacementStart = Math.min(prefix, first.visibleStart);
+    /** 跨块修改合并为一个手工范围，包含最后一块未改动的尾部。 */
+    const replacementEnd = Math.max(beforeEnd, last.visibleEnd) + delta;
     const nextBlocks = blocks.map((block, index) => {
       if (index === firstIndex) {
         return { ...block, visibleStart: replacementStart, visibleEnd: replacementEnd, visibleText: nextContent.slice(replacementStart, replacementEnd), status: 'manual' as const };

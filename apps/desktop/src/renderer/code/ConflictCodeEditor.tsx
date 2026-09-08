@@ -23,6 +23,12 @@ interface ConflictCodeEditorProps {
   range?: { from: number; to: number };
   /** 完整文件按冲突偏移构建稀疏操作标记。 */
   blocks?: ConflictBlock[];
+  /** 侧栏显示朝向结果的行旁操作；结果栏只保留冲突高亮。 */
+  side?: ConflictSide;
+  /** 只读参照仍可选入，操作禁用单独跟随页面忙碌状态。 */
+  actionsDisabled?: boolean;
+  /** 聚焦片段在原始文件中的起点，用于换算冲突行。 */
+  contentOffset?: number;
   /** 操作按钮使用当前界面语言。 */
   zh: boolean;
   /** 中间结果继续交给现有冲突编辑模型。 */
@@ -40,6 +46,19 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
   /** 按钮与滚动事件读取最新业务回调。 */
   const current = useRef(props);
   current.current = props;
+  /** 各栏按自己的文本偏移定位，同一套标记同时覆盖完整文件与聚焦片段。 */
+  const regions = useMemo(
+    () =>
+      (props.blocks ?? [])
+        .map((block) => ({
+          block,
+          from: (props.side === 'source' ? block.sourceStart : props.side === 'task' ? block.taskStart : block.visibleStart) - (props.contentOffset ?? 0),
+          to: (props.side === 'source' ? block.sourceEnd : props.side === 'task' ? block.taskEnd : block.visibleEnd) - (props.contentOffset ?? 0),
+        }))
+        .filter((region) => region.from >= 0)
+        .sort((left, right) => left.from - right.from),
+    [props.blocks, props.side, props.contentOffset],
+  );
   /** 文本修改由编辑器保留，扩展仅随冲突位置或阅读状态更新。 */
   const extensions = useMemo(
     () => [
@@ -48,33 +67,40 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
       lineNumbers({ formatNumber: (number: number) => String(number + (props.lineOffset ?? 0)) }),
       ViewPlugin.define(
         (view) => ({
-          decorations: conflictDecorations(view, props.blocks, props.range),
+          decorations: conflictDecorations(view, regions, props.range),
           update(update: ViewUpdate) {
-            if (update.viewportChanged || update.docChanged) this.decorations = conflictDecorations(update.view, current.current.blocks, current.current.range);
+            if (update.viewportChanged || update.docChanged) this.decorations = conflictDecorations(update.view, regions, props.range);
           },
         }),
         { decorations: (plugin) => plugin.decorations },
       ),
-      props.blocks
+      props.side && props.blocks
         ? gutter({
             class: 'conflict-code-actions',
+            side: props.side === 'source' ? 'after' : 'before',
             lineMarker: (view, line) => {
               /** 二分查找当前可见行的冲突，不在每次滚动扫描整份文件。 */
-              const blocks = current.current.blocks ?? [];
-              const index = precedingBlock(blocks, line.to);
-              const block = blocks[index];
-              return block && block.visibleStart >= line.from && block.visibleStart <= line.to ? new ConflictMarker(block, current, props.readOnly) : null;
+              const region = regions[precedingBlock(regions, line.to)];
+              return region && region.from >= line.from && region.from <= line.to ? new ConflictMarker(region.block, props.side!, current, Boolean(props.actionsDisabled), props.zh) : null;
             },
           })
         : [],
       EditorView.domEventHandlers({ scroll: (_event, view) => current.current.onScroll(view) }),
       EditorView.theme({
         '.cm-line.is-conflict': { backgroundColor: 'color-mix(in srgb, #d74733 16%, transparent)' },
+        '.cm-line.is-conflict-resolved': { backgroundColor: 'color-mix(in srgb, #267a4c 12%, transparent)' },
+        '.conflict-code-actions': { minWidth: '48px' },
         '.conflict-code-actions .cm-gutterElement': { display: 'flex', alignItems: 'center' },
-        '.conflict-code-actions button': { width: '20px', height: '20px', padding: '0', border: '0', background: 'transparent', color: 'inherit', cursor: 'pointer' },
+        '.conflict-code-actions [data-conflict-block]': { display: 'inline-flex' },
+        '.conflict-code-actions button': { width: '24px', height: '24px', padding: '0', border: '0', borderRadius: '3px', background: 'transparent', fontSize: '18px', lineHeight: '20px', cursor: 'pointer' },
+        '.conflict-code-actions .is-accepted': { color: 'var(--zeus-success-text, #267a4c)' },
+        '.conflict-code-actions .is-ignored': { color: 'var(--zeus-danger-text, #c43c32)' },
+        '.conflict-code-actions button[aria-pressed=true], .conflict-code-actions button:hover:not(:disabled)': { background: 'var(--zeus-control-bg)' },
+        '.conflict-code-actions button:focus-visible': { outline: '2px solid var(--zeus-control-accent)', outlineOffset: '-2px' },
+        '.conflict-code-actions button:disabled': { opacity: '0.45', cursor: 'not-allowed' },
       }),
     ],
-    [props.blocks, props.range, props.lineOffset, props.readOnly],
+    [regions, props.blocks, props.range, props.lineOffset, props.side, props.actionsDisabled, props.zh],
   );
   return (
     <CodeEditor
@@ -86,7 +112,15 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
       revealLine={props.revealLine}
       extensions={extensions}
       onChange={props.onChange}
-      onView={props.onView}
+      onView={(view) => {
+        // CodeMirror 默认将行号栏从辅助技术隐藏；只公开操作栏，普通行号仍保持隐藏。
+        for (const container of view?.dom.querySelectorAll('.cm-gutters') ?? []) {
+          if (!container.querySelector('.conflict-code-actions')) continue;
+          container.removeAttribute('aria-hidden');
+          for (const column of container.children) column.setAttribute('aria-hidden', String(!column.classList.contains('conflict-code-actions')));
+        }
+        props.onView(view);
+      }}
     />
   );
 });
@@ -96,33 +130,37 @@ class ConflictMarker extends GutterMarker {
   /** 按钮绑定权威冲突块，回调保持最新。 */
   constructor(
     private readonly block: ConflictBlock,
+    private readonly side: ConflictSide,
     private readonly current: { current: ConflictCodeEditorProps },
     private readonly disabled: boolean,
+    private readonly zh: boolean,
   ) {
     super();
   }
   /** 未变化的冲突按钮保留原生焦点。 */
   eq(other: ConflictMarker): boolean {
-    return this.block === other.block && this.disabled === other.disabled;
+    return this.block === other.block && this.side === other.side && this.disabled === other.disabled && this.zh === other.zh;
   }
   /** 使用原生按钮保留键盘和辅助技术操作。 */
   toDOM(): HTMLElement {
+    /** 每个侧栏只操作自身，移除表示不采用该侧修改。 */
     const group = document.createElement('span');
     group.dataset.conflictBlock = this.block.id;
-    for (const [side, action, symbol] of [
-      ['source', 'accepted', '→'],
-      ['source', 'ignored', '×'],
-      ['task', 'ignored', '×'],
-      ['task', 'accepted', '←'],
-    ] as const) {
+    for (const action of ['accepted', 'ignored'] as const) {
+      /** 原生按钮支持 Tab、回车以及已选状态朗读。 */
       const button = document.createElement('button');
-      const zh = this.current.current.zh;
+      /** 选入与移除都显示当前侧的处理状态。 */
+      const state = this.side === 'source' ? this.block.sourceState : this.block.taskState;
       button.type = 'button';
       button.disabled = this.disabled;
-      button.textContent = symbol;
-      button.title = zh ? `${action === 'accepted' ? '选入' : '忽略'}${side === 'source' ? '来源分支' : '任务分支'}` : `${action === 'accepted' ? 'Include' : 'Ignore'} ${side === 'source' ? 'source branch' : 'task branch'}`;
+      button.className = `is-${action}`;
+      button.textContent = action === 'ignored' ? '×' : this.side === 'source' ? '→' : '←';
+      button.title = this.zh
+        ? `${action === 'accepted' ? '选入' : '移除'}${this.side === 'source' ? '来源分支' : '任务分支'}的此处修改${action === 'ignored' ? '（不采用该侧修改）' : ''}`
+        : `${action === 'accepted' ? 'Include' : 'Exclude'} this ${this.side === 'source' ? 'source branch' : 'task branch'} change`;
       button.setAttribute('aria-label', button.title);
-      button.onclick = () => this.current.current.onSideAction?.(this.block, side, action);
+      button.setAttribute('aria-pressed', String(state === action));
+      button.onclick = () => this.current.current.onSideAction?.(this.block, this.side, action);
       group.append(button);
     }
     return group;
@@ -130,25 +168,32 @@ class ConflictMarker extends GutterMarker {
 }
 
 /** 查找起点不晚于当前偏移的最后一个冲突块。 */
-function precedingBlock(blocks: ConflictBlock[], offset: number): number {
+function precedingBlock(blocks: Array<{ from: number }>, offset: number): number {
+  /** 当前候选区间，右端不包含在内。 */
   let low = 0;
+  /** 二分上界随候选收缩。 */
   let high = blocks.length;
   while (low < high) {
+    /** 检查中点起始偏移。 */
     const middle = (low + high) >>> 1;
-    if (blocks[middle]!.visibleStart <= offset) low = middle + 1;
+    if (blocks[middle]!.from <= offset) low = middle + 1;
     else high = middle;
   }
   return low - 1;
 }
 
 /** 只装饰可见行；冲突跨度再长也不生成全文标记。 */
-function conflictDecorations(view: EditorView, blocks?: ConflictBlock[], range?: { from: number; to: number }) {
+function conflictDecorations(view: EditorView, regions: Array<{ block: ConflictBlock; from: number; to: number }>, range?: { from: number; to: number }) {
+  /** 装饰仅覆盖当前可见行。 */
   const decorations = [];
   for (const visible of view.visibleRanges) {
     for (let position = visible.from; position <= visible.to; ) {
+      /** 使用编辑器行索引定位，避免扫描全文。 */
       const line = view.state.doc.lineAt(position);
-      const block = blocks?.[precedingBlock(blocks, line.to)];
-      if ((block && block.visibleEnd >= line.from) || (range && line.number - 1 >= range.from && line.number - 1 < range.to)) decorations.push(Decoration.line({ class: 'is-conflict' }).range(line.from));
+      /** 各栏使用各自的冲突位置，已处理块改用完成色。 */
+      const region = regions[precedingBlock(regions, line.to)];
+      if ((region && (region.to > line.from || region.from === line.from)) || (range && line.number - 1 >= range.from && line.number - 1 < range.to))
+        decorations.push(Decoration.line({ class: region && region.block.status !== 'pending' ? 'is-conflict-resolved' : 'is-conflict' }).range(line.from));
       position = line.to + 1;
     }
   }
