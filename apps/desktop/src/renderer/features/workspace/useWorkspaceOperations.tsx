@@ -1952,6 +1952,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
+          taskGitDeliveryRevision={state.taskGitDeliveryRevision}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
           onLatestContentVisibilityChange={setLatestConversationContentVisible}
@@ -2018,6 +2019,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onOpenTaskDetail={onOpenTaskDetail}
           onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
+          taskGitDeliveryRevision={state.taskGitDeliveryRevision}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
           onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
