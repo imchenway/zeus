@@ -2310,26 +2310,19 @@
   will-change: auto !important;
 }
 
-/* reasoning 使用无端点停驻的连续扫光；其他状态继续沿用既有节奏。 */
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text {
-  animation: session-reasoning-continuous-sweep 1.85s linear infinite;
-  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
-  background-clip: text;
-  background-size: 240% 100%;
-  color: transparent;
-  -webkit-background-clip: text;
-}
-
+/* 思考摘要与当前状态共用连续扫光；固定纹理宽度让长摘要和短状态保持相同速度。 */
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
 .session-codex-parity-v1 .session-current-status-text {
-  animation: session-working-sweep 3.4s linear infinite;
-  background: linear-gradient(90deg, var(--session-text-muted) 0%, var(--session-text-muted) 36%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 64%, var(--session-text-muted) 100%);
+  animation: session-text-sweep 2.4s linear infinite;
+  background: linear-gradient(90deg, var(--session-text-muted) 0%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 100%) repeat-x;
   background-clip: text;
-  background-size: 240% 100%;
+  /* 每轮恰好移动一块首尾同色的纹理，去掉纯色停留段与循环回跳。 */
+  background-size: 160px 100%;
   color: transparent;
   -webkit-background-clip: text;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
   .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
   .session-codex-parity-v1 .session-current-status-text {
     animation: none;
@@ -11131,12 +11124,13 @@
   }
 }
 
-@keyframes session-reasoning-continuous-sweep {
+/* 位移与文字扫光的纹理宽度相等，循环首尾显示完全一致。 */
+@keyframes session-text-sweep {
   from {
-    background-position: 120% 0;
+    background-position: 0 0;
   }
   to {
-    background-position: -120% 0;
+    background-position: 160px 0;
   }
 }
 
