@@ -833,7 +833,7 @@ export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceB
     try {
       await runGit(input.cwd, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', branchHeadSha]);
     } catch (error) {
-      const conflictFiles = splitLines(await readGitStdout(input.cwd, ['diff', '--name-only', '--diff-filter=U']));
+      const conflictFiles = await readTaskIntegrationConflictPaths(input.cwd);
       if (conflictFiles.length === 0) throw error;
       return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles };
     }
@@ -1100,7 +1100,7 @@ export async function startTaskBranchIntegration(input: {
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }
   } catch (error) {
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     if (conflictFiles.length === 0) throw error;
     return {
       integrationPath,
@@ -1154,7 +1154,7 @@ export async function startTaskIntegrationAttempt(input: {
     if (registered.branch !== conflictBranch || registered.detached) {
       throw gitCoreError('ZEUS_TASK_CONFLICT_BRANCH_MISMATCH', 'The conflict worktree is not attached to its recorded conflict branch.');
     }
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     return {
       integrationPath,
       targetBranch,
@@ -1179,7 +1179,7 @@ export async function startTaskIntegrationAttempt(input: {
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }
   } catch (error) {
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     if (conflictFiles.length === 0) {
       await cleanupTaskIntegrationWorktree({ repositoryPath: context.topLevel, integrationPath }).catch(() => undefined);
       throw error;
@@ -1199,10 +1199,15 @@ export async function startTaskIntegrationAttempt(input: {
   };
 }
 
+/** 以 NUL 分隔读取真实冲突路径，保留中文、引号和空白；查询失败时抛错，不能误报冲突已清空。 */
+export async function readTaskIntegrationConflictPaths(cwd: string): Promise<string[]> {
+  return splitNullRecords((await runGit(cwd, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout);
+}
+
 /** 读取三方冲突内容：source 是来源分支，task 是任务分支，result 是当前可编辑结果。 */
 export async function readTaskIntegrationConflict(integrationPath: string, path: string): Promise<TaskIntegrationConflictFile> {
   const safePath = requireSafeWorkspacePath(path);
-  const conflicts = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const conflicts = await readTaskIntegrationConflictPaths(integrationPath);
   if (!conflicts.includes(safePath)) throw gitCoreError('ZEUS_TASK_CONFLICT_NOT_FOUND', `Conflict file is no longer unresolved: ${safePath}`);
   const [base, source, task, result] = await Promise.all([
     readGitStageText(integrationPath, 1, safePath),
@@ -1222,7 +1227,7 @@ export async function writeTaskIntegrationResolution(integrationPath: string, pa
   if (!isPathInside(integrationPath, absolutePath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Conflict path escapes the integration worktree: ${safePath}`);
   await writeFile(absolutePath, content, 'utf8');
   await runGit(integrationPath, ['add', '--', safePath]);
-  const remainingConflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const remainingConflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
   return { path: safePath, remainingConflictFiles };
 }
 
@@ -1238,7 +1243,7 @@ export async function writeTaskIntegrationDraft(integrationPath: string, path: s
 
 /** 冲突全部解决后生成合入候选提交；仍有冲突时拒绝继续。 */
 export async function completeTaskIntegrationCommit(input: { integrationPath: string; mode: 'merge' | 'squash'; commitMessage: string }): Promise<{ resultHeadSha: string }> {
-  const conflicts = splitLines(await readGitStdout(input.integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const conflicts = await readTaskIntegrationConflictPaths(input.integrationPath);
   if (conflicts.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve every conflict before completing the integration commit.');
   const mergeHead = await readGitStdout(input.integrationPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
   const staged = splitLines(await readGitStdout(input.integrationPath, ['diff', '--cached', '--name-only']));
@@ -1733,12 +1738,12 @@ function safePathSegment(value: string): string {
     .slice(0, 64);
 }
 
+/** 校验工作区相对路径并保留原始文件名，首尾空白也是合法路径的一部分。 */
 function requireSafeWorkspacePath(value: string): string {
-  const normalized = value.trim();
-  if (!normalized || isAbsolute(normalized) || normalized === '..' || normalized.startsWith(`..${sep}`) || relative('.', normalized).startsWith(`..${sep}`) || normalized.includes('\0')) {
+  if (!value || isAbsolute(value) || value === '..' || value.startsWith(`..${sep}`) || relative('.', value).startsWith(`..${sep}`) || value.includes('\0')) {
     throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid workspace-relative path: ${value}`);
   }
-  return normalized;
+  return value;
 }
 
 /** 项目显式使用本地 Prettier 时，只整理本次提交选中的现存普通文件。 */
@@ -2726,9 +2731,7 @@ function splitLines(value: string): string[] {
   return value ? value.split('\n').filter(Boolean) : [];
 }
 
+/** 拆分 Git 原始路径记录，仅丢弃结尾的空记录，不裁剪文件名。 */
 function splitNullRecords(value: string): string[] {
-  return value
-    .split('\0')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return value.split('\0').filter(Boolean);
 }

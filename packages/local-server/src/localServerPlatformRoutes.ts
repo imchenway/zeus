@@ -99,6 +99,7 @@ import { registerConversationSyncRoutes } from './conversationSyncRoutes.js';
 import { registerExecutionHostControlApi } from './executionHostControlApi.js';
 import { createPollingAdmissionPause, registerExecutionHostHandoffApi } from './executionHostHandoffApi.js';
 import { registerGitCommandRoutes } from './gitCommandRoutes.js';
+import { readTaskIntegrationSnapshot } from './gitIntegrationOperations.js';
 import { graphConversationReject, isExplicitGraphConversationRejection, registerGraphConversationCommandRoutes } from './graphConversationCommandRoutes.js';
 import { GraphConversationCommandApplication, graphConversationCommandTypes, graphConversationInputSha256 } from './graphConversationCommandApplication.js';
 import { closeHeavyWorkerJobs, heavyWorkerPoolSnapshot } from './heavyWorkerPool.js';
@@ -2041,14 +2042,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/tasks/:taskId/integrations', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
     const task = tasks.getById(request.params.taskId);
     if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
-    return { taskId: task.id, items: taskIntegrations.listByTask(task.id), integrations: taskIntegrations.listByTask(task.id) };
+    try {
+      /** 只读验收沿用复制库投影；正常打开交付页时读取真实冲突路径，不改写历史记录。 */
+      const items = readOnlyValidation ? taskIntegrations.listByTask(task.id) : await Promise.all(taskIntegrations.listByTask(task.id).map(readTaskIntegrationSnapshot));
+      return { taskId: task.id, items, integrations: items };
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
   });
 
   server.get('/api/tasks/:taskId/integrations/:integrationId/conflict', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string } }>, reply) => {
     const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
-    const path = request.query.path?.trim();
+    /** 查询参数传递真实文件名，首尾空白不属于可清理的输入噪声。 */
+    const path = request.query.path;
     if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
     try {
       return await readTaskIntegrationConflict(resolved.integration.integrationPath, path);
