@@ -1981,8 +1981,7 @@ a {
 }
 
 /* ZEUS-0293：任务看板沿用 Zeus 控件和颜色变量，只复刻可观察的看板行为。 */
-.macos-ai-app .task-table-page-view-segments,
-.macos-ai-app .task-table-view-mode-segments {
+.macos-ai-app .task-table-page-view-segments {
   display: inline-flex;
   min-height: 28px;
   align-items: center;
@@ -2685,8 +2684,7 @@ a {
 }
 
 @media (max-width: 760px) {
-  .macos-ai-app .task-table-page-view-segments,
-  .macos-ai-app .task-table-view-mode-segments {
+  .macos-ai-app .task-table-page-view-segments {
     flex: 0 0 auto;
   }
 
@@ -12400,8 +12398,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   white-space: nowrap;
 }
 
-.macos-ai-app .task-table-view-mode-segments,
-.macos-ai-app .task-table-title-hierarchy,
 .macos-ai-app .task-detail-related-add,
 .macos-ai-app .task-detail-relationship-row,
 .macos-ai-app .task-delete-dialog footer {
@@ -12409,32 +12405,9 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   align-items: center;
 }
 
-.macos-ai-app .task-table-view-mode-segments {
-  gap: 2px;
-}
-
 .macos-ai-app .task-table-view-pill[aria-pressed='true'] {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.macos-ai-app .task-table-title-hierarchy {
-  min-width: 0;
-  gap: 4px;
-}
-
-.macos-ai-app .task-table-hierarchy-toggle {
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.macos-ai-app .task-table-hierarchy-toggle:disabled {
-  opacity: 0.45;
 }
 
 .macos-ai-app .task-detail-relationships,
