@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
+import { cleanPackageArtifacts } from './clean-package-artifacts.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -236,6 +237,9 @@ export async function packageMac({ dmg = false } = {}) {
   verifyPackagedAppIdentity(appPath, variant);
   verifyPackagedApp(appPath);
   await verifyCodesignPackagedApp(appPath);
+  /** 只在打包和校验成功后回收同一身份、架构的旧安装包，失败时保留原有产物。 */
+  const obsolete = await cleanPackageArtifacts(outputRoot, { apply: true, variant, arch });
+  console.log(`Zeus 打包完成，已清理 ${obsolete.length} 个旧安装包配套文件，保留对应身份与架构的最新版本。`);
 }
 
 const invokedScriptPath = process.argv[1];

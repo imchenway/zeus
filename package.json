@@ -12,6 +12,7 @@
     "package:mac": "pnpm --filter @zeus/desktop package:mac",
     "package:mac:test": "pnpm --filter @zeus/desktop package:mac:test",
     "package:mac:release": "pnpm --filter @zeus/desktop package:mac:release",
+    "package:clean": "node scripts/clean-package-artifacts.mjs",
     "release": "node scripts/release-all.mjs",
     "release:gate": "node scripts/run-release-gate.mjs",
     "release:commands:sync": "pnpm --filter @zeus/shared build && node scripts/sync-release-commands.mjs",
