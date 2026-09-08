@@ -23,6 +23,7 @@ import {
 } from './codexAppServerProtocol.js';
 import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 import { type CodexModelBudgetEvidence, resolveCodexModelBudgetSnapshot } from './codexModelBudgetSnapshot.js';
+import { readCodexModelCatalogCache } from './codexModelCatalogCache.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -80,7 +81,7 @@ export interface CodexCapabilitiesSnapshot {
   protocolVersion: 'codex-app-server-v2';
   models: CodexModelCapability[];
   supportedModels: string[];
-  /** 与 generationId 同时冻结；派发期间禁止重新读取可变 Provider 缓存。 */
+  /** 与本批模型目录一同冻结；刷新整体替换快照，已取得的派发依据保持不变。 */
   modelBudgets: Readonly<Record<string, Readonly<CodexModelBudgetEvidence>>>;
   preflightTokenCount: {
     state: 'unavailable';
@@ -457,9 +458,13 @@ export interface CodexAppServerManager {
     providerEnvironment?: Record<string, string>;
     /** 世代管理器用于在进程启动前安装外部 Responses Provider；底层管理器不把它写入 RPC。 */
     responsesProvider?: CodexResponsesModelProvider | null;
+    /** 登录后的新连接须等到本次远端目录更新完成，不能接受启动时的旧缓存。 */
+    requireFreshModels?: boolean;
   }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
-  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
+  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string>; requireFreshModels?: boolean }): Promise<CodexCapabilitiesSnapshot>;
+  /** 刷新既有连接的完整目录，不重启进程或重放任何模型请求。 */
+  refreshModels(): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean; cachedOnly?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
@@ -556,8 +561,13 @@ type ServerRequestRecord = {
 const RESTART_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
 const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
 const ACCOUNT_USAGE_SNAPSHOT_TTL_MS = 15_000;
+/** 产品最多接受五分钟内取得的订阅目录；更旧的结果不能宣称同步成功。 */
+const MODEL_CATALOG_MAXIMUM_AGE_MS = 5 * 60_000;
+/** 登录后的远端目录等待有明确上限，失败仍保留账号与配置。 */
+const MODEL_CATALOG_SYNC_TIMEOUT_MS = 20_000;
 const SAFE_READ_RPC_METHODS = new Set([
   'model/list',
+  'config/read',
   'experimentalFeature/list',
   'account/read',
   'account/rateLimits/read',
@@ -648,6 +658,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const accountUsageReadInFlight = new Map<string, Promise<CodexAccountUsageSnapshot>>();
   /** 仅保留最近的登录状态，不保存授权地址或账号凭据。 */
   const chatGptLoginStatuses = new Map<string, CodexChatGptLoginStatus>();
+  /** 同一连接的目录刷新合并为一个请求。 */
+  let modelRefreshInFlight: Promise<CodexCapabilitiesSnapshot> | null = null;
+  /** 账号变化后拒绝迟到的目录回包。 */
+  let modelAccountRevision = 0;
+  /** 防止后台重试重复广播同一个同步错误。 */
+  let lastModelSyncError: string | null = null;
 
   /** 有界保留完成通知，兼容通知早于登录启动回包的情况。 */
   function rememberChatGptLoginStatus(status: CodexChatGptLoginStatus): void {
@@ -662,11 +678,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   }
 
   /** 使用与版本检测一致的程序环境；直接创建的管理器也支持终端安装目录。 */
-  async function start(command: string): Promise<CodexCapabilitiesSnapshot> {
+  async function start(command: string, requireFreshModels = false): Promise<CodexCapabilitiesSnapshot> {
     /** 上层已解析时直接复用；独立调用只在启动时读取终端目录。 */
     const searchPath = runtimeEnvironment.PATH ?? (await resolveCliSearchPath());
     if (preparingForShutdown || state.type === 'closed') throw managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.');
     const generationId = makeGenerationId();
+    modelAccountRevision += 1;
+    modelRefreshInFlight = null;
+    lastModelSyncError = null;
+    /** 以实际启动时刻确认官方组件本次预取的目录，不通过修改缓存强刷。 */
+    const modelsFreshSince = Date.now();
     requestSequence = 0;
     eventSequence = 0;
     diagnosticSequence = 0;
@@ -731,15 +752,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
       write({ method: 'initialized' });
-      const modelList = await retryableReadRpc(generationId, 'model/list', {});
-      const models = parseModels(modelList);
-      const goals = await readGoalCapability(generationId);
-      if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
-      const initializedAt = now();
       const initializedProviderVersion = providerVersionFromInitialize(initializeResponse);
       // Remote Control 的命令路径只负责连接常驻守护进程，不能代表守护进程的真实版本。
       // 热更新替换守护进程后继续使用启动时探测值会把新模型目录误判成旧世代。
       const providerVersion = initializedProviderVersion ?? (remoteControlTransport ? null : providerVersionFallback);
+      if (requireFreshModels) await waitForFreshSubscriptionModels(generationId, providerVersion, modelsFreshSince);
+      const models = await readModelCatalogPages(generationId);
+      if (requireFreshModels) assertFreshModelCatalog(providerVersion, models, modelsFreshSince);
+      const goals = await readGoalCapability(generationId);
+      if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
+      const initializedAt = now();
       const modelBudgets = await resolveModelBudgetSnapshotAfterBoundedRetry({
         codexHome,
         generationId,
@@ -776,8 +798,117 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const recoveryGuidance = remoteControlTransport
         ? codexRemoteControlRecoveryGuidance(env)
         : '请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。';
+      if (failure.message.startsWith('ZEUS_CODEX_MODEL_') || ('code' in failure && typeof failure.code === 'string' && failure.code.startsWith('ZEUS_CODEX_MODEL_'))) throw failure;
       throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。${recoveryGuidance}`);
     });
+  }
+
+  /** 完整读取分页并拒绝循环或冲突目录，不发布半份列表。 */
+  async function readModelCatalogPages(generationId: string): Promise<CodexModelCapability[]> {
+    /** 本次读取的完整目录。 */
+    const models: CodexModelCapability[] = [];
+    /** 防止异常游标导致无界读取。 */
+    const cursors = new Set<string>();
+    /** 模型标识必须在同一份目录内唯一。 */
+    const identifiers = new Set<string>();
+    /** 展示标识同样不能冲突，否则选择器无法准确定位模型。 */
+    const displayIdentifiers = new Set<string>();
+    /** 首次读取不传游标，后续遵循官方回包。 */
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      /** 每页使用相同的可见模型范围。 */
+      const response = asRecord(await retryableReadRpc(generationId, 'model/list', { limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) }));
+      for (const model of parseModels(response)) {
+        if (!model.model.trim() || !model.id.trim() || identifiers.has(model.model) || displayIdentifiers.has(model.id)) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '模型目录分页包含空白或重复条目，未更新列表。');
+        identifiers.add(model.model);
+        displayIdentifiers.add(model.id);
+        models.push(model);
+      }
+      if (response.nextCursor === null || response.nextCursor === undefined) return models;
+      if (typeof response.nextCursor !== 'string' || !response.nextCursor || cursors.has(response.nextCursor)) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '模型目录分页游标无效，未更新列表。');
+      cursor = response.nextCursor;
+      cursors.add(cursor);
+    }
+    throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '模型目录超出有界读取范围，未更新列表。');
+  }
+
+  /** 确认列表确实来自本次允许的官方缓存时间范围，而非失败后的内置回退。 */
+  function assertFreshModelCatalog(providerVersion: string | null, models: readonly CodexModelCapability[], minimumFetchedAt: number): void {
+    /** 此处只观察官方缓存，不删除、修改或复制它。 */
+    const cache = readCodexModelCatalogCache(codexHome, providerVersion);
+    if (!cache || cache.fetchedAtMs < minimumFetchedAt || models.length !== cache.visibleModels.size || models.some((model) => !cache.visibleModels.has(model.model))) {
+      throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '账号已登录，但尚未确认订阅模型目录同步成功。请检查网络及模型来源配置后重试。');
+    }
+  }
+
+  /** 新连接会由官方组件预取远端目录；等待其落地后再读取，避免抢到旧名单。 */
+  async function waitForFreshSubscriptionModels(generationId: string, providerVersion: string | null, freshSince: number): Promise<void> {
+    /** 同一连接可能再次发生账号通知，不能接纳切换前的读取。 */
+    const accountRevision = modelAccountRevision;
+    /** 登录身份与目录准备分别确认。 */
+    const account = parseAccountSnapshot(await retryableReadRpc(generationId, 'account/read', { refreshToken: false }), generationId, accountFingerprintSalt);
+    if (!account.signedIn || account.accountType !== 'chatgpt') throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '当前连接尚未确认订阅账号，无法同步订阅模型。');
+    /** 显式固定目录不会访问远端，必须给出可操作的原因。 */
+    const configResponse = asRecord(await retryableReadRpc(generationId, 'config/read', { includeLayers: false }));
+    const config = asRecord(configResponse.config);
+    if (typeof config.model_catalog_json === 'string' && config.model_catalog_json.trim()) {
+      throw managerError('ZEUS_CODEX_MODEL_CATALOG_FIXED', '账号已登录，但配置指定了固定的本地模型目录。取消 model_catalog_json 配置后再同步订阅模型。');
+    }
+    if (remoteControlTransport) {
+      // 远程接管复用常驻进程，不会因重连触发启动预取；独立短连接负责这次目录同步。
+      const catalogReader = createCodexAppServerManager(options);
+      try {
+        await catalogReader.ensureReady({ commandPath: commandPath!, ...(externalAgentHome ? { externalAgentHome } : {}), providerEnvironment, requireFreshModels: true });
+      } finally {
+        await catalogReader.close();
+      }
+    }
+    /** 等待期间持续核对连接所有权。 */
+    const deadline = Date.now() + MODEL_CATALOG_SYNC_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (preparingForShutdown || generationId !== currentGenerationId() || modelAccountRevision !== accountRevision) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '目录同步期间连接或账号已改变，请重试。');
+      const cache = readCodexModelCatalogCache(codexHome, providerVersion);
+      if (cache && cache.fetchedAtMs >= freshSince) return;
+      await waitFor(100);
+    }
+    throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '账号已登录，但本次模型目录更新超时；旧目录未被当作同步成功。');
+  }
+
+  /** 合并同代际刷新并整体替换目录，发送中的调用仍持有原有快照。 */
+  function refreshModels(): Promise<CodexCapabilitiesSnapshot> {
+    if (modelRefreshInFlight) return modelRefreshInFlight;
+    /** 请求创建时绑定当前账号变更次数。 */
+    const accountRevision = modelAccountRevision;
+    const request = (async () => {
+      const capabilities = await awaitCapabilities();
+      const account = parseAccountSnapshot(await retryableReadRpc(capabilities.generationId, 'account/read', { refreshToken: false }), capabilities.generationId, accountFingerprintSalt);
+      const models = await readModelCatalogPages(capabilities.generationId);
+      if (account.signedIn && account.accountType === 'chatgpt') assertFreshModelCatalog(capabilities.providerVersion, models, Date.now() - MODEL_CATALOG_MAXIMUM_AGE_MS);
+      const checkedAt = now();
+      const modelBudgets = await resolveModelBudgetSnapshotAfterBoundedRetry({ codexHome, generationId: capabilities.generationId, initializedAt: checkedAt, providerVersion: capabilities.providerVersion, models });
+      if (preparingForShutdown || state.type !== 'ready' || state.generationId !== capabilities.generationId || modelAccountRevision !== accountRevision)
+        throw managerError('ZEUS_CODEX_STALE_GENERATION', '模型刷新结果所属的连接或账号已改变。');
+      const updated = { ...state.capabilities, models, supportedModels: models.map((model) => model.model), modelBudgets };
+      state = { type: 'ready', generationId: capabilities.generationId, capabilities: updated };
+      lastModelSyncError = null;
+      emitEvent(capabilities.generationId, 'zeus/models/updated', { checkedAt, modelCount: models.length });
+      return updated;
+    })();
+    modelRefreshInFlight = request;
+    void request.then(
+      () => {
+        if (modelRefreshInFlight === request) modelRefreshInFlight = null;
+      },
+      (error: unknown) => {
+        if (modelRefreshInFlight === request) modelRefreshInFlight = null;
+        if (state.type !== 'ready' || preparingForShutdown || modelAccountRevision !== accountRevision) return;
+        const message = summarizeStderr(asError(error).message);
+        if (message === lastModelSyncError) return;
+        lastModelSyncError = message;
+        emitEvent(state.generationId, 'zeus/models/sync_failed', { message });
+      },
+    );
+    return request;
   }
 
   function trackProcessExit(process: CodexAppServerProcess): void {
@@ -1073,6 +1204,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       }
     }
     if (message.method === 'account/updated' || message.method === 'account/login/completed') {
+      modelAccountRevision += 1;
       lastAccountSnapshot = null;
       lastAccountRateLimitsSnapshot = null;
       lastAccountUsageSnapshot = null;
@@ -1209,6 +1341,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   }
 
   return {
+    refreshModels,
     ensureReady(input) {
       if (state.type === 'closed' || preparingForShutdown) return Promise.reject(managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.'));
       if (commandPath !== null && commandPath !== input.commandPath) {
@@ -1236,7 +1369,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (remoteControlTransport) remoteControlEnabled = true;
       if (state.type === 'ready') return Promise.resolve(state.capabilities);
       if (readyPromise) return readyPromise;
-      readyPromise = start(input.commandPath);
+      readyPromise = start(input.commandPath, input.requireFreshModels === true);
       void readyPromise.catch(() => undefined);
       return readyPromise;
     },

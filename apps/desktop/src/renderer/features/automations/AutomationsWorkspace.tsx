@@ -1,5 +1,5 @@
 import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { TrayIcon as Inbox } from '@phosphor-icons/react/dist/csr/Tray';
@@ -13,6 +13,7 @@ import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { SkillSelector } from '../skills/SkillSelector.js';
 import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from './automationContracts.js';
 
@@ -38,9 +39,39 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
   /** 删除前保留任务，只有确认成功才关闭弹窗。 */
   const [pendingDelete, setPendingDelete] = useState<AutomationTaskRecord | null>(null);
+  /** 模型刷新独立于自动化表单与运行记录。 */
+  const modelRevisionRef = useRef(0);
+  /** 目录按当前编辑的项目读取。 */
+  const modelProjectId = draft.projectIds[0] ?? props.projects[0]?.id;
+
+  useEffect(() => {
+    const client = props.client;
+    if (!client || !modelProjectId) return;
+    /** 切换项目后，旧目录读取不能覆盖当前模型选项。 */
+    let disposed = false;
+    const refreshModels = (): void => {
+      const revision = ++modelRevisionRef.current;
+      void client
+        .loadCodexConversationCapabilities(modelProjectId)
+        .then((next) => {
+          if (!disposed && revision === modelRevisionRef.current) setModels(next.models.filter((model) => model.available !== false));
+        })
+        .catch(() => {
+          // 网络恢复后的目录通知会重试，不打断自动化草稿编辑。
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    return () => {
+      disposed = true;
+      modelRevisionRef.current += 1;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    };
+  }, [props.client, modelProjectId]);
 
   async function refresh(): Promise<void> {
     if (!props.client) return;
+    /** 页面读取与目录通知共用代次，避免迟到结果回写。 */
+    const modelRevision = ++modelRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -48,7 +79,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       const [nextTasks, nextInbox, capabilities] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), projectId ? props.client.loadCodexConversationCapabilities(projectId) : Promise.resolve(null)]);
       setTasks(nextTasks);
       setInbox(nextInbox);
-      setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
+      if (modelRevision === modelRevisionRef.current) setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
       setDraft((current) => {
         if (current.modelId || !capabilities?.models.length) return current;
         const preferred = capabilities.models.find((model) => model.model === capabilities.preferredModel) ?? capabilities.models[0]!;

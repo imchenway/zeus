@@ -27,8 +27,8 @@ const maximumCatalogAgeMs = 30 * 24 * 60 * 60 * 1_000;
 const maximumFutureClockSkewMs = 5 * 60 * 1_000;
 
 /**
- * 在 app-server 完成握手时一次性冻结模型预算。发送路径只读取该代际快照，
- * 不再受之后被工具子进程改写的 models_cache.json 影响。
+ * 连接就绪或目录更新时，按同一批模型冻结预算并整体替换能力快照。
+ * 已捕获的预算对象保持不变，不受之后被工具子进程改写的缓存影响。
  */
 export function resolveCodexModelBudgetSnapshot(input: {
   codexHome: string | null;
