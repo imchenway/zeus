@@ -6,13 +6,21 @@
   text-rendering: optimizeLegibility;
 }
 
-/* 顶级自动化工作台：密度接近 macOS source list，终态不仅依赖颜色表意。 */
+/* 自动化与扩展管理使用同一中性页面和单层目录表面。 */
 .macos-ai-app .automations-workspace {
-  width: min(1180px, calc(100% - 40px));
-  min-height: 100%;
-  margin: 0 auto;
-  padding: 52px 0 40px;
-  color: var(--text-primary, #202124);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 980px);
+  align-content: start;
+  justify-content: center;
+  gap: 16px;
+  block-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow-y: auto;
+  padding: 28px clamp(20px, 4vw, 48px) 40px;
+  color: var(--zeus-product-text);
+  background: var(--zeus-product-canvas);
 }
 
 .macos-ai-app .runtime-timeout-unit-select {
@@ -26,187 +34,151 @@
 
 .macos-ai-app .automations-header,
 .macos-ai-app .automations-header-actions,
-.macos-ai-app .automations-tabs,
 .macos-ai-app .automation-row,
-.macos-ai-app .automation-row-main,
 .macos-ai-app .automation-row-actions,
-.macos-ai-app .automation-inbox-row,
-.macos-ai-app .automation-inbox-actions,
-.macos-ai-app .automation-editor > header,
-.macos-ai-app .automation-editor > footer {
+.macos-ai-app .automation-inbox-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .macos-ai-app .automations-header {
   justify-content: space-between;
-  gap: 28px;
-  margin-bottom: 24px;
+  gap: 20px;
 }
 
-.macos-ai-app .automations-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--text-tertiary, #777b82);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
+.macos-ai-app .automations-header > div:first-child {
+  min-inline-size: 0;
 }
 
 .macos-ai-app .automations-header h1 {
   margin: 0;
-  font-size: clamp(30px, 4vw, 44px);
-  line-height: 1.04;
-  letter-spacing: -0.035em;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
 }
 
 .macos-ai-app .automations-header p {
-  max-width: 650px;
-  margin: 9px 0 0;
-  color: var(--text-secondary, #62666d);
-  font-size: 14px;
+  margin: 7px 0 0;
+  color: var(--zeus-product-muted);
+  font-size: 13px;
   line-height: 1.55;
 }
 
 .macos-ai-app .automations-header-actions {
-  flex: 0 0 auto;
-  gap: 8px;
+  flex-shrink: 0;
 }
 
-.macos-ai-app .automations-icon-button,
-.macos-ai-app .automation-row-actions button {
-  display: inline-grid;
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid var(--border-subtle, #d8dadd);
-  border-radius: 9px;
-  background: var(--surface-primary, #fff);
-  color: inherit;
-}
-
-.macos-ai-app .automations-icon-button svg,
-.macos-ai-app .automation-row-actions svg,
+.macos-ai-app .automations-workspace .zeus-button svg,
 .macos-ai-app .automations-tabs svg {
-  width: 17px;
-  height: 17px;
+  inline-size: 16px;
+  block-size: 16px;
+  flex-shrink: 0;
 }
 
 .macos-ai-app .automations-tabs {
-  width: fit-content;
-  gap: 3px;
-  padding: 3px;
-  margin-bottom: 18px;
-  border: 1px solid var(--border-subtle, #d8dadd);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--surface-secondary, #f3f4f5) 82%, transparent);
+  display: flex;
+  inline-size: fit-content;
+  gap: 4px;
 }
 
 .macos-ai-app .automations-tabs button {
   display: inline-flex;
-  min-height: 34px;
   align-items: center;
   gap: 7px;
-  padding: 0 12px;
+  min-block-size: 32px;
+  padding: 4px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary, #62666d);
-  font-weight: 600;
+  color: var(--zeus-product-muted);
+  font: inherit;
 }
 
 .macos-ai-app .automations-tabs button[aria-current='page'] {
-  background: var(--surface-primary, #fff);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 9%);
-  color: var(--text-primary, #202124);
+  color: var(--zeus-product-accent);
+  font-weight: 600;
 }
 
-.macos-ai-app .automations-tabs button > span,
-.macos-ai-app .automations-unread-count {
-  min-width: 20px;
-  padding: 1px 6px;
+.macos-ai-app .automations-tabs button > span {
   border-radius: 999px;
-  background: var(--surface-tertiary, #e5e7ea);
+  background: var(--zeus-product-panel-muted);
+  padding: 1px 6px;
   font-size: 11px;
   text-align: center;
 }
 
-.macos-ai-app .automations-unread-count {
-  background: #2458d3 !important;
-  color: #fff;
+.macos-ai-app .automations-tabs button > .automations-unread-count {
+  background: var(--zeus-product-accent);
+  color: var(--zeus-control-primary-text, white);
 }
 
 .macos-ai-app .automations-layout {
-  display: grid;
-  min-height: 500px;
-  grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--border-subtle, #d8dadd);
+  min-inline-size: 0;
+  border: 1px solid var(--zeus-product-line-soft);
   border-radius: 16px;
-  background: var(--surface-primary, #fff);
-  box-shadow: 0 12px 38px rgb(0 0 0 / 5%);
-}
-
-.macos-ai-app .automations-layout.has-editor {
-  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
-}
-
-.macos-ai-app .automations-list {
-  min-width: 0;
+  background: var(--zeus-product-panel);
+  box-shadow: var(--zeus-card-shadow-soft);
+  overflow: hidden;
 }
 
 .macos-ai-app .automation-row,
 .macos-ai-app .automation-inbox-row {
-  min-height: 76px;
-  border-bottom: 1px solid var(--border-subtle, #e5e6e8);
+  min-inline-size: 0;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
 }
 
 .macos-ai-app .automation-row:last-child,
 .macos-ai-app .automation-inbox-row:last-child {
-  border-bottom: 0;
+  border-block-end: 0;
 }
 
 .macos-ai-app .automation-row-main {
-  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  min-inline-size: 0;
   flex: 1;
   gap: 12px;
   align-self: stretch;
-  padding: 13px 10px 13px 16px;
+  padding: 16px;
   border: 0;
   background: transparent;
   color: inherit;
-  text-align: left;
+  text-align: start;
 }
 
-.macos-ai-app .automation-row-main:hover,
-.macos-ai-app .automation-row-main:focus-visible {
-  background: color-mix(in srgb, var(--accent, #2f67d8) 7%, transparent);
+.macos-ai-app .automation-row-main:hover:not(:disabled) {
+  background: var(--zeus-control-bg-hover);
 }
 
 .macos-ai-app .automation-status-dot {
-  width: 9px;
-  height: 9px;
-  flex: 0 0 auto;
+  inline-size: 8px;
+  block-size: 8px;
   border-radius: 50%;
-  background: #2b9f63;
-  box-shadow: 0 0 0 3px rgb(43 159 99 / 12%);
+  background: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .automation-row[data-status='paused'] .automation-status-dot {
-  background: #92969d;
-  box-shadow: 0 0 0 3px rgb(146 150 157 / 12%);
+  background: var(--zeus-product-subtle);
 }
 
 .macos-ai-app .automation-row-main > span:nth-child(2),
-.macos-ai-app .automation-inbox-row > div {
+.macos-ai-app .automation-inbox-row > div:first-of-type {
   display: grid;
-  min-width: 0;
+  min-inline-size: 0;
   gap: 4px;
 }
 
 .macos-ai-app .automation-row-main strong,
 .macos-ai-app .automation-inbox-row strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.macos-ai-app .automation-row-main small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,283 +187,222 @@
 .macos-ai-app .automation-row-main small,
 .macos-ai-app .automation-inbox-row small,
 .macos-ai-app .automation-row-schedule {
-  color: var(--text-tertiary, #777b82);
+  color: var(--zeus-product-muted);
   font-size: 12px;
 }
 
 .macos-ai-app .automation-row-schedule {
-  margin-left: auto;
   white-space: nowrap;
 }
 
 .macos-ai-app .automation-row-actions {
-  gap: 5px;
-  padding-right: 13px;
+  flex-shrink: 0;
+  padding-inline-end: 16px;
 }
 
-.macos-ai-app .automation-row-actions .danger:hover {
-  color: #bb2f35;
-  border-color: color-mix(in srgb, #bb2f35 35%, transparent);
+.macos-ai-app .automation-icon-action {
+  inline-size: 32px;
+  padding: 0;
 }
 
 .macos-ai-app .automation-inbox-row {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-columns: 80px minmax(0, 1fr) auto;
   align-items: start;
-  gap: 14px;
+  gap: 16px;
   padding: 16px;
 }
 
 .macos-ai-app .automation-inbox-row[data-unread='true'] {
-  box-shadow: inset 3px 0 #2458d3;
-  background: color-mix(in srgb, #2458d3 4%, transparent);
+  box-shadow: inset 3px 0 var(--zeus-product-accent);
 }
 
 .macos-ai-app .automation-run-status {
-  width: fit-content;
+  inline-size: fit-content;
   padding: 4px 8px;
   border-radius: 999px;
-  background: #eef0f2;
-  color: #555b63;
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-muted);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .macos-ai-app .automation-run-status.status-succeeded {
-  background: #e3f5ea;
-  color: #167242;
+  color: var(--zeus-status-success-text);
 }
+
 .macos-ai-app .automation-run-status.status-failed,
 .macos-ai-app .automation-run-status.status-outcome_unknown {
-  background: #fbe8e9;
-  color: #a62c32;
+  background: var(--zeus-control-danger-bg);
+  color: var(--zeus-control-danger-text);
 }
-.macos-ai-app .automation-run-status.status-blocked {
-  background: #fff0d8;
-  color: #8a5700;
+
+.macos-ai-app .automation-run-status.status-blocked,
+.macos-ai-app .automation-inbox-row .automation-warning {
+  background: var(--zeus-warning-bg);
+  color: var(--zeus-product-text);
 }
 
 .macos-ai-app .automation-inbox-row p {
   margin: 3px 0 0;
-  color: var(--text-secondary, #62666d);
+  color: var(--zeus-product-muted);
   font-size: 12px;
-  line-height: 1.45;
-}
-
-.macos-ai-app .automation-inbox-row .automation-warning {
-  color: #8a5700;
-  font-weight: 600;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .macos-ai-app .automation-inbox-actions {
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
 }
 
-.macos-ai-app .automation-inbox-actions button,
-.macos-ai-app .automation-editor > header button {
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--border-subtle, #d8dadd);
-  border-radius: 8px;
-  background: var(--surface-primary, #fff);
-  color: inherit;
-  font-size: 12px;
+/* 长表单只增加可读宽度，仍由共用弹窗固定标题、操作区和内部滚动。 */
+.macos-ai-app .zeus-form-dialog.automation-editor {
+  inline-size: min(680px, 100%);
 }
 
-.macos-ai-app .automation-editor {
+.macos-ai-app .automation-form-section {
   display: grid;
-  min-width: 0;
-  max-height: calc(100vh - 235px);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  border-left: 1px solid var(--border-subtle, #d8dadd);
-  background: color-mix(in srgb, var(--surface-secondary, #f6f7f8) 70%, var(--surface-primary, #fff));
+  min-inline-size: 0;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 16px;
+  border: 0;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
 }
 
-.macos-ai-app .automation-editor > header,
-.macos-ai-app .automation-editor > footer {
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  background: var(--surface-primary, #fff);
-}
-
-.macos-ai-app .automation-editor > header {
-  border-bottom: 1px solid var(--border-subtle, #d8dadd);
-}
-.macos-ai-app .automation-editor > footer {
-  justify-content: flex-end;
-  border-top: 1px solid var(--border-subtle, #d8dadd);
-}
-.macos-ai-app .automation-editor > header span {
-  color: var(--text-tertiary, #777b82);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.macos-ai-app .automation-editor > header h2 {
-  margin: 2px 0 0;
-  font-size: 18px;
-}
-.macos-ai-app .automation-editor-scroll {
-  display: grid;
-  align-content: start;
-  gap: 15px;
-  overflow: auto;
-  padding: 18px;
-}
-
-.macos-ai-app .automation-editor label,
-.macos-ai-app .automation-editor fieldset,
-.macos-ai-app .automation-editor details > div {
-  display: grid;
-  gap: 7px;
-}
-
-.macos-ai-app .automation-editor label > span,
-.macos-ai-app .automation-editor legend {
-  color: var(--text-secondary, #62666d);
-  font-size: 12px;
+.macos-ai-app .automation-form-section legend {
+  padding: 0 0 12px;
+  font-size: 13px;
   font-weight: 650;
 }
 
-.macos-ai-app .automation-editor input:not([type='checkbox']),
-.macos-ai-app .automation-editor textarea {
-  width: 100%;
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid var(--border-subtle, #cfd2d6);
-  border-radius: 8px;
-  background: var(--surface-primary, #fff);
-  color: inherit;
-  font: inherit;
+.macos-ai-app .automation-form-field {
+  display: grid;
+  gap: 7px;
+  min-inline-size: 0;
 }
 
 .macos-ai-app .automation-editor textarea {
-  min-height: 124px;
-  resize: vertical;
-  line-height: 1.5;
+  min-block-size: 120px;
 }
-.macos-ai-app .automation-editor fieldset {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.macos-ai-app .automation-risk-ack,
-.macos-ai-app .automation-check {
-  display: flex !important;
-  min-height: 34px;
+
+.macos-ai-app .automation-editor .automation-risk-ack,
+.macos-ai-app .automation-editor .automation-check {
+  display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle, #d8dadd);
-  border-radius: 8px;
-  background: var(--surface-primary, #fff);
+  font-size: 12px;
+  line-height: 1.6;
 }
-.macos-ai-app .automation-risk-ack {
-  border-color: #e5b35c;
-  background: #fff8e9;
+
+.macos-ai-app .automation-editor .automation-risk-ack {
+  border-inline-start: 3px solid var(--zeus-product-line);
+  background: var(--zeus-warning-bg);
+  padding: 10px 12px;
 }
+
 .macos-ai-app .automation-risk-ack input,
 .macos-ai-app .automation-check input {
-  width: 16px;
-  height: 16px;
-  margin: 1px 0 0;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 2px 0 0;
 }
+
 .macos-ai-app .automation-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  min-inline-size: 0;
 }
-.macos-ai-app .automation-editor details {
-  padding: 11px;
-  border: 1px solid var(--border-subtle, #d8dadd);
-  border-radius: 10px;
-  background: var(--surface-primary, #fff);
+
+.macos-ai-app .automation-editor details > div {
+  margin-block-start: 12px;
 }
+
+.macos-ai-app .automation-editor details > .automation-check {
+  margin-block-start: 12px;
+}
+
 .macos-ai-app .automation-editor details summary {
-  min-height: 28px;
   cursor: pointer;
-  font-weight: 650;
+  font-weight: 600;
+  padding-block: 4px;
 }
-.macos-ai-app .automation-editor details[open] summary {
-  margin-bottom: 12px;
-}
+
 .macos-ai-app .automation-capability-error {
-  color: var(--zeus-control-danger-text, #a62c32);
-  line-height: 1.4;
+  color: var(--zeus-control-danger-text);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
 .macos-ai-app .automations-error {
-  margin: 0 0 12px;
+  margin: 0;
   padding: 10px 12px;
-  border: 1px solid #e6a7ab;
-  border-radius: 9px;
-  background: #fff0f1;
-  color: #8d252b;
+  border-radius: 8px;
+  background: var(--zeus-control-danger-bg);
+  color: var(--zeus-control-danger-text);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
+
 .macos-ai-app .automations-empty {
   display: grid;
-  min-height: 350px;
-  place-content: center;
   justify-items: center;
   gap: 8px;
-  padding: 30px;
-  color: var(--text-secondary, #62666d);
+  padding: 56px 24px;
+  color: var(--zeus-product-muted);
   text-align: center;
 }
+
 .macos-ai-app .automations-empty svg {
-  width: 32px;
-  height: 32px;
-  color: var(--text-tertiary, #777b82);
+  inline-size: 28px;
+  block-size: 28px;
 }
+
 .macos-ai-app .automations-empty p {
-  max-width: 360px;
+  max-inline-size: 360px;
   margin: 0;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
-.macos-ai-app .automations-workspace button:focus-visible,
-.macos-ai-app .automation-editor input:focus-visible,
-.macos-ai-app .automation-editor textarea:focus-visible,
+.macos-ai-app .automations-tabs button:focus-visible,
+.macos-ai-app .automation-row-main:focus-visible,
 .macos-ai-app .automation-editor summary:focus-visible {
-  outline: 2px solid var(--accent, #2458d3);
-  outline-offset: 2px;
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: -2px;
 }
 
-@media (max-width: 980px) {
-  .macos-ai-app .automations-layout.has-editor {
-    grid-template-columns: 1fr;
-  }
-  .macos-ai-app .automation-editor {
-    max-height: none;
-    border-top: 1px solid var(--border-subtle, #d8dadd);
-    border-left: 0;
-  }
-  .macos-ai-app .automation-inbox-row {
-    grid-template-columns: 1fr;
-  }
-  .macos-ai-app .automation-inbox-actions {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 620px) {
+@media (max-width: 680px) {
   .macos-ai-app .automations-workspace {
-    width: calc(100% - 24px);
-    padding-top: 34px;
+    padding: 20px 16px 32px;
   }
   .macos-ai-app .automations-header {
     align-items: flex-start;
     flex-direction: column;
+    gap: 12px;
   }
   .macos-ai-app .automation-form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .macos-ai-app .automation-row-main {
+    grid-template-columns: 8px minmax(0, 1fr);
+    gap: 6px 10px;
+    padding-inline-end: 0;
   }
   .macos-ai-app .automation-row-schedule {
-    display: none;
+    grid-column: 2;
+  }
+  .macos-ai-app .automation-inbox-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+  }
+  .macos-ai-app .automation-inbox-actions {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 }
 
@@ -1273,16 +1184,17 @@ a {
 
 .macos-ai-app .skills-workspace {
   align-content: start;
-  background: radial-gradient(circle at 8% -12%, color-mix(in oklab, var(--zeus-product-accent) 9%, transparent), transparent 34%), var(--zeus-product-panel);
+  background: var(--zeus-product-canvas);
   color: var(--zeus-product-text);
-  gap: 28px;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: clamp(28px, 5vw, 64px) clamp(24px, 6vw, 88px) 72px;
+  padding: 28px clamp(20px, 4vw, 48px) 40px;
 }
 
 /* 扩展页统一承载纵向滚动，避免后面的通用工作区裁剪规则覆盖它。 */
 .macos-ai-app .workspace-view.skills-workspace {
+  box-sizing: border-box;
+  gap: 20px;
   overflow-y: auto;
 }
 
@@ -1299,19 +1211,15 @@ a {
   gap: 11px;
 }
 
-.macos-ai-app .skills-workspace-kicker,
-.macos-ai-app .skill-install-dialog > header > div > span {
-  color: var(--zeus-product-accent);
-  font-size: 10px;
-  font-weight: 760;
-  letter-spacing: 0.14em;
-}
-
 .macos-ai-app .skills-workspace-title-row {
   align-items: end;
   display: flex;
   gap: 24px;
   justify-content: space-between;
+}
+
+.macos-ai-app .skills-workspace-title-row > button {
+  align-self: flex-start;
 }
 
 .macos-ai-app .skills-workspace-title-row > div {
@@ -1321,16 +1229,15 @@ a {
 }
 
 .macos-ai-app .skills-workspace-title-row h1,
-.macos-ai-app .skills-section-heading h2,
-.macos-ai-app .skill-install-dialog h2 {
+.macos-ai-app .skills-section-heading h2 {
   margin: 0;
 }
 
 .macos-ai-app .skills-workspace-title-row h1 {
-  font-size: clamp(26px, 3.6vw, 38px);
-  font-weight: 710;
-  letter-spacing: -0.035em;
-  line-height: 1.08;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
 }
 
 .macos-ai-app .skills-workspace-title-row p,
@@ -1341,7 +1248,7 @@ a {
 }
 
 .macos-ai-app .skills-workspace-title-row p {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .macos-ai-app .skills-workspace-actions {
@@ -1352,13 +1259,13 @@ a {
 
 .macos-ai-app .skills-workspace-actions button,
 .macos-ai-app .skill-list-item button,
-.macos-ai-app .skill-install-path-control button {
+.macos-ai-app .extension-path-control button {
   gap: 6px;
 }
 
 .macos-ai-app .skills-workspace-actions svg,
 .macos-ai-app .skill-list-item button svg,
-.macos-ai-app .skill-install-path-control button svg {
+.macos-ai-app .extension-path-control button svg {
   block-size: 15px;
   inline-size: 15px;
 }
@@ -1442,15 +1349,16 @@ a {
 }
 
 .macos-ai-app .skills-catalog-heading > input,
-.macos-ai-app .skill-install-fields input {
+.macos-ai-app .zeus-form-fields input:not([type='checkbox']):not([type='radio']),
+.macos-ai-app .zeus-form-fields textarea {
   appearance: none;
   background: var(--zeus-control-bg);
   border: 1px solid var(--zeus-control-border);
-  border-radius: 10px;
+  border-radius: 8px;
   box-sizing: border-box;
   color: var(--zeus-product-text);
   font: inherit;
-  min-block-size: 34px;
+  min-block-size: 32px;
   outline: 0;
   padding: 0 11px;
 }
@@ -1460,7 +1368,8 @@ a {
 }
 
 .macos-ai-app .skills-catalog-heading > input:focus,
-.macos-ai-app .skill-install-fields input:focus {
+.macos-ai-app .zeus-form-fields input:not([type='checkbox']):not([type='radio']):focus,
+.macos-ai-app .zeus-form-fields textarea:focus {
   border-color: var(--zeus-product-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--zeus-product-accent) 18%, transparent);
 }
@@ -1595,63 +1504,21 @@ a {
   white-space: nowrap;
 }
 
-.skill-install-portal-root.macos-ai-app {
-  inset: 0;
-  pointer-events: none;
-  position: fixed;
-  z-index: 126;
-}
-
-.macos-ai-app .skill-install-backdrop {
-  display: grid;
-  padding: 20px;
-  place-items: center;
-}
-
-.macos-ai-app .skill-install-dialog {
-  background: var(--zeus-solid-surface-bg);
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 16px;
-  box-shadow: 0 28px 76px oklch(18% 0.015 255 / 0.32);
-  color: var(--zeus-product-text);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  inline-size: min(560px, calc(100vw - 40px));
-  max-block-size: min(720px, calc(100vh - 40px));
-  overflow: hidden;
-}
-
-.macos-ai-app .skill-install-dialog > header,
-.macos-ai-app .skill-install-dialog > footer {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  padding-inline: 20px;
-}
-
+/* 扩展导航只负责布局，主题统一选中态和控件尺寸。 */
 .macos-ai-app .extension-tabs {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
   display: flex;
-  gap: 22px;
-  margin-block-start: 10px;
+  gap: 4px;
+  inline-size: fit-content;
+  margin-block-start: 8px;
 }
 
 .macos-ai-app .extension-tabs button {
-  background: transparent;
-  border: 0;
-  border-block-end: 2px solid transparent;
-  border-radius: 0;
   color: var(--zeus-product-muted);
   font: inherit;
-  min-block-size: 36px;
-  padding: 0 2px;
 }
 
 .macos-ai-app .extension-tabs button.is-active {
-  border-block-end-color: var(--zeus-product-accent);
-  color: var(--zeus-product-text);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .macos-ai-app .extensions-workspace > .skills-workspace {
@@ -1665,27 +1532,25 @@ a {
 .macos-ai-app .extension-plugin-list,
 .macos-ai-app .extension-plugin-detail,
 .macos-ai-app .extension-component-section,
-.macos-ai-app .extension-marketplace-card {
+.macos-ai-app .extension-marketplace-source {
   display: grid;
   gap: 12px;
 }
 
-.macos-ai-app .extension-plugin-card,
-.macos-ai-app .extension-marketplace-card {
-  background: color-mix(in oklab, var(--zeus-product-panel-muted) 70%, transparent);
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 14px;
-  overflow: hidden;
+.macos-ai-app .extension-plugin-row,
+.macos-ai-app .extension-marketplace-source {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  min-inline-size: 0;
 }
 
-.macos-ai-app .extension-plugin-card > header,
-.macos-ai-app .extension-marketplace-card > header {
+.macos-ai-app .extension-plugin-row > header,
+.macos-ai-app .extension-marketplace-source > header {
   align-items: center;
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  min-block-size: 62px;
-  padding: 10px 14px;
+  padding: 14px 0;
+  flex-wrap: wrap;
 }
 
 .macos-ai-app .extension-plugin-summary {
@@ -1702,7 +1567,7 @@ a {
 }
 
 .macos-ai-app .extension-plugin-summary > span:last-child,
-.macos-ai-app .extension-marketplace-card header > span:first-child,
+.macos-ai-app .extension-marketplace-source header > span:first-child,
 .macos-ai-app .extension-component-row > span:first-child {
   display: grid;
   gap: 3px;
@@ -1710,7 +1575,7 @@ a {
 }
 
 .macos-ai-app .extension-plugin-summary small,
-.macos-ai-app .extension-marketplace-card small,
+.macos-ai-app .extension-marketplace-source small,
 .macos-ai-app .extension-component-row small {
   color: var(--zeus-product-muted);
   font-size: 11px;
@@ -1720,7 +1585,7 @@ a {
 .macos-ai-app .extension-statuses,
 .macos-ai-app .extension-component-row > span:last-child,
 .macos-ai-app .extension-plugin-detail > footer,
-.macos-ai-app .extension-marketplace-card header > span:last-child {
+.macos-ai-app .extension-marketplace-source header > span:last-child {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
@@ -1748,8 +1613,8 @@ a {
 }
 
 .macos-ai-app .extension-plugin-detail {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
-  padding: 15px;
+  padding: 0 0 18px 28px;
+  min-inline-size: 0;
 }
 
 .macos-ai-app .extension-plugin-detail > p {
@@ -1799,123 +1664,238 @@ a {
   gap: 12px;
   justify-content: space-between;
   min-inline-size: 0;
+  flex-wrap: wrap;
   padding: 7px 0;
 }
 
-.macos-ai-app .extension-component-row select,
-.macos-ai-app .skill-install-fields select {
-  background: var(--zeus-control-bg);
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 8px;
-  color: var(--zeus-product-text);
-  min-block-size: 30px;
-  padding-inline: 8px;
-}
-
-.macos-ai-app .extension-marketplace-card > div {
+.macos-ai-app .extension-marketplace-source > div {
   border-block-start: 1px solid var(--zeus-product-line-soft);
-  padding: 6px 14px 10px;
+  padding: 4px 0 8px;
 }
 
-.macos-ai-app .skill-install-dialog > header {
-  padding-block: 18px 10px;
-}
-
-.macos-ai-app .skill-install-dialog > header > div {
-  display: grid;
-  gap: 4px;
-}
-
-.macos-ai-app .skill-install-dialog > header button {
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--zeus-product-muted);
-  display: grid;
-  inline-size: 30px;
-  min-block-size: 30px;
-  padding: 0;
-  place-items: center;
-}
-
-.macos-ai-app .skill-install-dialog > header button:hover:not(:disabled) {
-  background: var(--zeus-control-bg-hover);
+/* 业务表单共用一层实色表面，头尾固定而字段独立滚动。 */
+.macos-ai-app .zeus-form-dialog {
+  box-sizing: border-box;
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  box-shadow: var(--zeus-popover-shadow);
   color: var(--zeus-product-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: min(520px, 100%);
+  max-block-size: calc(100dvh - 40px);
+  min-inline-size: 0;
+  overflow: hidden;
+  font-size: 13px;
 }
 
-.macos-ai-app .skill-install-source-tabs {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+.macos-ai-app .zeus-form-dialog > header,
+.macos-ai-app .zeus-form-dialog > footer {
+  align-items: center;
   display: flex;
-  gap: 18px;
-  padding-inline: 20px;
+  gap: 8px;
+  padding: 20px;
 }
 
-.macos-ai-app .skill-install-source-tabs button {
-  background: transparent;
+.macos-ai-app .zeus-form-dialog > header {
+  justify-content: space-between;
+  padding-block-end: 12px;
+}
+
+.macos-ai-app .zeus-form-dialog h2 {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .zeus-form-dialog-close {
+  flex: 0 0 auto;
+  inline-size: 32px;
+  padding: 0;
+}
+
+.macos-ai-app .zeus-form-dialog svg,
+.macos-ai-app .extension-catalog .zeus-button svg {
+  block-size: 16px;
+  inline-size: 16px;
+  flex-shrink: 0;
+}
+
+.macos-ai-app .zeus-form-dialog > footer {
+  justify-content: flex-end;
+  padding-block-start: 16px;
+}
+
+.macos-ai-app .zeus-form-fields {
   border: 0;
-  border-block-end: 2px solid transparent;
-  border-radius: 0;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  min-block-size: 36px;
-  padding: 0 1px;
-}
-
-.macos-ai-app .skill-install-source-tabs button.is-active {
-  border-block-end-color: var(--zeus-product-accent);
-  color: var(--zeus-product-text);
-  font-weight: 680;
-}
-
-.macos-ai-app .skill-install-fields {
   display: grid;
-  gap: 15px;
+  gap: 16px;
+  margin: 0;
   min-block-size: 0;
+  min-inline-size: 0;
   overflow-y: auto;
-  padding: 18px 20px;
+  padding: 4px 20px;
 }
 
-.macos-ai-app .skill-install-fields label,
-.macos-ai-app .skill-install-grid {
+.macos-ai-app .zeus-form-fields label,
+.macos-ai-app .extension-form-field {
   display: grid;
   gap: 7px;
   min-inline-size: 0;
 }
 
-.macos-ai-app .skill-install-fields label > span:first-child {
+.macos-ai-app .zeus-form-description,
+.macos-ai-app .zeus-form-fields small {
   color: var(--zeus-product-muted);
   font-size: 12px;
+  line-height: 1.65;
+  margin: 0;
 }
 
-.macos-ai-app .skill-install-fields input {
+.macos-ai-app .zeus-form-fields input:not([type='checkbox']):not([type='radio']),
+.macos-ai-app .zeus-form-fields textarea {
   inline-size: 100%;
 }
 
-.macos-ai-app .skill-install-path-control {
+.macos-ai-app .zeus-form-fields textarea.extension-connector-config {
+  font-family: var(--zeus-font-mono, monospace);
+}
+
+.macos-ai-app .zeus-form-fields textarea {
+  line-height: 1.6;
+  padding-block: 8px;
+  resize: vertical;
+}
+
+.macos-ai-app .extension-path-control,
+.macos-ai-app .extension-form-grid {
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
   min-inline-size: 0;
 }
 
-.macos-ai-app .skill-install-grid {
+.macos-ai-app .extension-path-control {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.macos-ai-app .extension-path-control > input:only-child {
+  grid-column: 1 / -1;
+}
+
+.macos-ai-app .extension-form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.macos-ai-app .skill-install-security-note {
-  background: color-mix(in oklab, var(--zeus-product-accent) 6%, var(--zeus-product-panel-muted));
-  border-inline-start: 3px solid color-mix(in oklab, var(--zeus-product-accent) 55%, var(--zeus-product-line));
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-  line-height: 1.55;
-  margin: 2px 0 0;
-  padding: 9px 11px;
+/* 来源切换是两个原生切换按钮，键盘焦点与禁用状态清晰可见。 */
+.macos-ai-app .extension-source-tabs {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
 }
 
-.macos-ai-app .skill-install-dialog > footer {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+.macos-ai-app .extension-source-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--zeus-product-muted);
+  flex: 1;
+  font: inherit;
+  min-block-size: 32px;
+}
+
+.macos-ai-app .extension-source-tabs button[aria-pressed='true'] {
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+  font-weight: 600;
+}
+
+.macos-ai-app .extension-source-tabs button:focus-visible,
+.macos-ai-app .extension-plugin-summary:focus-visible,
+.macos-ai-app .extension-source-details > summary:focus-visible {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: 2px;
+}
+
+.macos-ai-app .extension-source-tabs button:disabled {
+  opacity: 0.5;
+}
+
+.macos-ai-app .extension-plugin-summary .skill-list-glyph {
+  flex: 0 0 36px;
+  block-size: 36px;
+}
+
+.macos-ai-app .extension-plugin-summary strong,
+.macos-ai-app .extension-marketplace-source strong,
+.macos-ai-app .extension-component-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .extension-expand-icon {
+  color: var(--zeus-product-muted);
+  flex: 0 0 16px;
+  transition: transform var(--zeus-motion-state-duration, 120ms) ease;
+}
+
+.macos-ai-app .extension-plugin-summary[aria-expanded='true'] .extension-expand-icon {
+  transform: rotate(90deg);
+}
+
+.macos-ai-app .extension-source-details > summary {
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding-block: 4px;
+}
+
+.macos-ai-app .extension-source-details dl {
+  padding-block-start: 8px;
+}
+
+.macos-ai-app .extension-plugin-detail > footer {
   justify-content: flex-end;
-  padding-block: 12px 16px;
+}
+
+.macos-ai-app .extension-component-row > span:last-child {
+  flex-shrink: 0;
+}
+
+.macos-ai-app .extension-component-row .zeus-select {
+  inline-size: auto;
+}
+
+.macos-ai-app .extension-component-row label {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .skills-embedded-toolbar {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 12px;
+  inline-size: min(980px, 100%);
+  justify-content: space-between;
+  margin-inline: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .extension-expand-icon {
+    transition: none;
+  }
 }
 
 /* 冲突确认弹窗原有 label 规则服务于单选项；Skill 选择器需要恢复为独立纵向字段。 */
@@ -1943,7 +1923,7 @@ a {
 @media (max-width: 780px) {
   .macos-ai-app .skills-workspace {
     gap: 22px;
-    padding: 30px 20px 56px;
+    padding: 20px 16px 32px;
   }
 
   .macos-ai-app .skills-workspace-title-row,
@@ -1975,7 +1955,7 @@ a {
 
 @media (max-width: 520px) {
   .macos-ai-app .skills-workspace-title-row h1 {
-    font-size: 28px;
+    font-size: 22px;
   }
 
   .macos-ai-app .skills-workspace-actions {
@@ -1994,8 +1974,8 @@ a {
     justify-self: start;
   }
 
-  .macos-ai-app .skill-install-grid,
-  .macos-ai-app .skill-install-path-control {
+  .macos-ai-app .extension-form-grid,
+  .macos-ai-app .extension-path-control {
     grid-template-columns: minmax(0, 1fr);
   }
 }
