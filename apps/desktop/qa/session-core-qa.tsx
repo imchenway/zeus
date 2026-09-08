@@ -125,6 +125,10 @@ function QuestionQa() {
   const language = parameters.has('en') ? 'en-US' : 'zh-CN';
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
   const scenario = parameters.get('case') ?? 'single';
+  /** PLAN 真实已答题记录用于对照，跨轮次场景复现用户反馈。 */
+  const synchronous = scenario === 'plan' || scenario === 'multiple';
+  /** 另发消息属于新的执行轮次，不能依赖原题仍在首屏。 */
+  const asNewMessage = scenario === 'newturn' || scenario === 'closed';
   /** 独立问题身份避免各场景草稿串用。 */
   const identity = `qa-question-${scenario}`;
   /** 答复送达通过按钮推进，以便观察接收和送达的区别。 */
@@ -135,14 +139,17 @@ function QuestionQa() {
   const [calls, setCalls] = useState(0);
   /** 保存当前已接收的回答。 */
   const [answers, setAnswers] = useState<Record<string, { answers: string[] }>>({
-    question_1: { answers: [scenario === 'freeform' || parameters.has('custom') ? '不需要你测\n请继续完成样式优化，并保留长文本换行。' : '手动调整后，关闭再打开同一个任务的代码交付窗口'] },
+    question_1: { answers: [scenario === 'newturn' ? '0.3.111' : scenario === 'freeform' || parameters.has('custom') ? '不需要你测\n请继续完成样式优化，并保留长文本换行。' : '手动调整后，关闭再打开同一个任务的代码交付窗口'] },
     ...(scenario === 'multi' ? { question_2: { answers: ['上次的屏幕'] } } : {}),
   });
   /** 与截图一致的长标题和选项，也覆盖只有自由输入的问题。 */
   const questions = [
     {
-      title: '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
-      ...(scenario === 'freeform' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
+      title:
+        scenario === 'newturn'
+          ? '能看到最新模型的那位用户，Zeus「关于」里显示的具体版本号是多少？需要确认是否也是 0.3.111，才能排除安装包版本差异。'
+          : '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
+      ...(scenario === 'freeform' || scenario === 'newturn' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
     },
     ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
   ];
@@ -165,6 +172,7 @@ function QuestionQa() {
   const reply: NativeSessionItemBuffer = {
     ...item,
     key: `${identity}-reply`,
+    turnId: asNewMessage ? 'qa-answer-turn' : item.turnId,
     itemId: `${identity}-reply`,
     providerItemId: delivery === 'resolved' ? `${identity}-reply` : undefined,
     type: 'userMessage',
@@ -172,20 +180,43 @@ function QuestionQa() {
     status: delivery === 'resolved' ? 'completed' : 'steering',
     optimistic: delivery !== 'resolved',
     text: formatAsyncQuestionAnswer(asyncMessageQuestions(item.payload), answers),
-    payload: { delivery: 'steer_now', questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers } },
+    payload: {
+      delivery: asNewMessage ? 'queue' : 'steer_now',
+      questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers, questions: asyncMessageQuestions(item.payload), ...(asNewMessage ? { asNewMessage: true } : {}) },
+    },
   };
   /** 单独保留账本模式，避免只验同一页同时有问答的情况。 */
-  const showReply = Boolean(delivery) && !parameters.has('ledger');
+  const showReply = Boolean(delivery) && !parameters.has('ledger') && !synchronous;
   /** 只建立组件需要的会话状态，其余沿用生产初始值。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: item.conversationId,
-    activeTurnId: item.turnId,
+    activeTurnId: asNewMessage && delivery ? reply.turnId : item.turnId,
     transportState: 'ready',
     conversationState: 'active_prework',
-    items: { ...(parameters.has('orphan') ? {} : { [identity]: item }), ...(showReply ? { [reply.key]: reply } : {}) },
-    itemOrder: [...(parameters.has('orphan') ? [] : [identity]), ...(showReply ? [reply.key] : [])],
-    terminalTurnIds: scenario === 'closed' ? { [item.turnId]: 'completed' } : {},
+    items: { ...(parameters.has('orphan') || synchronous ? {} : { [identity]: item }), ...(showReply ? { [reply.key]: reply } : {}) },
+    itemOrder: [...(parameters.has('orphan') || synchronous ? [] : [identity]), ...(showReply ? [reply.key] : [])],
+    terminalTurnIds: { ...(asNewMessage ? { [item.turnId]: 'completed' as const } : {}), ...(parameters.has('finished') ? { [reply.turnId]: 'completed' as const } : {}) },
+    pendingRequests:
+      synchronous && delivery
+        ? [
+            {
+              id: identity,
+              conversationId: item.conversationId,
+              turnId: item.turnId,
+              itemId: identity,
+              generationId: 'qa',
+              type: 'request_user_input',
+              status: 'resolved',
+              payload: { questions: asyncMessageQuestions(item.payload) },
+              response: { answers },
+              containsSecret: false,
+              expiresAt: null,
+              createdAt: '',
+              resolvedAt: '',
+            },
+          ]
+        : [],
   };
 
   /** 模拟有延迟的接收；失败场景必须保留真实表单中的选择和输入。 */
@@ -202,7 +233,7 @@ function QuestionQa() {
       <style>{'.qa-page { display: block !important; box-sizing: border-box; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
       <h1>PLAN 与异步询问共用表单验收</h1>
       <nav aria-label="询问场景">
-        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered'].map((name) => (
+        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
           <a key={name} href={`?questions&case=${name}`} style={{ marginRight: 16 }}>
             {name}
           </a>

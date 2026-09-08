@@ -1221,7 +1221,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const questions = source?.itemType === 'agentMessage' && source.status === 'completed' ? asyncMessageQuestions(parseJsonObject(source.payloadJson)) : [];
       const validation = validateCanonicalRequestUserInputAnswers({ questions }, answer.answers);
       if (!questions.length || validation || !Object.keys(answer.answers ?? {}).length) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', validation ?? '无法确认原问题及完整回答。');
-      questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
+      // 原题始终来自已落账的 Provider 记录，不接受客户端传入的题目内容。
+      questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, questions, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
       content = formatAsyncQuestionAnswer(questions, questionAnswer.answers);
       if ((questionAnswer.asNewMessage ? 'queue' : 'steer_now') !== delivery || (!questionAnswer.asNewMessage && body.expectedTurnId !== questionAnswer.providerTurnId)) {
         throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答必须进入原轮次；作为新消息发送需要明确选择。');

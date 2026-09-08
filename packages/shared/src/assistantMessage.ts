@@ -16,6 +16,8 @@ export interface AsyncQuestionAnswer {
   providerItemId: string;
   providerTurnId: string;
   answers: Record<string, { answers: string[] }>;
+  /** 回答携带经服务端核对的原题，历史分页未载入原提问时仍可完整回显。 */
+  questions?: CanonicalRequestUserInputQuestion[];
   asNewMessage?: boolean;
 }
 

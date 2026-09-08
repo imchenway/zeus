@@ -1,5 +1,5 @@
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
-import { classifyAssistantMessage } from '@zeus/shared';
+import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -26,7 +26,7 @@ import { type ConversationFileLocation, type ConversationOpenTarget, type Conver
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary } from './SessionReasoningSummary.js';
-import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -1231,7 +1231,13 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
 }
 
 export type TranscriptRow =
-  | { kind: 'item'; key: string; item: NativeSessionItemBuffer }
+  | {
+      kind: 'item';
+      key: string;
+      item: NativeSessionItemBuffer;
+      /** 结构化回答与 PLAN 已答题共用回显，作为处理过程行参与分组。 */
+      questionAnswer?: AnsweredRequestHistoryProps['request'];
+    }
   | { kind: 'answered_request'; key: string; request: NativePendingRequest }
   | {
       kind: 'activity';
@@ -1343,6 +1349,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       />
     );
   }
+  // 已送达的异步回答直接使用 PLAN 已答题组件，不再套用户消息及其操作栏。
+  if (row.questionAnswer && row.item.status === 'completed' && !row.item.optimistic) return <AnsweredRequestHistory request={row.questionAnswer} language={options.props.language} />;
   if (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question') {
     return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language} onOpen={row.item.status === 'completed' ? options.props.onOpenAsyncQuestion : undefined} />;
   }
@@ -1377,7 +1385,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
-        questionAnswer={asyncQuestionAnswerHistory(row.item, options.props.state)}
+        questionAnswer={row.questionAnswer}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}
         isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
@@ -1674,7 +1682,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-/** 轮次过程统一折叠，用户输入始终保留在主会话流，包括同轮中途补充。 */
+/** 问答与执行记录统一进入轮次过程；普通用户输入继续保留在主会话流。 */
 export function projectTranscriptTurnRows(
   rows: readonly TranscriptRow[],
   activeTurnId: string | null = null,
@@ -1688,7 +1696,7 @@ export function projectTranscriptTurnRows(
   const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of orderedRows) {
-    if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
+    if (row.kind !== 'item' || row.questionAnswer || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
     openingUserRowKeyByTurn.set(row.item.turnId, row.key);
   }
 
@@ -1866,6 +1874,8 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
+  // 异步答复是已回答询问，和 PLAN 答题一样进入处理过程，不再充当开场用户消息。
+  if (row.questionAnswer) return true;
   // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
   if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
@@ -1991,6 +2001,17 @@ export function projectTranscriptRows(
   terminalTurnIds: NativeSessionState['terminalTurnIds'] = {},
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
+  /** 问答关系只计算一次，同时决定卡片内容、所在位置和原问题去重。 */
+  const questionAnswers = new Map(items.map((item) => [item.key, asyncQuestionAnswerHistory(item, items)]));
+  /** 只有能完整展示的有效回答才接管原问题，失败答案保留重新回答入口。 */
+  const answeredQuestionIds = new Set(
+    items.flatMap((item) => {
+      if (!questionAnswers.get(item.key)) return [];
+      /** 已校验的结构化身份不使用正文、时间或当前轮次猜测关联。 */
+      const answer = item.payload.questionAnswer as AsyncQuestionAnswer;
+      return [`${answer.providerTurnId}/${answer.providerItemId}`];
+    }),
+  );
   const candidateActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
   // Provider 可能在终态到达后仍留下一条 in_progress reasoning；终态表优先，不能把旧摘要重新判成当前执行。
   const effectiveActiveTurnId = candidateActiveTurnId && !terminalTurnIds[candidateActiveTurnId] ? candidateActiveTurnId : null;
@@ -2049,13 +2070,15 @@ export function projectTranscriptRows(
       rows.push({ kind: 'answered_request', key: `answered-request:${entry.request.id}`, request: entry.request });
     } else {
       const item = entry.item;
+      // 答案卡片已完整承载原题和选项，不在主会话流重复展示同一个问题。
+      if (itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && answeredQuestionIds.has(`${item.turnId}/${item.providerItemId ?? item.itemId}`)) continue;
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
         // Provider 的状态型 reasoning 仍只显示活动轮最新一条；显式思考详情属于阶段过程，默认收起但不能丢弃。
         if (normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item)) continue;
         if (!isOperationalActivityItem(item)) {
-          rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
+          rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item, questionAnswer: questionAnswers.get(item.key) });
         } else {
           if (emittedActivityStages.has(stageIdentity)) continue;
           emittedActivityStages.add(stageIdentity);
