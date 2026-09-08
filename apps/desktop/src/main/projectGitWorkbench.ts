@@ -180,7 +180,9 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'rename_branch':
       return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
     case 'create_tag':
-      return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '' };
+      return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '', message: stringValue('message') };
+    case 'push_tag':
+      return { type: 'push_tag', tagName: stringValue('tagName') ?? '', remote: stringValue('remote') ?? '' };
     case 'delete_tag':
       return { type: 'delete_tag', tagName: stringValue('tagName') ?? '' };
     case 'stage':

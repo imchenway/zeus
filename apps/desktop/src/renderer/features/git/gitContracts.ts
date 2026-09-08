@@ -139,7 +139,8 @@ export interface ProjectGitWorkbenchSnapshot {
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
   | { type: 'rename_branch'; branchName: string; newName: string }
-  | { type: 'create_tag'; tagName: string; revision: string }
+  | { type: 'create_tag'; tagName: string; revision: string; message?: string }
+  | { type: 'push_tag'; tagName: string; remote: string }
   | { type: 'delete_tag'; tagName: string }
   | { type: 'subtree'; operation: 'add' | 'pull' | 'push'; path: string; remote: string; branch: string }
   | { type: 'submodule_update'; path: string }

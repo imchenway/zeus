@@ -85,11 +85,13 @@ export interface GitMenuConfirmation {
   description: string;
   field?: string;
   initialValue?: string;
+  messageField?: string;
   danger?: boolean;
-  run: (value: string) => Promise<boolean>;
+  run: (value: string, message?: string) => Promise<boolean>;
 }
 export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boolean; onClose: () => void }) {
   const [text, setText] = useState(props.value.initialValue ?? '');
+  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
@@ -106,6 +108,7 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
             <input autoFocus value={text} disabled={busy} onChange={(event) => setText(event.currentTarget.value)} />
           </label>
         ) : null}
+        {props.value.messageField ? <label>{props.value.messageField}<textarea value={message} disabled={busy} onChange={(event) => setMessage(event.currentTarget.value)} /></label> : null}
         {error ? <p role="alert">{error}</p> : null}
         <footer>
           <Button variant="secondary" disabled={busy} onClick={props.onClose}>
@@ -121,7 +124,7 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
               setBusy(true);
               setError('');
               try {
-                if (await props.value.run(text.trim())) props.onClose();
+                if (await props.value.run(text.trim(), message.trim())) props.onClose();
                 else setError(props.zh ? '操作未完成，请处理错误后重试。' : 'The operation did not complete. Resolve the error and retry.');
               } catch (reason) {
                 setError(reason instanceof Error ? reason.message : String(reason));

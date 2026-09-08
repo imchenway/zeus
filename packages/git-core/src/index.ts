@@ -286,7 +286,8 @@ export interface ProjectGitRepositorySnapshot {
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
   | { type: 'rename_branch'; branchName: string; newName: string }
-  | { type: 'create_tag'; tagName: string; revision: string }
+  | { type: 'create_tag'; tagName: string; revision: string; message?: string }
+  | { type: 'push_tag'; tagName: string; remote: string }
   | { type: 'delete_tag'; tagName: string }
   | { type: 'subtree'; operation: 'add' | 'pull' | 'push'; path: string; remote: string; branch: string }
   | { type: 'submodule_update'; path: string }
@@ -2123,14 +2124,19 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       break;
     }
     case 'create_tag':
+    case 'push_tag':
     case 'delete_tag': {
       const name = requireSafeGitRef(action.tagName, 'tag');
       await requireGitStdout(repositoryPath, ['check-ref-format', `refs/tags/${name}`]);
-      if (action.type === 'delete_tag') args = ['tag', '-d', name];
+      if (action.type === 'push_tag') {
+        const remote = requireKnownRemote(context, action.remote);
+        await requireGitStdout(repositoryPath, ['rev-parse', '--verify', `refs/tags/${name}`]);
+        args = ['push', '--no-follow-tags', remote, `refs/tags/${name}:refs/tags/${name}`];
+      } else if (action.type === 'delete_tag') args = ['tag', '-d', name];
       else {
         const revision = requireSafeGitRef(action.revision, 'revision');
         const sha = await requireGitStdout(repositoryPath, ['rev-parse', '--verify', `${revision}^{commit}`]);
-        args = ['tag', name, sha.trim()];
+        args = ['tag', '-a', name, '-m', requireSafeGitText(action.message?.trim() || name, 'tag message'), sha.trim()];
       }
       break;
     }

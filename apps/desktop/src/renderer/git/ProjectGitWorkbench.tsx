@@ -443,7 +443,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       });
     const newBranch = (baseRef: string) => form(label('新建分支…', 'New branch…'), label('分支名称', 'Branch name'), (branchName) => ({ type: 'create_branch', branchName, baseRef, smart: true }));
     if (target.kind === 'file' || target.kind === 'directory' || target.kind === 'stage') {
-      const files = repository.snapshot.fileStatuses.filter(
+      const files = repository.snapshot.fileStatuses.filter((file) => !subtree || subtree.repositoryId !== repository.id || file.path === subtree.path || file.path.startsWith(`${subtree.path}/`)).filter(
         (file) =>
           (target.kind === 'stage' || file.path === target.ref || (target.kind === 'directory' && file.path.startsWith(`${target.ref}/`))) &&
           (target.stage === 'staged' ? file.indexStatus !== ' ' && file.indexStatus !== '?' : file.workingTreeStatus !== ' ' || file.indexStatus === '?'),
@@ -456,7 +456,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         action(
           label('丢弃未暂存修改…', 'Discard unstaged changes…'),
           { type: 'discard', paths: tracked },
-          label(`将 ${tracked.length} 个已跟踪文件恢复为暂存区内容。未跟踪文件不会被删除。此操作无法撤销。`, `Restore ${tracked.length} tracked files from the index. Untracked files are kept. This cannot be undone.`),
+          label(`将 ${tracked.length} 个已跟踪文件恢复为暂存区内容。未跟踪文件不会被删除。此操作无法撤销。\n${tracked.join('\n')}`, `Restore ${tracked.length} tracked files from the index. Untracked files are kept. This cannot be undone.`),
           true,
           !tracked.length || repository.snapshot.conflictFiles.length > 0,
         );
@@ -515,7 +515,18 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       items.push({ label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: revision, comparisonMode: 'current' }) });
       action(label('检出此版本…', 'Checkout revision…'), { type: 'checkout_revision', revision, smart: true }, label('进入游离 HEAD 状态，现有修改由 Smart Stash 保护。', 'Enter detached HEAD. Smart Stash protects local changes.'));
       newBranch(revision);
-      form(label('创建标签…', 'Create tag…'), label('标签名称', 'Tag name'), (tagName) => ({ type: 'create_tag', tagName, revision }));
+      items.push({ label: label('创建附注标签…', 'Create annotated tag…'), disabled: busy !== null, run: () => setMenuConfirmation({
+        title: label('创建附注标签', 'Create annotated tag'), description: `${repository.name} · ${revision}`,
+        field: label('标签名称', 'Tag name'), messageField: label('标签说明（可选，默认使用标签名称）', 'Tag message (optional, defaults to tag name)'),
+        run: async (tagName, message) => (await execute(repository, { type: 'create_tag', tagName, revision, message }, label('创建附注标签', 'Create annotated tag'))) === 'completed',
+      }) });
+      if (target.kind === 'tag') {
+        for (const remote of repository.snapshot.remotes) action(
+          label(`推送此标签到 ${remote}…`, `Push this tag to ${remote}…`),
+          { type: 'push_tag', tagName: target.ref, remote },
+          label(`仅推送标签 ${target.ref} 到 ${remote}，不会覆盖已有远程标签。`, `Push only ${target.ref} to ${remote}, without overwriting an existing remote tag.`),
+        );
+      }
       if (target.kind === 'tag') action(label('删除本地标签…', 'Delete local tag…'), { type: 'delete_tag', tagName: target.ref }, label('仅删除本地标签，不删除远程标签。', 'Delete the local tag only.'), true);
       items.push({ label: target.kind === 'tag' ? label('复制标签名', 'Copy tag name') : label('复制提交哈希', 'Copy commit hash'), run: () => copy(target.ref) });
       const commit = repository.snapshot.recentCommits.find((item) => item.hash === target.ref);
@@ -2756,7 +2767,7 @@ function PushDialog(props: {
             <div className="project-git-push-options">
               <label>
                 <input type="checkbox" checked={pushTags} onChange={(event) => setPushTags(event.currentTarget.checked)} />
-                {props.zh ? '推送可达标签' : 'Push reachable tags'}
+                {props.zh ? '推送可达的附注标签' : 'Push reachable annotated tags'}
               </label>
               <label>
                 <input type="checkbox" checked={forceWithLease} onChange={(event) => setForceWithLease(event.currentTarget.checked)} />
