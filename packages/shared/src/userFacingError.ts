@@ -574,6 +574,21 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [['ZEUS_UPDATE_DOWNLOAD_INTERRUPTED'], ['更新下载中断，当前版本仍可使用。可以重新下载。', 'The update download was interrupted. You can keep using the current version and download again.', 'retry']],
   [
+    ['ZEUS_RELEASE_MANIFEST_NETWORK'],
+    [
+      '无法连接 GitHub 更新服务，请检查网络或代理设置后重新检查更新。当前版本仍可使用。',
+      'Could not connect to the GitHub update service. Check your network or proxy settings and try again. You can keep using the current version.',
+      'retry',
+    ],
+  ],
+  [['ZEUS_RELEASE_MANIFEST_TIMEOUT'], ['读取 GitHub 更新清单超时，请稍后重新检查更新。当前版本仍可使用。', 'Reading the GitHub update manifest timed out. Try again later. You can keep using the current version.', 'retry']],
+  [['ZEUS_RELEASE_MANIFEST_HTTP_TRANSIENT'], ['GitHub 更新服务暂时不可用或请求受限，请稍后重新检查更新。', 'The GitHub update service is temporarily unavailable or rate limited. Try again later.', 'retry']],
+  [
+    ['ZEUS_RELEASE_MANIFEST_HTTP_REJECTED'],
+    ['GitHub 更新清单无法访问，请查看错误详情中的响应状态。当前版本仍可使用。', 'The GitHub update manifest is not accessible. See the response status in the error details. You can keep using the current version.'],
+  ],
+  [['ZEUS_RELEASE_MANIFEST_INVALID'], ['收到的更新清单不完整或格式不正确，已停止本次更新。请稍后重新检查更新。', 'The update manifest is incomplete or invalid, so this update was stopped. Check for updates again later.']],
+  [
     ['unauthorized', 'invalid_api_key', 'authentication_error'],
     ['AI 服务拒绝了登录信息。请在设置中检查登录状态或访问密钥（API Key）。', 'The AI service rejected the credentials. Check your sign-in or API key in Settings.', 'model_settings'],
   ],

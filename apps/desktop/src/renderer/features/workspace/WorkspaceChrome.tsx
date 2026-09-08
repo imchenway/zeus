@@ -13,7 +13,6 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
 import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
@@ -884,9 +883,9 @@ export function SidebarNav(props: {
   );
 }
 
-/** 更新提示直接使用真实阶段，手动安装与下载失败分别显示。 */
+/** 侧栏只展示可用更新和处理进度；失败详情留在更新窗口，避免持续打扰工作。 */
 export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIndicatorState | null; language: AppLanguage; onOpen: () => void }) {
-  if (!props.state || props.state.phase === 'idle') return null;
+  if (!props.state || props.state.phase === 'idle' || props.state.phase === 'failed') return null;
   const zh = props.language === 'zh-CN';
   const version = props.state.latestVersion ?? props.state.currentVersion;
   const progress = props.state.progress === undefined ? null : `${Math.min(100, Math.floor(Math.max(0, props.state.progress) * 100))}%`;
@@ -895,30 +894,24 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
       ? zh
         ? `Zeus ${version} 等待重启`
         : `Zeus ${version} ready to restart`
-      : props.state.phase === 'failed'
+      : props.state.phase === 'manual'
         ? zh
-          ? `Zeus ${version} · ${props.state.failure?.title ?? '更新未完成'}`
-          : `Zeus ${version} · ${props.state.failure?.title ?? 'Update incomplete'}`
-        : props.state.phase === 'manual'
+          ? `Zeus ${version} · 下载新版`
+          : `Zeus ${version} · Download new version`
+        : props.state.phase === 'retrying'
           ? zh
-            ? `Zeus ${version} · 下载新版`
-            : `Zeus ${version} · Download new version`
-          : props.state.phase === 'retrying'
+            ? `Zeus ${version} 等待重试`
+            : `Zeus ${version} waiting to retry`
+          : props.state.phase === 'preparing'
             ? zh
-              ? `Zeus ${version} 等待重试`
-              : `Zeus ${version} waiting to retry`
-            : props.state.phase === 'preparing'
-              ? zh
-                ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
-                : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
-              : zh
-                ? `Zeus ${version} 可用`
-                : `Zeus ${version} available`;
+              ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
+              : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
+            : zh
+              ? `Zeus ${version} 可用`
+              : `Zeus ${version} available`;
   const icon =
     props.state.phase === 'ready' ? (
       <CheckCircle aria-hidden="true" weight="fill" />
-    ) : props.state.phase === 'failed' ? (
-      <WarningCircle aria-hidden="true" weight="fill" />
     ) : props.state.phase === 'preparing' || props.state.phase === 'retrying' ? (
       <SpinnerGap className="automatic-update-indicator-spinner" aria-hidden="true" />
     ) : (

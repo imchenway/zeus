@@ -11729,10 +11729,6 @@ body[data-surface='project-git-diff'] #root {
   color: var(--zeus-control-success-text);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='failed'] .automatic-update-indicator-icon {
-  color: var(--zeus-control-danger-text);
-}
-
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-spinner {
   animation: zeus-automatic-update-spin 1s linear infinite;
 }

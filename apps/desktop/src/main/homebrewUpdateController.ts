@@ -148,7 +148,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         return update;
       }
       if (update.status !== 'available' || !update.artifact) {
-        if (!update.latestVersion || update.latestVersion === update.currentVersion) throw new Error(update.reason || '暂时无法取得可用更新。');
+        if (!update.latestVersion || update.latestVersion === update.currentVersion) throw new Error(update.reason || '暂时无法取得可用更新。', { cause: update.error });
         await publishManualUpdate(update, 'release');
         return update;
       }

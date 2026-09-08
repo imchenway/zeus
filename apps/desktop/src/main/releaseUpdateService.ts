@@ -5,6 +5,7 @@ import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import type { UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
@@ -33,6 +34,8 @@ export interface DesktopReleaseUpdateStatus {
   recommendedAction: 'none' | 'open_download_page' | 'download_and_install';
   label: string;
   reason: string;
+  /** 保留本地服务返回的脱敏错误链，原生更新窗口据此解释原因。 */
+  error?: UserFacingErrorCause;
   checkedAt: string;
   executionHost?: unknown;
 }
