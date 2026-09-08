@@ -205,8 +205,19 @@ function scheduleExactAppRelaunchAfterCurrentProcessExit(): void {
   relauncher.unref();
 }
 
+/** 所有安装入口共用未保存内容检查，安装和退出前均保留用户数据。 */
+function assertUpdateCanInstall(): void {
+  if (taskTableLayoutDirtyWindowIds.size > 0 || [...unsavedChangeKeysByWindow.values()].some((keys) => keys.size > 0)) {
+    throw new Error('请先保存或放弃尚未保存的界面更改，再安装更新。');
+  }
+  if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
+    throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
+  }
+}
+
 /** 升级接力只登记为待确认；跨协议时先关闭旧宿主，辅助程序仍须等确认后才能武装。 */
 function requestUpgradeHandoffQuit(targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>): Promise<boolean> {
+  assertUpdateCanInstall();
   if (pendingUpgradeHandoff) return pendingUpgradeHandoff.result;
   let resolveDecision: (accepted: boolean) => void = () => undefined;
   const result = new Promise<boolean>((resolve) => {
@@ -1692,12 +1703,7 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
     if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
-    if (taskTableLayoutDirtyWindowIds.size > 0) {
-      throw new Error('请先保存或放弃尚未保存的任务表布局，再安装更新。');
-    }
-    if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
-      throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
-    }
+    assertUpdateCanInstall();
     const service = releaseUpdateService;
     const result = await activeMainCommandLedger().execute(request, 'desktop.release.install_update', async (_body, command) => {
       await command.markWriteStarted();
@@ -2865,6 +2871,14 @@ async function initializeApplication(): Promise<void> {
           if (!releaseUpdateService) throw new Error('Zeus 发布更新服务尚未就绪。');
           return releaseUpdateService.check();
         },
+        direct: releaseUpdateService,
+        /** 发布清单中的链接也必须属于 Zeus 官方发布目录。 */
+        openDownloadPage: async (value) => {
+          const url = new URL(value);
+          if (url.origin !== 'https://github.com' || !/^\/imchenway\/zeus\/releases(?:\/|$)/u.test(url.pathname)) throw new Error('更新下载页面不是 Zeus 官方发布地址。');
+          const result = await openExternalHttpsUrl({ url: value, openExternal: (target) => shell.openExternal(target) });
+          if (!result.opened) throw new Error('无法打开更新下载页面，请稍后重试。');
+        },
         homebrew: createHomebrewUpdateService({
           currentAppPath: currentAppBundlePath(),
           currentAppVersion: app.getVersion(),
@@ -2872,14 +2886,7 @@ async function initializeApplication(): Promise<void> {
           testMode: isTestDistribution(),
         }),
         currentVersion: app.getVersion(),
-        canInstall: () => {
-          if (taskTableLayoutDirtyWindowIds.size > 0 || [...unsavedChangeKeysByWindow.values()].some((keys) => keys.size > 0)) {
-            throw new Error('请先保存或放弃尚未保存的界面更改，再安装更新。');
-          }
-          if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
-            throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
-          }
-        },
+        canInstall: assertUpdateCanInstall,
         onInstallReady: requestUpgradeHandoffQuit,
       });
     }

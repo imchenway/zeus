@@ -1,6 +1,6 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants, existsSync, realpathSync } from 'node:fs';
+import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +41,19 @@ export interface DesktopReleaseUpdateOperation {
   accepted: boolean;
   update: DesktopReleaseUpdateStatus;
   reason: string;
+  /** 下载完成与用户同意退出是不同事实，取消重启后仍保留已准备的更新。 */
+  restartAccepted?: boolean;
 }
+
+/** 直接更新只报告真实收到的字节；校验期间不伪造下载进度。 */
+export interface ReleaseDownloadProgress {
+  phase: 'downloading' | 'verifying';
+  downloadedBytes?: number;
+  totalBytes?: number;
+}
+
+/** 需要手动安装的明确条件，不将这些条件显示为下载失败。 */
+export type ReleaseManualInstallReason = 'release' | 'protocol' | 'location' | 'signature';
 
 export interface CreateReleaseUpdateServiceOptions {
   userDataPath: string;
@@ -66,11 +78,15 @@ interface PreparedInstallerHandoff {
   bootstrapPath: string;
   transactionId: string;
   activationStarted: boolean;
+  /** 只清理由本服务创建且尚未启动安装器的暂存应用。 */
+  stagedAppPath: string;
 }
 
 export interface ReleaseUpdateService {
   check(): Promise<DesktopReleaseUpdateStatus>;
-  download(): Promise<DesktopReleaseUpdateOperation>;
+  /** 查询直接安装条件，正式包始终保留签名、公证和可写位置约束。 */
+  manualInstallReason(update: DesktopReleaseUpdateStatus): Promise<ReleaseManualInstallReason | null>;
+  download(onProgress?: (progress: ReleaseDownloadProgress) => void): Promise<DesktopReleaseUpdateOperation>;
   install(): Promise<DesktopReleaseUpdateOperation>;
 }
 
@@ -113,10 +129,13 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
 
   return {
     check: () => loadUpdateStatus(options),
-    download: () =>
+    manualInstallReason: (update) => manualInstallReason(update, options),
+    download: (onProgress) =>
       exclusive(async () => {
         const update = await loadUpdateStatus(options);
         assertDownloadAllowed(update, options);
+        if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并通过下载页面手动安装。');
+        await discardOutdatedHandoff(update);
         const artifact = update.artifact!;
         if (basename(artifact.fileName) !== artifact.fileName) throw new Error('更新包文件名包含非法路径。');
         const dataLayout = existsSync(join(options.userDataPath, 'data')) ? createZeusDataLayout(options.userDataPath) : createLegacyFlatZeusDataLayout(options.userDataPath);
@@ -130,6 +149,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           expectedSha256: artifact.sha256,
           expectedSizeBytes: artifact.sizeBytes,
           testMode: options.testMode && options.allowUntrustedTestUpdate,
+          onProgress,
         });
         prepared = { update, dmgPath };
         return {
@@ -142,6 +162,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
       exclusive(async () => {
         const update = await loadUpdateStatus(options);
         assertDownloadAllowed(update, options);
+        await discardOutdatedHandoff(update);
         if (preparedInstallerHandoff) {
           if (preparedInstallerHandoff.updateVersion !== update.latestVersion || preparedInstallerHandoff.artifactSha256 !== update.artifact!.sha256) {
             throw new Error('已有另一版本的更新等待重启，请先重新启动 Zeus 再检查新版本。');
@@ -149,6 +170,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           const accepted = await requestInstallerHandoff(preparedInstallerHandoff);
           return {
             accepted: true,
+            restartAccepted: accepted,
             update,
             reason: accepted ? '安装辅助进程已就绪；Zeus 将完整关闭并在成功后自动重新打开。' : '更新已经准备完成，等待你确认停止活动工作并重启。',
           };
@@ -156,6 +178,9 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact?.sha256) {
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
+        if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并通过下载页面手动安装。');
+        // 安装前重新核对缓存，避免下载后被替换的包进入挂载与复制流程。
+        if (!(await verifyExistingArtifact(prepared.dmgPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
         const transactionId = randomUUID();
         const staged = await stageUpdateApp({
           dmgPath: prepared.dmgPath,
@@ -186,30 +211,64 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           bootstrapPath,
           transactionId,
           activationStarted: false,
+          stagedAppPath: staged.appPath,
         };
         const accepted = await requestInstallerHandoff(preparedInstallerHandoff);
         return {
           accepted: true,
+          restartAccepted: accepted,
           update,
           reason: accepted ? '安装辅助进程已就绪；Zeus 将完整关闭并在成功后自动重新打开。' : '更新已经准备完成，等待你确认停止活动工作并重启。',
         };
       }),
   };
 
+  /** 取消重启后可以选择更新的发布包，但已经启动的安装交接不能被替换。 */
+  async function discardOutdatedHandoff(update: DesktopReleaseUpdateStatus): Promise<void> {
+    if (!preparedInstallerHandoff || (preparedInstallerHandoff.updateVersion === update.latestVersion && preparedInstallerHandoff.artifactSha256 === update.artifact?.sha256)) return;
+    if (preparedInstallerHandoff.activationStarted) throw new Error('安装交接已经开始，请等待完成后再检查更新。');
+    await rm(preparedInstallerHandoff.stagedAppPath, { recursive: true, force: true });
+    await rm(preparedInstallerHandoff.bootstrapPath, { force: true });
+    preparedInstallerHandoff = null;
+  }
+
   async function requestInstallerHandoff(handoff: PreparedInstallerHandoff): Promise<boolean> {
+    if (handoff.activationStarted) throw new Error('安装辅助进程的结果尚未确认，不能重复启动安装。');
     const accepted = await options.onInstallReady(async () => {
-      if (handoff.activationStarted) return;
+      if (handoff.activationStarted) throw new Error('安装辅助进程已经启动，不能重复执行。');
       handoff.activationStarted = true;
       try {
         await launchInstallerAndWaitUntilReady(handoff.bootstrapPath, options.userDataPath, handoff.transactionId);
       } catch (error) {
-        handoff.activationStarted = false;
+        // 只有明确停止了辅助进程，才能释放交接；未知结果不能重放。
+        if (error instanceof Error && 'installerStopped' in error && error.installerStopped === true) {
+          await rm(handoff.stagedAppPath, { recursive: true, force: true });
+          await rm(handoff.bootstrapPath, { force: true });
+          preparedInstallerHandoff = null;
+        }
         throw error;
       }
     });
     if (accepted) preparedInstallerHandoff = null;
     return accepted;
   }
+}
+
+/** 仅将明确不具备自动安装条件的情况引导到手动下载，磁盘读取异常继续报错。 */
+async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): Promise<ReleaseManualInstallReason | null> {
+  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) return 'protocol';
+  if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
+  const appPath = resolve(options.currentAppPath);
+  const appStat = await lstat(appPath);
+  if (!options.isPackaged || !appStat.isDirectory() || appStat.isSymbolicLink() || appPath.startsWith('/Volumes/') || appPath.includes('/AppTranslocation/')) return 'location';
+  try {
+    await access(dirname(appPath), fsConstants.W_OK);
+  } catch (error) {
+    if (isNodeError(error, 'EACCES') || isNodeError(error, 'EPERM') || isNodeError(error, 'EROFS')) return 'location';
+    throw error;
+  }
+  if (!(options.testMode && options.allowUntrustedTestUpdate) && !(await readSigningTeam(appPath))) return 'signature';
+  return null;
 }
 
 async function loadUpdateStatus(options: CreateReleaseUpdateServiceOptions): Promise<DesktopReleaseUpdateStatus> {
@@ -229,18 +288,24 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
   if (!options.isPackaged) throw new Error('Zeus 只允许 packaged App 执行应用内安装。');
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态中的当前版本与正在运行的 App 不一致。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可安装的更新。');
+  if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/u.test(update.latestVersion) || update.latestVersion.length > 128) throw new Error('更新版本号无效。');
+  if (update.artifact.arch !== process.arch) throw new Error('更新安装包与当前 Mac 架构不一致。');
   if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
     throw new Error('更新包未同时通过签名、公证和协议兼容门禁。');
   }
 }
 
-async function downloadVerifiedArtifact(input: { url: string; targetPath: string; expectedSha256: string; expectedSizeBytes: number | null; testMode: boolean }): Promise<void> {
+/** 流式下载并校验大小和摘要，完整校验通过后才公开缓存文件。 */
+async function downloadVerifiedArtifact(input: { url: string; targetPath: string; expectedSha256: string; expectedSizeBytes: number | null; testMode: boolean; onProgress?: (progress: ReleaseDownloadProgress) => void }): Promise<void> {
+  input.onProgress?.({ phase: 'verifying' });
   if (await verifyExistingArtifact(input.targetPath, input.expectedSha256, input.expectedSizeBytes)) return;
   const temporaryPath = `${input.targetPath}.${randomUUID()}.partial`;
   const output = await open(temporaryPath, 'wx', 0o600);
   const hash = createHash('sha256');
   let receivedBytes = 0;
+  /** 限制界面更新频率，下载仍按每个数据块完整写入。 */
+  let lastProgressAt = 0;
   try {
     const source = new URL(input.url);
     if (source.protocol === 'file:') {
@@ -248,31 +313,41 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
       const bytes = await readFile(fileURLToPath(source));
       receivedBytes = bytes.length;
       hash.update(bytes);
-      await output.write(bytes);
+      await output.writeFile(bytes);
     } else {
       const loopbackTestSource = input.testMode && source.protocol === 'http:' && source.hostname === '127.0.0.1' && Boolean(source.port);
       if (!loopbackTestSource && !isTrustedGithubDownloadUrl(source)) throw new Error('更新下载地址不是受信任的 GitHub Release。');
+      input.onProgress?.({ phase: 'downloading', ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
       const response = await fetch(source, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
-      if (!response.ok || !response.body) throw new Error(`更新下载失败：HTTP ${response.status}`);
+      if (!response.ok || !response.body)
+        throw new Error(`更新下载失败：HTTP ${response.status}`, { cause: { code: response.status === 408 || response.status === 429 || response.status >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' } });
       const responseUrl = new URL(response.url);
       const loopbackTestResponse = input.testMode && responseUrl.protocol === 'http:' && responseUrl.hostname === '127.0.0.1' && Boolean(responseUrl.port);
       if (!loopbackTestResponse && !isTrustedGithubResponseUrl(responseUrl)) throw new Error('更新下载重定向离开了受信任的 GitHub 产物域名。');
       for await (const chunk of response.body) {
         const bytes = Buffer.from(chunk);
         receivedBytes += bytes.length;
-        if (receivedBytes > maximumUpdateBytes) throw new Error('更新包超过允许大小。');
+        if (receivedBytes > maximumUpdateBytes || (input.expectedSizeBytes !== null && receivedBytes > input.expectedSizeBytes)) throw new Error('更新包超过允许大小。');
         hash.update(bytes);
-        await output.write(bytes);
+        await output.writeFile(bytes);
+        if (Date.now() - lastProgressAt >= 500) {
+          lastProgressAt = Date.now();
+          input.onProgress?.({ phase: 'downloading', downloadedBytes: receivedBytes, ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
+        }
       }
     }
     await output.sync();
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) {
+      throw new Error('更新下载中断，请重试。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', message: error.message } });
+    }
     throw error;
   } finally {
     await output.close();
   }
   const actualSha256 = hash.digest('hex');
+  input.onProgress?.({ phase: 'verifying' });
   if (actualSha256 !== input.expectedSha256 || (input.expectedSizeBytes !== null && receivedBytes !== input.expectedSizeBytes)) {
     await rm(temporaryPath, { force: true });
     throw new Error('更新包摘要或大小与发布清单不一致。');
@@ -282,11 +357,14 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
   await chmod(input.targetPath, 0o600);
 }
 
+/** 逐块验证缓存，避免整个安装包常驻内存。 */
 async function verifyExistingArtifact(path: string, expectedSha256: string, expectedSizeBytes: number | null): Promise<boolean> {
   try {
-    const bytes = await readFile(path);
-    if (expectedSizeBytes !== null && bytes.length !== expectedSizeBytes) return false;
-    return createHash('sha256').update(bytes).digest('hex') === expectedSha256;
+    const artifactStat = await lstat(path);
+    if (!artifactStat.isFile() || artifactStat.isSymbolicLink() || artifactStat.size > maximumUpdateBytes || (expectedSizeBytes !== null && artifactStat.size !== expectedSizeBytes)) return false;
+    const hash = createHash('sha256');
+    for await (const bytes of createReadStream(path)) hash.update(bytes);
+    return hash.digest('hex') === expectedSha256;
   } catch {
     return false;
   }
@@ -305,7 +383,7 @@ async function stageUpdateApp(input: { dmgPath: string; transactionId: string; t
     const sourceStat = await lstat(sourceAppPath);
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(`更新 DMG 缺少 ${appName}。`);
     await execFile('/usr/bin/ditto', [sourceAppPath, stagedAppPath], { maxBuffer: 8 * 1024 * 1024 });
-    await verifyStagedApp(stagedAppPath, input.expectedVersion, input.testMode);
+    await verifyReleaseApp(stagedAppPath, input.expectedVersion, input.testMode, input.targetAppPath);
     const appVersion = await readAppVersion(stagedAppPath);
     return { appPath: stagedAppPath, appVersion };
   } catch (error) {
@@ -327,13 +405,31 @@ async function mountDmg(dmgPath: string): Promise<string> {
   return mount;
 }
 
-async function verifyStagedApp(appPath: string, expectedVersion: string, testMode: boolean): Promise<void> {
-  await execFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], { maxBuffer: 8 * 1024 * 1024 });
-  const appVersion = await readAppVersion(appPath);
-  if (!testMode && appVersion !== expectedVersion) throw new Error(`更新 App 版本不匹配：expected=${expectedVersion} actual=${appVersion}`);
+/** 安装前后复验同一 Zeus 身份及签发团队；正式运行不依赖用户安装 Xcode 工具。 */
+export async function verifyReleaseApp(appPath: string, expectedVersion: string, testMode: boolean, currentAppPath: string): Promise<void> {
+  await execFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+  const expectedBundleId = testMode ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus';
+  const fields = await Promise.all(
+    ['CFBundleIdentifier', 'CFBundleShortVersionString', 'CFBundleVersion'].map(async (key) => {
+      const { stdout } = await execFile('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+      return stdout.trim();
+    }),
+  );
+  if (fields[0] !== expectedBundleId || fields[1] !== expectedVersion || fields[2] !== expectedVersion) throw new Error('更新 App 的身份或版本与发布信息不一致。');
   if (testMode) return;
-  await execFile('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', appPath], { maxBuffer: 8 * 1024 * 1024 });
-  await execFile('/usr/bin/xcrun', ['stapler', 'validate', appPath], { maxBuffer: 8 * 1024 * 1024 });
+  const teamId = await readSigningTeam(currentAppPath);
+  if (!teamId) throw new Error('当前 Zeus 缺少可信的正式签发团队，请先手动安装正式签名版本。');
+  await execFile('/usr/bin/codesign', ['--verify', '--strict', '-R', `=anchor apple generic and notarized and identifier "${expectedBundleId}" and certificate leaf[subject.OU] = "${teamId}"`, appPath], {
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  await execFile('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', appPath], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+}
+
+/** 从已安装应用的代码签名读取信任团队，不从下载内容或环境变量建立信任。 */
+async function readSigningTeam(appPath: string): Promise<string | null> {
+  const { stderr } = await execFile('/usr/bin/codesign', ['-dv', '--verbose=4', appPath], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+  return /^TeamIdentifier=([A-Z0-9]{10})$/mu.exec(stderr)?.[1] ?? null;
 }
 
 async function readAppVersion(appPath: string): Promise<string> {
@@ -354,22 +450,38 @@ async function launchInstallerAndWaitUntilReady(bootstrapPath: string, userDataP
       ZEUS_RELEASE_INSTALLER_BOOTSTRAP_PATH: bootstrapPath,
     },
   });
-  child.unref();
-  const resultPath = releaseInstallerResultPath(userDataPath, transactionId);
-  const deadline = Date.now() + installerReadyTimeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const value = JSON.parse(await readFile(resultPath, 'utf8')) as unknown;
-      if (isRecord(value) && value.transactionId === transactionId && value.status === 'ready') return;
-      if (isRecord(value) && (value.status === 'failed' || value.status === 'rolled_back')) {
-        throw new Error(typeof value.message === 'string' ? value.message : '安装辅助进程启动失败。');
+  /** 记录子进程结束，启动失败或超时后先停止它，再允许重新准备。 */
+  const exited = new Promise<void>((resolveExit) => {
+    child.once('exit', () => resolveExit());
+    child.once('error', () => resolveExit());
+  });
+  try {
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once('spawn', resolveSpawn);
+      child.once('error', rejectSpawn);
+    });
+    child.unref();
+    const resultPath = releaseInstallerResultPath(userDataPath, transactionId);
+    const deadline = Date.now() + installerReadyTimeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const value = JSON.parse(await readFile(resultPath, 'utf8')) as unknown;
+        if (isRecord(value) && value.transactionId === transactionId && value.status === 'ready') return;
+        if (isRecord(value) && (value.status === 'failed' || value.status === 'rolled_back')) {
+          throw new Error(typeof value.message === 'string' ? value.message : '安装辅助进程启动失败。');
+        }
+      } catch (error) {
+        if (!isNodeError(error, 'ENOENT')) throw error;
       }
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT')) throw error;
+      await wait(installerPollIntervalMs);
     }
-    await wait(installerPollIntervalMs);
+    throw new Error('安装辅助进程未在允许时间内就绪。');
+  } catch (error) {
+    // Main 尚未退出，安装器仍处于等待阶段，可以停止本次创建的子进程。
+    child.kill('SIGKILL');
+    const stopped = await Promise.race([exited.then(() => true), wait(3_000).then(() => false)]);
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error), { cause: error }), { installerStopped: stopped });
   }
-  throw new Error('安装辅助进程未在允许时间内就绪。');
 }
 
 function wait(delayMs: number): Promise<void> {
@@ -396,7 +508,7 @@ function isUnderTemporaryDirectory(path: string): boolean {
 }
 
 function isTrustedGithubDownloadUrl(url: URL): boolean {
-  return url.protocol === 'https:' && url.hostname === 'github.com' && /^\/[^/]+\/[^/]+\/releases\/download\//u.test(url.pathname);
+  return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/download/');
 }
 
 function isTrustedGithubResponseUrl(url: URL): boolean {

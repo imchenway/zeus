@@ -36,6 +36,10 @@ brew uninstall --cask --zap imchenway/tap/zeus
 
 也可以前往 [GitHub Releases](https://github.com/imchenway/zeus/releases) 下载安装包。
 
+应用内更新会识别当前安装方式：Homebrew 管理的应用沿用 Homebrew 更新；手动从 DMG 安装的应用，在正式签名、公证、版本兼容和安装位置条件满足时，可下载后确认重启安装。条件不足时显示“下载新版”，引导手动替换应用，不会反复尝试下载。临时签名的旧版需先手动安装一次正式签名版本，才能使用后续的直接自动安装。
+
+正式发布使用已有的 `REQUIRE_APPLE_DISTRIBUTION=true` 检查证书和公证配置；没有凭据时保留手动升级入口。开发验证无需配置正式证书。
+
 ## 首次打开
 
 当前公开版本尚未经过 Apple 公证。首次打开时，如果 macOS 提示无法验证 Zeus：

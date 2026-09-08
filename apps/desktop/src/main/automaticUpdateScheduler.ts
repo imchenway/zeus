@@ -99,8 +99,8 @@ export function createAutomaticUpdateScheduler(options: CreateAutomaticUpdateSch
   function handleIndicatorChange(state: HomebrewUpdateIndicatorState): void {
     const previous = persisted.indicator;
     let blockedPrepareVersion = persisted.blockedPrepareVersion;
-    if (state.phase === 'failed' && state.latestVersion) blockedPrepareVersion = state.latestVersion;
-    else if (state.phase === 'ready' || state.phase === 'idle' || (state.latestVersion && state.latestVersion !== previous.latestVersion)) blockedPrepareVersion = null;
+    if (state.phase === 'failed' && state.latestVersion && state.failure?.step !== 'check') blockedPrepareVersion = state.latestVersion;
+    else if (state.phase === 'ready' || state.phase === 'manual' || state.phase === 'idle' || (state.latestVersion && state.latestVersion !== previous.latestVersion)) blockedPrepareVersion = null;
     persisted = { ...persisted, blockedPrepareVersion, indicator: { ...state } };
     broadcastIndicator(state);
     schedulePersistence();
@@ -229,14 +229,20 @@ async function readPersistedState(path: string, currentVersion: string): Promise
 function isIndicatorState(value: unknown, currentVersion: string): value is HomebrewUpdateIndicatorState {
   if (!isRecord(value)) return false;
   return (
-    ['idle', 'available', 'preparing', 'retrying', 'ready', 'failed'].includes(String(value.phase)) &&
+    ['idle', 'available', 'manual', 'preparing', 'retrying', 'ready', 'failed'].includes(String(value.phase)) &&
     value.currentVersion === currentVersion &&
     (value.latestVersion === null || typeof value.latestVersion === 'string') &&
     typeof value.detail === 'string' &&
     typeof value.updatedAt === 'string' &&
     normalizeIsoDate(value.updatedAt) !== null &&
     (value.progress === undefined || (typeof value.progress === 'number' && Number.isFinite(value.progress) && value.progress >= 0 && value.progress <= 1)) &&
-    (value.retryAt === undefined || (typeof value.retryAt === 'string' && normalizeIsoDate(value.retryAt) !== null))
+    (value.retryAt === undefined || (typeof value.retryAt === 'string' && normalizeIsoDate(value.retryAt) !== null)) &&
+    (value.failure === undefined ||
+      (isRecord(value.failure) &&
+        ['check', 'prepare', 'download', 'install'].includes(String(value.failure.step)) &&
+        typeof value.failure.title === 'string' &&
+        typeof value.failure.canRetry === 'boolean' &&
+        (value.failure.technicalDetail === undefined || typeof value.failure.technicalDetail === 'string')))
   );
 }
 

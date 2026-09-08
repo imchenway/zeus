@@ -884,6 +884,7 @@ export function SidebarNav(props: {
   );
 }
 
+/** 更新提示直接使用真实阶段，手动安装与下载失败分别显示。 */
 export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIndicatorState | null; language: AppLanguage; onOpen: () => void }) {
   if (!props.state || props.state.phase === 'idle') return null;
   const zh = props.language === 'zh-CN';
@@ -896,19 +897,23 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
         : `Zeus ${version} ready to restart`
       : props.state.phase === 'failed'
         ? zh
-          ? `Zeus ${version} 下载失败`
-          : `Zeus ${version} download failed`
-        : props.state.phase === 'retrying'
+          ? `Zeus ${version} · ${props.state.failure?.title ?? '更新未完成'}`
+          : `Zeus ${version} · ${props.state.failure?.title ?? 'Update incomplete'}`
+        : props.state.phase === 'manual'
           ? zh
-            ? `Zeus ${version} 等待重试`
-            : `Zeus ${version} waiting to retry`
-          : props.state.phase === 'preparing'
+            ? `Zeus ${version} · 下载新版`
+            : `Zeus ${version} · Download new version`
+          : props.state.phase === 'retrying'
             ? zh
-              ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
-              : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
-            : zh
-              ? `Zeus ${version} 可用`
-              : `Zeus ${version} available`;
+              ? `Zeus ${version} 等待重试`
+              : `Zeus ${version} waiting to retry`
+            : props.state.phase === 'preparing'
+              ? zh
+                ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
+                : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
+              : zh
+                ? `Zeus ${version} 可用`
+                : `Zeus ${version} available`;
   const icon =
     props.state.phase === 'ready' ? (
       <CheckCircle aria-hidden="true" weight="fill" />
