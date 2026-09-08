@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
+import { classifyAssistantMessage, type AsyncQuestionAnswer, type TurnChangeSet } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationState,
@@ -35,6 +35,8 @@ export type NativeSessionAction =
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
   | { type: 'v2_content_loaded'; conversationId: string; handle: string; text: string; redacted: boolean }
+  /** 差异全文是按需读取结果，不复用已经消费过的实时事件身份。 */
+  | { type: 'turn_change_set_loaded'; changeSet: TurnChangeSet }
   | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
   | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
@@ -172,6 +174,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return mergeSnapshotV2Page(state, action.snapshot);
     case 'v2_content_loaded':
       return mergeCompleteContent(state, action);
+    case 'turn_change_set_loaded':
+      return mergeTurnChangeSet(state, action.changeSet);
     case 'session_metrics_hydrated': {
       if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
       const currentUpdatedAt = state.sessionMetrics?.updatedAt;
@@ -600,7 +604,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   }
 
   const activeTurnId = activeTurnFromSnapshot(snapshot);
-  const changeSetsByProviderId = Object.fromEntries((snapshot.changeSets ?? []).map((changeSet) => [changeSet.providerTurnId, changeSet]));
+  // 同一会话的按需页可能早于实时更新；摘要也不能抹掉同一修订已经读到的全文。
+  const changeSetsByProviderId = mergeTurnChangeSets(state.conversationId === snapshot.id ? state.changeSetsByProviderId : {}, snapshot.changeSets ?? []);
   const terminalTurnIds = { ...state.terminalTurnIds };
   for (const turn of snapshot.turns) {
     if (!isTerminalTurnStatus(turn.status)) continue;
@@ -628,7 +633,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     providerThreadId: snapshot.providerThreadId,
     activeTurnId,
     startedTurnId: activeTurnId,
-    snapshot,
+    snapshot: { ...snapshot, changeSets: Object.values(changeSetsByProviderId) },
     turnsByProviderId,
     changeSetsByProviderId,
     terminalTurnIds,
@@ -648,6 +653,32 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     feedbackEpoch,
     visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
     error: null,
+  };
+}
+
+/** 按修订合并变更集；同一修订优先保留完整差异。 */
+function mergeTurnChangeSets(current: Record<string, TurnChangeSet>, incoming: TurnChangeSet[]): Record<string, TurnChangeSet> {
+  // 映射沿用 Provider 轮次身份，保证卡片与审阅面板读取同一份数据。
+  const merged = { ...current };
+  for (const changeSet of incoming) {
+    // 较旧响应和同修订摘要都不能覆盖已加载的正文。
+    const previous = merged[changeSet.providerTurnId];
+    if (previous?.id === changeSet.id && (previous.updatedAt > changeSet.updatedAt || (previous.updatedAt === changeSet.updatedAt && previous.contentProjection !== 'summary' && changeSet.contentProjection === 'summary'))) continue;
+    merged[changeSet.providerTurnId] = changeSet;
+  }
+  return merged;
+}
+
+/** 将实时摘要和按需全文同步合入快照，避免后续资源分页把差异正文清空。 */
+function mergeTurnChangeSet(state: NativeSessionState, changeSet: TurnChangeSet): NativeSessionState {
+  if (changeSet.conversationId !== state.conversationId || changeSet.projectId !== state.projectId || !changeSet.providerTurnId) return state;
+  // 读取结果只更新展示数据，不推进实时事件游标。
+  const changeSetsByProviderId = mergeTurnChangeSets(state.changeSetsByProviderId, [changeSet]);
+  return {
+    ...state,
+    changeSetsByProviderId,
+    snapshot: state.snapshot ? { ...state.snapshot, changeSets: Object.values(changeSetsByProviderId) } : null,
+    transcriptRevision: state.transcriptRevision + 1,
   };
 }
 
@@ -811,7 +842,7 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
 
   return {
     ...hydrated,
-    snapshot: { ...snapshot, turns },
+    snapshot: { ...hydrated.snapshot!, turns },
     turnsByProviderId,
     terminalTurnIds: { ...hydrated.terminalTurnIds, ...state.terminalTurnIds },
     items,
@@ -1084,16 +1115,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     }
     case 'conversation.turn.change_set.changed': {
       const changeSet = isRecord(payload.changeSet) ? (payload.changeSet as unknown as NativeSessionState['changeSetsByProviderId'][string]) : null;
-      const providerTurnId = changeSet?.providerTurnId ?? stringValue(payload.turnId);
-      if (!changeSet || !providerTurnId || changeSet.conversationId !== base.conversationId) return base;
-      return {
-        ...base,
-        changeSetsByProviderId: {
-          ...base.changeSetsByProviderId,
-          [providerTurnId]: changeSet,
-        },
-        transcriptRevision: base.transcriptRevision + 1,
-      };
+      return changeSet ? mergeTurnChangeSet(base, changeSet) : base;
     }
     case 'conversation.item.started':
     case 'conversation.item.delta':

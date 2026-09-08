@@ -608,6 +608,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 }
 
+/** Provider 的新增和删除事件携带文件全文，进入内部补丁链前统一转换。 */
 function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
   if (!Array.isArray(value)) return [];
   const changes: ProviderFileUpdateChange[] = [];
@@ -615,7 +616,7 @@ function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
     if (!isRecord(candidate) || typeof candidate.path !== 'string' || !candidate.path.trim() || typeof candidate.diff !== 'string' || !isRecord(candidate.kind)) continue;
     const type = candidate.kind.type;
     if (type === 'add' || type === 'delete') {
-      changes.push({ path: candidate.path, diff: candidate.diff, kind: { type } });
+      changes.push({ path: candidate.path, diff: wholeFileDiff(candidate.diff, type), kind: { type } });
       continue;
     }
     if (type === 'update' && (candidate.kind.move_path === undefined || candidate.kind.move_path === null || typeof candidate.kind.move_path === 'string')) {
@@ -623,6 +624,16 @@ function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
     }
   }
   return changes;
+}
+
+/** 将整份文件编码为补丁，保留空文件、正文符号和末尾无换行语义。 */
+function wholeFileDiff(content: string, type: 'add' | 'delete'): string {
+  // 文件行数来自正文，列表项和代码里的加减号均属于普通内容。
+  const source = splitPatchLines(content);
+  if (source.lines.length === 0) return '';
+  // 新增从空文件开始，删除以空文件结束。
+  const range = `1,${source.lines.length}`;
+  return [type === 'add' ? `@@ -0,0 +${range} @@` : `@@ -${range} +0,0 @@`, ...source.lines.map((line) => `${type === 'add' ? '+' : '-'}${line}`), ...(source.trailingNewline ? [] : ['\\ No newline at end of file']), ''].join('\n');
 }
 
 function changePaths(
@@ -682,19 +693,24 @@ function validateExistingAncestor(path: string, root: string): void {
   }
 }
 
+/** 同路径连续修改只保留最早和最终快照，避免新增后修改在撤销时重新写回文件。 */
 function aggregateChangeFiles(files: ZeusTurnChangeFileRecord[]): AggregatedChangeFile[] {
   const byPath = new Map<string, AggregatedChangeFile>();
   for (const file of files) {
-    const key = `${file.oldPath ?? ''}\0${file.newPath ?? ''}`;
+    const key = `${file.oldPath ?? file.newPath ?? ''}\0${file.newPath ?? file.oldPath ?? ''}`;
     const existing = byPath.get(key);
     if (!existing) {
       byPath.set(key, { ...file, sourceIds: file.sourceItemId ? [file.sourceItemId] : [] });
       continue;
     }
+    // 中间内容或权限被其他写入改变时，不能只凭首末快照恢复整个文件。
+    const continuous = existing.postExists === file.preExists && existing.postHash === file.preHash && existing.postMode === file.preMode;
     byPath.set(key, {
       ...existing,
       id: existing.id,
       sourceIndex: Math.min(existing.sourceIndex, file.sourceIndex),
+      newPath: file.newPath,
+      changeType: existing.changeType === 'binary' || file.changeType === 'binary' ? 'binary' : !existing.oldPath ? 'added' : !file.newPath ? 'deleted' : existing.oldPath === file.newPath ? 'modified' : 'renamed',
       addedLines: existing.addedLines + file.addedLines,
       deletedLines: existing.deletedLines + file.deletedLines,
       postHash: file.postHash,
@@ -702,16 +718,34 @@ function aggregateChangeFiles(files: ZeusTurnChangeFileRecord[]): AggregatedChan
       postMode: file.postMode,
       postBlobRef: file.postBlobRef,
       unifiedDiff: [existing.unifiedDiff, file.unifiedDiff].filter(Boolean).join('\n'),
-      reversible: existing.reversible && file.reversible,
-      unavailableReason: existing.unavailableReason ?? file.unavailableReason,
+      reversible: existing.reversible && file.reversible && continuous,
+      unavailableReason: existing.unavailableReason ?? file.unavailableReason ?? (continuous ? null : '连续修改之间的文件内容或权限不一致，无法安全撤销或重新应用。'),
       updatedAt: file.updatedAt > existing.updatedAt ? file.updatedAt : existing.updatedAt,
       sourceIds: [...existing.sourceIds, ...(file.sourceItemId ? [file.sourceItemId] : [])],
     });
   }
-  return [...byPath.values()].filter((file) => !isNetZeroSamePathChange(file)).sort((left, right) => (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? ''));
+  // ponytail: 跨路径重命名链暂不合并；支持完整路径迁移顺序后再开放此类恢复。
+  const aggregated = [...byPath.values()].filter((file) => !isNetZeroSamePathChange(file));
+  // 不同聚合项不能同时恢复同一路径，否则写入顺序会覆盖另一项的结果。
+  const pathOwners = new Map<string, AggregatedChangeFile>();
+  for (const file of aggregated) {
+    for (const path of new Set([file.oldPath, file.newPath])) {
+      if (!path) continue;
+      // 独立重命名仍可恢复，只有与另一项共享路径时才拒绝。
+      const owner = pathOwners.get(path);
+      if (owner) {
+        owner.reversible = file.reversible = false;
+        owner.unavailableReason = file.unavailableReason = '同一文件涉及跨路径连续修改，暂不能安全撤销或重新应用；仍可审核差异。';
+      }
+      pathOwners.set(path, file);
+    }
+  }
+  return aggregated.sort((left, right) => (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? ''));
 }
 
 function isNetZeroSamePathChange(file: AggregatedChangeFile): boolean {
+  // 同轮新增后删除且快照链完整时，磁盘没有需要恢复的净变更。
+  if (!file.oldPath && !file.newPath && file.reversible && !file.preExists && !file.postExists) return true;
   if (!file.oldPath || file.oldPath !== file.newPath || file.preExists !== file.postExists) return false;
   if (!file.reversible || file.unavailableReason) return false;
   if (!file.preExists) return true;
@@ -768,11 +802,16 @@ export function toRealtimeChangeSet(changeSet: TurnChangeSet): TurnChangeSet {
   };
 }
 
+/** 只在补丁头部忽略文件名，正文中的连续加减号仍计入变更。 */
 function countDiffLines(diff: string): { added: number; deleted: number } {
   let added = 0;
   let deleted = 0;
+  // 每个文件头重置片段状态，避免把正文的 +++ / --- 当作路径。
+  let inHunk = false;
   for (const line of diff.replace(/\r\n?/gu, '\n').split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('diff ')) inHunk = false;
+    if (line.startsWith('@@')) inHunk = true;
+    if (!inHunk && (line.startsWith('+++') || line.startsWith('---'))) continue;
     if (line.startsWith('+')) added += 1;
     else if (line.startsWith('-')) deleted += 1;
   }
@@ -875,7 +914,9 @@ function applyUnifiedDiffBytes(baseBytes: Buffer, diff: string, direction: 'forw
   if (!normalized) return null;
   const patched = applyUnifiedDiffText(normalized.text, diff, direction);
   if (patched === null) return null;
-  return Buffer.from(normalized.eol === '\r\n' ? patched.replace(/\n/gu, '\r\n') : patched, 'utf8');
+  // 整文件新增或删除重建时，空文件无法提供换行风格，应沿用补丁正文。
+  const eol = baseBytes.length === 0 && diff.includes('\r\n') ? '\r\n' : normalized.eol;
+  return Buffer.from(eol === '\r\n' ? patched.replace(/\n/gu, '\r\n') : patched, 'utf8');
 }
 
 function normalizePatchText(value: string): { text: string; eol: '\n' | '\r\n' } | null {

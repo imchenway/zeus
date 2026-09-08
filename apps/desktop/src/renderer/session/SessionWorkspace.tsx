@@ -2604,6 +2604,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                               turnId: changeSet.providerTurnId,
                               ...(fileId ? { initialFileId: fileId } : {}),
                             });
+                            // 审阅入口也负责重试尚未补齐的正文，不能只打开空白摘要。
+                            if (changeSet.contentProjection === 'summary') void actions.onLoadTurnArtifacts?.(changeSet.providerTurnId);
                           }
                         : undefined
                     }
@@ -2723,6 +2725,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           fullWidth={contextFullWidth}
                           onFullWidthChange={setContextFullWidth}
                           onClose={closeContextWorkspace}
+                          loading={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.loading}
+                          loadError={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.error}
+                          onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
                           onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                           onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
                           comments={props.state?.contextDraft.codeComments}
