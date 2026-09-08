@@ -1,5 +1,6 @@
 import { defaultNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
 import { NativeControlRow } from '../features/workspace/workspaceSupport.js';
+import { ZeusSelect } from '../ZeusSelect.js';
 
 /** 代理只维护通用设置草稿，复用页面已有保存入口。 */
 export function NetworkProxySettingsFields(props: {
@@ -26,11 +27,19 @@ export function NetworkProxySettingsFields(props: {
             : 'Save, let tasks finish, then fully quit and reopen Zeus to apply. Closing a window or keeping tasks in the background is insufficient. Applies to Zeus requests, the built-in browser and newly started model processes.'
         }
       >
-        <select aria-label={zh ? '网络代理模式' : 'Network proxy mode'} value={value.mode} disabled={props.disabled} onChange={(event) => props.onChange({ ...value, mode: event.currentTarget.value as NetworkProxySettings['mode'] })}>
-          <option value="default">{zh ? '保持默认' : 'Keep defaults'}</option>
-          <option value="direct">{zh ? '直连（不使用代理）' : 'Direct (no proxy)'}</option>
-          <option value="manual">{zh ? '手动代理' : 'Manual proxy'}</option>
-        </select>
+        {/* 复用同页选择控件，保留下拉箭头和统一键盘操作。 */}
+        <ZeusSelect<NetworkProxySettings['mode']>
+          size="roomy"
+          ariaLabel={zh ? '网络代理模式' : 'Network proxy mode'}
+          value={value.mode}
+          disabled={props.disabled}
+          onChange={(mode) => props.onChange({ ...value, mode })}
+          options={[
+            { value: 'default', label: zh ? '保持默认' : 'Keep defaults' },
+            { value: 'direct', label: zh ? '直连（不使用代理）' : 'Direct (no proxy)' },
+            { value: 'manual', label: zh ? '手动代理' : 'Manual proxy' },
+          ]}
+        />
       </NativeControlRow>
       {value.mode === 'manual' ? (
         <>
