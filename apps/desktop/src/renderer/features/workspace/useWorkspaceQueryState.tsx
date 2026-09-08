@@ -804,6 +804,30 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     return 'general';
   });
   const settingsCategory = props.shellNavigation?.settingsCategory ?? localSettingsCategory;
+  const [releaseLoadState, setReleaseLoadState] = useState<'loading' | 'ready' | 'failed'>(props.initialReleaseStatus && props.initialReleaseUpdateStatus ? 'ready' : 'loading');
+  const [releaseLoadRevision, setReleaseLoadRevision] = useState(0);
+  useEffect(() => {
+    if (activeNavTarget !== 'settings' || settingsCategory !== 'release') return;
+    if (!props.onLoadReleaseStatus || !props.onLoadReleaseUpdateStatus) {
+      setReleaseLoadState(props.initialReleaseStatus && props.initialReleaseUpdateStatus ? 'ready' : 'failed');
+      return;
+    }
+    let cancelled = false;
+    setReleaseLoadState('loading');
+    void Promise.all([props.onLoadReleaseStatus(), props.onLoadReleaseUpdateStatus()])
+      .then(([status, update]) => {
+        if (cancelled) return;
+        setReleaseStatus(status);
+        setReleaseUpdateStatus(update);
+        setReleaseLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setReleaseLoadState('failed');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeNavTarget, settingsCategory, props.onLoadReleaseStatus, props.onLoadReleaseUpdateStatus, props.initialReleaseStatus, props.initialReleaseUpdateStatus, releaseLoadRevision]);
   const setSettingsCategory = props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory;
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   const selectedProject = projectDetail ?? firstProject;
@@ -1473,6 +1497,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     recoveringConflictAiStartsRef,
     recoveringNativeConversationStartsRef,
     releaseStatus,
+    releaseLoadState,
+    setReleaseLoadRevision,
     releaseUpdateBusy,
     releaseUpdateCheckState,
     releaseUpdateStatus,

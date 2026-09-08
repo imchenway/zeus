@@ -114,7 +114,7 @@ export function detectReleaseReadiness(input: ReleaseReadinessInput): ReleaseRea
 export function buildAutoUpdatePolicy(input: AutoUpdatePolicyInput): AutoUpdatePolicy {
   const currentVersion = input.currentVersion.trim() || '0.0.0';
   const channel = input.channel === 'stable' || input.channel === 'preview' ? input.channel : 'manual';
-  const changelogPath = input.changelogPath.trim() || 'docs/release.md';
+  const changelogPath = input.changelogPath.trim();
   const waitingFor: string[] = [];
   if (!input.hasReleaseWorkflow) waitingFor.push('GitHub Release workflow');
   if (!input.hasSignedAndNotarizedArtifacts) waitingFor.push('signed and notarized artifacts');

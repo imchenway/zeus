@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
@@ -61,12 +61,14 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
   const [snapshot, setSnapshot] = useState<CodexUsageAnalyticsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const loadRevision = useRef(0);
   useApplicationErrorDialog(error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const [filterOptions, setFilterOptions] = useState<{ projects: CodexLocalUsageGroup[]; models: CodexLocalUsageGroup[] }>({ projects: [], models: [] });
 
   const load = useCallback(async () => {
+    const revision = ++loadRevision.current;
     if (!props.client) {
       setLoading(false);
       setError(copy.unavailable);
@@ -75,6 +77,7 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
     setLoading(true);
     try {
       const next = await props.client.loadCodexUsageAnalytics({ range, projectId: projectId || undefined, model: model || undefined });
+      if (revision !== loadRevision.current) return;
       setSnapshot(next);
       setFilterOptions((current) => ({
         projects: mergeGroups(current.projects, next.local.byProject),
@@ -82,15 +85,18 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
       }));
       setError(null);
     } catch (cause) {
-      setError(cause);
+      if (revision === loadRevision.current) setError(cause);
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
   }, [copy.unavailable, model, projectId, props.client, range]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), props.refreshRevision > 0 ? 180 : 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadRevision.current += 1;
+    };
   }, [load, props.refreshRevision]);
 
   return (
@@ -100,8 +106,8 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
           <h2 className="settings-page-title">{copy.title}</h2>
           <small>{snapshot ? formatUpdatedAt(snapshot.updatedAt, props.language) : null}</small>
         </span>
-        <button type="button" onClick={() => void load()} disabled={loading}>
-          {copy.refresh}
+        <button type="button" onClick={() => void load()} disabled={loading} aria-busy={loading}>
+          {loading ? copy.loading : copy.refresh}
         </button>
       </header>
       {loading && !snapshot ? (

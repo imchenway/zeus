@@ -1233,7 +1233,7 @@ function normalizeRunParameters(definitions: CommandParameterDefinition[], rawVa
   const values: Record<string, string | number | boolean> = {};
   for (const definition of definitions) {
     const rawValue = rawValues[definition.key] ?? definition.defaultValue;
-    const missing = rawValue === undefined || (definition.type === 'string' && rawValue === '');
+    const missing = rawValue === undefined || rawValue === '';
     if (missing) {
       if (definition.required) issues.push({ field: definition.key, message: '参数为必填项。' });
       continue;

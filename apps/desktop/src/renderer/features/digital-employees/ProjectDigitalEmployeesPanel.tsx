@@ -1,6 +1,6 @@
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { CommandDefinition } from '@zeus/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DashboardClient } from '../../dashboardClient.js';
 import type { CodexConversationCapabilities } from '../../session/sessionTypes.js';
 import { Button } from '../../ui/Button.js';
@@ -52,10 +52,21 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorSection, setErrorSection] = useState<ProjectPanelSection | null>(null);
+
+  const employeeDrafts = useRef(new Map<string, { draft: DigitalEmployeeDraft; revision: number }>());
+  const configurationRevision = useRef(0);
+  const executionRevision = useRef(0);
 
   const loadProjectConfiguration = useCallback(async () => {
-    if (!props.client) return;
+    const revision = ++configurationRevision.current;
+    executionRevision.current += 1;
+    if (!props.client) {
+      setLoadState('failed');
+      return;
+    }
     setLoadState('loading');
+    setErrorSection(null);
     setError(null);
     try {
       const capabilitiesPromise = props.skillClient?.loadCodexConversationCapabilities?.(props.projectId).catch(() => null) ?? Promise.resolve(null);
@@ -67,6 +78,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
         props.client.loadProjectCommands(props.projectId),
         capabilitiesPromise,
       ]);
+      if (revision !== configurationRevision.current) return;
       setTemplates(nextTemplates);
       setEmployees(nextEmployees);
       setAutomations(nextAutomations);
@@ -76,12 +88,13 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setTemplateId((current) => (current && nextTemplates.some((template) => template.id === current) ? current : (nextTemplates[0]?.id ?? '')));
       setSelectedEmployeeId((current) => {
         const selected = current ? nextEmployees.find((employee) => employee.id === current) : undefined;
-        setEmployeeDraftState(selected ? employeeDraft(selected) : null);
+        setEmployeeDraftState(selected ? (employeeDrafts.current.get(selected.id)?.draft ?? employeeDraft(selected)) : null);
         return selected?.id ?? null;
       });
       setAutomationDraft((current) => ({ ...current, employeeId: current.employeeId && nextEmployees.some((employee) => employee.id === current.employeeId) ? current.employeeId : (nextEmployees[0]?.id ?? '') }));
       setLoadState('ready');
     } catch (cause) {
+      if (revision !== configurationRevision.current) return;
       setLoadState('failed');
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
@@ -89,52 +102,87 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
 
   const refreshExecutions = useCallback(async () => {
     if (!props.client) return;
+    const revision = ++executionRevision.current;
+    const configuration = configurationRevision.current;
     try {
-      setExecutions(await props.client.loadProjectDigitalEmployeeExecutions(props.projectId));
+      const next = await props.client.loadProjectDigitalEmployeeExecutions(props.projectId);
+      if (revision !== executionRevision.current || configuration !== configurationRevision.current) return;
+      setExecutions(next);
     } catch {
       // 轮询失败不覆盖用户正在编辑的配置；手动刷新会显示完整错误。
     }
   }, [props.client, props.projectId]);
 
   useEffect(() => {
+    employeeDrafts.current.clear();
+    setBusyAction(null);
     setSelectedEmployeeId(null);
     setEmployeeDraftState(null);
     setAutomationDraft({ ...emptyAutomationDraft });
     void loadProjectConfiguration();
+    return () => {
+      configurationRevision.current += 1;
+    };
   }, [loadProjectConfiguration]);
 
   const hasActiveExecutions = executions.some(executionIsActive);
   useEffect(() => {
-    if (!hasActiveExecutions) return;
+    if (!hasActiveExecutions || loadState !== 'ready') return;
     const timer = window.setInterval(() => void refreshExecutions(), 5_000);
-    return () => window.clearInterval(timer);
-  }, [hasActiveExecutions, refreshExecutions]);
+    return () => {
+      window.clearInterval(timer);
+      executionRevision.current += 1;
+    };
+  }, [hasActiveExecutions, loadState, refreshExecutions]);
 
   const deployCommands = useMemo(() => commands.filter((command) => command.enabled), [commands]);
 
   function selectEmployee(record: DigitalEmployeeRecord): void {
     setSelectedEmployeeId(record.id);
+    setEmployeeDraftState(employeeDrafts.current.get(record.id)?.draft ?? employeeDraft(record));
+    setError(null);
+  }
+
+  function editEmployee(draft: DigitalEmployeeDraft): void {
+    if (!selectedEmployeeId || busyAction || loadState !== 'ready') return;
+    const record = employees.find((employee) => employee.id === selectedEmployeeId);
+    if (!record) return;
+    const previous = employeeDrafts.current.get(record.id);
+    employeeDrafts.current.set(record.id, { draft, revision: previous?.revision ?? record.revision });
+    setEmployeeDraftState(draft);
+  }
+
+  function discardEmployeeDraft(): void {
+    if (!selectedEmployeeId || busyAction || loadState !== 'ready') return;
+    const record = employees.find((employee) => employee.id === selectedEmployeeId);
+    if (!record) return;
+    employeeDrafts.current.delete(record.id);
     setEmployeeDraftState(employeeDraft(record));
     setError(null);
   }
 
   async function addEmployee(): Promise<void> {
-    if (!props.client || !templateId) return;
+    if (!props.client || !templateId || busyAction || loadState !== 'ready') return;
+    setErrorSection('employees');
     setBusyAction('add-employee');
     setError(null);
+    const scope = configurationRevision.current;
     try {
       const record = await props.client.createProjectDigitalEmployee(props.projectId, { templateId });
+      if (scope !== configurationRevision.current) return;
       setEmployees((current) => [...current, record].sort((left, right) => left.name.localeCompare(right.name)));
       selectEmployee(record);
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function saveEmployee(): Promise<void> {
-    if (!props.client || !selectedEmployeeId || !employeeDraftState) return;
+    if (!props.client || !selectedEmployeeId || !employeeDraftState || busyAction || loadState !== 'ready') return;
+    setErrorSection('employees');
     const current = employees.find((employee) => employee.id === selectedEmployeeId);
     if (!current) return;
     if (!employeeDraftState.name.trim() || !employeeDraftState.role.trim()) {
@@ -147,57 +195,88 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     }
     setBusyAction('save-employee');
     setError(null);
+    const scope = configurationRevision.current;
     try {
-      const record = await props.client.updateProjectDigitalEmployee(props.projectId, current.id, current.revision, employeeInput(employeeDraftState));
+      const record = await props.client.updateProjectDigitalEmployee(props.projectId, current.id, employeeDrafts.current.get(current.id)?.revision ?? current.revision, employeeInput(employeeDraftState));
+      if (scope !== configurationRevision.current) return;
       setEmployees((items) => items.map((employee) => (employee.id === record.id ? record : employee)));
+      employeeDrafts.current.delete(record.id);
       setEmployeeDraftState(employeeDraft(record));
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function toggleEmployee(record: DigitalEmployeeRecord): Promise<void> {
-    if (!props.client) return;
+    if (!props.client || busyAction || loadState !== 'ready') return;
+    setErrorSection('employees');
     setBusyAction(`employee-toggle:${record.id}`);
     setError(null);
+    const scope = configurationRevision.current;
     try {
-      const updated = await props.client.updateProjectDigitalEmployee(props.projectId, record.id, record.revision, { enabled: !record.enabled });
+      const updated = await props.client.updateProjectDigitalEmployee(props.projectId, record.id, employeeDrafts.current.get(record.id)?.revision ?? record.revision, { enabled: !record.enabled });
+      if (scope !== configurationRevision.current) return;
       setEmployees((items) => items.map((employee) => (employee.id === updated.id ? updated : employee)));
-      if (selectedEmployeeId === updated.id) setEmployeeDraftState(employeeDraft(updated));
+      const draft = employeeDrafts.current.get(updated.id);
+      if (draft) {
+        draft.draft = { ...draft.draft, enabled: updated.enabled };
+        draft.revision = updated.revision;
+      }
+      if (selectedEmployeeId === updated.id) setEmployeeDraftState(draft?.draft ?? employeeDraft(updated));
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function deleteEmployee(record: DigitalEmployeeRecord): Promise<void> {
-    if (!props.client) return;
+    if (!props.client || busyAction || loadState !== 'ready') return;
+    setErrorSection('employees');
     if (!window.confirm(zh ? `从项目移除数字员工“${record.name}”？它的自动化规则也会停用。` : `Remove “${record.name}” from this project? Its automations will also be disabled.`)) return;
     setBusyAction(`employee-delete:${record.id}`);
     setError(null);
+    const scope = configurationRevision.current;
     try {
       await props.client.deleteProjectDigitalEmployee(props.projectId, record.id, record.revision);
+      if (scope !== configurationRevision.current) return;
+      employeeDrafts.current.delete(record.id);
       setEmployees((items) => items.filter((employee) => employee.id !== record.id));
       setAutomations((items) => items.filter((automation) => automation.employeeId !== record.id));
+      setAutomationDraft((draft) => (draft.employeeId === record.id ? { ...draft, employeeId: '' } : draft));
       if (selectedEmployeeId === record.id) {
         setSelectedEmployeeId(null);
         setEmployeeDraftState(null);
       }
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function createAutomation(): Promise<void> {
-    if (!props.client || !automationDraft.employeeId) return;
+    if (!props.client || !automationDraft.employeeId || busyAction || loadState !== 'ready') return;
+    setErrorSection('automations');
     if (!automationDraft.name.trim()) {
       setError(zh ? '自动化名称不能为空。' : 'Automation name is required.');
       return;
+    }
+    if ((automationDraft.triggerKind === 'daily' || automationDraft.triggerKind === 'weekly') && !/^([01]\d|2[0-3]):[0-5]\d$/.test(automationDraft.time)) {
+      setError(zh ? '请填写有效的本机时间。' : 'Enter a valid local time.');
+      return;
+    }
+    if (automationDraft.triggerKind === 'interval') {
+      const minutes = Number(automationDraft.intervalMinutes);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43200) {
+        setError(zh ? '间隔分钟必须是 1–43200 的整数。' : 'Interval minutes must be an integer from 1 to 43200.');
+        return;
+      }
     }
     if (automationDraft.triggerKind === 'once' && !automationDraft.runAt) {
       setError(zh ? '请选择一次性自动化的执行时间。' : 'Choose when the one-time automation should run.');
@@ -208,12 +287,17 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       return;
     }
     const employee = employees.find((candidate) => candidate.id === automationDraft.employeeId);
+    if (!employee?.enabled) {
+      setError(zh ? '请选择已启用的项目员工。' : 'Select an enabled project employee.');
+      return;
+    }
     if (automationDraft.actionKind === 'explore_project' && employee && !employee.autonomousExploration) {
       setError(zh ? '请先在员工配置中开启“允许只读自主探索”。' : 'Enable read-only autonomous exploration on this employee first.');
       return;
     }
     setBusyAction('create-automation');
     setError(null);
+    const scope = configurationRevision.current;
     try {
       const record = await props.client.createDigitalEmployeeAutomation(props.projectId, {
         employeeId: automationDraft.employeeId,
@@ -223,56 +307,72 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
         actionKind: automationDraft.actionKind,
         actionConfig: automationActionConfig(automationDraft),
       });
+      if (scope !== configurationRevision.current) return;
       setAutomations((current) => [record, ...current]);
       setAutomationDraft((current) => ({ ...emptyAutomationDraft, employeeId: current.employeeId }));
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function toggleAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client) return;
+    if (!props.client || busyAction || loadState !== 'ready') return;
+    setErrorSection('automations');
     setBusyAction(`automation-toggle:${record.id}`);
     setError(null);
+    const scope = configurationRevision.current;
     try {
       const updated = await props.client.updateDigitalEmployeeAutomation(props.projectId, record.id, record.revision, { enabled: !record.enabled });
+      if (scope !== configurationRevision.current) return;
       setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function runAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client) return;
+    if (!props.client || busyAction || loadState !== 'ready') return;
+    setErrorSection('automations');
     setBusyAction(`automation-run:${record.id}`);
     setError(null);
+    const scope = configurationRevision.current;
     try {
       const updated = await props.client.runDigitalEmployeeAutomation(props.projectId, record.id);
+      if (scope !== configurationRevision.current) return;
       setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
-      window.setTimeout(() => void refreshExecutions(), 1_500);
+      window.setTimeout(() => {
+        if (scope === configurationRevision.current) void refreshExecutions();
+      }, 1_500);
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
   async function deleteAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client) return;
+    if (!props.client || busyAction || loadState !== 'ready') return;
+    setErrorSection('automations');
     if (!window.confirm(zh ? `删除自动化规则“${record.name}”？` : `Delete automation “${record.name}”?`)) return;
     setBusyAction(`automation-delete:${record.id}`);
     setError(null);
+    const scope = configurationRevision.current;
     try {
       await props.client.deleteDigitalEmployeeAutomation(props.projectId, record.id, record.revision);
+      if (scope !== configurationRevision.current) return;
       setAutomations((items) => items.filter((automation) => automation.id !== record.id));
     } catch (cause) {
+      if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
-      setBusyAction(null);
+      if (scope === configurationRevision.current) setBusyAction(null);
     }
   }
 
@@ -289,12 +389,12 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
               : 'Employees work in this project. Settings changes apply to new work; ongoing work keeps its original configuration and permissions.'}
           </p>
         </span>
-        <Button variant="secondary" size="compact" busy={loadState === 'loading'} onClick={() => void loadProjectConfiguration()}>
+        <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busyAction !== null} onClick={() => void loadProjectConfiguration()}>
           {zh ? '刷新' : 'Refresh'}
         </Button>
       </header>
 
-      {error ? (
+      {error && (errorSection === null || errorSection === section) ? (
         <p className="digital-employee-feedback is-error" role="alert">
           {error}
         </p>
@@ -307,7 +407,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       </nav>
 
       {section === 'employees' ? (
-        <div className="digital-employee-project-section">
+        <div className="digital-employee-project-section" inert={busyAction !== null || loadState !== 'ready'} aria-busy={busyAction !== null}>
           <section className="digital-employee-assignment-strip" aria-label={zh ? '从模板添加员工' : 'Add employee from template'}>
             <span>
               <strong>{zh ? '从全局模板添加' : 'Add from a global template'}</strong>
@@ -352,7 +452,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
             </section>
             <section className="digital-employee-editor-pane" aria-label={zh ? '项目员工配置' : 'Project employee configuration'}>
               {selectedEmployeeId && employeeDraftState ? (
-                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={setEmployeeDraftState} />
+                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={editEmployee} />
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
@@ -366,12 +466,17 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                     {employees.find((employee) => employee.id === selectedEmployeeId) ? (
                       <>
                         <Button variant="secondary" size="compact" busy={busyAction === `employee-toggle:${selectedEmployeeId}`} onClick={() => void toggleEmployee(employees.find((employee) => employee.id === selectedEmployeeId)!)}>
-                          {employeeDraftState.enabled ? (zh ? '停用' : 'Disable') : zh ? '启用' : 'Enable'}
+                          {employees.find((employee) => employee.id === selectedEmployeeId)?.enabled ? (zh ? '停用' : 'Disable') : zh ? '启用' : 'Enable'}
                         </Button>
                         <Button variant="danger" size="compact" busy={busyAction === `employee-delete:${selectedEmployeeId}`} onClick={() => void deleteEmployee(employees.find((employee) => employee.id === selectedEmployeeId)!)}>
                           {zh ? '移除' : 'Remove'}
                         </Button>
                       </>
+                    ) : null}
+                    {employeeDrafts.current.has(selectedEmployeeId) ? (
+                      <Button variant="secondary" size="compact" onClick={discardEmployeeDraft}>
+                        {zh ? '放弃修改' : 'Discard changes'}
+                      </Button>
                     ) : null}
                     <Button variant="primary" size="compact" busy={busyAction === 'save-employee'} onClick={() => void saveEmployee()}>
                       {zh ? '保存员工配置' : 'Save employee'}
@@ -385,7 +490,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       ) : null}
 
       {section === 'automations' ? (
-        <div className="digital-employee-project-section digital-employee-automation-layout">
+        <div className="digital-employee-project-section digital-employee-automation-layout" inert={busyAction !== null || loadState !== 'ready'} aria-busy={busyAction !== null}>
           <AutomationEditor draft={automationDraft} employees={employees} language={props.language} onChange={setAutomationDraft} onCreate={() => void createAutomation()} busy={busyAction === 'create-automation'} />
           <section className="digital-employee-automation-list" aria-label={zh ? '自动化规则' : 'Automation rules'}>
             {automations.length === 0 ? <p className="digital-employee-empty">{zh ? '尚未创建自动化规则。' : 'No automation rules yet.'}</p> : null}
@@ -662,7 +767,8 @@ function AutomationEditor(props: {
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '选择数字员工' : 'Choose digital employee'}
-              value={props.draft.employeeId}
+              value={props.employees.some((employee) => employee.id === props.draft.employeeId) ? props.draft.employeeId : ''}
+              triggerLabel={!props.employees.some((employee) => employee.id === props.draft.employeeId) ? (zh ? '请先选择项目员工' : 'Select a project employee') : undefined}
               onChange={(employeeId) => patch({ employeeId })}
               options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, disabled: !employee.enabled }))}
               disabled={props.employees.length === 0}
@@ -767,7 +873,7 @@ function AutomationEditor(props: {
             {zh ? '探索执行固定只读，只检查当前项目的任务、代码和文档，并以任务/会话保存候选发现。' : 'Exploration is always read-only, limited to project tasks, code, and docs, with findings retained in a task conversation.'}
           </p>
         ) : null}
-        <Button variant="primary" size="compact" busy={props.busy} disabled={props.employees.length === 0} onClick={props.onCreate}>
+        <Button variant="primary" size="compact" busy={props.busy} disabled={!props.employees.some((employee) => employee.id === props.draft.employeeId && employee.enabled)} onClick={props.onCreate}>
           {zh ? '创建规则' : 'Create rule'}
         </Button>
       </div>

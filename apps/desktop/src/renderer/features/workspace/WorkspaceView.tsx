@@ -129,6 +129,7 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
 }
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   const { state, domainActions, operations } = input;
   const {
     actionState,
@@ -195,6 +196,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     projectedRuntimeLogOutput,
     props,
     releaseStatus,
+    releaseLoadState,
+    setReleaseLoadRevision,
     releaseUpdateBusy,
     releaseUpdateCheckState,
     releaseUpdateStatus,
@@ -480,6 +483,53 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   });
   const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
   const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
+  const normalizedSettingsQuery = settingsSearchQuery.trim().toLocaleLowerCase();
+  const settingsGroups = [
+    {
+      group: settingsWorkspaceCopy.sectionGroups.personal,
+      items: [
+        ['general', settingsWorkspaceCopy.categories.general, undefined],
+        ['usage', settingsWorkspaceCopy.categories.usage, undefined],
+        ['memory', settingsWorkspaceCopy.categories.memory, settingsWorkspaceCopy.localStatus],
+        ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
+        ['employees', settingsWorkspaceCopy.categories.employees, settingsWorkspaceCopy.localStatus],
+        ['security', settingsWorkspaceCopy.categories.security, settingsWorkspaceCopy.protectedStatus],
+      ],
+    },
+    {
+      group: settingsWorkspaceCopy.sectionGroups.integrations,
+      items: [
+        ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+        ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
+        ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
+        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 机器人' : 'IM Bots', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+        ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
+      ],
+    },
+    {
+      group: settingsWorkspaceCopy.sectionGroups.coding,
+      items: [
+        ['commands', settingsWorkspaceCopy.categories.commands, settingsWorkspaceCopy.localStatus],
+        ['git', settingsWorkspaceCopy.categories.git, settingsWorkspaceCopy.protectedStatus],
+      ],
+    },
+    {
+      group: settingsWorkspaceCopy.sectionGroups.maintenance,
+      items: [
+        ['release', settingsWorkspaceCopy.categories.release, settingsWorkspaceCopy.waitingStatus],
+        ['data', settingsWorkspaceCopy.categories.data, settingsWorkspaceCopy.localStatus],
+      ],
+    },
+  ] as Array<{ group: string; items: Array<[SettingsCategory, string, string | undefined]> }>;
+  const visibleSettingsGroups = settingsGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(([id, label]) => `${group.group} ${label} ${id}`.toLocaleLowerCase().includes(normalizedSettingsQuery)),
+    }))
+    .filter((group) => group.items.length > 0);
+  const visibleSettingsItems = visibleSettingsGroups.flatMap((group) => group.items);
+  const settingsNavigationTabStop = visibleSettingsItems.some(([id]) => id === settingsCategory) ? settingsCategory : visibleSettingsItems[0]?.[0];
+
   return (
     <main
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
@@ -1553,7 +1603,19 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </button>
               <span className="settings-query-field">
                 <MagnifyingGlass aria-hidden="true" weight="regular" />
-                <input className="settings-query-control" aria-label={settingsWorkspaceCopy.searchAria} placeholder={settingsWorkspaceCopy.searchPlaceholder} />
+                <input
+                  className="settings-query-control"
+                  aria-label={settingsWorkspaceCopy.searchAria}
+                  placeholder={settingsWorkspaceCopy.searchPlaceholder}
+                  value={settingsSearchQuery}
+                  onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      setSettingsSearchQuery('');
+                    }
+                  }}
+                />
               </span>
               <nav
                 className="settings-section-nav settings-sidebar-nav"
@@ -1563,45 +1625,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 data-inline-rail-keyboard="vertical"
                 onKeyDown={handleInlineRailKeyboardNavigation}
               >
-                {(
-                  [
-                    {
-                      group: settingsWorkspaceCopy.sectionGroups.personal,
-                      items: [
-                        ['general', settingsWorkspaceCopy.categories.general, undefined],
-                        ['usage', settingsWorkspaceCopy.categories.usage, undefined],
-                        ['memory', settingsWorkspaceCopy.categories.memory, settingsWorkspaceCopy.localStatus],
-                        ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
-                        ['employees', settingsWorkspaceCopy.categories.employees, settingsWorkspaceCopy.localStatus],
-                        ['security', settingsWorkspaceCopy.categories.security, settingsWorkspaceCopy.protectedStatus],
-                      ],
-                    },
-                    {
-                      group: settingsWorkspaceCopy.sectionGroups.integrations,
-                      items: [
-                        ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
-                        ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
-                        ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
-                        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 机器人' : 'IM Bots', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
-                        ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
-                      ],
-                    },
-                    {
-                      group: settingsWorkspaceCopy.sectionGroups.coding,
-                      items: [
-                        ['commands', settingsWorkspaceCopy.categories.commands, settingsWorkspaceCopy.localStatus],
-                        ['git', settingsWorkspaceCopy.categories.git, settingsWorkspaceCopy.protectedStatus],
-                      ],
-                    },
-                    {
-                      group: settingsWorkspaceCopy.sectionGroups.maintenance,
-                      items: [
-                        ['release', settingsWorkspaceCopy.categories.release, settingsWorkspaceCopy.waitingStatus],
-                        ['data', settingsWorkspaceCopy.categories.data, settingsWorkspaceCopy.localStatus],
-                      ],
-                    },
-                  ] as Array<{ group: string; items: Array<[SettingsCategory, string, string | undefined]> }>
-                ).map((group) => (
+                {visibleSettingsGroups.map((group) => (
                   <div className="settings-sidebar-group" role="presentation" key={group.group}>
                     <span className="settings-sidebar-group-title" role="presentation">
                       {group.group}
@@ -1613,7 +1637,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         className={`settings-section-button ${settingsCategory === id ? 'selected' : ''}`}
                         role="tab"
                         aria-selected={settingsCategory === id}
-                        tabIndex={settingsCategory === id ? 0 : -1}
+                        tabIndex={settingsNavigationTabStop === id ? 0 : -1}
                         data-inline-rail-item="true"
                         onClick={() => setSettingsCategory(id)}
                       >
@@ -1624,6 +1648,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   </div>
                 ))}
               </nav>
+              {visibleSettingsItems.length === 0 ? <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的设置分段' : 'No matching settings sections'}</p> : null}
             </aside>
             <section className="settings-detail-pane" aria-label={settingsWorkspaceCopy.detailPaneAria}>
               <div className="settings-content-column">
@@ -2210,99 +2235,118 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 {settingsCategory === 'commands' && props.commandClient ? <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'release' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.release}>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
-                      <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
-                        <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
-                        <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
-                        <em>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</em>
+                    {releaseLoadState !== 'ready' ? (
+                      <section className="settings-product-section" aria-busy={releaseLoadState === 'loading'}>
+                        <p role="status">
+                          {appShellSettings.appLanguage === 'zh-CN'
+                            ? releaseLoadState === 'loading'
+                              ? '正在读取发布与更新状态…'
+                              : '无法读取发布与更新状态，请重试。'
+                            : releaseLoadState === 'loading'
+                              ? 'Loading release and update status…'
+                              : 'Unable to load release and update status. Please retry.'}
+                        </p>
+                        {releaseLoadState === 'failed' ? (
+                          <button type="button" onClick={() => setReleaseLoadRevision((value) => value + 1)}>
+                            {appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry'}
+                          </button>
+                        ) : null}
                       </section>
-                      <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
-                        <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
-                        <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
-                        <em>{settingsWorkspaceCopy.release.notarizationDescription}</em>
-                      </section>
-                      <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
-                        <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
-                        <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
-                        <em>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</em>
-                      </section>
-                      <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
-                          <small>{settingsWorkspaceCopy.release.detailDescription}</small>
-                        </span>
-                        <span className="settings-row-field settings-evidence-list">
-                          <span>
-                            {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
+                    ) : (
+                      <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
+                        <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
+                          <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
+                          <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
+                          <em>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</em>
+                        </section>
+                        <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
+                          <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
+                          <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
+                          <em>{settingsWorkspaceCopy.release.notarizationDescription}</em>
+                        </section>
+                        <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
+                          <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
+                          <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
+                          <em>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</em>
+                        </section>
+                        <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
+                            <small>{settingsWorkspaceCopy.release.detailDescription}</small>
                           </span>
-                          <small>{releaseStatus.autoUpdate.changelogPath}</small>
-                          <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
-                          <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
-                        </span>
-                      </section>
-                      <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
-                        <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
-                          <span className="release-update-copy">
-                            <strong>{settingsWorkspaceCopy.release.updateTitle}</strong>
-                            <small>{formatReleaseUpdateReason(releaseUpdateStatus, settingsWorkspaceCopy.release)}</small>
+                          <span className="settings-row-field settings-evidence-list">
+                            <span>
+                              {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
+                            </span>
+                            {releaseStatus.autoUpdate.changelogPath ? <small>{releaseStatus.autoUpdate.changelogPath}</small> : null}
+                            <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
+                            <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
                           </span>
-                          <span className="release-update-field">
-                            {/* 设置页保留发布清单证据；用户升级操作统一由 macOS 原生 Homebrew 窗口承载。 */}
-                            <span>{formatReleaseUpdateLabel(releaseUpdateStatus, settingsWorkspaceCopy.release)}</span>
-                            <small>{settingsWorkspaceCopy.release.installHelp()}</small>
-                          </span>
-                          <span className="release-update-command-rail">
-                            <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
-                              {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
-                            </button>
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
                           </span>
                         </section>
-                        <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
-                          <span className="release-update-copy">
-                            <strong>{settingsWorkspaceCopy.release.versionTitle}</strong>
-                            <small>{releaseUpdateStatus.checkedAt ? settingsWorkspaceCopy.release.checkedAt(releaseUpdateStatus.checkedAt) : settingsWorkspaceCopy.release.notChecked}</small>
-                          </span>
-                          <span className="release-update-field">
-                            <span>{settingsWorkspaceCopy.release.currentVersion(releaseUpdateStatus.currentVersion)}</span>
-                            <span>{settingsWorkspaceCopy.release.latestVersion(releaseUpdateStatus.latestVersion)}</span>
-                            <small>{formatReleaseUpdateChannel(releaseUpdateStatus.channel, settingsWorkspaceCopy.release)}</small>
-                          </span>
-                          <span className="release-update-command-rail">
-                            <a href={releaseUpdateStatus.releasePageUrl}>GitHub Release</a>
-                          </span>
+                        <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
+                          <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
+                            <span className="release-update-copy">
+                              <strong>{settingsWorkspaceCopy.release.updateTitle}</strong>
+                              <small>{formatReleaseUpdateReason(releaseUpdateStatus, settingsWorkspaceCopy.release)}</small>
+                            </span>
+                            <span className="release-update-field">
+                              {/* 设置页保留发布清单证据；用户升级操作统一由 macOS 原生 Homebrew 窗口承载。 */}
+                              <span>{formatReleaseUpdateLabel(releaseUpdateStatus, settingsWorkspaceCopy.release)}</span>
+                              <small>{settingsWorkspaceCopy.release.installHelp()}</small>
+                            </span>
+                            <span className="release-update-command-rail">
+                              <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
+                                {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
+                              </button>
+                            </span>
+                          </section>
+                          <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
+                            <span className="release-update-copy">
+                              <strong>{settingsWorkspaceCopy.release.versionTitle}</strong>
+                              <small>{releaseUpdateStatus.checkedAt ? settingsWorkspaceCopy.release.checkedAt(releaseUpdateStatus.checkedAt) : settingsWorkspaceCopy.release.notChecked}</small>
+                            </span>
+                            <span className="release-update-field">
+                              <span>{settingsWorkspaceCopy.release.currentVersion(releaseUpdateStatus.currentVersion)}</span>
+                              <span>{settingsWorkspaceCopy.release.latestVersion(releaseUpdateStatus.latestVersion)}</span>
+                              <small>{formatReleaseUpdateChannel(releaseUpdateStatus.channel, settingsWorkspaceCopy.release)}</small>
+                            </span>
+                            <span className="release-update-command-rail">
+                              <a href={releaseUpdateStatus.releasePageUrl}>GitHub Release</a>
+                            </span>
+                          </section>
+                          <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
+                            <span className="release-update-copy">
+                              <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
+                              <small>
+                                {releaseUpdateStatus.artifact
+                                  ? `${releaseUpdateStatus.artifact.arch} · ${formatReleaseArtifactKind(releaseUpdateStatus.artifact.kind, settingsWorkspaceCopy.release)}`
+                                  : settingsWorkspaceCopy.release.waitingArtifact}
+                              </small>
+                            </span>
+                            <span className="release-update-field">
+                              {releaseUpdateStatus.artifact ? (
+                                <>
+                                  <span>{releaseUpdateStatus.artifact.fileName}</span>
+                                  <small>{releaseUpdateStatus.artifact.sha256}</small>
+                                </>
+                              ) : (
+                                <span>{settingsWorkspaceCopy.release.noArtifact}</span>
+                              )}
+                            </span>
+                            <span className="release-update-command-rail">
+                              {releaseUpdateCheckState === 'failed' ? (
+                                <span role="status">{settingsWorkspaceCopy.release.updateFailed}</span>
+                              ) : (
+                                <span className="settings-action-meta">{settingsWorkspaceCopy.release.recommendedActions[releaseUpdateStatus.recommendedAction]}</span>
+                              )}
+                            </span>
+                          </section>
                         </section>
-                        <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
-                          <span className="release-update-copy">
-                            <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
-                            <small>
-                              {releaseUpdateStatus.artifact
-                                ? `${releaseUpdateStatus.artifact.arch} · ${formatReleaseArtifactKind(releaseUpdateStatus.artifact.kind, settingsWorkspaceCopy.release)}`
-                                : settingsWorkspaceCopy.release.waitingArtifact}
-                            </small>
-                          </span>
-                          <span className="release-update-field">
-                            {releaseUpdateStatus.artifact ? (
-                              <>
-                                <span>{releaseUpdateStatus.artifact.fileName}</span>
-                                <small>{releaseUpdateStatus.artifact.sha256}</small>
-                              </>
-                            ) : (
-                              <span>{settingsWorkspaceCopy.release.noArtifact}</span>
-                            )}
-                          </span>
-                          <span className="release-update-command-rail">
-                            {releaseUpdateCheckState === 'failed' ? (
-                              <span role="status">{settingsWorkspaceCopy.release.updateFailed}</span>
-                            ) : (
-                              <span className="settings-action-meta">{settingsWorkspaceCopy.release.recommendedActions[releaseUpdateStatus.recommendedAction]}</span>
-                            )}
-                          </span>
-                        </section>
-                      </section>
-                    </NativeSettingsPane>
+                      </NativeSettingsPane>
+                    )}
                   </section>
                 ) : null}
                 {settingsCategory === 'data' ? (

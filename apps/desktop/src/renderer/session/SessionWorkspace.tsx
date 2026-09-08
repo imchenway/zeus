@@ -1378,7 +1378,23 @@ export function isDurableNativeConversationAcceptance(
   );
 }
 
+export interface NewConversationDraft {
+  content: string;
+  attachments: NativeConversationAttachment[];
+  permissionMode: NativePermissionMode;
+  collaborationMode: NativeCollaborationMode;
+  selectedModelId: string;
+  selectedEffort: string;
+  serviceTierSelection: NativeServiceTierSelection;
+  goalInputOpen: boolean;
+  goalObjective: string;
+  tokenDraft: { current: import('./StructuredComposerInput.js').StructuredToken[] };
+}
+
+export type NewConversationDraftStore = Map<string, NewConversationDraft>;
+
 export interface SessionWorkspaceProps {
+  newConversationDrafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
   state: NativeSessionState | null;
   /** 真实会话用 selector 子组件订阅；本地创建态继续直接使用 state。 */
@@ -1587,7 +1603,7 @@ export function createSessionHeaderSnapshot(conversation: NativeConversationChoi
   return {
     conversationId: conversation.id,
     title: conversationDisplayTitle(conversation.title, taskTitle, language),
-    contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
+    contextLabel: owner?.projectName ?? conversation.summary ?? conversation.projectId,
     taskId,
     taskManagementStatus: task?.managementStatus ?? null,
     taskManagementStatusOptions: task?.managementStatusOptions,
@@ -2347,7 +2363,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     >
       {displayedHeader ? (
         <header className="session-thread-header" data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
-          <span key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
+          <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
                 <button
@@ -2395,8 +2411,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 </span>
               ) : null}
             </span>
-            {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
-          </span>
+            <div className="session-thread-subtitle-row">
+              {displayedHeader.contextLabel ? (
+                <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
+                  {displayedHeader.contextLabel}
+                </small>
+              ) : null}
+              {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
+            </div>
+          </div>
           <div className="session-thread-header-actions">
             {!legacy && computerControlIdentity && window.zeus?.stopComputerUse ? (
               <button
@@ -2548,7 +2571,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 data-browser-resizing={browserResizing || undefined}
               >
                 <div className="session-conversation-pane">
-                  <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
+                  {!displayedHeader ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
                   <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <SessionTranscriptProjection
                     state={props.state}
@@ -2757,6 +2780,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </>
       ) : (
         <NewConversationComposer
+          key={owner?.kind === 'task' ? `task:${props.task?.id}` : 'project'}
+          drafts={props.newConversationDrafts}
           language={props.language}
           owner={owner}
           task={props.task}
@@ -2863,6 +2888,7 @@ function isComposerWritableForFocus(state: NativeSessionState | null, readOnly: 
 }
 
 function NewConversationComposer(props: {
+  drafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
@@ -2891,7 +2917,10 @@ function NewConversationComposer(props: {
 }) {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const runtimePreferencesInitializedRef = useRef(false);
+  const draftKey = props.owner?.kind === 'task' ? `task:${props.task?.id}` : 'project';
+  const [restoredDraft] = useState(() => props.drafts?.get(draftKey));
+  const [tokenDraft] = useState(() => restoredDraft?.tokenDraft ?? { current: [] });
+  const runtimePreferencesInitializedRef = useRef(Boolean(restoredDraft));
   const structuredSelectionRef = useRef<StructuredComposerSelection>({
     displayText: props.initialContent ?? '',
     promptText: props.initialContent ?? '',
@@ -2900,23 +2929,26 @@ function NewConversationComposer(props: {
     pluginReferences: [],
     computerUseRequested: false,
   });
-  const [content, setContent] = useState(() => props.initialContent ?? '');
-  const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
-  const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
-  const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
+  const [content, setContent] = useState(() => restoredDraft?.content ?? props.initialContent ?? '');
+  const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(restoredDraft?.attachments ?? props.initialAttachments ?? [])]);
+  const [permissionMode, setPermissionMode] = useState<NativePermissionMode>(() => restoredDraft?.permissionMode ?? 'auto');
+  const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>(() => restoredDraft?.collaborationMode ?? 'default');
   /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
   const capabilitiesRevision = useCodexCapabilitiesRevision();
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
-  const [selectedModelId, setSelectedModelId] = useState('');
-  const [selectedEffort, setSelectedEffort] = useState('');
-  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>({ type: 'standard' });
+  const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
+  const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
+  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
-  const [goalInputOpen, setGoalInputOpen] = useState(false);
-  const [goalObjective, setGoalObjective] = useState('');
+  const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
+  const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
+  useLayoutEffect(() => {
+    props.drafts?.set(draftKey, { content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft });
+  }, [props.drafts, draftKey, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
@@ -2987,8 +3019,9 @@ function NewConversationComposer(props: {
   const goalObjectiveValid = goalCount > 0 && goalCount <= 4_000;
 
   useEffect(() => {
-    if (!goalAvailable) setGoalInputOpen(false);
-  }, [goalAvailable]);
+    // 能力尚未返回时保留目标草稿，避免导航恢复被误判为不支持目标。
+    if (!capabilitiesLoading && capabilities && !goalAvailable) setGoalInputOpen(false);
+  }, [capabilitiesLoading, capabilities, goalAvailable]);
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -3084,6 +3117,7 @@ function NewConversationComposer(props: {
         setLocalError(accepted);
         return;
       }
+      if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') props.drafts?.delete(draftKey);
       await props.onAccepted?.();
     } catch (error) {
       setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
@@ -3174,6 +3208,7 @@ function NewConversationComposer(props: {
           />
         ) : (
           <StructuredComposerInput
+            tokenDraft={tokenDraft}
             value={content}
             onValueChange={setContent}
             onSelectionChange={(selection) => {

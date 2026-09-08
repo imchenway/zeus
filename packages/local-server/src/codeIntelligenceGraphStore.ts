@@ -132,7 +132,7 @@ export function readGraphNeighborhood(
        FROM project_edges
        WHERE (? IS NULL OR project_name = ?)
          AND (source_node_id IN (${placeholders}) OR target_node_id IN (${placeholders}))
-       ORDER BY rowid ASC
+       ORDER BY id ASC
        LIMIT 240`,
       [projectName ?? null, projectName ?? null, ...frontier, ...frontier],
     );
@@ -377,7 +377,7 @@ export function readGraphEdgesByNodeId(db: { select: <T>(sql: string, params?: S
       metadata_json: string;
     }>(
       `SELECT id, edge_type, source_node_id, target_node_id, source_ref, confidence, metadata_json
-     FROM project_edges WHERE (? IS NULL OR project_name = ?) AND (source_node_id = ? OR target_node_id = ?) ORDER BY rowid ASC LIMIT 20`,
+     FROM project_edges WHERE (? IS NULL OR project_name = ?) AND (source_node_id = ? OR target_node_id = ?) ORDER BY id ASC LIMIT 20`,
       [projectName ?? null, projectName ?? null, nodeId, nodeId],
     )
     .map((edge) => ({
@@ -422,7 +422,7 @@ export function readGraphView(
         metadata_json: string;
       }>(
         `SELECT id, node_type, name, qualified_name, source_ref, symbol_id, metadata_json
-     FROM project_nodes WHERE project_name = ? ORDER BY rowid ASC`,
+     FROM project_nodes WHERE project_name = ? ORDER BY id ASC`,
         [view.project_name],
       )
       .filter((node) => !payload.hasNodeFilter || payload.nodeIds.has(node.id))
@@ -446,7 +446,7 @@ export function readGraphView(
         metadata_json: string;
       }>(
         `SELECT id, edge_type, source_node_id, target_node_id, source_ref, confidence, metadata_json
-     FROM project_edges WHERE project_name = ? ORDER BY rowid ASC`,
+     FROM project_edges WHERE project_name = ? ORDER BY id ASC`,
         [view.project_name],
       )
       .filter((edge) => !payload.hasEdgeFilter || payload.edgeIds.has(edge.id))

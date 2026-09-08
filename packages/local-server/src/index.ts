@@ -678,6 +678,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 }
 
 async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase, traceStartup: (stage: string) => void, newDatabase: boolean): Promise<FastifyInstance> {
+  const now = () => new Date();
   const readOnlyValidation = options.readOnlyValidation;
   const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
   if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
@@ -854,7 +855,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const eventSubscribers = new Set<ConversationRealtimeSocket>();
   const nativeLocalEventGenerationId = `zeus-local-${randomUUID()}`;
   const conversationEventFlow = new ConversationEventFlowControl();
-  const now = () => new Date();
   const realtimeSubscriberHighWaterBytes = conversationEventFlowBudgets.websocket.maximumBufferedBytes;
   // Provider 恢复、后台用量刷新和命令路由都可能在后续初始化阶段发布会话事件。
   // 同步协议必须先于这些发布者建立，避免异步回调命中尚未初始化的词法绑定。

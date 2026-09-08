@@ -182,7 +182,7 @@ function cardTone(task: TaskRecord, rules: TaskBoardConditionalColorRule[], cont
 
 function calculateLane(tasks: TaskRecord[], calculation: TaskBoardCalculation, context: TaskBoardProjectionContext): string {
   const zh = context.language === 'zh-CN';
-  if (calculation.kind === 'count_all' || !calculation.property) return zh ? `${tasks.length} 项` : `${tasks.length} items`;
+  if (calculation.kind === 'count_all' || !calculation.property) return zh ? `${tasks.length} 项` : `${tasks.length} ${tasks.length === 1 ? 'item' : 'items'}`;
   const values = tasks.flatMap((task) => taskBoardCardPropertyValues(task, calculation.property!, context)).filter((value) => value && value !== taskBoardEmptyGroupId);
   if (calculation.kind === 'count_values') return String(values.length);
   if (calculation.kind === 'count_unique') return String(new Set(values).size);

@@ -859,7 +859,9 @@ export function userFacingErrorCause(error: unknown, depth = 0): UserFacingError
   const value = error !== null && typeof error === 'object' ? (error as Record<string, unknown>) : {};
   // 字符串形式的历史错误只识别开头的完整错误码，不猜测正文关键词。
   const message = typeof value.message === 'string' ? value.message : typeof error === 'string' ? error : '';
-  const code = typeof value.code === 'string' ? value.code : typeof value.error === 'string' ? value.error : /^([A-Z][A-Z0-9_]+)(?::|$)/u.exec(message)?.[1];
+  // Electron 会在 message 外包裹固定 IPC 前缀，仅拆解 Zeus 自身通道的这一格式。
+  const codeMessage = message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '');
+  const code = typeof value.code === 'string' ? value.code : typeof value.error === 'string' ? value.error : /^([A-Z][A-Z0-9_]+)(?::|$)/u.exec(codeMessage)?.[1];
   // 仅保留诊断对象的有界标量字段，避免跨界面携带凭据对象或大块业务数据。
   const detailFields =
     value.details && typeof value.details === 'object' && !Array.isArray(value.details)

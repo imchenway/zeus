@@ -303,7 +303,7 @@ export function localDateTimeToIso(value: string): string {
 
 export function automationTriggerConfig(draft: DigitalEmployeeAutomationDraft): Record<string, unknown> {
   if (draft.triggerKind === 'once') return { runAt: localDateTimeToIso(draft.runAt) };
-  if (draft.triggerKind === 'interval') return { intervalMinutes: Number.parseInt(draft.intervalMinutes, 10) };
+  if (draft.triggerKind === 'interval') return { intervalMinutes: Number(draft.intervalMinutes) };
   if (draft.triggerKind === 'daily' || draft.triggerKind === 'weekly') {
     const [hour = '9', minute = '0'] = draft.time.split(':');
     return {

@@ -725,10 +725,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   function recordLocalError(action: string, error: unknown): void {
     // 只记录真实捕获到的前端操作失败，并在渲染前脱敏，避免把 token / API key 明文带到界面。
+    // 由 localError 的统一出口弹窗，格式化阶段不再重复上报。
+    const explanation = describeUserFacingError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en');
     setLocalError({
       action,
       code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined,
-      message: redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)),
+      message: redactLocalUiErrorMessage(explanation.details || explanation.message),
       occurredAt: new Date().toISOString(),
     });
     setActionState('failed');
@@ -1286,6 +1288,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return loadedGraphView;
     } catch (error) {
       if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return undefined;
+      // 投影可被清理或重建，缺少缓存时由入口继续扫描，不提前弹出已恢复的错误。
+      if (error instanceof ZeusApiError && error.error === 'ZEUS_GRAPH_VIEW_NOT_FOUND') return undefined;
       recordLocalError('graph-view-open', error);
       setScanState('failed');
       return undefined;
@@ -1530,8 +1534,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (relativePath) {
       setGraphSourceOpenFeedback('opening');
       try {
-        setProjectCodeWorkspaceMode('source');
-        setVisitedCodeWorkspaceModes((current) => new Set(current).add('source'));
+        await selectProjectCodeWorkspaceMode('source');
         // 源码工作区按页面生命周期挂载；先切回源码页，等待一次绘制使命令式句柄就绪。
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         const sourceWorkspace = projectSourceWorkspaceRef.current;
