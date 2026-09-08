@@ -1,39 +1,56 @@
-import { defaultNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
+import { useState } from 'react';
+import { defaultNetworkProxySettings, normalizeNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
 import { NativeControlRow } from '../features/workspace/workspaceSupport.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 
-/** 代理只维护通用设置草稿，复用页面已有保存入口。 */
+/** 代理草稿就地校验，结束输入后自动保存完整地址。 */
 export function NetworkProxySettingsFields(props: {
   /** 当前界面语言。 */
   language: 'zh-CN' | 'en-US';
   /** 未配置时保留原网络行为。 */
   value: NetworkProxySettings | undefined;
-  /** 保存期间禁止继续修改草稿。 */
+  /** 服务不可用时禁止修改。 */
   disabled: boolean;
-  /** 由通用设置持有草稿，避免引入第二套保存状态。 */
+  /** 只有通过校验的配置交给通用自动保存入口。 */
   onChange: (value: NetworkProxySettings) => void;
 }) {
   /** 新字段在旧设置中可能尚不存在。 */
-  const value = props.value ?? defaultNetworkProxySettings;
+  const [value, setValue] = useState(props.value ?? defaultNetworkProxySettings);
+  /** 无效地址保留输入，避免保存半截地址或默默丢失草稿。 */
+  const [error, setError] = useState<string | null>(null);
   /** 跟随当前应用语言，无额外持久状态。 */
   const zh = props.language === 'zh-CN';
+  /** 输入完成后沿用服务端同一套校验。 */
+  function commit(next: NetworkProxySettings): void {
+    try {
+      /** 规范化主机和绕过列表后才保存。 */
+      const normalized = normalizeNetworkProxySettings(next);
+      setValue(normalized);
+      setError(null);
+      props.onChange(normalized);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : zh ? '代理配置无效，尚未保存。' : 'Invalid proxy settings. Not saved.');
+    }
+  }
   return (
     <>
       <NativeControlRow
         title={zh ? '网络代理' : 'Network proxy'}
-        description={
-          zh
-            ? '保存后，待任务结束，完全退出并重新打开 Zeus 生效；仅关闭窗口或保留后台任务不会生效。适用于 Zeus 网络请求、内置浏览器和新启动的模型进程。'
-            : 'Save, let tasks finish, then fully quit and reopen Zeus to apply. Closing a window or keeping tasks in the background is insufficient. Applies to Zeus requests, the built-in browser and newly started model processes.'
-        }
+        description={zh ? '输入完成后自动保存。待任务结束，完全退出并重新打开 Zeus 生效。' : 'Saves when editing finishes. Let tasks finish, then fully quit and reopen Zeus to apply.'}
       >
         {/* 复用同页选择控件，保留下拉箭头和统一键盘操作。 */}
         <ZeusSelect<NetworkProxySettings['mode']>
-          size="roomy"
+          size="regular"
           ariaLabel={zh ? '网络代理模式' : 'Network proxy mode'}
           value={value.mode}
           disabled={props.disabled}
-          onChange={(mode) => props.onChange({ ...value, mode })}
+          onChange={(mode) => {
+            /** 手动代理必须有完整地址，选择模式时先保留草稿。 */
+            const next = { ...value, mode };
+            setValue(next);
+            setError(null);
+            if (mode !== 'manual' || next.url) commit(next);
+          }}
           options={[
             { value: 'default', label: zh ? '保持默认' : 'Keep defaults' },
             { value: 'direct', label: zh ? '直连（不使用代理）' : 'Direct (no proxy)' },
@@ -55,7 +72,11 @@ export function NetworkProxySettingsFields(props: {
               placeholder="http://127.0.0.1:7890"
               value={value.url}
               disabled={props.disabled}
-              onChange={(event) => props.onChange({ ...value, url: event.currentTarget.value })}
+              onChange={(event) => setValue({ ...value, url: event.currentTarget.value })}
+              onBlur={() => commit(value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
             />
           </NativeControlRow>
           <NativeControlRow
@@ -71,7 +92,11 @@ export function NetworkProxySettingsFields(props: {
               placeholder=".example.com,192.168.1.10"
               value={value.bypass}
               disabled={props.disabled}
-              onChange={(event) => props.onChange({ ...value, bypass: event.currentTarget.value })}
+              onChange={(event) => setValue({ ...value, bypass: event.currentTarget.value })}
+              onBlur={() => commit(value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
             />
           </NativeControlRow>
         </>
@@ -86,6 +111,16 @@ export function NetworkProxySettingsFields(props: {
         >
           <span>{zh ? '不覆盖现有配置' : 'No override'}</span>
         </NativeControlRow>
+      ) : null}
+      {error ? (
+        <p className="settings-field-error" role="alert">
+          {error} {zh ? '尚未保存。' : 'Not saved.'}
+        </p>
+      ) : null}
+      {value.mode === 'manual' && !value.url && !error ? (
+        <p className="settings-field-note" role="status">
+          {zh ? '填写代理地址后自动保存。' : 'Enter a proxy address to save.'}
+        </p>
       ) : null}
     </>
   );

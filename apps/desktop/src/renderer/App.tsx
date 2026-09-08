@@ -75,8 +75,6 @@ function initialSettingsCategory(props: AppProps): SettingsCategory {
   if (props.initialMainNavTarget === 'settings-data') return 'data';
   if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'im';
   if (props.initialRuntimeSettings || props.initialRuntimeStatus) return 'runtime';
-  if (props.initialSecuritySecrets || props.initialSecurityAuditLogs?.length) return 'security';
-  if (props.initialGitConfirmation && props.initialMainNavTarget === 'settings') return 'git';
   if (props.initialReleaseStatus) return 'release';
   return 'general';
 }
@@ -101,4 +99,4 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];

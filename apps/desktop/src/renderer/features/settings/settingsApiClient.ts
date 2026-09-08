@@ -16,6 +16,8 @@ export interface SettingsApiClient {
 }
 
 export function createSettingsApiClient(transport: LocalApiTransport): SettingsApiClient {
+  /** 设置页切换后仍按操作顺序写入，避免旧请求晚到覆盖新选择。 */
+  let appShellSaveQueue: Promise<unknown> = Promise.resolve();
   return {
     loadRuntimeSettings: () => transport.request<RuntimeSettings>('/api/runtime/settings'),
     saveRuntimeSettings: async (input: RuntimeSettings) => {
@@ -28,9 +30,15 @@ export function createSettingsApiClient(transport: LocalApiTransport): SettingsA
       return transport.request<CodeMapSettings>('/api/code-map/settings', jsonRequest('PUT', body));
     },
     loadAppShellSettings: () => transport.request<AppShellSettings>('/api/settings/app-shell'),
-    saveAppShellSettings: async (input: UpdateAppShellSettingsRequest) => {
-      const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.appShellSettingsPut, scopeKind: 'settings', scopeId: 'app-shell', operationPrefix: 'app_shell_settings', value: input });
-      return transport.request<AppShellSettings>('/api/settings/app-shell', jsonRequest('PUT', body));
+    saveAppShellSettings: (input: UpdateAppShellSettingsRequest) => {
+      /** 失败继续交给调用方处理，同时允许后续修改正常保存。 */
+      const result = appShellSaveQueue.then(async () => {
+        /** 写入开始时创建命令，保证请求和顺序一致。 */
+        const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.appShellSettingsPut, scopeKind: 'settings', scopeId: 'app-shell', operationPrefix: 'app_shell_settings', value: input });
+        return transport.request<AppShellSettings>('/api/settings/app-shell', jsonRequest('PUT', body));
+      });
+      appShellSaveQueue = result.catch(() => undefined);
+      return result;
     },
     clearLocalCaches: async () => {
       const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.projectionCacheClear, scopeKind: 'settings', scopeId: 'projection-cache', operationPrefix: 'projection_cache_clear', value: {} });

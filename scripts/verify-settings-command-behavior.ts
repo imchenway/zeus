@@ -1,3 +1,7 @@
+import assert from 'node:assert/strict';
+import { createSettingsApiClient } from '../apps/desktop/src/renderer/features/settings/settingsApiClient.js';
+import { settingsPage } from '../apps/desktop/src/renderer/settings/SettingsPagination.js';
+import type { LocalApiTransport } from '../apps/desktop/src/renderer/transport/localApiTransport.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +23,27 @@ const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-settings-command-probe-'));
 const secretSentinel = 'settings-probe-secret-never-persist';
 const observed: Record<string, unknown> = {};
 let clockMs = Date.parse('2026-08-21T20:00:00.000Z');
+
+/** 同一客户端跨设置页面保存也必须顺序执行；某次失败不能堵住下一次。 */
+const savedAppearances: string[] = [];
+/** 延迟首个请求、拒绝第二个请求，观察第三个请求仍能按顺序保存。 */
+const settingsClient = createSettingsApiClient({
+  /** 只模拟设置传输，不涉及宿主或真实用户数据。 */
+  async request(_path, init) {
+    /** 只读取本检查所需的外观字段。 */
+    const appearance = JSON.parse(String(init?.body)).input.appearance;
+    if (appearance === 'dark') await new Promise((resolve) => setTimeout(resolve, 15));
+    if (appearance === 'system') throw new Error('预期的保存失败');
+    savedAppearances.push(appearance);
+    return { appearance };
+  },
+} as LocalApiTransport);
+await Promise.allSettled([settingsClient.saveAppShellSettings({ appearance: 'dark' }), settingsClient.saveAppShellSettings({ appearance: 'system' }), settingsClient.saveAppShellSettings({ appearance: 'light' })]);
+assert.deepEqual(savedAppearances, ['dark', 'light']);
+assert.equal(settingsPage(0, 4), 1);
+assert.equal(settingsPage(21, 3), 3);
+assert.equal(settingsPage(20, 3), 2);
+observed.settingsInteraction = { saveOrder: true, failureRecovery: true, pageBoundary: true };
 
 try {
   const db = await createZeusDatabase(join(probeRoot, 'probe.db'));

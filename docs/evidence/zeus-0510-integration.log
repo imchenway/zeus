@@ -1,0 +1,87 @@
+
+> zeus@0.3.111 verify:integration-command /Users/david/hypha/.zeus-worktrees/zeus-e2e-oBLuqT/0e13713b1108a5748303/ZEUS-0510
+> tsx scripts/verify-integration-command-behavior.ts
+
+{
+  "status": "passed",
+  "observed": {
+    "zentaoPassword": {
+      "listRedacted": true,
+      "explicitRead": true,
+      "missingInstanceRejected": true,
+      "cleared": true
+    },
+    "acceptedExternal": {
+      "firstStatus": 201,
+      "replayStatus": 200,
+      "invocations": 1,
+      "runtimeRefreshInvocations": 1,
+      "immutableReplay": true,
+      "receiptBytes": 494,
+      "artifactContentBytes": 1100264,
+      "artifactGeneration": "integration-command-result-v1"
+    },
+    "unknownExternal": {
+      "firstCode": "ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN",
+      "replayCode": "ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED",
+      "invocations": 1,
+      "outcome": "outcome_unknown_after_write",
+      "writeMarker": true,
+      "evidenceRedacted": true
+    },
+    "secretExternal": {
+      "firstStatus": 200,
+      "replayStatus": 200,
+      "writes": 1,
+      "configured": {
+        "configured": true,
+        "label": "已安全保存"
+      }
+    },
+    "coreSelection": {
+      "firstStatus": 200,
+      "replayStatus": 200,
+      "writes": 1,
+      "receiptOutcome": "accepted",
+      "businessRows": 1
+    },
+    "readOnlyProbe": {
+      "firstStatus": 200,
+      "replayStatus": 200,
+      "afterTtlStatus": 200,
+      "invocations": 2,
+      "inboxRows": 0,
+      "policy": {
+        "durable": false,
+        "maximumEntries": 128,
+        "ttlMs": 30000,
+        "maximumResultBytes": 1048576
+      },
+      "capacity": {
+        "overflowCode": "ZEUS_INTEGRATION_PROBE_CAPACITY_EXCEEDED",
+        "heldProbeInvocations": 3,
+        "beforeRelease": {
+          "active": 3,
+          "replayEntries": 1
+        },
+        "afterRelease": {
+          "active": 0,
+          "replayEntries": 4
+        }
+      }
+    },
+    "plaintextPersistence": {
+      "commandTablesContainSecret": false,
+      "auditContainsSecret": false,
+      "artifactContainsSecret": false
+    },
+    "routeCounts": {
+      "external": 13,
+      "core": 1,
+      "readOnlyProbe": 2,
+      "total": 16
+    },
+    "quickCheck": "ok",
+    "realExternalServicesStarted": false
+  }
+}

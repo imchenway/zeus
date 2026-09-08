@@ -67,9 +67,9 @@ export interface AppShellSettings {
   lastCacheClearAt: string | null;
 }
 
-export type UpdateAppShellSettingsRequest = Pick<
-  AppShellSettings,
-  'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'
+/** 与服务端局部更新保持一致，省略的偏好保留原值。 */
+export type UpdateAppShellSettingsRequest = Partial<
+  Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'>
 > & {
   /** 省略时保留当前代理，兼容其他设置的局部保存。 */
   networkProxy?: NetworkProxySettings;

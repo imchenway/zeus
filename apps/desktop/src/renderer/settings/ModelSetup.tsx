@@ -429,14 +429,14 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
                 : 'Account status not checked'}
         </span>
       </header>
-      <p>{zh ? '使用 ChatGPT 账号授权 Codex。Zeus 的登录独立于其他应用；也可以在下方配置自定义供应商。' : 'Authorize Codex with your ChatGPT account. Zeus signs in independently; custom providers can also be configured below.'}</p>
+      <p>{zh ? '通过 ChatGPT 账号登录，仅用于 Zeus。第三方模型服务在下方管理。' : 'Sign in with ChatGPT for Zeus. Manage third-party model services below.'}</p>
       <div className="model-setup-actions">
-        <Button onClick={() => controller.open('codex')}>{zh ? '使用 Codex 订阅登录' : 'Sign in with Codex subscription'}</Button>
+        <Button onClick={() => controller.open('codex')}>{signedIn ? (zh ? '重新登录' : 'Sign in again') : zh ? '登录 Codex' : 'Sign in to Codex'}</Button>
         <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking'} onClick={() => void controller.checkAccount()}>
           {zh ? '检查状态' : 'Check status'}
         </Button>
         <Button variant="secondary" onClick={() => controller.open('choose')}>
-          {zh ? '重新选择接入方式' : 'Choose connection method'}
+          {zh ? '接入设置' : 'Connection setup'}
         </Button>
       </div>
       {!controller.step && controller.error ? <p role="status">{typeof controller.error === 'string' ? controller.error : <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />}</p> : null}
