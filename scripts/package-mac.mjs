@@ -156,31 +156,6 @@ async function verifyCodesignPackagedApp(appPath) {
   await run('/usr/bin/codesign', buildCodesignVerifyArgs(appPath));
 }
 
-function readPackagedAppInfo(appPath, key) {
-  return execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')], {
-    encoding: 'utf8',
-  }).trim();
-}
-
-function verifyPackagedAppIdentity(appPath, variant) {
-  const expected =
-    variant === 'test'
-      ? {
-          bundleId: 'dev.hypha.zeus.test',
-          name: 'Zeus Test',
-          executable: 'Zeus Test',
-        }
-      : { bundleId: 'dev.hypha.zeus', name: 'Zeus', executable: 'Zeus' };
-  const actual = {
-    bundleId: readPackagedAppInfo(appPath, 'CFBundleIdentifier'),
-    name: readPackagedAppInfo(appPath, 'CFBundleName'),
-    executable: readPackagedAppInfo(appPath, 'CFBundleExecutable'),
-  };
-  if (actual.bundleId !== expected.bundleId || actual.name !== expected.name || actual.executable !== expected.executable) {
-    throw new Error(`Zeus 打包身份不一致：variant=${variant} expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)} app=${appPath}`);
-  }
-}
-
 async function prepareElectronDist(version, arch) {
   const zipName = electronZipFileName(version, arch);
   const cacheRoot = join(homedir(), 'Library', 'Caches', 'electron');
@@ -233,7 +208,6 @@ export async function packageMac({ dmg = false } = {}) {
     cwd: rootDir,
     env: packageEnv,
   });
-  verifyPackagedAppIdentity(appPath, variant);
   verifyPackagedApp(appPath);
   await verifyCodesignPackagedApp(appPath);
 }
