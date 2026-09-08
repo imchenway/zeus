@@ -1671,6 +1671,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
+/** 轮次过程统一折叠，用户输入始终保留在主会话流，包括同轮中途补充。 */
 export function projectTranscriptTurnRows(
   rows: readonly TranscriptRow[],
   activeTurnId: string | null = null,
@@ -1692,9 +1693,7 @@ export function projectTranscriptTurnRows(
   for (const row of orderedRows) {
     const turnId = transcriptRowTurnId(row);
     if (!turnId || !projectedTurnIds.has(turnId)) continue;
-    // 第一条用户消息开启轮次；同 turn 的后续用户消息是中途引导，必须留在过程时间线的真实位置。
-    const midTurnUserRow = row.kind === 'item' && itemRole(row.item) === 'user' && openingUserRowKeyByTurn.get(turnId) !== row.key;
-    if (!isTurnProcessRow(row) && !midTurnUserRow) continue;
+    if (!isTurnProcessRow(row)) continue;
     const workRows = processRowsByTurn.get(turnId) ?? [];
     workRows.push(row);
     processRowsByTurn.set(turnId, workRows);

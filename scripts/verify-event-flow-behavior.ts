@@ -96,6 +96,7 @@ function verifyAutomaticQueueDispatchSelection(): Record<string, unknown> {
   return { selectedId: selected.id, blockedSelection: null, legacyHeadId: legacyQueued.id };
 }
 
+/** 真实转录投影同时核对单轮过程分组和用户补充始终位于主会话流。 */
 function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const turnId = 'stage-turn';
   let timelineOrdinal = 0;
@@ -119,13 +120,16 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     };
   };
   const items = [
+    item('opening-user', 'userMessage', '请检查计划。'),
     item('bootstrap-reasoning-a', 'reasoning', 'A 摘要前的准备思考'),
     item('bootstrap-command-a', 'commandExecution', ''),
     item('summary-a', 'agentMessage', 'A 摘要', 'commentary'),
     item('command-a', 'commandExecution', ''),
     item('reasoning-a', 'reasoning', 'A 阶段思考'),
+    item('mid-user-a', 'userMessage', '确定那是需要合入的内容吗？'),
     item('summary-b', 'agentMessage', 'B 摘要', 'commentary'),
     item('tool-b', 'dynamicToolCall', ''),
+    item('mid-user-b', 'userMessage', '确定那是需要合入的内容吗？'),
     item('summary-c', 'agentMessage', 'C 摘要', 'commentary'),
     item('file-c', 'fileChange', ''),
     item('final', 'agentMessage', '最终正文', 'final_answer'),
@@ -147,7 +151,24 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     '每个阶段的命令、工具或文件操作必须各自合并为一组。',
   );
   assertBehavior(workRows[0]?.loadMore === true, '单轮过程入口必须负责继续加载本轮后续过程。');
+  // 活动、结束两种状态均保留三条用户输入；相同正文但不同身份的补充不能合并。
+  for (const activeTurnId of [turnId, null]) {
+    /** 复用实际投影入口，只切换同一轮的活动与终态。 */
+    const projected = projectTranscriptTurnRows(rows, activeTurnId, activeTurnId ? {} : { [turnId]: 'completed' });
+    assertBehavior(
+      projected
+        .filter((row) => row.kind === 'item' && row.item.type === 'userMessage')
+        .map((row) => row.key)
+        .join('|') === 'opening-user|mid-user-a|mid-user-b',
+      '用户开场与同轮补充必须按原顺序保留在主会话流。',
+    );
+    assertBehavior(
+      projected.every((row) => row.kind !== 'turn_work' || row.segments.every((segment) => ![segment.summary, ...segment.rows].some((detail) => detail?.kind === 'item' && detail.item.type === 'userMessage'))),
+      '处理过程不得收起或重复展示用户输入。',
+    );
+  }
   return {
+    mainStreamUserMessages: 3,
     stages: stages.map((stage) => ({
       summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null,
       detailGroups: stage.rows.length,
