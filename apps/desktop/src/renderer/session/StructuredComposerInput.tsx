@@ -85,7 +85,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [computerEnabled, setComputerEnabled] = useState(false);
-  const [mirrorScrollTop, setMirrorScrollTop] = useState(0);
+  /** 固定显示层的可视区域，只同步内部滚动，避免文字移出输入框。 */
+  const mirrorRef = useRef<HTMLDivElement | null>(null);
   const composingRef = useRef(false);
 
   useEffect(() => {
@@ -337,7 +338,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   return (
     <div className="structured-composer-root">
       <div className="structured-composer-editor">
-        <div className="structured-composer-mirror" aria-hidden="true" style={{ transform: `translateY(${-mirrorScrollTop}px)` }}>
+        <div ref={mirrorRef} className="structured-composer-mirror" aria-hidden="true">
           {renderMirror(props.value, tokens)}
         </div>
         <textarea
@@ -372,7 +373,10 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           onPaste={props.onPaste}
           onKeyDown={handleKeyDown}
           onScroll={(event) => {
-            setMirrorScrollTop(event.currentTarget.scrollTop);
+            if (mirrorRef.current) {
+              mirrorRef.current.scrollTop = event.currentTarget.scrollTop;
+              mirrorRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            }
             props.onScroll?.(event);
           }}
         />

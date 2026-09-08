@@ -9584,6 +9584,8 @@
   min-block-size: 48px;
   overflow-wrap: break-word;
   padding: 4px 5px;
+  /* 两层始终预留相同滚动条空间，避免长文出现不同的换行位置。 */
+  scrollbar-gutter: stable;
   white-space: pre-wrap;
 }
 
@@ -9612,9 +9614,13 @@
 
 .session-codex-parity-v1 .structured-composer-mirror {
   color: var(--session-text);
+  /* 显示层固定覆盖原生输入区，全文在此区域内滚动且不参与输入框高度计算。 */
+  inset: 0;
+  max-block-size: none;
+  min-block-size: 0;
   overflow: hidden;
   pointer-events: none;
-  position: relative;
+  position: absolute;
   z-index: 0;
 }
 
