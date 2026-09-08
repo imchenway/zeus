@@ -1,3 +1,5 @@
+import type { UserFacingErrorCause } from '@zeus/shared';
+
 /** Local Server 的发布清单与更新判定规则。 */
 export const currentExecutionHostProtocolVersion = 2;
 
@@ -82,6 +84,8 @@ export interface ReleaseUpdateStatus {
   recommendedAction: ReleaseUpdateRecommendedAction;
   label: string;
   reason: string;
+  /** 清单读取失败的脱敏原因，跨进程后仍可解释底层连接错误。 */
+  error?: UserFacingErrorCause;
   checkedAt: string;
 }
 

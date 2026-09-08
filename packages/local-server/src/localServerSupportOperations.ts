@@ -14,7 +14,7 @@ import { type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
 import { buildAutoUpdatePolicy, detectReleaseReadiness, evaluateReleaseUpdateAvailability, parseReleaseUpdateManifest, type ReleaseUpdateArtifactArch, type ReleaseUpdateManifest, type ReleaseUpdateStatus } from './releaseCore.js';
 import { getSecretPresenceLabel, type SecretStore } from './securityCore.js';
-import { commandNeedsHighRiskConfirmation, isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
+import { commandNeedsHighRiskConfirmation, describeUserFacingError, isTaskAttachmentField, userFacingErrorCause, type TaskAttachmentField } from '@zeus/shared';
 import {
   CommandArtifactRepository,
   CommandDefinitionRepository,
@@ -843,6 +843,7 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     };
   }
 
+  /** 所有更新入口共用同一读取结果，失败时保留可跨进程传递的真实原因。 */
   async function buildReleaseUpdateStatus(): Promise<ReleaseUpdateStatus> {
     const configuredCurrentVersion = typeof options.currentAppVersion === 'function' ? options.currentAppVersion().trim() : options.currentAppVersion?.trim();
     const currentVersion = configuredCurrentVersion || readProjectVersion(projectRoot);
@@ -868,22 +869,45 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
         automaticInstallEnabled: false,
         recommendedAction: 'open_download_page',
         label: '暂未取得更新清单',
-        reason: error instanceof Error && error.message ? `无法读取 GitHub Release manifest：${error.message}` : '无法读取 GitHub Release manifest。',
+        reason: describeUserFacingError(error).message,
+        error: userFacingErrorCause(error),
         checkedAt,
       };
     }
   }
 
+  /** 清单只读请求最多两次，每次含响应正文限时十秒，总预算小于桌面端三十秒。 */
   async function loadReleaseUpdateManifest(): Promise<ReleaseUpdateManifest> {
-    const response = await fetch(releaseUpdateManifestUrl, {
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        /** 超时同时约束连接、重定向与正文读取。 */
+        const signal = AbortSignal.timeout(10_000);
+        /** 网络错误与清单校验错误分开标记，不能把格式错误当作断网重试。 */
+        const response = await fetch(releaseUpdateManifestUrl, { headers: { accept: 'application/json' }, signal }).catch((cause: unknown) => {
+          throw Object.assign(new Error('无法连接 GitHub 更新服务。', { cause }), { code: signal.aborted ? 'ZEUS_RELEASE_MANIFEST_TIMEOUT' : 'ZEUS_RELEASE_MANIFEST_NETWORK' });
+        });
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw Object.assign(new Error(`GitHub 更新服务返回 HTTP ${response.status}。`), {
+            code: response.status === 408 || response.status === 429 || response.status >= 500 ? 'ZEUS_RELEASE_MANIFEST_HTTP_TRANSIENT' : 'ZEUS_RELEASE_MANIFEST_HTTP_REJECTED',
+          });
+        }
+        /** 正文传输中断可重试；已收到的无效 JSON 或清单不重试。 */
+        const body = await response.text().catch((cause: unknown) => {
+          throw Object.assign(new Error('未能完整读取 GitHub 更新清单。', { cause }), { code: signal.aborted ? 'ZEUS_RELEASE_MANIFEST_TIMEOUT' : 'ZEUS_RELEASE_MANIFEST_NETWORK' });
+        });
+        try {
+          return parseReleaseUpdateManifest(JSON.parse(body), { allowLoopbackDownloadUrls: Boolean(options.allowUntrustedReleaseUpdateTest) });
+        } catch (cause) {
+          throw Object.assign(new Error('GitHub 更新清单校验失败。', { cause }), { code: 'ZEUS_RELEASE_MANIFEST_INVALID' });
+        }
+      } catch (error) {
+        /** 只重试传输中断、限流或服务暂时故障，不重试明确的拒绝与内容错误。 */
+        const failure = userFacingErrorCause(error);
+        if (attempt >= 1 || !['ZEUS_RELEASE_MANIFEST_NETWORK', 'ZEUS_RELEASE_MANIFEST_TIMEOUT', 'ZEUS_RELEASE_MANIFEST_HTTP_TRANSIENT'].includes(failure.code ?? '')) throw error;
+        await new Promise<void>((resolveRetry) => setTimeout(resolveRetry, 400));
+      }
     }
-    return parseReleaseUpdateManifest(await response.json(), {
-      allowLoopbackDownloadUrls: Boolean(options.allowUntrustedReleaseUpdateTest),
-    });
   }
 
   function resolveReleaseUpdateArch(): ReleaseUpdateArtifactArch {
