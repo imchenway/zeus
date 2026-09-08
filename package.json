@@ -1,6 +1,6 @@
 {
   "name": "zeus",
-  "version": "0.3.111",
+  "version": "0.3.112",
   "private": true,
   "type": "module",
   "scripts": {
