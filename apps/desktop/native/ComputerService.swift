@@ -21,6 +21,51 @@ private struct ElementSnapshot {
 private let axMessagingTimeoutSeconds: Float = 2
 private let minimumScreenshotBudgetMilliseconds: Double = 5_000
 
+/** 明确的界面完成条件；只确认观察到的状态，不推断外部业务已完成。 */
+private struct ComputerStateCondition {
+    /** 精确匹配控件标题、描述或标识，不依赖会随页面变化的索引。 */
+    let name: String
+    /** 可选的辅助功能角色，用来区分同名控件。 */
+    let role: String?
+    /** 可选的完整文本值；空字符串代表确认清空。 */
+    let value: String?
+    /** 消失条件仅能由完整的目标窗口树确认。 */
+    let absent: Bool
+    /** 等待上限包含读取耗时，不在模型轮次之间固定睡眠。 */
+    let timeoutMilliseconds: Double
+
+    /** 在动作之前校验，错误条件不得造成先操作、后报参数错误。 */
+    static func parse(_ raw: Any?) throws -> ComputerStateCondition? {
+        guard let raw else { return nil }
+        guard let input = raw as? [String: Any],
+              Set(input.keys).isSubset(of: ["name", "role", "value", "state", "timeout_ms"]),
+              let name = input["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.count <= 1000,
+              input["role"] == nil || (input["role"] as? String).map({ !$0.isEmpty && $0.count <= 200 }) == true,
+              input["value"] == nil || (input["value"] as? String).map({ $0.count <= 20_000 }) == true,
+              input["state"] == nil || ["present", "absent"].contains(input["state"] as? String ?? ""),
+              !(input["state"] as? String == "absent" && input["value"] != nil)
+        else { throw ServiceFailure(code: "ZEUS_COMPUTER_WAIT_INVALID", message: "wait_for 需要精确 name，可选 role、value 和 present/absent；消失条件不能带 value。") }
+        let timeout = input["timeout_ms"] as? NSNumber ?? 3000
+        guard input["timeout_ms"] == nil || input["timeout_ms"] is NSNumber,
+              CFGetTypeID(timeout) != CFBooleanGetTypeID(), timeout.doubleValue.isFinite,
+              timeout.doubleValue.rounded() == timeout.doubleValue, (100...10_000).contains(timeout.doubleValue)
+        else { throw ServiceFailure(code: "ZEUS_COMPUTER_WAIT_INVALID", message: "wait_for.timeout_ms 必须是 100 到 10000 的整数。") }
+        return ComputerStateCondition(name: name, role: input["role"] as? String, value: input["value"] as? String, absent: input["state"] as? String == "absent", timeoutMilliseconds: timeout.doubleValue)
+    }
+
+    /** 缺少窗口树、不完整或同名值歧义时不把未知状态判成完成。 */
+    func isSatisfied(by summaries: [[String: Any]], complete: Bool, windowMatched: Bool) -> Bool {
+        guard windowMatched else { return false }
+        let matches = summaries.filter { element in
+            (role == nil || element["role"] as? String == role) && ["title", "description", "identifier"].contains { element[$0] as? String == name }
+        }
+        if absent { return complete && matches.isEmpty }
+        guard let value else { return !matches.isEmpty }
+        guard complete, matches.count == 1, let element = matches.first, element["secure"] as? Bool != true else { return false }
+        return element["value"] as? String == value
+    }
+}
+
 @main
 private struct ZeusComputerService {
     /** 主线程运行 AppKit，让系统采集回调、停止按钮和用户接管监听不被 AX 扫描阻塞。 */
@@ -48,6 +93,8 @@ private struct ZeusComputerService {
 
 private final class ComputerService {
     private var generation = 0
+    /** 串行工具动作的序号，观察结果可追溯到最近一次动作请求。 */
+    private var actionSequence = 0
     private var snapshots: [pid_t: ElementSnapshot] = [:]
     private var snapshotHistory: [Int: ElementSnapshot] = [:]
     /** 唯一控制窗口、持续采集和原生停止入口。 */
@@ -67,6 +114,8 @@ private final class ComputerService {
         parentPid = pid_t(Int32(environment["ZEUS_PARENT_PID"] ?? "-1") ?? -1)
         inputSource?.userData = Int64(ProcessInfo.processInfo.processIdentifier)
         inputSource?.localEventsSuppressionInterval = 0
+        // 为所有 AX 消息设置进程级上限，目标应用失去响应时仍能结束有界确认。
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), axMessagingTimeoutSeconds)
     }
 
     /** 父进程管道关闭时结束采集和预览。 */
@@ -103,6 +152,7 @@ private final class ComputerService {
     }
 
     private func invoke(method: String, params: [String: Any]) async throws -> Any {
+        let condition = try ComputerStateCondition.parse(params["wait_for"])
         switch method {
         case "status":
             return status()
@@ -115,30 +165,58 @@ private final class ComputerService {
         case "list_apps":
             return listApps()
         case "get_app_state":
-            return try await getAppState(params)
+            return try await getAppState(params, condition: condition)
         case "describe_target":
             return try await describeTarget(params)
+        default:
+            break
+        }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var action: [String: Any]
+        actionSequence += 1
+        switch method {
         case "click":
-            return try performClick(params, secondary: false)
+            action = try performClick(params, secondary: false)
         case "perform_secondary_action":
-            return try performClick(params, secondary: true)
+            action = try performClick(params, secondary: true)
         case "drag":
-            return try await performDrag(params)
+            action = try await performDrag(params)
         case "paste":
-            return try performPaste(params)
+            action = try performPaste(params)
         case "press_key":
-            return try performKey(params)
+            action = try performKey(params)
         case "scroll":
-            return try performScroll(params)
+            action = try performScroll(params)
         case "select_text":
-            return try selectText(params)
+            action = try selectText(params)
         case "set_value":
-            return try setValue(params)
+            action = try setValue(params)
         case "type_text":
-            return try typeText(params)
+            action = try typeText(params)
         default:
             throw ServiceFailure(code: "ZEUS_COMPUTER_METHOD_UNSUPPORTED", message: "Computer 方法不受支持：\(method)")
         }
+        let actionMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1000
+        snapshots.removeAll()
+        action["effect_verified"] = false
+        action["action_sequence"] = actionSequence
+        action["action_ms"] = actionMilliseconds
+        action["diagnostics"] = ["action_ms": actionMilliseconds, "native_total_ms": actionMilliseconds]
+        guard let condition else { return action }
+        do {
+            var observationParams = params
+            // 动作确认复用已经观察的窗口，不能因弹出另一窗口而隐式切换目标。
+            observationParams["include_screenshot"] = params["include_screenshot"] as? Bool ?? false
+            let observation = try await getAppState(observationParams, condition: condition, afterAction: true)
+            action.merge(observation) { _, value in value }
+            action["effect_verified"] = (observation["confirmation"] as? [String: Any])?["status"] as? String == "satisfied"
+        } catch {
+            // 动作已经投递；确认失败不能伪装成未执行，更不能自动重放。
+            let failure = error as? ServiceFailure
+            action["confirmation"] = ["status": "observation_failed", "code": failure?.code ?? "ZEUS_COMPUTER_OPERATION_FAILED", "message": failure?.message ?? String(describing: error)]
+        }
+        action["diagnostics"] = (action["diagnostics"] as? [String: Any] ?? [:]).merging(["action_ms": actionMilliseconds, "native_total_ms": (ProcessInfo.processInfo.systemUptime - startedAt) * 1000]) { _, value in value }
+        return action
     }
 
     private func status() -> [String: Any] {
@@ -183,14 +261,16 @@ private final class ComputerService {
             .sorted { String(describing: $0["name"]).localizedCaseInsensitiveCompare(String(describing: $1["name"])) == .orderedAscending }
     }
 
-    private func getAppState(_ params: [String: Any]) async throws -> [String: Any] {
+    /** 读取一次或等待明确条件；轮询复用窗口与采集流，仅最后一次读取返回模型。 */
+    private func getAppState(_ params: [String: Any], condition: ComputerStateCondition? = nil, afterAction: Bool = false) async throws -> [String: Any] {
         let startedAt = Date()
+        let startedUptime = ProcessInfo.processInfo.systemUptime
         try requireAccessibility()
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
         try rejectSelf(app)
         // 观察与后续输入固定同一窗口；截屏关闭只省略返回图片，不隐藏正在控制的系统状态。
-        let target = try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
+        let target = afterAction ? try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) : try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
         let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 1000)
         let deadlineUnixMilliseconds = numberValue(params["_deadline_unix_ms"])
         let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
@@ -199,30 +279,56 @@ private final class ComputerService {
         if AXUIElementIsAttributeSettable(applicationElement, "AXManualAccessibility" as CFString, &manualAccessibilitySettable) == .success && manualAccessibilitySettable.boolValue {
             _ = AXUIElementSetAttributeValue(applicationElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         }
-        // 语义树优先与采集窗口一致；应用未公开窗口树时仍保留有界应用观察。
-        let observedWindow = (attribute(applicationElement, kAXWindowsAttribute) as? [AXUIElement])?.first { matchesWindow($0, target: target) }
-        generation += 1
+        let waitStarted = ProcessInfo.processInfo.systemUptime
+        let waitDeadline = condition.map { Date().timeIntervalSince1970 * 1000 + $0.timeoutMilliseconds }
+        let readDeadline = [deadlineUnixMilliseconds, waitDeadline].compactMap { $0 }.min()
+        var axStartedAt = Date()
+        var axFinishedAt = axStartedAt
+        var readCount = 0
+        var axMilliseconds = 0.0
+        var satisfied = false
         var elements: [AXUIElement] = []
         var summaries: [[String: Any]] = []
-        var visited = Set<CFHashCode>()
         var truncatedReason: String?
-        reportProgress(params, stage: "ax_walk", elementCount: 0, startedAt: startedAt)
-        walk(
-            element: observedWindow ?? applicationElement,
-            depth: 0,
-            maxElements: maxElements,
-            deadlineUnixMilliseconds: deadlineUnixMilliseconds,
-            visited: &visited,
-            elements: &elements,
-            summaries: &summaries,
-            truncatedReason: &truncatedReason,
-            progress: { count in
-                if count == 1 || count.isMultiple(of: 50) {
-                    self.reportProgress(params, stage: "ax_walk", elementCount: count, startedAt: startedAt)
+        repeat {
+            try requireUnlockedSession()
+            if condition != nil { _ = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) }
+            axStartedAt = Date()
+            let readStarted = ProcessInfo.processInfo.systemUptime
+            // 每次重新定位窗口树，不复用已经离开页面的 AX 控件引用。
+            let observedWindow = (attribute(applicationElement, kAXWindowsAttribute) as? [AXUIElement])?.first { matchesWindow($0, target: target) }
+            elements.removeAll(keepingCapacity: true)
+            summaries.removeAll(keepingCapacity: true)
+            var visited = Set<CFHashCode>()
+            truncatedReason = nil
+            reportProgress(params, stage: "ax_walk", elementCount: 0, startedAt: startedAt)
+            walk(
+                element: observedWindow ?? applicationElement,
+                depth: 0,
+                maxElements: maxElements,
+                deadlineUnixMilliseconds: readDeadline,
+                visited: &visited,
+                elements: &elements,
+                summaries: &summaries,
+                truncatedReason: &truncatedReason,
+                progress: { count in
+                    if count == 1 || count.isMultiple(of: 50) {
+                        self.reportProgress(params, stage: "ax_walk", elementCount: count, startedAt: startedAt)
+                    }
                 }
-            }
-        )
-        if truncatedReason == nil, elements.count >= maxElements { truncatedReason = "element_limit" }
+            )
+            if truncatedReason == nil, elements.count >= maxElements { truncatedReason = "element_limit" }
+            axFinishedAt = Date()
+            axMilliseconds += (ProcessInfo.processInfo.systemUptime - readStarted) * 1000
+            readCount += 1
+            satisfied = condition?.isSatisfied(by: summaries, complete: truncatedReason == nil, windowMatched: observedWindow != nil) ?? false
+            guard let condition, !satisfied, !deadlineExceeded(readDeadline), (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000 < condition.timeoutMilliseconds else { break }
+            // ponytail: 有界复用现有 AX 扫描；大型树确有瓶颈时再引入目标区域订阅。
+            try await Task.sleep(nanoseconds: UInt64(min(100, max(0, remainingMilliseconds(until: readDeadline)))) * 1_000_000)
+        } while true
+        let axCompletedTime = CMClockGetTime(CMClockGetHostTimeClock())
+        let confirmationMilliseconds = (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000
+        generation += 1
         let complete = truncatedReason == nil
         let snapshot = ElementSnapshot(generation: generation, pid: app.processIdentifier, elements: elements, summaries: summaries, complete: complete)
         snapshots[app.processIdentifier] = snapshot
@@ -234,6 +340,7 @@ private final class ComputerService {
             "app": app.bundleIdentifier ?? app.bundleURL?.path ?? app.localizedName ?? "",
             "application": appSummary(app),
             "snapshot_generation": generation,
+            "action_sequence": actionSequence,
             "window": target.metadata,
             "control": control.status,
             "elements": summaries,
@@ -241,12 +348,13 @@ private final class ComputerService {
             "complete": complete,
             "truncated": !complete,
             "status": status(),
-            "diagnostics": [
-                "axElementCount": elements.count,
-                "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1000),
-            ],
+            "observation": ["ax_started_at_unix_ms": axStartedAt.timeIntervalSince1970 * 1000, "ax_finished_at_unix_ms": axFinishedAt.timeIntervalSince1970 * 1000, "atomic": false],
         ]
+        if condition != nil {
+            result["confirmation"] = ["status": satisfied ? "satisfied" : "timed_out", "scope": "accessibility_condition", "elapsed_ms": confirmationMilliseconds, "read_count": readCount]
+        }
         if let truncatedReason { result["truncated_reason"] = truncatedReason }
+        let screenshotStarted = ProcessInfo.processInfo.systemUptime
         if params["include_screenshot"] as? Bool != false {
             if remainingMilliseconds(until: deadlineUnixMilliseconds) < minimumScreenshotBudgetMilliseconds {
                 result["screenshot_status"] = "skipped_deadline"
@@ -255,7 +363,7 @@ private final class ComputerService {
             } else {
                 reportProgress(params, stage: "screenshot", elementCount: elements.count, startedAt: startedAt)
                 do {
-                    if let screenshot = try await captureWindow(app) {
+                    if let screenshot = try await captureWindow(app, notBefore: axCompletedTime) {
                         result["screenshot"] = screenshot
                         result["screenshot_status"] = "captured"
                     } else {
@@ -266,9 +374,12 @@ private final class ComputerService {
                 }
             }
         }
+        let screenshotMilliseconds = (ProcessInfo.processInfo.systemUptime - screenshotStarted) * 1000
         if let previous = intValue(params["previous_snapshot_generation"]) {
             result["diff"] = snapshotDiff(previousGeneration: previous, current: snapshot)
         }
+        if condition != nil { _ = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) }
+        result["diagnostics"] = ["axElementCount": elements.count, "ax_read_ms": axMilliseconds, "read_count": readCount, "confirmation_ms": condition == nil ? 0 : confirmationMilliseconds, "screenshot_ms": screenshotMilliseconds, "native_total_ms": (ProcessInfo.processInfo.systemUptime - startedUptime) * 1000]
         reportProgress(params, stage: "complete", elementCount: elements.count, startedAt: startedAt)
         return result
     }
@@ -305,7 +416,10 @@ private final class ComputerService {
             truncatedReason = "ax_cannot_complete"
             return true
         }
-        guard let summary = described.summary else { return false }
+        guard let summary = described.summary else {
+            truncatedReason = truncatedReason ?? "ax_unavailable"
+            return false
+        }
         elements.append(element)
         summaries.append(summary)
         progress(elements.count)
@@ -817,15 +931,16 @@ private final class ComputerService {
         throw ServiceFailure(code: "ZEUS_COMPUTER_KEY_UNSUPPORTED", message: "不支持的按键：\(key)")
     }
 
-    private func captureWindow(_ app: NSRunningApplication) async throws -> [String: Any]? {
+    /** 截图确认时间必须晚于本次控件读取，空闲帧和实际像素采集时间分别标明。 */
+    private func captureWindow(_ app: NSRunningApplication, notBefore: CMTime) async throws -> [String: Any]? {
         try FileManager.default.createDirectory(at: artifactRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let (image, target, capturedAt) = try await control.snapshot()
+        let (image, target, capturedAt, confirmedAt) = try await control.snapshot(notBefore: notBefore)
         let representation = NSBitmapImageRep(cgImage: image)
         guard let png = representation.representation(using: .png, properties: [:]) else { return nil }
         let file = artifactRoot.appendingPathComponent("computer-\(app.processIdentifier)-\(generation)-\(UUID().uuidString).png")
         try png.write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        return target.metadata.merging(["artifactPath": file.path, "mimeType": "image/png", "width": image.width, "height": image.height, "byteLength": png.count, "captured_at": ISO8601DateFormatter().string(from: capturedAt)]) { _, value in value }
+        return target.metadata.merging(["artifactPath": file.path, "mimeType": "image/png", "width": image.width, "height": image.height, "byteLength": png.count, "captured_at": ISO8601DateFormatter().string(from: capturedAt), "frame_confirmed_at": ISO8601DateFormatter().string(from: confirmedAt), "after_ax_read": true]) { _, value in value }
     }
 
     private func appSummary(_ app: NSRunningApplication) -> [String: Any] {
@@ -891,6 +1006,7 @@ private final class ComputerService {
         let copied = copyAttributes(element, names)
         guard copied.error == .success else { return (nil, [], copied.error) }
         let role = copied.values[kAXRoleAttribute] as? String ?? ""
+        guard !role.isEmpty else { return (nil, [], .noValue) }
         let subrole = copied.values[kAXSubroleAttribute] as? String ?? ""
         let secure = role == "AXSecureTextField" || subrole.localizedCaseInsensitiveContains("secure")
         var summary: [String: Any] = [
@@ -914,7 +1030,7 @@ private final class ComputerService {
     private func copyAttributes(_ element: AXUIElement, _ names: [String]) -> (values: [String: Any], error: AXError) {
         var copied: CFArray?
         let error = AXUIElementCopyMultipleAttributeValues(element, names as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &copied)
-        if error == .cannotComplete { return ([:], error) }
+        if [.cannotComplete, .invalidUIElement, .apiDisabled].contains(error) { return ([:], error) }
         guard error == .success, let values = copied as? [Any] else {
             return (Dictionary(uniqueKeysWithValues: names.compactMap { name in attribute(element, name).map { (name, $0 as Any) } }), .success)
         }
@@ -923,7 +1039,11 @@ private final class ComputerService {
             let value = values[index]
             let cfValue = value as CFTypeRef
             if CFGetTypeID(cfValue) == CFNullGetTypeID() { continue }
-            if CFGetTypeID(cfValue) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError { continue }
+            if CFGetTypeID(cfValue) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+                var attributeError = AXError.success
+                if AXValueGetValue(value as! AXValue, .axError, &attributeError), [.cannotComplete, .invalidUIElement, .apiDisabled].contains(attributeError) { return ([:], attributeError) }
+                continue
+            }
             result[name] = value
         }
         return (result, .success)

@@ -52,6 +52,8 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var image: CGImage?
     /** 完整或空闲帧的时间；空闲帧明确表示窗口内容未变化。 */
     private var frameDate = Date.distantPast
+    /** 最近一次完整像素帧的采集时间；空闲确认不能改写成重新采集。 */
+    private var imageDate = Date.distantPast
     /** 输入后的截图必须晚于该时间。 */
     private var mutationTime = CMTime.zero
     /** 使用采集帧原始时间戳，防止动作后才到达的旧帧被误认为新画面。 */
@@ -121,7 +123,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         if previous?.windowId != next.windowId || previous?.frame != next.frame || previous?.scale != next.scale || existing == nil {
             // 先脱离旧流，迟到的旧流停止回调不会撤销新窗口。
-            lock.withLock { capture = nil; image = nil; previewData = nil; frameDate = .distantPast; frameTime = .invalid; needsObservation = true }
+            lock.withLock { capture = nil; image = nil; previewData = nil; frameDate = .distantPast; imageDate = .distantPast; frameTime = .invalid; needsObservation = true }
             if let existing { try await existing.stopCapture() }
             let configuration = SCStreamConfiguration()
             configuration.width = max(1, Int(next.frame.width * scale))
@@ -219,14 +221,14 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         lock.withLock { ["active": !stopped && capture != nil, "paused": paused, "needs_observation": needsObservation] }
     }
 
-    /** 只返回该目标最新的完整图像或被空闲帧确认未变化的图像。 */
-    func snapshot() async throws -> (CGImage, ComputerWindowTarget, Date) {
+    /** 帧须晚于动作和控件回读；分别返回像素采集及内容未变化确认的时间。 */
+    func snapshot(notBefore: CMTime) async throws -> (CGImage, ComputerWindowTarget, Date, Date) {
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline {
-            let current = try lock.withLock { () throws -> (CGImage, ComputerWindowTarget, Date)? in
+            let current = try lock.withLock { () throws -> (CGImage, ComputerWindowTarget, Date, Date)? in
                 guard !stopped else { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "控制已停止。") }
-                guard let image, let target, frameTime.isValid, CMTimeCompare(frameTime, mutationTime) >= 0 else { return nil }
-                return (image, target, frameDate)
+                guard let image, let target, frameTime.isValid, CMTimeCompare(frameTime, mutationTime) >= 0, CMTimeCompare(frameTime, notBefore) >= 0 else { return nil }
+                return (image, target, imageDate, frameDate)
             }
             if let current { return current }
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -243,8 +245,12 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             if lock.withLock({ capture === stream && !stopped }) { stop(reason: "capture_unavailable") }
             return
         }
+        // 将原始单调帧时间换算为采集时刻，避免把队列送达时间误当成截图时间。
+        let sampleTime = sampleBuffer.presentationTimeStamp
+        guard sampleTime.isValid else { return }
+        let sampledAt = Date(timeIntervalSinceNow: -CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), sampleTime)))
         if status == .idle {
-            lock.withLock { if capture === stream && !stopped && image != nil { frameDate = Date(); frameTime = sampleBuffer.presentationTimeStamp } }
+            lock.withLock { if capture === stream && !stopped && image != nil { frameDate = sampledAt; frameTime = sampleTime } }
             return
         }
         guard status == .complete, let buffer = sampleBuffer.imageBuffer else { return }
@@ -258,7 +264,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         lock.withLock {
             guard capture === stream && !stopped else { return }
-            image = frame; previewData = thumbnail; frameDate = Date(); frameTime = sampleBuffer.presentationTimeStamp
+            image = frame; previewData = thumbnail; imageDate = sampledAt; frameDate = sampledAt; frameTime = sampleTime
         }
     }
 
