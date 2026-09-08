@@ -26,6 +26,7 @@ import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLi
 type ChangeAction = 'undo' | 'reapply';
 const maximumRenderedDiffLines = 2_000;
 
+/** 文件摘要始终允许进入审阅；正文缺失时由既有读取入口补齐。 */
 export function TurnChangeCard(props: {
   changeSet: TurnChangeSet;
   language: SessionUiLanguage;
@@ -83,7 +84,7 @@ export function TurnChangeCard(props: {
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
             </button>
           ) : null}
-          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0 || changeSet.contentProjection === 'summary'} onClick={() => props.onReview?.(changeSet)}>
+          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0} onClick={() => props.onReview?.(changeSet)}>
             {zh ? '审核' : 'Review'}
           </button>
         </nav>
@@ -126,6 +127,7 @@ export function TurnChangeCard(props: {
   );
 }
 
+/** 审阅只依赖差异正文，恢复快照不可用时仍显示变更和评论入口。 */
 export function TurnDiffWorkspace(props: {
   changeSet: TurnChangeSet;
   initialFileId?: string;
@@ -133,6 +135,12 @@ export function TurnDiffWorkspace(props: {
   fullWidth: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
   onClose: () => void;
+  /** 正文读取进度与可重试错误沿用会话分页状态。 */
+  loading?: boolean;
+  /** 正文加载失败原因，不与撤销不可用混为一谈。 */
+  loadError?: string | null;
+  /** 复用会话按需加载入口重新读取差异。 */
+  onLoad?: () => void;
   onOperate?: (changeSet: TurnChangeSet, action: ChangeAction) => Promise<TurnChangeSetOperationResult>;
   onOpenFile?: (file: TurnChangeFile, line?: number) => void | Promise<void>;
   comments?: ConversationCodeComment[];
@@ -293,91 +301,116 @@ export function TurnDiffWorkspace(props: {
                   {zh ? `差异过大，仅显示前 ${maximumRenderedDiffLines} 行（共 ${diff.totalLines} 行）。` : `Diff is too large; showing the first ${maximumRenderedDiffLines} of ${diff.totalLines} lines.`}
                 </p>
               ) : null}
-              <pre>
-                <code>
-                  {diff.lines.map((line, index) => {
-                    const position = activePath ? commentPosition(activePath, line) : null;
-                    const lineComments = position ? comments.filter((comment) => comment.position.line === position.line && comment.position.side === position.side) : [];
-                    const draftHere = Boolean(position && draftPosition?.line === position.line && draftPosition.side === position.side);
-                    const highlightedLine = highlightedDiffLine(line, index, leftHighlightInput, leftHighlights, rightHighlightInput, rightHighlights);
-                    return (
-                      <Fragment key={`${index}:${line.text}`}>
-                        <span className="session-diff-line" data-kind={line.kind}>
-                          {position && props.onCommentsChange ? (
-                            <button
-                              type="button"
-                              className="session-code-comment-add"
-                              aria-label={zh ? `评论${position.side === 'left' ? '旧' : '新'}文件第 ${position.line} 行` : `Comment on ${position.side === 'left' ? 'old' : 'new'} line ${position.line}`}
-                              onClick={(event) => {
-                                const useRange = event.shiftKey && rangeStart?.side === position.side;
-                                const startLine = useRange ? Math.min(rangeStart.line, position.line) : position.line;
-                                const endLine = useRange ? Math.max(rangeStart.line, position.line) : position.line;
-                                setRangeStart({ line: position.line, side: position.side });
-                                setEditingCommentId(null);
-                                setDraftPosition({ path: position.path, line: endLine, side: position.side, ...(startLine !== endLine ? { startLine, startSide: position.side } : {}) });
-                              }}
-                            >
-                              +
-                            </button>
-                          ) : (
-                            <span className="session-code-comment-spacer" aria-hidden="true" />
-                          )}
-                          <span className="session-diff-line-sign" aria-hidden="true">
-                            {line.sign}
-                          </span>
-                          {lineNumberForState(line, changeSet.state) && props.onOpenFile ? (
-                            <button
-                              type="button"
-                              className="session-diff-line-number"
-                              aria-label={zh ? `在源码中打开第 ${lineNumberForState(line, changeSet.state)} 行` : `Open source at line ${lineNumberForState(line, changeSet.state)}`}
-                              onClick={() => void openFile(activeFile, lineNumberForState(line, changeSet.state) ?? undefined)}
-                            >
-                              {lineNumberLabel(line)}
-                            </button>
-                          ) : (
-                            <span className="session-diff-line-number" aria-hidden="true">
-                              {lineNumberLabel(line)}
+              {changeSet.contentProjection === 'summary' ? (
+                <p className="session-turn-diff-empty" role="status">
+                  {props.loading
+                    ? zh
+                      ? '正在加载差异正文…'
+                      : 'Loading diff…'
+                    : props.loadError
+                      ? zh
+                        ? '差异正文加载失败，请重试。'
+                        : 'Could not load the diff. Please retry.'
+                      : zh
+                        ? '差异正文尚未加载。'
+                        : 'The diff has not been loaded yet.'}
+                  {props.onLoad ? (
+                    <button type="button" disabled={props.loading} onClick={props.onLoad}>
+                      {zh ? '加载差异' : 'Load diff'}
+                    </button>
+                  ) : null}
+                </p>
+              ) : !activeFile.unifiedDiff ? (
+                <p className="session-turn-diff-empty" role="status">
+                  {zh ? '此文件没有可显示的文本差异。' : 'This file has no displayable text diff.'}
+                </p>
+              ) : (
+                <pre>
+                  <code>
+                    {diff.lines.map((line, index) => {
+                      const position = activePath ? commentPosition(activePath, line) : null;
+                      const lineComments = position ? comments.filter((comment) => comment.position.line === position.line && comment.position.side === position.side) : [];
+                      const draftHere = Boolean(position && draftPosition?.line === position.line && draftPosition.side === position.side);
+                      const highlightedLine = highlightedDiffLine(line, index, leftHighlightInput, leftHighlights, rightHighlightInput, rightHighlights);
+                      return (
+                        <Fragment key={`${index}:${line.text}`}>
+                          <span className="session-diff-line" data-kind={line.kind}>
+                            {position && props.onCommentsChange ? (
+                              <button
+                                type="button"
+                                className="session-code-comment-add"
+                                aria-label={zh ? `评论${position.side === 'left' ? '旧' : '新'}文件第 ${position.line} 行` : `Comment on ${position.side === 'left' ? 'old' : 'new'} line ${position.line}`}
+                                onClick={(event) => {
+                                  const useRange = event.shiftKey && rangeStart?.side === position.side;
+                                  const startLine = useRange ? Math.min(rangeStart.line, position.line) : position.line;
+                                  const endLine = useRange ? Math.max(rangeStart.line, position.line) : position.line;
+                                  setRangeStart({ line: position.line, side: position.side });
+                                  setEditingCommentId(null);
+                                  setDraftPosition({ path: position.path, line: endLine, side: position.side, ...(startLine !== endLine ? { startLine, startSide: position.side } : {}) });
+                                }}
+                              >
+                                +
+                              </button>
+                            ) : (
+                              <span className="session-code-comment-spacer" aria-hidden="true" />
+                            )}
+                            <span className="session-diff-line-sign" aria-hidden="true">
+                              {line.sign}
                             </span>
-                          )}
-                          <span>
-                            <SyntaxHighlightedLine line={highlightedLine} />
-                          </span>
-                        </span>
-                        {lineComments.map((comment) =>
-                          editingCommentId === comment.id ? (
-                            <CodeCommentPanel
-                              key={comment.id}
-                              language={props.language}
-                              position={comment.position}
-                              comment={comment}
-                              onCancel={() => setEditingCommentId(null)}
-                              onSave={(body) => saveComment(comment.position, body, comment.id)}
-                              onDelete={() => {
-                                props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
-                                setEditingCommentId(null);
-                              }}
-                            />
-                          ) : (
-                            <span key={comment.id} className="session-saved-code-comment">
-                              <strong>{zh ? '本地评论' : 'Local comment'}</strong>
-                              <span>{comment.body}</span>
-                              <span className="session-saved-code-comment-actions">
-                                <button type="button" onClick={() => setEditingCommentId(comment.id)}>
-                                  {zh ? '编辑' : 'Edit'}
-                                </button>
-                                <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
-                                  {zh ? '删除' : 'Delete'}
-                                </button>
+                            {lineNumberForState(line, changeSet.state) && props.onOpenFile ? (
+                              <button
+                                type="button"
+                                className="session-diff-line-number"
+                                aria-label={zh ? `在源码中打开第 ${lineNumberForState(line, changeSet.state)} 行` : `Open source at line ${lineNumberForState(line, changeSet.state)}`}
+                                onClick={() => void openFile(activeFile, lineNumberForState(line, changeSet.state) ?? undefined)}
+                              >
+                                {lineNumberLabel(line)}
+                              </button>
+                            ) : (
+                              <span className="session-diff-line-number" aria-hidden="true">
+                                {lineNumberLabel(line)}
                               </span>
+                            )}
+                            <span>
+                              <SyntaxHighlightedLine line={highlightedLine} />
                             </span>
-                          ),
-                        )}
-                        {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
-                      </Fragment>
-                    );
-                  })}
-                </code>
-              </pre>
+                          </span>
+                          {lineComments.map((comment) =>
+                            editingCommentId === comment.id ? (
+                              <CodeCommentPanel
+                                key={comment.id}
+                                language={props.language}
+                                position={comment.position}
+                                comment={comment}
+                                onCancel={() => setEditingCommentId(null)}
+                                onSave={(body) => saveComment(comment.position, body, comment.id)}
+                                onDelete={() => {
+                                  props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                                  setEditingCommentId(null);
+                                }}
+                              />
+                            ) : (
+                              <span key={comment.id} className="session-saved-code-comment">
+                                <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+                                <span>{comment.body}</span>
+                                <span className="session-saved-code-comment-actions">
+                                  <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                                    {zh ? '编辑' : 'Edit'}
+                                  </button>
+                                  <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                                    {zh ? '删除' : 'Delete'}
+                                  </button>
+                                </span>
+                              </span>
+                            ),
+                          )}
+                          {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+                        </Fragment>
+                      );
+                    })}
+                  </code>
+                </pre>
+              )}
             </>
           ) : (
             <p className="session-turn-diff-empty">{zh ? '这一轮没有可显示的文本差异。' : 'This turn has no displayable text diff.'}</p>
@@ -433,7 +466,10 @@ function availableAction(changeSet: TurnChangeSet): ChangeAction | null {
   return null;
 }
 
+/** 将恢复能力限制与审阅能力区分，并将旧记录中的快照错误转为可理解的提示。 */
 function unavailableReason(reason: string, language: SessionUiLanguage): string {
+  if (reason === 'The captured recovery snapshots do not reproduce the provider patch.')
+    return language === 'zh-CN' ? '无法确认这次修改前后的文件内容，暂不能安全撤销或重新应用；仍可审核已记录的差异。' : 'Recovery snapshots could not be verified, so Undo/Reapply is unavailable. Recorded changes can still be reviewed.';
   if (reason !== historicalTurnChangeUnavailableReason) return reason;
   return language === 'zh-CN' ? '缺少这次修改前后的文件内容，无法撤销或重新应用这些修改。' : 'The file contents before and after these changes are unavailable. These changes cannot be undone or reapplied.';
 }
@@ -506,6 +542,7 @@ function highlightedDiffLine(line: DisplayDiffLine, index: number, leftInput: Di
   return (position ? highlights[position.segment]?.[position.line] : null) ?? (line.text ? [{ text: line.text }] : []);
 }
 
+/** 按补丁片段计算行号，正文中的连续加减号不能当作文件路径头。 */
 function diffLines(diff: string): {
   lines: DisplayDiffLine[];
   totalLines: number;
@@ -516,7 +553,9 @@ function diffLines(diff: string): {
   const rawLines = diff.split('\n');
   const truncated = rawLines.length > maximumRenderedDiffLines;
   const lines = rawLines.slice(0, maximumRenderedDiffLines).map((line) => {
-    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) {
+    if (((line.startsWith('+++') || line.startsWith('---')) && oldLine === null && newLine === null) || line.startsWith('diff ') || line.startsWith('index ')) {
+      oldLine = null;
+      newLine = null;
       return { kind: 'meta' as const, sign: '', text: line, oldLine: null, newLine: null };
     }
     if (line.startsWith('@@')) {

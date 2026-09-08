@@ -951,6 +951,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  /** 终态摘要通过读取动作补齐正文，不能重放已经去重的原始事件。 */
   function hydrateFullTerminalChangeSet(event: Extract<NativeConversationEvent, { type: 'conversation.turn.change_set.changed' }>): void {
     const summary = event.payload.changeSet;
     const load = options.client.loadTurnChangeSet;
@@ -958,20 +959,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const turnId = summary.providerTurnId || event.payload.turnId;
     const revision = summary.updatedAt;
     if (!turnId || !revision || fullChangeSetHydrationRevisions.get(turnId) === revision) return;
+    // 同一修订已有全文时，后续摘要不重复触发读取。
+    const loaded = state.changeSetsByProviderId[turnId];
+    if (loaded?.id === summary.id && loaded.contentProjection !== 'summary' && loaded.updatedAt >= revision) return;
     fullChangeSetHydrationRevisions.set(turnId, revision);
+    // 重连后旧请求不再拥有当前会话投影。
+    const generation = connectionToken;
     void load(options.projectId, options.conversationId, turnId)
       .then((changeSet) => {
-        if (disposed || fullChangeSetHydrationRevisions.get(turnId) !== revision || changeSet.id !== summary.id || changeSet.updatedAt < revision) return;
-        dispatch({
-          type: 'event_received',
-          event: {
-            ...event,
-            payload: { ...event.payload, changeSet },
-          },
-        });
+        if (disposed || generation !== connectionToken || fullChangeSetHydrationRevisions.get(turnId) !== revision || changeSet.id !== summary.id || changeSet.updatedAt < revision) return;
+        dispatch({ type: 'turn_change_set_loaded', changeSet });
       })
       .catch(() => {
         // 摘要卡仍是可读事实；完整 diff 可在下一次权威水合或后续终态事件中重试。
+      })
+      .finally(() => {
+        // 请求结束即释放去重占位，重连后仍能补齐同一修订。
         if (fullChangeSetHydrationRevisions.get(turnId) === revision) fullChangeSetHydrationRevisions.delete(turnId);
       });
   }
@@ -2215,7 +2218,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (currentChange?.loading) return;
     const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
     const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
-    const shouldLoadChange = Boolean(turn && v2Turn?.changeSetAvailable && options.client.loadTurnChangeSet && !(current.changeSets ?? []).some((changeSet) => changeSet.providerTurnId === pagingKey || changeSet.turnId === turn.id));
+    // 摘要只说明有变更，不能被当作已经加载全文；点击审阅时也允许按实时轮次重试。
+    const knownChangeSet = state.changeSetsByProviderId[pagingKey];
+    const shouldLoadChange = Boolean((v2Turn?.changeSetAvailable || knownChangeSet) && options.client.loadTurnChangeSet && (!knownChangeSet || knownChangeSet.contentProjection === 'summary'));
     if (!shouldLoadResources && !shouldLoadChange) {
       if (resources.loading) return;
       const merged = await attachV2ResourcesToSnapshot(current, resources.items);
@@ -2302,11 +2307,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
         })(),
       );
     }
-    if (shouldLoadChange && turn) {
+    if (shouldLoadChange) {
       loads.push(
         (async () => {
           try {
-            const changeSet = await options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn.id);
+            const changeSet = await options.client.loadTurnChangeSet!(options.projectId, options.conversationId, turn?.id ?? pagingKey);
             if (disposed || generation !== connectionToken) return;
             const latest = state.snapshot;
             if (!latest?.snapshotV2 || !latest.v2Paging) return;
