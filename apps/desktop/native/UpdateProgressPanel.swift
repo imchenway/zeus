@@ -26,13 +26,36 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
     override init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 176),
+            contentRect: Self.initialPanelFrame(),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         super.init()
         configurePanel()
+    }
+
+    /** 测试窗口从创建起遵守主应用指定的非主显示器，不先闪现在主屏。 */
+    private static func initialPanelFrame() -> NSRect {
+        guard let requested = ProcessInfo.processInfo.environment["ZEUS_TEST_DISPLAY_ID"] else {
+            return NSRect(x: 0, y: 0, width: 480, height: 176)
+        }
+        guard let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue == requested }),
+              requested != String(CGMainDisplayID()) else {
+            FileHandle.standardError.write(Data("测试更新窗口无法定位指定的非主显示器。\n".utf8))
+            exit(1)
+        }
+        return NSRect(x: screen.visibleFrame.midX - 240, y: screen.visibleFrame.midY - 88, width: 480, height: 176)
+    }
+
+    /** 窗口重新展示仍沿用测试显示器约束。 */
+    private func centerPanel() {
+        if ProcessInfo.processInfo.environment["ZEUS_TEST_DISPLAY_ID"] != nil {
+            let target = Self.initialPanelFrame()
+            panel.setFrameOrigin(NSPoint(x: target.midX - panel.frame.width / 2, y: target.midY - panel.frame.height / 2))
+        } else {
+            panel.center()
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -238,6 +261,10 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         }
 
         switch state {
+        case "manual":
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: localized("later"), primary: localized("downloadPage"))
         case "available":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
@@ -258,7 +285,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             progressRow.isHidden = true
             progressIndicator.isHidden = true
             // 仅展示后台明确允许的重试，不从失败状态推断可否再次执行。
-            setButtons(secondary: localized("close"), primary: command["canRetry"] as? Bool == true ? localized("retry") : nil)
+            setButtons(secondary: localized("close"), primary: command["canRetry"] as? Bool == true ? localized("retry") : localized("check"))
         case "installing":
             progressRow.isHidden = false
             progressIndicator.isHidden = false
@@ -282,14 +309,14 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
                 panel.deminiaturize(nil)
             }
             if !panel.isVisible {
-                panel.center()
+                centerPanel()
             }
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         guard !panel.isVisible, !panel.isMiniaturized else { return }
-        panel.center()
+        centerPanel()
         panel.orderFront(nil)
     }
 
@@ -318,6 +345,10 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
     @objc private func primaryAction() {
         switch primaryButton.title {
+        case localized("check"):
+            emit(action: "check")
+        case localized("downloadPage"):
+            emit(action: "open_download_page")
         case localized("download"):
             emit(action: "download")
         case localized("restart"):
@@ -386,6 +417,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         switch key {
         case "softwareUpdate": return english ? "Software Update" : "软件更新"
         case "later": return english ? "Later" : "稍后"
+        case "check": return english ? "Check for Updates" : "重新检查更新"
+        case "downloadPage": return english ? "Download New Version" : "下载新版"
         case "download": return english ? "Download Update" : "下载更新"
         case "reconnect": return english ? "Reconnect" : "重新连接"
         case "restart": return english ? "Restart Now" : "立即重启"

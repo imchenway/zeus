@@ -33,7 +33,7 @@ export interface RequestingWindowActivationResult {
   error?: string;
 }
 
-export type AutomaticUpdateIndicatorPhase = 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
+export type AutomaticUpdateIndicatorPhase = 'idle' | 'available' | 'manual' | 'preparing' | 'retrying' | 'ready' | 'failed';
 
 export interface AutomaticUpdateIndicatorState {
   phase: AutomaticUpdateIndicatorPhase;
@@ -43,6 +43,8 @@ export interface AutomaticUpdateIndicatorState {
   updatedAt: string;
   progress?: number;
   retryAt?: string;
+  /** 保留更新失败阶段和真实说明，避免将安装条件错误显示为下载失败。 */
+  failure?: { step: 'check' | 'prepare' | 'download' | 'install'; title: string; technicalDetail?: string; canRetry: boolean };
 }
 
 export interface ProjectRevealResult {

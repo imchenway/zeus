@@ -1,3 +1,4 @@
+import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type {
   ConversationFileLocation,
@@ -230,28 +231,11 @@ declare global {
       }>;
       openExternalHttpsUrl: (url: string) => Promise<{ opened: boolean; url?: string; error?: string }>;
       activateRequestingWindow: () => Promise<{ activated: boolean; error?: string }>;
-      getAutomaticUpdateIndicator: () => Promise<{
-        phase: 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
-        currentVersion: string;
-        latestVersion: string | null;
-        detail: string;
-        updatedAt: string;
-        progress?: number;
-        retryAt?: string;
-      } | null>;
+      /** 更新状态与侧栏共用同一声明，防止手动更新阶段在桥接层遗漏。 */
+      getAutomaticUpdateIndicator: () => Promise<AutomaticUpdateIndicatorState | null>;
       openAutomaticUpdateIndicator: () => Promise<{ opened: boolean }>;
       recordManualUpdateCheck: () => Promise<{ recorded: boolean }>;
-      onAutomaticUpdateIndicatorChanged: (
-        listener: (state: {
-          phase: 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
-          currentVersion: string;
-          latestVersion: string | null;
-          detail: string;
-          updatedAt: string;
-          progress?: number;
-          retryAt?: string;
-        }) => void,
-      ) => () => void;
+      onAutomaticUpdateIndicatorChanged: (listener: (state: AutomaticUpdateIndicatorState) => void) => () => void;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;

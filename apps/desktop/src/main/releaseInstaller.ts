@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { createExecutionHostControlClient, readExecutionHostRendezvous } from './executionHostProtocol.js';
 import { readReleaseInstallerBootstrap, releaseInstallerProtocolVersion, writeReleaseInstallerResult, type ReleaseInstallerBootstrap, type ReleaseInstallerResult } from './releaseInstallerProtocol.js';
+import { verifyReleaseApp } from './releaseUpdateService.js';
 
 const mainExitTimeoutMs = 10 * 60_000;
 const reopenedUiTimeoutMs = 90_000;
@@ -34,22 +35,28 @@ async function runReleaseInstaller(): Promise<void> {
   let movedOriginal = false;
   let installedNewApp = false;
   let failedNewUiLeaseId: string | null = null;
+  /** 新进程未安全退出时不得替换其正在运行的应用。 */
+  let newProcessPid: number | null = null;
   try {
+    await verifyReleaseApp(bootstrap.targetAppPath, bootstrap.previousAppVersion, bootstrap.testMode, bootstrap.targetAppPath);
+    await verifyReleaseApp(bootstrap.stagedAppPath, bootstrap.expectedAppVersion, bootstrap.testMode, bootstrap.targetAppPath);
     await rename(bootstrap.targetAppPath, bootstrap.backupAppPath);
     movedOriginal = true;
     await rename(bootstrap.stagedAppPath, bootstrap.targetAppPath);
     installedNewApp = true;
-    const newProcessPid = await launchApp(bootstrap.targetAppPath, bootstrap.executableRelativePath);
-    const reconnected = await waitForExpectedUi(bootstrap.userDataPath, bootstrap.expectedAppVersion, bootstrap.testMode ? reopenedUiTestTimeoutMs : reopenedUiTimeoutMs);
+    await verifyReleaseApp(bootstrap.targetAppPath, bootstrap.expectedAppVersion, bootstrap.testMode, bootstrap.backupAppPath);
+    const previousUiLeaseId = await readCurrentUiLeaseId(bootstrap.userDataPath);
+    newProcessPid = await launchApp(bootstrap.targetAppPath, bootstrap.executableRelativePath);
+    const reconnected = await waitForExpectedUi(bootstrap.userDataPath, bootstrap.expectedAppVersion, bootstrap.testMode ? reopenedUiTestTimeoutMs : reopenedUiTimeoutMs, previousUiLeaseId);
     if (!reconnected) {
       failedNewUiLeaseId = await readCurrentUiLeaseId(bootstrap.userDataPath);
-      if (!(await terminateProcess(newProcessPid))) throw new Error('新版界面未能连接执行宿主，且安装器无法安全终止该进程。');
       throw new Error('新版界面未在允许时间内重新连接执行宿主。');
     }
     await updateResult(bootstrap, 'completed', '升级完成，新版 Zeus 已重新连接执行宿主；旧 App 备份将在该宿主停止后清理。');
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     try {
+      if (newProcessPid !== null && !(await terminateProcess(newProcessPid))) throw new Error('新版进程无法安全退出，已保留当前应用及旧版备份，停止自动回滚。');
       if (installedNewApp) {
         const failedPath = `${bootstrap.stagedAppPath}.failed`;
         await rename(bootstrap.targetAppPath, failedPath);
