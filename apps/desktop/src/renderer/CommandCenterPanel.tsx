@@ -975,7 +975,7 @@ function CommandDefinitionModal(props: {
             ×
           </button>
         </header>
-        <div className="command-modal-body">
+        <div className="command-modal-body" inert={props.busy} aria-busy={props.busy || undefined}>
           <div className="command-editor-grid">
             <label>
               {zh ? '名称' : 'Name'}
@@ -1022,7 +1022,7 @@ function CommandDefinitionModal(props: {
               </Button>
             </header>
             {props.draft.parameters.map((parameter, index) => (
-              <fieldset className="command-parameter-row" key={`${parameter.key}-${index}`}>
+              <fieldset className="command-parameter-row" key={index}>
                 <legend>{zh ? `参数 ${index + 1}` : `Parameter ${index + 1}`}</legend>
                 <label>
                   {zh ? '环境变量' : 'Environment key'}
@@ -1055,6 +1055,7 @@ function CommandDefinitionModal(props: {
                   ) : (
                     <input
                       type={parameter.type === 'number' ? 'number' : 'text'}
+                      step={parameter.type === 'number' ? 'any' : undefined}
                       disabled={parameter.sensitive}
                       value={parameter.defaultValue === undefined ? '' : String(parameter.defaultValue)}
                       onChange={(event) => updateParameter(index, { defaultValue: event.currentTarget.value === '' ? undefined : parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })}
@@ -1186,7 +1187,7 @@ function CommandRunModal(props: {
             ×
           </button>
         </header>
-        <div className="command-modal-body">
+        <div className="command-modal-body" inert={props.busy} aria-busy={props.busy || undefined}>
           <dl>
             <div>
               <dt>{zh ? '项目目录' : 'Project directory'}</dt>
@@ -1206,7 +1207,7 @@ function CommandRunModal(props: {
               {parameter.label}
               <small>
                 {parameter.key}
-                {parameter.required ? ' · required' : ''}
+                {parameter.required ? (zh ? ' · 必填' : ' · required') : ''}
               </small>
               {parameter.type === 'boolean' ? (
                 <input autoFocus={index === 0} type="checkbox" checked={Boolean(props.values[parameter.key])} onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: event.currentTarget.checked })} />
@@ -1215,8 +1216,9 @@ function CommandRunModal(props: {
                   autoFocus={index === 0}
                   required={parameter.required}
                   type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}
+                  step={parameter.type === 'number' ? 'any' : undefined}
                   value={String(props.values[parameter.key] ?? '')}
-                  onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })}
+                  onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: parameter.type === 'number' && event.currentTarget.value !== '' ? Number(event.currentTarget.value) : event.currentTarget.value })}
                 />
               )}
               {parameter.description ? <small>{parameter.description}</small> : null}

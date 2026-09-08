@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/Button.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
@@ -19,22 +19,29 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const zh = props.language === 'zh-CN';
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
+  const loadRevisionRef = useRef(0);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
+  const [savedName, setSavedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<EditorTarget>(null);
+  const draftsRef = useRef(new Map<string, { draft: DigitalEmployeeTemplateDraft; target: NonNullable<EditorTarget> }>());
   const [draft, setDraft] = useState<DigitalEmployeeTemplateDraft>({ ...emptyTemplateDraft });
 
   const loadTemplates = useCallback(async () => {
     if (!props.client) return;
+    const revision = ++loadRevisionRef.current;
     setLoadState('loading');
     setError(null);
+    setSavedName(null);
     try {
       const [nextTemplates, nextCapabilities] = await Promise.all([props.client.loadDigitalEmployeeTemplates(), props.client.loadDigitalEmployeeCapabilities()]);
+      if (revision !== loadRevisionRef.current) return;
       setTemplates(nextTemplates);
       setCapabilities(nextCapabilities);
       setLoadState('ready');
     } catch (cause) {
+      if (revision !== loadRevisionRef.current) return;
       setLoadState('failed');
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
@@ -42,28 +49,59 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
   useEffect(() => {
     void loadTemplates();
+    return () => {
+      loadRevisionRef.current += 1;
+    };
   }, [loadTemplates]);
 
-  function beginCreate(): void {
-    setEditorTarget({ kind: 'new' });
+  function rememberDraft(): void {
+    if (!editorTarget || (editorTarget.kind === 'template' && editorTarget.record.builtIn)) return;
+    const key = editorTarget.kind === 'new' ? 'new' : editorTarget.record.id;
+    if (editorTarget.kind === 'template' && JSON.stringify(draft) === JSON.stringify(templateDraft(editorTarget.record))) {
+      draftsRef.current.delete(key);
+      return;
+    }
+    // 草稿保留原始版本，刷新后的新记录不能替它绕过并发修改校验。
+    draftsRef.current.set(key, { draft, target: editorTarget });
+  }
+
+  function cancelEditing(): void {
+    if (busy || !editorTarget) return;
+    draftsRef.current.delete(editorTarget.kind === 'new' ? 'new' : editorTarget.record.id);
+    setEditorTarget(null);
     setDraft({ ...emptyTemplateDraft });
     setError(null);
+    setSavedName(null);
+  }
+
+  function beginCreate(): void {
+    if (busy) return;
+    rememberDraft();
+    setEditorTarget({ kind: 'new' });
+    setDraft(draftsRef.current.get('new')?.draft ?? { ...emptyTemplateDraft });
+    setError(null);
+    setSavedName(null);
   }
 
   function beginInspect(record: DigitalEmployeeTemplateRecord): void {
-    setEditorTarget({ kind: 'template', record });
-    setDraft(templateDraft(record));
+    if (busy) return;
+    rememberDraft();
+    const cached = draftsRef.current.get(record.id);
+    setEditorTarget(cached?.target ?? { kind: 'template', record });
+    setDraft(cached?.draft ?? templateDraft(record));
     setError(null);
+    setSavedName(null);
   }
 
   async function saveTemplate(): Promise<void> {
-    if (!props.client || !editorTarget || (editorTarget.kind === 'template' && editorTarget.record.builtIn)) return;
+    if (busy || loadState === 'loading' || !props.client || !editorTarget || (editorTarget.kind === 'template' && editorTarget.record.builtIn)) return;
     if (!draft.name.trim() || !draft.role.trim() || !draft.prompt.trim()) {
       setError(zh ? '名称、岗位和提示词不能为空。' : 'Name, role, and prompt are required.');
       return;
     }
     setBusy(true);
     setError(null);
+    setSavedName(null);
     try {
       const record =
         editorTarget.kind === 'new' ? await props.client.createDigitalEmployeeTemplate(templateInput(draft)) : await props.client.updateDigitalEmployeeTemplate(editorTarget.record.id, editorTarget.record.revision, templateInput(draft));
@@ -71,8 +109,10 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
         const exists = current.some((candidate) => candidate.id === record.id);
         return sortTemplates(exists ? current.map((candidate) => (candidate.id === record.id ? record : candidate)) : [...current, record]);
       });
+      draftsRef.current.delete(editorTarget.kind === 'new' ? 'new' : editorTarget.record.id);
       setEditorTarget({ kind: 'template', record });
       setDraft(templateDraft(record));
+      setSavedName(record.name);
     } catch (cause) {
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
@@ -81,13 +121,15 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   }
 
   async function deleteTemplate(record: DigitalEmployeeTemplateRecord): Promise<void> {
-    if (!props.client || record.builtIn) return;
+    if (busy || loadState === 'loading' || !props.client || record.builtIn) return;
     const confirmed = window.confirm(zh ? `删除自定义模板“${record.name}”？已分配到项目的员工配置不会被删除。` : `Delete custom template “${record.name}”? Existing project employees will remain.`);
     if (!confirmed) return;
     setBusy(true);
     setError(null);
+    setSavedName(null);
     try {
       await props.client.deleteDigitalEmployeeTemplate(record.id, record.revision);
+      draftsRef.current.delete(record.id);
       setTemplates((current) => current.filter((candidate) => candidate.id !== record.id));
       setEditorTarget(null);
       setDraft({ ...emptyTemplateDraft });
@@ -116,15 +158,20 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           <p>{zh ? '保存可重复使用的岗位和工作要求。将模板添加到项目后，再为该员工设置项目权限。' : 'Save reusable roles and work instructions. Add a template to a project, then configure that employee’s project permissions.'}</p>
         </span>
         <span className="digital-employee-actions">
-          <Button variant="secondary" size="compact" busy={loadState === 'loading'} onClick={() => void loadTemplates()}>
+          <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => void loadTemplates()}>
             {zh ? '刷新' : 'Refresh'}
           </Button>
-          <Button variant="primary" size="compact" onClick={beginCreate}>
+          <Button variant="primary" size="compact" disabled={busy} onClick={beginCreate}>
             {zh ? '新建自定义模板' : 'New custom template'}
           </Button>
         </span>
       </header>
 
+      {savedName && !error ? (
+        <p className="digital-employee-feedback" role="status">
+          {zh ? `已保存模板“${savedName}”。` : `Saved template “${savedName}”.`}
+        </p>
+      ) : null}
       {error ? (
         <p className="digital-employee-feedback is-error" role="alert">
           {error}
@@ -149,6 +196,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               type="button"
               className={`digital-employee-list-row ${editorTarget?.kind === 'template' && editorTarget.record.id === template.id ? 'is-selected' : ''}`}
               aria-pressed={editorTarget?.kind === 'template' && editorTarget.record.id === template.id}
+              disabled={busy}
               onClick={() => beginInspect(template)}
             >
               <span className="digital-employee-avatar" aria-hidden="true">
@@ -172,7 +220,17 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span>{zh ? '也可以创建自己的岗位、业务领域、Skill 和提示词组合。' : 'Or create a custom combination of role, domain, skills, and prompt.'}</span>
             </div>
           ) : (
-            <TemplateEditor draft={draft} models={capabilities?.models ?? []} skillClient={props.skillClient} language={props.language} readOnly={readOnly} onChange={setDraft} />
+            <TemplateEditor
+              draft={draft}
+              models={capabilities?.models ?? []}
+              skillClient={props.skillClient}
+              language={props.language}
+              readOnly={readOnly || busy}
+              onChange={(next) => {
+                setDraft(next);
+                setSavedName(null);
+              }}
+            />
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
@@ -186,13 +244,18 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                     : 'Updating a template does not change employees already added to projects.'}
               </small>
               <span className="digital-employee-actions">
+                {!readOnly ? (
+                  <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
+                    {zh ? '取消编辑' : 'Cancel editing'}
+                  </Button>
+                ) : null}
                 {editorTarget.kind === 'template' && !editorTarget.record.builtIn ? (
-                  <Button variant="danger" size="compact" busy={busy} onClick={() => void deleteTemplate(editorTarget.record)}>
+                  <Button variant="danger" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void deleteTemplate(editorTarget.record)}>
                     {zh ? '删除' : 'Delete'}
                   </Button>
                 ) : null}
                 {!readOnly ? (
-                  <Button variant="primary" size="compact" busy={busy} onClick={() => void saveTemplate()}>
+                  <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveTemplate()}>
                     {zh ? '保存模板' : 'Save template'}
                   </Button>
                 ) : null}

@@ -185,17 +185,17 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
                 </div>
                 <div>
                   <dt>{zh ? '类型' : 'Kind'}</dt>
-                  <dd>{record.kind}</dd>
+                  <dd>{memoryValueLabel(record.kind, zh)}</dd>
                 </div>
                 <div>
                   <dt>{zh ? '来源' : 'Source'}</dt>
                   <dd>
-                    {record.source.kind} · {record.source.reference}
+                    {memoryValueLabel(record.source.kind, zh)} · {record.source.reference}
                   </dd>
                 </div>
                 <div>
                   <dt>{zh ? '确认' : 'Confirmation'}</dt>
-                  <dd>{record.confirmationLevel}</dd>
+                  <dd>{memoryValueLabel(record.confirmationLevel, zh)}</dd>
                 </div>
                 <div>
                   <dt>{zh ? '置信度' : 'Confidence'}</dt>
@@ -203,17 +203,17 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
                 </div>
                 <div>
                   <dt>{zh ? '复核日期' : 'Review after'}</dt>
-                  <dd>{formatTimestamp(record.reviewAfter)}</dd>
+                  <dd>{formatTimestamp(record.reviewAfter, zh)}</dd>
                 </div>
                 {record.supersedesId ? (
                   <div>
-                    <dt>supersedes</dt>
+                    <dt>{zh ? '替代记录' : 'Replaced record'}</dt>
                     <dd>{record.supersedesId}</dd>
                   </div>
                 ) : null}
                 {record.tombstoneReason ? (
                   <div>
-                    <dt>tombstone</dt>
+                    <dt>{zh ? '停用原因' : 'Reason disabled'}</dt>
                     <dd>{record.tombstoneReason}</dd>
                   </div>
                 ) : null}
@@ -231,6 +231,25 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
   );
 }
 
+const memoryValueLabels: Record<string, [string, string]> = {
+  preference: ['偏好', 'Preference'],
+  safety_boundary: ['安全边界', 'Safety boundary'],
+  stable_workflow: ['固定工作流程', 'Stable workflow'],
+  advisory: ['仅提供建议', 'Advice only'],
+  external_state: ['指导文件或应用操作', 'Guide file or app actions'],
+  user_explicit: ['用户明确输入', 'Explicit user input'],
+  project_instruction: ['项目说明', 'Project instruction'],
+  repeated_confirmation: ['多次确认', 'Repeated confirmation'],
+  manual_import: ['手动导入', 'Manual import'],
+  observed: ['根据观察', 'Observed'],
+  confirmed: ['已确认', 'Confirmed'],
+  explicit: ['明确确认', 'Explicitly confirmed'],
+};
+
+function memoryValueLabel(value: string, zh: boolean): string {
+  return memoryValueLabels[value]?.[zh ? 0 : 1] ?? value;
+}
+
 function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede'; lockedKey: string | null; language: MemoryLanguage; busy: boolean; onChange: (draft: MemoryDraft) => void; onCancel: () => void; onSubmit: () => void }) {
   const zh = props.language === 'zh-CN';
   const patch = (next: Partial<MemoryDraft>): void => props.onChange({ ...props.draft, ...next });
@@ -243,9 +262,9 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
       <label>
         <span>{zh ? '类型' : 'Kind'}</span>
         <select value={props.draft.candidateKind} onChange={(event) => patch({ candidateKind: event.currentTarget.value as MemoryKind })}>
-          <option value="preference">preference</option>
-          <option value="safety_boundary">safety_boundary</option>
-          <option value="stable_workflow">stable_workflow</option>
+          <option value="preference">{memoryValueLabel('preference', zh)}</option>
+          <option value="safety_boundary">{memoryValueLabel('safety_boundary', zh)}</option>
+          <option value="stable_workflow">{memoryValueLabel('stable_workflow', zh)}</option>
         </select>
       </label>
       <label className="memory-editor-content">
@@ -255,8 +274,8 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
       <label>
         <span>{zh ? '影响' : 'Effect'}</span>
         <select value={props.draft.effect} onChange={(event) => patch({ effect: event.currentTarget.value as MemoryEffect, externalStateConfirmed: false })}>
-          <option value="advisory">advisory</option>
-          <option value="external_state">external_state</option>
+          <option value="advisory">{memoryValueLabel('advisory', zh)}</option>
+          <option value="external_state">{memoryValueLabel('external_state', zh)}</option>
         </select>
       </label>
       <label>
@@ -339,12 +358,13 @@ function draftFromRecord(record: MemoryRecord): MemoryDraft {
 
 function memoryStatusLabel(status: ReturnType<typeof memoryDisplayStatus>, zh: boolean): string {
   if (status === 'current') return zh ? '当前有效' : 'Current';
-  if (status === 'review_due') return 'review_due';
-  if (status === 'superseded') return 'superseded';
-  return 'tombstone';
+  if (status === 'review_due') return zh ? '待复核' : 'Review due';
+  if (status === 'superseded') return zh ? '已被新版本替代' : 'Replaced by a newer version';
+  return zh ? '已停用' : 'Disabled';
 }
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string, zh: boolean): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+  // 复核日期按用户选择的 UTC 日历日保存，展示时不能再转换为本地时区的下一天。
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString(zh ? 'zh-CN' : 'en', { timeZone: 'UTC' });
 }

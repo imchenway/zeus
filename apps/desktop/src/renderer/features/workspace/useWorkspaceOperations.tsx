@@ -1,8 +1,8 @@
 import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
-import { ConnectedSessionWorkspace, SessionWorkspace } from '../../session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
@@ -243,6 +243,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     visibleTasks,
     workspaceScrollRef,
   } = state;
+  const newConversationDrafts = useMemo<NewConversationDraftStore>(() => new Map(), [newConversationFocusRequest]);
   const {
     archiveGraphConversation,
     askGraph,
@@ -2031,6 +2032,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
     return (
       <SessionWorkspace
+        newConversationDrafts={newConversationDrafts}
         key={selectedNativeConversation ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : `new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
         state={null}

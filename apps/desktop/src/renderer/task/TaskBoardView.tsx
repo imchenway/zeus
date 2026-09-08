@@ -319,7 +319,7 @@ function TaskBoardLane(props: {
             {props.label}
           </button>
           <span className="task-board-subgroup-actions">
-            <span>{props.context.language === 'zh-CN' ? `${props.cards.length} 项` : `${props.cards.length} items`}</span>
+            <span>{props.context.language === 'zh-CN' ? `${props.cards.length} 项` : `${props.cards.length} ${props.cards.length === 1 ? 'item' : 'items'}`}</span>
             <button type="button" aria-label={`${props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'} ${props.label}`} onClick={props.onHide}>
               <EyeSlash aria-hidden="true" />
             </button>
@@ -354,7 +354,7 @@ function TaskBoardLane(props: {
             </div>
           </SortableContext>
           <footer className="task-board-lane-calculation">
-            <span>{props.context.language === 'zh-CN' ? '统计' : 'Calculate'}</span>
+            <span>{props.context.language === 'zh-CN' ? '统计' : 'Summary'}</span>
             <strong>{props.calculation}</strong>
           </footer>
         </>
@@ -404,7 +404,7 @@ function TaskBoardColumn(props: {
         >
           <span className="task-board-group-dot" aria-hidden="true" />
           <span>{props.group.label}</span>
-          <small>{props.context.language === 'zh-CN' ? `${props.group.taskCount} 项` : `${props.group.taskCount} items`}</small>
+          <small>{props.context.language === 'zh-CN' ? `${props.group.taskCount} 项` : `${props.group.taskCount} ${props.group.taskCount === 1 ? 'item' : 'items'}`}</small>
           {collapsed ? <CaretRight className="task-board-column-caret" aria-hidden="true" /> : <CaretDown className="task-board-column-caret" aria-hidden="true" />}
         </button>
         <button
@@ -962,6 +962,7 @@ function TaskBoardSettingsDialog(props: {
           {draft.hiddenGroupIds.length > 0 ? (
             <fieldset hidden={props.section !== 'layout'}>
               <legend>{zh ? '隐藏分组' : 'Hidden groups'}</legend>
+              <p>{zh ? '勾选要恢复显示的分组，然后保存。取消不会改变当前看板。' : 'Select groups to show again, then save. Cancel keeps the current board unchanged.'}</p>
               {props.groupOptions
                 .filter((option) => draft.hiddenGroupIds.includes(option.id))
                 .map((option) => (
@@ -975,6 +976,7 @@ function TaskBoardSettingsDialog(props: {
           {Object.values(draft.hiddenSubgroupIdsByGroup).some((ids) => ids.length > 0) ? (
             <fieldset hidden={props.section !== 'layout'}>
               <legend>{zh ? '隐藏子分组' : 'Hidden subgroups'}</legend>
+              <p>{zh ? '勾选要恢复显示的子分组，然后保存。' : 'Select subgroups to show again, then save.'}</p>
               {Object.entries(draft.hiddenSubgroupIdsByGroup).flatMap(([groupId, ids]) =>
                 ids.map((subgroupId) => {
                   const groupLabel = props.groupOptions.find((option) => option.id === groupId)?.label ?? groupId;

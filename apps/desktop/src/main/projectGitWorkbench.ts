@@ -105,7 +105,8 @@ export class ProjectGitWorkbenchService {
     try {
       await beforeWrite(resolved.repository, action);
       signal?.throwIfAborted();
-      const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'pull' || action.type === 'update';
+      // 单独推送标签与分支推送共用凭据入口。
+      const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'push_tag' || action.type === 'pull' || action.type === 'update';
       const run = (env?: NodeJS.ProcessEnv) => executeProjectGitAction(resolved.repository.localPath, action, signal, env);
       const result = await (remoteAction ? withProjectGitAuthentication(run) : run()).catch((error: unknown) => {
         // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。
@@ -175,6 +176,16 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       return { type: value.type, kind: value.kind };
     case 'fetch':
       return { type: 'fetch', remote: stringValue('remote') };
+    case 'discard':
+      return { type: 'discard', paths: paths() };
+    case 'rename_branch':
+      return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
+    case 'create_tag':
+      return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '', message: stringValue('message') };
+    case 'push_tag':
+      return { type: 'push_tag', tagName: stringValue('tagName') ?? '', remote: stringValue('remote') ?? '' };
+    case 'delete_tag':
+      return { type: 'delete_tag', tagName: stringValue('tagName') ?? '' };
     case 'stage':
       return { type: 'stage', paths: paths() };
     case 'unstage':

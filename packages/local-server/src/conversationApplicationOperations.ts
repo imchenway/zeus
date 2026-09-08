@@ -3427,6 +3427,17 @@ export function createConversationApplicationOperations(dependencies: Conversati
     switch (value.type) {
       case 'fetch':
         return { type: 'fetch', remote: stringValue('remote') };
+      case 'discard':
+        return { type: 'discard', paths: paths() };
+      case 'rename_branch':
+        return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
+      case 'create_tag':
+        // 网页入口保留与桌面入口相同的标签说明和定向推送参数。
+        return { type: 'create_tag', tagName: stringValue('tagName') ?? '', revision: stringValue('revision') ?? '', message: stringValue('message') };
+      case 'push_tag':
+        return { type: 'push_tag', tagName: stringValue('tagName') ?? '', remote: stringValue('remote') ?? '' };
+      case 'delete_tag':
+        return { type: 'delete_tag', tagName: stringValue('tagName') ?? '' };
       case 'stage':
         return { type: 'stage', paths: paths() };
       case 'unstage':

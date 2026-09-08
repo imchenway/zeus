@@ -239,6 +239,7 @@ export type WorkspacePageProps = {
   onLoadSecuritySecrets?: () => Promise<SecuritySecretsSnapshot>;
   onLoadSecurityAuditLogs?: () => Promise<SecurityAuditLogEntry[]>;
   onLoadReleaseStatus?: () => Promise<ReleaseStatusSnapshot>;
+  onLoadReleaseUpdateStatus?: () => Promise<ReleaseUpdateStatusSnapshot>;
   onCheckReleaseUpdate?: () => Promise<ReleaseUpdateStatusSnapshot>;
   onSaveTelegramBotToken?: (token: string) => Promise<SecuritySecretsSnapshot>;
   onClearTelegramBotToken?: () => Promise<SecuritySecretsSnapshot>;

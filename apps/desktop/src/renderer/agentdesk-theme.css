@@ -228,19 +228,19 @@
 }
 
 /* Source list、项目列表和会话列表统一使用 AgentDesk 的蓝色选择语义。 */
-.macos-ai-app.zeus-shell :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
+.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
   border-color: transparent;
   border-radius: 10px;
   color: var(--agentdesk-text-secondary);
 }
 
-.macos-ai-app.zeus-shell :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
+.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
   background: rgb(40 102 247 / 0.07);
   color: var(--agentdesk-text);
 }
 
 .macos-ai-app.zeus-shell
-  :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(
+  :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(
     .active,
     .is-active,
     [aria-current='page'],
@@ -754,17 +754,17 @@ body:has(.macos-ai-app.zeus-shell) {
     0 12px 28px -24px rgb(31 74 112 / 50%);
 }
 
-.macos-ai-app.zeus-shell :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
+.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
   border-radius: 10px;
 }
 
-.macos-ai-app.zeus-shell :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
+.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
   background: rgb(255 255 255 / 42%);
   border-color: rgb(255 255 255 / 58%);
 }
 
 .macos-ai-app.zeus-shell
-  :where(.project-sidebar-item, .project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(
+  :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(
     .active,
     .is-active,
     [aria-current='page'],
@@ -1253,7 +1253,7 @@ body:has(.macos-ai-app.zeus-shell) {
   min-block-size: 64px;
   padding: 12px 14px;
   border-radius: var(--agentdesk-radius-card);
-  background: rgb(255 255 255 / 56%);
+  background: var(--agentdesk-control);
   border-color: rgb(148 163 184 / 24%);
   box-shadow: none;
 }
@@ -1301,7 +1301,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border-block-start: 1px solid rgb(148 163 184 / 18%);
 }
 
-/* 设置页中的控件保持白色玻璃，主操作才使用品牌蓝。 */
+/* 设置页控件跟随主题底色，主操作使用品牌蓝。 */
 .macos-ai-app.zeus-shell .settings-reference-shell :is(button, input, select, textarea) {
   box-shadow: none;
 }
@@ -1310,7 +1310,7 @@ body:has(.macos-ai-app.zeus-shell) {
   min-block-size: var(--zeus-control-height);
   block-size: var(--zeus-control-height);
   border-radius: var(--zeus-control-radius);
-  background: rgb(255 255 255 / 58%);
+  background: var(--agentdesk-control);
   border-color: rgb(148 163 184 / 24%);
 }
 
@@ -3142,14 +3142,18 @@ body:has(.macos-ai-app.zeus-shell) {
   flex-wrap: wrap;
   min-width: 0;
 }
-.project-git-commit-generation-controls select {
+.macos-ai-app.zeus-shell .project-git-commit-generation-controls select {
   width: 240px;
   max-width: 100%;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 4px 28px 4px 8px;
   border: 1px solid var(--zeus-product-line);
   border-radius: 6px;
-  background: var(--zeus-product-panel);
+  background-color: var(--zeus-product-panel);
+  background-image: var(--zeus-select-caret-icon);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
   color: inherit;
   font: inherit;
   text-overflow: ellipsis;
@@ -3171,8 +3175,8 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 .project-git-stage-panels {
   display: grid;
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-rows: minmax(0, var(--git-stages, 50%)) 6px minmax(0, 1fr);
+  gap: 0;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -3211,3 +3215,332 @@ body:has(.macos-ai-app.zeus-shell) {
   font-size: 12px;
   color: var(--zeus-product-muted);
 }
+
+/* 收起时只保留提交摘要，激活后恢复可拖动的完整编辑面板。 */
+.macos-ai-app.zeus-shell .project-git-browser-content > .project-git-changes-layout[data-commit-active='false'] {
+  grid-template-areas: 'tree resize diff' 'commit commit commit';
+  grid-template-rows: minmax(0, 1fr) 48px;
+}
+.project-git-commit-collapsed { grid-area: commit; display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-width: 0; border-top: 1px solid var(--zeus-product-line); background: var(--zeus-page-background); }
+.project-git-commit-collapsed > span { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.macos-ai-app.zeus-shell .project-git-commit-collapsed > button { flex: 1; min-width: 0; min-height: 30px; text-align: left; padding: 5px 10px; border: 1px solid var(--zeus-product-line); border-radius: 4px; background: var(--zeus-product-panel); color: var(--zeus-product-muted); font: inherit; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: none; }
+.project-git-commit-collapsed > button:focus-visible { outline: 2px solid var(--zeus-product-accent, #306cff); outline-offset: 1px; }
+.macos-ai-app.zeus-shell .project-git-stage-panel { border-radius: 0; border: 0; }
+.project-git-stage-panels > .git-separator-stages { grid-row: 2; min-height: 6px; }
+
+/* 导航入口与文件树采用独立行间距，树叶按钮不继承全局玻璃按钮样式。 */
+.macos-ai-app.zeus-shell .project-git-workspace-links > summary { margin-bottom: 6px; }
+.macos-ai-app.zeus-shell .project-git-workspace-links > button { margin-block: 4px; min-height: 34px; border-radius: 6px; }
+.macos-ai-app.zeus-shell .project-git-workspace-links > button:hover:not([aria-current='true']) { background: var(--zeus-source-list-hover) !important; }
+.macos-ai-app.zeus-shell .project-git-workspace-links > button[aria-current='true'] { background: var(--zeus-source-list-selected) !important; font-weight: 600; }
+.macos-ai-app.zeus-shell .project-git-stage-scroll { padding: 3px 0 6px; }
+.macos-ai-app.zeus-shell .project-git-change-folder > summary { min-height: 26px; min-block-size: 26px; padding-block: 1px; margin-block: 0; font-size: 12px; line-height: 1.5; gap: 6px; }
+.macos-ai-app.zeus-shell .project-git-change-file-row { min-height: 26px; min-block-size: 26px; margin-block: 1px; padding-block: 0; border-radius: 5px; }
+.macos-ai-app.zeus-shell .project-git-change-file-row > button {
+  min-height: 26px;
+  min-block-size: 26px;
+  padding-inline: 0 !important;
+  padding-block: 1px;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  gap: 7px;
+}
+.macos-ai-app.zeus-shell .project-git-change-file-row > button::before,
+.macos-ai-app.zeus-shell .project-git-change-file-row > button::after { display: none; }
+.macos-ai-app.zeus-shell .project-git-change-file-row:focus-within { outline: 1px solid var(--zeus-product-accent, #306cff); outline-offset: -1px; }
+
+.project-git-context-menu { position: fixed; z-index: 10000; display: flex; flex-direction: column; width: max-content; min-width: 210px; max-width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--zeus-product-line); border-radius: 8px; background: var(--zeus-product-panel, white); box-shadow: 0 8px 30px #0003; }
+.project-git-context-menu > strong { padding: 7px 9px; font-size: 11px; color: var(--zeus-product-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--zeus-product-line); margin-bottom: 4px; }
+.project-git-context-menu > button { border: 0; border-radius: 4px; padding: 7px 9px; text-align: left; background: transparent; color: inherit; font: inherit; font-size: 12px; box-shadow: none; }
+.project-git-context-menu > button:hover:not(:disabled), .project-git-context-menu > button:focus-visible { background: var(--zeus-source-list-selected); outline: none; }
+.project-git-context-menu > button:disabled { opacity: .4; }
+.project-git-context-menu > button[data-danger] { color: #c23838; }
+.project-git-menu-action-dialog { width: min(480px, calc(100vw - 40px)); padding: 20px; border-radius: 10px; background: var(--zeus-product-panel, white); display: grid; gap: 16px; }
+.project-git-menu-action-dialog p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; font-size: 13px; }
+.project-git-menu-action-dialog label { display: grid; gap: 8px; }
+.project-git-menu-action-dialog input { padding: 8px; font: inherit; }
+.project-git-menu-action-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+.project-git-stage-select-all { display: inline-flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.project-git-stage-select-all > input { flex: 0 0 auto; margin: 0; }
+.macos-ai-app.zeus-shell .project-git-file-view-select { width: auto; min-width: 90px; min-height: 28px; padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+
+/* Git 工具控件采用统一的紧凑平面样式，覆盖通用玻璃按钮与输入框装饰。 */
+.macos-ai-app.zeus-shell .project-git-toolbar { padding: 8px 12px !important; min-block-size: 44px; box-shadow: none !important; }
+.macos-ai-app.zeus-shell .project-git-toolbar-actions { gap: 6px; }
+.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button {
+  min-block-size: 28px !important; padding: 4px 10px !important; border-radius: 6px !important;
+  border: 1px solid var(--zeus-product-line) !important; background: var(--zeus-control-bg) !important;
+  box-shadow: none !important; font-size: 12px !important; line-height: 18px !important; font-weight: 500;
+}
+.macos-ai-app.zeus-shell .project-git-tabs {
+  min-block-size: 42px; padding: 6px 10px !important; gap: 4px !important;
+  border-radius: 0 !important; box-shadow: none !important; border-bottom: 1px solid var(--zeus-product-line);
+}
+.macos-ai-app.zeus-shell .project-git-tabs > button {
+  min-block-size: 28px !important; padding: 4px 10px !important; border: 0 !important;
+  border-radius: 6px !important; background: transparent !important; box-shadow: none !important;
+  font-size: 12px !important; line-height: 20px !important; color: var(--zeus-product-muted) !important;
+}
+.macos-ai-app.zeus-shell .project-git-tabs > button.is-active {
+  background: var(--zeus-source-list-selected) !important; color: var(--zeus-product-accent, #306cff) !important; font-weight: 600;
+}
+.macos-ai-app.zeus-shell .project-git-tabs > button > span { min-width: 18px; padding: 0 5px; font-size: 10px; line-height: 16px; border-radius: 8px; background: var(--zeus-page-background); }
+.macos-ai-app.zeus-shell .project-git-tab-facts { min-width: 0; gap: 8px; }
+.macos-ai-app.zeus-shell .project-git-tab-facts > label {
+  box-sizing: border-box; height: 30px; min-block-size: 30px; gap: 6px; padding: 0 8px;
+  border: 1px solid var(--zeus-product-line); border-radius: 6px; background: var(--zeus-control-bg); box-shadow: none;
+}
+.macos-ai-app.zeus-shell .project-git-tab-facts > label:focus-within { border-color: var(--zeus-product-accent, #306cff); box-shadow: 0 0 0 2px #306cff20; }
+.macos-ai-app.zeus-shell .project-git-tab-facts > label > svg { flex: 0 0 14px; height: 14px; }
+.macos-ai-app.zeus-shell .project-git-tab-facts input,
+.macos-ai-app.zeus-shell .project-git-tab-facts input:focus {
+  min-block-size: 0 !important; height: 26px !important; padding: 0 !important;
+  border: 0 !important; border-radius: 0 !important; outline: none !important; box-shadow: none !important;
+  background: transparent !important; font-size: 12px !important; line-height: 20px !important;
+}
+.macos-ai-app.zeus-shell .project-git-change-tree > header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 8px; }
+.macos-ai-app.zeus-shell .project-git-change-tree > header > strong { margin-right: auto; }
+.macos-ai-app.zeus-shell .project-git-file-view-select {
+  appearance: auto !important; min-block-size: 28px !important; height: 28px; min-width: 100px;
+  padding: 3px 8px !important; font-size: 12px !important; line-height: 20px;
+  border: 1px solid var(--zeus-product-line) !important; border-radius: 6px !important;
+  background: var(--zeus-control-bg) !important; box-shadow: none !important; color: var(--zeus-product-text);
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-folder { margin: 0; }
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-folder > summary,
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-directory-tree button {
+  box-sizing: border-box; min-height: 28px; min-block-size: 28px !important; margin-block: 1px;
+  padding-block: 3px !important; padding-right: 8px; gap: 6px; font-size: 12px !important; line-height: 20px;
+  font-weight: 400; border: 0 !important; border-radius: 5px !important;
+  background: transparent !important; box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-directory-tree button.is-current {
+  background: var(--zeus-source-list-selected) !important; font-weight: 600; color: var(--zeus-product-accent, #306cff);
+}
+.macos-ai-app.zeus-shell .project-git-branch-directory-tree button:focus-visible,
+.macos-ai-app.zeus-shell .project-git-branch-folder > summary:focus-visible { outline: 2px solid var(--zeus-product-accent, #306cff); outline-offset: -2px; }
+.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button:hover:not(:disabled),
+.macos-ai-app.zeus-shell .project-git-tabs > button:hover:not(.is-active),
+.macos-ai-app.zeus-shell .project-git-branch-directory-tree button:hover:not(.is-current),
+.macos-ai-app.zeus-shell .project-git-branch-folder > summary:hover { background: var(--zeus-source-list-hover) !important; }
+.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button::before,
+.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button::after,
+.macos-ai-app.zeus-shell .project-git-tabs > button::before,
+.macos-ai-app.zeus-shell .project-git-tabs > button::after,
+.macos-ai-app.zeus-shell .project-git-branch-directory-tree button::before,
+.macos-ai-app.zeus-shell .project-git-branch-directory-tree button::after { display: none !important; }
+
+/* 会话画布延伸至工作区边缘；正文仍使用会话自身的阅读宽度。 */
+.macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root),
+.macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
+.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
+  background: var(--session-canvas, #fff) !important; background-image: none !important;
+  border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .workspace-view-project-sessions,
+.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) { padding: 0 !important; gap: 0; }
+.macos-ai-app.zeus-shell .session-workspace-root { border: 0; border-radius: 0; box-shadow: none; }
+
+/* 答题区只保留单层面板，选项沿用键盘导航与回答状态。 */
+.macos-ai-app.zeus-shell .session-interaction-dock:has(.session-request-user-input-surface),
+.macos-ai-app.zeus-shell .session-request-user-input-surface {
+  background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .session-request-user-input-surface .session-question-status { margin-bottom: 8px; padding-inline: 4px; font-size: 12px; gap: 6px; }
+.macos-ai-app.zeus-shell .session-request-user-input-surface .session-question-panel {
+  background: var(--session-canvas) !important; border: 1px solid var(--session-line) !important;
+  border-radius: 12px !important; box-shadow: 0 2px 8px var(--session-shadow-soft) !important; padding: 12px !important;
+}
+.macos-ai-app.zeus-shell .session-rui-request fieldset > header { padding: 0 0 10px; gap: 12px; }
+.macos-ai-app.zeus-shell .session-rui-request header > strong { font-size: 14px; line-height: 22px; }
+.macos-ai-app.zeus-shell .session-rui-request button { box-shadow: none !important; background-image: none !important; }
+.macos-ai-app.zeus-shell .session-rui-request button::before,
+.macos-ai-app.zeus-shell .session-rui-request button::after { display: none !important; }
+.macos-ai-app.zeus-shell .session-rui-request header > button {
+  width: 28px; height: 28px; min-block-size: 28px !important; padding: 4px !important;
+  border: 0 !important; border-radius: 6px !important; background: transparent !important;
+}
+.macos-ai-app.zeus-shell .session-rui-request .session-question-options { column-gap: 10px; row-gap: 6px; }
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option {
+  min-block-size: 40px !important; padding: 7px 10px !important; gap: 10px;
+  border: 1px solid var(--session-line-soft) !important; border-radius: 8px !important;
+  background: var(--session-canvas) !important; color: var(--session-text) !important;
+}
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option:hover:not(:disabled) { background: var(--session-control-hover) !important; }
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option[aria-pressed='true'] {
+  border-color: var(--session-focus-outline, #306cff) !important;
+  background: color-mix(in srgb, var(--session-focus-outline, #306cff) 8%, var(--session-canvas)) !important;
+}
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option:focus-visible { outline: 2px solid var(--session-focus-outline); outline-offset: 1px; }
+.macos-ai-app.zeus-shell .session-rui-request .session-question-index {
+  min-block-size: 24px !important; min-inline-size: 24px !important; width: 24px; height: 24px;
+  padding: 0 !important; font-size: 12px; border-radius: 6px !important;
+  border: 1px solid var(--session-line) !important; background: var(--session-control-hover) !important;
+}
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option-copy > strong { font-size: 13px; font-weight: 500; line-height: 20px; }
+.macos-ai-app.zeus-shell .session-rui-request .session-question-other { margin-top: 4px; padding-block: 6px; }
+.macos-ai-app.zeus-shell .session-rui-request :is(footer, .session-rui-inline-actions) { gap: 8px; }
+.macos-ai-app.zeus-shell .session-rui-request :is(footer, .session-rui-inline-actions) button {
+  min-block-size: 30px !important; padding: 5px 10px !important; border: 1px solid var(--session-line) !important;
+  border-radius: 6px !important; background: var(--session-canvas) !important; color: var(--session-text) !important;
+  font-size: 12px !important; line-height: 18px; font-weight: 500;
+}
+.macos-ai-app.zeus-shell .session-rui-request :is(footer, .session-rui-inline-actions) button[type='submit'] {
+  background: var(--session-text) !important; border-color: var(--session-text) !important; color: var(--session-canvas) !important;
+}
+
+/* 所有项目页共用外框：Tab 左对齐内容卡片，上下间隔均为 12px。 */
+.macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) {
+  --project-frame-gap: 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--project-frame-gap) !important;
+  padding: var(--project-frame-gap) !important;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  background: var(--zeus-page-background) !important;
+}
+.macos-ai-app.zeus-shell .ai-workspace > .project-workspace-mode-toolbar {
+  box-sizing: border-box;
+  flex: 0 0 auto !important;
+  min-block-size: 40px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .ai-workspace > .project-workspace-mode-toolbar > nav {
+  margin: 0 !important;
+  align-self: center;
+}
+.macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) > .workspace-view {
+  box-sizing: border-box;
+  flex: 1 1 0 !important;
+  block-size: auto !important;
+  height: auto !important;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--zeus-card-border) !important;
+  border-radius: 12px !important;
+  background: var(--zeus-card-background) !important;
+  box-shadow: none !important;
+}
+
+/* 任务页复用统一外框，移除内部重复卡片及其外围空隙。 */
+.macos-ai-app.zeus-shell .workspace-view-project-tasks > .task-management-detail-pane {
+  padding: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  background: transparent !important;
+}
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-workbench {
+  margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  background: transparent !important; padding: 16px !important;
+}
+/* 统计摘要归入标题下方，保留点击展开完整信息的能力。 */
+.macos-ai-app.zeus-shell .session-thread-title-copy { gap: 3px; }
+.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details {
+  border: 0; background: transparent; pointer-events: auto; min-width: 0;
+}
+.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details > summary {
+  min-block-size: 20px; padding: 0; border-radius: 3px;
+}
+.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-summary-primary { gap: 3px 12px; font-size: 10px; line-height: 18px; }
+.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-summary-metric b { color: var(--session-text-muted); font-weight: 500; }
+.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-detail-groups {
+  max-height: 40vh; overflow: auto; padding: 10px 0; border-top: 1px solid var(--session-line-soft); margin-top: 6px;
+}
+
+.macos-ai-app.zeus-shell .session-thread-subtitle-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; min-width: 0; }
+.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-thread-project-name { flex: 0 1 auto; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 18px; }
+.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details { flex: 1 1 420px; }
+
+/* 项目侧栏保持单层列表，长标题与尾部操作分别占位。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-disclosure-placement="trailing"] {
+  display: grid; grid-template-columns: minmax(0, 1fr) 52px 18px; gap: 4px;
+  min-width: 0; box-shadow: none;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row-main {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr); min-width: 0; overflow: hidden; box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row-label {
+  display: block; width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-item,
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations,
+.macos-ai-app.zeus-shell .project-first-sidebar .session-conversation-project-group,
+.macos-ai-app.zeus-shell .project-first-sidebar .session-conversation-tree-item {
+  background: transparent !important; border: 0 !important; box-shadow: none !important;
+}
+/* 项目名与会话标题共用文字基线，包含内边距、图标列和间距。 */
+.macos-ai-app.zeus-shell .project-first-sidebar {
+  --zeus-sidebar-folder-size: 17px;
+  --zeus-sidebar-icon-column: 18px;
+  --zeus-sidebar-label-gap: 8px;
+  --zeus-sidebar-row-inset: 8px;
+  --zeus-sidebar-label-start: calc(var(--zeus-sidebar-row-inset) + var(--zeus-sidebar-icon-column) + var(--zeus-sidebar-label-gap));
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .native-folder-icon { inline-size: var(--zeus-sidebar-folder-size); block-size: var(--zeus-sidebar-folder-size); }
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-source-list-level="root"] { padding-inline: 0; border: 0; }
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-source-list-level="root"] > .zeus-source-list-row-main {
+  padding-inline-start: var(--zeus-sidebar-row-inset); border: 0;
+  grid-template-columns: var(--zeus-sidebar-icon-column) minmax(0, 1fr); gap: var(--zeus-sidebar-label-gap);
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations { margin: 3px 0 8px; padding: 0; }
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row {
+  padding-inline-start: var(--zeus-sidebar-label-start); border: 0;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .session-conversation-tree-row {
+  box-shadow: none !important; border-color: transparent !important; border-radius: 6px;
+}
+
+/* 源码目录和标签采用平面列表，避免通用按钮皮肤挤占内容。 */
+.macos-ai-app.zeus-shell .project-source-tree-scroll { padding: 4px 0 20px; }
+.macos-ai-app.zeus-shell .project-source-tree-scroll button {
+  min-height: 24px; margin-block: 0; padding-block: 2px; gap: 6px; font-size: 12px; line-height: 20px;
+  background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .project-source-tree-scroll button:hover:not(:disabled) { background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent) !important; }
+.macos-ai-app.zeus-shell .project-source-tree-scroll button.selected { background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent) !important; }
+.macos-ai-app.zeus-shell .project-source-search { margin: 8px 10px; min-height: 32px; gap: 8px; }
+.macos-ai-app.zeus-shell .project-source-search input { height: 30px; box-shadow: none; }
+.macos-ai-app.zeus-shell .project-source-tabs { gap: 0; padding: 0; align-items: stretch; min-height: 34px; background: var(--zeus-product-panel-muted); border-radius: 0 !important; box-shadow: none !important; }
+.macos-ai-app.zeus-shell .project-source-tab {
+  flex: 0 0 auto; display: flex; gap: 8px; min-width: 100px; max-width: 220px; min-height: 34px;
+  padding: 0 6px 0 0; border: 0; border-right: 1px solid var(--zeus-control-border); border-top: 2px solid transparent;
+  border-radius: 0 !important; box-shadow: none !important; background: transparent !important;
+}
+.macos-ai-app.zeus-shell .project-source-tab.active { background: var(--zeus-code-editor-bg) !important; border-top-color: var(--zeus-control-accent); color: var(--zeus-control-text); }
+.macos-ai-app.zeus-shell .project-source-tab:not(.active):hover { background: color-mix(in srgb, var(--zeus-control-accent) 5%, transparent) !important; }
+.macos-ai-app.zeus-shell .project-source-tab > [role="tab"] {
+  min-width: 0; min-height: 30px; padding: 0 0 0 10px; background: transparent !important;
+  border: 0 !important; box-shadow: none !important; border-radius: 0;
+}
+.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close {
+  flex: 0 0 22px; width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 0;
+  background: transparent !important; border: 0 !important; box-shadow: none !important; border-radius: 4px;
+  opacity: 0;
+}
+.macos-ai-app.zeus-shell .project-source-tab:is(.active, :hover, :focus-within) > .project-source-tab-close { opacity: 1; }
+.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close:hover { background: color-mix(in srgb, var(--zeus-control-accent) 12%, transparent) !important; }
+
+/* 全选与文件复选框共用左侧基线，树缩进仅作用于文件内容。 */
+.macos-ai-app.zeus-shell .project-git-stage-panel { --git-checkbox-inset: 8px; }
+.macos-ai-app.zeus-shell .project-git-stage-panel > header { padding-inline-start: var(--git-checkbox-inset); }
+.macos-ai-app.zeus-shell .project-git-stage-panel .project-git-change-file-row { padding-inline-start: var(--git-checkbox-inset); margin-inline: 0; }
+.macos-ai-app.zeus-shell .project-git-stage-panel .project-git-stage-select-all > input,
+.macos-ai-app.zeus-shell .project-git-stage-panel .project-git-change-file-row > input {
+  margin: 0 !important; width: 16px; height: 16px; flex: 0 0 16px;
+}
+.macos-ai-app.zeus-shell .project-git-stage-panel .project-git-change-file-row { gap: 6px; }

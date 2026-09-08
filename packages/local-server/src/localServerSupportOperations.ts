@@ -805,14 +805,17 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     const notarizationConfigured = Boolean(releaseEnvironment.APPLE_ID && releaseEnvironment.APPLE_APP_SPECIFIC_PASSWORD && releaseEnvironment.APPLE_TEAM_ID);
     const caskPath = `${projectRoot}/Casks/zeus.rb`;
     const workflowPath = `${projectRoot}/.github/workflows/release.yml`;
-    const changelogPath = 'docs/release.md';
+    const configuredCurrentVersion = typeof options.currentAppVersion === 'function' ? options.currentAppVersion().trim() : options.currentAppVersion?.trim();
+    const currentVersion = configuredCurrentVersion || readProjectVersion(projectRoot);
+    const versionChangelogPath = `releases/v${currentVersion}.md`;
+    const changelogPath = existsSync(`${projectRoot}/${versionChangelogPath}`) ? versionChangelogPath : '';
     const readiness = detectReleaseReadiness({
       hasAppleCertificate: signingConfigured,
       hasNotaryCredentials: notarizationConfigured,
     });
     const releaseWorkflowConfigured = existsSync(workflowPath);
     const autoUpdate = buildAutoUpdatePolicy({
-      currentVersion: readProjectVersion(projectRoot),
+      currentVersion,
       channel: 'manual',
       hasReleaseWorkflow: releaseWorkflowConfigured,
       hasSignedAndNotarizedArtifacts: readiness.canSign && readiness.canNotarize,

@@ -7,7 +7,7 @@ import type { PluginSkillReference } from './sessionTypes.js';
 type StructuredTokenKind = 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
 
 /** 保留标签展示范围、结构化身份与模型可识别的调用文本。 */
-interface StructuredToken {
+export interface StructuredToken {
   id: string;
   kind: StructuredTokenKind;
   start: number;
@@ -48,6 +48,7 @@ export interface StructuredComposerSelection {
 
 export interface StructuredComposerInputProps {
   value: string;
+  tokenDraft?: { current: StructuredToken[] };
   onValueChange(value: string): void;
   onSelectionChange(selection: StructuredComposerSelection): void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -76,7 +77,7 @@ export interface StructuredComposerInputProps {
 export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const zh = props.language === 'zh-CN';
   const listboxId = useId();
-  const [tokens, setTokens] = useState<StructuredToken[]>([]);
+  const [tokens, setTokens] = useState<StructuredToken[]>(() => props.tokenDraft?.current ?? []);
   const [trigger, setTrigger] = useState<TriggerRange | null>(null);
   const [activeOption, setActiveOption] = useState(0);
   const [catalog, setCatalog] = useState<SkillCatalog | null>(null);
@@ -150,6 +151,10 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
     setTokens((current) => current.filter((token) => props.value.slice(token.start, token.end) === token.label));
     if (!props.value) setTrigger(null);
   }, [props.value]);
+
+  useEffect(() => {
+    if (props.tokenDraft) props.tokenDraft.current = tokens;
+  }, [props.tokenDraft, tokens]);
 
   const selection = useMemo(() => selectionFromTokens(props.value, tokens), [props.value, tokens]);
   useEffect(() => props.onSelectionChange(selection), [props.onSelectionChange, selection]);

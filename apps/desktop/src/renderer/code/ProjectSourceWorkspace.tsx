@@ -83,6 +83,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const tabsRef = useRef(tabs);
   const activePathRef = useRef(activePath);
   const dirtyRef = useRef(false);
+  const fileOpenRequestedRef = useRef(false);
   directoriesRef.current = directories;
   tabsRef.current = tabs;
   activePathRef.current = activePath;
@@ -101,6 +102,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   const openFile = useCallback(
     async (relativePath: string, line?: number) => {
+      fileOpenRequestedRef.current = true;
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
         setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLine: line ?? tab.revealLine } : tab)));
@@ -117,6 +119,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       try {
         const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
         setTabs((current) => {
+          if (current.some((tab) => tab.document.relativePath === relativePath)) {
+            return current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLine: line ?? tab.revealLine } : tab));
+          }
           const available =
             current.length < 20
               ? current
@@ -217,8 +222,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             cursorLine: 1,
             cursorColumn: 1,
           }));
-        setTabs(restoredTabs);
-        setActivePath((current) => (restoredTabs.some((tab) => tab.document.relativePath === current) ? current : (restoredTabs[0]?.document.relativePath ?? null)));
+        // 恢复偏好期间可能已收到图谱跳转或用户打开请求，不能覆盖新标签与草稿。
+        setTabs((current) => {
+          const openPaths = new Set(current.map((tab) => tab.document.relativePath));
+          return [...current, ...restoredTabs.filter((tab) => !openPaths.has(tab.document.relativePath))].slice(0, 20);
+        });
+        if (!fileOpenRequestedRef.current) {
+          setActivePath((current) => (restoredTabs.some((tab) => tab.document.relativePath === current) ? current : (restoredTabs[0]?.document.relativePath ?? null)));
+        }
       } catch (loadError) {
         if (active) setError(loadError);
       } finally {
@@ -360,7 +371,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     }
     setBusyPath(path);
     try {
-      await loadDirectory(path);
+      // 再次展开也读取磁盘，避免外部文件操作后一直显示旧快照。
+      await loadDirectory(path, true);
       setExpandedDirectories((current) => new Set(current).add(path));
     } catch (loadError) {
       setError(loadError);
@@ -416,6 +428,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const entry = await bridge.createProjectSourceEntry({ projectId: props.project.id, parentRelativePath: operationParent, name: operationName, kind: operation.kind === 'create-file' ? 'file' : 'directory' });
         await loadDirectory(operationParent, true);
         if (entry.kind === 'file') await openFile(entry.relativePath);
+        setNotice(zh ? `已创建 ${entry.relativePath}` : `Created ${entry.relativePath}`);
       } else if (operation.kind === 'save-as') {
         const sourceTab = tabsRef.current.find((tab) => tab.document.relativePath === operation.tabPath);
         if (!sourceTab) throw new Error(zh ? '原文件标签已经关闭。' : 'The source tab is already closed.');
@@ -448,6 +461,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           });
         }
         await Promise.all([loadDirectory(parentPath(oldPath), true), loadDirectory(operationParent, true)]);
+        setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
         if (
@@ -456,8 +470,21 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         )
           return;
         await bridge.trashProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath });
-        setTabs((current) => current.filter((tab) => !isSameOrChild(tab.document.relativePath, operation.entry.relativePath)));
-        setActivePath((current) => (current && isSameOrChild(current, operation.entry.relativePath) ? null : current));
+        if (operation.entry.kind === 'directory') {
+          const deletedPath = operation.entry.relativePath;
+          // 删除成功后清除子目录缓存，避免同名目录重新创建时显示旧文件。
+          setDirectories((current) => Object.fromEntries(Object.entries(current).filter(([path]) => !isSameOrChild(path, deletedPath))));
+          setExpandedDirectories((current) => new Set([...current].filter((path) => !isSameOrChild(path, deletedPath))));
+        }
+        const currentTabs = tabsRef.current;
+        const currentPath = activePathRef.current;
+        const remainingTabs = currentTabs.filter((tab) => !isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
+        setTabs(remainingTabs);
+        if (currentPath && isSameOrChild(currentPath, operation.entry.relativePath)) {
+          const activeIndex = currentTabs.findIndex((tab) => tab.document.relativePath === currentPath);
+          const nextIndex = currentTabs.slice(0, activeIndex).filter((tab) => !isSameOrChild(tab.document.relativePath, operation.entry.relativePath)).length;
+          setActivePath(remainingTabs[Math.min(nextIndex, remainingTabs.length - 1)]?.document.relativePath ?? null);
+        }
         await loadDirectory(parentPath(operation.entry.relativePath), true);
         setNotice(zh ? '已移入系统废纸篓，可在 Finder 中恢复。' : 'Moved to system Trash. You can restore it in Finder.');
       }

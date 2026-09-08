@@ -113,7 +113,7 @@ export class ProjectSourceWorkspaceService {
     };
   }
 
-  async saveFile(input: SaveProjectSourceFileInput): Promise<ProjectSourceDocument> {
+  async saveFile(input: SaveProjectSourceFileInput, beforeWrite?: () => Promise<void>): Promise<ProjectSourceDocument> {
     const root = await this.#projectRoot(input.projectId);
     const target = await resolveExistingPath(root, input.relativePath, 'file');
     const targetLstat = await lstat(target.absolutePath);
@@ -130,6 +130,8 @@ export class ProjectSourceWorkspaceService {
     const bytes = input.hasBom ? Buffer.concat([utf8Bom, body]) : body;
     if (bytes.byteLength > maximumEditableBytes) throw workspaceError('ZEUS_PROJECT_SOURCE_TOO_LARGE', '保存后的文件超过 2 MiB 编辑上限。');
     const temporaryPath = join(dirname(target.absolutePath), `.${basename(target.absolutePath)}.${randomUUID()}.zeus-tmp`);
+    // 冲突与大小校验完成后才登记写入，校验失败不会被误报为写入结果未知。
+    await beforeWrite?.();
     const temporary = await open(temporaryPath, 'wx', targetLstat.mode);
     try {
       await temporary.writeFile(bytes);
@@ -152,7 +154,7 @@ export class ProjectSourceWorkspaceService {
     return this.readFile(input.projectId, target.relativePath);
   }
 
-  async createEntry(input: CreateProjectSourceEntryInput): Promise<ProjectSourceEntry> {
+  async createEntry(input: CreateProjectSourceEntryInput, beforeWrite?: () => Promise<void>): Promise<ProjectSourceEntry> {
     validateEntryName(input.name);
     const root = await this.#projectRoot(input.projectId);
     const parent = await resolveExistingPath(root, input.parentRelativePath, 'directory');
@@ -160,6 +162,7 @@ export class ProjectSourceWorkspaceService {
     assertSafeRelativePath(relativePath, false);
     const absolutePath = resolveLexicalPath(root, relativePath);
     await assertMissing(absolutePath);
+    await beforeWrite?.();
     if (input.kind === 'directory') {
       await mkdir(absolutePath, { mode: 0o755 });
       await syncDirectory(absolutePath);
@@ -175,7 +178,7 @@ export class ProjectSourceWorkspaceService {
     return describeEntry(root, relativePath);
   }
 
-  async moveEntry(input: MoveProjectSourceEntryInput): Promise<ProjectSourceEntry> {
+  async moveEntry(input: MoveProjectSourceEntryInput, beforeWrite?: () => Promise<void>): Promise<ProjectSourceEntry> {
     validateEntryName(input.targetName);
     const root = await this.#projectRoot(input.projectId);
     assertSafeRelativePath(normalizeRelativePath(input.relativePath), false);
@@ -189,16 +192,18 @@ export class ProjectSourceWorkspaceService {
     }
     const targetAbsolutePath = resolveLexicalPath(root, targetRelativePath);
     await assertMissing(targetAbsolutePath);
+    await beforeWrite?.();
     await rename(source.absolutePath, targetAbsolutePath);
     await syncDirectory(dirname(source.absolutePath));
     if (dirname(source.absolutePath) !== dirname(targetAbsolutePath)) await syncDirectory(dirname(targetAbsolutePath));
     return describeEntry(root, targetRelativePath);
   }
 
-  async trashEntry(projectId: string, relativePath: string): Promise<{ trashed: true; relativePath: string }> {
+  async trashEntry(projectId: string, relativePath: string, beforeWrite?: () => Promise<void>): Promise<{ trashed: true; relativePath: string }> {
     const root = await this.#projectRoot(projectId);
     assertSafeRelativePath(normalizeRelativePath(relativePath), false);
     const target = await resolveExistingEntryPath(root, relativePath);
+    await beforeWrite?.();
     await this.#services.trashItem(target.absolutePath);
     return { trashed: true, relativePath: target.relativePath };
   }
@@ -389,5 +394,6 @@ async function assertMissing(path: string): Promise<void> {
 }
 
 function workspaceError(code: string, message: string): Error {
-  return Object.assign(new Error(message), { code });
+  // Electron IPC 只保证传递 message，保留错误码供渲染层识别具体恢复方式。
+  return Object.assign(new Error(`${code}: ${message}`), { code });
 }
