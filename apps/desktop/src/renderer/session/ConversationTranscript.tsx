@@ -32,6 +32,7 @@ import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, ty
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
+import { isSubmissionWaitingInQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 
 export interface ConversationTranscriptProps {
@@ -1394,6 +1395,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
         queuedSubmissionId={queuedSubmissionId}
+        waitingInQueue={isSubmissionWaitingInQueue(options.props.state.queue, queuedSubmission)}
         conversationRestoring={Boolean(queuedSubmission && options.props.state.queue?.waitReason === 'conversation_restoring')}
         queuedSteerDisabledReason={queuedSteerDisabledReason}
         onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
@@ -2306,12 +2308,6 @@ function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, queuedClientU
   // Provider 的 active turn 会早于 userMessage/模型历史投影到达。此时不能因为 pending turn id
   // 与 Provider turn id 不同就隐藏本地气泡；只有队列已经用同一客户端身份画出替身时才去重。
   return Boolean(clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId));
-}
-
-function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null) {
-  return [...(queue?.submissions ?? [])]
-    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
-    .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 
 function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQueueSnapshot | null): NativeQueuedSubmission | null {

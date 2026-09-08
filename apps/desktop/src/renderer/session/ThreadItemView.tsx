@@ -152,6 +152,8 @@ export interface ThreadItemViewProps {
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
   queuedSubmissionId?: string;
+  /** 排队提示与操作共用真实等待事实，避免正常发送交接时短暂出现。 */
+  waitingInQueue?: boolean;
   /** 来自服务端队列的真实恢复阶段，与页面历史加载分开。 */
   conversationRestoring?: boolean;
   queuedSteerDisabledReason?: string | null;
@@ -306,7 +308,8 @@ function TaskPushMessageContent(
   );
 }
 
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage, conversationRestoring = false): string | null {
+/** 按实际交付阶段显示提示；内部入队不等同于用户需要等待。 */
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage, conversationRestoring = false, waitingInQueue = false): string | null {
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
   if (conversationRestoring && (item.status === 'queued' || item.status === 'paused')) return labels.restoringConversation;
@@ -328,7 +331,7 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     return labels.deliveryPaused;
   }
   if (item.status !== 'queued') return null;
-  return item.payload.queuedUntilHydrated === true ? labels.restoringConversation : labels.queued;
+  return item.payload.queuedUntilHydrated === true ? labels.restoringConversation : waitingInQueue ? labels.queued : null;
 }
 
 function recoveredRequestAnswers(value: unknown): Record<string, string[]> {
@@ -481,7 +484,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
-  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring) : null;
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring, props.waitingInQueue) : null;
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
@@ -723,7 +726,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {retryingExpert ? labels.retryingExpert : labels.retryExpert}
         </button>
       ) : null}
-      {props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission) ? (
+      {props.waitingInQueue && props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission) ? (
         <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions}>
           {props.onSteerQueuedSubmission ? (
             <button
