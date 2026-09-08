@@ -224,7 +224,7 @@ declare global {
       }>;
       clearNetworkCache: () => Promise<{ cleared: boolean; clearedAt: string }>;
       exportPatchToFile: (patch: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
-      openGraphSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
+      openSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
         opened: boolean;
         filePath: string | null;
         lineStart?: number | null;
@@ -251,8 +251,6 @@ declare global {
         mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
         error?: string;
       }>;
-      exportMermaidDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.mermaid'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
-      exportPlantUmlDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.plantuml'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       notifyAppShellSettingsChanged: (settings: {
         appLanguage: 'zh-CN' | 'en-US';
         appearance: 'light' | 'dark' | 'system';

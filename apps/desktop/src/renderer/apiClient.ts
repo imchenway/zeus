@@ -36,7 +36,6 @@ export type * from './features/automations/automationContracts.js';
 export type * from './features/conversations/conversationContracts.js';
 export type * from './features/dashboard/dashboardContracts.js';
 export type * from './features/git/gitContracts.js';
-export type * from './features/graph/graphContracts.js';
 export type * from './features/integrations/integrationContracts.js';
 export type * from './features/projects/projectContracts.js';
 export type * from './features/release/releaseContracts.js';

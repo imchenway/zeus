@@ -6,7 +6,6 @@
 - [会话编排](./docs/contexts/conversation-orchestration/CONTEXT.md) — 管理产品会话、提交、轮次、运行分段、队列与恢复决策。
 - [Agent Runtime](./docs/contexts/agent-runtime/CONTEXT.md) — 管理 Provider 能力、原生会话、运行代次与协议适配。
 - [执行与资产](./docs/contexts/execution-assets/CONTEXT.md) — 管理命令、终端、工具结果、附件、变更集与大型内容资产。
-- [代码智能](./docs/contexts/code-intelligence/CONTEXT.md) — 管理代码索引、符号、图谱、视图与可重建 generation。
 - [集成与平台](./docs/contexts/integration-platform/CONTEXT.md) — 管理远程入口、凭据槽位、安全、升级和本机运行边界。
 
 根级 [CONTEXT.md](./CONTEXT.md) 定义所有上下文共享的产品语言；上下文文档只补充各自拥有的特定概念。
@@ -17,7 +16,6 @@
 - **会话编排 → Agent Runtime**：会话编排提交带幂等身份的运行命令；Agent Runtime 返回带原生身份与 generation 的接纳、事件和恢复证据。
 - **会话编排 → 执行与资产**：会话编排只保存稳定资产引用、授权和展示投影；执行与资产拥有完整内容及其生命周期。
 - **工作管理 → 执行与资产**：任务可引用工作区、变更集和交付结果；文件系统与 Git 副作用必须通过执行命令发生。
-- **工作管理 → 代码智能**：工作管理发布项目或任务事实；代码智能生成可重建投影，不同步反写工作管理事实。
 - **集成与平台 → 其他上下文**：远程入口和桌面入口只提交公开命令、执行查询和接收领域事件；不得绕过应用服务直接写业务表。
 - **所有上下文 → 集成与平台**：只以凭据槽位 ID、授权 ID 和受控能力描述引用安全事实，不读取或复制明文密钥。
 

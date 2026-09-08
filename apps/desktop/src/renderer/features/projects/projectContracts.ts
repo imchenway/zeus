@@ -8,7 +8,6 @@ export interface ProjectRecord {
   localPath: string;
   description?: string | null;
   note?: string | null;
-  scanStatus: string;
   defaultTemplateId?: string | null;
 }
 
@@ -29,8 +28,6 @@ export interface ProjectWorkspaceConfigSnapshot {
 
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 
-export type ProjectIndexScope = 'project' | 'src' | 'custom';
-
 export interface ProjectModelServiceTierPreference {
   modelSourceId: string | null;
   modelId: string;
@@ -42,11 +39,6 @@ export interface ProjectConfig {
   serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultModel: string | null;
   defaultWorkMode: ProjectWorkMode;
-  defaultTaskPrompt: string;
-  scan: {
-    ignoreDirectories: string[];
-    indexScope: ProjectIndexScope;
-  };
   language: {
     primary: string;
     additional: string[];
@@ -61,7 +53,6 @@ export interface ProjectConfig {
   };
   database: {
     connectionName: string | null;
-    schemaPaths: string[];
   };
   telegram: {
     alias: string | null;
@@ -79,21 +70,8 @@ export interface ProjectDatabaseSecretSnapshot {
   password: SecretPresence;
 }
 
-export interface ProjectGraphSummary {
-  nodeCount: number;
-  edgeCount: number;
-  viewCount: number;
-}
-
-export interface ProjectScanStatus {
-  projectId: string;
-  scanStatus: ProjectRecord['scanStatus'];
-  graph: ProjectGraphSummary;
-}
-
 export interface ProjectOverview {
   project: ProjectRecord;
-  graph: ProjectGraphSummary;
   git: GitStatusSummary;
   tasks: {
     total: number;
@@ -109,7 +87,6 @@ export interface CreateProjectRequest {
   note?: string;
   defaultModel?: string | null;
   defaultWorkMode?: ProjectWorkMode;
-  defaultTaskPrompt?: string;
 }
 
 export interface UpdateProjectRequest {

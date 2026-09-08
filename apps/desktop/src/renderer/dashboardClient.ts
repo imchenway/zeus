@@ -5,7 +5,6 @@ import { createConversationApiClient, type ConversationApiClient } from './featu
 import { createDashboardApiClient, type DashboardApiClient } from './features/dashboard/dashboardApiClient.js';
 import { createDigitalEmployeeApiClient, type DigitalEmployeeApiClient } from './features/digital-employees/digitalEmployeeApiClient.js';
 import { createGitApiClient, type GitApiClient } from './features/git/gitApiClient.js';
-import { createGraphApiClient, type GraphApiClient } from './features/graph/graphApiClient.js';
 import { createIntegrationApiClient, type IntegrationApiClient } from './features/integrations/integrationApiClient.js';
 import { createMemoryApiClient, type MemoryApiClient } from './features/memory/memoryApiClient.js';
 import { createProjectApiClient, type ProjectApiClient } from './features/projects/projectApiClient.js';
@@ -27,7 +26,6 @@ export interface DashboardClient
     CommandCenterApiClient,
     ConversationApiClient,
     GitApiClient,
-    GraphApiClient,
     IntegrationApiClient,
     ProjectApiClient,
     RemoteControlApiClient,
@@ -96,7 +94,6 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     ...createCommandCenterApiClient(transport),
     ...conversations,
     ...git,
-    ...createGraphApiClient(transport),
     ...createIntegrationApiClient(transport),
     ...projects,
     ...remoteControl,

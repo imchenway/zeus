@@ -1,20 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
-import {
-  heavyWorkerProtocolVersion,
-  type CodeMapHeavyWorkerResult,
-  type GitDiffHeavyWorkerResult,
-  type GitStatusHeavyWorkerResult,
-  type HeavyWorkerInput,
-  type HeavyWorkerMessage,
-  type HeavyWorkerProgressStage,
-  type HeavyWorkerResult,
-} from './heavyWorkerContracts.js';
+import { heavyWorkerProtocolVersion, type GitDiffHeavyWorkerResult, type GitStatusHeavyWorkerResult, type HeavyWorkerInput, type HeavyWorkerMessage, type HeavyWorkerProgressStage, type HeavyWorkerResult } from './heavyWorkerContracts.js';
 
 const heavyWorkerConcurrency = 1;
 const heavyWorkerQueueLimit = 3;
 const heavyWorkerTimeoutMs = 15 * 60_000;
-const codeMapWorkerMaxResultBytes = 256 * 1024 * 1024;
 const gitDiffWorkerMaxResultBytes = 32 * 1024 * 1024;
 const gitStatusWorkerMaxResultBytes = 16 * 1024 * 1024;
 
@@ -61,23 +51,6 @@ let timedOutJobs = 0;
 let completedByKind = emptyCompletedByKind();
 let lastProgress: HeavyWorkerPoolSnapshot['lastProgress'] = null;
 let lastDurationMs: number | null = null;
-
-export function runCodeMapHeavyJob(rootPath: string, projectName: string, ignoreDirectories: string[], additionalFiles: Array<{ absolutePath: string; relativePath: string }>, signal?: AbortSignal): Promise<CodeMapHeavyWorkerResult> {
-  return enqueueHeavyJob(
-    {
-      protocolVersion: heavyWorkerProtocolVersion,
-      jobId: `heavy_${randomUUID()}`,
-      kind: 'code_map_scan',
-      rootPath,
-      projectName,
-      ignoreDirectories: [...ignoreDirectories],
-      additionalFiles: additionalFiles.map((file) => ({ ...file })),
-      maxResultBytes: codeMapWorkerMaxResultBytes,
-    },
-    isCodeMapResult,
-    signal,
-  );
-}
 
 /** 大型 Git diff 的子进程输出与 unified-diff 解析都在 Worker 内完成；Core 只接收有哈希与字节预算的投影。 */
 export function runGitDiffHeavyJob(rootPath: string, signal?: AbortSignal): Promise<GitDiffHeavyWorkerResult> {
@@ -257,12 +230,6 @@ function isResultRef(value: unknown, input: Pick<HeavyWorkerInput, 'jobId' | 'ki
   );
 }
 
-function isCodeMapResult(value: unknown, jobId: string): value is CodeMapHeavyWorkerResult {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const result = value as Partial<CodeMapHeavyWorkerResult>;
-  return Boolean(result.scan && typeof result.scan === 'object') && Boolean(result.graph && typeof result.graph === 'object') && isResultRef(value, { jobId, kind: 'code_map_scan', maxResultBytes: codeMapWorkerMaxResultBytes });
-}
-
 function isGitDiffResult(value: unknown, jobId: string): value is GitDiffHeavyWorkerResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const result = value as Partial<GitDiffHeavyWorkerResult>;
@@ -276,7 +243,6 @@ function isGitStatusResult(value: unknown, jobId: string): value is GitStatusHea
 }
 
 function isHeavyWorkerResult(value: unknown, input: HeavyWorkerInput): value is HeavyWorkerResult {
-  if (input.kind === 'code_map_scan') return isCodeMapResult(value, input.jobId);
   if (input.kind === 'git_diff') return isGitDiffResult(value, input.jobId);
   return isGitStatusResult(value, input.jobId);
 }
@@ -316,7 +282,7 @@ function finishJob(job: QueuedHeavyJob, outcome: 'completed' | 'failed', result?
 }
 
 function emptyCompletedByKind(): Record<HeavyWorkerInput['kind'], number> {
-  return { code_map_scan: 0, git_diff: 0, git_status: 0 };
+  return { git_diff: 0, git_status: 0 };
 }
 
 function heavyWorkerError(code: string, message: string): Error & { code: string } {

@@ -1,3 +1,5 @@
+import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
+import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { useId, useState } from 'react';
@@ -45,8 +47,7 @@ import {
   ProjectWorkspaceModeToolbar,
   SidebarNav,
 } from './WorkspaceChrome.js';
-import { formatGraphConversationStatus, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
-import { handleInlineRailKeyboardNavigation, RuntimeXtermPane } from '../graph/GraphCanvas.js';
+import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
   browserNativeConversationStartStorage,
   controlBusyProps,
@@ -134,7 +135,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const { state, domainActions, operations } = input;
   const {
     actionState,
-    activeGraphView,
     activeNavTarget,
     activeProjectId,
     activeProjectSection,
@@ -171,8 +171,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     gitDiffCopy,
     gitRemote,
     gitTargetRef,
-    graphAnswer,
-    graphConversations,
     loadTaskBoard,
     loadingDiffBusy,
     loadingRuntimeBusy,
@@ -222,8 +220,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     runtimeSettings,
     runtimeShowArchived,
     runtimeStatus,
-    scanBusy,
-    scanState,
     secondaryDrawerCopy,
     securityAuditLogs,
     securitySecrets,
@@ -234,8 +230,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     selectedProject,
     selectedTaskIds,
     sessionWorkspaceCopy,
-    setActiveNavTarget,
-    setActiveProjectSection,
     setAppShellSettings,
     setConversationDrawer,
     setExternalApiKeyInput,
@@ -334,12 +328,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     closeTaskCreateModal,
     closeTaskGitReview,
     closeTaskModelPush,
-    codeMapActionLabel,
     createCurrentProject,
     currentRuntimeAdapterDisplayName,
     deleteProject,
     effectiveTaskStatusSettingsTargetId,
-    loadGraphConversationDetail,
     materializeTaskCreateResources,
     openProjectCreateDialog,
     openTaskConflictAiConversation,
@@ -362,7 +354,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     runStorageRecoveryPreflightAndRestart,
     revealProjectInFinder,
     selectNativeConversation,
-    selectProjectCodeWorkspaceMode,
     submitTaskCreateModal,
     submitTaskModelPush,
     taskDetailPaneTask,
@@ -386,7 +377,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     checkReleaseUpdate,
     checkRuntimeAdapter,
     clearExternalApiKey,
-    clearLocalCaches,
     clearNetworkCache,
     clearTaskSelection,
     closeTaskDetail,
@@ -403,7 +393,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     exportLocalSettings,
     exportRuntimeLogs,
     generateRuntimeSessionSummary,
-    handleCodeMapAction,
     handleMainNavigate,
     handleProjectSidebarResizeKeyDown,
     handleProjectSidebarResizePointerDown,
@@ -426,7 +415,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     refreshRuntimeSessions,
     rejectGenericRuntimeConfirmation,
     renderNativeConversationWorkspace,
-    renderProjectCodeMapStage,
     renderTaskDetailPaneContent,
     repositoryPickerLabel,
     resetProjectSidebarWidth,
@@ -535,7 +523,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
 
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
@@ -801,23 +789,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
                     onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                     onDirtyChange={setSourceWorkspaceDirty}
-                    onOpenExternal={(relativePath, line) => void props.onOpenGraphSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                    onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
                   />
-                </div>
-              ) : null}
-              {visitedCodeWorkspaceModes.has('graph') ? (
-                <div className="project-code-mode-pane project-code-graph-pane" hidden={projectCodeWorkspaceMode !== 'graph'}>
-                  {activeGraphView ? (
-                    renderProjectCodeMapStage()
-                  ) : (
-                    <section className="project-code-mode-empty" aria-live="polite">
-                      <strong>{scanBusy ? codeWorkspaceCopy.scanning : codeWorkspaceCopy.graphTitle}</strong>
-                      <span>{scanState === 'failed' ? codeWorkspaceCopy.retryScan : codeWorkspaceCopy.waitingRealScan}</span>
-                      <Button variant="primary" busy={scanBusy} onClick={() => void selectProjectCodeWorkspaceMode('graph')}>
-                        {codeMapActionLabel()}
-                      </Button>
-                    </section>
-                  )}
                 </div>
               ) : null}
               {visitedCodeWorkspaceModes.has('commands') ? (
@@ -1458,57 +1431,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             {!runtimeLogsCollapsed ? <code className="runtime-log-line output">{projectedRuntimeLogOutput}</code> : <span>{sessionWorkspaceCopy.runtimeDrawer.collapsedLogs}</span>}
                           </div>
                         </section>
-                      ) : null}
-                    </section>
-                  ) : null}
-
-                  {conversationDrawer === 'context' ? (
-                    <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-context conversation-context-workbench" aria-label={secondaryDrawerCopy.contextLabel}>
-                      <div className="drawer-header-row">
-                        <strong>{secondaryDrawerCopy.contextLabel}</strong>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveNavTarget('projects');
-                            setActiveProjectSection('code');
-                            void handleCodeMapAction();
-                          }}
-                        >
-                          {secondaryDrawerCopy.openGraph}
-                        </button>
-                      </div>
-                      <section className="conversation-context-scope-row" aria-label={secondaryDrawerCopy.graphScopeAria}>
-                        <span className="conversation-context-row-copy">
-                          <strong>{secondaryDrawerCopy.graphContextTitle}</strong>
-                          <small>{secondaryDrawerCopy.graphContextHelp}</small>
-                        </span>
-                        <span className="conversation-context-row-meta">{secondaryDrawerCopy.graphContextMetrics(snapshot.graph.nodeCount, snapshot.graph.edgeCount, snapshot.graph.viewCount)}</span>
-                      </section>
-                      {graphAnswer ? (
-                        <div className="graph-context-answer-row conversation-context-answer-row">
-                          <span className="conversation-context-row-copy">
-                            <strong>{secondaryDrawerCopy.graphAnswerTitle}</strong>
-                            <small>{graphAnswer.sessionId ? secondaryDrawerCopy.runtimeSession(graphAnswer.sessionId) : secondaryDrawerCopy.insufficientRuntimeSession}</small>
-                          </span>
-                          <span className="conversation-context-row-meta">{graphAnswer.answer}</span>
-                        </div>
-                      ) : null}
-                      {graphConversations.length > 0 ? (
-                        <div className="conversation-context-graph-list" aria-label={secondaryDrawerCopy.graphConversationListAria}>
-                          {graphConversations.slice(0, 4).map((conversation) => (
-                            <button type="button" className="conversation-context-graph-row" key={conversation.id} onClick={() => loadGraphConversationDetail(conversation.id)}>
-                              {/* 上下文抽屉只提供图谱问答来源选择：标题、摘要和状态同一行呈现，避免回退成通用对象卡片。 */}
-                              <span className="conversation-context-graph-copy">
-                                <strong>{conversation.title}</strong>
-                                <small>{conversation.summary || conversation.sessionId || conversation.projectId}</small>
-                              </span>
-                              <span className="conversation-context-graph-meta">
-                                <span>{formatGraphConversationStatus(conversation.status, appShellSettings.appLanguage)}</span>
-                                <small>{conversation.archived ? secondaryDrawerCopy.archived : secondaryDrawerCopy.openable}</small>
-                              </span>
-                            </button>
-                          ))}
-                        </div>
                       ) : null}
                     </section>
                   ) : null}
@@ -2391,9 +2313,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         </span>
                         <span className="settings-row-field" />
                         <span className="settings-row-action-rail">
-                          <button type="button" onClick={clearLocalCaches} disabled={!props.onClearLocalCaches || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.data.clearCache}
-                          </button>
                           <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.data.clearNetworkCache}
                           </button>

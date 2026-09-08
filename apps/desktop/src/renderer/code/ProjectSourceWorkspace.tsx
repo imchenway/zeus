@@ -222,7 +222,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             cursorLine: 1,
             cursorColumn: 1,
           }));
-        // 恢复偏好期间可能已收到图谱跳转或用户打开请求，不能覆盖新标签与草稿。
+        // 恢复偏好期间可能已收到用户打开请求，不能覆盖新标签与草稿。
         setTabs((current) => {
           const openPaths = new Set(current.map((tab) => tab.document.relativePath));
           return [...current, ...restoredTabs.filter((tab) => !openPaths.has(tab.document.relativePath))].slice(0, 20);

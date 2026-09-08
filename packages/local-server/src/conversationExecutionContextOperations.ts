@@ -21,7 +21,7 @@ import {
 } from '@zeus/storage';
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
+import { parseJsonObject } from './localServerPlatformSupport.js';
 import { isPathInsideRoot } from './conversationResourcePreview.js';
 import { matchesTaskConflictAiConversationTitle } from './taskConflictAi.js';
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';

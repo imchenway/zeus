@@ -67,11 +67,6 @@ body {
   background: #405de6;
 }
 
-.qa-answer {
-  margin-top: 24px;
-  line-height: 1.65;
-}
-
 .qa-scenes {
   display: flex;
   flex-wrap: wrap;

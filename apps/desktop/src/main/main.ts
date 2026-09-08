@@ -12,12 +12,11 @@ import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, ty
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
 import { chooseProjectDirectory } from './projectDirectoryPicker.js';
 import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
-import { type GraphSourceLocation, openGraphSourceLocation } from './sourceOpen.js';
+import { type SourceLocation, openSourceLocation } from './sourceOpen.js';
 import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, type MainAppShellSettings, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications } from './appShellPolicy.js';
 import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
 import { openLocalLogDirectory } from './localLogDirectory.js';
@@ -2023,8 +2022,8 @@ function setupIpc(): void {
       writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
     }),
   );
-  ipcMain.handle('zeus:open-graph-source', (_event, source: GraphSourceLocation) =>
-    openGraphSourceLocation({
+  ipcMain.handle('zeus:open-source', (_event, source: SourceLocation) =>
+    openSourceLocation({
       projectRoot: resolveMainProjectRoot(),
       source,
       // 只检查文件存在性，不读取内容；打开动作交由 macOS 默认编辑器或文件关联处理。
@@ -2037,38 +2036,6 @@ function setupIpc(): void {
         }
       },
       openPath: (filePath) => shell.openPath(filePath),
-    }),
-  );
-  ipcMain.handle('zeus:export-mermaid-diagram', (_event, payload: unknown) =>
-    exportMermaidDiagramToFile({
-      payload: payload as {
-        fileName: string;
-        mimeType: string;
-        content: string;
-      },
-      chooseFile: () =>
-        dialog.showSaveDialog({
-          title: nativeText('导出 Mermaid 图表源码', 'Export Mermaid diagram source'),
-          defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.mmd',
-          filters: [{ name: 'Mermaid Diagram', extensions: ['mmd'] }],
-        }),
-      writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
-    }),
-  );
-  ipcMain.handle('zeus:export-plantuml-diagram', (_event, payload: unknown) =>
-    exportPlantUmlDiagramToFile({
-      payload: payload as {
-        fileName: string;
-        mimeType: string;
-        content: string;
-      },
-      chooseFile: () =>
-        dialog.showSaveDialog({
-          title: nativeText('导出 PlantUML 图表源码', 'Export PlantUML diagram source'),
-          defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.puml',
-          filters: [{ name: 'PlantUML Diagram', extensions: ['puml', 'plantuml'] }],
-        }),
-      writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
     }),
   );
   ipcMain.handle('zeus:export-runtime-logs', (_event, payload: unknown) =>

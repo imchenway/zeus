@@ -3,7 +3,7 @@ import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { type MainNavTarget, type SettingsCategory, WorkspacePage } from './WorkspacePage.js';
 
-export { buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
+export { buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
 
 type AppProps = Omit<ComponentProps<typeof WorkspacePage>, 'shellNavigation'>;
 
@@ -64,7 +64,7 @@ function initialMainRoute(props: AppProps): MainNavTarget {
   if (typeof window !== 'undefined' && window.location.hash) return routeFromHash(window.location.hash);
   if (props.initialSecuritySecrets || props.initialReleaseStatus || props.initialSecurityAuditLogs?.length || props.initialLocalError) return 'settings';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret || props.initialArchivedProjects?.length) return 'projects';
-  if (props.initialGitDiff || props.initialGitConfirmation || props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length) return 'projects';
+  if (props.initialGitDiff || props.initialGitConfirmation) return 'projects';
   if ((props.snapshot?.tasks.length ?? 0) > 0) return 'conversations';
   return 'projects';
 }
@@ -85,7 +85,7 @@ function routeFromHash(hash: string | undefined): MainNavTarget {
   const target = hash?.replace(/^#/, '');
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
-  if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
+  if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target.startsWith('settings-')) return 'settings';

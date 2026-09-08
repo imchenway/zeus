@@ -4,7 +4,7 @@ import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig } fr
 import { type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup } from '../../session/ProjectConversationTree.js';
 import { createNativeConversationStartEnvelopeManager, createProjectConversationStartEnvelopeManager, preloadCodexConversationCapabilities, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
-import { forgetGraphConversationCommandRequest, graphConversationClientCommandTypes } from '../conversations/graphConversationCommandClient.js';
+import { forgetConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
@@ -32,7 +32,6 @@ import {
   type AiRuntimeAdapterStatus,
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
-  type CodeMapSettings,
   type CodexConfigImportResult,
   type CodexConfigImportPreview,
   type CodexLegacyImportSnapshot,
@@ -40,12 +39,7 @@ import {
   type DashboardSnapshot,
   type GitDiffSummary,
   type GitOperationConfirmation,
-  type GraphConversationHistoryItem,
-  type GraphConversationHistoryPage,
-  type GraphQuestionAnswer,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  type GraphViewType,
+  type ConversationHistoryItem,
   type ProjectConfig,
   type ProjectModelServiceTierPreference,
   type ProjectDatabaseSecretSnapshot,
@@ -78,7 +72,6 @@ import {
   errorToLocalUiMessage,
   formatGenericShellRisk,
   formatRuntimeConfirmationStatus,
-  normalizeCodeMapSettings,
   normalizeLocalUiError,
   normalizeProjectConfig,
   normalizeRuntimeSettings,
@@ -105,13 +98,8 @@ import {
   formatRuntimeLogCopyStatus,
   formatRuntimeLogExportStatus,
   getLanguageCopy,
-  GRAPH_NODE_TASK_SUCCESS_DISMISS_MS,
-  GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS,
-  type GraphNodeTaskFeedback,
-  type GraphSourceOpenFeedback,
   inferInitialMainNavTarget,
   inferInitialProjectSection,
-  isProjectGraphViewForProject,
   type LocalUiErrorSnapshot,
   type MainNavTarget,
   type NativeConversationChoiceTaskLoadState,
@@ -125,7 +113,6 @@ import {
   readProjectSidebarPreferredWidth,
   readSettingsCategoryFromHash,
   resolveConversationNavigationId,
-  resolveInitialGraphProjectId,
   resolveNativeConversationSelectionPresentation,
   resolveSelectedNativeConversationForProject,
   resolveTaskManagementStatusConfig,
@@ -192,19 +179,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     [setGitQuery],
   );
   const setPatchExportStatus = useCallback((updater: string | ((current: string) => string)) => setGitQuery('patchExportStatus', updater), [setGitQuery]);
-  const [graphView, setGraphView] = useState<GraphViewSnapshot | undefined>(() => props.initialGraphView);
-  const [graphProjectId, setGraphProjectId] = useState<string | undefined>(() => resolveInitialGraphProjectId(props.initialGraphView, props.initialGraphProjectId, snapshot.projects));
-  const [graphAnswer, setGraphAnswer] = useState<GraphQuestionAnswer | undefined>(() => props.initialGraphAnswer);
-  const [graphConversations, setGraphConversations] = useState<GraphConversationHistoryItem[]>(() => props.initialGraphConversations ?? []);
-  const [graphConversationPage, setGraphConversationPage] = useState<Pick<GraphConversationHistoryPage, 'total' | 'limit' | 'offset' | 'query' | 'archived'>>(() => ({
-    total: props.initialGraphConversations?.length ?? 0,
-    limit: 5,
-    offset: 0,
-    query: null,
-    archived: false,
-  }));
-  const [selectedGraphConversation, setSelectedGraphConversation] = useState<GraphConversationHistoryItem | undefined>(() => props.initialGraphConversations?.[0]);
-  const [nativeLegacyConversationDetails, setNativeLegacyConversationDetails] = useState<Record<string, GraphConversationHistoryItem>>({});
+  const [nativeLegacyConversationDetails, setNativeLegacyConversationDetails] = useState<Record<string, ConversationHistoryItem>>({});
   const [nativeLegacyMessageLoadState, setNativeLegacyMessageLoadState] = useState<'empty' | 'loading' | 'error'>('empty');
   const [nativeLegacyMessageError, setNativeLegacyMessageError] = useState<string | null>(null);
   const {
@@ -270,8 +245,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         storage: browserNativeConversationStartStorage(),
         createId: createSessionOperationId,
         releaseRequest: (task, request) =>
-          forgetGraphConversationCommandRequest({
-            commandType: graphConversationClientCommandTypes.taskConversationCreate,
+          forgetConversationStartCommandRequest({
+            commandType: conversationStartClientCommandTypes.taskConversationCreate,
             scopeKind: 'task',
             scopeId: task.id,
             reconnectIdentity: request.idempotencyKey,
@@ -282,9 +257,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const recoveringNativeConversationStartsRef = useRef<Set<string>>(new Set());
   const recoveringConflictAiStartsRef = useRef<Set<string>>(new Set());
   const taskCreationIdentityRef = useRef<{ signature: string; idempotencyKey: string } | null>(null);
-  const graphNodeTaskIdentityRef = useRef<Map<string, string>>(new Map());
   const templateTaskIdentityRef = useRef<Map<string, string>>(new Map());
-  const graphConversationTaskIdentityRef = useRef<Map<string, string>>(new Map());
   const runtimeTaskIdentityRef = useRef<Map<string, string>>(new Map());
   const projectConversationStartEnvelopeManager = useMemo(
     () =>
@@ -292,8 +265,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         storage: browserNativeConversationStartStorage(),
         createId: createSessionOperationId,
         releaseRequest: (projectId, request) =>
-          forgetGraphConversationCommandRequest({
-            commandType: graphConversationClientCommandTypes.projectConversationCreate,
+          forgetConversationStartCommandRequest({
+            commandType: conversationStartClientCommandTypes.projectConversationCreate,
             scopeKind: 'project',
             scopeId: projectId,
             reconnectIdentity: request.idempotencyKey,
@@ -308,26 +281,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     return () => window.removeEventListener('resize', updateProjectSidebarViewportWidth);
   }, []);
   useEffect(() => () => projectSidebarDragCleanupRef.current?.(), []);
-  const [graphConversationSearch, setGraphConversationSearch] = useState('');
-  const [graphNodeTaskFeedback, setGraphNodeTaskFeedback] = useState<GraphNodeTaskFeedback>('idle');
-  const [graphSourceOpenFeedback, setGraphSourceOpenFeedback] = useState<GraphSourceOpenFeedback>('idle');
-  const [lastGraphNodeTaskId, setLastGraphNodeTaskId] = useState<string | undefined>();
-  useEffect(() => {
-    if (graphNodeTaskFeedback !== 'created') return;
-    const clearGraphNodeTaskSuccessFeedback = window.setTimeout(() => {
-      // 图谱节点任务创建成功只做短暂确认，失败状态继续保留以支持原地重试。
-      setGraphNodeTaskFeedback('idle');
-    }, GRAPH_NODE_TASK_SUCCESS_DISMISS_MS);
-    return () => window.clearTimeout(clearGraphNodeTaskSuccessFeedback);
-  }, [graphNodeTaskFeedback]);
-  useEffect(() => {
-    if (graphSourceOpenFeedback === 'idle' || graphSourceOpenFeedback === 'opening') return;
-    const clearGraphSourceOpenFeedback = window.setTimeout(() => {
-      // 源码打开结果只做短暂确认，避免状态条长期压在代码图谱主舞台上。
-      setGraphSourceOpenFeedback('idle');
-    }, GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS);
-    return () => window.clearTimeout(clearGraphSourceOpenFeedback);
-  }, [graphSourceOpenFeedback]);
   const [taskEvents, setTaskEvents] = useState<TaskEventRecord[]>(() => props.initialTaskEvents ?? []);
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplateRecord[]>(() => props.initialTaskTemplates ?? []);
   const [archivedProjects, setArchivedProjects] = useState<ProjectRecord[]>(() => props.initialArchivedProjects ?? []);
@@ -364,7 +317,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [createProjectConfigForm] = useState(() => ({
     defaultModel: '',
     defaultWorkMode: 'plan' as ProjectConfig['defaultWorkMode'],
-    defaultTaskPrompt: '',
   }));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskTagFilter, setTaskTagFilter] = useState('');
@@ -408,8 +360,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       note: nextProject?.note ?? '',
     });
   }, [props.snapshot]);
-
-  const [graphSearchResult, setGraphSearchResult] = useState<GraphSearchResult | undefined>();
   const gitConfirmation = gitQuery.confirmation;
   const gitOperationStatus = gitQuery.operationStatus;
   const gitCommitMessage = gitQuery.commitMessage;
@@ -441,7 +391,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [codexConfigImportResult, setCodexConfigImportResult] = useState<CodexConfigImportResult | null>(null);
   const [codexConfigImportLoading, setCodexConfigImportLoading] = useState(false);
   const [codexConfigImportError, setCodexConfigImportError] = useState<string | null>(null);
-  const [codeMapSettings, setCodeMapSettings] = useState<CodeMapSettings>(() => normalizeCodeMapSettings(props.initialCodeMapSettings));
   const initialAppShellSettings = normalizeRendererAppShellSettings(
     props.initialAppShellSettings ?? {
       appLanguage: 'zh-CN',
@@ -477,8 +426,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         exportSupported: true,
         redactsSecrets: true,
       },
-      cache: { codeIndex: true, graphView: true, layout: true },
-      lastCacheClearAt: null,
     },
   );
   const { snapshot: settingsQuery, update: setAppShellSettings } = useSettingsFeatureController({ client: props.nativeConversationClient?.settings ?? null, initialValue: initialAppShellSettings });
@@ -689,7 +636,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [telegramTestStatus, setTelegramTestStatus] = useState<string>(() => getLanguageCopy(props.initialAppShellSettings?.appLanguage ?? 'zh-CN').settingsWorkspace.telegram.notTested);
   const [telegramSecuritySettings, setTelegramSecuritySettings] = useState<TelegramSecuritySettings>({ allowedUserIds: [] });
   const [telegramAllowedUserIdsInput, setTelegramAllowedUserIdsInput] = useState('');
-  const [scanState, setScanState] = useState<'idle' | 'scanning' | 'failed'>('idle');
   const [actionState, setActionState] = useState<
     'idle' | 'creating-project' | 'creating-task' | 'loading-diff' | 'loading-runtime' | 'loading-templates' | 'updating-task' | 'creating-git-confirmation' | 'confirming-git-operation' | 'executing-git-operation' | 'failed'
   >('idle');
@@ -718,7 +664,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const creatingGitConfirmationBusy = actionState === 'creating-git-confirmation';
   const confirmingGitOperationBusy = actionState === 'confirming-git-operation';
   const executingGitOperationBusy = actionState === 'executing-git-operation';
-  const scanActionBusy = scanState === 'scanning';
   const releaseUpdateBusy = releaseUpdateCheckState === 'loading';
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
   const [storageRecoveryFault, setStorageRecoveryFault] = useState<StorageRecoveryFaultState | null>(null);
@@ -781,7 +726,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       props.initialRuntimeConfirmation
     )
       return 'runtime';
-    if (props.initialMainNavTarget === 'code-map' || props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length) return 'context';
     if (props.initialMainNavTarget === 'git-diff' || props.initialGitDiff || props.initialGitConfirmation) return 'changes';
     if (props.initialTaskTemplates?.length) return 'templates';
     return undefined;
@@ -904,14 +848,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setTaskModelPushPendingByTask(next);
     return next;
   }, []);
-  const graphViewRequestVersionRef = useRef(0);
-  const graphSearchRequestVersionRef = useRef(0);
-  const graphQuestionRequestVersionRef = useRef(0);
-  const graphScanRequestVersionRef = useRef(0);
-  const graphConversationListRequestVersionRef = useRef(0);
-  const graphConversationDetailRequestVersionRef = useRef(0);
-  const activeGraphViewTypeRef = useRef<GraphViewType | undefined>(undefined);
-  const selectedTaskConversationRef = useRef<GraphConversationHistoryItem | undefined>(undefined);
+  const selectedTaskConversationRef = useRef<ConversationHistoryItem | undefined>(undefined);
   const pendingRealtimeTaskRefreshIdsRef = useRef<Set<string>>(new Set());
   const pendingRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   const repeatRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
@@ -920,21 +857,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
-  // 图谱视图必须同时匹配当前项目 id 与响应元数据，避免切换项目后把 Zeus 或其他项目图谱挂到当前代码页。
-  const activeGraphView = graphView && graphProjectId === activeProjectId && isProjectGraphViewForProject(graphView, selectedProject, { requireProjectIdentity: orderedProjects.length > 1 }) ? graphView : undefined;
-  useEffect(() => {
-    activeGraphViewTypeRef.current = activeGraphView?.viewType as GraphViewType | undefined;
-  }, [activeGraphView?.viewType]);
-  const activeProjectGraphSummary = activeGraphView
-    ? {
-        // 项目代码页只能展示已经通过当前项目身份校验的图谱数据；Dashboard 的全局 Zeus 计数不能作为项目图谱兜底。
-        nodeCount: activeGraphView.nodes.length,
-        edgeCount: activeGraphView.edges.length,
-      }
-    : { nodeCount: 0, edgeCount: 0 };
-  const activeProjectGraphSummaryBoundary = appShellSettings.appLanguage === 'zh-CN' ? '当前已加载视图' : 'Currently loaded view';
-  // 忙碌态只代表本轮 UI 发起的动作；数据库里上次崩溃残留的 scanning 不能永久锁死项目扫描入口，真实并发由服务端 409 兜底。
-  const scanBusy = scanActionBusy;
   const projectTaskModelPushManagementStatus = useCallback(
     (task: TaskRecord): TaskRecord => {
       const pending = taskModelPushPendingByTask[task.id];
@@ -1297,15 +1219,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const nativeSessionChoices = nativeSessionTask ? (projectedTaskConversationChoices[nativeSessionTask.id] ?? []) : nativeSessionProject ? (nativeConversationChoicesByProject[nativeSessionProject.id]?.choices ?? []) : [];
   const nativeSessionChoiceTaskState = nativeSessionTask ? nativeConversationChoiceTaskStates[nativeSessionTask.id] : nativeSessionProject ? nativeConversationChoiceProjectStates[nativeSessionProject.id] : undefined;
   const nativeLegacyMessages = useMemo(() => {
-    const entries: Array<[string, Array<{ id: string; role: string; content: string }>]> = [...graphConversations, ...(selectedGraphConversation ? [selectedGraphConversation] : [])].map((conversation) => [
-      conversation.id,
-      conversation.messages.map((message) => ({ id: message.id, role: message.role, content: message.content })),
-    ]);
+    const entries: Array<[string, Array<{ id: string; role: string; content: string }>]> = [];
     for (const [sourceConversationId, conversation] of Object.entries(nativeLegacyConversationDetails)) {
       entries.push([sourceConversationId, conversation.messages.map((message) => ({ id: message.id, role: message.role, content: message.content }))]);
     }
     return Object.fromEntries(entries);
-  }, [graphConversations, nativeLegacyConversationDetails, selectedGraphConversation]);
+  }, [nativeLegacyConversationDetails]);
   const activeTaskManagementStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, activeProjectId);
   const activeTaskManagementStatusLabels = buildConfiguredTaskManagementStatusLabels(activeTaskManagementStatusConfig, appShellSettings.appLanguage);
   const activeTaskManagementStatusIds = activeTaskManagementStatusConfig.statuses.map((status) => status.id);
@@ -1313,13 +1232,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const selectedTask = conversationDraftOpen ? undefined : taskDetail && (!activeProjectId || taskDetail.projectId === activeProjectId) ? taskDetail : currentProjectTasks[0];
   const selectedTaskConversation = useMemo(() => {
     if (!selectedTask) return undefined;
-    const candidatesById = new Map<string, GraphConversationHistoryItem>();
-    for (const conversation of graphConversations) candidatesById.set(conversation.id, conversation);
-    if (selectedGraphConversation) candidatesById.set(selectedGraphConversation.id, selectedGraphConversation);
+    const candidatesById = new Map(Object.values(nativeLegacyConversationDetails).map((conversation) => [conversation.id, conversation]));
     return Array.from(candidatesById.values())
       .filter((conversation) => !conversation.archived && conversation.projectId === selectedTask.projectId && conversation.taskId === selectedTask.id)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-  }, [graphConversations, selectedGraphConversation, selectedTask?.id, selectedTask?.projectId]);
+  }, [nativeLegacyConversationDetails, selectedTask?.id, selectedTask?.projectId]);
   const visibleTasks = useMemo(
     () =>
       filterVisibleTasks(currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter, {
@@ -1343,11 +1260,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   return {
     props,
     actionState,
-    activeGraphView,
-    activeGraphViewTypeRef,
     activeNavTarget,
-    activeProjectGraphSummary,
-    activeProjectGraphSummaryBoundary,
     activeProjectId,
     activeProjectIdRef,
     activeProjectSection,
@@ -1362,7 +1275,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     archivedConversations,
     archivedProjects,
     automaticUpdateIndicator,
-    codeMapSettings,
     codeWorkspaceCopy,
     codeWorkspacePreferenceTimerRef,
     codexConfigImportError,
@@ -1405,23 +1317,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     gitStashRef,
     gitSwitchBranchName,
     gitTargetRef,
-    graphAnswer,
-    graphConversationDetailRequestVersionRef,
-    graphConversationListRequestVersionRef,
-    graphConversationPage,
-    graphConversationSearch,
-    graphConversationTaskIdentityRef,
-    graphConversations,
-    graphNodeTaskFeedback,
-    graphNodeTaskIdentityRef,
-    graphProjectId,
-    graphQuestionRequestVersionRef,
-    graphScanRequestVersionRef,
-    graphSearchRequestVersionRef,
-    graphSearchResult,
-    graphSourceOpenFeedback,
-    graphViewRequestVersionRef,
-    lastGraphNodeTaskId,
     latestConversationContentVisible,
     loadTaskBoard,
     loadingDiffBusy,
@@ -1527,14 +1422,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     runtimeStatus,
     runtimeTaskIdentityRef,
     saveTaskTableLayoutThenLeaveRef,
-    scanBusy,
-    scanState,
     secondaryDrawerCopy,
     securityAuditLogs,
     securitySecrets,
     selectNoResults,
     selectSearchPlaceholder,
-    selectedGraphConversation,
     selectedNativeConversation,
     selectedNativeConversationId,
     selectedNativeConversationIdRef,
@@ -1552,7 +1444,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setArchivedConversationLoadState,
     setArchivedConversations,
     setArchivedProjects,
-    setCodeMapSettings,
     setCodexConfigImportError,
     setCodexConfigImportLoading,
     setCodexConfigImportPreview,
@@ -1579,16 +1470,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setGitStashRef,
     setGitSwitchBranchName,
     setGitTargetRef,
-    setGraphAnswer,
-    setGraphConversationPage,
-    setGraphConversationSearch,
-    setGraphConversations,
-    setGraphNodeTaskFeedback,
-    setGraphProjectId,
-    setGraphSearchResult,
-    setGraphSourceOpenFeedback,
-    setGraphView,
-    setLastGraphNodeTaskId,
     setLatestConversationContentVisible,
     setLocalError,
     setNativeConversationChoiceProjectStates,
@@ -1642,10 +1523,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setRuntimeSettings,
     setRuntimeShowArchived,
     setRuntimeStatus,
-    setScanState,
     setSecurityAuditLogs,
     setSecuritySecrets,
-    setSelectedGraphConversation,
     setSelectedNativeConversationId,
     setSelectedNativeConversationPresentation,
     setSelectedTaskIds,

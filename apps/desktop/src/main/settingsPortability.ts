@@ -35,7 +35,6 @@ export interface ImportSettingsSnapshotResult {
     settings: {
       appShell?: Record<string, unknown>;
       runtime?: Record<string, unknown>;
-      codeMap?: Record<string, unknown>;
       telegramNotification?: Record<string, unknown>;
       telegramSecurity?: Record<string, unknown>;
     };
@@ -129,7 +128,6 @@ export async function importSettingsSnapshotFromFile(input: ImportSettingsSnapsh
   const settings = parsed.settings as {
     appShell?: Record<string, unknown>;
     runtime?: Record<string, unknown>;
-    codeMap?: Record<string, unknown>;
     telegramNotification?: Record<string, unknown>;
     telegramSecurity?: Record<string, unknown>;
   };
@@ -145,7 +143,6 @@ export async function importSettingsSnapshotFromFile(input: ImportSettingsSnapsh
       settings: {
         appShell: settings.appShell,
         runtime: settings.runtime,
-        codeMap: settings.codeMap,
         telegramNotification: settings.telegramNotification,
         telegramSecurity: settings.telegramSecurity,
       },

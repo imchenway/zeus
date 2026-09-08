@@ -11,14 +11,12 @@ import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions, operations: WorkspaceOperations): void {
   const {
     activeNavTarget,
-    activeProjectId,
     activeProjectIdRef,
     archivedConversationLoadState,
     codexConfigImportLoading,
     codexConfigImportPreview,
     codexLegacyImportLoading,
     codexLegacyImportSnapshot,
-    graphProjectId,
     latestConversationContentVisible,
     nativeConversationChoiceLoadCoordinator,
     nativeConversationStartEnvelopeManager,
@@ -43,7 +41,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     taskTableLayoutDirty,
     zeusWindowForeground,
   } = state;
-  const { acknowledgeNativeConversationAttention, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations, resetGraphWorkspace } = domainActions;
+  const { acknowledgeNativeConversationAttention, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
   const { openProjectSection, refreshCodexConfigImport, refreshCodexLegacyImports, requestWorkspaceLeave } = operations;
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
@@ -164,11 +162,6 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       disposed = true;
     };
   }, [props.executionHostTransition, props.nativeConversationClient, snapshot.tasks]);
-  useEffect(() => {
-    if (graphProjectId === activeProjectId) return;
-    // 当前项目变化时必须先清空旧图谱工作区，避免 A 项目的真实图谱继续挂在 B 项目的代码页里。
-    resetGraphWorkspace(activeProjectId);
-  }, [activeProjectId, graphProjectId]);
   useEffect(() => {
     if (!taskConversationDrawerTarget || taskConversationDrawerTarget.status !== 'opening' || taskConversationDrawerReady) return;
     const target = taskConversationDrawerTarget;

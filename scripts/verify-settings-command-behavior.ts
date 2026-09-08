@@ -55,14 +55,14 @@ try {
 
     const rollback = parse(
       application,
-      commandRequest({ label: 'core-rollback', commandType: settingsCommandTypes.codeMapSettingsPut, scopeKind: 'settings', scopeId: 'code-map', operationIdentity: 'code_map_rollback_probe', input: { value: 'invalid-late' } }),
+      commandRequest({ label: 'core-rollback', commandType: settingsCommandTypes.appShellSettingsPut, scopeKind: 'settings', scopeId: 'app-shell', operationIdentity: 'app_shell_rollback_probe', input: { value: 'invalid-late' } }),
     );
     let rollbackFailed = false;
     try {
       application.executeCore({
         parsed: rollback,
-        destinationId: 'code_map_settings',
-        resourceId: 'code-map',
+        destinationId: 'app_shell_settings',
+        resourceId: 'app-shell',
         mutateBusinessState: () => {
           db.execute(`INSERT INTO settings_probe (id, value_json) VALUES (?, ?)`, ['rollback', '{}']);
           throw new Error('planned mutation failure');
@@ -171,16 +171,16 @@ try {
 
     const explicit = parse(
       application,
-      commandRequest({ label: 'explicit-reject', commandType: settingsCommandTypes.projectionCacheClear, scopeKind: 'settings', scopeId: 'projection-cache', operationIdentity: 'cache_rejected_probe', input: {} }),
+      commandRequest({ label: 'explicit-reject', commandType: settingsCommandTypes.runtimeSettingsPut, scopeKind: 'settings', scopeId: 'runtime', operationIdentity: 'retention_rejected_probe', input: { logRetentionDays: 30 } }),
     );
     try {
       await application.executeExternal({
         parsed: explicit,
-        destinationId: 'projection_database_cache',
-        resourceId: 'code-graph-cache',
-        externalOperationId: 'cache_rejected_probe:projection-clear',
+        destinationId: 'runtime_log_retention',
+        resourceId: 'runtime-log-retention',
+        externalOperationId: 'retention_rejected_probe:retention',
         invoke: async () => {
-          throw new SettingsExternalOperationRejectedError('projection writer explicitly rejected operation');
+          throw new SettingsExternalOperationRejectedError('日志保留设置已明确拒绝本次操作');
         },
         mutateAcceptedBusinessState: () => undefined,
       });
@@ -270,7 +270,7 @@ try {
     );
     assertProbe(unknownInvocations === 1 && unknownCode === 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN' && replayCode === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Unknown after write must block automatic resend.');
     assertProbe(secretWrites === 1 && !durableText.includes(secretSentinel) && !unknownAttempt.receipt.evidenceJson.includes(secretSentinel), 'Secret plaintext must not enter durable command evidence.');
-    assertProbe((observed.routeCounts as { total: number }).total === 11, 'Settings command inventory must cover exactly eleven routes.');
+    assertProbe((observed.routeCounts as { total: number }).total === 8, '设置命令清单必须覆盖八条现有路由。');
     assertProbe(observed.quickCheck === 'ok', 'Temporary SQLite quick_check must pass.');
     console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
   } finally {

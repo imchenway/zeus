@@ -205,7 +205,6 @@ export enum ZeusEventKind {
   TaskUpdated = 'zeus.task.updated',
   RuntimeUpdated = 'zeus.runtime.updated',
   TerminalOutput = 'zeus.terminal.output',
-  GraphGenerated = 'zeus.graph.generated',
   GitUpdated = 'zeus.git.updated',
   TelegramUpdated = 'zeus.telegram.updated',
   SecurityWarning = 'zeus.security.warning',

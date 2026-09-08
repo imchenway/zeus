@@ -62,7 +62,7 @@ import { type FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
+import { parseJsonObject } from './localServerPlatformSupport.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
 import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
@@ -1334,7 +1334,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     };
     return workspaceGitResponse(body, 201, () => {
       publishGitDiffUpdatedEvent(diff, project.id);
-      persistReadonlyGitDiffSnapshot({ projectId: project.id, taskId: task.id, diff, graphRoot: project.localPath });
+      persistReadonlyGitDiffSnapshot({ projectId: project.id, taskId: task.id, diff });
       publishRealtimeEvent('git.snapshot.created', { projectId: project.id, taskId: task.id, snapshotType: 'readonly_diff', fileCount: diff.files.length });
     });
   }

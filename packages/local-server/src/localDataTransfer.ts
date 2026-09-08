@@ -38,7 +38,6 @@ export interface PortableProjectRecord {
   description: string | null;
   note: string | null;
   defaultTemplateId: string | null;
-  scanStatus: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,7 +91,7 @@ export interface PortableTaskTemplateRecord {
 export function exportLocalBusinessData(db: ZeusDatabase, exportedAt: string): LocalDataExportSnapshot {
   const projects = db
     .select<PortableProjectDbRow>(
-      `SELECT id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at
+      `SELECT id, name, slug, local_path, description, note, default_template_id, created_at, updated_at
      FROM projects WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC`,
     )
     .map(mapPortableProjectRow);
@@ -209,9 +208,9 @@ export function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExp
   for (const project of projects) {
     // 导入保留原 ID，保证任务、模板和事件仍能关联到真实项目；不写入任何密钥或运行产物。
     db.execute(
-      `INSERT OR REPLACE INTO projects (id, name, slug, local_path, description, note, default_template_id, scan_status, created_at, updated_at, archived, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`,
-      [project.id, project.name, project.slug, project.localPath, project.description, project.note ?? null, project.defaultTemplateId, project.scanStatus, project.createdAt, project.updatedAt],
+      `INSERT OR REPLACE INTO projects (id, name, slug, local_path, description, note, default_template_id, created_at, updated_at, archived, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`,
+      [project.id, project.name, project.slug, project.localPath, project.description, project.note ?? null, project.defaultTemplateId, project.createdAt, project.updatedAt],
     );
   }
   for (const template of taskTemplates) {
@@ -370,7 +369,6 @@ export interface PortableProjectDbRow {
   description: string | null;
   note: string | null;
   default_template_id: string | null;
-  scan_status: string;
   created_at: string;
   updated_at: string;
 }
@@ -430,7 +428,6 @@ export function mapPortableProjectRow(row: PortableProjectDbRow): PortableProjec
     description: row.description,
     note: row.note,
     defaultTemplateId: row.default_template_id,
-    scanStatus: row.scan_status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -499,15 +496,7 @@ export function parseStringArrayJson(raw: string): string[] {
 
 export function isPortableProjectRecord(value: unknown): value is PortableProjectRecord {
   const record = value as Partial<PortableProjectRecord>;
-  return (
-    typeof record.id === 'string' &&
-    typeof record.name === 'string' &&
-    typeof record.slug === 'string' &&
-    typeof record.localPath === 'string' &&
-    typeof record.scanStatus === 'string' &&
-    typeof record.createdAt === 'string' &&
-    typeof record.updatedAt === 'string'
-  );
+  return typeof record.id === 'string' && typeof record.name === 'string' && typeof record.slug === 'string' && typeof record.localPath === 'string' && typeof record.createdAt === 'string' && typeof record.updatedAt === 'string';
 }
 
 export function isPortableTaskRecord(value: unknown): value is PortableTaskRecord {

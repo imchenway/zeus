@@ -10,7 +10,6 @@ import {
   listAiCliAdapters,
   type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
-import { type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
 import { buildAutoUpdatePolicy, detectReleaseReadiness, evaluateReleaseUpdateAvailability, parseReleaseUpdateManifest, type ReleaseUpdateArtifactArch, type ReleaseUpdateManifest, type ReleaseUpdateStatus } from './releaseCore.js';
 import { getSecretPresenceLabel, type SecretStore } from './securityCore.js';
@@ -20,7 +19,6 @@ import {
   CommandDefinitionRepository,
   CommandRunRepository,
   ConversationRepository,
-  ProjectionDatabaseRuntimeManager,
   ProjectRepository,
   RuntimeSessionRepository,
   SettingRepository,
@@ -35,29 +33,7 @@ import { createTelegramBotMessageClient, getTelegramConfigurationState, type Tel
 import { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, parse, resolve } from 'node:path';
-import {
-  emptyGraphSearchResult,
-  type GraphEdgeDetail,
-  graphEdgeDetailFromGraph,
-  graphEdgesByNodeIdFromGraph,
-  type GraphNeighborhood,
-  graphNeighborhoodFromGraph,
-  graphNodeSnapshotFromGraph,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  graphViewSnapshotFromGraph,
-  readGraphEdgeDetail,
-  readGraphEdgesByNodeId,
-  readGraphNeighborhood,
-  readGraphNodeById,
-  readGraphNodeIdsBySourceRef,
-  readGraphSummary,
-  readGraphSummaryByProject,
-  readGraphView,
-  searchGraphNodes,
-  searchGraphNodesInMemory,
-} from './codeIntelligenceGraphStore.js';
+import { isAbsolute, join, parse } from 'node:path';
 import { commandCenterCommandTypes, createCommandCenterCommandRequest } from './commandCenterCommandApplication.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { isPathInsideRoot } from './conversationResourcePreview.js';
@@ -71,7 +47,7 @@ import type {
   UpdateTelegramNotificationSettingsBody,
   UpdateTelegramSecuritySettingsBody,
 } from './index.js';
-import { type CodeMapSettingsSnapshot, projectConfigSettingsPrefix } from './localServerSettingsNormalization.js';
+import { projectConfigSettingsPrefix } from './localServerSettingsNormalization.js';
 import { type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
 import {
@@ -99,15 +75,12 @@ export type LocalServerSupportOperationDependencies = Record<string, any> & {
   isNativeApiRecord(value: unknown): value is Record<string, unknown>;
   now(): Date;
   platformMutableState: {
-    codeMapSettings: CodeMapSettingsSnapshot;
-    memoryGraphCache: ProjectGraph | null;
     runtimeSettings: RuntimeSettingsSnapshot;
     telegramMessageSender: TelegramMessageSender | undefined;
     telegramNotificationSettings: TelegramNotificationSettingsSnapshot;
     telegramPollingService: TelegramPollingService | undefined;
     telegramSecuritySettings: TelegramSecuritySettingsSnapshot;
   };
-  projectionDatabases: ProjectionDatabaseRuntimeManager;
   projects: ProjectRepository;
   runtimeSessions: RuntimeSessionRepository;
   secretStore: SecretStore;
@@ -156,7 +129,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     dataLayout,
     db,
     findProjectByRef,
-    formatTelegramGraphAsk,
     formatTelegramTaskDiff,
     formatTelegramTaskLogs,
     isNativeApiRecord,
@@ -170,7 +142,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     parseTelegramLogsArgs,
     platformMutableState,
     projectRoot,
-    projectionDatabases,
     projects,
     publishRealtimeEvent,
     publishRuntimeSessionEvent,
@@ -386,201 +357,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
       ...mergedEnv,
       PATH: expandCliSearchPath(mergedEnv.PATH),
     };
-  }
-
-  function readCurrentGraphSummary(): {
-    nodeCount: number;
-    edgeCount: number;
-    viewCount: number;
-  } {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory' && platformMutableState.memoryGraphCache) {
-      return {
-        nodeCount: platformMutableState.memoryGraphCache.nodes.length,
-        edgeCount: platformMutableState.memoryGraphCache.edges.length,
-        viewCount: platformMutableState.memoryGraphCache.views.length,
-      };
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') {
-      return { nodeCount: 0, edgeCount: 0, viewCount: 0 };
-    }
-    return readGraphSummary(projectionDatabases.index);
-  }
-
-  function readCurrentGraphSummaryByProject(projectName: string): {
-    nodeCount: number;
-    edgeCount: number;
-    viewCount: number;
-  } {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory' && platformMutableState.memoryGraphCache) {
-      if (platformMutableState.memoryGraphCache.projectName !== projectName) {
-        return { nodeCount: 0, edgeCount: 0, viewCount: 0 };
-      }
-      return {
-        nodeCount: platformMutableState.memoryGraphCache.nodes.length,
-        edgeCount: platformMutableState.memoryGraphCache.edges.length,
-        viewCount: platformMutableState.memoryGraphCache.views.length,
-      };
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') {
-      return { nodeCount: 0, edgeCount: 0, viewCount: 0 };
-    }
-    return readGraphSummaryByProject(projectionDatabases.index, projectName);
-  }
-
-  function resolveGraphProjectName(project: ZeusProjectRecord): string {
-    // 项目级图谱缓存必须使用不可变项目 id 作为隔离键；项目名称可重名、可改名，不能用来决定要读哪一套真实图谱。
-    return project.id;
-  }
-
-  function resolveGraphProjectReadKeys(project: ZeusProjectRecord): string[] {
-    const primaryKey = resolveGraphProjectName(project);
-    // 兼容旧版全局 Zeus 图谱和历史缓存：先读项目 id 新缓存，读不到时只回退项目显示名，非同名项目不会吃到 Zeus 全局图谱。
-    return project.name && project.name !== primaryKey ? [primaryKey, project.name] : [primaryKey];
-  }
-
-  function readCurrentGraphSummaryForProject(project: ZeusProjectRecord): { graphProjectName: string; summary: { nodeCount: number; edgeCount: number; viewCount: number } } {
-    const [primaryKey, ...fallbackKeys] = resolveGraphProjectReadKeys(project);
-    const primarySummary = readCurrentGraphSummaryByProject(primaryKey);
-    if (primarySummary.nodeCount > 0 || primarySummary.edgeCount > 0 || primarySummary.viewCount > 0) {
-      return { graphProjectName: primaryKey, summary: primarySummary };
-    }
-    for (const fallbackKey of fallbackKeys) {
-      const fallbackSummary = readCurrentGraphSummaryByProject(fallbackKey);
-      if (fallbackSummary.nodeCount > 0 || fallbackSummary.edgeCount > 0 || fallbackSummary.viewCount > 0) {
-        return { graphProjectName: fallbackKey, summary: fallbackSummary };
-      }
-    }
-    return { graphProjectName: primaryKey, summary: primarySummary };
-  }
-
-  function readCurrentGraphNodeByIdForProject(nodeId: string, project: ZeusProjectRecord): { graphProjectName: string; node: GraphViewSnapshot['nodes'][number] } | undefined {
-    for (const graphProjectName of resolveGraphProjectReadKeys(project)) {
-      const node = readCurrentGraphNodeById(nodeId, graphProjectName);
-      if (node) return { graphProjectName, node };
-    }
-    return undefined;
-  }
-
-  function readCurrentGraphViewForProject(viewType: string, project: ZeusProjectRecord): { graphProjectName: string; view: GraphViewSnapshot } | undefined {
-    for (const graphProjectName of resolveGraphProjectReadKeys(project)) {
-      const view = readCurrentGraphView(viewType, graphProjectName);
-      if (view) return { graphProjectName, view };
-    }
-    return undefined;
-  }
-
-  function searchCurrentGraphNodesForProject(project: ZeusProjectRecord, rawQuery: string, nodeType?: string, edgeType?: string, rawMinConfidence?: string): { graphProjectName: string; result: GraphSearchResult } {
-    const [primaryKey, ...fallbackKeys] = resolveGraphProjectReadKeys(project);
-    const primaryResult = searchCurrentGraphNodes(rawQuery, nodeType, edgeType, rawMinConfidence, primaryKey);
-    if (primaryResult.nodes.length > 0 || primaryResult.edges.length > 0) return { graphProjectName: primaryKey, result: primaryResult };
-    for (const fallbackKey of fallbackKeys) {
-      const fallbackResult = searchCurrentGraphNodes(rawQuery, nodeType, edgeType, rawMinConfidence, fallbackKey);
-      if (fallbackResult.nodes.length > 0 || fallbackResult.edges.length > 0) return { graphProjectName: fallbackKey, result: fallbackResult };
-    }
-    return { graphProjectName: primaryKey, result: primaryResult };
-  }
-
-  function formatProjectScopedGraphViewTitle(view: Pick<GraphViewSnapshot, 'title' | 'viewType'>, projectName: string): string {
-    // 项目级接口即使兼容读取旧全局当前仓库图谱，展示标题也必须跟随当前项目；
-    // 否则用户切到 tc-app-core 仍看到 “Zeus 系统架构图”，会误判事实来源。
-    const suffixByViewType: Record<string, string> = {
-      architecture: '系统架构图',
-      module: '模块图',
-      table: '表关系图',
-      module_detail: '模块详情图',
-      api_sequence: '接口时序图',
-      module_flow: '模块流程图',
-      method_logic: '方法逻辑图',
-    };
-    const suffix = suffixByViewType[view.viewType];
-    return suffix ? `${projectName} ${suffix}` : view.title;
-  }
-
-  function resolveGraphProjectNameByProjectId(projectId: string): string | undefined {
-    const project = projects.getById(projectId);
-    return project ? resolveGraphProjectName(project) : undefined;
-  }
-
-  function readCurrentGraphView(viewType: string, projectName?: string): GraphViewSnapshot | undefined {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      if (!platformMutableState.memoryGraphCache || (projectName && platformMutableState.memoryGraphCache.projectName !== projectName)) return undefined;
-      return graphViewSnapshotFromGraph(platformMutableState.memoryGraphCache, viewType);
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return undefined;
-    return readGraphView(projectionDatabases.index, viewType, projectName);
-  }
-
-  function attachGraphViewPerformance(view: GraphViewSnapshot, startedAt: number): GraphViewSnapshot {
-    if (!platformMutableState.codeMapSettings.performanceMonitoringEnabled) return view;
-    // 性能监控只记录本次真实图谱视图读取耗时和真实节点/边数量，不生成虚假的历史趋势数据。
-    return {
-      ...view,
-      performance: {
-        durationMs: Math.max(0, Date.now() - startedAt),
-        nodeCount: view.nodes.length,
-        edgeCount: view.edges.length,
-      },
-    };
-  }
-
-  function searchCurrentGraphNodes(rawQuery: string, nodeType?: string, edgeType?: string, rawMinConfidence?: string, projectName?: string): GraphSearchResult {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      return platformMutableState.memoryGraphCache && (!projectName || platformMutableState.memoryGraphCache.projectName === projectName)
-        ? searchGraphNodesInMemory(platformMutableState.memoryGraphCache, rawQuery, nodeType, edgeType, rawMinConfidence)
-        : emptyGraphSearchResult(rawQuery, nodeType, edgeType, rawMinConfidence);
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') {
-      return emptyGraphSearchResult(rawQuery, nodeType, edgeType, rawMinConfidence);
-    }
-    return searchGraphNodes(projectionDatabases.index, rawQuery, nodeType, edgeType, rawMinConfidence, projectName);
-  }
-
-  function readCurrentGraphNodeById(nodeId: string, projectName?: string): GraphViewSnapshot['nodes'][number] | undefined {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      return platformMutableState.memoryGraphCache && (!projectName || platformMutableState.memoryGraphCache.projectName === projectName) ? graphNodeSnapshotFromGraph(platformMutableState.memoryGraphCache, nodeId) : undefined;
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return undefined;
-    return readGraphNodeById(projectionDatabases.index, nodeId, projectName);
-  }
-
-  function readCurrentGraphNodeIdsBySourceRef(sourceRef: string, graphRoot = projectRoot): string[] {
-    const sourceRefCandidates = Array.from(new Set([sourceRef, resolve(graphRoot, sourceRef)]));
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      // Git Diff 通常返回仓库相对路径，图谱扫描保存绝对路径；同时匹配两种口径但不做模糊匹配，避免误关联。
-      return platformMutableState.memoryGraphCache
-        ? platformMutableState.memoryGraphCache.nodes
-            .filter((node) => sourceRefCandidates.includes(node.sourceRef))
-            .map((node) => node.id)
-            .sort()
-        : [];
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return [];
-    // Diff API 必须能独立使用；尚未扫描图谱时先创建空表，返回空关联而不是让审计快照失败。
-    return sourceRefCandidates.flatMap((candidate) => readGraphNodeIdsBySourceRef(projectionDatabases.index, candidate)).sort();
-  }
-
-  function readCurrentGraphEdgesByNodeId(nodeId: string, projectName?: string): GraphViewSnapshot['edges'] {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      return platformMutableState.memoryGraphCache && (!projectName || platformMutableState.memoryGraphCache.projectName === projectName) ? graphEdgesByNodeIdFromGraph(platformMutableState.memoryGraphCache, nodeId, 20) : [];
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return [];
-    return readGraphEdgesByNodeId(projectionDatabases.index, nodeId, projectName);
-  }
-
-  function readCurrentGraphEdgeDetail(edgeId: string): GraphEdgeDetail | undefined {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      return platformMutableState.memoryGraphCache ? graphEdgeDetailFromGraph(platformMutableState.memoryGraphCache, edgeId) : undefined;
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return undefined;
-    return readGraphEdgeDetail(projectionDatabases.index, edgeId);
-  }
-
-  function readCurrentGraphNeighborhood(nodeId: string, depth: number, projectName?: string): GraphNeighborhood | undefined {
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'memory') {
-      return platformMutableState.memoryGraphCache && (!projectName || platformMutableState.memoryGraphCache.projectName === projectName) ? graphNeighborhoodFromGraph(platformMutableState.memoryGraphCache, nodeId, depth) : undefined;
-    }
-    if (platformMutableState.codeMapSettings.graphCacheStrategy === 'disabled') return undefined;
-    return readGraphNeighborhood(projectionDatabases.index, nodeId, depth, projectName);
   }
 
   function markRuntimeSessionConversationsInactive(session: Pick<AiRuntimeSession, 'id' | 'status' | 'endedAt' | 'exitCode'>): void {
@@ -983,8 +759,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
       }
       case 'diff':
         return formatTelegramTaskDiff(command.args[0]);
-      case 'ask':
-        return formatTelegramGraphAsk(command.args[0], command.args.slice(1).join(' '));
       case 'run':
         return runTelegramTask(command.args[0], command.args[1]);
       case 'confirm':
@@ -1018,7 +792,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
       '/continue <task>',
       '/logs <task> [--full]',
       '/diff <task>',
-      '/ask <project> <question>',
       '/help',
       '安全限制：默认禁止远程执行任意 shell；远程任务默认不自动提交 Git；高风险执行需要确认。',
       '命令中心：只有桌面端已单独开启 Telegram 的命令才会显示；高风险命令同样需要本次明确确认，不需要额外短语。',
@@ -1930,24 +1703,6 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     readProjectDatabaseSecretSnapshot,
     readProjectConfig,
     buildRuntimeProcessEnv,
-    readCurrentGraphSummary,
-    readCurrentGraphSummaryByProject,
-    resolveGraphProjectName,
-    resolveGraphProjectReadKeys,
-    readCurrentGraphSummaryForProject,
-    readCurrentGraphNodeByIdForProject,
-    readCurrentGraphViewForProject,
-    searchCurrentGraphNodesForProject,
-    formatProjectScopedGraphViewTitle,
-    resolveGraphProjectNameByProjectId,
-    readCurrentGraphView,
-    attachGraphViewPerformance,
-    searchCurrentGraphNodes,
-    readCurrentGraphNodeById,
-    readCurrentGraphNodeIdsBySourceRef,
-    readCurrentGraphEdgesByNodeId,
-    readCurrentGraphEdgeDetail,
-    readCurrentGraphNeighborhood,
     markRuntimeSessionConversationsInactive,
     formatRuntimeSessionConversationSummary,
     persistRuntimeConversationSummary,

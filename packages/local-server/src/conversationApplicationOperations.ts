@@ -48,7 +48,7 @@ import { type FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
+import { parseJsonObject } from './localServerPlatformSupport.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
@@ -260,7 +260,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     taskStages,
     taskWorkspaces,
     tasks,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     trustedConversationAttachmentRoots,
   } = dependencies;
 
@@ -1054,7 +1054,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return {
       statusCode: 201,
       body: {
-        conversation: toGraphConversationHistoryItem(updatedConversation),
+        conversation: toConversationHistoryItem(updatedConversation),
         ...(runtimeSession ? { runtimeSession } : {}),
         ...(runtimeError ? { runtimeError } : {}),
       },

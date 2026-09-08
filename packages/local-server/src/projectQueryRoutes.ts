@@ -24,14 +24,6 @@ export function registerProjectQueryRoutes(options: { server: FastifyInstance; a
     }
   });
 
-  options.server.get('/api/projects/:projectId/scan-status', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
-    try {
-      return options.application.readScanStatus(request.params.projectId);
-    } catch (error) {
-      return sendNativeQueryRouteError(reply, error);
-    }
-  });
-
   options.server.get('/api/projects/:projectId/overview', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     try {
       return await options.application.readOverview(request.params.projectId);

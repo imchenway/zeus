@@ -14,17 +14,7 @@ import {
   type ZeusProjectRecord,
   type ZeusTaskRecord,
 } from '@zeus/storage';
-import {
-  type CreateProjectGraphTaskInput,
-  type CreateTaskFromGraphConversationInput,
-  type CreateTaskFromGraphNodeInput,
-  type CreateTaskFromTemplateInput,
-  type CreateTaskTemplateInput,
-  type CreateUserTaskInput,
-  type LinkGraphNodeInput,
-  type WorkManagementCommandActor,
-  WorkManagementRouteError,
-} from './workManagementCoreCommandRoutes.js';
+import { type CreateTaskFromTemplateInput, type CreateTaskTemplateInput, type CreateUserTaskInput, type WorkManagementCommandActor, WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
 import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
 
 interface CoreOperationContext {
@@ -33,45 +23,13 @@ interface CoreOperationContext {
   actor: WorkManagementCommandActor;
 }
 
-interface GraphNodeSource {
-  id: string;
-  nodeType: string;
-  name: string;
-  qualifiedName: string;
-  sourceRef: string;
-  symbolId: string;
-  metadata: Record<string, unknown>;
-}
-
-interface GraphEdgeSource {
-  id: string;
-  edgeType: string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  sourceRef: string;
-  confidence: number;
-  metadata: Record<string, unknown>;
-}
-
-interface GraphViewSource {
-  id: string;
-  title: string;
-  viewType: string;
-  nodes: GraphNodeSource[];
-  edges: GraphEdgeSource[];
-}
-
 interface WorkManagementCoreOperationPorts {
   projects: Pick<ProjectRepository, 'getById'>;
-  tasks: Pick<TaskRepository, 'create' | 'createFromTemplate' | 'getById' | 'updateSourceContext' | 'updateStatus'>;
+  tasks: Pick<TaskRepository, 'create' | 'createFromTemplate' | 'getById' | 'updateStatus'>;
   taskBoards: Pick<TaskBoardRepository, 'getSnapshot' | 'updateSettings'>;
   taskTemplates: Pick<TaskTemplateRepository, 'createCustom' | 'getById'>;
   conversations: Pick<ConversationRepository, 'getById'>;
   resolveDefaultManagementStatus(projectId: string): TaskManagementStatus;
-  readGraphNodeForProject(nodeId: string, project: ZeusProjectRecord): { graphProjectName: string; node: GraphNodeSource } | undefined;
-  readGraphViewForProject(viewId: string, project: ZeusProjectRecord): { graphProjectName: string; view: GraphViewSource } | undefined;
-  readGraphEdgesByNode(nodeId: string, graphProjectName: string): GraphEdgeSource[];
-  readGraphEdge(edgeId: string): (GraphEdgeSource & { sourceNode: GraphNodeSource; targetNode: GraphNodeSource }) | undefined;
   recordTaskEvent(input: CreateTaskEventInput): void;
   appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void;
   afterCommit(callback: () => void): void;
@@ -79,7 +37,7 @@ interface WorkManagementCoreOperationPorts {
 }
 
 /**
- * 模板、看板设置和图谱建任务只修改 Core SQLite 事实。公开路由先通过统一命令信封，
+ * 模板、看板设置和任务只修改 Core SQLite 事实。公开路由先通过统一命令信封，
  * 再由本对象在同一个 durable transaction 内写业务事实、任务事件、投影 outbox 和 receipt。
  */
 export class WorkManagementCoreOperations {
@@ -236,144 +194,6 @@ export class WorkManagementCoreOperations {
     return task;
   }
 
-  createTaskFromGraphConversation(projectId: string, conversationId: string, input: CreateTaskFromGraphConversationInput, taskId: string, context: CoreOperationContext): ZeusTaskRecord {
-    const project = this.requireProject(projectId);
-    const conversation = this.ports.conversations.getById(conversationId);
-    if (!conversation || conversation.projectId !== project.id) throw routeError(404, 'ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found');
-    const userMessage = conversation.messages.find((message) => message.role === 'user');
-    const assistantMessage = [...conversation.messages].reverse().find((message) => message.role === 'assistant');
-    if (!userMessage || !assistantMessage) throw routeError(409, 'ZEUS_CONVERSATION_INCOMPLETE', 'Conversation does not contain both question and answer messages');
-    const metadata = parseJsonObject(assistantMessage.metadataJson);
-    const sourceNodeIds = boundedStringArray(metadata.sourceNodeIds, 20);
-    const sourceEdgeIds = boundedStringArray(metadata.sourceEdgeIds, 40);
-    const sourceNodes = sourceNodeIds
-      .map((nodeId) => this.ports.readGraphNodeForProject(nodeId, project)?.node)
-      .filter((node): node is GraphNodeSource => Boolean(node))
-      .slice(0, 12)
-      .map(boundedGraphNode);
-    const sourceEdges = sourceEdgeIds
-      .map((edgeId) => this.ports.readGraphEdge(edgeId))
-      .filter((edge): edge is GraphEdgeSource & { sourceNode: GraphNodeSource; targetNode: GraphNodeSource } => Boolean(edge))
-      .slice(0, 24)
-      .map(boundedGraphEdge);
-    const suggestedTestScope = Array.from(new Set([...sourceNodes.map((node) => node.sourceRef), ...sourceEdges.map((edge) => edge.sourceRef)].filter(Boolean))).slice(0, 24);
-    const question = boundedText(userMessage.content, 4 * 1024);
-    const answer = boundedText(assistantMessage.content, 8 * 1024);
-    const intent = optionalText(input.intent, 8 * 1024, 'intent') ?? '基于这次图谱问答创建可执行跟进任务。';
-    const task = this.ports.tasks.create({
-      id: taskId,
-      projectId: project.id,
-      managementStatus: this.ports.resolveDefaultManagementStatus(project.id),
-      title: `跟进图谱问答：${boundedText(userMessage.content, 192)}`,
-      taskType: 'requirement',
-      description: [intent, `问题：${question}`, `回答摘要：${boundedText(assistantMessage.content, 2 * 1024)}`, suggestedTestScope.length > 0 ? `建议验证范围：${suggestedTestScope.join(', ')}` : '建议验证范围：等待更多图谱来源'].join(
-        '\n',
-      ),
-      createdFrom: 'graph_question',
-      sourceContext: {
-        graphQuestion: { conversationId: conversation.id, question, answer, sourceNodeIds, sourceEdgeIds },
-        sourceNodes,
-        sourceEdges,
-        suggestedTestScope,
-        riskHints: ['核对 AI 回答来源节点是否仍与当前代码一致', '优先补充来源文件相关验收', '若图谱来源不足，先重新扫描真实代码库'],
-      },
-      tags: ['graph-question'],
-    });
-    this.ports.recordTaskEvent({ taskId: task.id, eventType: 'task.created.from_graph_question', title: '任务从图谱问答创建', payload: { conversationId: conversation.id, sourceNodeIds, sourceEdgeIds } });
-    this.audit(context.actor, 'graph.conversation.task.created', 'task', task.id, { projectId: project.id, conversationId: conversation.id, sourceNodeCount: sourceNodeIds.length, sourceEdgeCount: sourceEdgeIds.length });
-    this.afterTaskCreated(task, 'graph_question');
-    return task;
-  }
-
-  createTaskFromGraphNode(projectId: string | null, nodeId: string, input: CreateTaskFromGraphNodeInput | CreateProjectGraphTaskInput, taskId: string, context: CoreOperationContext): ZeusTaskRecord {
-    if (!projectId) throw routeError(400, 'ZEUS_PROJECT_REQUIRED', 'projectId is required');
-    const project = this.requireProject(projectId);
-    const resolved = this.ports.readGraphNodeForProject(requiredText(nodeId, 512, 'nodeId'), project);
-    if (!resolved) throw routeError(404, 'ZEUS_GRAPH_NODE_NOT_FOUND', 'Graph node not found. Scan the project first.');
-    const node = boundedGraphNode(resolved.node);
-    const edges = this.ports.readGraphEdgesByNode(node.id, resolved.graphProjectName).slice(0, 24).map(boundedGraphEdge);
-    const lineStart = finiteMetadataNumber(resolved.node.metadata.lineStart);
-    const lineEnd = finiteMetadataNumber(resolved.node.metadata.lineEnd);
-    const intent = optionalText(input.intent, 8 * 1024, 'intent') ?? '基于代码图谱分析该节点的实现风险、影响范围和建议验证范围。';
-    const task = this.ports.tasks.create({
-      id: taskId,
-      projectId: project.id,
-      managementStatus: this.ports.resolveDefaultManagementStatus(project.id),
-      title: `分析图谱节点：${node.name}`,
-      taskType: 'requirement',
-      description: [intent, `节点类型：${node.nodeType}`, `来源：${node.sourceRef}${lineStart ? `:${lineStart}${lineEnd ? `-${lineEnd}` : ''}` : ''}`].join('\n'),
-      createdFrom: 'graph_node',
-      sourceContext: {
-        graphNode: node,
-        relatedEdges: edges,
-        suggestedVerificationScope: Array.from(new Set([node.sourceRef, ...edges.map((edge) => edge.sourceRef)])).slice(0, 24),
-        riskHints: ['检查节点上下游影响', '执行相关静态检查与构建', '如节点涉及运行时入口需验证本地服务 API'],
-      },
-    });
-    this.ports.recordTaskEvent({ taskId: task.id, eventType: 'task.created.from_graph_node', title: '任务从图谱节点创建', payload: { nodeId: node.id, sourceRef: node.sourceRef } });
-    this.audit(context.actor, 'graph.node.task.created', 'task', task.id, { taskId: task.id, projectId: project.id, nodeId: node.id });
-    this.afterTaskCreated(task, 'graph_node');
-    return task;
-  }
-
-  createTaskFromGraphView(projectId: string, viewId: string, input: CreateProjectGraphTaskInput, taskId: string, context: CoreOperationContext): ZeusTaskRecord {
-    const project = this.requireProject(projectId);
-    const resolved = this.ports.readGraphViewForProject(requiredText(viewId, 512, 'viewId'), project);
-    if (!resolved) throw routeError(404, 'ZEUS_GRAPH_VIEW_NOT_FOUND', 'Graph view not found. Scan the project first.');
-    const view = resolved.view;
-    const sourceNodes = view.nodes.slice(0, 12).map(boundedGraphNode);
-    const sourceEdges = view.edges.slice(0, 24).map(boundedGraphEdge);
-    const intent = optionalText(input.intent, 8 * 1024, 'intent') ?? '基于当前代码图谱视图分析架构风险、影响范围和建议验收范围。';
-    const task = this.ports.tasks.create({
-      id: taskId,
-      projectId: project.id,
-      managementStatus: this.ports.resolveDefaultManagementStatus(project.id),
-      title: `分析图谱视图：${boundedText(view.title, 512)}`,
-      taskType: 'requirement',
-      description: [intent, `视图类型：${boundedText(view.viewType, 256)}`, `节点数：${view.nodes.length}`, `边数：${view.edges.length}`].join('\n'),
-      createdFrom: 'graph_view',
-      sourceContext: {
-        graphView: { id: boundedText(view.id, 512), title: boundedText(view.title, 512), viewType: boundedText(view.viewType, 256), nodeCount: view.nodes.length, edgeCount: view.edges.length },
-        sourceNodes,
-        sourceEdges,
-        suggestedTestScope: Array.from(new Set(sourceNodes.map((node) => node.sourceRef).filter(Boolean))).slice(0, 24),
-        riskHints: ['按视图节点逐项核对影响面', '优先补齐来源文件验收', '如果视图过大，先缩小到关键节点再执行'],
-      },
-    });
-    this.ports.recordTaskEvent({ taskId: task.id, eventType: 'task.created.from_graph_view', title: '任务从图谱视图创建', payload: { viewId: view.id, viewType: view.viewType, nodeCount: view.nodes.length, edgeCount: view.edges.length } });
-    this.audit(context.actor, 'graph.view.task.created', 'task', task.id, { taskId: task.id, projectId: project.id, viewId: view.id });
-    this.afterTaskCreated(task, 'graph_view');
-    return task;
-  }
-
-  linkTaskGraphNode(taskId: string, input: LinkGraphNodeInput, context: CoreOperationContext): ZeusTaskRecord {
-    const task = this.requireTask(taskId);
-    const nodeId = requiredText(input.nodeId, 512, 'nodeId');
-    const project = this.requireProject(task.projectId);
-    const resolved = this.ports.readGraphNodeForProject(nodeId, project);
-    if (!resolved) throw routeError(404, 'ZEUS_GRAPH_NODE_NOT_FOUND', 'Graph node not found. Scan the project first.');
-    const node = boundedGraphNode(resolved.node);
-    const reason = optionalText(input.reason, 2 * 1024, 'reason') ?? '手动关联图谱节点';
-    const sourceContext = parseJsonObject(task.sourceContextJson);
-    const existingLinks = Array.isArray(sourceContext.linkedGraphNodes)
-      ? sourceContext.linkedGraphNodes
-          .filter(isPlainRecord)
-          .filter((item) => item.id !== node.id)
-          .slice(-23)
-      : [];
-    const linkedGraphNodes = [...existingLinks, { id: node.id, name: node.name, nodeType: node.nodeType, sourceRef: node.sourceRef, reason }];
-    const existingScopes = boundedStringArray(sourceContext.suggestedTestScope, 23);
-    const updated = this.ports.tasks.updateSourceContext(task.id, {
-      ...sourceContext,
-      linkedGraphNodes,
-      suggestedTestScope: Array.from(new Set([...existingScopes, node.sourceRef])).slice(-24),
-    });
-    this.ports.recordTaskEvent({ taskId: updated.id, eventType: 'task.linked_graph_node', title: '任务关联图谱节点', payload: { nodeId: node.id, sourceRef: node.sourceRef, reason } });
-    this.audit(context.actor, 'task.graph_node.linked', 'task', updated.id, { taskId: updated.id, projectId: updated.projectId, nodeId: node.id });
-    this.ports.afterCommit(() => this.ports.publishRealtimeEvent('task.updated', { taskId: updated.id, projectId: updated.projectId, changedFields: ['sourceContext'], updatedAt: updated.updatedAt }));
-    return updated;
-  }
-
   private requireProject(projectId: string): ZeusProjectRecord {
     const project = this.ports.projects.getById(projectId);
     if (!project) throw routeError(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
@@ -414,23 +234,6 @@ function optionalText(value: unknown, maximumBytes: number, field: string): stri
   return value;
 }
 
-function boundedText(value: string, maximumBytes: number): string {
-  const bytes = Buffer.from(value, 'utf8');
-  if (bytes.byteLength <= maximumBytes) return value;
-  return bytes
-    .subarray(0, maximumBytes)
-    .toString('utf8')
-    .replace(/\uFFFD$/u, '');
-}
-
-function boundedStringArray(value: unknown, maximumItems: number): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .slice(0, maximumItems)
-    .map((item) => boundedText(item, 512));
-}
-
 function normalizeTemplateVariables(value: unknown): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!isPlainRecord(value)) throw routeError(400, 'ZEUS_INVALID_TEMPLATE_VARIABLES', 'variables must be a plain object.');
@@ -444,53 +247,6 @@ function normalizeTemplateVariables(value: unknown): Record<string, string> | un
     normalized[key] = item;
   }
   return normalized;
-}
-
-function parseJsonObject(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return isPlainRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function boundedGraphNode(node: GraphNodeSource) {
-  return {
-    id: boundedText(node.id, 256),
-    nodeType: boundedText(node.nodeType, 128),
-    name: boundedText(node.name, 512),
-    qualifiedName: boundedText(node.qualifiedName, 768),
-    sourceRef: boundedText(node.sourceRef, 768),
-    symbolId: boundedText(node.symbolId, 256),
-    metadata: boundedMetadata(node.metadata),
-  };
-}
-
-function boundedGraphEdge(edge: GraphEdgeSource) {
-  return {
-    id: boundedText(edge.id, 256),
-    edgeType: boundedText(edge.edgeType, 128),
-    sourceNodeId: boundedText(edge.sourceNodeId, 256),
-    targetNodeId: boundedText(edge.targetNodeId, 256),
-    sourceRef: boundedText(edge.sourceRef, 768),
-    confidence: Number.isFinite(edge.confidence) ? edge.confidence : 0,
-  };
-}
-
-function boundedMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key of ['lineStart', 'lineEnd', 'language', 'kind', 'visibility']) {
-    const value = metadata[key];
-    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value;
-    else if (typeof value === 'string') result[key] = boundedText(value, 256);
-    else if (typeof value === 'boolean') result[key] = value;
-  }
-  return result;
-}
-
-function finiteMetadataNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

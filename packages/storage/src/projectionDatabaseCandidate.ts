@@ -4,7 +4,8 @@ import { basename, dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ZeusDatabasePort } from './databasePort.js';
 
-export const projectionIndexCandidateGeneration = '2026-08-21-projection-index-runtime-v2';
+/** 会话索引结构代次；旧派生库会由现有候选切换机制重建。 */
+export const projectionIndexCandidateGeneration = '2026-09-08-conversation-index';
 export const projectionCacheCandidateGeneration = '2026-08-21-projection-cache-runtime-v2';
 
 export type ProjectionDatabaseCandidateErrorCode =
@@ -74,10 +75,6 @@ interface WatermarkRow {
   sync_event_sequence: number;
 }
 
-interface GenericProjectionRow {
-  [key: string]: unknown;
-}
-
 const maximumIdentityLength = 512;
 
 /**
@@ -117,15 +114,6 @@ export async function createProjectionIndexCandidate(input: { source: ZeusDataba
            ON stream.conversation_id = counters.conversation_id AND stream.is_current = 1
         ORDER BY counters.conversation_id`,
     );
-    const graphNodes = sourceTableExists(input.source, 'project_nodes') ? input.source.select<GenericProjectionRow>(`SELECT * FROM project_nodes ORDER BY id`) : [];
-    const graphEdges = sourceTableExists(input.source, 'project_edges') ? input.source.select<GenericProjectionRow>(`SELECT * FROM project_edges ORDER BY id`) : [];
-    const codeSymbols = sourceTableExists(input.source, 'code_symbols') ? input.source.select<GenericProjectionRow>(`SELECT * FROM code_symbols ORDER BY id`) : [];
-    const graphViews = sourceTableExists(input.source, 'graph_views') ? input.source.select<GenericProjectionRow>(`SELECT * FROM graph_views ORDER BY id`) : [];
-    if (!sourceTableExists(input.source, 'project_nodes')) gaps.push('source_table_missing:project_nodes');
-    if (!sourceTableExists(input.source, 'project_edges')) gaps.push('source_table_missing:project_edges');
-    if (!sourceTableExists(input.source, 'code_symbols')) gaps.push('source_table_missing:code_symbols');
-    if (!sourceTableExists(input.source, 'graph_views')) gaps.push('source_table_missing:graph_views');
-
     candidate = new DatabaseSync(temporaryPath);
     configureCandidate(candidate);
     createIndexCandidateSchema(candidate);
@@ -160,11 +148,6 @@ export async function createProjectionIndexCandidate(input: { source: ZeusDataba
          VALUES (?, ?, ?, ?, ?, ?)`,
       );
       for (const row of watermarks) watermarkInsert.run(row.conversation_id, row.timeline_sequence, row.model_history_sequence, row.process_sequence, row.model_request_sequence, row.sync_event_sequence);
-      insertGenericProjectionRows(candidate, 'graph_node_documents', 'project_nodes', graphNodes);
-      insertGenericProjectionRows(candidate, 'graph_edge_documents', 'project_edges', graphEdges);
-      insertGenericProjectionRows(candidate, 'code_symbol_documents', 'code_symbols', codeSymbols);
-      insertGenericProjectionRows(candidate, 'graph_node_documents', 'graph_views', graphViews);
-      for (const gap of gaps) candidate.prepare(`INSERT INTO projection_gaps (gap_kind, detail, observed_at) VALUES ('source_capability', ?, ?)`).run(gap, createdAt);
       const sourceWaterline = watermarks.reduce((maximum, row) => Math.max(maximum, row.sync_event_sequence), 0);
       candidate.prepare(`UPDATE projection_metadata SET event_waterline = ? WHERE singleton = 1`).run(sourceWaterline);
       candidate.exec('COMMIT');
@@ -175,10 +158,6 @@ export async function createProjectionIndexCandidate(input: { source: ZeusDataba
     counts.conversations = conversations.length;
     counts.turns = turns.length;
     counts.watermarks = watermarks.length;
-    counts.graphNodes = graphNodes.length;
-    counts.graphEdges = graphEdges.length;
-    counts.codeSymbols = codeSymbols.length;
-    counts.graphViews = graphViews.length;
     assertCandidateQuickCheck(candidate, 'index.db 候选');
     candidate.close();
     candidate = null;
@@ -325,153 +304,7 @@ function createIndexCandidateSchema(db: DatabaseSync): void {
       model_request_sequence INTEGER NOT NULL,
       sync_event_sequence INTEGER NOT NULL
     );
-    CREATE TABLE graph_node_documents (
-      source_table TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      project_id TEXT,
-      kind TEXT,
-      label TEXT,
-      updated_at TEXT,
-      payload_json TEXT NOT NULL,
-      PRIMARY KEY (source_table, source_id)
-    );
-    CREATE INDEX idx_projection_graph_nodes_project ON graph_node_documents(project_id, kind, source_id);
-    CREATE TABLE graph_edge_documents (
-      source_table TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      project_id TEXT,
-      kind TEXT,
-      label TEXT,
-      updated_at TEXT,
-      payload_json TEXT NOT NULL,
-      PRIMARY KEY (source_table, source_id)
-    );
-    CREATE INDEX idx_projection_graph_edges_project ON graph_edge_documents(project_id, kind, source_id);
-    CREATE TABLE code_symbol_documents (
-      source_table TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      project_id TEXT,
-      kind TEXT,
-      label TEXT,
-      updated_at TEXT,
-      payload_json TEXT NOT NULL,
-      PRIMARY KEY (source_table, source_id)
-    );
-    CREATE INDEX idx_projection_code_symbols_project ON code_symbol_documents(project_id, kind, source_id);
-    CREATE TABLE projection_gaps (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      gap_kind TEXT NOT NULL,
-      detail TEXT NOT NULL,
-      observed_at TEXT NOT NULL
-    );
-    CREATE VIEW code_symbols AS
-      SELECT source_id AS id,
-             json_extract(payload_json, '$.project_name') AS project_name,
-             json_extract(payload_json, '$.symbol_type') AS symbol_type,
-             json_extract(payload_json, '$.name') AS name,
-             json_extract(payload_json, '$.qualified_name') AS qualified_name,
-             json_extract(payload_json, '$.file_path') AS file_path,
-             CAST(json_extract(payload_json, '$.line_start') AS INTEGER) AS line_start,
-             CAST(json_extract(payload_json, '$.line_end') AS INTEGER) AS line_end,
-             json_extract(payload_json, '$.language') AS language,
-             json_extract(payload_json, '$.metadata_json') AS metadata_json,
-             json_extract(payload_json, '$.source_hash') AS source_hash
-        FROM code_symbol_documents WHERE source_table = 'code_symbols';
-    CREATE TRIGGER code_symbols_insert INSTEAD OF INSERT ON code_symbols BEGIN
-      INSERT INTO code_symbol_documents (source_table, source_id, project_id, kind, label, updated_at, payload_json)
-      VALUES ('code_symbols', NEW.id, NEW.project_name, NEW.symbol_type, NEW.name, NULL,
-        json_object('id', NEW.id, 'project_name', NEW.project_name, 'symbol_type', NEW.symbol_type, 'name', NEW.name,
-          'qualified_name', NEW.qualified_name, 'file_path', NEW.file_path, 'line_start', NEW.line_start,
-          'line_end', NEW.line_end, 'language', NEW.language, 'metadata_json', NEW.metadata_json, 'source_hash', NEW.source_hash));
-    END;
-    CREATE TRIGGER code_symbols_delete INSTEAD OF DELETE ON code_symbols BEGIN
-      DELETE FROM code_symbol_documents WHERE source_table = 'code_symbols' AND source_id = OLD.id;
-    END;
-    CREATE VIEW project_nodes AS
-      SELECT source_id AS id,
-             json_extract(payload_json, '$.project_name') AS project_name,
-             json_extract(payload_json, '$.node_type') AS node_type,
-             json_extract(payload_json, '$.name') AS name,
-             json_extract(payload_json, '$.qualified_name') AS qualified_name,
-             json_extract(payload_json, '$.source_ref') AS source_ref,
-             json_extract(payload_json, '$.symbol_id') AS symbol_id,
-             json_extract(payload_json, '$.metadata_json') AS metadata_json
-        FROM graph_node_documents WHERE source_table = 'project_nodes';
-    CREATE TRIGGER project_nodes_insert INSTEAD OF INSERT ON project_nodes BEGIN
-      INSERT INTO graph_node_documents (source_table, source_id, project_id, kind, label, updated_at, payload_json)
-      VALUES ('project_nodes', NEW.id, NEW.project_name, NEW.node_type, NEW.name, NULL,
-        json_object('id', NEW.id, 'project_name', NEW.project_name, 'node_type', NEW.node_type, 'name', NEW.name,
-          'qualified_name', NEW.qualified_name, 'source_ref', NEW.source_ref, 'symbol_id', NEW.symbol_id, 'metadata_json', NEW.metadata_json));
-    END;
-    CREATE TRIGGER project_nodes_update INSTEAD OF UPDATE ON project_nodes BEGIN
-      UPDATE graph_node_documents
-         SET project_id = NEW.project_name, kind = NEW.node_type, label = NEW.name,
-             payload_json = json_object('id', NEW.id, 'project_name', NEW.project_name, 'node_type', NEW.node_type, 'name', NEW.name,
-               'qualified_name', NEW.qualified_name, 'source_ref', NEW.source_ref, 'symbol_id', NEW.symbol_id, 'metadata_json', NEW.metadata_json)
-       WHERE source_table = 'project_nodes' AND source_id = OLD.id;
-    END;
-    CREATE TRIGGER project_nodes_delete INSTEAD OF DELETE ON project_nodes BEGIN
-      DELETE FROM graph_node_documents WHERE source_table = 'project_nodes' AND source_id = OLD.id;
-    END;
-    CREATE VIEW project_edges AS
-      SELECT source_id AS id,
-             json_extract(payload_json, '$.project_name') AS project_name,
-             json_extract(payload_json, '$.edge_type') AS edge_type,
-             json_extract(payload_json, '$.source_node_id') AS source_node_id,
-             json_extract(payload_json, '$.target_node_id') AS target_node_id,
-             json_extract(payload_json, '$.source_ref') AS source_ref,
-             CAST(json_extract(payload_json, '$.confidence') AS REAL) AS confidence,
-             json_extract(payload_json, '$.metadata_json') AS metadata_json
-        FROM graph_edge_documents WHERE source_table = 'project_edges';
-    CREATE TRIGGER project_edges_insert INSTEAD OF INSERT ON project_edges BEGIN
-      INSERT INTO graph_edge_documents (source_table, source_id, project_id, kind, label, updated_at, payload_json)
-      VALUES ('project_edges', NEW.id, NEW.project_name, NEW.edge_type, NEW.source_ref, NULL,
-        json_object('id', NEW.id, 'project_name', NEW.project_name, 'edge_type', NEW.edge_type,
-          'source_node_id', NEW.source_node_id, 'target_node_id', NEW.target_node_id, 'source_ref', NEW.source_ref,
-          'confidence', NEW.confidence, 'metadata_json', NEW.metadata_json));
-    END;
-    CREATE TRIGGER project_edges_delete INSTEAD OF DELETE ON project_edges BEGIN
-      DELETE FROM graph_edge_documents WHERE source_table = 'project_edges' AND source_id = OLD.id;
-    END;
-    CREATE VIEW graph_views AS
-      SELECT source_id AS id,
-             json_extract(payload_json, '$.project_name') AS project_name,
-             json_extract(payload_json, '$.view_type') AS view_type,
-             json_extract(payload_json, '$.title') AS title,
-             json_extract(payload_json, '$.payload_json') AS payload_json
-        FROM graph_node_documents WHERE source_table = 'graph_views';
-    CREATE TRIGGER graph_views_insert INSTEAD OF INSERT ON graph_views BEGIN
-      INSERT INTO graph_node_documents (source_table, source_id, project_id, kind, label, updated_at, payload_json)
-      VALUES ('graph_views', NEW.id, NEW.project_name, NEW.view_type, NEW.title, NULL,
-        json_object('id', NEW.id, 'project_name', NEW.project_name, 'view_type', NEW.view_type, 'title', NEW.title, 'payload_json', NEW.payload_json));
-    END;
-    CREATE TRIGGER graph_views_delete INSTEAD OF DELETE ON graph_views BEGIN
-      DELETE FROM graph_node_documents WHERE source_table = 'graph_views' AND source_id = OLD.id;
-    END;
   `);
-}
-
-function insertGenericProjectionRows(db: DatabaseSync, targetTable: 'graph_node_documents' | 'graph_edge_documents' | 'code_symbol_documents', sourceTable: string, rows: GenericProjectionRow[]): void {
-  const insert = db.prepare(
-    `INSERT INTO ${targetTable} (source_table, source_id, project_id, kind, label, updated_at, payload_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  );
-  rows.forEach((row, index) => {
-    const id = stringField(row, ['id', 'symbol_id', 'node_id', 'edge_id']) ?? `${sourceTable}:${index}`;
-    insert.run(
-      sourceTable,
-      id,
-      stringField(row, ['project_id', 'projectId']),
-      stringField(row, ['kind', 'type', 'symbol_kind', 'edge_type']),
-      boundedText(stringField(row, ['label', 'name', 'display_name', 'qualified_name']) ?? id, 4_096),
-      stringField(row, ['updated_at', 'created_at']),
-      stableJson(sqliteJsonValue(row)),
-    );
-  });
-}
-
-function sourceTableExists(source: ZeusDatabasePort, table: 'project_nodes' | 'project_edges' | 'code_symbols' | 'graph_views'): boolean {
-  return Boolean(source.get<{ present: number }>(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?`, [table]));
 }
 
 function configureCandidate(db: DatabaseSync): void {
@@ -563,34 +396,6 @@ function normalizeSearchText(value: string): string {
 
 function boundedText(value: string, maximumLength: number): string {
   return value.length <= maximumLength ? value : value.slice(0, maximumLength);
-}
-
-function stringField(row: GenericProjectionRow, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value) return value;
-    if (typeof value === 'number' || typeof value === 'bigint') return String(value);
-  }
-  return null;
-}
-
-function sqliteJsonValue(value: unknown): unknown {
-  if (value instanceof Uint8Array) return { base64: Buffer.from(value).toString('base64') };
-  if (typeof value === 'bigint') return value.toString();
-  if (Array.isArray(value)) return value.map(sqliteJsonValue);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, sqliteJsonValue(nested)]));
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  if (value === undefined) return 'null';
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
-    .join(',')}}`;
 }
 
 async function safeUnlink(path: string): Promise<void> {
