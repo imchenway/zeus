@@ -210,6 +210,8 @@ export interface SessionWorkspaceActions {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onOpenTurnChangeFile?: (changeSet: TurnChangeSet, file: TurnChangeFile, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  /** 审核页直接读取当前文件全文，无需执行打开文件操作。 */
+  onLoadTurnChangeFilePreview?: (changeSet: TurnChangeSet, file: TurnChangeFile) => Promise<ConversationResourcePreview>;
   onCallMcpAppTool?: (input: import('./McpAppFrame.js').McpAppToolCall) => Promise<import('./McpAppFrame.js').McpAppToolResult>;
   onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
@@ -574,6 +576,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
         const preview = await props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
         return { opened: true, mode: result.mode, preview: location ? { ...preview, location } : preview };
+      },
+      /** 复用已验证会话、变更归属和路径权限的只读预览接口。 */
+      onLoadTurnChangeFilePreview: async (changeSet, file) => {
+        if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
+        return props.client.loadTurnChangeFilePreview(projectId, conversationId, changeSet.providerTurnId, changeSet.id, file.id);
       },
     };
     return {
@@ -2109,7 +2116,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (!result.opened) throw new Error('turn_change_file_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
-      setContextWorkspace({ kind: 'source', preview: result.preview, viewMode: 'source' });
+      setContextWorkspace({ kind: 'source', preview: result.preview, viewMode: line ? 'source' : defaultSourceWorkspaceViewMode(result.preview) });
       return;
     }
     if (result.mode === 'zeus_browser') {
@@ -2730,6 +2737,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
                           onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                           onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
+                          onLoadPreview={actions.onLoadTurnChangeFilePreview}
                           comments={props.state?.contextDraft.codeComments}
                           onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
                         />
