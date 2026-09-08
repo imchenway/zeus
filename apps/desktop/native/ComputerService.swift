@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ScreenCaptureKit
 
@@ -66,6 +67,23 @@ private struct ComputerStateCondition {
     }
 }
 
+/** 会触发控件或输入的动作必须先经宿主检查实时目标。 */
+private let preparedActionMethods: Set<String> = ["click", "drag", "paste", "perform_secondary_action", "press_key", "set_value", "type_text"]
+
+/** 宿主一次确认对应的精确动作；控件、内容或参数变化后不能复用。 */
+private struct PreparedComputerAction {
+    /** 原生生成的一次性凭据，不由模型提供。 */
+    let token: String
+    /** 获准检查的工具动作。 */
+    let method: String
+    /** 包含控制身份的完整动作参数。 */
+    let arguments: Data
+    /** 系统控件引用，防止同名控件相互替换。 */
+    let element: AXUIElement
+    /** 应用、窗口、控件及内容指纹。 */
+    let state: Data
+}
+
 @main
 private struct ZeusComputerService {
     /** 主线程运行 AppKit，让系统采集回调、停止按钮和用户接管监听不被 AX 扫描阻塞。 */
@@ -101,6 +119,8 @@ private final class ComputerService {
     private let control = ComputerControlSession()
     /** 当前串行请求由宿主签发的控制身份。 */
     private var controlSessionId = ""
+    /** 串行动作只保留一份待执行检查，使用后立即消费。 */
+    private var preparedAction: PreparedComputerAction?
     /** 虚拟输入独立于硬件键鼠状态，不继承用户正在按住的修饰键。 */
     private let inputSource = CGEventSource(stateID: .privateState)
     private let artifactRoot: URL
@@ -153,6 +173,7 @@ private final class ComputerService {
 
     private func invoke(method: String, params: [String: Any]) async throws -> Any {
         let condition = try ComputerStateCondition.parse(params["wait_for"])
+        if preparedActionMethods.contains(method) { try validatePreparedAction(method, params) }
         switch method {
         case "status":
             return status()
@@ -165,9 +186,10 @@ private final class ComputerService {
         case "list_apps":
             return listApps()
         case "get_app_state":
+            preparedAction = nil
             return try await getAppState(params, condition: condition)
         case "describe_target":
-            return try await describeTarget(params)
+            return try describeTarget(params)
         default:
             break
         }
@@ -444,26 +466,96 @@ private final class ComputerService {
         return false
     }
 
-    private func describeTarget(_ params: [String: Any]) async throws -> [String: Any] {
+    /** 检查实际执行路径上的控件，不使用先前展示给模型的缓存描述。 */
+    private func inspectActionTarget(_ method: String, _ params: [String: Any]) throws -> (element: AXUIElement, summary: [String: Any], state: Data) {
         try requireAccessibility()
         try requireUnlockedSession()
-        let app = try await resolveApplication(params)
-        try rejectSelf(app)
+        let (app, requestedElement) = try appAndElement(params, elementRequired: method == "set_value")
+        let window = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
+        if method == "press_key" { _ = try keyChord(params["key"] as? String ?? "") }
+        var hitParams = params
+        if method == "drag" { hitParams["x"] = params["from_x"] ?? params["start_x"]; hitParams["y"] = params["from_y"] ?? params["start_y"] }
+        let focused = focusedElement(app.processIdentifier)
+        // 与实际执行函数选择同一控件：文字与粘贴不使用坐标，按键只使用真实焦点。
         let target: AXUIElement?
-        if let x = numberValue(params["x"]), let y = numberValue(params["y"]) {
-            var candidate: AXUIElement?
-            guard AXUIElementCopyElementAtPosition(AXUIElementCreateApplication(app.processIdentifier), Float(x), Float(y), &candidate) == .success,
-                  let candidate,
-                  elementProcessIdentifier(candidate) == app.processIdentifier
-            else { return ["available": false] }
-            target = candidate
-        } else {
-            target = focusedElement(app.processIdentifier)
+        if method == "press_key" { target = focused }
+        else if ["type_text", "paste"].contains(method) { target = requestedElement ?? focused }
+        else if method == "drag" { target = try hitElement(app.processIdentifier, params: hitParams) }
+        else { target = try requestedElement ?? hitElement(app.processIdentifier, params: hitParams) }
+        guard let target else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "无法确认目标控件；请重新读取目标窗口，动作尚未执行。")
         }
-        guard let target else { return ["available": false] }
+        try requireElementWindow(target, target: window)
         let described = describeElement(target, index: 0, depth: 0, includeValue: false, includeActions: false, includeChildren: false)
-        guard let summary = described.summary else { return ["available": false] }
-        return (["available": true] as [String: Any]).merging(summary) { _, value in value }
+        guard var summary = described.summary else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "无法读取目标控件信息；请重新观察，动作尚未执行。")
+        }
+        var valueSettable = DarwinBoolean(false)
+        var selectedTextSettable = DarwinBoolean(false)
+        let role = summary["role"] as? String ?? ""
+        summary["editable"] = [kAXTextFieldRole, kAXTextAreaRole, "AXSecureTextField"].contains(role) && (
+            (AXUIElementIsAttributeSettable(target, kAXValueAttribute as CFString, &valueSettable) == .success && valueSettable.boolValue) ||
+            (AXUIElementIsAttributeSettable(target, kAXSelectedTextAttribute as CFString, &selectedTextSettable) == .success && selectedTextSettable.boolValue)
+        )
+        summary["appName"] = app.localizedName ?? app.bundleIdentifier ?? app.bundleURL?.path ?? ""
+        summary["windowId"] = window.windowId
+        let axWindow = attribute(target, kAXWindowAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        summary["windowTitle"] = axWindow.flatMap { stringAttribute($0, kAXTitleAttribute) } ?? ""
+        var state = summary
+        state["pid"] = Int(app.processIdentifier)
+        state["window"] = window.metadata
+        state["content"] = actionContentFingerprint(target)
+        // 回车可能走默认按钮；等待期间该按钮发生变化也必须重新确认。
+        if let axWindow, let defaultButton = attribute(axWindow, kAXDefaultButtonAttribute), CFGetTypeID(defaultButton) == AXUIElementGetTypeID() {
+            let button = defaultButton as! AXUIElement
+            state["defaultButton"] = describeElement(button, index: 0, depth: 0, includeValue: false, includeActions: false, includeChildren: false).summary
+            state["defaultButtonIdentity"] = String(CFHash(button))
+        }
+        // 点击发送按钮时也绑定当前输入焦点及草稿内容，等待确认期间不能悄悄换稿。
+        if let focused { state["focus"] = String(CFHash(focused)); state["focusContent"] = actionContentFingerprint(focused) }
+        return (target, summary, try encoder.data(withJSONObject: state, options: [.sortedKeys]))
+    }
+
+    /** 内容只在原生服务内做完整指纹比较，密码值不读取也不回传给模型。 */
+    private func actionContentFingerprint(_ element: AXUIElement) -> String {
+        guard (try? rejectSecure(element)) != nil else { return "secure" }
+        let value = stringAttribute(element, kAXValueAttribute) ?? ""
+        let digest = SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+        var range = CFRange(location: -1, length: -1)
+        if let selection = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(selection) == AXValueGetTypeID(), AXValueGetType(selection as! AXValue) == .cfRange {
+            _ = AXValueGetValue(selection as! AXValue, .cfRange, &range)
+        }
+        return "\(digest):\(range.location):\(range.length)"
+    }
+
+    /** 排除传输编号、校验字段和宿主审批后设置的读取时限；动作及观察条件仍绑定本次批准。 */
+    private func actionArguments(_ params: [String: Any]) throws -> Data {
+        try encoder.data(withJSONObject: params.filter { !["_request_id", "_action_tool", "_action_token", "_deadline_unix_ms"].contains($0.key) }, options: [.sortedKeys])
+    }
+
+    /** 为宿主提供可确认的目标，并签发只用于这一次动作的凭据。 */
+    private func describeTarget(_ params: [String: Any]) throws -> [String: Any] {
+        preparedAction = nil
+        guard let method = params["_action_tool"] as? String, preparedActionMethods.contains(method) else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_REQUIRED", message: "目标检查缺少具体动作。")
+        }
+        let target = try inspectActionTarget(method, params)
+        let token = UUID().uuidString
+        preparedAction = PreparedComputerAction(token: token, method: method, arguments: try actionArguments(params), element: target.element, state: target.state)
+        return target.summary.merging(["token": token]) { _, value in value }
+    }
+
+    /** 在实际输入前消费凭据并重新读取目标；确认不能授权变化后的控件或内容。 */
+    private func validatePreparedAction(_ method: String, _ params: [String: Any]) throws {
+        let prepared = preparedAction
+        preparedAction = nil
+        guard let prepared, params["_action_token"] as? String == prepared.token, method == prepared.method, try actionArguments(params) == prepared.arguments else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_CHANGED", message: "本次操作的目标检查已失效，动作尚未执行；请重新观察后发起操作。")
+        }
+        let current = try inspectActionTarget(method, params)
+        guard CFEqual(current.element, prepared.element), current.state == prepared.state else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_CHANGED", message: "等待期间目标窗口、控件或内容已变化，动作尚未执行；请重新观察并确认实际操作。")
+        }
     }
 
     private func resolveApplication(_ params: [String: Any]) async throws -> NSRunningApplication {
@@ -790,10 +882,14 @@ private final class ComputerService {
         }
     }
 
+    /** 后台应用可能不公开应用级焦点，改从已观察窗口实时确认唯一焦点控件。 */
     private func focusedElement(_ pid: pid_t) -> AXUIElement? {
         let application = AXUIElementCreateApplication(pid)
-        guard let value = attribute(application, kAXFocusedUIElementAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
+        if let value = attribute(application, kAXFocusedUIElementAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() { return (value as! AXUIElement) }
+        guard let snapshot = snapshots[pid], snapshot.complete, let window = try? control.requireTarget(pid: pid, sessionId: controlSessionId) else { return nil }
+        // ponytail: 应用级接口缺失时扫描当前完整快照的存活控件；若实测延迟过高再接入窗口级焦点通知。
+        let focused = snapshot.elements.filter { boolAttribute($0, kAXFocusedAttribute) == true && (try? requireElementWindow($0, target: window)) != nil }
+        return focused.count == 1 ? focused[0] : nil
     }
 
     private func snapshotDiff(previousGeneration: Int, current: ElementSnapshot) -> [String: Any] {

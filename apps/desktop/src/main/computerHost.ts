@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
+import { computerActionApprovalDetail, computerActionApprovalReason, type ComputerActionTarget } from './computerActionApproval.js';
 
 interface ComputerServiceResponse {
   id: string;
@@ -44,19 +45,6 @@ interface ComputerServiceProgress {
   elapsedMs: number;
 }
 
-interface ComputerElementSummary {
-  element_index?: number;
-  role?: string;
-  subrole?: string;
-  title?: string;
-  description?: string;
-  identifier?: string;
-  value?: unknown;
-  secure?: boolean;
-  focused?: boolean;
-  frame?: { x?: number; y?: number; width?: number; height?: number };
-}
-
 type ComputerPermissionKind = 'accessibility' | 'screen_capture';
 
 interface CreateComputerHostOptions {
@@ -79,8 +67,6 @@ const serviceTerminationKillWaitMs = 2_000;
 const maximumServiceLineBytes = 16 * 1024 * 1024;
 const maximumServiceDiagnosticBytes = 32 * 1024;
 const serviceProgressPrefix = 'ZEUS_COMPUTER_PROGRESS ';
-const sensitiveActionPattern = /\b(buy|purchase|pay|checkout|order|submit|send|publish|delete|remove|erase|confirm|authorize|transfer|sign|login|注册|登录|提交|发送|发布|购买|支付|下单|删除|移除|确认|授权|转账|签署)\b/iu;
-const secureFieldPattern = /\b(password|passcode|otp|one.?time|verification|cvv|cvc|card|iban|routing|account|ssn|身份证|密码|验证码|卡号|账户|密钥|secret|token)\b/iu;
 
 export class ComputerHost implements BrowserAutomationPort {
   private readonly now: () => string;
@@ -91,7 +77,8 @@ export class ComputerHost implements BrowserAutomationPort {
   private stdoutBuffer = '';
   private stderrBuffer = '';
   private readonly pending = new Map<string, PendingServiceRequest>();
-  private readonly latestElements = new Map<string, { generation: number; elements: ComputerElementSummary[] }>();
+  /** 只保留补全元素身份所需的观察世代；审批始终读取实时控件。 */
+  private readonly latestSnapshots = new Map<string, number>();
   private serviceRecovery: Promise<void> | null = null;
   private serviceRecoveryFailure: Error | null = null;
   private lastServiceProgress: ComputerServiceProgress | null = null;
@@ -113,6 +100,8 @@ export class ComputerHost implements BrowserAutomationPort {
   private serviceStartup: Promise<void> | null = null;
   /** 仅缓存当前控制者的最后一张缩略图，结束时同步清空。 */
   private controlPreview: ZeusComputerPreview | null = null;
+  /** 用户停止或关闭能力时同步关闭本轮尚未回答的确认框。 */
+  private actionApproval: AbortController | null = null;
 
   constructor(private readonly options: CreateComputerHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -262,17 +251,19 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.refreshServiceStatus();
       await this.requestMissingPermissionsForTool(input);
       this.assertControlAllowed(input, generation);
-      await this.ensureSensitiveActionApproval(input);
-      this.assertControlAllowed(input, generation);
       const serviceArguments = this.prepareServiceArguments(input);
+      await this.ensureSensitiveActionApproval(input, serviceArguments, generation);
+      this.assertControlAllowed(input, generation);
+      // 读取时限从审批结束后计算，用户确认耗时不挤占动作后的观察预算。
+      if (input.tool === 'get_app_state' || serviceArguments.wait_for !== undefined) serviceArguments._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
       // 动作一旦发出就不能继续使用旧索引；只有实际回读成功才能恢复缓存。
-      if (!['get_app_state', 'list_apps'].includes(input.tool)) this.latestElements.clear();
+      if (!['get_app_state', 'list_apps'].includes(input.tool)) this.latestSnapshots.clear();
       const serviceStartedAt = performance.now();
       const result = await this.callService(input.tool, serviceArguments);
       const serviceFinishedAt = performance.now();
       this.assertControlAllowed(input, generation);
       if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result);
-      // 先缓存完整控件供审批使用，再裁剪模型投影，安全判断不依赖紧凑摘要。
+      // 先记住动作回读的观察世代，再裁剪模型投影；审批始终读取实时控件。
       const { textValue, image } = await this.projectResult(result, input.arguments.full_output === true);
       if (isRecord(textValue)) {
         textValue.diagnostics = {
@@ -291,7 +282,7 @@ export class ComputerHost implements BrowserAutomationPort {
         success: true,
       };
     } catch (error) {
-      if (input.tool !== 'list_apps') this.latestElements.clear();
+      if (input.tool !== 'list_apps') this.latestSnapshots.clear();
       this.scheduleIdleStop();
       const record = isRecord(error) ? error : {};
       const code = typeof record.code === 'string' ? record.code : 'ZEUS_COMPUTER_OPERATION_FAILED';
@@ -316,11 +307,13 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 先撤销所有排队和在途请求，再释放原生资源。 */
   private revokeControl(): void {
+    this.actionApproval?.abort();
+    this.actionApproval = null;
     this.controlGeneration += 1;
     if (this.controlOwner) this.revokedTurns.add(JSON.stringify([this.controlOwner.input.conversationId, this.controlOwner.input.turnId]));
     this.controlOwner = null;
     this.controlPreview = null;
-    this.latestElements.clear();
+    this.latestSnapshots.clear();
   }
 
   async close(): Promise<void> {
@@ -553,7 +546,7 @@ export class ComputerHost implements BrowserAutomationPort {
       pending.reject(rejection(id, pending));
     }
     this.pending.clear();
-    this.latestElements.clear();
+    this.latestSnapshots.clear();
     return true;
   }
 
@@ -623,8 +616,7 @@ export class ComputerHost implements BrowserAutomationPort {
     const appRecord = isRecord(record.application) ? record.application : isRecord(record.app) ? record.app : {};
     const appKeys = [args.app, typeof record.app === 'string' ? record.app : undefined, appRecord.name, appRecord.bundleId, appRecord.path].filter((value): value is string => typeof value === 'string' && value.length > 0);
     const generation = typeof record.snapshot_generation === 'number' ? record.snapshot_generation : 0;
-    const elements = Array.isArray(record.elements) ? record.elements.filter(isRecord).map((entry) => ({ ...entry })) : [];
-    for (const key of appKeys) this.latestElements.set(key, { generation, elements });
+    for (const key of appKeys) this.latestSnapshots.set(key, generation);
     const status = isRecord(record.status) ? record.status : {};
     this.settings = {
       ...this.settings,
@@ -634,86 +626,85 @@ export class ComputerHost implements BrowserAutomationPort {
     };
   }
 
-  private async ensureSensitiveActionApproval(input: BrowserAutomationToolCall): Promise<void> {
-    let element = this.elementFor(input.arguments);
-    let targetUnknown = false;
-    const app = typeof input.arguments.app === 'string' ? input.arguments.app : '';
-    const focusedTarget = ['type_text', 'paste', 'press_key'].includes(input.tool);
-    const x = typeof input.arguments.x === 'number' ? input.arguments.x : typeof input.arguments.from_x === 'number' ? input.arguments.from_x : undefined;
-    const y = typeof input.arguments.y === 'number' ? input.arguments.y : typeof input.arguments.from_y === 'number' ? input.arguments.from_y : undefined;
-    if (!element && app && (focusedTarget || (x !== undefined && y !== undefined))) {
-      element = await this.describeServiceTarget(app, x, y);
-      targetUnknown = !element;
-    }
-    const descriptor = `${element?.role ?? ''} ${element?.subrole ?? ''} ${element?.title ?? ''} ${element?.description ?? ''} ${element?.identifier ?? ''}`;
-    if (element?.secure || secureFieldPattern.test(descriptor)) {
-      if (['set_value', 'type_text', 'paste'].includes(input.tool)) {
-        throw Object.assign(new Error('Zeus 不读取或填写密码、验证码及其他安全文本字段。'), { code: 'ZEUS_COMPUTER_SECURE_FIELD_BLOCKED' });
-      }
-    }
-    const key = typeof input.arguments.key === 'string' ? input.arguments.key.toLocaleLowerCase() : '';
-    const sensitive =
-      sensitiveActionPattern.test(descriptor) ||
-      targetUnknown ||
-      (input.tool === 'press_key' && /(^|\+)(enter|return|delete|backspace)$/iu.test(key)) ||
-      (['click', 'perform_secondary_action'].includes(input.tool) && Boolean(element && sensitiveActionPattern.test(descriptor))) ||
-      (['click', 'perform_secondary_action'].includes(input.tool) && !element && typeof input.arguments.x === 'number');
-    if (!sensitive) return;
+  /** Codex 与 Pi 共用一次目标检查；普通编辑沿用全局授权，最终动作只批准当前真实目标。 */
+  private async ensureSensitiveActionApproval(input: BrowserAutomationToolCall, serviceArguments: Record<string, unknown>, generation: number): Promise<void> {
+    if (!['click', 'drag', 'paste', 'perform_secondary_action', 'press_key', 'set_value', 'type_text'].includes(input.tool)) return;
+    /** 控件及凭据均来自实际原生窗口，不由调用者声明。 */
+    const target = await this.describeServiceTarget(input.tool, serviceArguments);
+    this.assertControlAllowed(input, generation);
+    serviceArguments._action_token = target.token;
+    /** 一次确认的语言保持一致。 */
+    const english = this.options.language?.() === 'en-US';
+    /** 普通编辑不创建任何额外确认。 */
+    const reason = computerActionApprovalReason(input.tool, serviceArguments, target, english);
+    if (!reason) return;
+    /** 确认归属于当前 Zeus 窗口，目标应用无法代为操作该弹窗。 */
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    /** 一次性取消信号跟随控制生命周期。 */
+    const controller = new AbortController();
+    this.actionApproval = controller;
+    /** 默认拒绝，具体应用与动作在说明中展示。 */
     const options: Electron.MessageBoxOptions = {
       type: 'warning',
-      buttons: this.options.language?.() === 'en-US' ? ['Allow once', 'Decline'] : ['允许一次', '拒绝'],
+      buttons: english ? ['Allow once', 'Decline'] : ['允许一次', '拒绝'],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
-      title: this.options.language?.() === 'en-US' ? 'Allow this computer action?' : '允许这次电脑操作？',
-      message: this.options.language?.() === 'en-US' ? 'The AI wants to perform an action that may send information or change content in another app.' : 'AI 请求执行可能发送信息或修改其他应用内容的操作。',
-      detail: `${input.tool} · ${(element?.title || element?.description || (this.options.language?.() === 'en-US' ? 'Target app' : '目标应用')).slice(0, 300)}`,
+      signal: controller.signal,
+      title: english ? 'Allow this computer action?' : '允许这次电脑操作？',
+      message: english ? 'Allow this computer action?' : '允许这次电脑操作？',
+      detail: `${computerActionApprovalDetail(input.tool, serviceArguments, target, english)}\n\n${reason}`,
     };
-    const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-    if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });
+    try {
+      /** 只接受明确的本次批准；停止信号优先于稍晚到达的按钮结果。 */
+      const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+      if (controller.signal.aborted) throw Object.assign(new Error('本轮桌面控制已停止，动作尚未执行。'), { code: 'ZEUS_COMPUTER_STOPPED' });
+      if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });
+    } finally {
+      if (this.actionApproval === controller) this.actionApproval = null;
+    }
   }
 
-  private async describeServiceTarget(app: string, x: number | undefined, y: number | undefined): Promise<ComputerElementSummary | null> {
-    const result = asRecord(await this.callService('describe_target', { app, ...(x !== undefined && y !== undefined ? { x, y } : {}) }));
-    if (result.available !== true) return null;
+  /** 原生检查同时签发一次性凭据；执行前再次核对应用、窗口、焦点、内容及动作参数。 */
+  private async describeServiceTarget(tool: string, serviceArguments: Record<string, unknown>): Promise<ComputerActionTarget> {
+    /** 来自隔离原生服务的响应仍需验证必要目标字段。 */
+    const result = asRecord(await this.callService('describe_target', { ...serviceArguments, _action_tool: tool }));
+    if (typeof result.token !== 'string' || !result.token || typeof result.appName !== 'string' || !result.appName || typeof result.windowId !== 'number' || typeof result.role !== 'string' || !result.role) {
+      throw Object.assign(new Error('无法确认这次操作的目标控件；请重新读取目标窗口，动作尚未执行。'), { code: 'ZEUS_COMPUTER_TARGET_UNAVAILABLE' });
+    }
     return {
-      role: typeof result.role === 'string' ? result.role : undefined,
-      subrole: typeof result.subrole === 'string' ? result.subrole : undefined,
-      title: typeof result.title === 'string' ? result.title : undefined,
-      description: typeof result.description === 'string' ? result.description : undefined,
-      identifier: typeof result.identifier === 'string' ? result.identifier : undefined,
+      token: result.token,
+      appName: result.appName,
+      windowId: result.windowId,
+      windowTitle: typeof result.windowTitle === 'string' ? result.windowTitle : '',
+      role: result.role,
+      subrole: typeof result.subrole === 'string' ? result.subrole : '',
+      title: typeof result.title === 'string' ? result.title : '',
+      description: typeof result.description === 'string' ? result.description : '',
+      identifier: typeof result.identifier === 'string' ? result.identifier : '',
+      editable: result.editable === true,
       secure: result.secure === true,
-      focused: result.focused === true,
     };
   }
 
-  private elementFor(args: Record<string, unknown>): ComputerElementSummary | null {
-    const app = typeof args.app === 'string' ? args.app : '';
-    const index = typeof args.element_index === 'number' ? args.element_index : -1;
-    const snapshot = this.latestElements.get(app);
-    const generation = typeof args.snapshot_generation === 'number' ? args.snapshot_generation : snapshot?.generation;
-    return snapshot && snapshot.generation === generation && index >= 0 ? (snapshot.elements[index] ?? null) : null;
-  }
-
+  /** 内部身份与审批凭据只由宿主写入，模型参数不能伪造。 */
   private prepareServiceArguments(input: BrowserAutomationToolCall): Record<string, unknown> {
-    const args: Record<string, unknown> = { ...input.arguments, _control_session_id: this.controlOwner?.id };
+    const args: Record<string, unknown> = { ...Object.fromEntries(Object.entries(input.arguments).filter(([key]) => !key.startsWith('_'))), _control_session_id: this.controlOwner?.id };
     const app = typeof args.app === 'string' ? args.app : '';
-    const snapshot = app ? this.latestElements.get(app) : undefined;
+    const snapshot = app ? this.latestSnapshots.get(app) : undefined;
     if (input.tool === 'get_app_state' || args.wait_for !== undefined) {
-      if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot.generation;
+      if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot;
       if (args.disableDiff === true) delete args.previous_snapshot_generation;
-      args._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
       if (args.include_screenshot === undefined) args.include_screenshot = input.tool === 'get_app_state' && !snapshot;
     }
     if (typeof args.element_index === 'number' && args.snapshot_generation === undefined) {
       if (!snapshot) throw Object.assign(new Error('element_index 没有当前 AX 快照，请重新调用 get_app_state。'), { code: 'ZEUS_COMPUTER_ELEMENT_STALE' });
-      args.snapshot_generation = snapshot.generation;
+      args.snapshot_generation = snapshot;
     }
     return args;
   }
 
-  /** 默认只投影一份紧凑树或更小的差异；完整原始快照仍留在宿主缓存。 */
+  /** 默认只投影一份紧凑树或更小的差异；完整原始快照由原生服务保留。 */
   private compactResult(result: Record<string, unknown>): Record<string, unknown> {
     if (!Array.isArray(result.elements)) return { ...result };
     /** 保留空 value、禁用和安全字段；省略几何信息及可由默认值还原的属性。 */
