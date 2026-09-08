@@ -1582,7 +1582,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
                         ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
                         ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
-                        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 机器人' : 'IM Bots', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+                        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 接入' : 'IM Integrations', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
                         ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
                       ],
                     },
