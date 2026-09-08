@@ -1951,6 +1951,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape') return;
+    // 格式预览先退出阅读状态，避免编辑草稿时触发中断确认。
+    if (event.target instanceof Element && event.target.closest('.structured-composer-preview')) return;
     if (event.target instanceof Element && event.target.closest('.session-composer-shell[data-goal-input="true"]')) return;
     const planRequest = pendingRequests.length === 0 ? pendingPlanImplementationRequests[0] : undefined;
     if (planRequest) {

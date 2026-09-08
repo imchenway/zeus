@@ -100,6 +100,7 @@ const sessionConnectionSymbol = (
   </span>
 );
 
+/** 会话错误和消息状态共用警示图标，不依赖背景颜色区分提示。 */
 const turnFailureSymbol = (
   <span className="session-turn-failure-icon" aria-hidden="true">
     <svg viewBox="0 0 24 24">
@@ -1220,13 +1221,30 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
   );
 }
 
+/** 沿用既有会话提示外观，具体状态的文案、操作和播报级别由调用方保留。 */
+function ConversationNotice(props: { children: ReactNode; label: string; role?: 'alert' | 'status'; deliveryState?: 'unconfirmed' | 'failed' | 'provider-stop-pending' | 'interaction-recovery-pending' }) {
+  return (
+    <section
+      className={`session-turn-failure${props.deliveryState ? ' session-message-delivery-feedback' : ''}`}
+      data-state={props.deliveryState}
+      role={props.role ?? 'alert'}
+      aria-live={props.role === 'status' ? 'polite' : 'assertive'}
+      aria-label={props.label}
+    >
+      {turnFailureSymbol}
+      <div className="session-turn-failure-message">{props.children}</div>
+    </section>
+  );
+}
+
+/** 模型返回错误保留独立名称，避免与消息发送状态混淆。 */
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
+  /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
   return (
-    <article className="session-turn-failure" role="alert" aria-label={zh ? '模型返回错误' : 'Model error'}>
-      {turnFailureSymbol}
-      <VisibleApplicationError className="session-turn-failure-message" error={props.failure} language={zh ? 'zh-CN' : 'en'} />
-    </article>
+    <ConversationNotice label={zh ? '模型返回错误' : 'Model error'}>
+      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    </ConversationNotice>
   );
 }
 
@@ -1488,22 +1506,25 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
   );
 }
 
+/** 问题暂不可用时保留停止入口，外观与其他会话提示一致。 */
 function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage; turnId: string; onInterrupt?: (turnId: string) => void | Promise<void> }): ReactNode {
+  /** 等待停止完成期间禁用重复操作。 */
   const [stopping, setStopping] = useState(false);
+  /** 沿用当前轮次的停止操作，不改变回答或队列状态。 */
   const stop = () => {
     if (!props.onInterrupt || stopping) return;
     setStopping(true);
     void Promise.resolve(props.onInterrupt(props.turnId)).finally(() => setStopping(false));
   };
   return (
-    <section className="session-message-delivery-feedback" data-state="unconfirmed" role="alert" aria-live="assertive">
+    <ConversationNotice deliveryState="unconfirmed" label={props.language === 'zh-CN' ? '问题暂不可用' : 'Question unavailable'}>
       <span>{props.language === 'zh-CN' ? 'AI 正在等待你的回答，但 Zeus 暂时无法显示可回答的问题。' : 'The AI is waiting for your answer, but Zeus cannot currently display a question you can respond to.'}</span>
       <div className="session-message-delivery-actions">
         <button type="button" disabled={!props.onInterrupt || stopping} onClick={stop}>
           {stopping ? (props.language === 'zh-CN' ? '正在停止…' : 'Stopping…') : props.language === 'zh-CN' ? '停止当前任务' : 'Stop current turn'}
         </button>
       </div>
-    </section>
+    </ConversationNotice>
   );
 }
 
@@ -1529,16 +1550,16 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const localAcceptanceFailure = Boolean(props.item.optimistic && !props.submissionId && props.clientUserMessageId);
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
-      <section className="session-message-delivery-feedback" data-state="interaction-recovery-pending" role="status" aria-live="polite">
+      <ConversationNotice deliveryState="interaction-recovery-pending" role="status" label={props.language === 'zh-CN' ? '正在恢复对话' : 'Restoring conversation'}>
         {props.language === 'zh-CN' ? '正在恢复对话并继续处理你的回答…' : 'Restoring the conversation to continue with your answer…'}
-      </section>
+      </ConversationNotice>
     );
   }
   if (pausedReason === 'provider_stop_pending') {
     return (
-      <section className="session-message-delivery-feedback" data-state="provider-stop-pending" role="status" aria-live="polite">
+      <ConversationNotice deliveryState="provider-stop-pending" role="status" label={props.language === 'zh-CN' ? '正在确认运行状态' : 'Checking run status'}>
         {props.language === 'zh-CN' ? '正在确认上次运行已停止，确认后将自动继续' : 'Confirming the previous run has stopped. This message will continue automatically afterward.'}
-      </section>
+      </ConversationNotice>
     );
   }
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
@@ -1565,7 +1586,7 @@ export function MessageDeliveryOutcomeFeedback(props: {
   };
 
   return (
-    <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
+    <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
       <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       <div className="session-message-delivery-actions">
         {(explanation.action === 'sign_in' || explanation.action === 'model_settings' || explanation.action === 'choose_model') && props.onOpenAiSettings ? (
@@ -1633,7 +1654,7 @@ export function MessageDeliveryOutcomeFeedback(props: {
         ) : null}
       </div>
       {actionError ? <VisibleApplicationError error={actionError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
-    </section>
+    </ConversationNotice>
   );
 }
 
