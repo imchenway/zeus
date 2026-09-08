@@ -309,6 +309,8 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:app-close-frontmost-layer', handler);
     return () => ipcRenderer.removeListener('zeus:app-close-frontmost-layer', handler);
   },
+  /** 打开系统浏览器菜单，仅返回用户选择，不直接执行动作。 */
+  showBrowserMenu: (input: unknown) => ipcRenderer.invoke('zeus:browser:show-menu', input),
   getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
   activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),

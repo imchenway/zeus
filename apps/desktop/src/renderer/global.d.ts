@@ -282,6 +282,8 @@ declare global {
       onNativeNewConversation: (listener: () => void) => () => void;
       onNativeCloseActiveContextTab: (listener: () => void) => () => void;
       onNativeCloseFrontmostLayer: (listener: () => void) => () => void;
+      /** 系统菜单保持原生网页可见，并返回选择或取消。 */
+      showBrowserMenu: (input: { x: number; y: number; language: 'zh-CN' | 'en-US'; canSplit: boolean }) => Promise<'new_tab' | 'reload' | 'reset_size' | 'close' | null>;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;

@@ -1641,6 +1641,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
+  /** 浏览器标签与文件标题直接挂在会话顶栏，避免内容上方再叠一层工具栏。 */
+  const [contextToolbarHost, setContextToolbarHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
@@ -2356,17 +2358,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       onKeyDownCapture={handleWorkspaceKeyDownCapture}
       onPointerDownCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
       }}
       onFocusCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header" data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
+        <header className="session-thread-header" data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || undefined} data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
           <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
@@ -2424,12 +2426,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
             </div>
           </div>
+          <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
           <div className="session-thread-header-actions">
             {!legacy && props.conversation ? (
               <button
                 type="button"
                 className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
                 aria-pressed={browserOpen}
+                aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
                 title={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
                 onClick={(event) => {
                   contextReturnFocusRef.current = event.currentTarget;
@@ -2442,7 +2446,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 }}
               >
                 <GlobeSimple aria-hidden="true" weight="regular" />
-                <span>{props.language === 'zh-CN' ? '浏览器' : 'Browser'}</span>
               </button>
             ) : null}
             {!legacy && props.conversation && props.state ? (
@@ -2679,12 +2682,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                       {contextWorkspace.kind === 'browser' ? (
                         <BrowserWorkspace
+                          toolbarHost={contextToolbarHost}
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
                           suspended={browserResizing || quickActionsPopoverOpen}
                           expanded={contextFullWidth}
+                          canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}
                           onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
                           onResetSize={() => {
@@ -2718,6 +2723,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       ) : null}
                       {contextWorkspace.kind === 'source' ? (
                         <SourceWorkspace
+                          canSplit={browserLayoutWidth > 840}
+                          toolbarHost={contextToolbarHost}
                           preview={contextWorkspace.preview}
                           viewMode={contextWorkspace.viewMode}
                           onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
