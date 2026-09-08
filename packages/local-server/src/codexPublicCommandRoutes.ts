@@ -81,7 +81,7 @@ export function registerCodexPublicCommandRoutes(options: {
     adoptEnabled(enabled: boolean): void;
   };
   configuration: {
-    activate(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }>;
+    activate(input?: { syncSubscriptionModels?: boolean }): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }>;
     recordImported(result: CodexConfigImportApiResult): void;
   };
   now(): Date;
@@ -232,20 +232,27 @@ export function registerCodexPublicCommandRoutes(options: {
     }
   });
 
-  server.post('/api/codex-config/activate', async (request: FastifyRequest<{ Body: CodexPublicMutationRequest<EmptyInput> }>, reply) => {
+  server.post('/api/codex-config/activate', async (request: FastifyRequest<{ Body: CodexPublicMutationRequest<{ syncSubscriptionModels?: boolean }> }>, reply) => {
     try {
-      const parsed = application.parse<EmptyInput>({
+      const parsed = application.parse<{ syncSubscriptionModels?: boolean }>({
         value: request.body,
         commandType: codexPublicCommandTypes.configurationActivate,
         scopeKind: 'provider_configuration',
         scopeId: codexPublicCommandScopeIds.configuration,
       });
-      assertExactInputKeys(parsed.input, [], parsed.command.commandType);
+      // 普通配置应用仍可使用空输入；订阅登录明确要求同步本次模型目录。
+      assertExactInputKeys(parsed.input, Object.hasOwn(parsed.input, 'syncSubscriptionModels') ? ['syncSubscriptionModels'] : [], parsed.command.commandType);
+      if (parsed.input.syncSubscriptionModels !== undefined && typeof parsed.input.syncSubscriptionModels !== 'boolean') throw codedError('ZEUS_CODEX_PUBLIC_COMMAND_INVALID', 'syncSubscriptionModels 必须为布尔值。');
       const executed = await application.executeExternal({
         parsed,
         destinationId: 'codex:configuration-runtime',
         resourceId: codexPublicCommandScopeIds.configuration,
-        invoke: options.configuration.activate,
+        invoke: () => options.configuration.activate(parsed.input),
+        // 目录同步失败时新连接已被撤销，允许用户修正条件后重新同步。
+        isExplicitRejection: (error) =>
+          error !== null &&
+          typeof error === 'object' &&
+          (('code' in error && (error.code === 'ZEUS_CODEX_MODEL_SYNC_FAILED' || error.code === 'ZEUS_CODEX_MODEL_CATALOG_FIXED')) || ('dispatchDisposition' in error && error.dispatchDisposition === 'runtime_rejected')),
       });
       return executed.result;
     } catch (error) {

@@ -1569,13 +1569,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return capabilities.modelBudgets[model.model] ?? null;
   };
 
-  async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
+  async function activateCurrentCodexConfiguration(input: { syncSubscriptionModels?: boolean } = {}): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
     if (!codexAppServerManager.activateFreshGeneration) {
       throw nativeApiError('ZEUS_CODEX_CONFIG_HOT_RELOAD_UNAVAILABLE', '当前 Codex 运行服务不支持配置热启用。');
     }
     const capabilities = await codexAppServerManager.activateFreshGeneration({
       commandPath: currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      requireFreshModels: input.syncSubscriptionModels === true,
     });
     return { runtimeReloaded: true, runtimeGenerationId: capabilities.generationId, restartRequired: false };
   }
@@ -3408,8 +3409,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const unsubscribeCodexRpcRetries = codexAppServerManager.subscribeRpcRetries((progress) => {
     publishRealtimeEvent('codex.rpc.retrying', { ...progress });
   });
+  /** 所有窗口收到目录变更后重新读取，后台失败不冒充更新完成。 */
+  const unsubscribeCodexModels = codexAppServerManager.subscribe((event) => {
+    if (readOnlyValidation || (event.method !== 'zeus/models/updated' && event.method !== 'zeus/models/sync_failed')) return;
+    const state = codexAppServerManager.getState();
+    if (state.type !== 'ready' || state.generationId !== event.generationId) return;
+    // 目录事件仅传递刷新状态，不转发账号或供应商的任意回包。
+    publishRealtimeEvent('codex.models.changed', { generationId: event.generationId, succeeded: event.method === 'zeus/models/updated' });
+  });
   closeLocalServerResources = async () => {
     unsubscribeCodexRpcRetries();
+    unsubscribeCodexModels();
     await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
   };
   projectGitQueries = platformRoutes.projectGitQueries;

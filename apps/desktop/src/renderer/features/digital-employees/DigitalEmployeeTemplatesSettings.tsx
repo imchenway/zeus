@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/Button.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { DigitalEmployeeCapabilitiesSnapshot, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
@@ -20,6 +21,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
   const loadRevisionRef = useRef(0);
+  /** 目录与模板分别更新，避免刷新覆盖正在编辑的模板。 */
+  const modelRevisionRef = useRef(0);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
   const [savedName, setSavedName] = useState<string | null>(null);
@@ -28,9 +31,35 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const draftsRef = useRef(new Map<string, { draft: DigitalEmployeeTemplateDraft; target: NonNullable<EditorTarget> }>());
   const [draft, setDraft] = useState<DigitalEmployeeTemplateDraft>({ ...emptyTemplateDraft });
 
+  useEffect(() => {
+    /** 模型发布后只读取新的能力列表。 */
+    const client = props.client;
+    if (!client) return;
+    let disposed = false;
+    const refresh = (): void => {
+      const revision = ++modelRevisionRef.current;
+      void client
+        .loadDigitalEmployeeCapabilities()
+        .then((next) => {
+          if (!disposed && revision === modelRevisionRef.current) setCapabilities(next);
+        })
+        .catch(() => {
+          // 暂时无法读取时保留已有目录，等待下次更新通知。
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      disposed = true;
+      modelRevisionRef.current += 1;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [props.client]);
+
   const loadTemplates = useCallback(async () => {
     if (!props.client) return;
     const revision = ++loadRevisionRef.current;
+    /** 模板初始化不得覆盖更新通知启动的较新读取。 */
+    const modelRevision = ++modelRevisionRef.current;
     setLoadState('loading');
     setError(null);
     setSavedName(null);
@@ -38,7 +67,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       const [nextTemplates, nextCapabilities] = await Promise.all([props.client.loadDigitalEmployeeTemplates(), props.client.loadDigitalEmployeeCapabilities()]);
       if (revision !== loadRevisionRef.current) return;
       setTemplates(nextTemplates);
-      setCapabilities(nextCapabilities);
+      if (modelRevision === modelRevisionRef.current) setCapabilities(nextCapabilities);
       setLoadState('ready');
     } catch (cause) {
       if (revision !== loadRevisionRef.current) return;
