@@ -10540,100 +10540,186 @@ body[data-surface='project-git-diff'] #root {
   place-items: center;
 }
 
-/* 启动失败是独立页，不使用弹窗、卡片、遮罩或背景虚化。 */
+/* 冷灰白底叠加低饱和柔光，深色对应石墨底；只用静态渐变保持页面安静。 */
 .startup-failure-shell {
-  background: oklch(98.7% 0.003 255);
-  color: oklch(23% 0.018 255);
+  background:
+    radial-gradient(ellipse at 18% 12%, light-dark(rgb(130 115 205 / 0.1), rgb(130 115 205 / 0.08)), transparent 60%), radial-gradient(ellipse at 85% 90%, light-dark(rgb(143 166 197 / 0.14), rgb(100 128 166 / 0.06)), transparent 55%),
+    linear-gradient(135deg, light-dark(#faf9f7, #1e1e25), light-dark(#f0f1f5, #15161c));
+  block-size: 100svh;
+  box-sizing: border-box;
+  color: light-dark(#24252b, #f0f0f4);
+  color-scheme: light dark;
   display: grid;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  min-block-size: 100vh;
-  padding: clamp(48px, 10vh, 112px) clamp(36px, 8vw, 128px);
-  place-items: center start;
+  overflow: auto;
+  padding: 64px 24px 88px;
+  place-items: center;
 }
 
+/* 有应用主题标记时沿用该主题，否则跟随系统。 */
+html[data-zeus-theme='light'] .startup-failure-shell {
+  color-scheme: light;
+}
+
+html[data-zeus-theme='dark'] .startup-failure-shell {
+  color-scheme: dark;
+}
+
+/* 失败状态直接使用整页空间，以阅读宽度和对齐组织内容，不添加卡片容器。 */
 .startup-failure-content {
+  box-sizing: border-box;
+  column-gap: 24px;
   display: grid;
-  gap: 0;
-  inline-size: min(520px, 100%);
+  grid-template-columns: 64px minmax(0, 1fr);
+  inline-size: min(640px, 100%);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 
+/* 复用应用已有图标，资源随样式打包，不再用普通字母代替品牌。 */
 .startup-failure-mark {
-  align-items: center;
-  background: oklch(94.5% 0.028 285);
-  border: 1px solid oklch(88% 0.035 285);
-  border-radius: 11px;
-  color: oklch(48% 0.15 285);
-  display: inline-flex;
-  font-size: 20px;
-  font-weight: 760;
-  block-size: 42px;
-  inline-size: 42px;
-  justify-content: center;
-  margin-block-end: 28px;
+  background: url('../../assets/icon.svg') center / contain no-repeat;
+  block-size: 64px;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  inline-size: 64px;
+  margin-block-start: -8px;
 }
 
+/* 正文、详情与操作共用一条左对齐基线。 */
+.startup-failure-content > :not(.startup-failure-mark) {
+  grid-column: 2;
+}
+
+/* 标题保持桌面应用的阅读尺度，避免错误信息像宣传页主标题。 */
 .startup-failure-content h1 {
-  font-size: clamp(30px, 4vw, 42px);
-  font-weight: 720;
-  letter-spacing: -0.035em;
-  line-height: 1.08;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
   margin: 0;
+  text-wrap: balance;
 }
 
+/* 原因优先于操作后果，两层说明都保持足够对比度。 */
 .startup-failure-description {
-  color: oklch(42% 0.014 255);
-  font-size: 16px;
-  line-height: 1.65;
-  margin: 20px 0 0;
+  color: light-dark(#666874, #b3b5c1);
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 14px 0 0;
+  text-wrap: pretty;
 }
 
 .startup-failure-log-hint {
-  color: oklch(56% 0.012 255);
-  font-size: 13px;
-  line-height: 1.5;
-  margin: 8px 0 0;
+  color: light-dark(#737580, #a2a5b2);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 14px 0 0;
+  text-align: start;
+  text-wrap: pretty;
 }
 
+/* 错误说明直接展开详情，不再另设重复入口。 */
+.startup-failure-content details {
+  min-inline-size: 0;
+  text-align: start;
+}
+
+.startup-failure-content summary {
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* 用轻量折角表示展开状态，仍保留原生详情的键盘操作。 */
+.startup-failure-content summary::-webkit-details-marker {
+  display: none;
+}
+
+.startup-failure-content summary::after {
+  border-block-end: 1px solid currentColor;
+  border-inline-end: 1px solid currentColor;
+  block-size: 5px;
+  content: '';
+  display: inline-block;
+  inline-size: 5px;
+  margin-inline-start: 6px;
+  color: light-dark(#776bc5, #b4a8f5);
+  transform: rotate(45deg);
+  vertical-align: 3px;
+}
+
+.startup-failure-content details[open] summary::after {
+  transform: rotate(225deg);
+}
+
+.startup-failure-content summary:hover {
+  color: light-dark(#25272d, #eceef2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 展开的原始详情使用正文排版，长内容局部滚动，不截断错误信息。 */
+.startup-failure-content pre {
+  color: light-dark(#666874, #b3b5c1);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 12px 0 0;
+  max-block-size: min(240px, 30svh);
+  max-inline-size: 100%;
+  overflow: auto;
+}
+
+/* 操作紧随说明左对齐，保持主按钮在操作组右侧，不再模拟弹窗右下角。 */
 .startup-failure-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-block-start: 30px;
+  gap: 8px;
+  justify-content: flex-start;
+  margin-block-start: 32px;
 }
 
+/* 次要操作用中性底色与细边框保持按钮感，紫色留给重新启动。 */
 .startup-failure-button {
-  background: transparent;
-  border: 1px solid oklch(82% 0.012 255);
-  border-radius: 9px;
-  color: oklch(30% 0.018 255);
+  background: light-dark(#fff, #25262d);
+  border: 1px solid light-dark(#d9dae2, #42444f);
+  border-radius: 8px;
+  color: light-dark(#4c4e5c, #dedee8);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
-  font-weight: 650;
-  min-block-size: 38px;
+  font-weight: 500;
+  min-block-size: 40px;
   padding: 0 16px;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
 
 .startup-failure-button.is-primary {
-  background: oklch(28% 0.025 255);
-  border-color: oklch(28% 0.025 255);
-  color: oklch(98% 0.003 255);
+  background: light-dark(#6155d8, #b9adff);
+  border-color: light-dark(#574bc8, #c5bbff);
+  box-shadow: 0 1px 2px rgb(35 25 82 / 0.12);
+  color: light-dark(#fff, #29214d);
 }
 
-.startup-failure-button:hover:not(:disabled),
-.startup-failure-button:focus-visible {
-  border-color: oklch(60% 0.02 255);
-  outline: none;
+.startup-failure-button:hover:not(:disabled) {
+  background: light-dark(#f1f0f6, #303138);
+  border-color: light-dark(#c5c5d2, #575966);
 }
 
-.startup-failure-button.is-primary:hover:not(:disabled),
-.startup-failure-button.is-primary:focus-visible {
-  background: oklch(23% 0.025 255);
-  border-color: oklch(23% 0.025 255);
+.startup-failure-button.is-primary:hover:not(:disabled) {
+  background: light-dark(#5146bd, #c8beff);
+  border-color: light-dark(#4a3fae, #d4cbff);
 }
 
-.startup-failure-button:focus-visible {
-  box-shadow: 0 0 0 3px oklch(58% 0.12 255 / 0.18);
+/* 按钮和详情入口共用清晰的键盘焦点，禁用态保留原有等待语义。 */
+.startup-failure-button:focus-visible,
+.startup-failure-content summary:focus-visible {
+  outline: 2px solid light-dark(#6155d8, #b9adff);
+  outline-offset: 3px;
 }
 
 .startup-failure-button:disabled {
@@ -10641,14 +10727,37 @@ body[data-surface='project-git-diff'] #root {
   opacity: 0.58;
 }
 
-@media (max-width: 640px) {
+/* 窄窗口将正文扩展到整行，按钮仍紧凑排列，空间不足时自然换行。 */
+@media (max-width: 480px) {
   .startup-failure-shell {
-    padding: 40px 28px;
+    padding: 56px 24px 40px;
   }
 
-  .startup-failure-actions,
+  .startup-failure-content {
+    column-gap: 12px;
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .startup-failure-mark {
+    block-size: 40px;
+    grid-row: 1;
+    inline-size: 40px;
+    margin-block-start: -3px;
+  }
+
+  .startup-failure-content h1 {
+    font-size: 24px;
+  }
+
+  .startup-failure-content > :not(.startup-failure-mark, h1) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* 尊重系统减少动态效果设置。 */
+@media (prefers-reduced-motion: reduce) {
   .startup-failure-button {
-    inline-size: 100%;
+    transition: none;
   }
 }
 
