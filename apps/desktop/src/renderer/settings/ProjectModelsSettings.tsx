@@ -307,6 +307,7 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
                   setSelection((current) => ({ ...current, defaultModelRef: value }));
                 }}
                 options={defaultPresentation.options}
+                pinning={defaultPresentation.pinning}
                 triggerLabel={unavailableDefaultLabel ? `${unavailableDefaultLabel} · ${zh ? '不可用' : 'Unavailable'}` : defaultPresentation.triggerLabel}
                 searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}

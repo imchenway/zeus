@@ -3389,6 +3389,7 @@ function NewConversationComposer(props: {
                 className="session-composer-model-dropdown"
                 value={selectedModel?.id ?? ''}
                 options={modelPresentation.options}
+                pinning={modelPresentation.pinning}
                 disabled={submitting || !props.owner || !selectedModel}
                 searchable
                 searchPlaceholder={props.language === 'zh-CN' ? '搜索供应商或模型' : 'Search providers or models'}
