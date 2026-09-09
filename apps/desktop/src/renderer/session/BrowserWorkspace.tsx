@@ -231,8 +231,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     if (!bridge?.setBrowserLayout || !viewport || !tabId) return;
     // 只保留最新一帧的显示请求，弹窗出现时立即取消。
     let frame = 0;
-    // 共用弹窗直接挂在 body 下；任一弹窗存在时原生网页都不得显示。
-    const isSuspended = (): boolean => Boolean(props.suspended || document.body.querySelector(':scope > [data-zeus-primitive="modal"]'));
+    // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
+    const isSuspended = (): boolean =>
+      props.suspended === true ||
+      [...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport));
     // 每次提交都重新读取弹窗状态和尺寸，避免延迟回调把网页重新盖到弹窗上。
     const syncLayout = (): void => {
       if (closedTabIdsRef.current.has(tabId)) return;
@@ -254,7 +256,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     // 占位区尺寸变化继续复用同一布局入口。
     const observer = new ResizeObserver(apply);
     observer.observe(viewport);
-    // 只观察 body 直属节点增删，不订阅会话正文或弹窗内部内容变化。
+    // 只观察弹窗与抽屉的门户增删；叠加层全部卸载后才恢复，不订阅正文或浮层内部内容变化。
     const modalObserver = new MutationObserver(apply);
     modalObserver.observe(document.body, { childList: true });
     window.addEventListener('resize', apply);
