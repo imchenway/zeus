@@ -1643,6 +1643,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
   /** 浏览器标签与文件标题直接挂在会话顶栏，避免内容上方再叠一层工具栏。 */
   const [contextToolbarHost, setContextToolbarHost] = useState<HTMLDivElement | null>(null);
+  /** 环境卡在浏览器旁占用实际空间，避免遮盖原生网页。 */
+  const [browserEnvironmentHost, setBrowserEnvironmentHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
@@ -2368,7 +2370,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header" data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || undefined} data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
+        <header
+          className="session-thread-header"
+          data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || undefined}
+          data-context-full-width={contextFullWidth || browserLayoutWidth <= 840 || undefined}
+          data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}
+          style={{ '--session-context-width': `${resolvedBrowserTargetWidth}px` } as CSSProperties}
+        >
           <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
@@ -2426,86 +2434,89 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
             </div>
           </div>
-          <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
-          <div className="session-thread-header-actions">
-            {!legacy && props.conversation ? (
-              <button
-                type="button"
-                className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
-                aria-pressed={browserOpen}
-                aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
-                title={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
-                onClick={(event) => {
-                  contextReturnFocusRef.current = event.currentTarget;
-                  if (browserOpen) {
-                    closeContextWorkspace();
-                    return;
+          <div className="session-context-header-tools">
+            <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
+            <div className="session-thread-header-actions">
+              {!legacy && props.conversation ? (
+                <button
+                  type="button"
+                  className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
+                  aria-pressed={browserOpen}
+                  aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
+                  title={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
+                  onClick={(event) => {
+                    contextReturnFocusRef.current = event.currentTarget;
+                    if (browserOpen) {
+                      closeContextWorkspace();
+                      return;
+                    }
+                    setContextFullWidth(false);
+                    setContextWorkspace({ kind: 'browser' });
+                  }}
+                >
+                  <GlobeSimple aria-hidden="true" weight="regular" />
+                </button>
+              ) : null}
+              {!legacy && props.conversation && props.state ? (
+                <SessionQuickActionsCard
+                  language={props.language}
+                  conversation={props.conversation}
+                  state={props.state}
+                  task={props.task}
+                  persistentHost={quickActionsPersistentHost}
+                  dockHost={browserOpen ? browserEnvironmentHost : null}
+                  forceCollapsed={contextOpen}
+                  suppressed={props.quickActionsSuppressed}
+                  capabilities={props.capabilities}
+                  serviceTierPreferences={serviceTierPreferences}
+                  onServiceTierPreferenceChange={saveServiceTierPreference}
+                  onLoadCapabilities={actions.onLoadCapabilities}
+                  onLoadSkills={actions.onLoadSkills}
+                  onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
+                  taskGitDeliveryRevision={props.taskGitDeliveryRevision}
+                  onOpenTaskDetail={actions.onOpenTaskDetail}
+                  onOpenGitReview={actions.onOpenTaskGitReview}
+                  onOpenGitDelivery={actions.onOpenTaskGitDelivery}
+                  onOpenProjectCommands={actions.onOpenProjectCommands}
+                  subagentCount={subagentThreadIds.length}
+                  onOpenSubagents={
+                    actions.onLoadSubagents && actions.onLoadSubagentThread
+                      ? (trigger) => {
+                          contextReturnFocusRef.current = trigger;
+                          setContextFullWidth(false);
+                          setContextWorkspace({ kind: 'subagents' });
+                        }
+                      : undefined
                   }
-                  setContextFullWidth(false);
-                  setContextWorkspace({ kind: 'browser' });
-                }}
-              >
-                <GlobeSimple aria-hidden="true" weight="regular" />
-              </button>
-            ) : null}
-            {!legacy && props.conversation && props.state ? (
-              <SessionQuickActionsCard
-                language={props.language}
-                conversation={props.conversation}
-                state={props.state}
-                task={props.task}
-                persistentHost={quickActionsPersistentHost}
-                forceCollapsed={contextOpen}
-                suppressed={props.quickActionsSuppressed}
-                capabilities={props.capabilities}
-                serviceTierPreferences={serviceTierPreferences}
-                onServiceTierPreferenceChange={saveServiceTierPreference}
-                onLoadCapabilities={actions.onLoadCapabilities}
-                onLoadSkills={actions.onLoadSkills}
-                onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
-                taskGitDeliveryRevision={props.taskGitDeliveryRevision}
-                onOpenTaskDetail={actions.onOpenTaskDetail}
-                onOpenGitReview={actions.onOpenTaskGitReview}
-                onOpenGitDelivery={actions.onOpenTaskGitDelivery}
-                onOpenProjectCommands={actions.onOpenProjectCommands}
-                subagentCount={subagentThreadIds.length}
-                onOpenSubagents={
-                  actions.onLoadSubagents && actions.onLoadSubagentThread
-                    ? (trigger) => {
-                        contextReturnFocusRef.current = trigger;
-                        setContextFullWidth(false);
-                        setContextWorkspace({ kind: 'subagents' });
-                      }
-                    : undefined
-                }
-                onStartCodeReview={(selection: SessionCodeReviewSelection) => {
-                  if (!props.task || !props.conversation || !actions.onStartConversation || props.conversation.projectId !== props.task.projectId || props.conversation.taskId !== props.task.id) {
-                    return {
-                      state: 'failed',
-                      message: props.language === 'zh-CN' ? '此对话没有可用于代码审查的任务工作目录。' : 'This conversation has no task working folder available for code review.',
-                    };
-                  }
-                  return actions.onStartConversation({
-                    mode: 'create',
-                    source: 'code_review',
-                    task: props.task,
-                    inheritConversationId: props.conversation.id,
-                    content: props.language === 'zh-CN' ? '请审查当前工作区的完整代码变化。' : 'Review all code changes in the current workspace.',
-                    permissionMode: selection.permissionMode,
-                    collaborationMode: 'default',
-                    serviceTierSelection: selection.serviceTierSelection,
-                    model: selection.model,
-                    effort: selection.effort,
-                    agentKind: selection.agentKind,
-                    ...(selection.skillId ? { skillId: selection.skillId } : {}),
-                  });
-                }}
-                onAddSources={actions.onChooseAttachments}
-                onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
-                onLoadResourcePreview={actions.onLoadResourcePreview}
-                onPopoverOpenChange={setQuickActionsPopoverOpen}
-              />
-            ) : null}
+                  onStartCodeReview={(selection: SessionCodeReviewSelection) => {
+                    if (!props.task || !props.conversation || !actions.onStartConversation || props.conversation.projectId !== props.task.projectId || props.conversation.taskId !== props.task.id) {
+                      return {
+                        state: 'failed',
+                        message: props.language === 'zh-CN' ? '此对话没有可用于代码审查的任务工作目录。' : 'This conversation has no task working folder available for code review.',
+                      };
+                    }
+                    return actions.onStartConversation({
+                      mode: 'create',
+                      source: 'code_review',
+                      task: props.task,
+                      inheritConversationId: props.conversation.id,
+                      content: props.language === 'zh-CN' ? '请审查当前工作区的完整代码变化。' : 'Review all code changes in the current workspace.',
+                      permissionMode: selection.permissionMode,
+                      collaborationMode: 'default',
+                      serviceTierSelection: selection.serviceTierSelection,
+                      model: selection.model,
+                      effort: selection.effort,
+                      agentKind: selection.agentKind,
+                      ...(selection.skillId ? { skillId: selection.skillId } : {}),
+                    });
+                  }}
+                  onAddSources={actions.onChooseAttachments}
+                  onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
+                  onLoadResourcePreview={actions.onLoadResourcePreview}
+                  onPopoverOpenChange={setQuickActionsPopoverOpen}
+                />
+              ) : null}
+            </div>
           </div>
         </header>
       ) : null}
@@ -2678,7 +2689,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       }}
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
-                    <div className="session-browser-pane">
+                    <div className="session-browser-pane" data-environment-open={(browserOpen && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
                       {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                       {contextWorkspace.kind === 'browser' ? (
                         <BrowserWorkspace
@@ -2687,7 +2698,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
-                          suspended={browserResizing || quickActionsPopoverOpen}
+                          suspended={browserResizing}
                           expanded={contextFullWidth}
                           canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}
@@ -2704,6 +2715,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           }}
                         />
                       ) : null}
+                      {browserOpen ? <div ref={setBrowserEnvironmentHost} className="session-browser-environment-host" /> : null}
                       {contextWorkspace.kind === 'subagents' && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
                         <SubagentWorkspace
                           language={props.language}

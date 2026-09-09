@@ -283,7 +283,18 @@ declare global {
       onNativeCloseActiveContextTab: (listener: () => void) => () => void;
       onNativeCloseFrontmostLayer: (listener: () => void) => () => void;
       /** 系统菜单保持原生网页可见，并返回选择或取消。 */
-      showBrowserMenu: (input: { x: number; y: number; language: 'zh-CN' | 'en-US'; canSplit: boolean }) => Promise<'new_tab' | 'reload' | 'reset_size' | 'close' | null>;
+      /** 系统菜单绑定当前会话和标签，原生网页保持可见。 */
+      showBrowserMenu: (input: {
+        x: number;
+        y: number;
+        conversationId: string;
+        tabId: string;
+        language: 'zh-CN' | 'en-US';
+        canSplit: boolean;
+        expanded: boolean;
+      }) => Promise<
+        'new_tab' | 'close_tab' | 'close_other_tabs' | 'back' | 'forward' | 'reload' | 'stop' | 'find' | 'copy_url' | 'open_external' | 'zoom_in' | 'zoom_out' | 'zoom_reset' | 'devtools' | 'toggle_expanded' | 'reset_size' | 'close' | null
+      >;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
