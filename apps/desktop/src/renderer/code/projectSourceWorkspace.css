@@ -190,7 +190,7 @@
 }
 
 .project-source-tree-scroll button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent);
+  background: var(--zeus-interaction-hover);
 }
 .project-source-tree-scroll button.selected {
   background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent);

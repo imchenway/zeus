@@ -95,7 +95,10 @@
   text-align: start;
 }
 
-.macos-ai-app .digital-employee-list-row:hover:not(:disabled):not([aria-disabled='true']),
+/* 悬停浅于实际选中，避免路过一行也显示为已选择。 */
+.macos-ai-app .digital-employee-list-row:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
 .macos-ai-app .digital-employee-list-row.is-selected {
   background: color-mix(in oklab, var(--zeus-product-accent) 8%, var(--zeus-product-panel));
 }
@@ -802,7 +805,7 @@
 
 .macos-ai-app .digital-collaboration-deliverable:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: color-mix(in oklab, var(--zeus-product-accent) 42%, var(--zeus-control-border));
-  background: color-mix(in oklab, var(--zeus-product-accent) 5%, transparent);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .digital-collaboration-legacy {

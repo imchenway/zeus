@@ -3596,12 +3596,17 @@
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary {
+  /* 悬停反馈止于摘要内容，不把标题下方整行染色。 */
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  box-sizing: border-box;
   align-items: baseline;
   cursor: pointer;
   display: flex;
   gap: 12px;
-  min-block-size: 32px;
-  padding: 6px 20px;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 
 /* 收起入口固定在详情底部居中，独立于滚动内容且不挤占摘要宽度。 */
@@ -4374,12 +4379,12 @@
   gap: 8px;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   min-block-size: 34px;
-  padding: 2px 38px 2px 0;
+  padding: 4px 38px 4px 8px;
+  border-radius: 6px;
 }
 
 .session-codex-parity-v1 .session-command-summary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
-  border-radius: 7px;
 }
 
 .session-codex-parity-v1 .session-command-terminal-icon {
@@ -4486,7 +4491,7 @@
   cursor: pointer;
   font-weight: 590;
   line-height: 1.5;
-  padding: 3px 2px;
+  padding: 4px 8px;
 }
 
 .session-codex-parity-v1 .session-reasoning-detail > summary:hover:not(:disabled):not([aria-disabled='true']) {
@@ -4520,6 +4525,10 @@
 
 .session-codex-parity-v1 .session-activity-group > details > summary {
   align-items: center;
+  /* 过程行只让图标、标题和箭头构成命中区，正文剩余宽度保持空白。 */
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  border-radius: 6px;
   color: var(--session-text-muted);
   cursor: pointer;
   display: flex;
@@ -4527,7 +4536,7 @@
   font-weight: 590;
   gap: 9px;
   min-block-size: 28px;
-  padding: 0 2px;
+  padding: 4px 8px;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary:hover:not(:disabled):not([aria-disabled='true']) {
@@ -4659,7 +4668,8 @@
   display: flex;
   gap: 6px;
   list-style: none;
-  min-block-size: 24px;
+  min-block-size: 28px;
+  padding: 4px 8px;
   min-inline-size: 0;
 }
 
@@ -5468,6 +5478,21 @@
   padding: 0 !important;
 }
 
+/* 两个会话入口与活动草稿的发送共用品牌色；暂停仍保留中性控制语义。 */
+.session-codex-parity-v1 .session-primary-command-slot .session-send-button,
+.session-codex-parity-v1 .session-active-draft-submit {
+  background: var(--zeus-brand-primary) !important;
+  color: white !important;
+}
+.session-codex-parity-v1 .session-primary-command-slot .session-send-button:hover:not(:disabled),
+.session-codex-parity-v1 .session-active-draft-submit:hover:not(:disabled) {
+  background: var(--zeus-interaction-primary-hover) !important;
+}
+.session-codex-parity-v1 .session-primary-command-slot .session-send-button:active:not(:disabled),
+.session-codex-parity-v1 .session-active-draft-submit:active:not(:disabled) {
+  background: var(--zeus-interaction-primary-pressed) !important;
+}
+
 .session-codex-parity-v1 .session-stop-button > span {
   background: currentColor;
   border-radius: 2px;
@@ -5884,7 +5909,9 @@
 .session-codex-parity-v1 .session-plan-summary-title {
   gap: 8px;
   min-inline-size: 0;
-  padding: 4px 2px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  min-block-size: 28px;
 }
 
 .session-codex-parity-v1 .session-plan-summary-title > strong {
@@ -8343,7 +8370,10 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .browser-annotation-actions > button:hover:not(:disabled):not([aria-disabled='true']),
+.session-codex-parity-v1 .browser-annotation-actions > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
 .session-codex-parity-v1 .browser-annotation-actions > button.selected {
   background: color-mix(in oklab, var(--session-accent) 12%, var(--session-canvas));
   color: var(--session-text);
@@ -10443,7 +10473,9 @@
   padding: 0 8px;
 }
 
-.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger:hover:not(:disabled):not([aria-disabled='true']),
+.session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
 .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .zeus-select-trigger {
   background: color-mix(in srgb, var(--session-selected) 72%, transparent);
 }

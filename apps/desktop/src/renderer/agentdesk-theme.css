@@ -327,11 +327,9 @@
     .project-settings-section-tabs button,
     .project-git-tabs > button,
     .digital-employee-section-tabs button,
-    .automations-tabs button,
     .task-table-status-segment,
     .task-table-view-pill,
     .task-table-page-view-segments button,
-    .extension-tabs button,
     .project-workspace-mode-toolbar button
   ) {
   border-radius: var(--agentdesk-radius-tab);
@@ -341,7 +339,7 @@
   color: var(--agentdesk-accent-strong);
 }
 
-.macos-ai-app.zeus-shell :is(.project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs, .task-table-status-segments, .task-table-page-view-segments) {
+.macos-ai-app.zeus-shell :is(.project-settings-section-tabs, .digital-employee-section-tabs, .task-table-status-segments, .task-table-page-view-segments) {
   border-radius: var(--agentdesk-radius-tab-rail);
   background: color-mix(in srgb, var(--agentdesk-accent) 6%, var(--agentdesk-surface-inset));
   border-color: var(--agentdesk-border);
@@ -351,7 +349,6 @@
   :is(
     .project-settings-section-tabs button[aria-selected='true'],
     .digital-employee-section-tabs button.is-selected,
-    .automations-tabs button[aria-current='page'],
     .task-table-status-segment[aria-pressed='true'],
     .task-table-view-pill[aria-pressed='true'],
     .task-table-page-view-segments button[aria-pressed='true']
@@ -1333,8 +1330,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .project-git-tabs,
     .project-settings-section-tabs,
     .digital-employee-section-tabs,
-    .automations-tabs,
-    .extension-tabs,
     .menu-bar-usage-tabs,
     .task-table-status-segments,
     .task-table-page-view-segments
@@ -1690,7 +1685,7 @@ body:has(.macos-ai-app.zeus-shell) {
   flex-shrink: 0;
 }
 /* 同类导航轨道统一为紧凑圆角容器，按钮与外边缘保持 4px 留白。 */
-.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs, .project-settings-section-tabs, .digital-employee-section-tabs) {
+.macos-ai-app.zeus-shell :is(.project-settings-section-tabs, .digital-employee-section-tabs) {
   border-radius: 12px;
   padding: 4px;
   gap: 4px;
@@ -1699,20 +1694,48 @@ body:has(.macos-ai-app.zeus-shell) {
   max-inline-size: 100%;
   flex-wrap: wrap;
 }
-.macos-ai-app.zeus-shell .extension-tabs > button {
-  min-block-size: 32px;
-  padding: 4px 12px;
+/* 自动化与扩展是页面导航，用细下划线指示当前位置，避免胶囊内再套紫色胶囊。 */
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-block-end: 1px solid var(--zeus-product-line);
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.macos-ai-app.zeus-shell .extension-tabs > button.is-active {
-  background: color-mix(in srgb, var(--agentdesk-accent) 12%, var(--zeus-card-background));
-  color: var(--agentdesk-accent-strong);
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button {
+  min-block-size: 38px;
+  padding: 8px 2px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
 }
-.macos-ai-app.zeus-shell .extension-tabs > button:hover:not(:disabled):not([aria-disabled='true']):not(.is-active) {
-  background: var(--zeus-interaction-hover);
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button[aria-current='page'] {
+  background: transparent;
+  border-block-end-color: var(--zeus-brand-primary);
+  color: var(--zeus-product-text);
+  font-weight: 600;
+}
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
+  color: var(--zeus-product-text);
+}
+/* 普通数量只是补充信息，未读数继续沿用独立提醒颜色。 */
+.macos-ai-app.zeus-shell .automations-tabs > button > span:not(.automations-unread-count) {
+  background: transparent;
+  color: var(--zeus-product-subtle);
+  padding-inline: 2px;
 }
 @media (max-width: 640px) {
   .macos-ai-app.zeus-shell .skills-catalog {
@@ -1822,6 +1845,8 @@ body:has(.macos-ai-app.zeus-shell) {
   margin-block-start: 20px;
 }
 .macos-ai-app.zeus-shell .project-git-navigator summary {
+  /* 树形导航整行可折叠，计数继续靠右；外形沿用公共折叠标题。 */
+  inline-size: auto;
   cursor: pointer;
   padding: 6px 8px;
   font-size: 12px;
@@ -2334,22 +2359,7 @@ body:has(.macos-ai-app.zeus-shell) {
   min-height: 6px;
 }
 
-/* 导航入口与文件树采用独立行间距，树叶按钮不继承全局玻璃按钮样式。 */
-.macos-ai-app.zeus-shell .project-git-workspace-links > summary {
-  margin-bottom: 6px;
-}
-.macos-ai-app.zeus-shell .project-git-workspace-links > button {
-  margin-block: 4px;
-  min-height: 34px;
-  border-radius: 6px;
-}
-.macos-ai-app.zeus-shell .project-git-workspace-links > button:hover:not(:disabled):not([aria-disabled='true']):not([aria-current='true']) {
-  background: var(--zeus-source-list-hover) !important;
-}
-.macos-ai-app.zeus-shell .project-git-workspace-links > button[aria-current='true'] {
-  background: var(--zeus-source-list-selected) !important;
-  font-weight: 600;
-}
+/* 文件树采用独立行间距，树叶按钮不继承全局玻璃按钮样式。 */
 .macos-ai-app.zeus-shell .project-git-stage-scroll {
   padding: 3px 0 6px;
 }
@@ -2527,8 +2537,11 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--zeus-product-muted) !important;
 }
 .macos-ai-app.zeus-shell .project-git-tabs > button.is-active {
-  background: var(--zeus-source-list-selected) !important;
-  color: var(--zeus-product-accent, var(--zeus-brand-primary)) !important;
+  /* 当前页面用中性文字和细线标识，避免与分支和提交选择共享整块紫底。 */
+  background: transparent !important;
+  color: var(--zeus-product-text) !important;
+  box-shadow: inset 0 -2px var(--zeus-brand-primary) !important;
+  border-radius: 0 !important;
   font-weight: 600;
 }
 .macos-ai-app.zeus-shell .project-git-tabs > button > span {
@@ -2736,11 +2749,6 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
   pointer-events: auto;
   min-inline-size: 0;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details > summary {
-  min-block-size: 24px;
-  padding: 0;
-  border-radius: 3px;
 }
 .macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-summary-primary {
   gap: 3px 12px;
