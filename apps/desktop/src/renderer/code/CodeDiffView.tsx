@@ -363,5 +363,7 @@ function diffRows(file: TaskGitFileDiff, align: boolean): DiffRow[] {
       }
     }
   }
+  // 二进制或仅文件模式变化的 diff 没有文本 hunk；CodeMirror 文档仍必须至少有一行。
+  if (rows.length === 0) rows.push({ left: '', right: '', leftNumber: null, rightNumber: null, kind: 'empty' });
   return rows;
 }
