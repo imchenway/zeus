@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
-/** 设置编辑共用保存状态，只有最后一笔写入成功才显示已保存。 */
+/** 设置编辑共用写入状态，成功静默，失败保留可恢复反馈。 */
 export type SettingsSaveState = 'idle' | 'saving' | 'saved' | 'failed';
 
 /** 按交互顺序写入，失败不重放；调用方保留草稿并允许用户再次编辑。 */
@@ -42,13 +42,14 @@ export function useSettingsAutosave(language: 'zh-CN' | 'en-US') {
   return { status, save, reset };
 }
 
-/** 页面右上角统一的真实保存结果。 */
+/** 自动保存只提示失败；正常写入不占据页面或弹出成功提示。 */
 export function SettingsSaveStatus(props: { status: SettingsSaveState; language: 'zh-CN' | 'en-US' }) {
   /** 文案跟随当前页面语言。 */
   const zh = props.language === 'zh-CN';
+  if (props.status !== 'failed') return null;
   return (
-    <span className="settings-save-status" role="status" data-state={props.status}>
-      {props.status === 'saving' ? (zh ? '正在保存…' : 'Saving…') : props.status === 'saved' ? (zh ? '已保存' : 'Saved') : props.status === 'failed' ? (zh ? '未保存，请重试' : 'Not saved. Retry.') : null}
+    <span className="settings-save-status" role="alert" data-state="failed">
+      {zh ? '未保存，请重试' : 'Not saved. Retry.'}
     </span>
   );
 }
