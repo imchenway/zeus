@@ -424,8 +424,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     toggleAllVisibleTaskSelection,
     toggleCollapsedProject,
     togglePinnedProject,
-    toggleSidebarConversationOrganization,
-    toggleSidebarConversationStatusGroup,
     toggleTaskSelection,
     updateTaskBoardSettings,
     workspaceDrawerPortalStyle,
@@ -739,8 +737,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
-          conversationOrganization={appShellSettings.sidebarConversationOrganization}
-          collapsedConversationStatusIdsByProject={appShellSettings.sidebarConversationCollapsedStatusIdsByProject}
           conversationGroups={nativeConversationGroups}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
@@ -757,8 +753,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onOpenProjectSection={openProjectSection}
           onTogglePinnedProject={togglePinnedProject}
           onToggleProjectCollapsed={(projectId) => void toggleCollapsedProject(projectId)}
-          onToggleConversationOrganization={toggleSidebarConversationOrganization}
-          onToggleConversationStatusGroup={toggleSidebarConversationStatusGroup}
           onRevealProjectInFinder={(projectPath) => revealProjectInFinder(projectPath)}
           onRenameProject={(projectId, displayName) => renameProjectDisplayName(projectId, displayName)}
           onPrepareProjectDelete={setPendingProjectDeleteId}

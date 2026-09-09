@@ -2895,65 +2895,6 @@ a {
   color: var(--zeus-product-text);
   outline: 0;
 }
-.project-sidebar-conversations .session-conversation-status-group {
-  display: grid;
-  min-inline-size: 0;
-}
-.project-sidebar-conversations .session-conversation-status-group + .session-conversation-status-group {
-  margin-block-start: 2px;
-}
-.project-sidebar-conversations .session-conversation-status-group-toggle {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  color: var(--zeus-product-subtle);
-  display: grid;
-  font-size: 12px;
-  font-weight: 620;
-  gap: 3px;
-  grid-template-columns: 13px minmax(0, 1fr);
-  inline-size: 100%;
-  min-block-size: 24px;
-  padding: 0 6px 0 3px;
-  text-align: start;
-}
-.project-sidebar-conversations .session-conversation-status-group-toggle:hover:not(:disabled):not([aria-disabled='true']),
-.project-sidebar-conversations .session-conversation-status-group-toggle:focus-visible {
-  background: var(--zeus-source-list-hover);
-  color: var(--zeus-product-muted);
-}
-.project-sidebar-conversations .session-conversation-status-group-toggle:focus-visible {
-  box-shadow: var(--zeus-control-focus);
-  outline: 0;
-}
-.project-sidebar-conversations .session-conversation-status-group-toggle strong {
-  font: inherit;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.project-sidebar-conversations .session-conversation-status-group-chevron {
-  display: inline-block;
-  font-size: 17px;
-  font-weight: 400;
-  line-height: 1;
-  text-align: center;
-  transform: rotate(0deg);
-  transition: transform 120ms var(--zeus-motion-ease-out);
-}
-.project-sidebar-conversations .session-conversation-status-group-toggle[aria-expanded='true'] .session-conversation-status-group-chevron {
-  transform: rotate(90deg);
-}
-.project-sidebar-conversations .session-conversation-status-group-content {
-  margin-inline-start: 10px;
-  min-inline-size: 0;
-}
-.project-sidebar-conversations .session-conversation-project-direct-items:not(:empty) {
-  margin-block-end: 2px;
-}
 .project-first-sidebar .is-active-project-root {
   background: var(--zeus-source-list-selected);
   border-color: var(--zeus-product-line-soft);
@@ -10869,6 +10810,25 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .zeus-select-option[aria-selected='true'] .zeus-select-option-check {
   opacity: 1;
+}
+
+/* 多选始终显示复选框轮廓，让未选项也能表达可叠加选择。 */
+.macos-ai-app .zeus-select-listbox[aria-multiselectable='true'] .zeus-select-option-check {
+  align-items: center;
+  block-size: 16px;
+  border: 1px solid var(--zeus-select-check);
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: inline-flex;
+  inline-size: 16px;
+  justify-content: center;
+  line-height: 1;
+  opacity: 1;
+}
+.macos-ai-app .zeus-select-listbox[aria-multiselectable='true'] .zeus-select-option[aria-selected='true'] .zeus-select-option-check {
+  background: var(--zeus-product-accent);
+  border-color: var(--zeus-product-accent);
+  color: white;
 }
 
 .macos-ai-app .zeus-select-empty {
@@ -20427,7 +20387,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   grid-auto-columns: 28px;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button) {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button) {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -20445,19 +20405,19 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     color 120ms var(--zeus-motion-ease-out);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button) svg {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button) svg {
   block-size: 18px;
   display: block;
   flex: none;
   inline-size: 18px;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):hover:not(:disabled):not([aria-disabled='true']) {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-native-row-hover);
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):focus-visible {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button):focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
@@ -20468,12 +20428,167 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-control-disabled-text);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .project-sidebar-conversations .session-conversation-status-group-chevron {
-    transition: none;
-  }
+/* 状态筛选复用选择器的键盘与弹层，仅保留紧凑漏斗入口。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-select[data-icon-only] > .project-conversation-filter-button {
+  box-sizing: border-box;
+  inline-size: 28px;
+  min-inline-size: 28px;
+  padding: 0;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .project-conversation-filter-button .zeus-select-chevron {
+  display: none;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .project-conversation-filter-button.is-filtered {
+  color: var(--zeus-brand-text);
+}
+/* 图标继承按钮的筛选状态色，避免深色通用文字规则覆盖选中提示。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-conversation-filter-button .zeus-select-trigger-icon {
+  color: inherit;
 }
 
+/* 任务筛选沿用中性浮层和当前主题强调色，色彩只强调可操作与已选控件。 */
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover {
+  background: var(--zeus-card-background);
+  border-color: var(--zeus-card-border);
+  border-radius: var(--zeus-popover-radius);
+  box-shadow: var(--zeus-card-shadow);
+  padding: 8px;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover::before {
+  display: none;
+}
+/* 清除选择是操作，独立于带复选框的状态和会话类型。 */
+.macos-ai-app .project-conversation-filter-popover .zeus-select-header {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 2px 8px 8px;
+}
+/* 标题和选项保留主文字层级，分区与辅助操作使用各自的次级颜色。 */
+.macos-ai-app.zeus-shell .project-conversation-filter-popover .zeus-select-header > span {
+  color: var(--zeus-product-text);
+}
+.macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 400;
+  min-block-size: 24px;
+  padding: 3px 4px;
+}
+.macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--zeus-product-accent) 7%, transparent);
+  color: var(--zeus-brand-text);
+}
+.macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear:focus-visible {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: 2px;
+}
+.macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear:disabled {
+  color: var(--zeus-product-subtle);
+  opacity: 0.5;
+}
+/* 只用短标题区分任务状态与未关联任务的会话，避免增加说明段落。 */
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option-group {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--zeus-product-subtle);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  margin: 0;
+  padding: 4px 8px 5px;
+  text-transform: none;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option-group:not(:first-child) {
+  border-block-start: 1px solid var(--zeus-card-border);
+  margin: 6px 8px 0;
+  padding: 10px 0 5px;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option {
+  font-size: 13px;
+  font-weight: 400;
+  gap: 10px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  line-height: 20px;
+  min-block-size: 30px;
+  padding: 5px 8px;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option-label {
+  color: inherit;
+  grid-column: 2;
+  grid-row: 1;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option-check {
+  block-size: 14px;
+  border-color: color-mix(in srgb, var(--zeus-product-subtle) 80%, var(--zeus-card-background));
+  border-radius: 4px;
+  font-size: 11px;
+  grid-column: 1;
+  grid-row: 1;
+  inline-size: 14px;
+  justify-self: start;
+}
+.macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option[aria-selected='true'] .zeus-select-option-check {
+  background: var(--zeus-product-accent);
+  border-color: var(--zeus-product-accent);
+}
+.macos-ai-app .project-conversation-filter-popover .zeus-select-footer {
+  border-block-start: 1px solid var(--zeus-card-border);
+  display: grid;
+  gap: 4px;
+  margin: 6px 8px 0;
+  padding: 8px 0 2px;
+}
+.macos-ai-app .project-conversation-filter-display {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  font-weight: 400;
+  gap: 16px;
+  justify-content: space-between;
+  min-block-size: 28px;
+}
+.macos-ai-app .project-conversation-filter-display .settings-switch-state {
+  background: transparent;
+  border: 0;
+  flex: none;
+  padding: 0;
+}
+/* 开关轨道更紧凑，整行仍可点击；开关和复选框使用同一个主题强调色。 */
+.macos-ai-app .project-conversation-filter-display .settings-switch-state .native-switch-input {
+  block-size: 28px;
+  inline-size: 32px;
+  min-block-size: 28px;
+}
+.macos-ai-app .project-conversation-filter-display .settings-switch-state .native-switch-track {
+  block-size: 18px;
+  box-shadow: none;
+  box-sizing: border-box;
+  inline-size: 32px;
+}
+.macos-ai-app .project-conversation-filter-display .settings-switch-state .native-switch-track::before {
+  background: white;
+  block-size: 14px;
+  inline-size: 14px;
+}
+.macos-ai-app .project-conversation-filter-display .settings-switch-state .native-switch-input:checked + .native-switch-track::before {
+  transform: translateX(14px);
+}
+.macos-ai-app .project-conversation-filter-display .settings-switch-state .native-switch-input:focus-visible + .native-switch-track {
+  box-shadow: var(--zeus-control-focus);
+}
 /* 项目会话入口显示未读会话数；没有未读时，运行态仍保留轻量动效。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator {
   block-size: 9px;

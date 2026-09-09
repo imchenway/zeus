@@ -285,30 +285,6 @@ export function normalizeTaskExpandedIdsByProject(value: unknown): Record<string
   return normalized;
 }
 
-export function normalizeSidebarConversationOrganization(value: unknown): 'flat' | 'task_status' {
-  return value === 'task_status' ? 'task_status' : 'flat';
-}
-
-export function normalizeSidebarConversationCollapsedStatusIdsByProject(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const normalized: Record<string, string[]> = {};
-  for (const [projectId, statusIds] of Object.entries(value)) {
-    const normalizedProjectId = projectId.trim();
-    const invalidProjectId = !normalizedProjectId || normalizedProjectId.length > 160 || Array.from(normalizedProjectId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
-    if (invalidProjectId || !Array.isArray(statusIds)) continue;
-    normalized[normalizedProjectId] = [
-      ...new Set(
-        statusIds
-          .filter((statusId): statusId is string => typeof statusId === 'string')
-          .map((statusId) => statusId.trim())
-          .filter((statusId) => Boolean(statusId) && statusId.length <= 160 && !Array.from(statusId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127)),
-      ),
-    ].slice(0, 100);
-    if (Object.keys(normalized).length >= 100) break;
-  }
-  return normalized;
-}
-
 export function normalizeTaskManagementStatusByProject(value: unknown, template: TaskManagementStatusConfig): Record<string, TaskManagementStatusConfig> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const normalized: Record<string, TaskManagementStatusConfig> = {};
@@ -387,8 +363,6 @@ export interface AppShellSettingsSnapshot {
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
-  sidebarConversationOrganization: 'flat' | 'task_status';
-  sidebarConversationCollapsedStatusIdsByProject: Record<string, string[]>;
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns: TaskTableColumnPreferences;
@@ -429,8 +403,6 @@ export interface UpdateAppShellSettingsBody {
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];
-  sidebarConversationOrganization?: 'flat' | 'task_status';
-  sidebarConversationCollapsedStatusIdsByProject?: Record<string, string[]>;
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
@@ -557,8 +529,6 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
     defaultProjectId: normalizeDefaultProjectId(value?.defaultProjectId, identities),
     pinnedProjectIds: normalizeProjectPreferenceIds(value?.pinnedProjectIds),
     collapsedProjectIds: normalizeProjectPreferenceIds(value?.collapsedProjectIds),
-    sidebarConversationOrganization: normalizeSidebarConversationOrganization(value?.sidebarConversationOrganization),
-    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(value?.sidebarConversationCollapsedStatusIdsByProject),
     defaultModel: normalizeAppShellDefaultModel(value?.defaultModel),
     modelSetupStatus: value?.modelSetupStatus === 'pending' || value?.modelSetupStatus === 'skipped' || value?.modelSetupStatus === 'completed' ? value.modelSetupStatus : null,
     newProjectDefaultModelRef: typeof value?.newProjectDefaultModelRef === 'string' && parseModelRef(value.newProjectDefaultModelRef) ? value.newProjectDefaultModelRef : null,
@@ -608,12 +578,6 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       defaultProjectId: input.defaultProjectId === null ? null : typeof input.defaultProjectId === 'string' ? input.defaultProjectId : current.defaultProjectId,
       pinnedProjectIds: Array.isArray(input.pinnedProjectIds) ? normalizeProjectPreferenceIds(input.pinnedProjectIds) : current.pinnedProjectIds,
       collapsedProjectIds: Array.isArray(input.collapsedProjectIds) ? normalizeProjectPreferenceIds(input.collapsedProjectIds) : current.collapsedProjectIds,
-      sidebarConversationOrganization: Object.prototype.hasOwnProperty.call(input, 'sidebarConversationOrganization')
-        ? normalizeSidebarConversationOrganization(input.sidebarConversationOrganization)
-        : current.sidebarConversationOrganization,
-      sidebarConversationCollapsedStatusIdsByProject: Object.prototype.hasOwnProperty.call(input, 'sidebarConversationCollapsedStatusIdsByProject')
-        ? normalizeSidebarConversationCollapsedStatusIdsByProject(input.sidebarConversationCollapsedStatusIdsByProject)
-        : current.sidebarConversationCollapsedStatusIdsByProject,
       modelSetupStatus: input.modelSetupStatus === undefined ? current.modelSetupStatus : input.modelSetupStatus,
       newProjectDefaultModelRef: input.newProjectDefaultModelRef === undefined ? current.newProjectDefaultModelRef : input.newProjectDefaultModelRef,
       defaultModel: input.defaultModel === null ? null : typeof input.defaultModel === 'string' ? input.defaultModel : current.defaultModel,

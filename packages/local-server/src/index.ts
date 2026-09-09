@@ -927,11 +927,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
           JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
           JSON.stringify(persistedAppShellSettings.taskPageViewByProject) !== JSON.stringify(appShellSettings.taskPageViewByProject) ||
-          JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject) ||
-          persistedAppShellSettings.sidebarConversationOrganization !== appShellSettings.sidebarConversationOrganization ||
-          JSON.stringify(persistedAppShellSettings.sidebarConversationCollapsedStatusIdsByProject) !== JSON.stringify(appShellSettings.sidebarConversationCollapsedStatusIdsByProject))))
+          JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject))))
   ) {
-    // 旧列键、旧默认顺序、新增列宽、项目筛选和侧栏会话组织偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
+    // 旧列键、旧默认顺序、新增列宽、项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }

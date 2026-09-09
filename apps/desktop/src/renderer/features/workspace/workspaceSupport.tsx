@@ -577,8 +577,6 @@ export type AppShellSettingsSavePayload = Pick<
   | 'defaultProjectId'
   | 'pinnedProjectIds'
   | 'collapsedProjectIds'
-  | 'sidebarConversationOrganization'
-  | 'sidebarConversationCollapsedStatusIdsByProject'
   | 'defaultModel'
   | 'defaultTaskTemplateId'
   | 'taskTableColumns'
@@ -887,30 +885,6 @@ export function normalizeTaskExpandedIdsByProject(value: unknown): Record<string
   );
 }
 
-export function normalizeSidebarConversationOrganization(value: unknown): AppShellSettings['sidebarConversationOrganization'] {
-  return value === 'task_status' ? 'task_status' : 'flat';
-}
-
-export function normalizeSidebarConversationCollapsedStatusIdsByProject(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([projectId, statusIds]) => Boolean(projectId.trim()) && projectId.length <= 160 && Array.isArray(statusIds))
-      .slice(0, 100)
-      .map(([projectId, statusIds]) => [
-        projectId.trim(),
-        [
-          ...new Set(
-            (statusIds as unknown[])
-              .filter((statusId): statusId is string => typeof statusId === 'string')
-              .map((statusId) => statusId.trim())
-              .filter((statusId) => Boolean(statusId) && statusId.length <= 160),
-          ),
-        ].slice(0, 100),
-      ]),
-  );
-}
-
 export function normalizeCodeWorkspaceByProject(value: unknown): Record<string, ProjectCodeWorkspacePreference> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(
@@ -954,8 +928,6 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
   return {
     ...settings,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
-    sidebarConversationOrganization: normalizeSidebarConversationOrganization(settings.sidebarConversationOrganization),
-    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(settings.sidebarConversationCollapsedStatusIdsByProject),
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
@@ -988,8 +960,6 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     defaultProjectId: settings.defaultProjectId,
     pinnedProjectIds: settings.pinnedProjectIds,
     collapsedProjectIds: settings.collapsedProjectIds,
-    sidebarConversationOrganization: normalizeSidebarConversationOrganization(settings.sidebarConversationOrganization),
-    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(settings.sidebarConversationCollapsedStatusIdsByProject),
     defaultModel: settings.defaultModel,
     defaultTaskTemplateId: settings.defaultTaskTemplateId,
     // 任务字段偏好属于本机 app shell 设置；任何通用设置保存都必须带上，避免后续保存把字段配置丢掉。
@@ -1047,8 +1017,6 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskPageViewByProject: currentSettings.taskPageViewByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
-    sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
-    sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
   };
 }
 
@@ -1068,8 +1036,6 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskPageViewByProject: currentSettings.taskPageViewByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
-    sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
-    sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
   };
 }
 

@@ -6,12 +6,11 @@ import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
-import { ListIcon as List } from '@phosphor-icons/react/dist/csr/List';
+import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
-import { StackSimpleIcon as StackSimple } from '@phosphor-icons/react/dist/csr/StackSimple';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
@@ -26,11 +25,12 @@ import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
 import { Button } from '../../ui/Button.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
-import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
+import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, type GenericShellCommandRisk } from './workspaceFormatters.js';
 import {
   controlBusyProps,
@@ -47,7 +47,9 @@ import {
   type WorkspaceViewId,
 } from './workspaceSupport.js';
 
+/** 项目会话首屏数量。 */
 const defaultVisibleConversationCount = 6;
+/** 每次展开更多追加的会话数量。 */
 const additionalVisibleConversationCount = 10;
 
 /** 首次工作面复用项目创建，不引入独立引导状态或模型前置依赖。 */
@@ -315,6 +317,7 @@ export function ProjectWorkspaceModeToolbar(props: {
   );
 }
 
+/** 项目导航将状态筛选与搜索叠加，会话始终平铺。 */
 export function SidebarNav(props: {
   activeNavTarget: WorkspaceViewId;
   activeProjectId?: string;
@@ -322,8 +325,6 @@ export function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
-  conversationOrganization: AppShellSettings['sidebarConversationOrganization'];
-  collapsedConversationStatusIdsByProject: Record<string, string[]>;
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
@@ -340,8 +341,6 @@ export function SidebarNav(props: {
   onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection) => void;
   onTogglePinnedProject: (projectId: string) => void;
   onToggleProjectCollapsed: (projectId: string) => void;
-  onToggleConversationOrganization: () => void;
-  onToggleConversationStatusGroup: (projectId: string, statusId: string) => void;
   onRevealProjectInFinder: (projectPath: string) => Promise<void>;
   onRenameProject: (projectId: string, displayName: string) => Promise<void>;
   onPrepareProjectDelete: (projectId: string) => void;
@@ -355,6 +354,12 @@ export function SidebarNav(props: {
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
+  /** 与搜索一样只影响当前窗口；重开窗口默认显示全部会话。 */
+  const [conversationStatusFilters, setConversationStatusFilters] = useState<string[]>([]);
+  /** 筛选时默认收起无匹配会话的项目，可在弹层中关闭。 */
+  const [hideEmptyFilteredProjects, setHideEmptyFilteredProjects] = useState(true);
+  /** 默认保留所有会话，按需将每个任务收为当前列表顺序的最新一条。 */
+  const [latestConversationOnly, setLatestConversationOnly] = useState(false);
   const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();
   const [projectRenameDraft, setProjectRenameDraft] = useState('');
@@ -566,18 +571,60 @@ export function SidebarNav(props: {
       setProjectRenameBusy(false);
     }
   };
-  const visibleProjects = projectSearchQuery.trim()
-    ? props.projects.filter((project) => {
-        const query = projectSearchQuery.trim().toLocaleLowerCase();
-        const group = props.conversationGroups.find((candidate) => candidate.projectId === project.id);
-        const conversationMatches = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])].some((conversation) =>
-          conversationDisplayTitle(conversation.title, group?.tasks.find((task) => task.taskId === conversation.taskId)?.taskTitle, props.appLanguage)
-            .toLocaleLowerCase()
-            .includes(query),
-        );
-        return project.name.toLocaleLowerCase().includes(query) || project.localPath.toLocaleLowerCase().includes(query) || conversationMatches;
-      })
-    : props.projects;
+  /** 相同状态身份合并为一个选项；项目自定义名称不同则并列显示，避免误读。 */
+  const statusLabelsById = new Map<string, Set<string>>();
+  for (const group of props.conversationGroups) {
+    for (const status of [...group.taskStatuses, ...group.tasks.filter((task) => !group.taskStatuses.some((status) => status.id === task.managementStatus)).map((task) => ({ id: task.managementStatus, label: task.managementStatus }))]) {
+      if (!statusLabelsById.has(status.id)) statusLabelsById.set(status.id, new Set());
+      statusLabelsById.get(status.id)!.add(status.label);
+    }
+  }
+  /** 真正的任务状态与其他会话分区展示；清除选择不属于可选值。 */
+  const statusFilterOptions = [
+    ...Array.from(statusLabelsById, ([id, labels]) => ({ value: `status:${id}`, label: [...labels].join(' / '), group: copy.taskStatusFilterGroup })),
+    { value: 'project', label: copy.projectConversationsOnly, group: copy.otherConversationFilterGroup },
+  ];
+  /** 忽略已删除的状态；未选择状态时显示全部会话。 */
+  const activeStatusFilters = conversationStatusFilters.filter((value) => statusFilterOptions.some((option) => option.value === value));
+  /** 多个状态按并集筛选，项目直属会话也可一起选中。 */
+  const hasStatusFilter = activeStatusFilters.length > 0;
+  /** 状态筛选或同任务去重生效时，漏斗和空项目选项都反映当前筛选。 */
+  const hasConversationFilter = hasStatusFilter || latestConversationOnly;
+  /** 已选状态只出现在漏斗悬停提示中，不额外占用侧栏空间。 */
+  const statusFilterLabel = hasStatusFilter
+    ? statusFilterOptions
+        .filter((option) => activeStatusFilters.includes(option.value))
+        .map((option) => option.label)
+        .join(props.appLanguage === 'zh-CN' ? '、' : ', ')
+    : copy.allConversations;
+  /** 上游已按阶段时间倒序；先取每个任务首条，再搜索和分页，避免旧会话因搜索重新出现。 */
+  const filteredConversationGroups = props.conversationGroups.map((group) => ({
+    ...group,
+    conversations: !hasStatusFilter || activeStatusFilters.includes('project') ? group.conversations : [],
+    tasks: (!hasStatusFilter ? group.tasks : group.tasks.filter((task) => activeStatusFilters.includes(`status:${task.managementStatus}`))).map((task) =>
+      latestConversationOnly ? { ...task, conversations: task.conversations.slice(0, 1) } : task,
+    ),
+  }));
+  /** 空项目是否隐藏由独立显示选项决定；全部模式仍保留空项目。 */
+  const visibleProjects = props.projects.filter((project) => {
+    /** 搜索与列表渲染共用已筛选的数据，不能由被筛掉的会话撑起空项目。 */
+    const group = filteredConversationGroups.find((candidate) => candidate.projectId === project.id);
+    /** 项目直属会话与符合状态的任务会话。 */
+    const conversations = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])];
+    if (hasConversationFilter && hideEmptyFilteredProjects && conversations.length === 0) return false;
+    /** 沿用项目名称、目录和会话显示标题的大小写不敏感搜索。 */
+    const query = projectSearchQuery.trim().toLocaleLowerCase();
+    return (
+      !query ||
+      project.name.toLocaleLowerCase().includes(query) ||
+      project.localPath.toLocaleLowerCase().includes(query) ||
+      conversations.some((conversation) =>
+        conversationDisplayTitle(conversation.title, group?.tasks.find((task) => task.taskId === conversation.taskId)?.taskTitle, props.appLanguage)
+          .toLocaleLowerCase()
+          .includes(query),
+      )
+    );
+  });
   const enteringProjectIds = useNewItemMotionIds(props.projects.map((project) => project.id));
   // macOS 红黄绿窗口按钮属于系统层：侧栏只保留 44px 顶部安全区，避开交通灯但不再保留整行死空间。
   const titlebarProtectedSidebarStyle = {
@@ -635,24 +682,84 @@ export function SidebarNav(props: {
             <input type="search" aria-label={copy.search} placeholder={copy.search} value={projectSearchQuery} onChange={(event) => setProjectSearchQuery(event.currentTarget.value)} />
           </label>
           <span className="project-sidebar-heading-actions">
-            <button
-              type="button"
-              className="project-conversation-organization-button"
-              aria-label={props.conversationOrganization === 'task_status' ? copy.showConversationsFlat : copy.groupConversationsByTaskStatus}
-              title={props.conversationOrganization === 'task_status' ? copy.showConversationsFlat : copy.groupConversationsByTaskStatus}
-              onClick={props.onToggleConversationOrganization}
-            >
-              {props.conversationOrganization === 'task_status' ? <List aria-hidden="true" weight="regular" /> : <StackSimple aria-hidden="true" weight="regular" />}
-            </button>
+            <ZeusSelect
+              ariaLabel={copy.filterConversationsByTaskStatus}
+              value={activeStatusFilters[0] ?? statusFilterOptions[0]!.value}
+              selectedValues={activeStatusFilters}
+              options={statusFilterOptions}
+              onChange={(value) => {
+                setConversationStatusFilters(activeStatusFilters.includes(value) ? activeStatusFilters.filter((status) => status !== value) : [...activeStatusFilters, value]);
+                setVisibleConversationCountByProject({});
+              }}
+              triggerIcon={<Funnel aria-hidden="true" weight={hasConversationFilter ? 'fill' : 'regular'} />}
+              triggerClassName={`project-conversation-filter-button${hasConversationFilter ? ' is-filtered' : ''}`}
+              triggerTitle={`${copy.filterConversationsByTaskStatus}: ${statusFilterLabel}${latestConversationOnly ? ` · ${copy.latestConversationOnly}` : ''}`}
+              searchable={false}
+              hideSelectedLabel
+              popoverClassName="project-conversation-filter-popover"
+              popoverMinWidth={248}
+              header={
+                <>
+                  <span>{copy.conversationFilterTitle}</span>
+                  <button
+                    type="button"
+                    className="project-conversation-filter-clear"
+                    disabled={!hasStatusFilter}
+                    onClick={() => {
+                      setConversationStatusFilters([]);
+                      setVisibleConversationCountByProject({});
+                    }}
+                  >
+                    {copy.clearConversationSelection}
+                  </button>
+                </>
+              }
+              footer={
+                <>
+                  <label className="project-conversation-filter-display" title={copy.hideEmptyFilteredProjects}>
+                    <span>{copy.hideEmptyFilteredProjectsLabel}</span>
+                    <span className="settings-switch-state">
+                      <input
+                        className="native-switch-input"
+                        type="checkbox"
+                        role="switch"
+                        aria-label={copy.hideEmptyFilteredProjects}
+                        checked={hideEmptyFilteredProjects}
+                        onChange={(event) => setHideEmptyFilteredProjects(event.currentTarget.checked)}
+                      />
+                      <span className="native-switch-track" aria-hidden="true" />
+                    </span>
+                  </label>
+                  <label className="project-conversation-filter-display">
+                    <span>{copy.latestConversationOnly}</span>
+                    <span className="settings-switch-state">
+                      <input
+                        className="native-switch-input"
+                        type="checkbox"
+                        role="switch"
+                        aria-label={copy.latestConversationOnly}
+                        checked={latestConversationOnly}
+                        onChange={(event) => {
+                          setLatestConversationOnly(event.currentTarget.checked);
+                          setVisibleConversationCountByProject({});
+                        }}
+                      />
+                      <span className="native-switch-track" aria-hidden="true" />
+                    </span>
+                  </label>
+                </>
+              }
+              size="compact"
+            />
             <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
               <Plus aria-hidden="true" weight="regular" />
             </button>
           </span>
         </div>
         {props.projects.length === 0 ? null : visibleProjects.length === 0 ? (
-          <section className="project-inline-recovery-row project-search-empty-row" aria-label={copy.noProjectMatches}>
+          <section className="project-inline-recovery-row project-search-empty-row" aria-label={hasConversationFilter ? copy.noConversationMatches : copy.noProjectMatches}>
             <span className="project-inline-recovery-copy">
-              <strong>{copy.noProjectMatches}</strong>
+              <strong>{hasConversationFilter ? copy.noConversationMatches : copy.noProjectMatches}</strong>
             </span>
           </section>
         ) : (
@@ -664,7 +771,7 @@ export function SidebarNav(props: {
             const menuClosing = closingProjectMenuIds.has(project.id);
             const menuVisible = menuOpen || menuClosing;
             const menuPosition = projectMenuPositions.get(project.id);
-            const conversationGroup = props.conversationGroups.find((group) => group.projectId === project.id);
+            const conversationGroup = filteredConversationGroups.find((group) => group.projectId === project.id);
             const projectMatchesSearch = project.name.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase()) || project.localPath.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase());
             const projectMorePopover =
               menuVisible && menuPosition ? (
@@ -808,9 +915,9 @@ export function SidebarNav(props: {
                     </>
                   }
                 />
-                <Collapsible open={expanded}>
-                  <div className="project-sidebar-conversations">
-                    {conversationGroup ? (
+                {conversationGroup && ((conversationGroup.conversations?.length ?? 0) > 0 || conversationGroup.tasks.some((task) => task.conversations.length > 0)) ? (
+                  <Collapsible open={expanded}>
+                    <div className="project-sidebar-conversations">
                       <ProjectConversationTree
                         groups={[conversationGroup]}
                         selectedConversationId={props.selectedConversationId}
@@ -828,13 +935,10 @@ export function SidebarNav(props: {
                             [project.id]: (current[project.id] ?? defaultVisibleConversationCount) + additionalVisibleConversationCount,
                           }))
                         }
-                        organization={props.conversationOrganization}
-                        collapsedStatusIdsByProject={props.collapsedConversationStatusIdsByProject}
-                        onToggleStatusGroup={props.onToggleConversationStatusGroup}
                       />
-                    ) : null}
-                  </div>
-                </Collapsible>
+                    </div>
+                  </Collapsible>
+                ) : null}
               </section>
             );
           })
