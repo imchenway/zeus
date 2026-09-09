@@ -115,6 +115,9 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
+  if (file.hunks.length === 0) {
+    return <p className="project-git-empty-copy">{props.zh ? '此文件没有可显示的文本差异，可能是二进制文件或仅包含文件元数据变化。' : 'This file has no displayable text diff. It may be binary or contain metadata-only changes.'}</p>;
+  }
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
   return (

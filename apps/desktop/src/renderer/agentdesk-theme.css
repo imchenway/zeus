@@ -827,6 +827,14 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: 0;
 }
 
+/* Git 外层由项目页统一卡片承载，这里清掉更早的工作区装饰，避免额外轮廓。 */
+.macos-ai-app.zeus-shell .workspace-view-project-git {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
 .macos-ai-app.zeus-shell .workspace-view-project-tasks > .task-management-detail-pane {
   background: transparent;
   border: 0;
@@ -1316,7 +1324,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell
   :where(
     .task-table-workbench,
-    .project-git-workbench,
     .project-source-workspace,
     .task-board-workbench,
     .settings-reference-shell,
@@ -2559,6 +2566,9 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-toolbar {
   padding: 8px 12px !important;
   min-block-size: 44px;
+  border: 0 !important;
+  border-block-end: 1px solid var(--zeus-product-line) !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
 }
 .macos-ai-app.zeus-shell .project-git-toolbar-actions {
@@ -2838,7 +2848,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none;
 }
 
-/* 所有项目页共用外框：外围留白保持 12px，导航与内容卡片的间距收紧为 4px。 */
+/* 项目页保留统一外围留白和单层外框；Git 内部工作台不再重复绘制卡片。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) {
   --project-frame-gap: 12px;
   box-sizing: border-box;
