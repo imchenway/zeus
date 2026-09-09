@@ -3241,19 +3241,25 @@
   white-space: nowrap;
 }
 
+/* 标题工具固定在首行，详情在第二行使用完整内容宽度。 */
 .session-codex-parity-v1 .session-thread-header {
   align-items: center;
   background: var(--session-header);
   border-block-end: 1px solid var(--session-line-soft);
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  gap: 16px;
-  justify-content: space-between;
+  gap: 4px 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-block-size: 58px;
-  padding: 10px var(--session-gutter);
+  padding: 10px 20px;
   pointer-events: none;
   position: relative;
   z-index: 31;
+}
+
+/* 详情展开时去掉标题栏叠加的下留白，底部仅保留收起按钮的点击范围。 */
+.session-codex-parity-v1 .session-thread-header:has(> .session-thread-subtitle-row > .session-runtime-details[open]) {
+  padding-block-end: 0;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-motion-title='entered'] {
@@ -3316,15 +3322,6 @@
   box-shadow: 0 0 0 3px var(--session-focus);
   outline: 1px solid var(--session-focus-outline);
   outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-thread-title-copy small {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  line-height: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-thread-status {
@@ -3574,16 +3571,56 @@
   background: var(--session-canvas);
   border-block-end: 1px solid var(--session-line-soft);
   color: var(--session-text-muted);
+  container-type: inline-size;
   flex: 0 0 auto;
   font-size: 11px;
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary {
+  align-items: baseline;
   cursor: pointer;
-  display: grid;
-  gap: 2px;
-  min-block-size: 46px;
-  padding: 5px var(--session-gutter);
+  display: flex;
+  gap: 12px;
+  min-block-size: 32px;
+  padding: 6px 20px;
+}
+
+/* 收起入口固定在详情底部居中，独立于滚动内容且不挤占摘要宽度。 */
+.session-codex-parity-v1 .session-runtime-detail-footer {
+  display: flex;
+  justify-content: center;
+  padding-block: 4px 0;
+}
+
+.session-codex-parity-v1 .session-runtime-collapse-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  block-size: 24px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: 32px;
+  justify-content: center;
+  padding: 4px;
+}
+
+.session-codex-parity-v1 .session-runtime-collapse-button > svg {
+  block-size: 12px;
+  inline-size: 12px;
+}
+
+.session-codex-parity-v1 .session-runtime-collapse-button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-runtime-collapse-button:focus-visible {
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 1px;
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary:focus-visible {
@@ -3675,47 +3712,151 @@
   color: var(--session-warning);
 }
 
+/* 详情按信息用途分组；列宽由详情容器决定，适配主会话与智能体侧栏。 */
 .session-codex-parity-v1 .session-runtime-detail-groups {
-  background: var(--session-control);
   border-block-start: 1px solid var(--session-line-soft);
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
-  padding: 9px var(--session-gutter) 11px;
+  max-block-size: min(48vh, 420px);
+  min-inline-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 20px;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 100px minmax(0, 1fr);
   min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
+  border-block-start: 1px solid var(--session-line-soft);
+  padding-block-start: 14px;
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group > h3 {
   color: var(--session-text);
-  font-size: 11px;
-  font-weight: 680;
-  margin: 0 0 7px;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group > dl {
-  display: grid;
-  gap: 6px 12px;
-  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
   margin: 0;
 }
 
-.session-codex-parity-v1 .session-runtime-detail-group > dl > div {
+.session-codex-parity-v1 .session-runtime-detail-body {
   display: grid;
-  gap: 2px;
+  gap: 12px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-body > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
   min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-runtime-details :where(dt, dd) {
+  line-height: 1.5;
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-runtime-details dt {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.session-codex-parity-v1 .session-runtime-details dd {
   color: var(--session-text);
-  font-weight: 620;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  min-inline-size: 0;
+}
+
+/* 路径独占通栏并换行，复制按钮独立占位，避免隐藏路径尾部或挤出横向滚动条。 */
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body {
+  gap: 8px 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body > div {
+  align-items: baseline;
+  gap: 8px;
+  grid-template-columns: 100px minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-runtime-detail-body > [data-wide='true'] {
+  grid-column: 1 / -1;
+}
+
+.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] dd {
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-runtime-code-value {
+  align-items: start;
+  display: flex;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-code-value > code {
+  background: transparent;
+  color: inherit;
+  font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
+  font-size: inherit;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: 0;
+  white-space: normal;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  block-size: 24px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  inline-size: 24px;
+  justify-content: center;
+  padding: 4px;
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:hover,
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible,
+.session-codex-parity-v1 .session-runtime-copy-button[data-copied='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+}
+
+.session-codex-parity-v1 .session-runtime-copy-button > svg {
+  block-size: 14px;
+  display: block;
+  inline-size: 14px;
+}
+
+@container (max-width: 620px) {
+  .session-codex-parity-v1 .session-runtime-detail-group,
+  .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .session-codex-parity-v1 .session-error-details {
@@ -6228,7 +6369,7 @@
 
   .session-codex-parity-v1 .session-thread-header {
     min-block-size: 52px;
-    padding-inline-start: 126px;
+    padding-inline: 16px;
   }
 
   .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
@@ -6260,25 +6401,12 @@
 }
 
 @media (max-width: 559px) {
-  .session-codex-parity-v1 .session-thread-title-copy small {
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    inline-size: 1px;
-    overflow: hidden;
-    position: absolute;
-    white-space: nowrap;
-  }
-
   .session-codex-parity-v1 .session-composer-runtime-settings .session-composer-dropdown-trigger {
     max-inline-size: 96px;
   }
 
   .session-codex-parity-v1 .session-composer-runtime-settings .session-composer-dropdown + .session-composer-dropdown .session-composer-dropdown-trigger {
     max-inline-size: 72px;
-  }
-
-  .session-codex-parity-v1 .session-thread-header {
-    padding-inline: 126px 16px;
   }
 
   .session-codex-parity-v1 .session-delivery-mode button {
@@ -11118,134 +11246,6 @@
 .session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon) {
   background: transparent !important;
   box-shadow: none !important;
-}
-
-/* 最终覆盖：运行详情按高频事实分区，每条描述列表对应一行。 */
-.session-codex-parity-v1 .session-runtime-detail-groups {
-  gap: 0;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group {
-  align-items: start;
-  display: grid;
-  gap: 7px;
-  grid-template-columns: minmax(0, 1fr);
-  padding-block: 12px;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
-  border-block-start: 1px solid var(--session-line-soft);
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group > h3 {
-  color: var(--session-text);
-  font-size: 12px;
-  font-weight: 680;
-  letter-spacing: 0.01em;
-  line-height: 1.35;
-  margin: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-body {
-  border-inline-start: 1px solid color-mix(in srgb, var(--session-line) 78%, transparent);
-  display: grid;
-  gap: 7px;
-  margin-inline-start: 2px;
-  min-inline-size: 0;
-  padding-inline-start: 16px;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-line {
-  align-items: baseline;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 28px;
-  margin: 0;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-line > div {
-  align-items: baseline;
-  display: inline-flex;
-  flex: 0 1 auto;
-  gap: 5px;
-  line-height: 1.45;
-  max-inline-size: 100%;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-line dt {
-  color: var(--session-text-muted);
-  flex: 0 0 auto;
-  font-weight: 560;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-line dt::after {
-  content: ':';
-}
-
-.session-codex-parity-v1 .session-runtime-details[data-language='zh-CN'] .session-runtime-detail-line dt::after {
-  content: '：';
-}
-
-.session-codex-parity-v1 .session-runtime-detail-line dd {
-  color: var(--session-text);
-  font-weight: 500;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-line > div {
-  flex: 1 1 320px;
-  min-inline-size: min(320px, 100%);
-}
-
-.session-codex-parity-v1 .session-runtime-code-value {
-  align-items: center;
-  display: flex;
-  gap: 5px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-code-value > code {
-  display: block;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-runtime-copy-button {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: var(--session-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  flex: 0 0 auto;
-  justify-content: center;
-  margin: -3px;
-  padding: 3px;
-}
-
-.session-codex-parity-v1 .session-runtime-copy-button:hover,
-.session-codex-parity-v1 .session-runtime-copy-button:focus-visible,
-.session-codex-parity-v1 .session-runtime-copy-button[data-copied='true'] {
-  background: var(--session-control-hover);
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-runtime-copy-button:focus-visible {
-  box-shadow: 0 0 0 3px var(--session-focus);
-  outline: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-copy-button > svg {
-  block-size: 14px;
-  display: block;
-  inline-size: 14px;
 }
 
 .session-codex-parity-v1 .session-extension-mention-selector {

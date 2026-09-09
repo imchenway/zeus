@@ -1,3 +1,4 @@
+import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -5,13 +6,16 @@ import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionT
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { formatTokenCount } from './tokenUsageFormat.js';
 
+/** 会话与智能体共用的运行事实；项目名称只作为摘要前缀。 */
 interface RuntimeDetailsProps {
   runtime: NativeRuntimeDetailsSnapshot;
   language: SessionUiLanguage;
   scope: 'session' | 'subagent';
   mcpStartup?: Record<string, unknown> | null;
+  contextLabel?: string;
 }
 
+/** 使用原生折叠面板展示摘要及按用途分组的运行事实。 */
 export function RuntimeDetails(props: RuntimeDetailsProps) {
   const zh = props.language === 'zh-CN';
   const copy = runtimeLabels(props.language);
@@ -28,6 +32,11 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
     <details className="session-runtime-details" data-language={props.language} data-severity={warning ? 'warning' : 'ready'} data-scope={props.scope} aria-label={copy.runtimeDetails}>
       <summary>
         <span className="session-runtime-summary-primary">
+          {props.contextLabel ? (
+            <small className="session-thread-project-name" title={props.contextLabel}>
+              {props.contextLabel}
+            </small>
+          ) : null}
           <RuntimeSummaryMetric label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
@@ -36,51 +45,51 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
         </span>
       </summary>
       <div className="session-runtime-detail-groups">
-        <RuntimeDetailGroup title={props.scope === 'subagent' ? (zh ? '智能体' : 'Agent') : zh ? '会话' : 'Session'} kind="session">
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={zh ? '模型' : 'Model'} value={factValue(props.runtime.model, props.language)} />
-            <RuntimeUsageRow label={zh ? '推理强度' : 'Reasoning effort'} value={factValue(props.runtime.effort, props.language)} />
-            <RuntimeUsageRow label={zh ? '速率' : 'Speed'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
-          </RuntimeDetailLine>
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
-            <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          </RuntimeDetailLine>
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
-            <RuntimeUsageRow label={zh ? '累计输入' : 'Cumulative input'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language, true)} />
-            <RuntimeUsageRow label={zh ? '累计输出' : 'Cumulative output'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language, true)} />
-          </RuntimeDetailLine>
+        <RuntimeDetailGroup title={zh ? '模型设置' : 'Model settings'} kind="session">
+          <RuntimeUsageRow label={zh ? '模型' : 'Model'} value={factValue(props.runtime.model, props.language)} />
+          <RuntimeUsageRow label={zh ? '推理强度' : 'Reasoning effort'} value={factValue(props.runtime.effort, props.language)} />
+          <RuntimeUsageRow label={zh ? '速率' : 'Speed'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
         </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '费用' : 'Cost'} kind="cost">
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
-          </RuntimeDetailLine>
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '性能' : 'Performance'} kind="performance">
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          </RuntimeDetailLine>
+        <RuntimeDetailGroup title={zh ? '用量与性能' : 'Usage & performance'} kind="usage">
+          <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
+          <RuntimeUsageRow label={zh ? '累计输入' : 'Cumulative input'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language, true)} />
+          <RuntimeUsageRow label={zh ? '累计输出' : 'Cumulative output'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language, true)} />
+          <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
+          <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
+          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
+          <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
         </RuntimeDetailGroup>
         <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={zh ? '工作目录' : 'Working directory'} value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} />} />
-            <RuntimeUsageRow label={zh ? '工作分支' : 'Working branch'} value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} />} />
-          </RuntimeDetailLine>
-          <RuntimeDetailLine>
-            <RuntimeUsageRow
-              label={zh ? '线程 ID' : 'Thread ID'}
-              value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} copyLabel={zh ? '复制线程 ID' : 'Copy thread ID'} copiedLabel={zh ? '线程 ID 已复制' : 'Thread ID copied'} />}
-            />
-            <RuntimeUsageRow
-              label="JSONL"
-              value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} copyLabel={zh ? '复制 JSONL 路径' : 'Copy JSONL path'} copiedLabel={zh ? 'JSONL 路径已复制' : 'JSONL path copied'} />}
-            />
-          </RuntimeDetailLine>
-          <RuntimeDetailLine>
-            <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(props.language)} />
-          </RuntimeDetailLine>
+          <RuntimeUsageRow wide label={zh ? '工作目录' : 'Working directory'} value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} />} />
+          <RuntimeUsageRow label={zh ? '工作分支' : 'Working branch'} value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} />} />
+          <RuntimeUsageRow
+            label={zh ? '线程 ID' : 'Thread ID'}
+            value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} copyLabel={zh ? '复制线程 ID' : 'Copy thread ID'} copiedLabel={zh ? '线程 ID 已复制' : 'Thread ID copied'} />}
+          />
+          <RuntimeUsageRow
+            wide
+            label="JSONL"
+            value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} copyLabel={zh ? '复制 JSONL 路径' : 'Copy JSONL path'} copiedLabel={zh ? 'JSONL 路径已复制' : 'JSONL path copied'} />}
+          />
+          <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(props.language)} />
         </RuntimeDetailGroup>
+      </div>
+      <div className="session-runtime-detail-footer">
+        <button
+          type="button"
+          className="session-runtime-collapse-button"
+          aria-label={zh ? '收起详情' : 'Collapse details'}
+          title={zh ? '收起详情' : 'Collapse details'}
+          onClick={(event) => {
+            // 原生折叠后将焦点交回摘要，避免键盘焦点留在已隐藏的按钮上。
+            const details = event.currentTarget.closest('details');
+            if (!details) return;
+            details.open = false;
+            details.querySelector('summary')?.focus({ preventScroll: true });
+          }}
+        >
+          <CaretUp aria-hidden="true" />
+        </button>
       </div>
     </details>
   );
@@ -101,22 +110,20 @@ function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
   );
 }
 
-function RuntimeDetailGroup(props: { title: string; kind: 'session' | 'cost' | 'performance' | 'environment'; children: ReactNode }) {
+/** 每组只保留一份描述列表，由可用宽度决定字段列数。 */
+function RuntimeDetailGroup(props: { title: string; kind: 'session' | 'usage' | 'environment'; children: ReactNode }) {
   return (
     <section className="session-runtime-detail-group" data-group={props.kind}>
       <h3>{props.title}</h3>
-      <div className="session-runtime-detail-body">{props.children}</div>
+      <dl className="session-runtime-detail-body">{props.children}</dl>
     </section>
   );
 }
 
-function RuntimeDetailLine(props: { children: ReactNode }) {
-  return <dl className="session-runtime-detail-line">{props.children}</dl>;
-}
-
-function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
+/** 长路径独占一行，其余事实共享自适应网格。 */
+function RuntimeUsageRow(props: { label: string; value: ReactNode; wide?: boolean }) {
   return (
-    <div>
+    <div data-wide={props.wide || undefined}>
       <dt>{props.label}</dt>
       <dd>{props.value}</dd>
     </div>
