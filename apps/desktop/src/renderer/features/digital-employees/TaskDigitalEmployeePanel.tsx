@@ -690,7 +690,7 @@ function TaskEmployeeRunDialog(props: {
               maxLength={20_000}
               value={supplementalInfo}
               placeholder={zh ? '例如：本次优先处理的边界、已知线索或验收重点' : 'For example: priorities, known clues, or acceptance focus for this work item'}
-              disabled={props.busy || inputResources.processing}
+              disabled={props.busy}
               onChange={(event) => setSupplementalInfo(event.currentTarget.value)}
               onPaste={inputResources.handlePaste}
               onKeyDown={inputResources.handlePasteShortcut}

@@ -5155,16 +5155,14 @@
   resize: none;
 }
 
-.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
-.session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
+.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
   border: 0;
   box-shadow: none;
   outline: 0;
 }
 
 @media (forced-colors: active) {
-  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
-  .session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
+  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
     outline: 1px solid CanvasText;
     outline-offset: 2px;
   }
@@ -9442,124 +9440,112 @@
     min-inline-size: 0;
   }
 }
-/* ZEUS-0427：原生 textarea 保持唯一输入表面，镜像层只投影结构化标签。 */
+/* 会话正文始终在同一个 Markdown 编辑器中输入与排版。 */
 .session-codex-parity-v1 .structured-composer-root {
   min-inline-size: 0;
   position: relative;
 }
 
 .session-codex-parity-v1 .structured-composer-editor {
-  display: grid;
   min-inline-size: 0;
-  position: relative;
 }
 
-/* 预览与原文共用输入框位置；隐藏时保留原生节点和撤销历史。 */
-.session-codex-parity-v1 .structured-composer-editor[hidden] {
-  display: none;
-}
-
-/* 格式切换保持轻量，编辑入口始终可通过键盘访问。 */
-.session-codex-parity-v1 .structured-composer-format-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-block-end: 4px;
-}
-
-.session-codex-parity-v1 .structured-composer-format-actions > button {
+.session-codex-parity-v1 .structured-composer-editor .cm-editor {
   background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: var(--session-text-muted);
-  cursor: pointer;
+  color: var(--session-text);
   font: inherit;
-  font-size: 12px;
-  padding: 4px 6px;
+  outline: none;
 }
 
-/* 长内容由预览区纵向滚动，宽表继续复用渲染器的唯一横向滚动容器。 */
-.session-codex-parity-v1 .structured-composer-preview {
+/* 输入区随内容增长，超长内容由编辑器内部滚动。 */
+.session-codex-parity-v1 .structured-composer-editor .cm-scroller {
+  font: inherit;
+  line-height: 1.45;
   max-block-size: 34vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.session-codex-parity-v1 .structured-composer-editor .cm-content {
+  box-sizing: border-box;
+  caret-color: var(--session-text);
   min-block-size: 48px;
   min-inline-size: 0;
-  overflow-y: auto;
-  padding: 4px 5px;
-}
-
-.session-codex-parity-v1 .structured-composer-preview:focus-visible,
-.session-codex-parity-v1 .structured-composer-format-actions > button:focus-visible {
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: -1px;
-}
-
-.session-codex-parity-v1 .structured-composer-preview > .session-markdown {
-  font: inherit;
   inline-size: 100%;
-}
-
-.session-codex-parity-v1 .structured-composer-preview .table-node-wrapper {
-  border-radius: 0;
-  margin-block: 0 4px;
-}
-
-/* 标识符及日期不折行、不改写，所有列都可横向查看。 */
-.session-codex-parity-v1 .structured-composer-preview .table-node :where(th, td) {
-  min-inline-size: max-content;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .structured-composer-editor > textarea,
-.session-codex-parity-v1 .structured-composer-mirror {
-  appearance: none;
-  border: 0;
-  box-sizing: border-box;
-  font: inherit;
-  grid-area: 1 / 1;
-  inline-size: 100%;
-  line-height: 1.45;
-  margin: 0;
-  max-block-size: 34vh;
-  min-block-size: 48px;
-  overflow-wrap: break-word;
-  padding: 4px 5px;
-  /* 两层始终预留相同滚动条空间，避免长文出现不同的换行位置。 */
-  scrollbar-gutter: stable;
+  flex: 1 1 0;
+  padding: 4px 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea {
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  caret-color: var(--session-text);
-  color: transparent !important;
-  -webkit-text-fill-color: transparent;
-  outline: 0;
-  overflow-y: hidden;
-  position: relative;
-  resize: none;
-  z-index: 1;
+.session-codex-parity-v1 .structured-composer-editor .cm-line {
+  padding-inline: 5px;
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea::placeholder {
+.session-codex-parity-v1 .structured-composer-editor .cm-placeholder {
   color: var(--session-text-muted);
-  -webkit-text-fill-color: var(--session-text-muted);
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea::selection {
+.session-codex-parity-v1 .structured-composer-editor ::selection {
   background: color-mix(in srgb, var(--session-accent) 22%, transparent);
 }
 
-.session-codex-parity-v1 .structured-composer-mirror {
-  color: var(--session-text);
-  /* 显示层固定覆盖原生输入区，全文在此区域内滚动且不参与输入框高度计算。 */
-  inset: 0;
-  max-block-size: none;
-  min-block-size: 0;
-  overflow: hidden;
-  pointer-events: none;
-  position: absolute;
-  z-index: 0;
+.session-codex-parity-v1 .structured-composer-editor [aria-disabled='true'] {
+  cursor: default;
+}
+
+/* Markdown 字形只改变显示，不重写正文或空白。 */
+.session-codex-parity-v1 .composer-md-heading,
+.session-codex-parity-v1 .composer-md-strong {
+  font-weight: 650;
+}
+.session-codex-parity-v1 .composer-md-h1 {
+  font-size: 1.5em;
+}
+.session-codex-parity-v1 .composer-md-h2 {
+  font-size: 1.3em;
+}
+.session-codex-parity-v1 .composer-md-h3 {
+  font-size: 1.15em;
+}
+.session-codex-parity-v1 .composer-md-emphasis {
+  font-style: italic;
+}
+.session-codex-parity-v1 .composer-md-strike {
+  text-decoration: line-through;
+}
+.session-codex-parity-v1 .composer-md-link {
+  color: var(--session-accent);
+  text-decoration: underline;
+}
+.session-codex-parity-v1 .composer-md-code,
+.session-codex-parity-v1 .composer-md-code-block {
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  background: color-mix(in srgb, var(--session-text) 5%, transparent);
+}
+.session-codex-parity-v1 .composer-md-quote {
+  border-inline-start: 3px solid var(--session-border);
+  color: var(--session-text-muted);
+}
+
+/* 表格复用正文渲染与横向滚动，长编号和前导零原样显示。 */
+.session-codex-parity-v1 .composer-md-table {
+  min-inline-size: 0;
+  padding: 4px 5px;
+}
+.session-codex-parity-v1 .composer-md-table .session-markdown {
+  font: inherit;
+}
+.session-codex-parity-v1 .composer-md-table .table-node :where(th, td) {
+  min-inline-size: max-content;
+  white-space: nowrap;
+  cursor: text;
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 .structured-composer-editor .cm-focused {
+    outline: 1px solid CanvasText;
+  }
 }
 
 .session-codex-parity-v1 .structured-composer-token {

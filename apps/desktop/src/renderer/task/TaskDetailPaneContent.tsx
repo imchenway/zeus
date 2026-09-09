@@ -1,3 +1,4 @@
+import { retainInputFocus } from '../ui/retainInputFocus.js';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
@@ -438,9 +439,15 @@ function InlineTaskTextField(props: {
       insertPastedText(control, request.plainText, selectionStart, selectionEnd);
       return;
     }
-    const result = await props.onPasteResources(request);
-    if (result.updatedAt) baseUpdatedAtRef.current = result.updatedAt;
-    if (result.insertText) insertPastedText(control, result.insertText, selectionStart, selectionEnd);
+    /** 保存附件和更新任务后保留当前编辑位置，主动切换字段时不抢焦点。 */
+    const restoreFocus = retainInputFocus(control);
+    try {
+      const result = await props.onPasteResources(request);
+      if (result.updatedAt) baseUpdatedAtRef.current = result.updatedAt;
+      if (result.insertText) insertPastedText(control, result.insertText, selectionStart, selectionEnd);
+    } finally {
+      restoreFocus();
+    }
   }
 
   function handlePasteShortcutFallback(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {

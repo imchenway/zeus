@@ -1,10 +1,9 @@
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { type ClipboardEventHandler, type CompositionEventHandler, type FocusEventHandler, type KeyboardEvent, type RefObject, type UIEventHandler, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ClipboardEventHandler, type KeyboardEvent, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
 import type { PluginSkillReference } from './sessionTypes.js';
-import { ConversationMarkdown } from './ConversationMarkdown.js';
-import { autosizeTextarea } from './textareaAutosize.js';
+import { MarkdownComposerEditor, type ComposerInputHandle } from './MarkdownComposerEditor.js';
 
 type StructuredTokenKind = 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
 
@@ -53,7 +52,7 @@ export interface StructuredComposerInputProps {
   tokenDraft?: { current: StructuredToken[] };
   onValueChange(value: string): void;
   onSelectionChange(selection: StructuredComposerSelection): void;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textareaRef: RefObject<ComposerInputHandle | null>;
   projectId?: string;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
@@ -69,13 +68,13 @@ export interface StructuredComposerInputProps {
   onGoalMode(): void;
   onOpenComputerSettings?(): void;
   onKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
-  onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
-  onCompositionStart?: CompositionEventHandler<HTMLTextAreaElement>;
-  onCompositionEnd?: CompositionEventHandler<HTMLTextAreaElement>;
-  onBlur?: FocusEventHandler<HTMLTextAreaElement>;
-  onScroll?: UIEventHandler<HTMLTextAreaElement>;
+  onPaste?: ClipboardEventHandler<HTMLTextAreaElement | HTMLDivElement>;
+  onCompositionStart?(): void;
+  onCompositionEnd?(value: string): void;
+  onBlur?(value: string): void;
 }
 
+/** 新建和继续会话共用 Markdown 输入、命令菜单和结构化引用。 */
 export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const zh = props.language === 'zh-CN';
   const listboxId = useId();
@@ -88,28 +87,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [computerEnabled, setComputerEnabled] = useState(false);
-  /** 固定显示层的可视区域，只同步内部滚动，避免文字移出输入框。 */
-  const mirrorRef = useRef<HTMLDivElement | null>(null);
+  /** 输入法组词期间不显示命令菜单。 */
   const composingRef = useRef(false);
-  /** 只在原生粘贴已写入草稿后切换展示，保留浏览器的选区替换及撤销记录。 */
-  const previewAfterPasteRef = useRef(false);
-  /** 预览绑定原文，发送清空或外部修改草稿时自动退出。 */
-  const [previewValue, setPreviewValue] = useState<string | null>(null);
-  /** 预览成为可聚焦的阅读区域，避免焦点留在隐藏的原文输入框。 */
-  const previewRef = useRef<HTMLDivElement | null>(null);
-  /** 预览只改变展示，不参与结构化标签或发送正文的计算。 */
-  const showingPreview = Boolean(props.value.trim()) && previewValue === props.value;
-
-  useLayoutEffect(() => {
-    if (showingPreview) previewRef.current?.focus({ preventScroll: true });
-    else if (props.textareaRef.current) autosizeTextarea(props.textareaRef.current);
-  }, [showingPreview, props.textareaRef]);
-
-  /** 切换回原文时恢复原生输入框及其已有选区，不重建编辑节点。 */
-  function editMarkdownSource(): void {
-    setPreviewValue(null);
-    requestAnimationFrame(() => props.textareaRef.current?.focus({ preventScroll: true }));
-  }
 
   useEffect(() => {
     let active = true;
@@ -171,7 +150,6 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   useEffect(() => {
     setTokens((current) => current.filter((token) => props.value.slice(token.start, token.end) === token.label));
     if (!props.value) setTrigger(null);
-    if (!props.value) setPreviewValue(null);
   }, [props.value]);
 
   useEffect(() => {
@@ -289,16 +267,18 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
     setTrigger(findTrigger(props.value, caret));
   }
 
+  /** 正文与引用同步更新，输入法组词期间保持菜单关闭。 */
   function updateValue(nextValue: string, caret: number): void {
+    if (props.disabled) return;
     const nextTokens = reconcileTokens(props.value, nextValue, tokens);
     setTokens(nextTokens);
     props.onSelectionChange(selectionFromTokens(nextValue, nextTokens));
     props.onValueChange(nextValue);
-    requestAnimationFrame(() => setTrigger(findTrigger(nextValue, caret)));
+    setTrigger(composingRef.current ? null : findTrigger(nextValue, caret));
   }
 
   function choose(option: MenuOption): void {
-    if (!trigger || option.disabled) return;
+    if (!trigger || option.disabled || props.disabled) return;
     if (option.action) {
       const next = `${props.value.slice(0, trigger.start)}${props.value.slice(trigger.end)}`;
       const nextTokens = reconcileTokens(props.value, next, tokens);
@@ -335,7 +315,9 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
     });
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  /** 先处理命令与原子标签，再交给会话的发送与输入法保护。 */
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (props.disabled) return;
     if (!composingRef.current && trigger && options.length > 0) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -354,7 +336,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         return;
       }
     }
-    if (!composingRef.current && handleAtomicTokenKey(event, props.value, tokens, updateValue)) {
+    if (!composingRef.current && handleAtomicTokenKey(event, props.textareaRef.current, props.value, tokens, updateValue)) {
       setTrigger(null);
       return;
     }
@@ -364,101 +346,37 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const activeDescendant = trigger && options[activeOption] ? `${listboxId}-${safeDomId(options[activeOption]!.id)}` : undefined;
   return (
     <div className="structured-composer-root">
-      {props.value.trim() ? (
-        <div className="structured-composer-format-actions">
-          <button
-            type="button"
-            disabled={props.disabled}
-            aria-pressed={showingPreview}
-            onClick={() => {
-              if (showingPreview) editMarkdownSource();
-              else {
-                setTrigger(null);
-                setPreviewValue(props.value);
-              }
-            }}
-          >
-            {showingPreview ? (zh ? '编辑原文' : 'Edit source') : zh ? '预览格式' : 'Preview formatting'}
-          </button>
-        </div>
-      ) : null}
-      {showingPreview ? (
-        <div
-          ref={previewRef}
-          className="structured-composer-preview"
-          role="region"
-          tabIndex={0}
-          aria-label={zh ? '消息格式预览，按 Escape 编辑原文' : 'Message preview, press Escape to edit source'}
-          onKeyDown={(event) => {
-            if (event.target !== event.currentTarget || props.disabled) return;
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              event.stopPropagation();
-              editMarkdownSource();
-            } else if (event.key === 'Enter' && !event.shiftKey) {
-              // 预览仍使用调用方的发送条件，避免绕过忙碌、只读或输入法保护。
-              props.onKeyDown(event);
-            }
-          }}
-        >
-          <ConversationMarkdown text={props.value} streamId={`composer:${listboxId}`} phase="final" language={props.language} />
-        </div>
-      ) : null}
-      <div className="structured-composer-editor" hidden={showingPreview}>
-        <div ref={mirrorRef} className="structured-composer-mirror" aria-hidden="true">
-          {renderMirror(props.value, tokens)}
-        </div>
-        <textarea
-          ref={props.textareaRef}
-          aria-label={props.ariaLabel}
-          aria-keyshortcuts={props.ariaKeyShortcuts}
-          aria-autocomplete={trigger ? 'list' : undefined}
-          aria-controls={trigger ? listboxId : undefined}
-          aria-expanded={trigger ? true : undefined}
-          aria-activedescendant={activeDescendant}
-          autoFocus={props.autoFocus}
-          placeholder={props.placeholder}
-          value={props.value}
-          disabled={props.disabled}
-          onChange={(event) => updateValue(event.currentTarget.value, event.currentTarget.selectionStart)}
-          onInput={(event) => {
-            // 即使选中全文后粘贴相同文本，也能在原生插入结束后进入预览。
-            if (previewAfterPasteRef.current) setPreviewValue(event.currentTarget.value);
-            previewAfterPasteRef.current = false;
-          }}
-          onClick={(event) => updateTrigger(event.currentTarget.selectionStart)}
-          onKeyUp={(event) => {
-            if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) updateTrigger(event.currentTarget.selectionStart);
-          }}
-          onSelect={(event) => updateTrigger(event.currentTarget.selectionStart)}
-          onCompositionStart={(event) => {
-            composingRef.current = true;
-            setTrigger(null);
-            props.onCompositionStart?.(event);
-          }}
-          onCompositionEnd={(event) => {
-            composingRef.current = false;
-            props.onCompositionEnd?.(event);
-            requestAnimationFrame(() => updateTrigger(event.currentTarget.selectionStart));
-          }}
-          onBlur={props.onBlur}
-          onPaste={(event) => {
-            previewAfterPasteRef.current = false;
-            props.onPaste?.(event);
-            if (event.defaultPrevented || props.disabled || composingRef.current) return;
-            previewAfterPasteRef.current = hasMarkdownFormatting(event.clipboardData.getData('text/plain'));
-          }}
-          onKeyDown={handleKeyDown}
-          onScroll={(event) => {
-            if (mirrorRef.current) {
-              mirrorRef.current.scrollTop = event.currentTarget.scrollTop;
-              mirrorRef.current.scrollLeft = event.currentTarget.scrollLeft;
-            }
-            props.onScroll?.(event);
-          }}
-        />
-      </div>
-      {trigger && !showingPreview ? (
+      <MarkdownComposerEditor
+        value={props.value}
+        inputRef={props.textareaRef}
+        tokens={tokens}
+        disabled={props.disabled}
+        autoFocus={props.autoFocus}
+        ariaLabel={props.ariaLabel}
+        ariaKeyShortcuts={props.ariaKeyShortcuts}
+        placeholder={props.placeholder}
+        language={props.language}
+        listboxId={trigger ? listboxId : undefined}
+        activeDescendant={activeDescendant}
+        onChange={updateValue}
+        onSelect={updateTrigger}
+        onKeyDown={handleKeyDown}
+        onPaste={props.onPaste}
+        onCompositionStart={() => {
+          composingRef.current = true;
+          setTrigger(null);
+          props.onCompositionStart?.();
+        }}
+        onCompositionEnd={(value) => {
+          composingRef.current = false;
+          props.onCompositionEnd?.(value);
+        }}
+        onBlur={(value) => {
+          composingRef.current = false;
+          props.onBlur?.(value);
+        }}
+      />
+      {trigger && !props.disabled ? (
         <div className="structured-composer-menu" id={listboxId} role="listbox" aria-label={trigger.kind === '@' ? (zh ? '选择数字员工' : 'Select digital employees') : zh ? '选择命令' : 'Select command'}>
           {options.map((option, index) => (
             <div
@@ -514,11 +432,6 @@ function selectionFromTokens(value: string, tokens: StructuredToken[]): Structur
   };
 }
 
-/** ponytail: 只用格式标记决定是否自动预览；完整语法交给现有渲染器，未识别的格式可手动预览。 */
-function hasMarkdownFormatting(value: string): boolean {
-  return /(?:^|\n) {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d+[.)]\s|`{3}|~{3}|\|?[ \t]*:?-+:?[ \t]*\|)|(?:\*\*|__|~~|`)[^\n]+(?:\*\*|__|~~|`)|!?\[[^\]\n]+\]\([^)\n]+\)/u.test(value);
-}
-
 function findTrigger(value: string, caret: number): TriggerRange | null {
   const before = value.slice(0, caret);
   const match = /(^|\s)([/@])([^\s/@]*)$/u.exec(before);
@@ -544,21 +457,23 @@ function reconcileTokens(previousValue: string, nextValue: string, tokens: Struc
     .filter((token) => nextValue.slice(token.start, token.end) === token.label);
 }
 
-function handleAtomicTokenKey(event: KeyboardEvent<HTMLTextAreaElement>, value: string, tokens: StructuredToken[], update: (value: string, caret: number) => void): boolean {
-  const start = event.currentTarget.selectionStart;
-  const end = event.currentTarget.selectionEnd;
+/** 标签按原文坐标整体移动或删除，避免只留下半个结构化身份。 */
+function handleAtomicTokenKey(event: KeyboardEvent<HTMLDivElement>, input: ComposerInputHandle | null, value: string, tokens: StructuredToken[], update: (value: string, caret: number) => void): boolean {
+  if (!input) return false;
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
   if (event.key === 'ArrowLeft' && start === end) {
     const token = tokens.find((candidate) => start > candidate.start && start <= candidate.end);
     if (!token) return false;
     event.preventDefault();
-    event.currentTarget.setSelectionRange(token.start, token.start);
+    input.setSelectionRange(token.start, token.start);
     return true;
   }
   if (event.key === 'ArrowRight' && start === end) {
     const token = tokens.find((candidate) => start >= candidate.start && start < candidate.end);
     if (!token) return false;
     event.preventDefault();
-    event.currentTarget.setSelectionRange(token.end, token.end);
+    input.setSelectionRange(token.end, token.end);
     return true;
   }
   if (event.key !== 'Backspace' && event.key !== 'Delete') return false;
@@ -570,26 +485,8 @@ function handleAtomicTokenKey(event: KeyboardEvent<HTMLTextAreaElement>, value: 
   if (removeEnd < value.length && value[removeEnd] === ' ') removeEnd += 1;
   else if (removeStart > 0 && value[removeStart - 1] === ' ') removeStart -= 1;
   update(`${value.slice(0, removeStart)}${value.slice(removeEnd)}`, removeStart);
-  requestAnimationFrame(() => event.currentTarget.setSelectionRange(removeStart, removeStart));
+  requestAnimationFrame(() => input.setSelectionRange(removeStart, removeStart));
   return true;
-}
-
-function renderMirror(value: string, tokens: StructuredToken[]) {
-  const ordered = [...tokens].sort((left, right) => left.start - right.start);
-  const parts: React.ReactNode[] = [];
-  let cursor = 0;
-  for (const token of ordered) {
-    if (token.start > cursor) parts.push(<span key={`text:${cursor}`}>{value.slice(cursor, token.start)}</span>);
-    parts.push(
-      <span key={token.id} className="structured-composer-token" data-kind={token.kind}>
-        {value.slice(token.start, token.end)}
-      </span>,
-    );
-    cursor = token.end;
-  }
-  if (cursor < value.length) parts.push(<span key={`text:${cursor}`}>{value.slice(cursor)}</span>);
-  parts.push(<span key="tail">&#8203;</span>);
-  return parts;
 }
 
 function firstEnabledOption(options: MenuOption[]): number {
