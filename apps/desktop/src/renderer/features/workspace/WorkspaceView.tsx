@@ -87,7 +87,7 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
   const modelsPanelId = `${sectionId}-models-panel`;
 
   return (
-    <div className="project-settings-shell">
+    <div className="project-settings-shell" data-section={section}>
       <header className="project-settings-page-heading">
         <span className="project-settings-page-title">
           <h1>{zh ? '项目设置' : 'Project settings'}</h1>
