@@ -22189,6 +22189,62 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   flex-basis: 100%;
   line-height: 1.7;
 }
+/* 缺少程序属于准备步骤，使用中性面板而非错误弹窗。 */
+.macos-ai-app .model-setup-installation {
+  display: grid;
+  gap: 16px;
+  flex-basis: 100%;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+}
+/* 程序状态和版本在窄窗口中允许自然换行。 */
+.macos-ai-app .model-setup-installation-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* 安装说明采用现有次要文字颜色，并保持可读行距。 */
+.macos-ai-app .model-setup-installation small,
+.macos-ai-app .model-setup-installation-heading span {
+  color: var(--zeus-product-muted);
+  line-height: 1.6;
+}
+/* 程序路径与安装命令可能很长，不能撑破登录窗口。 */
+.macos-ai-app .model-setup-installation-path,
+.macos-ai-app .model-setup-installation-command pre {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+/* 命令与说明保持一组，复制按钮仍使用公共按钮原语。 */
+.macos-ai-app .model-setup-installation-command {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--zeus-product-line-soft);
+}
+/* 命令展示不继承全局代码块的额外宽度和空白。 */
+.macos-ai-app .model-setup-installation-command pre {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+}
+/* 路径编辑只在用户展开后显示，并保持标签与输入框相邻。 */
+.macos-ai-app .model-setup-installation-path-editor form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+/* 输入框宽度受面板限制，长路径保留原生水平编辑行为。 */
+.macos-ai-app .model-setup-installation-path-editor input {
+  width: 100%;
+  min-width: 0;
+}
 .macos-ai-app .model-setup-import ul {
   max-height: 200px;
   overflow-y: auto;

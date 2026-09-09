@@ -40,17 +40,54 @@ export async function completeCodexLoginHandoff(input: CodexLoginHandoffInput): 
   return true;
 }
 
-/** 共享官方登录流程；所有入口都通过当前请求身份隔离取消和迟到回执。 */
-export async function authenticateCodexWithBrowser(input: {
-  client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'loadCodexChatGptLoginStatus' | 'cancelCodexChatGptLogin' | 'loadCodexAccount' | 'activateCodexConfig'>;
+/** 认证完成后的模型准备与回交，可在同步失败后单独重试。 */
+export interface CodexSubscriptionSetupInput {
+  /** 使用 Zeus 当前账号和已有运行配置接口。 */
+  client: Pick<CodexApiClient, 'loadCodexAccount' | 'activateCodexConfig'>;
+  /** 取消或切换任务后停止接收回执。 */
   isCurrent: () => boolean;
-  onLoginId: (loginId: string | null) => void;
   /** 认证完成后仍需等待当前账号的模型目录与容量就绪。 */
   onPreparingModels: () => void;
+  /** 只有账号和模型均确认就绪后才显示接入成功。 */
   showSuccess: (account: CodexAccountSnapshot) => void;
+  /** 继续原任务确认，不重复发起认证。 */
   continueOriginalAction: (account: CodexAccountSnapshot) => void;
+  /** 窗口激活失败不能改变认证事实。 */
   recordActivationError: (error: unknown) => void;
-}): Promise<void> {
+}
+
+/** 模型准备失败时保留认证完成事实，重试仅刷新目录并核对账号。 */
+export async function completeCodexSubscriptionSetup(input: CodexSubscriptionSetupInput): Promise<void> {
+  if (!input.isCurrent()) return;
+  input.onPreparingModels();
+  await input.client.activateCodexConfig({ syncSubscriptionModels: true });
+  if (!input.isCurrent()) return;
+  /** 新实例读取真实账号，避免登录前的缓存进入成功反馈。 */
+  const account = await input.client.loadCodexAccount();
+  if (!input.isCurrent()) return;
+  if (!account.signedIn || account.accountType !== 'chatgpt') throw new Error('ZEUS_CODEX_LOGIN_REQUIRED');
+  await completeCodexLoginHandoff({
+    isCurrent: input.isCurrent,
+    showSuccess: () => input.showSuccess(account),
+    activateZeus: async () => {
+      /** 只激活发起接入的 Zeus 窗口。 */
+      const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
+      if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
+    },
+    recordActivationError: input.recordActivationError,
+    continueOriginalAction: () => input.continueOriginalAction(account),
+  });
+}
+
+/** 共享官方登录流程；所有入口都通过当前请求身份隔离取消和迟到回执。 */
+export async function authenticateCodexWithBrowser(
+  input: CodexSubscriptionSetupInput & {
+    /** 认证和模型准备使用同一个当前客户端。 */
+    client: Pick<CodexApiClient, 'startCodexChatGptLogin' | 'loadCodexChatGptLoginStatus' | 'cancelCodexChatGptLogin' | 'loadCodexAccount' | 'activateCodexConfig'>;
+    /** 登录身份只用于当前请求的等待与取消。 */
+    onLoginId: (loginId: string | null) => void;
+  },
+): Promise<void> {
   // 登录任务身份只留在内存；认证地址和账号凭据不写入持久记录。
   let loginId: string | null = null;
   try {
@@ -74,23 +111,7 @@ export async function authenticateCodexWithBrowser(input: {
         loginId = null;
         input.onLoginId(null);
         // 登录前的运行实例冻结了未认证目录；复用现有代际切换，保留旧实例正在执行的轮次。
-        input.onPreparingModels();
-        await input.client.activateCodexConfig({ syncSubscriptionModels: true });
-        if (!input.isCurrent()) return;
-        /** 新实例重新读取真实账号，避免登录前的账号缓存进入成功反馈。 */
-        const account = await input.client.loadCodexAccount();
-        if (!input.isCurrent()) return;
-        if (!account.signedIn || account.accountType !== 'chatgpt') throw new Error('ZEUS_CODEX_LOGIN_REQUIRED');
-        await completeCodexLoginHandoff({
-          isCurrent: input.isCurrent,
-          showSuccess: () => input.showSuccess(account),
-          activateZeus: async () => {
-            const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
-            if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
-          },
-          recordActivationError: input.recordActivationError,
-          continueOriginalAction: () => input.continueOriginalAction(account),
-        });
+        await completeCodexSubscriptionSetup(input);
         return;
       }
       await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 800));

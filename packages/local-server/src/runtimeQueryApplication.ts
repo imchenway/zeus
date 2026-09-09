@@ -68,13 +68,12 @@ export class RuntimeQueryApplication {
     return this.ports.adapters.listAdapters();
   }
 
+  /** 仅未知适配器返回不存在；真实检测故障保留自身原因。 */
   async checkAdapter(adapterId: string): Promise<AiCliAdapterStatus> {
-    try {
-      const configuredPath = isRuntimeAdapterId(adapterId) ? this.ports.readSettings().adapterCliPaths[adapterId] : undefined;
-      return await this.ports.adapters.checkAdapter(adapterId, configuredPath);
-    } catch {
-      throw queryError('ZEUS_RUNTIME_ADAPTER_NOT_FOUND', 'AI Runtime adapter not found', 404);
-    }
+    if (!isRuntimeAdapterId(adapterId)) throw queryError('ZEUS_RUNTIME_ADAPTER_NOT_FOUND', 'AI Runtime adapter not found', 404);
+    /** 每次重新读取设置，不能沿用安装前或编辑路径前的检测结果。 */
+    const configuredPath = this.ports.readSettings().adapterCliPaths[adapterId];
+    return this.ports.adapters.checkAdapter(adapterId, configuredPath);
   }
 
   readSettings(): RuntimeSettingsSnapshot {
