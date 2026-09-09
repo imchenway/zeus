@@ -1,11 +1,10 @@
 import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
-import { redactUserFacingErrorDetails } from '@zeus/shared';
 import { useEffect, useId, useRef, useState } from 'react';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type {
   DashboardClient,
   ModelAuthenticationScheme,
-  ModelCapabilityEvidence,
   ModelConnectionDiagnostic,
   ModelConnectionModel,
   ModelConnectionRecord,
@@ -532,6 +531,21 @@ export function ModelConnectionsSettingsPane(props: {
                     : 'Choose the request format and authentication supported by the service for each model. Feature availability is based on checks of that connection.'}
                 </small>
               </span>
+            </header>
+            <div className="model-list-toolbar">
+              {draft.models.length > 0 ? (
+                <input
+                  className="settings-list-search"
+                  type="search"
+                  aria-label={zh ? '搜索模型' : 'Search models'}
+                  placeholder={zh ? '搜索模型名称' : 'Search model names'}
+                  value={modelQuery}
+                  onChange={(event) => {
+                    setModelQuery(event.currentTarget.value);
+                    setRequestedModelPage(1);
+                  }}
+                />
+              ) : null}
               {draft.templateId === 'custom' || props.onComplete ? (
                 <span className="model-add-row">
                   <input aria-label={zh ? '手工模型 ID' : 'Manual model ID'} placeholder={zh ? '手工模型 ID' : 'Manual model ID'} value={newModelId} onChange={(event) => setNewModelId(event.currentTarget.value)} />
@@ -540,20 +554,7 @@ export function ModelConnectionsSettingsPane(props: {
                   </Button>
                 </span>
               ) : null}
-            </header>
-            {draft.models.length > 0 ? (
-              <input
-                className="settings-list-search"
-                type="search"
-                aria-label={zh ? '搜索模型' : 'Search models'}
-                placeholder={zh ? '搜索模型名称' : 'Search model names'}
-                value={modelQuery}
-                onChange={(event) => {
-                  setModelQuery(event.currentTarget.value);
-                  setRequestedModelPage(1);
-                }}
-              />
-            ) : null}
+            </div>
             {draft.models.length > 0 && filteredModels.length === 0 ? <p role="status">{zh ? '没有匹配的模型。' : 'No matching models.'}</p> : null}
             {draft.models.length === 0 ? (
               <p>
@@ -684,13 +685,14 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
   }
 }
 
-/** 模型名称、启用状态与连接配置直接对齐显示。 */
+/** 模型默认只显示名称与连接摘要，展开后编辑；启用与移除独立操作。 */
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
   /** 将展开按钮与详细配置关联。 */
   const detailsId = useId();
   const zh = props.language === 'zh-CN';
   const model = props.model;
-  const routeDescription = protocolDescription(model.protocolFamily, zh);
+  /** 展开仅影响当前模型的展示，不写入供应商配置。 */
+  const [expanded, setExpanded] = useState(false);
   const contextDeclaration = (
     <>
       <input
@@ -713,121 +715,88 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
   return (
     <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
       <header className="model-definition-header">
-        <label className="model-definition-identity">
-          <input type="checkbox" checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
+        <input type="checkbox" aria-label={zh ? `启用模型 ${model.id}` : `Enable model ${model.id}`} checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
+        <button type="button" className="model-definition-toggle" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((value) => !value)}>
           <span>
             <strong title={model.id}>{model.id}</strong>
             <small>{modelRouteLabel(model, zh)}</small>
           </span>
-        </label>
+          <CaretDownIcon aria-hidden="true" />
+        </button>
         {props.readOnly ? null : (
           <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
             <X aria-hidden="true" weight="bold" />
           </button>
         )}
       </header>
-      <div id={detailsId} className="model-definition-details">
-        {props.readOnly ? (
-          <dl className="model-route-facts">
-            <div>
-              <dt>{zh ? '请求协议' : 'Request protocol'}</dt>
-              <dd>{protocolLabel(model.protocolFamily)}</dd>
-            </div>
-            <div>
-              <dt>{zh ? '认证方式' : 'Authentication'}</dt>
-              <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
-            </div>
-            <div>
-              <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
-              <dd>
+      {expanded ? (
+        <div id={detailsId} className="model-definition-details">
+          {props.readOnly ? (
+            <dl className="model-route-facts">
+              <div>
+                <dt>{zh ? '请求协议' : 'Request protocol'}</dt>
+                <dd>{protocolLabel(model.protocolFamily)}</dd>
+              </div>
+              <div>
+                <dt>{zh ? '认证方式' : 'Authentication'}</dt>
+                <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
+              </div>
+              <div>
+                <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
+                <dd>
+                  <span className="model-context-declaration-value">{contextDeclaration}</span>
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <div className="model-route-controls">
+              <label>
+                <span>{zh ? '请求协议' : 'Request protocol'}</span>
+                <ZeusSelect<ModelProtocolFamily>
+                  ariaLabel={zh ? `${model.id} 请求协议` : `${model.id} request protocol`}
+                  className="model-protocol-select"
+                  size="compact"
+                  value={model.protocolFamily}
+                  disabled={props.readOnly}
+                  onChange={(protocolFamily) =>
+                    props.onChange({
+                      ...model,
+                      protocolFamily,
+                      runtimeAdapter: 'pi_sdk',
+                      authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
+                    })
+                  }
+                  options={[
+                    { value: 'openai_completions', label: 'OpenAI Chat Completions' },
+                    { value: 'anthropic_messages', label: 'Anthropic Messages' },
+                    { value: 'openai_responses', label: 'OpenAI Responses' },
+                  ]}
+                />
+              </label>
+              <label>
+                <span>{zh ? '认证方式' : 'Authentication'}</span>
+                <ZeusSelect<ModelAuthenticationScheme>
+                  ariaLabel={zh ? `${model.id} 认证方式` : `${model.id} authentication`}
+                  className="model-protocol-select"
+                  size="compact"
+                  value={model.authenticationScheme}
+                  disabled={props.readOnly}
+                  onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
+                  options={[
+                    { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
+                    { value: 'bearer', label: 'Authorization: Bearer' },
+                    { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
+                  ]}
+                />
+              </label>
+              <label className="model-context-declaration">
+                <span>{zh ? '上下文窗口' : 'Context window'}</span>
                 <span className="model-context-declaration-value">{contextDeclaration}</span>
-              </dd>
+              </label>
             </div>
-          </dl>
-        ) : (
-          <div className="model-route-controls">
-            <label>
-              <span>{zh ? '请求协议' : 'Request protocol'}</span>
-              <ZeusSelect<ModelProtocolFamily>
-                ariaLabel={zh ? `${model.id} 请求协议` : `${model.id} request protocol`}
-                className="model-protocol-select"
-                size="compact"
-                value={model.protocolFamily}
-                disabled={props.readOnly}
-                onChange={(protocolFamily) =>
-                  props.onChange({
-                    ...model,
-                    protocolFamily,
-                    runtimeAdapter: 'pi_sdk',
-                    authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
-                  })
-                }
-                options={[
-                  { value: 'openai_completions', label: 'OpenAI Chat Completions' },
-                  { value: 'anthropic_messages', label: 'Anthropic Messages' },
-                  { value: 'openai_responses', label: 'OpenAI Responses' },
-                ]}
-              />
-            </label>
-            <label>
-              <span>{zh ? '认证方式' : 'Authentication'}</span>
-              <ZeusSelect<ModelAuthenticationScheme>
-                ariaLabel={zh ? `${model.id} 认证方式` : `${model.id} authentication`}
-                className="model-protocol-select"
-                size="compact"
-                value={model.authenticationScheme}
-                disabled={props.readOnly}
-                onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
-                options={[
-                  { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
-                  { value: 'bearer', label: 'Authorization: Bearer' },
-                  { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
-                ]}
-              />
-            </label>
-            <label className="model-context-declaration">
-              <span>{zh ? '上下文窗口' : 'Context window'}</span>
-              <span className="model-context-declaration-value">{contextDeclaration}</span>
-            </label>
-          </div>
-        )}
-        <p className="model-route-description">{routeDescription}</p>
-        <dl className="model-capability-summary">
-          <div>
-            <dt>{zh ? '推理' : 'Reasoning'}</dt>
-            <dd>{reasoningCapabilityLabel(model, zh)}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
-            <dd>{capabilityStateLabel(model.capability.tools.state, zh)}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '图片输入' : 'Image input'}</dt>
-            <dd>{capabilityStateLabel(model.capability.imageInput.state, zh)}</dd>
-          </div>
-        </dl>
-        <details className="model-capability-evidence">
-          <summary>{zh ? '查看能力依据' : 'View capability evidence'}</summary>
-          <dl>
-            <div>
-              <dt>{zh ? '推理' : 'Reasoning'}</dt>
-              <dd>{capabilityEvidenceText(model.capability.reasoning, zh)}</dd>
-            </div>
-            <div>
-              <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
-              <dd>{capabilityEvidenceText(model.capability.tools, zh)}</dd>
-            </div>
-            <div>
-              <dt>{zh ? '图片输入' : 'Image input'}</dt>
-              <dd>{capabilityEvidenceText(model.capability.imageInput, zh)}</dd>
-            </div>
-          </dl>
-          <details>
-            <summary>{zh ? '检测记录（原文）' : 'Original check details'}</summary>
-            <pre>{[model.capability.reasoning.reason, model.capability.tools.reason, model.capability.imageInput.reason].map(redactUserFacingErrorDetails).join('\n')}</pre>
-          </details>
-        </details>
-      </div>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -871,16 +840,6 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
   };
 }
 
-function protocolDescription(protocolFamily: ModelProtocolFamily, zh: boolean): string {
-  if (protocolFamily === 'anthropic_messages') {
-    return zh ? 'Anthropic Messages 请求格式 · 支持缓存设置与用量信息' : 'Anthropic Messages format · cache settings and usage';
-  }
-  if (protocolFamily === 'openai_responses') {
-    return zh ? 'OpenAI Responses 请求格式 · 支持对话缓存' : 'OpenAI Responses format · conversation caching';
-  }
-  return zh ? 'OpenAI Chat Completions 兼容格式' : 'OpenAI Chat Completions-compatible format';
-}
-
 function protocolLabel(protocolFamily: ModelProtocolFamily): string {
   if (protocolFamily === 'anthropic_messages') return 'Anthropic Messages';
   if (protocolFamily === 'openai_responses') return 'OpenAI Responses';
@@ -897,19 +856,7 @@ function modelRouteLabel(model: ModelConnectionModel, zh: boolean): string {
   return `${protocolLabel(model.protocolFamily)} · ${authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}`;
 }
 
-function reasoningCapabilityLabel(model: ModelConnectionModel, zh: boolean): string {
-  const reasoning = model.capability.reasoning;
-  if (reasoning.state !== 'supported') return capabilityStateLabel(reasoning.state, zh);
-  return zh ? `默认 ${reasoning.defaultLevel} · ${reasoning.levels.length} 档` : `Default ${reasoning.defaultLevel} · ${reasoning.levels.length} levels`;
-}
-
 const zhModelCapabilityPendingReason = '等待识别此服务中该模型支持的功能。';
-
-function capabilityStateLabel(state: ModelCapabilityEvidence['state'], zh: boolean): string {
-  if (state === 'supported') return zh ? '支持' : 'Supported';
-  if (state === 'unsupported') return zh ? '不支持' : 'Unsupported';
-  return zh ? '待检测' : 'Pending detection';
-}
 
 function cloneModel(model: ModelConnectionModel): ModelConnectionModel {
   return {
@@ -922,12 +869,4 @@ function cloneModel(model: ModelConnectionModel): ModelConnectionModel {
       usage: { ...model.capability.usage },
     },
   };
-}
-
-/** 根据已记录的检测状态解释能力来源，原始诊断不当作普通说明。 */
-function capabilityEvidenceText(evidence: Pick<ModelCapabilityEvidence, 'source' | 'state'>, zh: boolean): string {
-  if (evidence.source === 'catalog') return zh ? '来自模型资料，尚需检查当前连接是否支持。' : 'Based on model information. Support still needs to be checked for this connection.';
-  if (evidence.state === 'supported') return zh ? '当前记录显示此连接支持该功能。' : 'The current record indicates that this connection supports the feature.';
-  if (evidence.state === 'unsupported') return zh ? '当前记录显示此连接不支持该功能。' : 'The current record indicates that this connection does not support the feature.';
-  return zh ? '尚未确认此连接是否支持该功能。' : 'Support for this feature has not been confirmed on this connection.';
 }

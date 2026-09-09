@@ -219,6 +219,7 @@ export function NetworkProxySettingsFields(props: {
         </p>
       ) : null}
       <NativeControlRow
+        className="network-proxy-check-row"
         title={zh ? '检查网址' : 'Check URL'}
         description={
           zh
@@ -226,29 +227,29 @@ export function NetworkProxySettingsFields(props: {
             : 'Check both network paths using this form without changing the active proxy. A response does not verify model credentials or API access.'
         }
       >
-        <input
-          type="url"
-          aria-label={zh ? '检查网址' : 'Check URL'}
-          autoComplete="off"
-          spellCheck={false}
-          value={target}
-          disabled={disabled}
-          onChange={(event) => {
-            setTarget(event.currentTarget.value);
-            setResult(null);
-            setCheckError(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !disabled) void checkConnection();
-          }}
-        />
+        <span className="network-proxy-check">
+          <input
+            type="url"
+            aria-label={zh ? '检查网址' : 'Check URL'}
+            autoComplete="off"
+            spellCheck={false}
+            value={target}
+            disabled={disabled}
+            onChange={(event) => {
+              setTarget(event.currentTarget.value);
+              setResult(null);
+              setCheckError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !disabled) void checkConnection();
+            }}
+          />
+          <Button disabled={disabled || !window.zeus?.checkNetworkProxyConnection} busy={checking} onClick={() => void checkConnection()}>
+            {checking ? (zh ? '正在检查…' : 'Checking…') : zh ? '检查连接' : 'Check connection'}
+          </Button>
+        </span>
       </NativeControlRow>
-      <div className="network-proxy-check">
-        <Button disabled={disabled || !window.zeus?.checkNetworkProxyConnection} busy={checking} onClick={() => void checkConnection()}>
-          {checking ? (zh ? '正在检查…' : 'Checking…') : zh ? '检查连接' : 'Check connection'}
-        </Button>
-        {!window.zeus?.checkNetworkProxyConnection ? <span className="settings-field-note">{zh ? '请在 Zeus 桌面应用中检查连接。' : 'Check the connection in the Zeus desktop app.'}</span> : null}
-      </div>
+      {!window.zeus?.checkNetworkProxyConnection ? <p className="settings-field-note">{zh ? '请在 Zeus 桌面应用中检查连接。' : 'Check the connection in the Zeus desktop app.'}</p> : null}
       <div aria-live="polite" aria-busy={checking}>
         {checking ? <p className="settings-field-note">{zh ? '正在检查浏览器与模型网络，最多约 10 秒…' : 'Checking browser and model networks, up to about 10 seconds…'}</p> : null}
         {result ? (

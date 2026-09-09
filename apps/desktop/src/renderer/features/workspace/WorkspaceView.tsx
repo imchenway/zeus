@@ -5,6 +5,20 @@ import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import type { Icon } from '@phosphor-icons/react';
+import { SlidersHorizontalIcon } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
+import { ChartBarIcon } from '@phosphor-icons/react/dist/csr/ChartBar';
+import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
+import { ListChecksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
+import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot';
+import { PlugsConnectedIcon } from '@phosphor-icons/react/dist/csr/PlugsConnected';
+import { CubeIcon } from '@phosphor-icons/react/dist/csr/Cube';
+import { BrowserIcon } from '@phosphor-icons/react/dist/csr/Browser';
+import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
+import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
+import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
+import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
+import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
 import { useId, useMemo, useState } from 'react';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
@@ -482,40 +496,41 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   /** 当前展示页始终对应有效记录范围。 */
   const archivePage = settingsPage(filteredArchives.length, archiveRequestedPage);
   const normalizedSettingsQuery = settingsSearchQuery.trim().toLocaleLowerCase();
+  /** 每个设置入口绑定语义图标，复用既有线性图标库与导航结构。 */
   const settingsGroups = [
     {
       group: settingsWorkspaceCopy.sectionGroups.personal,
       items: [
-        ['general', settingsWorkspaceCopy.categories.general, undefined],
-        ['usage', settingsWorkspaceCopy.categories.usage, undefined],
-        ['memory', settingsWorkspaceCopy.categories.memory, settingsWorkspaceCopy.localStatus],
-        ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
-        ['employees', settingsWorkspaceCopy.categories.employees, settingsWorkspaceCopy.localStatus],
+        ['general', settingsWorkspaceCopy.categories.general, SlidersHorizontalIcon],
+        ['usage', settingsWorkspaceCopy.categories.usage, ChartBarIcon],
+        ['memory', settingsWorkspaceCopy.categories.memory, BrainIcon],
+        ['tasks', settingsWorkspaceCopy.categories.tasks, ListChecksIcon],
+        ['employees', settingsWorkspaceCopy.categories.employees, RobotIcon],
       ],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.integrations,
       items: [
-        ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
-        ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
-        ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
+        ['runtime', settingsWorkspaceCopy.categories.runtime, PlugsConnectedIcon],
+        ['models', settingsWorkspaceCopy.categories.models, CubeIcon],
+        ['browser', settingsWorkspaceCopy.categories.browser, BrowserIcon],
         // IM 接入名称同时用于侧栏展示与设置搜索。
-        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 接入' : 'IM Integrations', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
-        ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
+        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 接入' : 'IM Integrations', ChatCircleDotsIcon],
+        ['zentao', settingsWorkspaceCopy.categories.zentao, PuzzlePieceIcon],
       ],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.coding,
-      items: [['commands', settingsWorkspaceCopy.categories.commands, settingsWorkspaceCopy.localStatus]],
+      items: [['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon]],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.maintenance,
       items: [
-        ['release', settingsWorkspaceCopy.categories.release, settingsWorkspaceCopy.waitingStatus],
-        ['data', settingsWorkspaceCopy.categories.data, settingsWorkspaceCopy.localStatus],
+        ['release', settingsWorkspaceCopy.categories.release, ArrowCircleUpIcon],
+        ['data', settingsWorkspaceCopy.categories.data, DatabaseIcon],
       ],
     },
-  ] as Array<{ group: string; items: Array<[SettingsCategory, string, string | undefined]> }>;
+  ] as Array<{ group: string; items: Array<[SettingsCategory, string, Icon]> }>;
   const visibleSettingsGroups = settingsGroups
     .map((group) => ({
       ...group,
@@ -1556,7 +1571,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     <span className="settings-sidebar-group-title" role="presentation">
                       {group.group}
                     </span>
-                    {group.items.map(([id, label]) => (
+                    {group.items.map(([id, label, SectionIcon]) => (
                       <button
                         key={id}
                         id={`${settingsPanelId}-${id}`}
@@ -1569,6 +1584,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         data-inline-rail-item="true"
                         onClick={() => setSettingsCategory(id)}
                       >
+                        <SectionIcon className="settings-section-icon" weight="regular" aria-hidden="true" />
                         <span className="settings-section-label">{label}</span>
                       </button>
                     ))}
@@ -1851,19 +1867,31 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </span>
                           </section>
                           <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
-                            <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
-                            <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
-                            <em>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</em>
+                            <span className="settings-row-copy">
+                              <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
+                            </span>
+                            <span className="settings-row-field">
+                              <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
+                              <small>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</small>
+                            </span>
                           </section>
                           <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
-                            <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
-                            <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
-                            <em>{settingsWorkspaceCopy.release.notarizationDescription}</em>
+                            <span className="settings-row-copy">
+                              <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
+                            </span>
+                            <span className="settings-row-field">
+                              <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
+                              <small>{settingsWorkspaceCopy.release.notarizationDescription}</small>
+                            </span>
                           </section>
                           <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
-                            <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
-                            <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
-                            <em>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</em>
+                            <span className="settings-row-copy">
+                              <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
+                            </span>
+                            <span className="settings-row-field">
+                              <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
+                              <small>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</small>
+                            </span>
                           </section>
                           <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
                             <span className="settings-row-copy">

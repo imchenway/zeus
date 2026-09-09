@@ -7,6 +7,7 @@ import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
+import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
 type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'desktopNotificationsEnabled' | 'networkProxy'>;
@@ -62,14 +63,14 @@ export function GeneralSettingsPane(props: {
           <h2 className="settings-page-title">{zh ? '通用' : 'General'}</h2>
           <p>{zh ? '调整界面与通知，修改后自动保存。' : 'Appearance and notifications. Changes save automatically.'}</p>
         </span>
-        <span className="settings-save-status" role="status" data-state={status}>
-          {status === 'saving' ? (zh ? '正在保存…' : 'Saving…') : status === 'saved' ? (zh ? '已保存' : 'Saved') : status === 'failed' ? (zh ? '未保存' : 'Not saved') : null}
-          {status === 'failed' ? (
+        {status === 'failed' ? (
+          <div className="settings-heading-actions">
+            <SettingsSaveStatus status={status} language={props.value.appLanguage} />
             <Button size="compact" onClick={() => save({})}>
               {zh ? '重试' : 'Retry'}
             </Button>
-          ) : null}
-        </span>
+          </div>
+        ) : null}
       </header>
       <NativeSettingsPane label={zh ? '界面与通知' : 'Appearance and notifications'}>
         <NativeControlRow title={zh ? '应用语言' : 'Language'} description={zh ? '选择 Zeus 的界面语言。' : 'Choose the Zeus interface language.'}>
