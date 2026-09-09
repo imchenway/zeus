@@ -1,4 +1,5 @@
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { SettingsSaveStatus, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -59,6 +60,8 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   const [error, setError] = useState<string | null>(null);
   /** 成功操作的即时反馈。 */
   const [notice, setNotice] = useState<string | null>(null);
+  /** 本地配置保存回执独立于配对和连接诊断。 */
+  const [saveState, setSaveState] = useState<SettingsSaveState>('idle');
 
   /** 同时读取连接和项目选项，恢复当前绑定信息。 */
   const refresh = useCallback(async () => {
@@ -179,10 +182,13 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       setAction(nextAction);
       setError(null);
       setNotice(null);
+      if (nextAction === 'update') setSaveState('saving');
       try {
         const result = await operation();
         await onSuccess(result);
+        if (nextAction === 'update') setSaveState('saved');
       } catch (reason) {
+        if (nextAction === 'update') setSaveState('failed');
         setError(errorMessage(reason, zh ? 'zh-CN' : 'en'));
       } finally {
         setAction(null);
@@ -305,6 +311,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
     <section className="settings-product-pane im-robot-settings" aria-label={zh ? 'IM 接入' : 'IM Integrations'}>
       <header className="im-page-heading">
         <h2 className="settings-page-title">{zh ? 'IM 接入' : 'IM Integrations'}</h2>
+        <SettingsSaveStatus language={props.language} status={saveState} />
         <p>{zh ? '在聊天中交办任务，随时查看项目进展。' : 'Delegate tasks in chat and follow your project’s progress.'}</p>
       </header>
 

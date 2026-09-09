@@ -116,32 +116,6 @@ export function GeneralSettingsPane(props: {
           <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} disabled={!props.client} onChange={(networkProxy) => save({ networkProxy })} />
         </NativeSettingsPane>
       </section>
-      <details className="settings-disclosure settings-permission-help">
-        <summary>{zh ? 'AI 操作权限如何生效' : 'How AI permissions work'}</summary>
-        <p>
-          {zh
-            ? '权限在每个会话的输入框中选择，也可在创建任务会话时设置。这里没有额外的全局权限开关。'
-            : 'Choose permissions in each conversation composer or when creating a task conversation. There is no extra global permission switch here.'}
-        </p>
-        <dl>
-          <div>
-            <dt>{zh ? '只读' : 'Read only'}</dt>
-            <dd>{zh ? '以读取和分析为主，不直接修改文件。' : 'Read and analyze without directly changing files.'}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '自动' : 'Auto'}</dt>
-            <dd>{zh ? '在工作目录内处理任务；越界访问及需要授权的操作会发起确认。' : 'Work within the workspace. Access beyond it and other restricted actions require approval.'}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '完全访问' : 'Full access'}</dt>
-            <dd>
-              {zh
-                ? '放开该会话的文件和命令限制。浏览器、电脑操作仍遵守各自的开关和敏感操作确认。'
-                : 'Removes file and command restrictions for that conversation. Browser and computer controls still enforce their own settings and sensitive-action approvals.'}
-            </dd>
-          </div>
-        </dl>
-      </details>
     </section>
   );
 }

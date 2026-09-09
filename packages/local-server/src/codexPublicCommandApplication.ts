@@ -6,6 +6,8 @@ import { createCommandValidation } from './commandApplicationPrimitives.js';
 export const codexPublicCommandTypes = {
   accountLoginStart: 'codex.account.login.start',
   accountLoginCancel: 'codex.account.login.cancel',
+  /** 主动退出当前 Zeus 使用的 Codex 账户。 */
+  accountLogout: 'codex.account.logout',
   remoteControlEnable: 'codex.remote_control.enable',
   remoteControlDisable: 'codex.remote_control.disable',
   remoteControlPairingStart: 'codex.remote_control.pairing.start',

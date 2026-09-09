@@ -598,3 +598,8 @@ export function parseZentaoInstanceBaseUrl(rawBaseUrl: string): { host: string; 
 export function zentaoInstanceApiBase(instance: Pick<ZentaoInstanceRecord, 'host' | 'basePath'>): string {
   return `${instance.host}${instance.basePath}/api.php/v1`;
 }
+
+/** 数字员工仅使用随应用分发的预置头像，不接受任意路径或网址。 */
+export const digitalEmployeeAvatarIds = ['loki', 'argus', 'eric', 'higgins', 'vidar'] as const;
+/** 头像身份跨模板与项目员工保持一致。 */
+export type DigitalEmployeeAvatarId = (typeof digitalEmployeeAvatarIds)[number];

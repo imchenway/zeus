@@ -218,6 +218,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'startCodexChatGptLogin'
     | 'loadCodexChatGptLoginStatus'
     | 'cancelCodexChatGptLogin'
+    | 'logoutCodexAccount'
     | 'inspectCodexConfigImport'
     | 'importCodexConfig'
     | 'activateCodexConfig'

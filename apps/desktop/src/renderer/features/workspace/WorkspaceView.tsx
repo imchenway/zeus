@@ -1,3 +1,6 @@
+import { RuntimeSettingsPane } from '../../settings/RuntimeSettingsPane.js';
+import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
+import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
@@ -36,18 +39,7 @@ import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from '../../CommandCenterPanel.js';
 import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
-import {
-  formatRuntimeAdapterDetectionFacts,
-  formatRuntimeDefaultArgs,
-  formatRuntimeTerminalEnv,
-  InlineRecoveryPrompt,
-  parseRuntimeDefaultArgsText,
-  parseRuntimeTerminalEnvText,
-  ProjectCreateDialog,
-  ProjectStartGuide,
-  ProjectWorkspaceModeToolbar,
-  SidebarNav,
-} from './WorkspaceChrome.js';
+import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceModeToolbar, SidebarNav } from './WorkspaceChrome.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
   browserNativeConversationStartStorage,
@@ -62,8 +54,8 @@ import {
   formatReleaseUpdateLabel,
   formatReleaseUpdateReason,
   formatReleaseWaitingForItems,
-  formatRuntimeAdapterDisplayName,
   formatRuntimeSessionStatus,
+  formatRuntimeAdapterDisplayName,
   type NativeConversationAppClient,
   NativeSettingsPane,
   PROJECT_SIDEBAR_MIN_WIDTH,
@@ -132,6 +124,8 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  /** 一次编辑一个字段，新增字段无需继续拉长页面。 */
+  const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
   const { state, domainActions, operations } = input;
   const {
     actionState,
@@ -215,8 +209,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     runtimeShowArchived,
     runtimeStatus,
     secondaryDrawerCopy,
-    selectNoResults,
-    selectSearchPlaceholder,
     selectedNativeConversation,
     selectedNativeConversationId,
     selectedProject,
@@ -405,8 +397,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     restoreRuntimeSession,
     runBulkTaskDelete,
     runBulkTaskStatusChange,
-    saveAppShellSettings,
-    saveRuntimeSettings,
     saveSourceWorkspaceAndLeave,
     saveTaskPageViewMode,
     saveTaskStatusFilter,
@@ -423,7 +413,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     toggleSidebarConversationStatusGroup,
     toggleTaskSelection,
     updateTaskBoardSettings,
-    updateTaskManagementStatusConfigDraft,
     workspaceDrawerPortalStyle,
   } = operations;
   /** 任务详情也可从会话页打开；接入上下文仍由原工作面身份约束，关闭或切换后旧回执失效。 */
@@ -450,12 +439,28 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskContext: taskModelSetupContext,
     requestedTaskStep: taskModelPushEntry === 'choose' || taskModelPushEntry === 'custom' ? taskModelPushEntry : undefined,
   });
-  const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
-  const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
   /** 侧栏选项与当前详情相互关联，键盘和读屏均可定位内容。 */
   const settingsPanelId = useId();
   /** 归档筛选只作用于当前列表，不修改任何会话。 */
   const [archiveQuery, setArchiveQuery] = useState('');
+  /** 任务字段的写入状态；仅提交该页拥有的偏好。 */
+  const taskAutosave = useSettingsAutosave(appShellSettings.appLanguage);
+  /** 两个复合页共享各自页面标题处的保存反馈。 */
+  const [runtimeSaveState, setRuntimeSaveState] = useState<SettingsSaveState>('idle');
+  const [modelSaveState, setModelSaveState] = useState<SettingsSaveState>('idle');
+  /** 删除状态的替换关系随失败草稿保留，成功后才清除。 */
+  function saveTaskFields(patch: Pick<UpdateAppShellSettingsRequest, 'taskTableEnumSortOrders' | 'taskManagementStatusTemplate' | 'taskManagementStatusByProject' | 'taskManagementStatusReplacements'>): void {
+    setAppShellSettings((current) => ({ ...current, ...patch }));
+    /** 客户端串行保存，避免与通用设置互相覆盖。 */
+    const client = props.nativeConversationClient?.settings;
+    if (!client) return;
+    void taskAutosave.save(async () => {
+      await client.saveAppShellSettings({ ...patch, taskManagementStatusReplacements: patch.taskManagementStatusReplacements ?? state.taskManagementStatusReplacements });
+      state.setTaskManagementStatusReplacements({});
+    });
+  }
+  /** 项目快速筛选与文字搜索同时生效。 */
+  const [archiveProjectId, setArchiveProjectId] = useState('');
   /** 分页状态随列表缩短自动夹紧。 */
   const [archiveRequestedPage, setArchiveRequestedPage] = useState(1);
   /** 列表变化时一次关联项目和任务，搜索时不再逐条扫描全部任务。 */
@@ -469,9 +474,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   /** 标题、项目与任务编号使用相同的检索词。 */
   const normalizedArchiveQuery = archiveQuery.trim().toLocaleLowerCase();
   /** 空检索直接复用列表，不额外生成数组。 */
-  const filteredArchives = normalizedArchiveQuery
-    ? archiveItems.filter(({ conversation, task, project }) => `${conversation.title} ${task?.title ?? ''} ${task?.taskCode ?? ''} ${project?.name ?? ''}`.toLocaleLowerCase().includes(normalizedArchiveQuery))
-    : archiveItems;
+  const filteredArchives = archiveItems.filter(
+    ({ conversation, task, project }) =>
+      (!archiveProjectId || conversation.projectId === archiveProjectId) &&
+      (!normalizedArchiveQuery || `${conversation.title} ${task?.title ?? ''} ${task?.taskCode ?? ''} ${project?.name ?? ''}`.toLocaleLowerCase().includes(normalizedArchiveQuery)),
+  );
   /** 当前展示页始终对应有效记录范围。 */
   const archivePage = settingsPage(filteredArchives.length, archiveRequestedPage);
   const normalizedSettingsQuery = settingsSearchQuery.trim().toLocaleLowerCase();
@@ -1585,90 +1592,119 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 {settingsCategory === 'employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
-                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
-                    <section className="settings-product-section" aria-labelledby="task-status-config-title">
-                      <header className="settings-section-heading">
-                        <strong id="task-status-config-title">{appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task statuses'}</strong>
-                        <span>
-                          {appShellSettings.appLanguage === 'zh-CN'
-                            ? '每个项目独立维护状态名称、颜色和顺序。删除使用中的状态时，先迁移任务再删除。'
-                            : 'Each project owns its status names, colors, and order. In-use statuses migrate before deletion.'}
-                        </span>
-                      </header>
-                      <label className="task-status-config-scope">
-                        <span>{appShellSettings.appLanguage === 'zh-CN' ? '配置对象' : 'Configuration target'}</span>
-                        <ZeusSelect
-                          size="regular"
-                          ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '选择任务状态配置对象' : 'Choose task status configuration target'}
-                          value={effectiveTaskStatusSettingsTargetId}
-                          onChange={setTaskStatusSettingsTargetId}
-                          options={[
-                            { value: '__template__', label: appShellSettings.appLanguage === 'zh-CN' ? '新项目默认模板' : 'New project default template' },
-                            ...snapshot.projects.map((project) => ({ value: project.id, label: project.name })),
-                          ]}
-                        />
-                      </label>
-                      <TaskManagementStatusEditor
-                        language={appShellSettings.appLanguage}
-                        config={taskStatusSettingsConfig}
-                        usageCounts={taskStatusSettingsUsageCounts}
-                        labelForStatus={(status) => formatConfiguredTaskManagementStatus(status, taskStatusSettingsConfig, appShellSettings.appLanguage)}
-                        onChange={updateTaskManagementStatusConfigDraft}
-                      />
-                    </section>
-                    <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
-                      <header className="settings-section-heading">
-                        <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他字段的排序规则' : 'Sort order for other fields'}</strong>
-                        <span>
-                          {appShellSettings.appLanguage === 'zh-CN'
-                            ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
-                            : 'Priority and run status remain fixed system values. Drag to define ascending order; descending reverses it. This applies to every project.'}
-                        </span>
-                      </header>
-                      <div className="task-enum-order-grid task-enum-order-grid-secondary">
-                        <TaskEnumOrderEditor
-                          language={appShellSettings.appLanguage}
-                          title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
-                          description={appShellSettings.appLanguage === 'zh-CN' ? 'P0 至 P4 的业务顺序' : 'Business order for P0 through P4'}
-                          items={taskTableEnumSortOrders.priority.map((value) => ({ value, label: taskPriorityLabels[value] }))}
-                          onChange={(priority) =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, priority }),
-                            }))
-                          }
-                        />
-                        <TaskEnumOrderEditor
-                          language={appShellSettings.appLanguage}
-                          title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
-                          description={appShellSettings.appLanguage === 'zh-CN' ? 'AI 工作状态的排序' : 'AI work status order'}
-                          items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
-                          onChange={(runStatus) =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, runStatus }),
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="task-list-settings-actions">
-                        <Button
-                          variant="secondary"
-                          size="compact"
-                          onClick={() =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              taskTableEnumSortOrders: defaultTaskTableEnumSortOrders,
-                            }))
-                          }
-                        >
-                          {appShellSettings.appLanguage === 'zh-CN' ? '恢复默认顺序' : 'Restore default order'}
-                        </Button>
-                        <Button variant="primary" size="compact" onClick={() => void saveAppShellSettings()} disabled={!props.onSaveAppShellSettings || loadingRuntimeBusy} busy={loadingRuntimeBusy}>
-                          {settingsWorkspaceCopy.save}
-                        </Button>
-                      </div>
-                    </section>
+                    <header className="settings-page-heading">
+                      <span>
+                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
+                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '选择字段，调整选项与排序。修改后自动保存。' : 'Choose a field to edit options and order. Changes save automatically.'}</p>
+                      </span>
+                      <SettingsSaveStatus status={taskAutosave.status} language={appShellSettings.appLanguage} />
+                    </header>
+                    <div className="task-fields-workspace">
+                      <nav className="task-field-nav" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '任务字段' : 'Task fields'}>
+                        {(['status', 'priority', 'runStatus'] as const).map((field) => (
+                          <button className="task-field-tab" key={field} type="button" aria-current={taskField === field ? 'page' : undefined} onClick={() => setTaskField(field)}>
+                            {
+                              {
+                                status: appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task status',
+                                priority: appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority',
+                                runStatus: appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status',
+                              }[field]
+                            }
+                          </button>
+                        ))}
+                      </nav>
+                      <fieldset className="task-field-detail" onInput={() => taskAutosave.reset()} disabled={taskAutosave.status === 'saving'}>
+                        {taskField === 'status' ? (
+                          <>
+                            <section className="settings-product-section" aria-labelledby="task-status-config-title">
+                              <header className="settings-section-heading">
+                                <strong id="task-status-config-title">{appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task statuses'}</strong>
+                                <span>
+                                  {appShellSettings.appLanguage === 'zh-CN'
+                                    ? '每个项目独立维护状态名称、颜色和顺序。删除使用中的状态时，先迁移任务再删除。'
+                                    : 'Each project owns its status names, colors, and order. In-use statuses migrate before deletion.'}
+                                </span>
+                              </header>
+                              <label className="task-status-config-scope">
+                                <span>{appShellSettings.appLanguage === 'zh-CN' ? '配置对象' : 'Configuration target'}</span>
+                                <ZeusSelect
+                                  size="regular"
+                                  ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '选择任务状态配置对象' : 'Choose task status configuration target'}
+                                  value={effectiveTaskStatusSettingsTargetId}
+                                  onChange={setTaskStatusSettingsTargetId}
+                                  options={[
+                                    { value: '__template__', label: appShellSettings.appLanguage === 'zh-CN' ? '新项目默认模板' : 'New project default template' },
+                                    ...snapshot.projects.map((project) => ({ value: project.id, label: project.name })),
+                                  ]}
+                                />
+                              </label>
+                              <TaskManagementStatusEditor
+                                language={appShellSettings.appLanguage}
+                                config={taskStatusSettingsConfig}
+                                usageCounts={taskStatusSettingsUsageCounts}
+                                labelForStatus={(status) => formatConfiguredTaskManagementStatus(status, taskStatusSettingsConfig, appShellSettings.appLanguage)}
+                                onChange={(config, deletion) => {
+                                  /** 迁移关系与状态配置在同一笔本地事务提交。 */
+                                  const replacements =
+                                    effectiveTaskStatusSettingsTargetId !== '__template__' && deletion?.replacementStatusId
+                                      ? {
+                                          ...state.taskManagementStatusReplacements,
+                                          [effectiveTaskStatusSettingsTargetId]: { ...state.taskManagementStatusReplacements[effectiveTaskStatusSettingsTargetId], [deletion.removedStatusId]: deletion.replacementStatusId },
+                                        }
+                                      : state.taskManagementStatusReplacements;
+                                  state.setTaskManagementStatusReplacements(replacements);
+                                  saveTaskFields({
+                                    ...(effectiveTaskStatusSettingsTargetId === '__template__'
+                                      ? { taskManagementStatusTemplate: config }
+                                      : { taskManagementStatusByProject: { ...appShellSettings.taskManagementStatusByProject, [effectiveTaskStatusSettingsTargetId]: config } }),
+                                    taskManagementStatusReplacements: replacements,
+                                  });
+                                }}
+                              />
+                            </section>
+                          </>
+                        ) : (
+                          <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
+                            <header className="settings-section-heading">
+                              <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他字段的排序规则' : 'Sort order for other fields'}</strong>
+                              <span>
+                                {appShellSettings.appLanguage === 'zh-CN'
+                                  ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
+                                  : 'Priority and run status remain fixed system values. Drag to define ascending order; descending reverses it. This applies to every project.'}
+                              </span>
+                            </header>
+                            <div className="task-enum-order-grid task-enum-order-grid-secondary">
+                              {taskField === 'priority' ? (
+                                <TaskEnumOrderEditor
+                                  language={appShellSettings.appLanguage}
+                                  title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
+                                  description={appShellSettings.appLanguage === 'zh-CN' ? 'P0 至 P4 的业务顺序' : 'Business order for P0 through P4'}
+                                  items={taskTableEnumSortOrders.priority.map((value) => ({ value, label: taskPriorityLabels[value] }))}
+                                  onChange={(priority) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, priority }) })}
+                                />
+                              ) : (
+                                <TaskEnumOrderEditor
+                                  language={appShellSettings.appLanguage}
+                                  title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
+                                  description={appShellSettings.appLanguage === 'zh-CN' ? 'AI 工作状态的排序' : 'AI work status order'}
+                                  items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
+                                  onChange={(runStatus) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, runStatus }) })}
+                                />
+                              )}
+                            </div>
+                            <div className="task-list-settings-actions">
+                              <Button
+                                variant="secondary"
+                                size="compact"
+                                onClick={() => saveTaskFields({ taskTableEnumSortOrders: { ...taskTableEnumSortOrders, [taskField]: defaultTaskTableEnumSortOrders[taskField as 'priority' | 'runStatus'] } })}
+                              >
+                                {appShellSettings.appLanguage === 'zh-CN' ? '恢复默认顺序' : 'Restore default order'}
+                              </Button>
+                            </div>
+                          </section>
+                        )}
+                      </fieldset>
+                    </div>
                   </section>
                 ) : null}
                 {settingsCategory === 'runtime' ? (
@@ -1678,237 +1714,36 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.runtime}</h2>
                         <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理本机运行环境、远程接管与配置导入。' : 'Local runtime, remote control and configuration import.'}</p>
                       </span>
+                      <SettingsSaveStatus status={runtimeSaveState} language={appShellSettings.appLanguage} />
                     </header>
-                    <details className="settings-disclosure">
-                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '本机运行环境' : 'Local runtime settings'}</summary>
-                      <p>
-                        {appShellSettings.appLanguage === 'zh-CN'
-                          ? '工具路径用于定位本机程序；默认模型、参数与超时用于命令行运行。会话模型和权限在会话中选择。'
-                          : 'Tool paths locate local programs. Default models, arguments and timeouts apply to command-line runs. Conversation models and permissions are chosen in each conversation.'}
-                      </p>
-                      <NativeSettingsPane label={settingsWorkspaceCopy.runtime.paneTitle} className="deep-settings-pane runtime-settings-pane">
-                        <section className="settings-state-row settings-runtime-cli-state-row" aria-label={settingsWorkspaceCopy.runtime.cliStatusAria}>
-                          <strong>{runtime.aiCli.name}</strong>
-                          <span>{runtime.aiCli.available ? settingsWorkspaceCopy.runtime.detected : settingsWorkspaceCopy.runtime.waitingConfiguration}</span>
-                        </section>
-                        <section className="settings-config-row runtime-adapter-select-row" aria-label={settingsWorkspaceCopy.runtime.defaultAdapterAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.defaultAdapterTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.defaultAdapterDescription}</small>
-                          </span>
-                          <span className="settings-row-field">
-                            <ZeusSelect
-                              size="regular"
-                              ariaLabel={settingsWorkspaceCopy.runtime.defaultAdapterAria}
-                              value={runtimeSettings.defaultAdapterId}
-                              onChange={(value) =>
-                                setRuntimeSettings((current) => ({
-                                  ...current,
-                                  defaultAdapterId: value,
-                                }))
-                              }
-                              searchPlaceholder={selectSearchPlaceholder}
-                              emptyLabel={selectNoResults}
-                              options={
-                                runtimeAdapters.length === 0
-                                  ? [{ value: 'codex', label: settingsWorkspaceCopy.runtime.codexCliDisplayName }]
-                                  : runtimeAdapters.map((adapter) => ({
-                                      value: adapter.id,
-                                      label: formatRuntimeAdapterDisplayName(adapter.id, runtimeAdapters, settingsWorkspaceCopy.runtime),
-                                    }))
-                              }
-                            />
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.adapterActionMeta}</span>
-                          </span>
-                        </section>
-                        <section className="settings-config-row runtime-adapter-model-row" aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.adapterModelTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.adapterModelDescription}</small>
-                          </span>
-                          <span className="settings-row-field">
-                            <input
-                              aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}
-                              value={runtimeSettings.adapterModels[runtimeSettings.defaultAdapterId] ?? ''}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value;
-                                setRuntimeSettings((current) => ({
-                                  ...current,
-                                  adapterModels: {
-                                    ...current.adapterModels,
-                                    [current.defaultAdapterId]: value,
-                                  },
-                                }));
-                              }}
-                            />
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.modelMeta}</span>
-                          </span>
-                        </section>
-                        <section className="settings-config-row runtime-default-args-row" aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.defaultArgsTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.defaultArgsDescription}</small>
-                          </span>
-                          <span className="settings-row-field">
-                            <input
-                              aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}
-                              value={formatRuntimeDefaultArgs(runtimeSettings.adapterDefaultArgs[runtimeSettings.defaultAdapterId] ?? ['--ask-for-approval', 'never'])}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value;
-                                setRuntimeSettings((current) => ({
-                                  ...current,
-                                  adapterDefaultArgs: {
-                                    ...current.adapterDefaultArgs,
-                                    [current.defaultAdapterId]: parseRuntimeDefaultArgsText(value),
-                                  },
-                                }));
-                              }}
-                            />
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.argsMeta}</span>
-                          </span>
-                        </section>
-                        <section className="settings-config-row runtime-cli-path-row" aria-label={settingsWorkspaceCopy.runtime.cliPathAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.cliPathTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.cliPathDescription}</small>
-                          </span>
-                          <span className="settings-row-field">
-                            <input
-                              aria-label={settingsWorkspaceCopy.runtime.cliPathAria}
-                              value={runtimeSettings.adapterCliPaths[runtimeSettings.defaultAdapterId] ?? ''}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value;
-                                setRuntimeSettings((current) => ({
-                                  ...current,
-                                  adapterCliPaths: {
-                                    ...current.adapterCliPaths,
-                                    [current.defaultAdapterId]: value,
-                                  },
-                                }));
-                              }}
-                            />
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">PATH</span>
-                          </span>
-                        </section>
-                        <section className="settings-config-row runtime-timeout-row" aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.timeoutSecondsTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.timeoutSecondsDescription}</small>
-                          </span>
-                          <span className="settings-row-field">
-                            <input
-                              aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}
-                              type="number"
-                              min={1}
-                              max={315_360_000 / durationUnitSeconds(runtimeTimeoutUnit)}
-                              value={String(runtimeTimeoutValue)}
-                              onChange={(event) => {
-                                const value = event.currentTarget.valueAsNumber;
-                                if (!Number.isInteger(value) || value < 1) return;
-                                setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, value * durationUnitSeconds(runtimeTimeoutUnit)) }));
-                              }}
-                            />
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <select
-                              className="settings-action-meta runtime-timeout-unit-select"
-                              aria-label={appShellSettings.appLanguage === 'zh-CN' ? '执行超时单位' : 'Execution timeout unit'}
-                              value={runtimeTimeoutUnit}
-                              onChange={(event) => {
-                                const unit = event.currentTarget.value as RuntimeDurationUnit;
-                                setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, runtimeTimeoutValue * durationUnitSeconds(unit)) }));
-                              }}
-                            >
-                              <option value="seconds">{appShellSettings.appLanguage === 'zh-CN' ? '秒' : 'Seconds'}</option>
-                              <option value="minutes">{appShellSettings.appLanguage === 'zh-CN' ? '分钟' : 'Minutes'}</option>
-                              <option value="hours">{appShellSettings.appLanguage === 'zh-CN' ? '小时' : 'Hours'}</option>
-                              <option value="days">{appShellSettings.appLanguage === 'zh-CN' ? '天' : 'Days'}</option>
-                            </select>
-                          </span>
-                        </section>
-                        <section className="settings-matrix-row runtime-advanced-row" aria-label={settingsWorkspaceCopy.runtime.advancedAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.runtime.advancedTitle}</strong>
-                            <small>{settingsWorkspaceCopy.runtime.advancedDescription}</small>
-                          </span>
-                          <span className="settings-row-field settings-runtime-advanced-field-list">
-                            {/* 高级 Runtime 参数保持在同一设置行内，用显式双字段区域承载真实 shell 与 env 输入，避免回到纵向表单堆。 */}
-                            <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-shell-field">
-                              <span>{settingsWorkspaceCopy.runtime.shellPathTitle}</span>
-                              <input
-                                aria-label={settingsWorkspaceCopy.runtime.shellPathAria}
-                                value={runtimeSettings.shell.path ?? ''}
-                                onChange={(event) => {
-                                  const value = event.currentTarget.value;
-                                  setRuntimeSettings((current) => ({
-                                    ...current,
-                                    shell: {
-                                      ...current.shell,
-                                      path: value || null,
-                                    },
-                                  }));
-                                }}
-                              />
-                            </span>
-                            <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-env-field">
-                              <span>{settingsWorkspaceCopy.runtime.terminalEnvTitle}</span>
-                              <textarea
-                                aria-label={settingsWorkspaceCopy.runtime.terminalEnvAria}
-                                value={formatRuntimeTerminalEnv(runtimeSettings.terminalEnv)}
-                                onChange={(event) => {
-                                  const value = event.currentTarget.value;
-                                  setRuntimeSettings((current) => ({
-                                    ...current,
-                                    terminalEnv: parseRuntimeTerminalEnvText(value),
-                                  }));
-                                }}
-                              />
-                            </span>
-                            <small>{settingsWorkspaceCopy.runtime.advancedHelp}</small>
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">{runtimeSettings.shell.login ? settingsWorkspaceCopy.runtime.loginShell : settingsWorkspaceCopy.runtime.nonLoginShell}</span>
-                          </span>
-                        </section>
-                        <button type="button" onClick={saveRuntimeSettings} disabled={!props.onSaveRuntimeSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                          {settingsWorkspaceCopy.runtime.saveDefaultAdapter}
-                        </button>
-                      </NativeSettingsPane>
-                    </details>
                     <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient?.remoteControl ?? null} />
-                    <details className="settings-disclosure">
-                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '旧会话导入' : 'Import older conversations'}</summary>
-                      <LegacyChatImportSettings
-                        language={appShellSettings.appLanguage}
-                        snapshot={codexLegacyImportSnapshot}
-                        loading={codexLegacyImportLoading}
-                        busy={codexLegacyImportBusy}
-                        error={codexLegacyImportError}
-                        onRefresh={refreshCodexLegacyImports}
-                        onImport={startCodexLegacyImport}
-                      />
-                    </details>
-                    <details className="settings-disclosure">
-                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '从 Codex App 导入配置' : 'Import Codex App configuration'}</summary>
-                      <CodexConfigImportSettings
-                        language={appShellSettings.appLanguage}
-                        preview={codexConfigImportPreview}
-                        result={codexConfigImportResult}
-                        loading={codexConfigImportLoading}
-                        error={codexConfigImportError}
-                        onRefresh={refreshCodexConfigImport}
-                        onImport={importCodexConfig}
-                        onActivate={activateCodexConfig}
-                      />
-                    </details>
+                    <LegacyChatImportSettings
+                      language={appShellSettings.appLanguage}
+                      snapshot={codexLegacyImportSnapshot}
+                      loading={codexLegacyImportLoading}
+                      busy={codexLegacyImportBusy}
+                      error={codexLegacyImportError}
+                      onRefresh={refreshCodexLegacyImports}
+                      onImport={startCodexLegacyImport}
+                    />
+                    <CodexConfigImportSettings
+                      language={appShellSettings.appLanguage}
+                      preview={codexConfigImportPreview}
+                      result={codexConfigImportResult}
+                      loading={codexConfigImportLoading}
+                      error={codexConfigImportError}
+                      onRefresh={refreshCodexConfigImport}
+                      onImport={importCodexConfig}
+                      onActivate={activateCodexConfig}
+                    />
+                    <RuntimeSettingsPane
+                      value={runtimeSettings}
+                      language={appShellSettings.appLanguage}
+                      adapters={runtimeAdapters}
+                      onChange={setRuntimeSettings}
+                      onSave={props.onSaveRuntimeSettings}
+                      onSaveStateChange={setRuntimeSaveState}
+                    />
                   </section>
                 ) : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
@@ -1919,9 +1754,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.models}</h2>
                         <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理模型服务与可用模型。' : 'Manage model providers and available models.'}</p>
                       </span>
+                      <SettingsSaveStatus status={modelSaveState} language={appShellSettings.appLanguage} />
                     </header>
                     <CodexAccountSettings controller={modelSetup} />
-                    <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
+                    <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} onSaveStateChange={setModelSaveState} />
                   </>
                 ) : null}
                 {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
@@ -1985,8 +1821,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </span>
                           </section>
                         </section>
-                        <details className="settings-disclosure release-technical-details">
-                          <summary>{appShellSettings.appLanguage === 'zh-CN' ? '安装包与发布详情' : 'Package and release details'}</summary>
+                        <section className="release-technical-details">
+                          <h3>{appShellSettings.appLanguage === 'zh-CN' ? '安装包与发布详情' : 'Package and release details'}</h3>
                           <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
                             <span className="release-update-copy">
                               <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
@@ -2046,7 +1882,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
                             </span>
                           </section>
-                        </details>
+                        </section>
                       </NativeSettingsPane>
                     )}
                   </section>
@@ -2090,17 +1926,32 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
                           <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
                         </span>
-                        <input
-                          type="search"
-                          className="settings-list-search"
-                          aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
-                          placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
-                          value={archiveQuery}
-                          onChange={(event) => {
-                            setArchiveQuery(event.currentTarget.value);
-                            setArchiveRequestedPage(1);
-                          }}
-                        />
+                        <div className="settings-archive-filters">
+                          <ZeusSelect
+                            size="regular"
+                            ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '筛选归档项目' : 'Filter archived projects'}
+                            value={archiveProjectId}
+                            onChange={(id) => {
+                              setArchiveProjectId(id);
+                              setArchiveRequestedPage(1);
+                            }}
+                            options={[
+                              { value: '', label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects' },
+                              ...Array.from(new Map(archiveItems.map(({ conversation, project }) => [conversation.projectId, { value: conversation.projectId, label: project?.name ?? conversation.projectId }])).values()),
+                            ]}
+                          />
+                          <input
+                            type="search"
+                            className="settings-list-search"
+                            aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
+                            placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
+                            value={archiveQuery}
+                            onChange={(event) => {
+                              setArchiveQuery(event.currentTarget.value);
+                              setArchiveRequestedPage(1);
+                            }}
+                          />
+                        </div>
                         <span className="settings-archived-conversation-list" aria-live="polite">
                           {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
                           {archivedConversationLoadState === 'error' ? (
@@ -2111,7 +1962,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </span>
                           ) : null}
                           {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
-                            <small>{normalizedArchiveQuery ? (appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的归档会话。' : 'No matching archived conversations.') : settingsWorkspaceCopy.data.emptyArchivedConversations}</small>
+                            <small>
+                              {normalizedArchiveQuery || archiveProjectId ? (appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的归档会话。' : 'No matching archived conversations.') : settingsWorkspaceCopy.data.emptyArchivedConversations}
+                            </small>
                           ) : null}
                           {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
                             return (
@@ -2123,7 +1976,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                       ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
                                       : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
                                   </small>
-                                  <small>{formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}</small>
+                                  <time className="settings-archive-date" dateTime={conversation.updatedAt}>
+                                    {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
+                                  </time>
                                 </span>
                                 <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreTaskConversation(conversation)}>
                                   {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
@@ -2151,20 +2006,4 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       </section>
     </main>
   );
-}
-
-type RuntimeDurationUnit = 'seconds' | 'minutes' | 'hours' | 'days';
-
-function durationUnitSeconds(unit: RuntimeDurationUnit): number {
-  if (unit === 'days') return 86_400;
-  if (unit === 'hours') return 3_600;
-  if (unit === 'minutes') return 60;
-  return 1;
-}
-
-function durationUnitForSeconds(seconds: number): RuntimeDurationUnit {
-  if (seconds % 86_400 === 0) return 'days';
-  if (seconds % 3_600 === 0) return 'hours';
-  if (seconds % 60 === 0) return 'minutes';
-  return 'seconds';
 }

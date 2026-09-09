@@ -472,6 +472,10 @@ export interface CodexAppServerManager {
   /** 查询指定登录尝试，不用已有账号状态推断新的授权已经完成。 */
   readChatGptLoginStatus(input: { generationId: string; loginId: string }): Promise<CodexChatGptLoginStatus>;
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
+  /** 主动退出账户，不重试外部写入。 */
+  logoutAccount(): Promise<void>;
+  /** 共享认证变更后丢弃该实例的旧账户快照。 */
+  invalidateAccountState(): void;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
   archiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<void>;
@@ -646,6 +650,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let eventSequence = 0;
   let diagnosticSequence = 0;
   let remoteControlEnabled = false;
+  /** 所有账户变更共用失效边界，迟到的读取无法回填旧登录状态。 */
+  function invalidateAccountState(): void {
+    modelAccountRevision += 1;
+    lastAccountSnapshot = null;
+    lastAccountRateLimitsSnapshot = null;
+    lastAccountUsageSnapshot = null;
+    accountReadInFlight.clear();
+    accountRateLimitsReadInFlight.clear();
+    accountUsageReadInFlight.clear();
+  }
   let lastAccountSnapshot: TimedGenerationSnapshot<CodexAccountSnapshot> | null = null;
   let lastAccountRateLimitsSnapshot: TimedGenerationSnapshot<CodexAccountRateLimitsSnapshot> | null = null;
   let lastAccountUsageSnapshot: TimedGenerationSnapshot<CodexAccountUsageSnapshot> | null = null;
@@ -1204,10 +1218,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       }
     }
     if (message.method === 'account/updated' || message.method === 'account/login/completed') {
-      modelAccountRevision += 1;
-      lastAccountSnapshot = null;
-      lastAccountRateLimitsSnapshot = null;
-      lastAccountUsageSnapshot = null;
+      invalidateAccountState();
     } else if (message.method === 'account/rateLimits/updated') {
       lastAccountRateLimitsSnapshot = null;
     }
@@ -1373,8 +1384,22 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       void readyPromise.catch(() => undefined);
       return readyPromise;
     },
+    invalidateAccountState,
+    /** 官方退出回执返回前不推断退出成功；失败同样使旧快照失效。 */
+    async logoutAccount() {
+      /** 绑定当前已就绪的执行实例。 */
+      const capabilities = await awaitCapabilities();
+      invalidateAccountState();
+      try {
+        await rpc(capabilities.generationId, 'account/logout', {});
+      } finally {
+        invalidateAccountState();
+      }
+    },
     async readAccount(input = {}) {
       const capabilities = await awaitCapabilities();
+      /** 读取回执必须仍属于同一登录状态。 */
+      const accountRevision = modelAccountRevision;
       const refreshToken = input.refreshToken === true;
       const cached = lastAccountSnapshot?.value.generationId === capabilities.generationId ? lastAccountSnapshot : null;
       if (input.cachedOnly === true) {
@@ -1393,6 +1418,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             capabilities.generationId,
             accountFingerprintSalt,
           );
+          if (accountRevision !== modelAccountRevision) throw managerError('ZEUS_CODEX_ACCOUNT_CHANGED', '账户状态已变化，请重新检查。');
           lastAccountSnapshot = { value: snapshot, cachedAt: Date.now() };
           return snapshot;
         })();
@@ -1406,18 +1432,21 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         return await request;
       } catch (error) {
         const allowCached = input.allowCachedOnTransportFailure ?? !refreshToken;
-        if (allowCached && cached && isAccountReadTransportFailure(error)) return cached.value;
+        if (accountRevision === modelAccountRevision && allowCached && cached && isAccountReadTransportFailure(error)) return cached.value;
         throw error;
       }
     },
     async readAccountRateLimits() {
       const capabilities = await awaitCapabilities();
+      /** 读取回执必须仍属于同一登录状态。 */
+      const accountRevision = modelAccountRevision;
       const cached = lastAccountRateLimitsSnapshot;
       if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
       const existing = accountRateLimitsReadInFlight.get(capabilities.generationId);
       if (existing) return existing;
       const request: Promise<CodexAccountRateLimitsSnapshot> = (async () => {
         const snapshot = parseAccountRateLimitsSnapshot(await retryableReadRpc(capabilities.generationId, 'account/rateLimits/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        if (accountRevision !== modelAccountRevision) throw managerError('ZEUS_CODEX_ACCOUNT_CHANGED', '账户状态已变化，请重新检查。');
         lastAccountRateLimitsSnapshot = { value: snapshot, cachedAt: Date.now() };
         return snapshot;
       })().finally(() => {
@@ -1428,12 +1457,15 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async readAccountUsage() {
       const capabilities = await awaitCapabilities();
+      /** 读取回执必须仍属于同一登录状态。 */
+      const accountRevision = modelAccountRevision;
       const cached = lastAccountUsageSnapshot;
       if (cached?.value.generationId === capabilities.generationId && Date.now() - cached.cachedAt < ACCOUNT_USAGE_SNAPSHOT_TTL_MS) return cached.value;
       const existing = accountUsageReadInFlight.get(capabilities.generationId);
       if (existing) return existing;
       const request: Promise<CodexAccountUsageSnapshot> = (async () => {
         const snapshot = parseAccountUsageSnapshot(await retryableReadRpc(capabilities.generationId, 'account/usage/read', {}, { timeoutMs: Math.min(requestTimeoutMs, 8_000) }), capabilities.generationId);
+        if (accountRevision !== modelAccountRevision) throw managerError('ZEUS_CODEX_ACCOUNT_CHANGED', '账户状态已变化，请重新检查。');
         lastAccountUsageSnapshot = { value: snapshot, cachedAt: Date.now() };
         return snapshot;
       })().finally(() => {

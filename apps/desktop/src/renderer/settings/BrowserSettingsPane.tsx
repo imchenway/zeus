@@ -1,3 +1,5 @@
+import { ZeusSelect } from '../ZeusSelect.js';
+import { SettingsSaveStatus } from './useSettingsAutosave.js';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ZeusBrowserSettings, ZeusComputerSettings, ZeusRetiredNativeRuntimeState } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
@@ -225,6 +227,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     setError(null);
     try {
       setComputerSettings(await window.zeus.updateComputerSettings({ enabled }));
+      setStatus(labels.saved);
     } catch (computerError) {
       setError(computerError);
     } finally {
@@ -302,13 +305,17 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     }
   }
 
-  async function save(): Promise<void> {
+  /** 仅保存此次选择或输入完成的字段。 */
+  async function save(patch: Partial<ZeusBrowserSettings>): Promise<void> {
     if (!settings || !window.zeus?.updateBrowserSettings) return;
     setBusy(true);
     setStatus(null);
     setError(null);
     try {
-      setSettings(await window.zeus.updateBrowserSettings(settings));
+      setSettings((current) => (current ? { ...current, ...patch } : current));
+      /** 使用部分更新，避免顺带提交安全开关。 */
+      const saved = await window.zeus.updateBrowserSettings(patch);
+      setSettings((current) => (current ? { ...current, ...Object.fromEntries(Object.keys(patch).map((key) => [key, saved[key as keyof ZeusBrowserSettings]])) } : current));
       setStatus(labels.saved);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError : labels.saveFailed);
@@ -346,72 +353,84 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
 
   return (
     <section className="settings-product-pane browser-settings-product-pane" aria-label={labels.title}>
-      <h2 className="settings-page-title">{labels.title}</h2>
-      <p className="browser-settings-intro">{labels.intro}</p>
+      <header className="settings-page-heading">
+        <span>
+          <h2 className="settings-page-title">{labels.title}</h2>
+          <p>{props.language === 'zh-CN' ? '管理网页打开方式、下载与浏览器权限。修改后自动保存。' : 'Manage links, downloads and browser permissions. Changes save automatically.'}</p>
+        </span>
+        <SettingsSaveStatus language={props.language} status={busy ? 'saving' : error ? 'failed' : status === labels.saved || status === labels.switchSaved ? 'saved' : 'idle'} />
+      </header>
       <section className="native-settings-pane browser-settings-pane" aria-label={labels.title}>
         <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
           <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => void setBoolean('enabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
-          <select
-            aria-label={labels.webLinks}
+          <ZeusSelect
+            size="regular"
+            ariaLabel={labels.webLinks}
             value={settings.webLinkOpenTarget}
             disabled={busy}
-            onChange={(event) =>
-              setSettings({
-                ...settings,
-                webLinkOpenTarget: event.currentTarget.value as ZeusBrowserSettings['webLinkOpenTarget'],
-              })
-            }
-          >
-            <option value="zeus_browser">{labels.zeusBrowser}</option>
-            <option value="system_default">{labels.externalBrowser}</option>
-          </select>
+            onChange={(value) => void save({ webLinkOpenTarget: value })}
+            options={[
+              { value: 'zeus_browser', label: labels.zeusBrowser },
+              { value: 'system_default', label: labels.externalBrowser },
+            ]}
+          />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.localWeb} description={labels.localWebHelp}>
-          <select
-            aria-label={labels.localWeb}
+          <ZeusSelect
+            size="regular"
+            ariaLabel={labels.localWeb}
             value={settings.localWebOpenTarget}
             disabled={busy}
-            onChange={(event) =>
-              setSettings({
-                ...settings,
-                localWebOpenTarget: event.currentTarget.value as ZeusBrowserSettings['localWebOpenTarget'],
-              })
-            }
-          >
-            <option value="zeus_browser">{labels.zeusBrowser}</option>
-            <option value="system_default">{labels.externalBrowser}</option>
-          </select>
+            onChange={(value) => void save({ localWebOpenTarget: value })}
+            options={[
+              { value: 'zeus_browser', label: labels.zeusBrowser },
+              { value: 'system_default', label: labels.externalBrowser },
+            ]}
+          />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.files} description={labels.filesHelp}>
-          <select
-            aria-label={labels.files}
+          <ZeusSelect
+            size="regular"
+            ariaLabel={labels.files}
             value={settings.fileOpenTarget}
             disabled={busy}
-            onChange={(event) =>
-              setSettings({
-                ...settings,
-                fileOpenTarget: event.currentTarget.value as ZeusBrowserSettings['fileOpenTarget'],
-              })
-            }
-          >
-            <option value="zeus_source">{labels.zeusPreview}</option>
-            <option value="system_default">{labels.systemDefault}</option>
-            <option value="editor:vscode">Visual Studio Code</option>
-            <option value="editor:vscode-insiders">Visual Studio Code - Insiders</option>
-            <option value="editor:cursor">Cursor</option>
-            <option value="editor:windsurf">Windsurf</option>
-          </select>
+            onChange={(value) => void save({ fileOpenTarget: value })}
+            options={[
+              { value: 'zeus_source', label: labels.zeusPreview },
+              { value: 'system_default', label: labels.systemDefault },
+              { value: 'editor:vscode', label: 'Visual Studio Code' },
+              { value: 'editor:vscode-insiders', label: 'Visual Studio Code - Insiders' },
+              { value: 'editor:cursor', label: 'Cursor' },
+              { value: 'editor:windsurf', label: 'Windsurf' },
+            ]}
+          />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.screenshots} description={labels.screenshotsHelp}>
-          <select aria-label={labels.screenshots} value={settings.screenshotMode} disabled={busy} onChange={(event) => setSettings({ ...settings, screenshotMode: event.currentTarget.value as ZeusBrowserSettings['screenshotMode'] })}>
-            <option value="always">{labels.always}</option>
-            <option value="necessary">{labels.necessary}</option>
-          </select>
+          <ZeusSelect
+            size="regular"
+            ariaLabel={labels.screenshots}
+            value={settings.screenshotMode}
+            disabled={busy}
+            onChange={(value) => void save({ screenshotMode: value })}
+            options={[
+              { value: 'always', label: labels.always },
+              { value: 'necessary', label: labels.necessary },
+            ]}
+          />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.downloads} description={labels.downloadsHelp}>
-          <input aria-label={labels.downloads} value={settings.downloadDirectory} disabled={busy} onChange={(event) => setSettings({ ...settings, downloadDirectory: event.currentTarget.value })} />
+          <input
+            aria-label={labels.downloads}
+            value={settings.downloadDirectory}
+            disabled={busy}
+            onChange={(event) => {
+              setStatus(null);
+              setSettings({ ...settings, downloadDirectory: event.currentTarget.value });
+            }}
+            onBlur={(event) => void save({ downloadDirectory: event.currentTarget.value })}
+          />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
           <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
@@ -481,15 +500,12 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           </BrowserSettingRow>
         ) : null}
         <div className="browser-settings-actions">
-          <Button variant="secondary" size="compact" onClick={() => void save()} busy={busy}>
-            {labels.save}
-          </Button>
           <Button variant="danger" size="compact" onClick={() => void clear()} busy={busy}>
             {labels.clear}
           </Button>
         </div>
       </section>
-      {status ? (
+      {status && status !== labels.saved && status !== labels.switchSaved ? (
         <p className="browser-settings-status" role="status">
           {status}
         </p>

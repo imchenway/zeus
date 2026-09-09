@@ -1,3 +1,4 @@
+import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
 import { redactUserFacingErrorDetails } from '@zeus/shared';
 import { useEffect, useId, useRef, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
@@ -44,6 +45,8 @@ type ModelConnectionClient = Pick<
 /** 设置与首次引导共享供应商编辑器，完成回调只接受已落库且可选的模型。 */
 export function ModelConnectionsSettingsPane(props: {
   language: 'zh-CN' | 'en-US';
+  /** 完整设置页在页面标题右侧显示回执。 */
+  onSaveStateChange?: (status: SettingsSaveState) => void;
   client: ModelConnectionClient | null;
   /** 引导切回其他步骤时清除尚未保存的密钥，保留普通配置。 */
   active?: boolean;
@@ -76,6 +79,11 @@ export function ModelConnectionsSettingsPane(props: {
   const [requestedModelPage, setRequestedModelPage] = useState(1);
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'deleting'>('loading');
   const [message, setMessage] = useState<string | null>(null);
+  /** 保存反馈与模型诊断消息分开。 */
+  const [saveState, setSaveState] = useState<SettingsSaveState>('idle');
+  useEffect(() => props.onSaveStateChange?.(saveState), [saveState, props.onSaveStateChange]);
+  /** 同一次失焦、点击不重复提交。 */
+  const savingRef = useRef(false);
   const [diagnostic, setDiagnostic] = useState<ModelConnectionDiagnostic | null>(null);
   /** 切换供应商后忽略旧目录回执。 */
   const modelRequestRef = useRef(0);
@@ -128,6 +136,7 @@ export function ModelConnectionsSettingsPane(props: {
   const modelPage = settingsPage(filteredModels.length, requestedModelPage);
 
   function selectConnection(connection: ModelConnectionRecord): void {
+    setSaveState('idle');
     setModelQuery('');
     setRequestedModelPage(1);
     setDraft({
@@ -148,33 +157,40 @@ export function ModelConnectionsSettingsPane(props: {
     setMessage(null);
   }
 
+  /** 文字输入结束保存，选择项立即保存；新建和接入引导仍显式创建。 */
+  function changeDraft(next: ModelConnectionDraft): void {
+    setDraft(next);
+    setSaveState('idle');
+    if (next.id && !props.onComplete) void save(next);
+  }
+
   function applyTemplate(templateId: ModelConnectionTemplateId): void {
     const template = templateDefaults[templateId];
-    setDraft((value) => ({
-      ...value,
+    changeDraft({
+      ...draft,
       templateId,
       ...(templateId === 'custom' ? {} : { name: template.name, baseUrl: template.baseUrl, modelsPath: template.modelsPath }),
-      models: value.models.map((model) => ({
+      models: draft.models.map((model) => ({
         ...model,
         capability: {
           ...model.capability,
           reasoning: { ...model.capability.reasoning, thinkingFormat: template.thinkingFormat },
         },
       })),
-    }));
+    });
   }
 
   function addManualModel(): void {
     const id = newModelId.trim();
     if (!id || draft.models.some((model) => model.id === id)) return;
-    setDraft((value) => ({ ...value, models: [...value.models, createModel(id, templateDefaults[value.templateId].thinkingFormat)] }));
+    changeDraft({ ...draft, models: [...draft.models, createModel(id, templateDefaults[draft.templateId].thinkingFormat)] });
     setNewModelId('');
     setModelQuery('');
     setRequestedModelPage(Math.ceil((draft.models.length + 1) / settingsPageSize));
   }
 
   function updateModel(modelId: string, update: (model: ModelConnectionModel) => ModelConnectionModel): void {
-    setDraft((value) => ({ ...value, models: value.models.map((model) => (model.id === modelId ? update(model) : model)) }));
+    changeDraft({ ...draft, models: draft.models.map((model) => (model.id === modelId ? update(model) : model)) });
   }
 
   async function reloadConnections(preferredId?: string): Promise<void> {
@@ -185,31 +201,35 @@ export function ModelConnectionsSettingsPane(props: {
     if (selected) selectConnection(selected);
   }
 
-  function createSaveInput(): SaveModelConnectionRequest {
+  function createSaveInput(value = draft): SaveModelConnectionRequest {
     return {
-      name: draft.name,
-      templateId: draft.templateId,
-      baseUrl: draft.baseUrl,
-      modelsPath: draft.modelsPath,
-      enabled: draft.enabled,
-      models: draft.models,
-      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+      name: value.name,
+      templateId: value.templateId,
+      baseUrl: value.baseUrl,
+      modelsPath: value.modelsPath,
+      enabled: value.enabled,
+      models: value.models,
+      ...(value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}),
     };
   }
 
   async function persistConnection(input: SaveModelConnectionRequest): Promise<void> {
-    if (!props.client || busy) return;
+    if (!props.client || busy || savingRef.current) return;
+    savingRef.current = true;
     setStatus('saving');
+    setSaveState('saving');
     setMessage(null);
     try {
       const saved = draft.id ? await props.client.updateModelConnection(draft.id, input) : await props.client.createModelConnection(input);
       setConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       setDraft({ ...saved, id: saved.id, apiKey: '', models: saved.models.map(cloneModel) });
-      setMessage(zh ? '供应商配置已保存；实际模型调用尚未验证。' : 'Provider configuration saved; actual model calls have not been verified.');
+      setSaveState('saved');
       if (props.onComplete) await refreshDefaultModels(saved.id);
     } catch (error) {
+      setSaveState('failed');
       setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
+      savingRef.current = false;
       setStatus('idle');
     }
   }
@@ -240,8 +260,9 @@ export function ModelConnectionsSettingsPane(props: {
     }
   }
 
-  async function save(): Promise<void> {
-    const input = createSaveInput();
+  async function save(value = draft): Promise<void> {
+    const input = createSaveInput(value);
+    if (current && JSON.stringify(input) === JSON.stringify(createSaveInput({ ...current, apiKey: '' }))) return;
     if (requiresInsecureHttpConfirmation(input.baseUrl, current?.baseUrl)) {
       setPendingInsecureHttpSave(input);
       return;
@@ -354,21 +375,24 @@ export function ModelConnectionsSettingsPane(props: {
             {zh ? '填写服务地址和访问密钥（API Key），即可在项目中选择该服务的模型。密钥只保存在本机钥匙串。' : 'Enter the service address and API key to use its models in projects. The key is stored only in this Mac’s Keychain.'}
           </small>
         </span>
-        <Button
-          hidden={Boolean(props.onComplete)}
-          variant="secondary"
-          size="compact"
-          onClick={() => {
-            setDraft(emptyDraft());
-            setModelQuery('');
-            setRequestedModelPage(1);
-            setDiagnostic(null);
-            setMessage(null);
-          }}
-          disabled={busy}
-        >
-          {zh ? '新建供应商' : 'New provider'}
-        </Button>
+        <span className="settings-heading-actions">
+          {!props.onSaveStateChange ? <SettingsSaveStatus status={saveState} language={props.language} /> : null}
+          <Button
+            hidden={Boolean(props.onComplete)}
+            variant="secondary"
+            size="compact"
+            onClick={() => {
+              setDraft(emptyDraft());
+              setModelQuery('');
+              setRequestedModelPage(1);
+              setDiagnostic(null);
+              setMessage(null);
+            }}
+            disabled={busy}
+          >
+            {zh ? '新建供应商' : 'New provider'}
+          </Button>
+        </span>
       </header>
 
       {props.onComplete && connections.length > 0 ? (
@@ -406,7 +430,15 @@ export function ModelConnectionsSettingsPane(props: {
           ))}
         </nav>
 
-        <fieldset disabled={busy} className="model-connection-editor" aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}>
+        <fieldset
+          disabled={busy}
+          onInput={() => setSaveState('idle')}
+          onBlurCapture={(event) => {
+            if (draft.id && !props.onComplete && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'search') void save();
+          }}
+          className="model-connection-editor"
+          aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}
+        >
           <div className="model-connection-field-grid">
             <label>
               <span>{zh ? '快捷模板' : 'Template'}</span>
@@ -463,19 +495,16 @@ export function ModelConnectionsSettingsPane(props: {
               />
             </label>
             {draft.templateId === 'custom' ? (
-              <details className="model-setup-advanced model-connection-wide-field">
-                <summary>{zh ? '高级连接设置' : 'Advanced connection settings'}</summary>
-                <label>
-                  <span>{zh ? '模型目录路径' : 'Models path'}</span>
-                  <input
-                    value={draft.modelsPath}
-                    onChange={(event) => {
-                      const modelsPath = event.currentTarget.value;
-                      setDraft((value) => ({ ...value, modelsPath }));
-                    }}
-                  />
-                </label>
-              </details>
+              <label>
+                <span>{zh ? '模型目录路径' : 'Models path'}</span>
+                <input
+                  value={draft.modelsPath}
+                  onChange={(event) => {
+                    const modelsPath = event.currentTarget.value;
+                    setDraft((value) => ({ ...value, modelsPath }));
+                  }}
+                />
+              </label>
             ) : null}
           </div>
 
@@ -485,7 +514,7 @@ export function ModelConnectionsSettingsPane(props: {
               checked={draft.enabled}
               onChange={(event) => {
                 const enabled = event.currentTarget.checked;
-                setDraft((value) => ({ ...value, enabled }));
+                changeDraft({ ...draft, enabled });
               }}
             />
             <span>{zh ? '允许项目使用此供应商' : 'Allow projects to use this provider'}</span>
@@ -546,7 +575,7 @@ export function ModelConnectionsSettingsPane(props: {
                   model={model}
                   readOnly={draft.templateId !== 'custom'}
                   onChange={(next) => updateModel(model.id, () => next)}
-                  onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))}
+                  onRemove={() => changeDraft({ ...draft, models: draft.models.filter((candidate) => candidate.id !== model.id) })}
                 />
               ))}
             </div>
@@ -592,9 +621,11 @@ export function ModelConnectionsSettingsPane(props: {
             </label>
           ) : null}
           <footer className="model-connection-actions">
-            <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
-              {zh ? '保存供应商' : 'Save provider'}
-            </Button>
+            {!draft.id || props.onComplete || saveState === 'failed' ? (
+              <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
+                {draft.id ? (zh ? '保存供应商' : 'Save provider') : zh ? '创建供应商' : 'Create provider'}
+              </Button>
+            ) : null}
             <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
               {zh ? '获取模型' : 'Fetch models'}
             </Button>
@@ -653,10 +684,8 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
   }
 }
 
-/** 模型列表默认只显示身份和启用状态，连接细节由用户主动展开。 */
+/** 模型名称、启用状态与连接配置直接对齐显示。 */
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
-  /** 折叠仅隐藏控件，模型草稿继续由供应商编辑器持有。 */
-  const [expanded, setExpanded] = useState(false);
   /** 将展开按钮与详细配置关联。 */
   const detailsId = useId();
   const zh = props.language === 'zh-CN';
@@ -691,16 +720,13 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             <small>{modelRouteLabel(model, zh)}</small>
           </span>
         </label>
-        <Button className="model-definition-toggle" size="compact" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((value) => !value)}>
-          {expanded ? (zh ? '收起' : 'Collapse') : zh ? '配置' : 'Configure'}
-        </Button>
         {props.readOnly ? null : (
           <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
             <X aria-hidden="true" weight="bold" />
           </button>
         )}
       </header>
-      <div id={detailsId} className="model-definition-details" hidden={!expanded}>
+      <div id={detailsId} className="model-definition-details">
         {props.readOnly ? (
           <dl className="model-route-facts">
             <div>

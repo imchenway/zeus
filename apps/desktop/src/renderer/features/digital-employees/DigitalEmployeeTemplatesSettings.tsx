@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DigitalEmployeeAvatar, EmployeeAvatarPicker } from './DigitalEmployeeAvatar.js';
+import { SettingsSaveStatus } from '../../settings/useSettingsAutosave.js';
 import { Button } from '../../ui/Button.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
@@ -25,6 +27,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const modelRevisionRef = useRef(0);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
+  /** 同一帧的失焦与选择事件只启动一次写入。 */
+  const savingRef = useRef(false);
   const [savedName, setSavedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<EditorTarget>(null);
@@ -67,6 +71,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       const [nextTemplates, nextCapabilities] = await Promise.all([props.client.loadDigitalEmployeeTemplates(), props.client.loadDigitalEmployeeCapabilities()]);
       if (revision !== loadRevisionRef.current) return;
       setTemplates(nextTemplates);
+
       if (modelRevision === modelRevisionRef.current) setCapabilities(nextCapabilities);
       setLoadState('ready');
     } catch (cause) {
@@ -84,7 +89,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   }, [loadTemplates]);
 
   function rememberDraft(): void {
-    if (!editorTarget || (editorTarget.kind === 'template' && editorTarget.record.builtIn)) return;
+    if (!editorTarget) return;
     const key = editorTarget.kind === 'new' ? 'new' : editorTarget.record.id;
     if (editorTarget.kind === 'template' && JSON.stringify(draft) === JSON.stringify(templateDraft(editorTarget.record))) {
       draftsRef.current.delete(key);
@@ -122,21 +127,26 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     setSavedName(null);
   }
 
-  async function saveTemplate(): Promise<void> {
-    if (busy || loadState === 'loading' || !props.client || !editorTarget || (editorTarget.kind === 'template' && editorTarget.record.builtIn)) return;
-    if (!draft.name.trim() || !draft.role.trim() || !draft.prompt.trim()) {
+  /** 输入结束或选择配置后保存；新模板仍需完整填写后创建。 */
+  async function saveTemplate(nextDraft = draft): Promise<void> {
+    if (savingRef.current || busy || loadState === 'loading' || !props.client || !editorTarget) return;
+    if (editorTarget.kind === 'template' && JSON.stringify(nextDraft) === JSON.stringify(templateDraft(editorTarget.record))) return;
+    if (!nextDraft.name.trim() || !nextDraft.role.trim() || !nextDraft.prompt.trim()) {
       setError(zh ? '名称、岗位和提示词不能为空。' : 'Name, role, and prompt are required.');
       return;
     }
+    savingRef.current = true;
     setBusy(true);
     setError(null);
     setSavedName(null);
     try {
       const record =
-        editorTarget.kind === 'new' ? await props.client.createDigitalEmployeeTemplate(templateInput(draft)) : await props.client.updateDigitalEmployeeTemplate(editorTarget.record.id, editorTarget.record.revision, templateInput(draft));
+        editorTarget.kind === 'new'
+          ? await props.client.createDigitalEmployeeTemplate(templateInput(nextDraft))
+          : await props.client.updateDigitalEmployeeTemplate(editorTarget.record.id, editorTarget.record.revision, editorTarget.record.builtIn ? { avatarId: nextDraft.avatarId } : templateInput(nextDraft));
       setTemplates((current) => {
         const exists = current.some((candidate) => candidate.id === record.id);
-        return sortTemplates(exists ? current.map((candidate) => (candidate.id === record.id ? record : candidate)) : [...current, record]);
+        return exists ? current.map((candidate) => (candidate.id === record.id ? record : candidate)) : [...current, record];
       });
       draftsRef.current.delete(editorTarget.kind === 'new' ? 'new' : editorTarget.record.id);
       setEditorTarget({ kind: 'template', record });
@@ -145,6 +155,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     } catch (cause) {
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     } finally {
+      savingRef.current = false;
       setBusy(false);
     }
   }
@@ -187,6 +198,12 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           <p>{zh ? '保存可重复使用的岗位和工作要求。将模板添加到项目后，再为该员工设置项目权限。' : 'Save reusable roles and work instructions. Add a template to a project, then configure that employee’s project permissions.'}</p>
         </span>
         <span className="digital-employee-actions">
+          <SettingsSaveStatus language={props.language} status={busy ? 'saving' : error ? 'failed' : savedName ? 'saved' : 'idle'} />
+          {error && editorTarget?.kind === 'template' ? (
+            <Button size="compact" disabled={busy} onClick={() => void saveTemplate()}>
+              {zh ? '重试保存' : 'Retry save'}
+            </Button>
+          ) : null}
           <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => void loadTemplates()}>
             {zh ? '刷新' : 'Refresh'}
           </Button>
@@ -196,11 +213,6 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
         </span>
       </header>
 
-      {savedName && !error ? (
-        <p className="digital-employee-feedback" role="status">
-          {zh ? `已保存模板“${savedName}”。` : `Saved template “${savedName}”.`}
-        </p>
-      ) : null}
       {error ? (
         <p className="digital-employee-feedback is-error" role="alert">
           {error}
@@ -228,16 +240,13 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               disabled={busy}
               onClick={() => beginInspect(template)}
             >
-              <span className="digital-employee-avatar" aria-hidden="true">
-                {template.role.slice(0, 1)}
-              </span>
+              <DigitalEmployeeAvatar {...template} />
               <span>
                 <strong>{template.name}</strong>
                 <small>
-                  {template.role} · {template.domain || (zh ? '通用' : 'General')}
+                  {template.role} · {template.domain || (zh ? '通用' : 'General')} · {template.builtIn ? (zh ? '内置' : 'Built-in') : zh ? '自定义' : 'Custom'}
                 </small>
               </span>
-              <em>{template.builtIn ? (zh ? '内置' : 'Built-in') : zh ? '自定义' : 'Custom'}</em>
             </button>
           ))}
         </section>
@@ -249,25 +258,49 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span>{zh ? '也可以创建自己的岗位、业务领域、Skill 和提示词组合。' : 'Or create a custom combination of role, domain, skills, and prompt.'}</span>
             </div>
           ) : (
-            <TemplateEditor
-              draft={draft}
-              models={capabilities?.models ?? []}
-              skillClient={props.skillClient}
-              language={props.language}
-              readOnly={readOnly || busy}
-              onChange={(next) => {
-                setDraft(next);
-                setSavedName(null);
-              }}
-            />
+            <>
+              <div className="employee-identity-heading">
+                <DigitalEmployeeAvatar {...draft} />
+                <div>
+                  <h3>{draft.name || (zh ? '新建数字员工' : 'New employee')}</h3>
+                  <span>{zh ? '选择预置头像' : 'Choose a portrait'}</span>
+                  <EmployeeAvatarPicker
+                    {...draft}
+                    disabled={busy}
+                    language={props.language}
+                    onChange={(avatarId) => {
+                      const next = { ...draft, avatarId };
+                      setDraft(next);
+                      setSavedName(null);
+                      if (editorTarget.kind === 'template') void saveTemplate(next);
+                    }}
+                  />
+                </div>
+              </div>
+              <TemplateEditor
+                draft={draft}
+                models={capabilities?.models ?? []}
+                skillClient={props.skillClient}
+                language={props.language}
+                readOnly={readOnly || busy}
+                onCommit={() => {
+                  if (editorTarget.kind === 'template') void saveTemplate();
+                }}
+                onChange={(next, commit) => {
+                  setDraft(next);
+                  setSavedName(null);
+                  if (commit && editorTarget.kind === 'template') void saveTemplate(next);
+                }}
+              />
+            </>
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
               <small>
                 {readOnly
                   ? zh
-                    ? '内置模板不能直接修改。添加到项目后，可以调整该员工的配置。'
-                    : 'Built-in templates cannot be edited directly. Add one to a project to customize that employee’s settings.'
+                    ? '头像修改自动保存。岗位配置由内置模板维护，可添加到项目后调整。'
+                    : 'Portrait changes save automatically. Add a built-in template to a project to customize its work settings.'
                   : zh
                     ? '更新模板不会改变已添加到项目的员工配置。'
                     : 'Updating a template does not change employees already added to projects.'}
@@ -275,7 +308,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <span className="digital-employee-actions">
                 {!readOnly ? (
                   <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
-                    {zh ? '取消编辑' : 'Cancel editing'}
+                    {editorTarget.kind === 'new' ? (zh ? '取消' : 'Cancel') : zh ? '完成编辑' : 'Done'}
                   </Button>
                 ) : null}
                 {editorTarget.kind === 'template' && !editorTarget.record.builtIn ? (
@@ -283,9 +316,9 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                     {zh ? '删除' : 'Delete'}
                   </Button>
                 ) : null}
-                {!readOnly ? (
+                {editorTarget.kind === 'new' ? (
                   <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveTemplate()}>
-                    {zh ? '保存模板' : 'Save template'}
+                    {zh ? '创建模板' : 'Create template'}
                   </Button>
                 ) : null}
               </span>
@@ -303,12 +336,19 @@ function TemplateEditor(props: {
   skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
   readOnly: boolean;
-  onChange: (draft: DigitalEmployeeTemplateDraft) => void;
+  /** 字段结束编辑时提交。 */
+  onCommit: () => void;
+  onChange: (draft: DigitalEmployeeTemplateDraft, commit?: boolean) => void;
 }) {
   const zh = props.language === 'zh-CN';
-  const patch = (value: Partial<DigitalEmployeeTemplateDraft>) => props.onChange({ ...props.draft, ...value });
+  const patch = (value: Partial<DigitalEmployeeTemplateDraft>) => props.onChange({ ...props.draft, ...value }, !['name', 'role', 'domain', 'description', 'prompt'].some((key) => key in value));
   return (
-    <div className="digital-employee-form">
+    <div
+      className="digital-employee-form"
+      onBlurCapture={(event) => {
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) props.onCommit();
+      }}
+    >
       <div className="digital-employee-form-grid">
         <label>
           <span>{zh ? '模板名称' : 'Template name'}</span>
@@ -336,8 +376,4 @@ function TemplateEditor(props: {
       </section>
     </div>
   );
-}
-
-function sortTemplates(records: DigitalEmployeeTemplateRecord[]): DigitalEmployeeTemplateRecord[] {
-  return [...records].sort((left, right) => Number(right.builtIn) - Number(left.builtIn) || left.name.localeCompare(right.name));
 }

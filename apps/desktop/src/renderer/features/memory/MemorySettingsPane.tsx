@@ -3,6 +3,10 @@ import type { MemoryApiClient } from './memoryApiClient.js';
 import { memoryDisplayStatus, type MemoryCandidateInput, type MemoryEffect, type MemoryKind, type MemoryRecord, type MemoryScope } from './memoryContracts.js';
 import { useMemoryFeatureController } from './useMemoryFeatureController.js';
 import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { ModalPortal } from '../../ui/ModalPortal.js';
+import { Button } from '../../ui/Button.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
+import { SettingsSaveStatus } from '../../settings/useSettingsAutosave.js';
 import './memorySettingsPane.css';
 
 type MemoryLanguage = 'zh-CN' | 'en-US';
@@ -34,14 +38,18 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
   const [tombstoneTarget, setTombstoneTarget] = useState<MemoryRecord | null>(null);
   const [tombstoneReason, setTombstoneReason] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  /** 只有写入完成才展示保存回执，打开新草稿时清除。 */
+  const [saved, setSaved] = useState(false);
   const busy = controller.snapshot.command !== 'idle';
 
   const openCreate = (): void => {
+    setSaved(false);
     setDraft(emptyDraft());
     setEditor({ mode: 'create' });
     setFormError(null);
   };
   const openSupersede = (record: MemoryRecord): void => {
+    setSaved(false);
     setDraft(draftFromRecord(record));
     setEditor({ mode: 'supersede', record });
     setFormError(null);
@@ -65,6 +73,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       }
       setEditor(null);
       setFormError(null);
+      setSaved(true);
     } catch (error) {
       setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     }
@@ -77,6 +86,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       setTombstoneTarget(null);
       setTombstoneReason('');
       setFormError(null);
+      setSaved(true);
     } catch (error) {
       setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     }
@@ -89,9 +99,12 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
           <h2>{zh ? '长期记忆' : 'Long-term memory'}</h2>
           <p>{zh ? '只管理稳定偏好、安全边界和工作流。不会从会话自动抽取任务事实或运行结果。' : 'Only stable preferences, safety boundaries, and workflows are managed. Conversations are never mined automatically.'}</p>
         </span>
-        <button type="button" onClick={openCreate} disabled={busy || (scopeKind === 'project' && !projectId)}>
-          {zh ? '新增记忆' : 'Add memory'}
-        </button>
+        <div className="settings-heading-actions">
+          <SettingsSaveStatus status={busy ? 'saving' : formError ? 'failed' : saved ? 'saved' : 'idle'} language={props.language} />
+          <Button onClick={openCreate} disabled={busy || (scopeKind === 'project' && !projectId)}>
+            {zh ? '新增记忆' : 'Add memory'}
+          </Button>
+        </div>
       </header>
 
       <div className="memory-scope-controls" role="group" aria-label={zh ? '记忆范围' : 'Memory scope'}>
@@ -102,16 +115,14 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
           {zh ? '项目' : 'Project'}
         </button>
         {scopeKind === 'project' ? (
-          <label>
-            <span>{zh ? '项目' : 'Project'}</span>
-            <select value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)}>
-              {props.projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ZeusSelect
+            size="regular"
+            className="memory-project-select"
+            ariaLabel={zh ? '选择记忆项目' : 'Choose memory project'}
+            value={projectId}
+            onChange={setProjectId}
+            options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+          />
         ) : null}
         <button type="button" onClick={() => void controller.reload()} disabled={controller.snapshot.phase === 'loading'}>
           {zh ? '刷新' : 'Refresh'}
@@ -119,16 +130,33 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
       </div>
 
       {editor ? (
-        <MemoryEditor
-          draft={draft}
-          mode={editor.mode}
-          lockedKey={editor.mode === 'supersede' ? editor.record.memoryKey : null}
-          language={props.language}
-          busy={busy}
-          onChange={setDraft}
-          onCancel={() => setEditor(null)}
-          onSubmit={() => void submit()}
-        />
+        <ModalPortal rootClassName="zeus-shell settings-editor-portal" dismissDisabled={busy} onDismiss={() => setEditor(null)}>
+          <div className="settings-reference-shell">
+            <section className="settings-editor-dialog settings-content-column" role="dialog" aria-modal="true" aria-labelledby="memory-editor-title">
+              <header className="settings-page-heading">
+                <span>
+                  <h2 id="memory-editor-title">{editor.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '修正记忆' : 'Correct memory'}</h2>
+                  <p>{scope.kind === 'global' ? (zh ? '全局记忆' : 'Global memory') : props.projects.find((project) => project.id === scope.id)?.name}</p>
+                </span>
+              </header>
+              <MemoryEditor
+                draft={draft}
+                mode={editor.mode}
+                lockedKey={editor.mode === 'supersede' ? editor.record.memoryKey : null}
+                language={props.language}
+                busy={busy}
+                onChange={setDraft}
+                onCancel={() => setEditor(null)}
+                onSubmit={() => void submit()}
+              />
+              {formError ? (
+                <p role="alert" className="settings-field-error">
+                  {formError}
+                </p>
+              ) : null}
+            </section>
+          </div>
+        </ModalPortal>
       ) : null}
 
       {tombstoneTarget ? (
@@ -150,7 +178,7 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
         </section>
       ) : null}
 
-      {(formError ?? controller.snapshot.error) ? (
+      {!editor && (formError ?? controller.snapshot.error) ? (
         <p className="memory-settings-error" role="alert">
           {formError ?? <VisibleApplicationError error={controller.snapshot.errorCause ?? controller.snapshot.error} language={zh ? 'zh-CN' : 'en'} />}
         </p>
@@ -254,18 +282,20 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
   const zh = props.language === 'zh-CN';
   const patch = (next: Partial<MemoryDraft>): void => props.onChange({ ...props.draft, ...next });
   return (
-    <section className="memory-editor" aria-label={props.mode === 'create' ? (zh ? '新增长期记忆' : 'Add long-term memory') : zh ? '修正长期记忆' : 'Correct long-term memory'}>
+    <fieldset disabled={props.busy} className="memory-editor" aria-label={props.mode === 'create' ? (zh ? '新增长期记忆' : 'Add long-term memory') : zh ? '修正长期记忆' : 'Correct long-term memory'}>
       <label>
         <span>{zh ? '记忆标识' : 'Memory identifier'}</span>
         <input value={props.lockedKey ?? props.draft.memoryKey} disabled={props.lockedKey !== null} maxLength={160} onChange={(event) => patch({ memoryKey: event.currentTarget.value })} />
       </label>
       <label>
         <span>{zh ? '类型' : 'Kind'}</span>
-        <select value={props.draft.candidateKind} onChange={(event) => patch({ candidateKind: event.currentTarget.value as MemoryKind })}>
-          <option value="preference">{memoryValueLabel('preference', zh)}</option>
-          <option value="safety_boundary">{memoryValueLabel('safety_boundary', zh)}</option>
-          <option value="stable_workflow">{memoryValueLabel('stable_workflow', zh)}</option>
-        </select>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={zh ? '记忆类型' : 'Memory kind'}
+          value={props.draft.candidateKind}
+          onChange={(candidateKind) => patch({ candidateKind: candidateKind as MemoryKind })}
+          options={['preference', 'safety_boundary', 'stable_workflow'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
+        />
       </label>
       <label className="memory-editor-content">
         <span>{zh ? '内容' : 'Content'}</span>
@@ -273,10 +303,13 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
       </label>
       <label>
         <span>{zh ? '影响' : 'Effect'}</span>
-        <select value={props.draft.effect} onChange={(event) => patch({ effect: event.currentTarget.value as MemoryEffect, externalStateConfirmed: false })}>
-          <option value="advisory">{memoryValueLabel('advisory', zh)}</option>
-          <option value="external_state">{memoryValueLabel('external_state', zh)}</option>
-        </select>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={zh ? '记忆影响' : 'Memory effect'}
+          value={props.draft.effect}
+          onChange={(effect) => patch({ effect: effect as MemoryEffect, externalStateConfirmed: false })}
+          options={['advisory', 'external_state'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
+        />
       </label>
       <label>
         <span>{zh ? '置信度（0–1）' : 'Confidence (0–1)'}</span>
@@ -304,7 +337,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
           {props.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '保存为新版本' : 'Save as new version'}
         </button>
       </span>
-    </section>
+    </fieldset>
   );
 }
 
