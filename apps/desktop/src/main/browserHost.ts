@@ -38,7 +38,6 @@ interface PersistedBrowserTab {
 interface PersistedBrowserState {
   version: 1;
   settings: ZeusBrowserSettings;
-  originRules: Record<string, 'allow' | 'deny'>;
   activeTabByConversation: Record<string, string>;
   tabs: PersistedBrowserTab[];
   managementBookmarks?: ManagedBrowserBookmark[];
@@ -182,7 +181,6 @@ export const browserPartition = 'persist:zeus-browser';
 const maxPersistedCommentsPerTab = 200;
 const maxCommentBodyLength = 20_000;
 const approvalTimeoutMs = 5 * 60_000;
-const sensitiveActionPattern = /\b(buy|purchase|pay|checkout|order|submit|send|publish|delete|remove|erase|confirm|authorize|transfer|sign|login|log in|注册|登录|提交|发送|发布|购买|支付|下单|删除|移除|确认|授权|转账|签署)\b/iu;
 const sensitiveFieldPattern = /\b(password|passcode|otp|one.?time|verification|secret|token|api.?key|card|cvv|cvc|iban|routing|account|ssn|身份证|密码|验证码|密钥|卡号|账户)\b/iu;
 
 function defaultSettings(options: CreateBrowserHostOptions): ZeusBrowserSettings {
@@ -191,8 +189,6 @@ function defaultSettings(options: CreateBrowserHostOptions): ZeusBrowserSettings
     downloadDirectory: options.defaultDownloadDirectory,
     askWhereToSave: false,
     screenshotMode: 'always',
-    fullCdpEnabled: false,
-    allowAgentAllSites: false,
     webLinkOpenTarget: 'zeus_browser',
     localWebOpenTarget: 'zeus_browser',
     fileOpenTarget: 'zeus_source',
@@ -228,7 +224,6 @@ export class BrowserHost implements BrowserAutomationPort {
   private readonly windows = new Map<number, BrowserWindow>();
   private readonly visibleTabByWindow = new Map<number, string>();
   private readonly activeTabByConversation = new Map<string, string>();
-  private readonly originRules = new Map<string, 'allow' | 'deny'>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly grantedWebPermissions = new Set<string>();
   private readonly downloads: BrowserDownload[] = [];
@@ -536,7 +531,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'open') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      await this.ensureAgentSiteAccess(input.conversationId, undefined, url);
+      this.assertAgentUrlAllowed(url);
       const window = this.preferredWindow(input.conversationId);
       const snapshot = await this.openTab(window, { conversationId: input.conversationId, url });
       this.emitOpenRequested(input.conversationId);
@@ -551,7 +546,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'select_tab') {
       const selected = this.requireConversationTab(input.conversationId, requireNonEmptyString(args.tabId, 'tabId'));
-      await this.ensureAgentSiteAccess(input.conversationId, selected.snapshot.id, selected.snapshot.url);
+      this.assertAgentUrlAllowed(selected.snapshot.url);
       const window = this.preferredWindow(input.conversationId);
       await this.activateTab(window, input.conversationId, selected.snapshot.id);
       this.emitOpenRequested(input.conversationId);
@@ -566,19 +561,19 @@ export class BrowserHost implements BrowserAutomationPort {
     const tab = await this.resolveToolTab(input.conversationId, optionalString(args.tabId));
     if (input.tool === 'navigate') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, url);
+      this.assertAgentUrlAllowed(url);
       await this.ensureView(tab).webContents.loadURL(url);
       await this.waitForTabReady(tab, 30_000);
       this.emitOpenRequested(input.conversationId);
       return toolJson({ tabId: tab.snapshot.id, url });
     }
 
-    await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, tab.snapshot.url);
+    this.assertAgentUrlAllowed(tab.snapshot.url);
     this.emitOpenRequested(input.conversationId);
     switch (input.tool) {
       case 'history': {
         const action = requireNonEmptyString(args.action, 'action');
-        const result = await this.invokeHistoryTool(input, tab, action);
+        const result = await this.invokeHistoryTool(tab, action);
         if (action !== 'stop') await this.waitForTabReady(tab, 30_000);
         return result;
       }
@@ -591,7 +586,7 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'type':
         return this.invokeTypeTool(input, tab);
       case 'press':
-        return this.invokePressTool(input, tab, requireNonEmptyString(args.key, 'key'));
+        return this.invokePressTool(tab, requireNonEmptyString(args.key, 'key'));
       case 'scroll':
         return this.invokeScrollTool(tab, args);
       case 'wait':
@@ -645,9 +640,6 @@ export class BrowserHost implements BrowserAutomationPort {
       if (this.options.legacySystemDownloadDirectory && resolve(this.settings.downloadDirectory) === resolve(this.options.legacySystemDownloadDirectory)) {
         // 旧版本把系统“下载”目录当作内置浏览器默认值，会让普通设置操作也触发 macOS 文件夹授权。
         this.settings = { ...this.settings, downloadDirectory: resolve(this.options.defaultDownloadDirectory) };
-      }
-      for (const [origin, decision] of Object.entries(parsed.originRules ?? {})) {
-        if ((decision === 'allow' || decision === 'deny') && isAllowedOrigin(origin)) this.originRules.set(origin, decision);
       }
       for (const [conversationId, tabId] of Object.entries(parsed.activeTabByConversation ?? {})) {
         if (conversationId && tabId) this.activeTabByConversation.set(conversationId, tabId);
@@ -1271,24 +1263,13 @@ export class BrowserHost implements BrowserAutomationPort {
     return this.requireConversationTab(conversationId, snapshot.activeTabId!);
   }
 
-  private async ensureAgentSiteAccess(conversationId: string, tabId: string | undefined, targetUrl: string): Promise<void> {
+  /** 网页操作直接执行，仅保留本地文件访问边界。 */
+  private assertAgentUrlAllowed(targetUrl: string): void {
     const url = new URL(targetUrl);
-    if (url.protocol === 'about:') return;
     if (url.protocol === 'file:') throw new Error('Agent automation cannot navigate to local file URLs. Open the file manually in the built-in browser.');
-    const origin = url.origin;
-    if (this.settings.allowAgentAllSites || this.originRules.get('*') === 'allow' || this.originRules.get(origin) === 'allow') return;
-    if (this.originRules.get(origin) === 'deny') throw new Error(`Agent browser access is blocked for ${origin}.`);
-    const decision = await this.requestApproval({
-      conversationId,
-      tabId,
-      kind: 'site',
-      origin,
-      title: this.text(`允许 AI 访问 ${origin} 吗？`, `Allow agent access to ${origin}?`),
-      detail: this.text('AI 请求在 Zeus 内置浏览器中读取或操作这个网站。', 'The agent wants to inspect or interact with this site in the Zeus built-in browser.'),
-    });
-    if (decision === 'deny') throw new Error(`Agent browser access was denied for ${origin}.`);
   }
 
+  /** 仅处理网页自身申请的设备等权限，不接收 AI 操作授权。 */
   private requestApproval(input: Omit<ZeusBrowserApprovalRequest, 'id' | 'createdAt'>): Promise<ZeusBrowserApprovalDecision> {
     const request: ZeusBrowserApprovalRequest = {
       ...input,
@@ -1313,22 +1294,14 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!pending) return { resolved: false };
     clearTimeout(pending.timer);
     this.pendingApprovals.delete(requestId);
-    if (pending.request.kind === 'site' && pending.request.origin) {
-      if (decision === 'allow_site') this.originRules.set(pending.request.origin, 'allow');
-      if (decision === 'allow_all') {
-        this.originRules.set('*', 'allow');
-        this.settings = { ...this.settings, allowAgentAllSites: true };
-      }
-      if (decision === 'deny') this.originRules.set(pending.request.origin, 'deny');
-    }
     pending.resolve(decision);
     this.schedulePersist();
     this.emitSnapshot(pending.request.conversationId);
     return { resolved: true };
   }
 
+  /** 在允许的网址范围内执行历史导航。 */
   private async invokeHistoryTool(
-    input: BrowserAutomationToolCall,
     tab: LiveBrowserTab,
     action: string,
   ): Promise<{
@@ -1341,7 +1314,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (targetOffset !== 0) {
       const target = history.getAllEntries()[history.getActiveIndex() + targetOffset];
       if (target?.url && safeOrigin(target.url) !== safeOrigin(tab.snapshot.url)) {
-        await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, target.url);
+        this.assertAgentUrlAllowed(target.url);
       }
     }
     if (action === 'back' && history.canGoBack()) history.goBack();
@@ -1386,19 +1359,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (info.fileInput) return toolText('Automated file uploads are not supported. Ask the user to choose the file manually.', false);
     if (info.navigationUrl && safeOrigin(info.navigationUrl) !== safeOrigin(tab.snapshot.url)) {
       const navigationUrl = normalizeBrowserUrl(info.navigationUrl);
-      await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, navigationUrl);
-    }
-    if (isSensitiveElement(info)) {
-      const decision = await this.requestApproval({
-        conversationId: input.conversationId,
-        tabId: tab.snapshot.id,
-        kind: 'sensitive_action',
-        origin: safeOrigin(tab.snapshot.url),
-        title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
-        detail: this.text(`AI 请求点击“${(info.name || info.text || info.selector).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to click “${(info.name || info.text || info.selector).slice(0, 160)}”.`),
-        tool: 'click',
-      });
-      if (decision === 'deny') return toolText('The user denied the sensitive click.', false);
+      this.assertAgentUrlAllowed(navigationUrl);
     }
     const result = await this.ensureView(tab).webContents.executeJavaScript(
       `(${clickElementScript})(${JSON.stringify(selector)}, ${JSON.stringify(optionalString(input.arguments.mouse_button) ?? 'left')}, ${JSON.stringify(boundedInteger(input.arguments.click_count, 1, 1, 3))})`,
@@ -1423,8 +1384,8 @@ export class BrowserHost implements BrowserAutomationPort {
     return toolJson(result);
   }
 
+  /** 按键直接执行，剪贴板仍走独立工具入口。 */
   private async invokePressTool(
-    input: BrowserAutomationToolCall,
     tab: LiveBrowserTab,
     keyChord: string,
   ): Promise<{
@@ -1448,26 +1409,14 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     const normalizedKey = keyCode.toLowerCase();
     if ((modifiers.includes('meta') || modifiers.includes('control')) && (normalizedKey === 'c' || normalizedKey === 'v' || normalizedKey === 'x')) {
-      return toolText('Clipboard keyboard shortcuts are not supported. Use the clipboard tool so the user can approve access.', false);
+      return toolText('Clipboard keyboard shortcuts are not supported. Use the clipboard tool for clipboard access.', false);
     }
     const webContents = this.ensureView(tab).webContents;
-    if (normalizedKey === 'enter' || normalizedKey === 'return' || normalizedKey === 'delete') {
-      if (normalizedKey === 'enter' || normalizedKey === 'return') {
-        const navigationUrl = await webContents.executeJavaScript(`(${activeElementNavigationScript})()`, true);
-        if (typeof navigationUrl === 'string' && navigationUrl && safeOrigin(navigationUrl) !== safeOrigin(tab.snapshot.url)) {
-          await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, normalizeBrowserUrl(navigationUrl));
-        }
+    if (normalizedKey === 'enter' || normalizedKey === 'return') {
+      const navigationUrl = await webContents.executeJavaScript(`(${activeElementNavigationScript})()`, true);
+      if (typeof navigationUrl === 'string' && navigationUrl && safeOrigin(navigationUrl) !== safeOrigin(tab.snapshot.url)) {
+        this.assertAgentUrlAllowed(normalizeBrowserUrl(navigationUrl));
       }
-      const decision = await this.requestApproval({
-        conversationId: input.conversationId,
-        tabId: tab.snapshot.id,
-        kind: 'sensitive_action',
-        origin: safeOrigin(tab.snapshot.url),
-        title: this.text('允许这次按键操作吗？', 'Allow this browser key action?'),
-        detail: this.text(`AI 请求按下 ${keyChord}。这可能提交表单或执行删除等操作。`, `The agent wants to press ${keyChord}. This key can submit a form or trigger a destructive page action.`),
-        tool: 'press',
-      });
-      if (decision === 'deny') return toolText('The user denied the sensitive key action.', false);
     }
     webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
@@ -1515,17 +1464,6 @@ export class BrowserHost implements BrowserAutomationPort {
     success: boolean;
   }> {
     const action = requireNonEmptyString(input.arguments.action, 'action');
-    const decision = await this.requestApproval({
-      conversationId: input.conversationId,
-      kind: 'sensitive_action',
-      title: action === 'read' ? this.text('允许读取剪贴板吗？', 'Allow clipboard read?') : this.text('允许修改剪贴板吗？', 'Allow clipboard write?'),
-      detail:
-        action === 'read'
-          ? this.text('AI 将读取剪贴板当前内容，其中可能包含你复制的私人信息。', 'The AI will read the current clipboard, which may contain private information you copied.')
-          : this.text('AI 将替换剪贴板当前内容。', 'The AI will replace the current clipboard contents.'),
-      tool: 'clipboard',
-    });
-    if (decision === 'deny') return toolText('The user denied clipboard access.', false);
     if (action === 'read') return toolText(clipboard.readText(), true);
     if (action === 'write') {
       clipboard.writeText(requireString(input.arguments.text, 'text'));
@@ -1541,19 +1479,8 @@ export class BrowserHost implements BrowserAutomationPort {
     contentItems: BrowserAutomationContentItem[];
     success: boolean;
   }> {
-    if (!this.settings.fullCdpEnabled) return toolText('Full CDP access is disabled in Browser Settings.', false);
     const method = requireNonEmptyString(input.arguments.method, 'method');
     const params = isPlainRecord(input.arguments.params) ? input.arguments.params : {};
-    const decision = await this.requestApproval({
-      conversationId: input.conversationId,
-      tabId: tab.snapshot.id,
-      kind: 'full_cdp',
-      origin: safeOrigin(tab.snapshot.url),
-      title: this.text('允许浏览器开发者权限吗？', 'Allow full browser developer access?'),
-      detail: this.text(`AI 请求执行浏览器开发者操作 ${method}（CDP），可以超出普通工具的限制读取或修改网页。`, `The agent requested CDP method ${method}. This can inspect or change the current page outside normal browser tool limits.`),
-      tool: 'developer',
-    });
-    if (decision === 'deny') return toolText('The user denied full CDP access.', false);
     const debuggerApi = this.ensureView(tab).webContents.debugger;
     try {
       if (!debuggerApi.isAttached()) debuggerApi.attach('1.3');
@@ -1601,34 +1528,11 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!contract) return toolText(`Method path is not in Browser ${browserFrozenContractVersion}: ${path}`, false);
     this.expireAdvancedHandlesOutsideTurn(input.conversationId, input.turnId);
     const args = normalizeAdvancedArguments(isPlainRecord(input.arguments.arguments) ? input.arguments.arguments : {});
-    if (contract.risk === 'developer') {
-      if (!this.settings.fullCdpEnabled) return toolText('Advanced developer Browser methods are disabled in Settings.', false);
-      const approved = await this.requestAdvancedApproval(input, contract, 'full_cdp');
-      if (!approved) return toolText(`The user denied ${path}.`, false);
-    } else if (contract.risk === 'sensitive') {
-      const approved = await this.requestAdvancedApproval(input, contract, 'sensitive_action');
-      if (!approved) return toolText(`The user denied ${path}.`, false);
-    }
-
     const handle = optionalString(input.arguments.handle) ? this.requireAdvancedHandle(input, requireNonEmptyString(input.arguments.handle, 'handle')) : undefined;
     const direct = await this.invokeAdvancedDirect(input, contract, args, handle);
     if (direct) return direct;
     const tab = await this.resolveAdvancedTab(input, handle, args);
     return this.invokeAdvancedTabCapability(input, contract, handle, tab, args);
-  }
-
-  private async requestAdvancedApproval(input: BrowserAutomationToolCall, contract: BrowserFrozenContractEntry, kind: 'full_cdp' | 'sensitive_action'): Promise<boolean> {
-    const handle = optionalString(input.arguments.handle) ? this.advancedHandles.get(requireNonEmptyString(input.arguments.handle, 'handle')) : undefined;
-    const tab = handle?.tabId ? this.tabs.get(handle.tabId) : undefined;
-    const decision = await this.requestApproval({
-      conversationId: input.conversationId,
-      ...(tab ? { tabId: tab.snapshot.id, origin: safeOrigin(tab.snapshot.url) } : {}),
-      kind,
-      title: kind === 'full_cdp' ? this.text('允许浏览器开发者权限吗？', 'Allow advanced browser developer access?') : this.text('允许这次网页操作吗？', 'Allow this sensitive browser operation?'),
-      detail: this.text(`AI 请求执行网页操作 ${contract.path}。请确认是否允许读取或修改相关网页内容。`, `The AI requests browser action ${contract.path}. Review whether to allow access to or changes on the relevant page.`),
-      tool: 'invoke',
-    });
-    return decision !== 'deny';
   }
 
   private async invokeAdvancedDirect(
@@ -1751,7 +1655,7 @@ export class BrowserHost implements BrowserAutomationPort {
       }
       case 'Tabs.new': {
         const url = optionalString(args.url) ? normalizeBrowserUrl(requireNonEmptyString(args.url, 'url')) : 'about:blank';
-        if (url !== 'about:blank') await this.ensureAgentSiteAccess(input.conversationId, undefined, url);
+        if (url !== 'about:blank') this.assertAgentUrlAllowed(url);
         const snapshot = await this.openTab(this.preferredWindow(input.conversationId), { conversationId: input.conversationId, url });
         const tab = this.requireConversationTab(input.conversationId, snapshot.activeTabId!);
         if (url !== 'about:blank') await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
@@ -1803,14 +1707,14 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (path === 'Tab.goto') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, url);
+      this.assertAgentUrlAllowed(url);
       await this.ensureView(tab).webContents.loadURL(url);
       await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
       return toolJson({ url: tab.snapshot.url, documentGeneration: tab.documentGeneration });
     }
     if (path === 'Tab.back' || path === 'Tab.forward' || path === 'Tab.reload') {
       const action = path === 'Tab.back' ? 'back' : path === 'Tab.forward' ? 'forward' : 'reload';
-      const result = await this.invokeHistoryTool(input, tab, action);
+      const result = await this.invokeHistoryTool(tab, action);
       await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
       return result;
     }
@@ -1868,7 +1772,7 @@ export class BrowserHost implements BrowserAutomationPort {
       }
       return toolJson(state);
     }
-    if (method === 'pressKey') return this.invokePressTool(input, tab, requireNonEmptyString(args.key, 'key'));
+    if (method === 'pressKey') return this.invokePressTool(tab, requireNonEmptyString(args.key, 'key'));
     if (method === 'scroll') {
       const direction = requireNonEmptyString(args.direction, 'direction').toLocaleLowerCase();
       const amount = Math.max(0.1, Math.min(finiteNumber(args.pages, 1), 100)) * 600;
@@ -1901,22 +1805,6 @@ export class BrowserHost implements BrowserAutomationPort {
       );
     }
     if (method === 'performSecondaryAction') {
-      const info = await this.elementInfo(tab, this.resolveTarget(tab, target));
-      if (isSensitiveElement(info)) {
-        const decision = await this.requestApproval({
-          conversationId: input.conversationId,
-          tabId: tab.snapshot.id,
-          kind: 'sensitive_action',
-          origin: safeOrigin(tab.snapshot.url),
-          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
-          detail: this.text(
-            `AI 请求对“${(info.name || info.text || info.selector).slice(0, 160)}”执行 ${String(args.action)}。请确认该操作的影响。`,
-            `The agent wants to perform ${String(args.action)} on “${(info.name || info.text || info.selector).slice(0, 160)}”.`,
-          ),
-          tool: 'invoke',
-        });
-        if (decision === 'deny') return toolText('The user denied the sensitive accessibility action.', false);
-      }
       const result = await this.ensureView(tab).webContents.executeJavaScript(
         `(${performElementSecondaryActionScript})(${JSON.stringify(this.resolveTarget(tab, target))}, ${JSON.stringify(requireNonEmptyString(args.action, 'action'))})`,
         true,
@@ -1937,7 +1825,7 @@ export class BrowserHost implements BrowserAutomationPort {
   private async invokeAdvancedCua(input: BrowserAutomationToolCall, method: string, tab: LiveBrowserTab, args: Record<string, unknown>): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     const webContents = this.ensureView(tab).webContents;
     const modifiers = inputEventModifiers(args.keypress ?? args.keys);
-    if (method === 'keypress') return this.invokePressTool(input, tab, requireKeyCombination(args.keys ?? args.key));
+    if (method === 'keypress') return this.invokePressTool(tab, requireKeyCombination(args.keys ?? args.key));
     if (method === 'scroll') {
       webContents.sendInputEvent({
         type: 'mouseWheel',
@@ -1983,30 +1871,9 @@ export class BrowserHost implements BrowserAutomationPort {
       return toolJson({ dragged: true, start: { x: startX, y: startY }, end: { x: endX, y: endY } });
     }
     if (method === 'click' || method === 'double_click') {
-      const info = (await webContents.executeJavaScript(
-        `(() => {
-        const element = document.elementFromPoint(${JSON.stringify(startX)}, ${JSON.stringify(startY)});
-        if (!element) return null;
-        const input = element instanceof HTMLInputElement ? element : null;
-        const button = element instanceof HTMLButtonElement ? element : null;
-        const form = input?.form || button?.form || null;
-        return { selector: '', tagName: element.tagName, type: input?.type || element.getAttribute('type') || '', role: element.getAttribute('role') || '', name: element.getAttribute('aria-label') || element.getAttribute('name') || '', text: (element.textContent || '').trim().slice(0, 500), href: element instanceof HTMLAnchorElement ? element.href : '', navigationUrl: element instanceof HTMLAnchorElement ? element.href : form ? input?.formAction || button?.formAction || form.action : '', disabled: 'disabled' in element && Boolean(element.disabled), editable: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable, fileInput: input?.type === 'file', submitter: input?.type === 'submit' || input?.type === 'image' || button?.type === 'submit' };
-      })()`,
-        true,
-      )) as BrowserToolElementInfo | null;
-      if (!info) return toolText('ZEUS_BROWSER_COORDINATE_TARGET_MISSING: No element exists at the requested viewport coordinate.', false);
-      if (isSensitiveElement(info)) {
-        const decision = await this.requestApproval({
-          conversationId: input.conversationId,
-          tabId: tab.snapshot.id,
-          kind: 'sensitive_action',
-          origin: safeOrigin(tab.snapshot.url),
-          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
-          detail: this.text(`AI 请求操作“${(info.name || info.text || info.navigationUrl).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to activate “${(info.name || info.text || info.navigationUrl).slice(0, 160)}”.`),
-          tool: 'invoke',
-        });
-        if (decision === 'deny') return toolText('The user denied the sensitive coordinate action.', false);
-      }
+      // 只确认坐标处存在目标，不再按按钮类型或名称阻断操作。
+      const targetExists = await webContents.executeJavaScript(`Boolean(document.elementFromPoint(${JSON.stringify(startX)}, ${JSON.stringify(startY)}))`, true);
+      if (!targetExists) return toolText('ZEUS_BROWSER_COORDINATE_TARGET_MISSING: No element exists at the requested viewport coordinate.', false);
       const clickCount = method === 'double_click' ? 2 : 1;
       webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(startX), y: Math.round(startY), button, clickCount, modifiers });
       webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(startX), y: Math.round(startY), button, clickCount, modifiers });
@@ -2021,7 +1888,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const target = (await this.ensureView(tab).webContents.executeJavaScript(`(${activeElementSelectorScript})()`, true)) as string;
       return this.invokeTypeTool({ ...input, arguments: { target, text: requireString(args.text, 'text'), replace: false } }, tab);
     }
-    if (method === 'keypress') return this.invokePressTool(input, tab, requireKeyCombination(args.keys ?? args.key));
+    if (method === 'keypress') return this.invokePressTool(tab, requireKeyCombination(args.keys ?? args.key));
     if (method === 'scroll' && !optionalString(args.node_id)) return this.invokeScrollTool(tab, { x: args.x, y: args.y });
     const target = advancedTarget({ ...args, target: args.node_id ?? args.target });
     if (method === 'click') return this.invokeClickTool({ ...input, arguments: { target } }, tab);
@@ -2255,22 +2122,6 @@ export class BrowserHost implements BrowserAutomationPort {
       const expression = advancedExpression(args.pageFunction ?? args.expression).slice(0, 200_000);
       return toolJson(await this.runLocatorOperation(tab, query, method, { expression, argument: args.arg ?? args.argument }));
     }
-    if (['click', 'dblclick', 'press', 'check', 'uncheck', 'setChecked', 'selectOption'].includes(method)) {
-      const info = (await this.runLocatorOperation(tab, query, 'info', {})) as BrowserToolElementInfo;
-      const key = String(args.value ?? args.key ?? '').toLocaleLowerCase();
-      if (isSensitiveElement(info) || (method === 'press' && ['enter', 'return', 'delete'].includes(key))) {
-        const decision = await this.requestApproval({
-          conversationId: input.conversationId,
-          tabId: tab.snapshot.id,
-          kind: 'sensitive_action',
-          origin: safeOrigin(tab.snapshot.url),
-          title: this.text('允许这次网页操作吗？', 'Allow this sensitive browser action?'),
-          detail: this.text(`AI 请求操作“${(info.name || info.text || info.selector).slice(0, 160)}”。请确认网页上的操作及影响。`, `The agent wants to activate “${(info.name || info.text || info.selector).slice(0, 160)}”.`),
-          tool: 'invoke',
-        });
-        if (decision === 'deny') return toolText('The user denied the sensitive locator action.', false);
-      }
-    }
     const operationArgs = method === 'press' ? { ...args, key: args.value } : method === 'pressSequentially' || method === 'type' ? { ...args, text: args.value } : args;
     const result = await this.runLocatorOperation(tab, query, method, operationArgs);
     return toolJson(result);
@@ -2298,16 +2149,6 @@ export class BrowserHost implements BrowserAutomationPort {
       const attributes = description.node?.attributes ?? [];
       return toolJson(attributes.some((value, index) => index % 2 === 0 && value === 'multiple'));
     }
-    const decision = await this.requestApproval({
-      conversationId: input.conversationId,
-      tabId: tab.snapshot.id,
-      kind: 'sensitive_action',
-      origin: safeOrigin(tab.snapshot.url),
-      title: this.text('选择要上传到网页的文件吗？', 'Choose files for browser upload?'),
-      detail: this.text('将打开文件选择窗口，你选中的文件可被这个网页读取并上传。', 'Zeus will open a native picker. Only files explicitly selected by the user are granted to this page.'),
-      tool: 'invoke',
-    });
-    if (decision === 'deny') return toolText('The user denied the file upload.', false);
     const result = await dialog.showOpenDialog(this.preferredWindow(input.conversationId), { properties: ['openFile', 'multiSelections'] });
     if (result.canceled || result.filePaths.length === 0) return toolText('The user did not select a file.', false);
     const debuggerApi = await this.ensureCdpMonitor(tab);
@@ -2620,7 +2461,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const submit = isPlainRecord(args.submit) ? args.submit : {};
       const submitSelector = this.browserAuthSelector(input, submit.selector);
       if (submitSelector && submit.action === 'click') await this.ensureView(tab).webContents.executeJavaScript(`document.querySelector(${JSON.stringify(submitSelector)})?.click()`, true);
-      else if (submitSelector && submit.action === 'press_enter') await this.invokePressTool(input, tab, 'Enter');
+      else if (submitSelector && submit.action === 'press_enter') await this.invokePressTool(tab, 'Enter');
       return toolJson({ status: 'submitted', ...(secure.selectedOption ? { selected_option: secure.selectedOption } : {}) });
     } finally {
       for (const key of Object.keys(secure.values)) secure.values[key] = '';
@@ -2870,7 +2711,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const changes = asRecord(values[1]);
       if (typeof changes.url === 'string') {
         const url = normalizeBrowserUrl(changes.url);
-        await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, url);
+        this.assertAgentUrlAllowed(url);
         await this.ensureView(tab).webContents.loadURL(url);
         await this.waitForTabReady(tab, 30_000);
       }
@@ -3018,7 +2859,7 @@ export class BrowserHost implements BrowserAutomationPort {
       let tab: LiveBrowserTab | undefined;
       try {
         const url = normalizeBrowserUrl(requestedUrl);
-        await this.ensureAgentSiteAccess(input.conversationId, undefined, url);
+        this.assertAgentUrlAllowed(url);
         const snapshot = await this.openTab(window, { conversationId: input.conversationId, url });
         tab = this.requireConversationTab(input.conversationId, snapshot.activeTabId!);
         await this.waitForTabReady(tab, timeoutMs);
@@ -3064,8 +2905,6 @@ export class BrowserHost implements BrowserAutomationPort {
       const external = await this.options.configureExternalBrowsers(this.settings);
       this.settings = { ...this.settings, externalConnectionState: external.state, ...(external.detail ? { externalConnectionDetail: external.detail } : {}) };
     }
-    if (this.settings.allowAgentAllSites) this.originRules.set('*', 'allow');
-    else this.originRules.delete('*');
     if (this.settings.downloadDirectory !== previousDownloadDirectory) {
       // 只有用户明确修改下载路径时才触碰目标目录，普通浏览器设置不得扩大本机文件权限。
       await mkdir(this.settings.downloadDirectory, { recursive: true });
@@ -3088,10 +2927,8 @@ export class BrowserHost implements BrowserAutomationPort {
       pending.resolve('deny');
     }
     this.pendingApprovals.clear();
-    this.originRules.clear();
     this.grantedWebPermissions.clear();
     this.downloads.length = 0;
-    this.settings = { ...this.settings, allowAgentAllSites: false };
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         await tab.view.webContents.loadURL('about:blank');
@@ -3143,7 +2980,6 @@ export class BrowserHost implements BrowserAutomationPort {
     const value: PersistedBrowserState = {
       version: 1,
       settings: this.settings,
-      originRules: Object.fromEntries(this.originRules),
       activeTabByConversation: Object.fromEntries(this.activeTabByConversation),
       tabs: [...this.tabs.values()].map((tab) => ({ snapshot: tab.snapshot })),
       managementBookmarks: [...this.managementBookmarks.values()],
@@ -3242,7 +3078,7 @@ function normalizeBounds(value: unknown): Rectangle {
 }
 
 function normalizeApprovalDecision(value: unknown): ZeusBrowserApprovalDecision {
-  if (value === 'allow_once' || value === 'allow_site' || value === 'allow_all' || value === 'deny') return value;
+  if (value === 'allow_once' || value === 'deny') return value;
   throw new TypeError('Browser approval decision is invalid.');
 }
 
@@ -3254,8 +3090,6 @@ function normalizeSettings(value: unknown, fallback: ZeusBrowserSettings): ZeusB
     downloadDirectory,
     askWhereToSave: typeof record.askWhereToSave === 'boolean' ? record.askWhereToSave : fallback.askWhereToSave,
     screenshotMode: record.screenshotMode === 'necessary' ? 'necessary' : record.screenshotMode === 'always' ? 'always' : fallback.screenshotMode,
-    fullCdpEnabled: typeof record.fullCdpEnabled === 'boolean' ? record.fullCdpEnabled : fallback.fullCdpEnabled,
-    allowAgentAllSites: typeof record.allowAgentAllSites === 'boolean' ? record.allowAgentAllSites : fallback.allowAgentAllSites,
     webLinkOpenTarget: webLinkOpenTarget(record.webLinkOpenTarget) ?? fallback.webLinkOpenTarget,
     localWebOpenTarget: webLinkOpenTarget(record.localWebOpenTarget) ?? fallback.localWebOpenTarget,
     fileOpenTarget: fileOpenTarget(record.fileOpenTarget) ?? fallback.fileOpenTarget,
@@ -3477,14 +3311,6 @@ function safeOrigin(value: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function isAllowedOrigin(value: string): boolean {
-  return value === '*' || value === 'file://' || /^https?:\/\/[^/]+$/iu.test(value);
-}
-
-function isSensitiveElement(info: BrowserToolElementInfo): boolean {
-  return info.submitter || sensitiveActionPattern.test(`${info.role} ${info.name} ${info.text}`) || (info.tagName === 'INPUT' && ['submit', 'button', 'image'].includes(info.type));
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

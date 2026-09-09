@@ -79,7 +79,6 @@ async function receiveCommand(command) {
 }
 
 async function executeCommand(command) {
-  if (command.tool === '__preflight') return sensitivePreflight(command);
   if (command.tool === 'catalog') return { value: { contractVersion: ZEUS_CONTRACT_VERSION, surface: ZEUS_SURFACE } };
   if (command.tool === 'release_handles') {
     const requested = Array.isArray(command.arguments?.handles) ? new Set(command.arguments.handles.map(String)) : null;
@@ -93,40 +92,6 @@ async function executeCommand(command) {
   }
   if (command.tool === 'invoke') return invokeAdvanced(command);
   return invokeConvenience(command);
-}
-
-async function sensitivePreflight(command) {
-  const request = command.arguments?.original || {};
-  const tool = String(request.tool || '');
-  const args = normalizeMethodArguments(request.arguments || {});
-  let tab;
-  let info = null;
-  if (tool === 'click' || tool === 'type') {
-    tab = await resolveClaimedConvenienceTab(command, args.tabId);
-    info = await sendPage(tab.id, 'element', { target: args.target });
-  } else if (tool === 'press') {
-    tab = await resolveClaimedConvenienceTab(command, args.tabId);
-    info = await sendPage(tab.id, 'focused_element', {});
-  } else if (tool === 'invoke') {
-    const path = String(args.path || '');
-    const methodArgs = args.arguments || {};
-    tab = await tabForAdvanced(command, args, methodArgs);
-    if (path.startsWith('PlaywrightLocator.')) {
-      const handle = requireHandle(command, args.handle, 'PlaywrightLocator');
-      info = await sendPage(tab.id, 'locator', { query: handle.payload.query, operation: 'info' });
-    } else if (path.startsWith('AXAPI.')) {
-      const target = axTarget(methodArgs);
-      info = Array.isArray(target) ? await sendPage(tab.id, 'element_at_point', { x: target[0], y: target[1] }) : await sendPage(tab.id, 'element', { target });
-    } else if (path.startsWith('DomCUAAPI.') && methodArgs.node_id) info = await sendPage(tab.id, 'element', { target: methodArgs.node_id });
-    else if (path.startsWith('CUAAPI.') && methodArgs.x != null && methodArgs.y != null) info = await sendPage(tab.id, 'element_at_point', { x: methodArgs.x, y: methodArgs.y });
-  }
-  const descriptor = info ? `${info.role || ''} ${info.name || ''} ${info.text || ''} ${info.type || ''} ${info.navigationUrl || ''}`.trim().slice(0, 1000) : '';
-  const sensitive = Boolean(
-    info?.submitter ||
-    info?.secure ||
-    /\b(buy|purchase|pay|checkout|order|submit|send|publish|delete|remove|confirm|authorize|transfer|sign|login|password|otp|cvv|注册|登录|提交|发送|发布|购买|支付|下单|删除|确认|授权|转账|密码|验证码)\b/iu.test(descriptor),
-  );
-  return { value: { sensitive, descriptor, unknown: !info } };
 }
 
 async function invokeConvenience(command) {

@@ -91,7 +91,8 @@ export interface ZeusBrowserTabSnapshot {
   updatedAt: string;
 }
 
-export type ZeusBrowserApprovalKind = 'site' | 'sensitive_action' | 'web_permission' | 'full_cdp';
+/** 浏览器只对网页自身请求的设备等权限征求同意。 */
+export type ZeusBrowserApprovalKind = 'web_permission';
 
 export interface ZeusBrowserApprovalRequest {
   id: string;
@@ -114,8 +115,6 @@ export interface ZeusBrowserSettings {
   downloadDirectory: string;
   askWhereToSave: boolean;
   screenshotMode: ZeusBrowserScreenshotMode;
-  fullCdpEnabled: boolean;
-  allowAgentAllSites: boolean;
   webLinkOpenTarget: ZeusWebLinkOpenTarget;
   localWebOpenTarget: ZeusWebLinkOpenTarget;
   fileOpenTarget: ZeusFileOpenTarget;
@@ -199,7 +198,8 @@ export type ZeusBrowserCommand =
   | { action: 'delete_comment'; commentId: string }
   | { action: 'focus_comment'; commentId: string };
 
-export type ZeusBrowserApprovalDecision = 'allow_once' | 'allow_site' | 'allow_all' | 'deny';
+/** 网页权限按本次请求允许或拒绝，不再管理 AI 站点放行。 */
+export type ZeusBrowserApprovalDecision = 'allow_once' | 'deny';
 
 export type ZeusBrowserEvent =
   | { type: 'snapshot'; snapshot: ZeusBrowserConversationSnapshot }

@@ -63,8 +63,6 @@ const copy = {
     showComments: '显示批注列表',
     hideComments: '隐藏批注列表',
     allowOnce: '允许一次',
-    allowSite: '始终允许此站点',
-    allowAll: '允许所有站点',
     deny: '拒绝',
     closeTab: '关闭标签',
     close: '关闭浏览器',
@@ -105,8 +103,6 @@ const copy = {
     showComments: 'Show comments',
     hideComments: 'Hide comments',
     allowOnce: 'Allow once',
-    allowSite: 'Always allow this site',
-    allowAll: 'Allow all sites',
     deny: 'Deny',
     closeTab: 'Close tab',
     close: 'Close browser',
@@ -408,16 +404,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     if (comment) await command({ action: 'focus_comment', commentId: comment.id });
   }
 
+  /** 回应网页设备权限；AI 操作无需确认卡。 */
   async function respondToApproval(request: ZeusBrowserApprovalRequest, decision: ZeusBrowserApprovalDecision): Promise<void> {
     if (!window.zeus?.respondToBrowserApproval) return;
-    if (decision === 'allow_all') {
-      const confirmed = window.confirm(
-        props.language === 'zh-CN'
-          ? '允许所有站点会让 agent 在未来无需逐站点确认即可读取和操作网页。敏感动作仍会单独确认。确定继续吗？'
-          : 'Allowing all sites lets the agent inspect and operate future sites without per-site approval. Sensitive actions still require confirmation. Continue?',
-      );
-      if (!confirmed) return;
-    }
     await window.zeus.respondToBrowserApproval({ requestId: request.id, decision });
   }
 
@@ -620,16 +609,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                   <button type="button" onClick={() => void respondToApproval(request, 'allow_once')}>
                     {labels.allowOnce}
                   </button>
-                  {request.kind === 'site' ? (
-                    <>
-                      <button type="button" onClick={() => void respondToApproval(request, 'allow_site')}>
-                        {labels.allowSite}
-                      </button>
-                      <button type="button" onClick={() => void respondToApproval(request, 'allow_all')}>
-                        {labels.allowAll}
-                      </button>
-                    </>
-                  ) : null}
                 </div>
               </article>
             ))}
