@@ -4274,7 +4274,12 @@
   gap: 8px;
   /* 会话容器已经提供左右留白，状态行与正文共用同一宽度。 */
   inline-size: min(var(--session-thread-max), 100%);
-  margin: 8px auto;
+  margin: 0 auto;
+}
+
+/* 消息间距由内部时间线保留；底部状态与最后一条过程只留紧凑行距。 */
+.session-codex-parity-v1 .session-transcript:has(> .session-transcript-thinking) {
+  row-gap: 6px;
 }
 
 .session-codex-parity-v1 .session-thinking-pulse {
@@ -8997,6 +9002,36 @@
 .session-codex-parity-v1 .session-turn-duration time {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+
+/* 最终答复的操作和耗时进入正常布局，窄分栏允许自然换行。 */
+.session-codex-parity-v1 .session-thread-item-footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-block-start: 5px;
+}
+
+/* 同行页脚自身占位，不再为原来的悬浮操作栏预留第二份空间。 */
+.session-codex-parity-v1 .session-thread-item:has(> .session-thread-item-footer) {
+  margin-block-end: 0;
+}
+
+.session-codex-parity-v1 .session-thread-item-footer > .session-thread-item-actions {
+  opacity: 1;
+  position: static;
+}
+
+/* 耗时靠右显示，独立收尾的轮次继续保留原有分隔线。 */
+.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration {
+  inline-size: auto;
+  margin: 0 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration > p::before,
+.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration > p::after {
+  content: none;
 }
 
 .session-codex-parity-v1 .session-turn-duration-body {
