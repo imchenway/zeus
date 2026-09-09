@@ -2272,7 +2272,7 @@
   will-change: auto !important;
 }
 
-/* 原文固定参与排版；扫光只平移合成图层，不再逐帧改变文字背景并触发重绘。 */
+/* 原文固定参与排版；扫光只移动一层遮罩，不再依赖正反图层同步复位。 */
 .session-codex-parity-v1 .session-sweep-text {
   /* 一轮移动一个纹理宽度；短状态与长摘要均以每秒 120 像素扫过。 */
   --session-text-sweep-width: 120px;
@@ -2282,31 +2282,22 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-sweep-text-light,
-.session-codex-parity-v1 .session-sweep-text-light::before {
-  animation: session-text-sweep 1s linear infinite;
-  position: absolute;
-  will-change: transform;
-}
-
-/* 额外保留一个纹理周期，平移时两端始终覆盖原文，循环接缝保持同色。 */
+/* 遮罩平铺后每轮匀速移动一个纹理宽度，首尾完全重合，不在任何文字位置停留。 */
 .session-codex-parity-v1 .session-sweep-text-light {
+  animation: session-text-sweep 1s linear infinite;
   color: color-mix(in oklab, var(--session-text-muted) 35%, var(--session-canvas));
-  inline-size: calc(100% + var(--session-text-sweep-width));
-  inset-block: 0;
-  inset-inline-start: calc(-1 * var(--session-text-sweep-width));
-  mask-image: repeating-linear-gradient(90deg, transparent 0, #000 calc(var(--session-text-sweep-width) / 2), transparent var(--session-text-sweep-width));
+  inset: 0;
+  mask-image: linear-gradient(90deg, transparent, #000, transparent);
+  mask-repeat: repeat;
+  mask-size: var(--session-text-sweep-width) 100%;
   pointer-events: none;
+  position: absolute;
   user-select: none;
 }
 
-/* 副本以相同节奏反向平移抵消父层位移，文字不动，只有静态渐变遮罩扫过。 */
+/* 副本固定覆盖原文，只有遮罩推进；不再依赖两层动画相互抵消位移。 */
 .session-codex-parity-v1 .session-sweep-text-light::before {
-  animation-direction: reverse;
   content: attr(data-text);
-  inline-size: calc(100% - var(--session-text-sweep-width));
-  inset-block-start: 0;
-  inset-inline-start: 0;
 }
 
 @media (prefers-reduced-motion: reduce), (forced-colors: active) {
@@ -11055,13 +11046,13 @@
   }
 }
 
-/* 正反两个合成层共享匀速周期，位移抵消且首尾纹理连续。 */
+/* 单层遮罩按完整纹理周期循环，文字与副本始终固定。 */
 @keyframes session-text-sweep {
   from {
-    transform: translateX(0);
+    mask-position: 0 0;
   }
   to {
-    transform: translateX(var(--session-text-sweep-width));
+    mask-position: var(--session-text-sweep-width) 0;
   }
 }
 
