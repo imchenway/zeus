@@ -2770,13 +2770,13 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--session-canvas) !important;
 }
 
-/* 所有项目页共用外框：Tab 左对齐内容卡片，上下间隔均为 12px。 */
+/* 所有项目页共用外框：外围留白保持 12px，导航与内容卡片的间距收紧为 4px。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) {
   --project-frame-gap: 12px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: var(--project-frame-gap) !important;
+  gap: 4px !important;
   padding: var(--project-frame-gap) !important;
   min-inline-size: 0;
   min-block-size: 0;
