@@ -865,6 +865,8 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
   const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: acceptance.conversation.id,
+    /** 使用会话原始创建身份，续接回执不能改用本次续发操作身份。 */
+    creationOperationIdentity: nullableStringField(conversation.creationOperationIdentity),
     projectId: stringField(conversation.projectId) ?? task.projectId,
     taskId: stringField(conversation.taskId) ?? task.id,
     title: stringField(conversation.title) ?? task.title,

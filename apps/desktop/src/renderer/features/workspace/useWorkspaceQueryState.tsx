@@ -877,16 +877,24 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     () => new Set([...terminalTaskIds].filter((taskId) => !nativeConversationChoicesByTask[taskId]?.choices.some((choice) => !choice.archived)).concat(Object.keys(optimisticTerminalTaskStatuses))),
     [nativeConversationChoicesByTask, optimisticTerminalTaskStatuses, terminalTaskIds],
   );
+  /** 将同一次推送的临时工作面与真实会话合并为一个入口，不依赖列表和回执的到达顺序。 */
   const projectedTaskConversationChoices = useMemo(
     () =>
       Object.fromEntries(
         snapshot.tasks.map((task) => {
+          /** 本任务当前的本地推送工作面。 */
           const pending = taskModelPushPendingByTask[task.id];
+          /** 服务端返回的任务历史，包含可能先于推送回执到达的真实会话。 */
           const choices = nativeConversationChoicesByTask[task.id]?.choices ?? [];
           if (!pending) return [task.id, choices];
-          const authoritativeChoice = pending.status === 'accepted' ? choices.find((choice) => choice.id === pending.choice.id) : undefined;
+          /** 创建身份只能在同一项目和任务内关联，防止误合并同名会话及其他推送。 */
+          const isPendingChoice = (choice: NativeConversationChoice): boolean =>
+            choice.id === pending.choice.id || (Boolean(pending.operationIdentity) && choice.projectId === pending.task.projectId && choice.taskId === pending.task.id && choice.creationOperationIdentity === pending.operationIdentity);
+          /** 身份匹配不代表创建成功；只有原流程确认接受后才采用服务端展示状态。 */
+          const authoritativeChoice = pending.status === 'accepted' ? choices.find(isPendingChoice) : undefined;
+          /** 接管后继续保留稳定导航身份，创建中或失败时保持原工作面。 */
           const projectedChoice = authoritativeChoice ? { ...authoritativeChoice, navigationId: pending.navigationId } : pending.choice;
-          return [task.id, [projectedChoice, ...choices.filter((choice) => choice.id !== pending.choice.id)]];
+          return [task.id, [projectedChoice, ...choices.filter((choice) => !isPendingChoice(choice))]];
         }),
       ) as Record<string, NativeConversationChoice[]>,
     [nativeConversationChoicesByTask, snapshot.tasks, taskModelPushPendingByTask],

@@ -152,10 +152,13 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
                 }
             }
             do { try await stream.startCapture() }
-            catch { stop(reason: "capture_failed"); throw error }
+            catch { self.stream(stream, didStopWithError: error); throw error }
         }
         try lock.withLock {
             if stopped { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "本轮控制已停止。") }
+            guard capture != nil, target?.windowId == next.windowId, target?.pid == next.pid else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "目标窗口或采集已变化，请重新观察。")
+            }
             if !paused { needsObservation = false }
         }
         await MainActor.run {
@@ -173,7 +176,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 工具线程的输入闸门；窗口关闭、移动、暂停或撤销时均不投递输入。 */
     func requireTarget(pid: pid_t, sessionId: String) throws -> ComputerWindowTarget {
         let current = try lock.withLock { () throws -> ComputerWindowTarget in
-            guard !stopped, let target, target.pid == pid, target.sessionId == sessionId else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口，不能直接开始输入。") }
+            guard !stopped, capture != nil, let target, target.pid == pid, target.sessionId == sessionId else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口，不能直接开始输入。") }
             guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户正在操作目标应用；等待用户在会话预览中点击继续，禁止自动恢复。") }
             guard !needsObservation else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "窗口位置或用户控制状态已变化，请重新观察。") }
             return target
@@ -242,7 +245,14 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let rawStatus = attachments.first?[.status] as? Int, let status = SCFrameStatus(rawValue: rawStatus) else { return }
         if [.blank, .suspended, .stopped].contains(status) {
-            if lock.withLock({ capture === stream && !stopped }) { stop(reason: "capture_unavailable") }
+            // 帧状态不代表用户撤权；明确的停止原因由采集结束回调处理。
+            /** 迟到的旧流空帧不能清理新窗口正在进行的输入。 */
+            let invalidated = lock.withLock { () -> Bool in
+                guard capture === stream && !stopped else { return false }
+                image = nil; previewData = nil; frameTime = .invalid; needsObservation = true
+                return true
+            }
+            if invalidated { releaseInput() }
             return
         }
         // 将原始单调帧时间换算为采集时刻，避免把队列送达时间误当成截图时间。
@@ -268,15 +278,35 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
     }
 
-    /** macOS 菜单栏停止共享或采集出错，都立即撤销动作权限。 */
+    /** 用户取消共享才撤销整轮；采集故障只作废旧目标，允许重新观察。 */
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        if lock.withLock({ capture === stream && !stopped }) { stop(reason: "system_capture_stopped") }
+        /** 使用系统给出的明确原因区分用户停止和采集故障。 */
+        let failure = error as NSError
+        if failure.domain == SCStreamErrorDomain && [SCStreamError.Code.userStopped.rawValue, SCStreamError.Code.userDeclined.rawValue].contains(failure.code) {
+            stop(reason: "system_capture_stopped", stream: stream)
+        } else {
+            invalidateCapture(stream)
+        }
+    }
+
+    /** 窗口关闭或采集失败只作废观察；下一次观察重建采集，旧动作不会自动重放。 */
+    private func invalidateCapture(_ stream: SCStream) {
+        /** 同一把锁确认流身份并清理，迟到的旧流事件不能使新窗口失效。 */
+        let invalidated = lock.withLock { () -> Bool in
+            guard !stopped, capture === stream else { return false }
+            capture = nil; image = nil; previewData = nil; frameTime = .invalid; needsObservation = true
+            return true
+        }
+        guard invalidated else { return }
+        releaseInput()
+        DispatchQueue.main.async { [weak self] in self?.cursorPanel?.orderOut(nil); self?.publishPreview() }
+        Task { try? await stream.stopCapture() }
     }
 
     /** 停止不依赖模型响应；先撤销，再关闭预览和采集，最后由宿主回收进程。 */
-    func stop(reason: String) {
+    func stop(reason: String, stream: SCStream? = nil) {
         let previous = lock.withLock { () -> (SCStream?, String)? in
-            guard !stopped else { return nil }
+            guard !stopped, stream == nil || capture === stream else { return nil }
             stopped = true
             let result = (capture, target?.sessionId ?? "")
             capture = nil; image = nil; previewData = nil
@@ -381,7 +411,10 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
             stop(reason: "screen_locked"); return
         }
-        guard let frame = windowFrame(current.windowId), NSRunningApplication(processIdentifier: current.pid)?.isTerminated == false else { stop(reason: "target_closed"); return }
+        guard let frame = windowFrame(current.windowId), NSRunningApplication(processIdentifier: current.pid)?.isTerminated == false else {
+            if let stream = lock.withLock({ target?.windowId == current.windowId ? capture : nil }) { invalidateCapture(stream) }
+            return
+        }
         if frame != current.frame { lock.withLock { needsObservation = true } }
         let state = lock.withLock { (paused, needsObservation) }
         statusCaption?.title = state.0 ? "已暂停 · \(targetLabel)" : targetLabel
