@@ -620,19 +620,25 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   min-block-size: 30px;
+  padding: 4px 12px;
   border: 0;
   border-radius: var(--usage-radius-control, 8px);
   color: var(--usage-text);
   font: inherit;
   font-size: 11.5px;
   font-weight: 630;
+  line-height: 1.4;
 }
 
 .menu-bar-usage-actions .menu-bar-usage-primary-action {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   inline-size: 100%;
   padding-inline: 11px;
   background: var(--usage-accent);
@@ -847,8 +853,8 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-tabs button[aria-selected='true'] {
   border-color: var(--usage-accent-border);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--usage-accent-soft) 86%, white), var(--usage-accent-soft));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 42%);
+  background: var(--usage-accent-soft);
+  box-shadow: none;
   color: var(--usage-accent-strong);
 }
 
@@ -871,7 +877,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-load-failure button {
   border-color: var(--usage-accent-border);
   background: var(--usage-panel-strong);
-  box-shadow: var(--usage-shadow-soft);
+  box-shadow: none;
   color: var(--usage-accent-strong);
 }
 
@@ -957,10 +963,11 @@ body:has(.menu-bar-usage-root),
   border-color: var(--usage-line);
 }
 
+/* 浮窗操作按钮同样使用纯色，键盘焦点环保持独立。 */
 .menu-bar-usage-actions button {
   border: 1px solid var(--usage-line);
   background: var(--usage-panel);
-  box-shadow: var(--usage-shadow-soft);
+  box-shadow: none;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -970,8 +977,8 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-actions .menu-bar-usage-primary-action {
   border-color: color-mix(in srgb, var(--usage-accent) 72%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--usage-accent) 88%, white), var(--usage-accent));
-  box-shadow: 0 10px 24px -16px rgb(40 102 247 / 72%);
+  background: var(--usage-accent);
+  box-shadow: none;
   color: #fff;
 }
 
@@ -988,15 +995,13 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-actions .menu-bar-usage-primary-action:hover:not(:disabled) {
   border-color: var(--usage-accent-strong);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--usage-accent-strong) 88%, white), var(--usage-accent-strong));
+  background: var(--usage-accent-strong);
   color: #fff;
 }
 
 .menu-bar-usage-root button:focus-visible {
   border-color: color-mix(in srgb, var(--usage-accent) 52%, transparent);
-  box-shadow:
-    var(--usage-shadow-soft),
-    0 0 0 3px rgb(40 102 247 / 18%);
+  box-shadow: 0 0 0 3px rgb(40 102 247 / 18%);
   outline: 0;
 }
 
