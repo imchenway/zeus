@@ -84,6 +84,7 @@ export function AgentExecutionConfigFields(props: {
               if (model) props.onChange(modelDefaults(model));
             }}
             options={modelOptions}
+            pinning={modelPresentation.pinning}
             triggerLabel={props.value.model ? (unavailableSelection ? (zh ? '当前模型不可用' : 'Current model unavailable') : modelPresentation.triggerLabel) : zh ? '跟随项目默认' : 'Use project default'}
             searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
             emptyLabel={zh ? '没有匹配模型' : 'No matching models'}

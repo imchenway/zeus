@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { PushPinIcon } from '@phosphor-icons/react/dist/csr/PushPin';
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
@@ -8,6 +9,22 @@ export interface ZeusSelectOption<T extends string> {
   disabled?: boolean;
   group?: string;
   searchText?: string;
+  /** 置顶后仍显示来源，避免不同供应商的同名选项混淆。 */
+  description?: string;
+}
+
+/** 可选的本机置顶偏好；相同存储键的选择入口共用顺序。 */
+export interface ZeusSelectPinning {
+  /** 持久化完整选项身份，不按显示名称合并。 */
+  storageKey: string;
+  /** 顶部分组标题。 */
+  groupLabel: string;
+  /** 置顶操作文案。 */
+  pinLabel: string;
+  /** 取消置顶操作文案。 */
+  unpinLabel: string;
+  /** 存储失败时的可见说明。 */
+  saveErrorLabel: string;
 }
 
 export interface ZeusSelectProps<T extends string> {
@@ -30,6 +47,8 @@ export interface ZeusSelectProps<T extends string> {
   emptyLabel?: string;
   searchable?: boolean;
   popoverMinWidth?: number;
+  /** 启用后使用包含选择与置顶按钮的对话框，避免在选项内嵌套按钮。 */
+  pinning?: ZeusSelectPinning;
   size: 'compact' | 'regular' | 'roomy';
 }
 
@@ -45,6 +64,17 @@ const tabbableSelector = ['a[href]', 'button:not([disabled])', 'input:not([disab
 function focusElement(element: HTMLElement | undefined): void {
   if (!element || typeof window === 'undefined') return;
   window.requestAnimationFrame(() => element.focus());
+}
+
+/** 本机偏好按字符串数组读取；损坏或不可访问的存储不影响模型选择。 */
+function readPinnedValues(storageKey: string): string[] {
+  try {
+    /** 外部存储只接受非空字符串身份，并去除重复记录。 */
+    const values: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]');
+    return Array.isArray(values) ? [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))] : [];
+  } catch {
+    return [];
+  }
 }
 
 function filterSelectOptions<T extends string>(options: readonly ZeusSelectOption<T>[], query: string): readonly ZeusSelectOption<T>[] {
@@ -107,7 +137,10 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
       const markerWidth = hasColor ? (gridColumnWidths[0] ?? 10) : 0;
       const checkWidth = gridColumnWidths.at(-1) ?? 16;
       const gapCount = hasColor ? 2 : 1;
-      const rowWidth = parseCssPixel(optionStyle.paddingInlineStart) + parseCssPixel(optionStyle.paddingInlineEnd) + markerWidth + checkWidth + parseCssPixel(optionStyle.columnGap) * gapCount + clone.getBoundingClientRect().width;
+      /** 置顶按钮占据独立列，测量时为图钉和列间距预留空间。 */
+      const pinWidth = option.parentElement?.classList.contains('zeus-select-option-row') ? 32 : 0;
+      const rowWidth =
+        parseCssPixel(optionStyle.paddingInlineStart) + parseCssPixel(optionStyle.paddingInlineEnd) + markerWidth + checkWidth + parseCssPixel(optionStyle.columnGap) * gapCount + clone.getBoundingClientRect().width + pinWidth;
       optionWidth = Math.max(optionWidth, rowWidth);
     }
     const measuredWidth = popover.getBoundingClientRect().width;
@@ -139,8 +172,21 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [activeValue, setActiveValue] = useState<T>(props.value);
   const [query, setQuery] = useState('');
+  /** 每次打开重新读取，其他模型入口的最新置顶立即可见。 */
+  const [pinnedValues, setPinnedValues] = useState<string[]>([]);
+  /** 只有持久化成功才更新置顶状态。 */
+  const [pinSaveFailed, setPinSaveFailed] = useState(false);
   const [popoverLayout, setPopoverLayout] = useState<ZeusSelectPopoverLayout | null>(null);
-  const visibleOptions = useMemo(() => (searchable ? filterSelectOptions(props.options, query) : props.options), [props.options, query, searchable]);
+  /** 已不可用的身份只保留偏好，不重新插入当前可选目录。 */
+  const pinnedOptions = useMemo(() => {
+    if (!props.pinning) return [];
+    /** 按完整身份索引当前目录，置顶数量增加时也只遍历一遍模型。 */
+    const optionsByValue = new Map<string, ZeusSelectOption<T>>(props.options.filter((option) => !option.disabled).map((option) => [option.value, option]));
+    return pinnedValues.flatMap((value) => optionsByValue.get(value) ?? []);
+  }, [pinnedValues, props.options, props.pinning]);
+  /** 置顶项只出现一次，未置顶项沿用业务原有分组顺序。 */
+  const orderedOptions = useMemo(() => [...pinnedOptions, ...props.options.filter((option) => !pinnedOptions.includes(option))], [pinnedOptions, props.options]);
+  const visibleOptions = useMemo(() => (searchable ? filterSelectOptions(orderedOptions, query) : orderedOptions), [orderedOptions, query, searchable]);
   const enabledVisibleOptions = useMemo(() => visibleOptions.filter((option) => !option.disabled), [visibleOptions]);
   const rootId = `zeus-select-${generatedId}`;
   const listboxId = `${rootId}-listbox`;
@@ -172,7 +218,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const triggerRect = trigger.getBoundingClientRect();
     const viewportPadding = 8;
     const popoverGap = 6;
-    const maxWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+    /** 模型长名称截断显示，避免单个长名称把菜单撑成横跨页面的大面板。 */
+    const maxWidth = Math.max(0, Math.min(window.innerWidth - viewportPadding * 2, props.pinning ? 360 : Number.POSITIVE_INFINITY));
     if (popoverRef.current) {
       popoverContentWidthRef.current = Math.max(popoverContentWidthRef.current, measurePopoverContentWidth(popoverRef.current, maxWidth));
     }
@@ -182,7 +229,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const bottomTop = triggerRect.bottom + popoverGap;
     const availableBottomHeight = Math.max(0, window.innerHeight - bottomTop - viewportPadding);
     const placement = popoverHeight > 0 && popoverHeight > availableBottomHeight ? 'top' : 'bottom';
-    const top = placement === 'top' ? triggerRect.top - popoverGap - popoverHeight : bottomTop;
+    const top = Math.max(viewportPadding, placement === 'top' ? triggerRect.top - popoverGap - popoverHeight : bottomTop);
     const nextLayout: ZeusSelectPopoverLayout = {
       top,
       left,
@@ -195,7 +242,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       }
       return nextLayout;
     });
-  }, [props.popoverMinWidth]);
+  }, [props.popoverMinWidth, props.pinning]);
 
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
@@ -207,6 +254,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const resolvedActiveValue = enabledOptions.some((option) => option.value === nextActiveValue) ? nextActiveValue : enabledOptions[0]?.value;
     if (resolvedActiveValue === undefined) return;
     setQuery('');
+    if (props.pinning) setPinnedValues(readPinnedValues(props.pinning.storageKey));
+    setPinSaveFailed(false);
     setActiveValue(resolvedActiveValue);
     popoverContentWidthRef.current = 0;
     setPopoverLayout(null);
@@ -219,6 +268,45 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     props.onChange(value);
     setActiveValue(value);
     if (!multiple) closeListbox();
+  };
+
+  /** 置顶只保存显示偏好，不触发模型切换，也不关闭浮层。 */
+  const togglePin = (option: ZeusSelectOption<T>, button: HTMLButtonElement) => {
+    if (!props.pinning || !option.value || option.disabled) return;
+    /** 写入前读取最新偏好，保留其他入口或项目中暂不可见的置顶。 */
+    const current = readPinnedValues(props.pinning.storageKey);
+    /** 新置顶排在末尾，已有置顶的相对顺序保持稳定。 */
+    const next = current.includes(option.value) ? current.filter((value) => value !== option.value) : [...current, option.value];
+    try {
+      window.localStorage.setItem(props.pinning.storageKey, JSON.stringify(next));
+      setPinnedValues(next);
+      setPinSaveFailed(false);
+      window.requestAnimationFrame(() => {
+        button.focus({ preventScroll: true });
+        // 新置顶先展示顶部分组；大量置顶时仍确保当前图钉处于可见区域。
+        if (next.includes(option.value)) popoverRef.current?.querySelector('.zeus-select-listbox')?.scrollTo({ top: 0 });
+        button.scrollIntoView({ block: 'nearest' });
+      });
+    } catch {
+      setPinSaveFailed(true);
+    }
+  };
+
+  /** 对话框允许 Tab 遍历搜索、选择与置顶；离开边界时回到原页面。 */
+  const handlePopoverKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
+    if (!props.pinning || event.defaultPrevented) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeListbox();
+    } else if (event.key === 'Tab') {
+      /** 对话框中所有可用按钮均可通过键盘到达。 */
+      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input, button:not(:disabled)'));
+      if (event.target !== (event.shiftKey ? controls[0] : controls.at(-1))) return;
+      event.preventDefault();
+      closeListbox(false);
+      if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
+    }
   };
 
   const moveActiveOption = (direction: 1 | -1 | 'first' | 'last') => {
@@ -234,6 +322,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (open && event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       closeListbox();
     } else if (open && event.key === 'Tab') {
       event.preventDefault();
@@ -251,6 +340,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const handleOptionKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, option: ZeusSelectOption<T>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       closeListbox();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -267,7 +357,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       if (!option.disabled) selectOption(option.value);
-    } else if (event.key === 'Tab') {
+    } else if (event.key === 'Tab' && !props.pinning) {
       event.preventDefault();
       closeListbox(false);
       if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
@@ -276,7 +366,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
 
   const handleSearchChange = (value: string) => {
     setQuery(value);
-    const nextVisibleOptions = filterSelectOptions(props.options, value).filter((option) => !option.disabled);
+    const nextVisibleOptions = filterSelectOptions(orderedOptions, value).filter((option) => !option.disabled);
     const selectedVisibleOption = nextVisibleOptions.find((option) => option.value === props.value);
     setActiveValue(selectedVisibleOption?.value ?? nextVisibleOptions[0]?.value ?? props.value);
   };
@@ -284,6 +374,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       closeListbox();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -305,7 +396,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         event.preventDefault();
         selectOption(activeOption.value);
       }
-    } else if (event.key === 'Tab') {
+    } else if (event.key === 'Tab' && !props.pinning) {
       event.preventDefault();
       closeListbox(false);
       if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
@@ -337,13 +428,14 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     };
   }, [open, searchPlaceholder, searchable, syncPopoverLayout, visibleOptions]);
 
+  // 只在打开时自动聚焦；方向键移动后不能把焦点抢回搜索框。
   useEffect(() => {
     if (!open || typeof window === 'undefined') return undefined;
     const animationFrame = window.requestAnimationFrame(() => {
       focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(activeValue) ?? undefined));
     });
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [activeValue, open, searchable]);
+  }, [open, searchable]);
 
   useEffect(() => {
     setActiveValue(props.value);
@@ -360,7 +452,12 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     <span className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'} data-zeus-primitive="select-popover" data-control-size={props.size}>
       <span
         ref={popoverRef}
+        id={props.pinning ? `${rootId}-dialog` : undefined}
+        role={props.pinning ? 'dialog' : undefined}
+        aria-label={props.pinning ? props.ariaLabel : undefined}
         className="zeus-select-popover"
+        data-pinnable={props.pinning ? 'true' : undefined}
+        onKeyDown={handlePopoverKeyDown}
         data-motion-surface="popover"
         data-zeus-select-placement={popoverLayout?.placement ?? 'bottom'}
         style={
@@ -392,40 +489,73 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
             </span>
           </span>
         ) : null}
-        <span id={listboxId} className="zeus-select-listbox" role="listbox" aria-label={props.ariaLabel} aria-multiselectable={multiple || undefined}>
+        {pinSaveFailed ? (
+          <span className="zeus-select-empty" role="alert">
+            {props.pinning?.saveErrorLabel}
+          </span>
+        ) : null}
+        <span id={listboxId} className="zeus-select-listbox" role={props.pinning ? 'list' : 'listbox'} aria-label={props.ariaLabel} aria-multiselectable={(!props.pinning && multiple) || undefined}>
           {visibleOptions.length > 0 ? (
             visibleOptions.map((option, index) => {
               const selected = multiple ? selectedValues.has(option.value) : option.value === props.value;
+              /** 置顶区与供应商区分开判断，避免名称碰巧相同时合并标题。 */
+              const pinned = pinnedOptions.includes(option);
+              /** 跨供应商置顶使用统一标题，来源仍显示在模型名称下面。 */
+              const group = pinned ? props.pinning?.groupLabel : option.group;
+              /** 操作文案包含来源，读屏与悬停均能区分同名模型。 */
+              const optionLabel = `${option.description ?? option.group ?? ''} ${option.label}`.trim();
               return (
-                <Fragment key={`${option.value || 'empty'}-${index}`}>
-                  {option.group && visibleOptions[index - 1]?.group !== option.group ? (
+                <Fragment key={option.value}>
+                  {group && (index === 0 || pinned !== pinnedOptions.includes(visibleOptions[index - 1]!) || (!pinned && visibleOptions[index - 1]?.group !== group)) ? (
                     <span className="zeus-select-option-group" role="presentation">
-                      {option.group}
+                      {pinned ? <PushPinIcon size={12} weight="fill" aria-hidden="true" /> : null}
+                      {group}
                     </span>
                   ) : null}
-                  <button
-                    ref={(element) => {
-                      if (element) optionRefs.current.set(option.value, element);
-                      else optionRefs.current.delete(option.value);
-                    }}
-                    id={`${listboxId}-option-${index}`}
-                    type="button"
-                    className="zeus-select-option"
-                    role="option"
-                    aria-label={option.group ? `${option.group}: ${option.label}` : option.label}
-                    aria-selected={selected}
-                    tabIndex={open && option.value === activeValue ? 0 : -1}
-                    disabled={option.disabled}
-                    data-value={option.value}
-                    onClick={() => selectOption(option.value)}
-                    onKeyDown={(event) => handleOptionKeyDown(event, option)}
-                  >
-                    {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
-                    <span className="zeus-select-option-label">{option.label}</span>
-                    <span className="zeus-select-option-check" aria-hidden="true">
-                      {selected ? '✓' : ''}
-                    </span>
-                  </button>
+                  <span className={props.pinning ? 'zeus-select-option-row' : undefined} role={props.pinning ? 'listitem' : 'presentation'}>
+                    <button
+                      ref={(element) => {
+                        if (element) optionRefs.current.set(option.value, element);
+                        else optionRefs.current.delete(option.value);
+                      }}
+                      id={`${listboxId}-option-${index}`}
+                      type="button"
+                      className="zeus-select-option"
+                      role={props.pinning ? undefined : 'option'}
+                      aria-label={optionLabel}
+                      aria-selected={props.pinning ? undefined : selected}
+                      aria-pressed={props.pinning ? selected : undefined}
+                      data-selected={selected}
+                      tabIndex={open && (props.pinning || option.value === activeValue) ? 0 : -1}
+                      disabled={option.disabled}
+                      data-value={option.value}
+                      title={optionLabel}
+                      onFocus={() => setActiveValue(option.value)}
+                      onClick={() => selectOption(option.value)}
+                      onKeyDown={(event) => handleOptionKeyDown(event, option)}
+                    >
+                      {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
+                      <span className="zeus-select-option-label">
+                        {option.label}
+                        {pinned && (option.description || option.group) ? <small className="zeus-select-option-description">{option.description ?? option.group}</small> : null}
+                      </span>
+                      <span className="zeus-select-option-check" aria-hidden="true">
+                        {selected ? '✓' : ''}
+                      </span>
+                    </button>
+                    {props.pinning && option.value && !option.disabled ? (
+                      <button
+                        type="button"
+                        className="zeus-select-pin"
+                        aria-label={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
+                        title={pinned ? props.pinning.unpinLabel : props.pinning.pinLabel}
+                        aria-pressed={pinned}
+                        onClick={(event) => togglePin(option, event.currentTarget)}
+                      >
+                        <PushPinIcon size={15} weight={pinned ? 'fill' : 'regular'} aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </span>
                 </Fragment>
               );
             })
@@ -456,13 +586,13 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         ref={triggerRef}
         type="button"
         className={props.triggerClassName ? `zeus-select-trigger ${props.triggerClassName}` : 'zeus-select-trigger'}
-        role="combobox"
+        role={props.pinning ? undefined : 'combobox'}
         aria-label={props.ariaLabel}
         aria-describedby={props.ariaDescribedBy}
-        aria-haspopup="listbox"
+        aria-haspopup={props.pinning ? 'dialog' : 'listbox'}
         aria-expanded={open}
-        aria-controls={listboxId}
-        aria-activedescendant={open ? activeOptionId : undefined}
+        aria-controls={props.pinning ? `${rootId}-dialog` : listboxId}
+        aria-activedescendant={open && !props.pinning ? activeOptionId : undefined}
         title={props.triggerTitle}
         disabled={props.disabled}
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
