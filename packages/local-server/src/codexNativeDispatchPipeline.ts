@@ -80,6 +80,9 @@ interface CodexNativeDispatchPipelineDependencies {
 
   recordServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, reason: 'model_unsupported' | 'app_server_rejected', actualServiceTier?: string | null): void;
 
+  /** 回执异常后核对先到达的用户回显，不重新发送原请求。 */
+  reconcilePersistedUserMessageAcceptances(conversationId: string): number;
+
   recoverPausedConversation(conversationId: string, mode: 'dispatch'): Promise<ZeusConversationWithMessagesRecord>;
 
   requireConversation(conversationId: string): ZeusConversationWithMessagesRecord;
@@ -116,6 +119,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     providerCommands,
     providerThreadAuthority,
     recordServiceTierDowngrade,
+    reconcilePersistedUserMessageAcceptances,
     recoverPausedConversation,
     requestQueueDrain,
     requireConversation,
@@ -660,7 +664,13 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         // 写出后的未知结果优先于通用暂停或归档恢复，不能覆盖为可重试失败。
         if (!segmentLifecycle) options.execution.markCurrentSubmissionOutcomeUnknown(conversation.id, submission.id, serializeError(error), now());
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+        reconcilePersistedUserMessageAcceptances(conversation.id);
         await persist();
+        /** 回显已证明送达时返回同一轮次，避免失败响应把界面重新降成暂停。 */
+        const reconciled = options.submissions.getById(submission.id);
+        if (reconciled?.providerTurnId && reconciled.submissionOutcome !== 'outcome_unknown') {
+          return accepted(reconciled, 'active', candidateProviderThreadId ?? conversation.providerThreadId, reconciled.providerTurnId);
+        }
         options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id, queueDispatchRequested: false });
         return accepted(submission, 'recovery_required', candidateProviderThreadId ?? conversation.providerThreadId, null);
       }

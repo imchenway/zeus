@@ -1,4 +1,30 @@
-import type { NativeQueuedSubmission, NativeQueueSnapshot } from './sessionTypes.js';
+import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionItemBuffer } from './sessionTypes.js';
+
+/** 待发送消息按权威队列顺序放在记录末尾，恢复时不会被提交时间插回旧回复之前。 */
+export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemBuffer[], queue: NativeQueueSnapshot | null): NativeSessionItemBuffer[] {
+  /** 提交与客户端消息身份共同覆盖本地气泡和冷开队列投影。 */
+  const positions = new Map<string, number>();
+  visibleQueuedSubmissions(queue).forEach((submission, index) => {
+    positions.set(submission.id, index);
+    if (submission.clientUserMessageId) positions.set(submission.clientUserMessageId, index);
+  });
+  /** 已有原生消息身份的条目仍属于真实历史，不能被陈旧队列状态挪到末尾。 */
+  const queuePosition = (item: NativeSessionItemBuffer): number | undefined => {
+    if (!item.optimistic || item.providerItemId) return undefined;
+    for (const id of [item.payload.submissionId, item.clientUserMessageId, item.durableClientUserMessageId]) {
+      if (typeof id === 'string' && positions.has(id)) return positions.get(id);
+    }
+    return undefined;
+  };
+  return [...items].sort((left, right) => {
+    /** 有明确队列身份时优先按队列定位，其他条目沿用真实时间。 */
+    const leftPosition = queuePosition(left);
+    /** 同时比较两端，保证已确认历史位于待发队列之前。 */
+    const rightPosition = queuePosition(right);
+    if (leftPosition !== undefined || rightPosition !== undefined) return leftPosition === undefined ? -1 : rightPosition === undefined ? 1 : leftPosition - rightPosition;
+    return (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '') || left.key.localeCompare(right.key);
+  });
+}
 
 /** 沿用提交的稳定队列顺序，保留模型接手前的消息气泡。 */
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {

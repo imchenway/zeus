@@ -41,6 +41,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['暂时无法继续对话：Zeus 尚未取得这次发送后的最新状态。请检查对话状态。', 'The conversation cannot continue until Zeus receives the latest state after this send. Check the conversation status.', 'check'],
   ],
   [['ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED'], ['这条消息尚未发送给 AI，正在等待发送确认。', 'This message has not been sent to the AI and is waiting for confirmation.']],
+  // 响应解析失败不能证明发送失败，操作入口必须引导核对结果。
+  [['ZEUS_CODEX_RPC_PROTOCOL_ERROR'], ['Codex 的响应无法读取，暂时无法确认发送结果。请先检查会话状态。', 'The Codex response could not be read, so delivery is unconfirmed. Check the conversation status first.', 'check']],
   // 本地校验已知原因按完整文案识别，避免进入通用错误入口后丢失用户可解决的信息。
   [
     ['Zeus 的文件编辑服务尚未连接。', 'Zeus has not connected to the file editing service yet.'],
@@ -983,7 +985,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
     .filter(Boolean)
     .join('\n');
   const zh = language === 'zh-CN';
-  const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING/u.test(item.code ?? ''));
+  const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$/u.test(item.code ?? ''));
   return {
     message: match?.[zh ? 0 : 1] ?? (zh ? 'Zeus 尚未识别这次错误的具体原因。请查看错误详情。' : 'Zeus has not identified the cause of this error. See the error details.'),
     details: translated && !root.code && !root.cause && !root.details ? '' : details,
