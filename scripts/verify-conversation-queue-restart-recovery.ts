@@ -123,7 +123,7 @@ try {
   };
   const restartedProvider = createRestartProbeManager({
     providerThreadId,
-    turnIds: [secondProviderTurnId],
+    turnIds: [secondProviderTurnId, ...Array.from({ length: 4 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
     initialTurns: [completedFirstTurn],
   });
   runningServer = await startProbeServer(restartedProvider.manager, 'after-restart');
@@ -159,6 +159,38 @@ try {
   const secondQueueEntry = queue.find((entry) => isRecord(entry) && entry.clientMessageId === secondClientMessageId);
   assertBehavior(!secondQueueEntry || secondQueueEntry.status !== 'queued', '新消息仍停留在 queued，未真正进入 Provider。');
 
+  // 两种到达顺序都走真实消息命令、事件投影和队列调度；未知请求不能被重发。
+  for (const echoOrder of ['before', 'after'] as const) {
+    /** 当前活动轮结束前连续排入两条补充。 */
+    const activeIndex = restartedProvider.startTurnInputs.length - 1;
+    /** 两条补充各自保留稳定客户端身份。 */
+    const clients = [randomUUID(), randomUUID()];
+    for (const clientUserMessageId of clients) {
+      /** 由应用消息入口持久保存原始提交。 */
+      const input = { content: `回显顺序 ${echoOrder}：${clientUserMessageId}`, clientUserMessageId, idempotencyKey: randomUUID(), delivery: 'queue' };
+      /** 接纳到本地队列不代表模型已收到。 */
+      const result = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        body: commandRequest({ commandType: 'conversation.message.submit', scopeKind: 'product_conversation', scopeId: conversationId, operationIdentity: randomUUID(), input, inputSha256: conversationDispatchInputSha256(input) }),
+      });
+      assertBehavior(result.status === 202, `补充消息入队失败：${JSON.stringify(result.body)}`);
+    }
+    restartedProvider.loseNextReceipt(echoOrder);
+    await restartedProvider.completeTurn(activeIndex);
+    await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 2, '上一轮结束后没有发送队首补充。');
+    if (echoOrder === 'after') {
+      await waitFor(async () => {
+        /** 错误回执已落库后才投递用户回显。 */
+        const response = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+        return JSON.stringify(response.body).includes('outcome_unknown');
+      }, '回执丢失没有保留结果待确认状态。');
+      await restartedProvider.publishUserMessage(activeIndex + 1);
+    }
+    await restartedProvider.completeTurn(activeIndex + 1);
+    await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 3, `回显 ${echoOrder} 后第二条补充没有自动发送。`);
+    for (const client of clients) assertBehavior(restartedProvider.startTurnInputs.filter((entry) => entry.clientUserMessageId === client).length === 1, '补充消息必须按原身份恰好发送一次。');
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -170,6 +202,8 @@ try {
         secondProviderTurnId,
         secondClientMessageIdPreserved: true,
         manualRetryRequired: false,
+        lostReceiptEchoOrders: ['before', 'after'],
+        queuedFollowupsSentOnce: true,
         temporaryDatabaseCleanup: 'finally',
       },
       null,
@@ -210,6 +244,12 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   manager: CodexAppServerManager;
   startTurnInputs: CodexTurnStartInput[];
   readonly readThreadCalls: number;
+  /** 控制下一次发送的回显与错误回执顺序。 */
+  loseNextReceipt(order: 'before' | 'after'): void;
+  /** 投递带有原客户端身份的模型回显。 */
+  publishUserMessage(index: number): Promise<void>;
+  /** 结束活动轮以唤醒下一条消息。 */
+  completeTurn(index: number): Promise<void>;
 } {
   const generationId = `generation_${randomUUID().replaceAll('-', '')}`;
   const capabilities: CodexCapabilitiesSnapshot = {
@@ -254,6 +294,33 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   const startTurnInputs: CodexTurnStartInput[] = [];
   const turns = [...input.initialTurns];
   let readThreadCalls = 0;
+  /** 只丢失下一次成功回执，实际用户输入仍被模型接收。 */
+  let lostReceiptOrder: 'before' | 'after' | null = null;
+  /** 同一实例的事件序号持续推进。 */
+  let eventSequence = 0;
+  /** 通过应用真实订阅入口推进事件。 */
+  const emit = async (method: string, params: JsonObject): Promise<void> => {
+    /** 保留独立事件身份以通过幂等摄取。 */
+    const event = { generationId, sequence: ++eventSequence, method, params, receivedAt: new Date().toISOString() };
+    await Promise.all([...listeners].map((listener) => listener(event)));
+  };
+  /** 从原请求还原用户回显，不制造另一个客户端编号。 */
+  const publishUserMessage = async (index: number): Promise<void> => {
+    /** 初始旧历史不计入本实例的新请求编号。 */
+    const turn = turns[input.initialTurns.length + index]!;
+    /** 条目编号在重复历史读取中保持一致。 */
+    const item = { type: 'userMessage', id: `user_${turn.id}`, clientId: startTurnInputs[index]!.clientUserMessageId, content: startTurnInputs[index]!.input };
+    turn.items = [item];
+    await emit('item/completed', { threadId: input.providerThreadId, turnId: turn.id, item });
+  };
+  /** 完成事实同时供实时事件和权威历史读取使用。 */
+  const completeTurn = async (index: number): Promise<void> => {
+    /** 按本实例的派发顺序找到真实活动轮。 */
+    const turn = turns[input.initialTurns.length + index]!;
+    turn.status = 'completed';
+    turn.completedAt = new Date().toISOString();
+    await emit('turn/completed', { threadId: input.providerThreadId, turn });
+  };
   const threadSnapshot = (): CodexThreadSnapshot => ({
     id: input.providerThreadId,
     status: { type: turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? 'active' : 'idle', ...(turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? { activeFlags: [] } : {}) },
@@ -281,6 +348,14 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       if (!turnId) throw new Error('重启探针没有为 turn/start 预留 Provider turn id。');
       const turn: CodexTurnSnapshot = { id: turnId, threadId: input.providerThreadId, status: 'active', items: [] };
       turns.push(turn);
+      if (lostReceiptOrder) {
+        /** 故障只影响本次回执，后续消息使用正常响应。 */
+        const order = lostReceiptOrder;
+        lostReceiptOrder = null;
+        await emit('turn/started', { threadId: input.providerThreadId, turn });
+        if (order === 'before') await publishUserMessage(startTurnInputs.length - 1);
+        throw Object.assign(new Error('已写出的成功回执无法读取'), { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR' });
+      }
       return turn;
     },
     detectExternalAgentConfig: async () => ({ status: 'not_found', sourceRoot: null, candidates: [], warnings: [] }),
@@ -310,6 +385,11 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   return {
     manager,
     startTurnInputs,
+    loseNextReceipt(order) {
+      lostReceiptOrder = order;
+    },
+    publishUserMessage,
+    completeTurn,
     get readThreadCalls() {
       return readThreadCalls;
     },
@@ -343,10 +423,10 @@ async function requestJson(server: RunningZeusLocalServer, path: string, input: 
   return { status: response.status, body: text ? (JSON.parse(text) as JsonObject) : {} };
 }
 
-async function waitFor(condition: () => boolean, message: string, timeoutMs = 5_000): Promise<void> {
+async function waitFor(condition: () => boolean | Promise<boolean>, message: string, timeoutMs = 5_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (condition()) return;
+    if (await condition()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(message);

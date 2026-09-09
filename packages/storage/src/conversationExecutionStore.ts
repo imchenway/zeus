@@ -1082,7 +1082,14 @@ export class ConversationExecutionRepository {
           ORDER BY sequence LIMIT 1`,
         [input.conversationId, input.submissionId ?? null, input.turnId, input.segmentId, providerItemId, providerItemId],
       );
-      if (existing) return mapModelHistory(existing);
+      if (existing) {
+        // 回显可能先于发送回执写入；沿用历史序号补齐提交身份，避免冷开时丢失客户端关联。
+        if (!existing.submission_id && input.submissionId) {
+          this.db.execute(`UPDATE conversation_model_history SET submission_id = ? WHERE id = ?`, [input.submissionId, existing.id]);
+          existing.submission_id = input.submissionId;
+        }
+        return mapModelHistory(existing);
+      }
     }
     const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
     const id = `conversation_model_history_${randomId(12)}`;

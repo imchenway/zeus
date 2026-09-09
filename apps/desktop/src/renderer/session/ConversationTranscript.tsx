@@ -32,7 +32,7 @@ import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, ty
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
-import { isSubmissionWaitingInQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
+import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 
 export interface ConversationTranscriptProps {
@@ -338,18 +338,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
   const projectedItems = useMemo(() => {
-    // 历史暂停 submission 与新 Provider 正文来自不同投影入口，但必须共享同一条持久时间线。
-    // 直接 append 会把数小时前的任务推送卡放到刚发送的消息之后，造成用户气泡“跳到最上面”。
-    const durableItems = coalesceSupersededInterruptedQueuedUserMessages(
-      [...persistedItems, ...queuedSubmissionItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key)),
-    );
-    return props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems;
+    // 已确认消息沿用历史时间；仍在排队的补充留在记录末尾，避免切换后藏到旧回复上方。
+    const durableItems = coalesceSupersededInterruptedQueuedUserMessages([...persistedItems, ...queuedSubmissionItems]);
+    return orderTranscriptItemsWithQueue(props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems, props.state.queue);
   }, [
     persistedItems,
     props.projectPersistedPlans,
     props.state.conversationId,
     props.state.planImplementationRequests,
     props.state.providerThreadId,
+    props.state.queue,
     props.state.snapshot?.snapshotV2,
     props.state.terminalTurnIds,
     props.state.turnsByProviderId,

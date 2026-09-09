@@ -94,7 +94,7 @@ import { createCodexNativeConversationAccess } from './codexNativeConversationAc
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
 import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
-import { chooseNativeUserMessageContent, type NativeUserMessageProjection, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
+import { chooseNativeUserMessageContent, type NativeUserMessageProjection, reconcileNativeUserMessageAcceptance, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import { codexProviderEventIdentity, createCodexProviderEventFlow } from './codexProviderEventFlow.js';
 import { projectCodexProviderEvent } from './codexProviderEventProjection.js';
@@ -1529,6 +1529,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
+    if (reconcileNativeUserMessageAcceptance(options, message, providerClientId, createdAt)) {
+      runStates.set(conversation.id, inferRunState(requireConversation(conversation.id)));
+      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission?.id });
+    }
     options.execution.confirmUserMessageHistory(message.id);
     flushServiceTierDowngradeNotice(submission);
     resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
@@ -1857,6 +1861,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       // 未绑定线程时没有外部事实可读；不得为检查创建线程或准备工作目录。
       if (conversation.providerThreadId) {
         await providerThreadAuthority.inspect(conversation, null, { readOnly: true });
+        reconcilePersistedUserMessageAcceptances(conversation.id);
         await persist();
       }
       return toQueueSnapshot(conversation.id);
@@ -2685,11 +2690,39 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
+  /** 重启先补齐已经到达但未结算的续发回执，再核对终态轮次。 */
   async function reconcilePersistedTerminalSubmissions(): Promise<number> {
     assertOpen();
     await providerEvents.waitForIdle();
-    const reconciledCount = reconcilePersistedTerminalTurnSubmissions();
+    /** 先补齐发送身份，再沿用终态轮次的统一收口。 */
+    const reconciledCount = reconcilePersistedUserMessageAcceptances() + reconcilePersistedTerminalTurnSubmissions();
     if (reconciledCount > 0) await persist();
+    return reconciledCount;
+  }
+
+  /** 回显与失败回执到达顺序不固定；发送失败后和重启时都核对已经保存的精确身份。 */
+  function reconcilePersistedUserMessageAcceptances(conversationId?: string): number {
+    /** 只检查有未知回执的提交，避免扫描所有历史消息。 */
+    let reconciledCount = 0;
+    /** 显式检查与单次派发失败只读取目标会话，启动恢复才遍历未完成提交。 */
+    const submissions = conversationId ? options.submissions.listByConversation(conversationId) : options.submissions.listRecoverable();
+    for (const submission of submissions) {
+      if (submission.submissionOutcome !== 'outcome_unknown') continue;
+      /** 身份必须同时存在于原生条目与持久消息，不能仅凭相同正文确认送达。 */
+      const conversation = options.conversations.getById(submission.conversationId);
+      if (conversation?.agentKind !== 'codex') continue;
+      /** 用户消息必须已经带有真实原生身份。 */
+      const message = conversation.messages.find((entry) => entry.role === 'user' && entry.clientMessageId === submission.clientMessageId && entry.providerItemId && entry.providerThreadId);
+      if (!message) continue;
+      /** 摄取记录中的客户端编号是模型回显，不能由本地正文猜测。 */
+      const item = options.providerItems.getByProvider(message.providerThreadId!, message.providerItemId!);
+      /** 有界摄取记录缺少编号时保持未知，等待下一次权威历史检查。 */
+      const clientId = item ? parseJsonRecord(item.payloadJson).clientId : null;
+      if (!reconcileNativeUserMessageAcceptance(options, message, typeof clientId === 'string' ? clientId : null, now())) continue;
+      reconciledCount += 1;
+      runStates.set(conversation.id, inferRunState(requireConversation(conversation.id)));
+      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
+    }
     return reconciledCount;
   }
 
@@ -2967,6 +3000,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     planControlModeForSubmission,
     projectGoal,
     recordServiceTierDowngrade,
+    reconcilePersistedUserMessageAcceptances,
     recoverPausedConversation,
     requireConversation,
     requestQueueDrain,
