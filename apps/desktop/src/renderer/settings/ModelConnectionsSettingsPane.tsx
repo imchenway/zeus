@@ -1,5 +1,5 @@
 import { redactUserFacingErrorDetails } from '@zeus/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type {
   DashboardClient,
@@ -18,6 +18,7 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */
 interface ModelConnectionDraft extends SaveModelConnectionRequest {
@@ -49,13 +50,30 @@ export function ModelConnectionsSettingsPane(props: {
   /** 首次引导在编辑器内选择新项目默认模型。 */
   onComplete?: (modelRef: string) => Promise<void>;
   onBusyChange?: (busy: boolean) => void;
-  /** 当前任务只启用当前项目模型，不调整其他项目或全局默认。 */
-  completionScope?: 'project' | 'new_projects';
+  /** 当前任务或对话只启用当前项目模型，不调整其他项目或全局默认。 */
+  completionScope?: 'project' | 'conversation' | 'new_projects';
 }) {
   const zh = props.language === 'zh-CN';
+  /** 可见标签和读屏名称共用当前接入范围文案。 */
+  const completionModelLabel =
+    props.completionScope === 'conversation'
+      ? zh
+        ? '本次对话模型'
+        : 'Model for this conversation'
+      : props.completionScope === 'project'
+        ? zh
+          ? '本次任务模型'
+          : 'Model for this task'
+        : zh
+          ? '新项目默认模型'
+          : 'Default model for new projects';
   const [connections, setConnections] = useState<ModelConnectionRecord[]>([]);
   const [draft, setDraft] = useState<ModelConnectionDraft>(() => emptyDraft());
   const [newModelId, setNewModelId] = useState('');
+  /** 搜索和分页只改变展示，不影响供应商保存的模型集合。 */
+  const [modelQuery, setModelQuery] = useState('');
+  /** 切换供应商或筛选时回到第一页。 */
+  const [requestedModelPage, setRequestedModelPage] = useState(1);
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'deleting'>('loading');
   const [message, setMessage] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ModelConnectionDiagnostic | null>(null);
@@ -80,6 +98,7 @@ export function ModelConnectionsSettingsPane(props: {
       .then((items) => {
         if (!active) return;
         setConnections(items);
+        if (!props.onComplete && items[0]) selectConnection(items[0]);
         setStatus('idle');
       })
       .catch((error: unknown) => {
@@ -103,8 +122,14 @@ export function ModelConnectionsSettingsPane(props: {
     setPendingInsecureHttpSave(null);
   }, [props.active]);
   const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
+  /** 本地筛选保留全部草稿，翻页不会遗失模型修改。 */
+  const filteredModels = draft.models.filter((model) => model.id.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()));
+  /** 实际页随模型删除夹紧。 */
+  const modelPage = settingsPage(filteredModels.length, requestedModelPage);
 
   function selectConnection(connection: ModelConnectionRecord): void {
+    setModelQuery('');
+    setRequestedModelPage(1);
     setDraft({
       id: connection.id,
       name: connection.name,
@@ -144,6 +169,8 @@ export function ModelConnectionsSettingsPane(props: {
     if (!id || draft.models.some((model) => model.id === id)) return;
     setDraft((value) => ({ ...value, models: [...value.models, createModel(id, templateDefaults[value.templateId].thinkingFormat)] }));
     setNewModelId('');
+    setModelQuery('');
+    setRequestedModelPage(Math.ceil((draft.models.length + 1) / settingsPageSize));
   }
 
   function updateModel(modelId: string, update: (model: ModelConnectionModel) => ModelConnectionModel): void {
@@ -322,12 +349,24 @@ export function ModelConnectionsSettingsPane(props: {
     <section className="settings-product-pane model-connections-settings" aria-label={zh ? '模型供应商' : 'Model providers'}>
       <header className="settings-section-heading model-connections-heading">
         <span>
-          <strong>{zh ? '模型供应商' : 'Model providers'}</strong>
+          <strong>{zh ? '自定义供应商' : 'Custom providers'}</strong>
           <small>
             {zh ? '填写服务地址和访问密钥（API Key），即可在项目中选择该服务的模型。密钥只保存在本机钥匙串。' : 'Enter the service address and API key to use its models in projects. The key is stored only in this Mac’s Keychain.'}
           </small>
         </span>
-        <Button hidden={Boolean(props.onComplete)} variant="secondary" size="compact" onClick={() => setDraft(emptyDraft())} disabled={busy}>
+        <Button
+          hidden={Boolean(props.onComplete)}
+          variant="secondary"
+          size="compact"
+          onClick={() => {
+            setDraft(emptyDraft());
+            setModelQuery('');
+            setRequestedModelPage(1);
+            setDiagnostic(null);
+            setMessage(null);
+          }}
+          disabled={busy}
+        >
           {zh ? '新建供应商' : 'New provider'}
         </Button>
       </header>
@@ -408,19 +447,6 @@ export function ModelConnectionsSettingsPane(props: {
                     }}
                   />
                 </label>
-                <details open={props.onComplete ? undefined : true} className="model-setup-advanced">
-                  <summary>{zh ? '高级连接设置' : 'Advanced connection settings'}</summary>
-                  <label>
-                    <span>{zh ? '模型目录路径' : 'Models path'}</span>
-                    <input
-                      value={draft.modelsPath}
-                      onChange={(event) => {
-                        const modelsPath = event.currentTarget.value;
-                        setDraft((value) => ({ ...value, modelsPath }));
-                      }}
-                    />
-                  </label>
-                </details>
               </>
             ) : null}
             <label>
@@ -429,12 +455,28 @@ export function ModelConnectionsSettingsPane(props: {
                 type="password"
                 autoComplete="off"
                 value={draft.apiKey}
+                placeholder={current?.apiKeyConfigured ? (zh ? '已保存，留空保留现有密钥' : 'Saved; leave blank to keep the current key') : undefined}
                 onChange={(event) => {
                   const apiKey = event.currentTarget.value;
                   setDraft((value) => ({ ...value, apiKey }));
                 }}
               />
             </label>
+            {draft.templateId === 'custom' ? (
+              <details className="model-setup-advanced model-connection-wide-field">
+                <summary>{zh ? '高级连接设置' : 'Advanced connection settings'}</summary>
+                <label>
+                  <span>{zh ? '模型目录路径' : 'Models path'}</span>
+                  <input
+                    value={draft.modelsPath}
+                    onChange={(event) => {
+                      const modelsPath = event.currentTarget.value;
+                      setDraft((value) => ({ ...value, modelsPath }));
+                    }}
+                  />
+                </label>
+              </details>
+            ) : null}
           </div>
 
           <label className="model-connection-enabled">
@@ -452,7 +494,9 @@ export function ModelConnectionsSettingsPane(props: {
           <section className="model-definition-section">
             <header>
               <span>
-                <strong>{zh ? '模型连接与功能' : 'Model connections and features'}</strong>
+                <strong>
+                  {zh ? '可用模型' : 'Available models'} <small>{draft.models.length}</small>
+                </strong>
                 <small>
                   {zh
                     ? '为每个模型选择服务支持的请求格式和登录方式。功能是否可用以检测结果为准。'
@@ -468,6 +512,20 @@ export function ModelConnectionsSettingsPane(props: {
                 </span>
               ) : null}
             </header>
+            {draft.models.length > 0 ? (
+              <input
+                className="settings-list-search"
+                type="search"
+                aria-label={zh ? '搜索模型' : 'Search models'}
+                placeholder={zh ? '搜索模型名称' : 'Search model names'}
+                value={modelQuery}
+                onChange={(event) => {
+                  setModelQuery(event.currentTarget.value);
+                  setRequestedModelPage(1);
+                }}
+              />
+            ) : null}
+            {draft.models.length > 0 && filteredModels.length === 0 ? <p role="status">{zh ? '没有匹配的模型。' : 'No matching models.'}</p> : null}
             {draft.models.length === 0 ? (
               <p>
                 {draft.templateId === 'custom'
@@ -480,30 +538,19 @@ export function ModelConnectionsSettingsPane(props: {
               </p>
             ) : null}
             <div className="model-definition-list">
-              {draft.models.map((model) => {
-                // 引导先选择模型，协议与能力仍可在高级设置中调整。
-                const editor = (
-                  <ModelDefinitionEditor
-                    key={model.id}
-                    language={props.language}
-                    model={model}
-                    readOnly={draft.templateId !== 'custom'}
-                    onChange={(next) => updateModel(model.id, () => next)}
-                    onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))}
-                  />
-                );
-                return props.onComplete ? (
-                  <details key={model.id} className="model-setup-advanced">
-                    <summary>
-                      {model.id} · {zh ? '高级设置' : 'Advanced settings'}
-                    </summary>
-                    {editor}
-                  </details>
-                ) : (
-                  editor
-                );
-              })}
+              {/* 设置与引导共用一层展开控件，避免连续展开两次才能修改模型。 */}
+              {filteredModels.slice((modelPage - 1) * settingsPageSize, modelPage * settingsPageSize).map((model) => (
+                <ModelDefinitionEditor
+                  key={`${draft.id ?? 'new'}:${model.id}`}
+                  language={props.language}
+                  model={model}
+                  readOnly={draft.templateId !== 'custom'}
+                  onChange={(next) => updateModel(model.id, () => next)}
+                  onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))}
+                />
+              ))}
             </div>
+            <SettingsPagination label={zh ? '可用模型' : 'Available models'} language={props.language} total={filteredModels.length} page={modelPage} onChange={setRequestedModelPage} />
           </section>
 
           {diagnostic ? (
@@ -526,22 +573,20 @@ export function ModelConnectionsSettingsPane(props: {
           ) : null}
           {props.onComplete ? (
             <label className="model-setup-default-model">
-              <span>{props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={props.completionScope === 'project' ? (zh ? '本次任务模型' : 'Model for this task') : zh ? '新项目默认模型' : 'Default model for new projects'}
-                value={defaultModelRef}
-                onChange={setDefaultModelRef}
-                options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))}
-              />
+              <span>{completionModelLabel}</span>
+              <ZeusSelect size="regular" ariaLabel={completionModelLabel} value={defaultModelRef} onChange={setDefaultModelRef} options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))} />
               <small>
-                {props.completionScope === 'project'
+                {props.completionScope === 'conversation'
                   ? zh
-                    ? '仅为当前项目启用。接入后返回确认，不会开始执行。'
-                    : 'Enable for this project only. Return to confirmation without starting the task.'
-                  : zh
-                    ? '只影响之后新建的项目。'
-                    : 'Only affects new projects.'}{' '}
+                    ? '仅为当前项目启用。接入后返回草稿，确认后再发送。'
+                    : 'Enable for this project only. Return to your draft to review and send.'
+                  : props.completionScope === 'project'
+                    ? zh
+                      ? '仅为当前项目启用。接入后返回确认，不会开始执行。'
+                      : 'Enable for this project only. Return to confirmation without starting the task.'
+                    : zh
+                      ? '只影响之后新建的项目。'
+                      : 'Only affects new projects.'}{' '}
                 {zh ? '模型目录可用不代表实际调用成功。' : 'A model listing does not verify actual calls.'}
               </small>
             </label>
@@ -608,7 +653,12 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
   }
 }
 
+/** 模型列表默认只显示身份和启用状态，连接细节由用户主动展开。 */
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
+  /** 折叠仅隐藏控件，模型草稿继续由供应商编辑器持有。 */
+  const [expanded, setExpanded] = useState(false);
+  /** 将展开按钮与详细配置关联。 */
+  const detailsId = useId();
   const zh = props.language === 'zh-CN';
   const model = props.model;
   const routeDescription = protocolDescription(model.protocolFamily, zh);
@@ -641,112 +691,117 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             <small>{modelRouteLabel(model, zh)}</small>
           </span>
         </label>
+        <Button className="model-definition-toggle" size="compact" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? (zh ? '收起' : 'Collapse') : zh ? '配置' : 'Configure'}
+        </Button>
         {props.readOnly ? null : (
           <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
             <X aria-hidden="true" weight="bold" />
           </button>
         )}
       </header>
-      {props.readOnly ? (
-        <dl className="model-route-facts">
-          <div>
-            <dt>{zh ? '请求协议' : 'Request protocol'}</dt>
-            <dd>{protocolLabel(model.protocolFamily)}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '认证方式' : 'Authentication'}</dt>
-            <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
-          </div>
-          <div>
-            <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
-            <dd>
+      <div id={detailsId} className="model-definition-details" hidden={!expanded}>
+        {props.readOnly ? (
+          <dl className="model-route-facts">
+            <div>
+              <dt>{zh ? '请求协议' : 'Request protocol'}</dt>
+              <dd>{protocolLabel(model.protocolFamily)}</dd>
+            </div>
+            <div>
+              <dt>{zh ? '认证方式' : 'Authentication'}</dt>
+              <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
+            </div>
+            <div>
+              <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
+              <dd>
+                <span className="model-context-declaration-value">{contextDeclaration}</span>
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <div className="model-route-controls">
+            <label>
+              <span>{zh ? '请求协议' : 'Request protocol'}</span>
+              <ZeusSelect<ModelProtocolFamily>
+                ariaLabel={zh ? `${model.id} 请求协议` : `${model.id} request protocol`}
+                className="model-protocol-select"
+                size="compact"
+                value={model.protocolFamily}
+                disabled={props.readOnly}
+                onChange={(protocolFamily) =>
+                  props.onChange({
+                    ...model,
+                    protocolFamily,
+                    runtimeAdapter: 'pi_sdk',
+                    authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
+                  })
+                }
+                options={[
+                  { value: 'openai_completions', label: 'OpenAI Chat Completions' },
+                  { value: 'anthropic_messages', label: 'Anthropic Messages' },
+                  { value: 'openai_responses', label: 'OpenAI Responses' },
+                ]}
+              />
+            </label>
+            <label>
+              <span>{zh ? '认证方式' : 'Authentication'}</span>
+              <ZeusSelect<ModelAuthenticationScheme>
+                ariaLabel={zh ? `${model.id} 认证方式` : `${model.id} authentication`}
+                className="model-protocol-select"
+                size="compact"
+                value={model.authenticationScheme}
+                disabled={props.readOnly}
+                onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
+                options={[
+                  { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
+                  { value: 'bearer', label: 'Authorization: Bearer' },
+                  { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
+                ]}
+              />
+            </label>
+            <label className="model-context-declaration">
+              <span>{zh ? '上下文窗口' : 'Context window'}</span>
               <span className="model-context-declaration-value">{contextDeclaration}</span>
-            </dd>
+            </label>
           </div>
-        </dl>
-      ) : (
-        <div className="model-route-controls">
-          <label>
-            <span>{zh ? '请求协议' : 'Request protocol'}</span>
-            <ZeusSelect<ModelProtocolFamily>
-              ariaLabel={zh ? `${model.id} 请求协议` : `${model.id} request protocol`}
-              className="model-protocol-select"
-              size="compact"
-              value={model.protocolFamily}
-              disabled={props.readOnly}
-              onChange={(protocolFamily) =>
-                props.onChange({
-                  ...model,
-                  protocolFamily,
-                  runtimeAdapter: 'pi_sdk',
-                  authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
-                })
-              }
-              options={[
-                { value: 'openai_completions', label: 'OpenAI Chat Completions' },
-                { value: 'anthropic_messages', label: 'Anthropic Messages' },
-                { value: 'openai_responses', label: 'OpenAI Responses' },
-              ]}
-            />
-          </label>
-          <label>
-            <span>{zh ? '认证方式' : 'Authentication'}</span>
-            <ZeusSelect<ModelAuthenticationScheme>
-              ariaLabel={zh ? `${model.id} 认证方式` : `${model.id} authentication`}
-              className="model-protocol-select"
-              size="compact"
-              value={model.authenticationScheme}
-              disabled={props.readOnly}
-              onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
-              options={[
-                { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
-                { value: 'bearer', label: 'Authorization: Bearer' },
-                { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
-              ]}
-            />
-          </label>
-          <label className="model-context-declaration">
-            <span>{zh ? '上下文窗口' : 'Context window'}</span>
-            <span className="model-context-declaration-value">{contextDeclaration}</span>
-          </label>
-        </div>
-      )}
-      <p className="model-route-description">{routeDescription}</p>
-      <dl className="model-capability-summary">
-        <div>
-          <dt>{zh ? '推理' : 'Reasoning'}</dt>
-          <dd>{reasoningCapabilityLabel(model, zh)}</dd>
-        </div>
-        <div>
-          <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
-          <dd>{capabilityStateLabel(model.capability.tools.state, zh)}</dd>
-        </div>
-        <div>
-          <dt>{zh ? '图片输入' : 'Image input'}</dt>
-          <dd>{capabilityStateLabel(model.capability.imageInput.state, zh)}</dd>
-        </div>
-      </dl>
-      <details className="model-capability-evidence">
-        <summary>{zh ? '查看能力依据' : 'View capability evidence'}</summary>
-        <dl>
+        )}
+        <p className="model-route-description">{routeDescription}</p>
+        <dl className="model-capability-summary">
           <div>
             <dt>{zh ? '推理' : 'Reasoning'}</dt>
-            <dd>{capabilityEvidenceText(model.capability.reasoning, zh)}</dd>
+            <dd>{reasoningCapabilityLabel(model, zh)}</dd>
           </div>
           <div>
             <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
-            <dd>{capabilityEvidenceText(model.capability.tools, zh)}</dd>
+            <dd>{capabilityStateLabel(model.capability.tools.state, zh)}</dd>
           </div>
           <div>
             <dt>{zh ? '图片输入' : 'Image input'}</dt>
-            <dd>{capabilityEvidenceText(model.capability.imageInput, zh)}</dd>
+            <dd>{capabilityStateLabel(model.capability.imageInput.state, zh)}</dd>
           </div>
         </dl>
-        <details>
-          <summary>{zh ? '检测记录（原文）' : 'Original check details'}</summary>
-          <pre>{[model.capability.reasoning.reason, model.capability.tools.reason, model.capability.imageInput.reason].map(redactUserFacingErrorDetails).join('\n')}</pre>
+        <details className="model-capability-evidence">
+          <summary>{zh ? '查看能力依据' : 'View capability evidence'}</summary>
+          <dl>
+            <div>
+              <dt>{zh ? '推理' : 'Reasoning'}</dt>
+              <dd>{capabilityEvidenceText(model.capability.reasoning, zh)}</dd>
+            </div>
+            <div>
+              <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
+              <dd>{capabilityEvidenceText(model.capability.tools, zh)}</dd>
+            </div>
+            <div>
+              <dt>{zh ? '图片输入' : 'Image input'}</dt>
+              <dd>{capabilityEvidenceText(model.capability.imageInput, zh)}</dd>
+            </div>
+          </dl>
+          <details>
+            <summary>{zh ? '检测记录（原文）' : 'Original check details'}</summary>
+            <pre>{[model.capability.reasoning.reason, model.capability.tools.reason, model.capability.imageInput.reason].map(redactUserFacingErrorDetails).join('\n')}</pre>
+          </details>
         </details>
-      </details>
+      </div>
     </article>
   );
 }

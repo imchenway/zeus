@@ -35,7 +35,6 @@ export interface DashboardSnapshot {
       parentHashes: string[];
     }>;
   };
-  graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
 
 export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';

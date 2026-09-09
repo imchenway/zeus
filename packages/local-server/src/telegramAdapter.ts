@@ -162,7 +162,7 @@ interface TelegramApiGetFileResponse {
   description?: string;
 }
 
-const supportedCommands = new Set(['start', 'projects', 'tasks', 'run', 'status', 'stop', 'continue', 'logs', 'diff', 'ask', 'confirm', 'cancel', 'commands', 'command', 'help']);
+const supportedCommands = new Set(['start', 'projects', 'tasks', 'run', 'status', 'stop', 'continue', 'logs', 'diff', 'confirm', 'cancel', 'commands', 'command', 'help']);
 const defaultTelegramMaxLength = 3900;
 const mediaGroupQuietWindowMs = 1_500;
 

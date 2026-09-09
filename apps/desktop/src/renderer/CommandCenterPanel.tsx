@@ -1285,8 +1285,6 @@ function projectConfigWithCommandPermissions(config: ProjectConfig, command: Com
   return {
     defaultModel: config.defaultModel,
     defaultWorkMode: config.defaultWorkMode,
-    defaultTaskPrompt: config.defaultTaskPrompt,
-    scan: config.scan,
     language: config.language,
     dependencies: config.dependencies,
     database: config.database,

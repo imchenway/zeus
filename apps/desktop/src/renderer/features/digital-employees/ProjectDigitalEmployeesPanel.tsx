@@ -6,6 +6,7 @@ import type { CodexConversationCapabilities } from '../../session/sessionTypes.j
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeAutomationRecord, DigitalEmployeeExecutionRecord, DigitalEmployeeRecord, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import {
@@ -57,9 +58,36 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const employeeDrafts = useRef(new Map<string, { draft: DigitalEmployeeDraft; revision: number }>());
   const configurationRevision = useRef(0);
   const executionRevision = useRef(0);
+  /** 模型目录独立更新，迟到的页面初始化不能覆盖它。 */
+  const capabilitiesRevision = useRef(0);
+
+  useEffect(() => {
+    /** 只刷新模型能力，保留员工及自动化编辑草稿。 */
+    const load = props.skillClient?.loadCodexConversationCapabilities;
+    if (!load) return;
+    let disposed = false;
+    const refresh = (): void => {
+      const revision = ++capabilitiesRevision.current;
+      void load(props.projectId)
+        .then((nextCapabilities) => {
+          if (!disposed && revision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
+        })
+        .catch(() => {
+          // 暂时断网时保留最近的模型，后续目录通知会再次读取。
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      disposed = true;
+      capabilitiesRevision.current += 1;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [props.projectId, props.skillClient]);
 
   const loadProjectConfiguration = useCallback(async () => {
     const revision = ++configurationRevision.current;
+    /** 与目录独立刷新共用递增标识，避免旧结果回写。 */
+    const modelRevision = ++capabilitiesRevision.current;
     executionRevision.current += 1;
     if (!props.client) {
       setLoadState('failed');
@@ -84,7 +112,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setAutomations(nextAutomations);
       setExecutions(nextExecutions);
       setCommands(nextCommands);
-      setCapabilities(nextCapabilities);
+      if (modelRevision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
       setTemplateId((current) => (current && nextTemplates.some((template) => template.id === current) ? current : (nextTemplates[0]?.id ?? '')));
       setSelectedEmployeeId((current) => {
         const selected = current ? nextEmployees.find((employee) => employee.id === current) : undefined;

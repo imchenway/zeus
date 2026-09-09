@@ -32,6 +32,16 @@ export interface TaskModelSetupContext {
   onComplete: (modelRef: string | null) => Promise<void>;
 }
 
+/** 新对话接入绑定原草稿；离开草稿后取消迟到结果。 */
+export interface ConversationModelSetupContext {
+  /** 仅为发起接入的项目启用模型。 */
+  projectId: string;
+  /** 草稿卸载或切换项目时失效，不保留待发送请求。 */
+  signal: AbortSignal;
+  /** 刷新草稿的可选模型，等待用户再次发送。 */
+  onComplete: (modelRef: string | null) => Promise<void>;
+}
+
 /** 按需接入与常驻设置共用同一流程，关闭只释放当前请求，不切换工作面。 */
 export function useModelSetup(input: {
   client: NativeConversationAppClient | null;
@@ -44,7 +54,7 @@ export function useModelSetup(input: {
   /** 接入只由用户操作打开，不在启动时打断工作。 */
   const [step, setStep] = useState<'choose' | 'custom' | 'codex' | 'config' | null>(null);
   /** 接入目标冻结到发起操作，迟到结果不能改变另一项任务。 */
-  const targetRef = useRef<TaskModelSetupContext | null>(null);
+  const targetRef = useRef<TaskModelSetupContext | ConversationModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
   const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
   /** 普通提示保留原文；失败保留脱敏原因，供统一错误出口展示摘要和详情。 */
@@ -81,7 +91,7 @@ export function useModelSetup(input: {
   }
 
   /** 打开时冻结目标，设置入口不继承任务接入的作用范围。 */
-  function open(next: 'choose' | 'codex' | 'custom' = 'choose', target: TaskModelSetupContext | null = null): void {
+  function open(next: 'choose' | 'codex' | 'custom' = 'choose', target: TaskModelSetupContext | ConversationModelSetupContext | null = null): void {
     invalidate();
     targetRef.current = target;
     setOperation('idle');
@@ -90,14 +100,39 @@ export function useModelSetup(input: {
     setStep(next);
   }
 
+  /** 任务按工作面身份校验，新对话按原草稿生命周期校验。 */
+  function isTargetCurrent(target: typeof targetRef.current): boolean {
+    if (!target) return true;
+    if ('signal' in target) return !target.signal.aborted;
+    return target.taskId === currentInputRef.current.taskContext?.taskId && target.projectId === currentInputRef.current.taskContext?.projectId;
+  }
+
   useEffect(() => {
-    if (!targetRef.current || (targetRef.current.taskId === input.taskContext?.taskId && targetRef.current.projectId === input.taskContext?.projectId)) return;
+    if (isTargetCurrent(targetRef.current)) return;
     invalidate();
     targetRef.current = null;
     setStep(null);
     setCustomVisited(false);
     setOperation('idle');
   }, [input.taskContext?.taskId, input.taskContext?.projectId]);
+
+  useEffect(() => {
+    /** 接入期间离开原草稿，立即关闭弹窗并停止等待登录。 */
+    const target = targetRef.current;
+    if (!target || !('signal' in target)) return;
+    /** 不等待下一次渲染才取消，避免旧结果写回新工作面。 */
+    const cancel = (): void => {
+      if (targetRef.current !== target) return;
+      invalidate();
+      targetRef.current = null;
+      setStep(null);
+      setCustomVisited(false);
+      setOperation('idle');
+    };
+    if (target.signal.aborted) cancel();
+    else target.signal.addEventListener('abort', cancel, { once: true });
+    return () => target.signal.removeEventListener('abort', cancel);
+  }, [step]);
 
   useEffect(() => {
     if (input.taskContext && input.requestedTaskStep) open(input.requestedTaskStep, input.taskContext);
@@ -108,7 +143,8 @@ export function useModelSetup(input: {
     const openFromError = (event: Event): void => {
       /** 错误出口只允许选择已有接入步骤。 */
       const requested = (event as CustomEvent).detail;
-      open(requested === 'codex' ? 'codex' : 'choose', currentInputRef.current.taskContext ?? null);
+      if (requested?.conversationContext) open('choose', requested.conversationContext);
+      else open(requested === 'codex' ? 'codex' : 'choose', currentInputRef.current.taskContext ?? null);
     };
     window.addEventListener(modelSetupRequestedEvent, openFromError);
     return () => {
@@ -128,7 +164,7 @@ export function useModelSetup(input: {
     /** 保存期间只允许当前目标接收完成通知。 */
     const target = targetRef.current;
     const request = ++requestRef.current;
-    const isCurrent = (): boolean => requestRef.current === request && (!target || (currentInputRef.current.taskContext?.taskId === target.taskId && currentInputRef.current.taskContext?.projectId === target.projectId));
+    const isCurrent = (): boolean => requestRef.current === request && isTargetCurrent(target);
     setOperation('saving');
     setError(null);
     try {
@@ -183,7 +219,7 @@ export function useModelSetup(input: {
     targetRef.current = null;
     setStep(null);
     setCustomVisited(false);
-    target?.onCancel();
+    if (target && 'taskId' in target) target.onCancel();
   }
 
   /** 返回首屏保留供应商编辑器普通字段，编辑器自身负责清除密钥。 */
@@ -340,7 +376,8 @@ export function useModelSetup(input: {
     step,
     setStep,
     open,
-    taskTarget: targetRef.current,
+    taskTarget: targetRef.current && 'taskId' in targetRef.current ? targetRef.current : null,
+    conversationTarget: targetRef.current && 'signal' in targetRef.current ? targetRef.current : null,
     operation,
     error,
     account,
@@ -392,14 +429,14 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
                 : 'Account status not checked'}
         </span>
       </header>
-      <p>{zh ? '使用 ChatGPT 账号授权 Codex。Zeus 的登录独立于其他应用；也可以在下方配置自定义供应商。' : 'Authorize Codex with your ChatGPT account. Zeus signs in independently; custom providers can also be configured below.'}</p>
+      <p>{zh ? '通过 ChatGPT 账号登录，仅用于 Zeus。第三方模型服务在下方管理。' : 'Sign in with ChatGPT for Zeus. Manage third-party model services below.'}</p>
       <div className="model-setup-actions">
-        <Button onClick={() => controller.open('codex')}>{zh ? '使用 Codex 订阅登录' : 'Sign in with Codex subscription'}</Button>
+        <Button onClick={() => controller.open('codex')}>{signedIn ? (zh ? '重新登录' : 'Sign in again') : zh ? '登录 Codex' : 'Sign in to Codex'}</Button>
         <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking'} onClick={() => void controller.checkAccount()}>
           {zh ? '检查状态' : 'Check status'}
         </Button>
         <Button variant="secondary" onClick={() => controller.open('choose')}>
-          {zh ? '重新选择接入方式' : 'Choose connection method'}
+          {zh ? '接入设置' : 'Connection setup'}
         </Button>
       </div>
       {!controller.step && controller.error ? <p role="status">{typeof controller.error === 'string' ? controller.error : <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />}</p> : null}
@@ -441,9 +478,13 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                 ? zh
                   ? '接入后进入推送确认，检查设置后再开始。'
                   : 'Continue to push confirmation after setup. Review your settings before starting.'
-                : zh
-                  ? '选择模型接入方式，或使用已有供应商。'
-                  : 'Choose how to connect, or select an existing provider.'}
+                : c.conversationTarget
+                  ? zh
+                    ? '接入后返回新对话，已输入的内容会保留，确认后再发送。'
+                    : 'Return to your new conversation after setup. Your draft is preserved for you to review and send.'
+                  : zh
+                    ? '选择模型接入方式，或使用已有供应商。'
+                    : 'Choose how to connect, or select an existing provider.'}
             </p>
             {c.taskTarget ? <small className="model-setup-task-context">{c.taskTarget.label}</small> : null}
           </div>
@@ -477,7 +518,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                 client={c.input.client}
                 active={c.step === 'custom'}
                 onBusyChange={c.setEditorBusy}
-                completionScope={c.taskTarget ? 'project' : 'new_projects'}
+                completionScope={c.conversationTarget ? 'conversation' : c.taskTarget ? 'project' : 'new_projects'}
                 onComplete={(reference) => c.finish(reference)}
               />
             ) : null}

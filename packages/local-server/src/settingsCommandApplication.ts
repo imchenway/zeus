@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
 import { createCommandValidation } from './commandApplicationPrimitives.js';
+import { NetworkProxySettingsError } from '@zeus/shared';
 
 export const settingsCommandTypes = {
   projectDatabaseSecretPut: 'settings.project_database_secret.put',
@@ -10,10 +11,8 @@ export const settingsCommandTypes = {
   projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
-  projectionCacheClear: 'settings.projection_cache.clear',
   settingsImport: 'settings.import',
   dataImport: 'settings.business_data.import',
-  codeMapSettingsPut: 'settings.code_map.put',
 } as const;
 
 export type SettingsCommandType = (typeof settingsCommandTypes)[keyof typeof settingsCommandTypes];
@@ -53,21 +52,11 @@ interface ReplayedExternal {
 }
 
 export const settingsCommandRoutePolicy = {
-  coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/projects/:projectId/model-service-tier-preference', 'PUT /api/settings/app-shell', 'PUT /api/code-map/settings'],
-  externalOperations: [
-    'PUT /api/projects/:projectId/database/secret',
-    'DELETE /api/projects/:projectId/database/secret',
-    'PUT /api/runtime/settings',
-    'POST /api/settings/code-graph-cache/clear',
-    'POST /api/settings/cache/clear',
-    'POST /api/settings/import',
-    'POST /api/data/import',
-  ],
+  coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/projects/:projectId/model-service-tier-preference', 'PUT /api/settings/app-shell'],
+  externalOperations: ['PUT /api/projects/:projectId/database/secret', 'DELETE /api/projects/:projectId/database/secret', 'PUT /api/runtime/settings', 'POST /api/settings/import', 'POST /api/data/import'],
   importBodyBudgets: { settingsBytes: 1024 * 1024, businessDataBytes: 32 * 1024 * 1024 },
   runtimeRetentionFact: 'runtime.settings.logRetentionDays',
   runtimeRetentionDerivedOperation: 'rebuildable_runtime_log_retention',
-  projectionCacheFact: 'app.shell.settings.lastCacheClearAt',
-  projectionCacheDerivedOperation: 'rebuildable_projection_database_cache',
   secretPersistence: 'hash-only-command-envelope-and-non-secret-result-artifact',
   postWriteFailure: 'outcome_unknown_after_write',
   automaticRetryAfterUnknown: false,
@@ -319,6 +308,8 @@ export function settingsCommandInputSha256(input: unknown): string {
 }
 
 export function settingsCommandHttpError(error: unknown, redactSensitiveText: (value: string) => { text: string }): { statusCode: number; body: Record<string, unknown> } {
+  // 地址校验失败属于输入错误，不能记作保存服务异常。
+  if (error instanceof NetworkProxySettingsError) return { statusCode: 400, body: { error: error.code, message: error.message } };
   if (error instanceof SettingsCommandApplicationError) {
     return { statusCode: error.statusCode, body: { error: error.code, message: boundedErrorMessage(error.message, redactSensitiveText), recoveryRequired: error.recoveryRequired } };
   }

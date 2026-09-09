@@ -1,3 +1,4 @@
+import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -16,12 +17,10 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
+import { ListChecksIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
 import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
-import { GraphIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/Graph';
-import { TerminalWindowIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
+import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../../session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
@@ -32,9 +31,8 @@ import { ModalPortal } from '../../ui/ModalPortal.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
-import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type CodeMapSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
+import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type AppShellSettings, type ProjectConfig, type ProjectRecord, type RuntimeSettings } from '../../apiClient.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, type GenericShellCommandRisk } from './workspaceFormatters.js';
-import { handleSourceListKeyboardNavigation } from '../graph/GraphCanvas.js';
 import {
   controlBusyProps,
   defaultProjectNameFromLocalPath,
@@ -293,6 +291,7 @@ export function ProjectRenameDialog(props: {
   return surface;
 }
 
+/** 项目主导航统一图标尺寸与字重，并让图标和文案作为整体居中。 */
 export function ProjectWorkspaceModeToolbar(props: {
   project: ProjectRecord;
   section: ProjectWorkspaceSection;
@@ -300,27 +299,31 @@ export function ProjectWorkspaceModeToolbar(props: {
   language: AppLanguage;
   onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
 }) {
+  /** 导航文案跟随当前应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
     git: 'Git',
     source: zh ? '源码' : 'Source',
-    graph: zh ? '图谱' : 'Graph',
     commands: zh ? '命令' : 'Commands',
   };
+  /** 同一套线性图标保持一致的视觉重量。 */
   const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
-    tasks: <WorkspaceTasksIcon aria-hidden="true" />,
-    git: <WorkspaceGitIcon aria-hidden="true" />,
-    source: <WorkspaceSourceIcon aria-hidden="true" />,
-    graph: <WorkspaceGraphIcon aria-hidden="true" />,
-    commands: <WorkspaceCommandsIcon aria-hidden="true" />,
+    tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
+    git: <WorkspaceGitIcon size={18} weight="regular" aria-hidden="true" />,
+    source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
+    commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
   };
   return (
     <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
+          /** 当前工作区与源码子模式共同决定选中态。 */
           const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          /** 当前入口文案。 */
           const label = labels[item.id];
+          /** 读屏和提示保留快捷键说明。 */
           const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
           return (
             <button
@@ -334,7 +337,7 @@ export function ProjectWorkspaceModeToolbar(props: {
               onClick={() => props.onOpen(item.section, item.codeMode)}
             >
               <span aria-hidden="true">{icons[item.id]}</span>
-              {label}
+              <span className="project-workspace-mode-label">{label}</span>
             </button>
           );
         })}
@@ -891,9 +894,9 @@ export function SidebarNav(props: {
   );
 }
 
-/** 更新提示直接使用真实阶段，手动安装与下载失败分别显示。 */
+/** 侧栏只展示可用更新和处理进度；失败详情留在更新窗口，避免持续打扰工作。 */
 export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIndicatorState | null; language: AppLanguage; onOpen: () => void }) {
-  if (!props.state || props.state.phase === 'idle') return null;
+  if (!props.state || props.state.phase === 'idle' || props.state.phase === 'failed') return null;
   const zh = props.language === 'zh-CN';
   const version = props.state.latestVersion ?? props.state.currentVersion;
   const progress = props.state.progress === undefined ? null : `${Math.min(100, Math.floor(Math.max(0, props.state.progress) * 100))}%`;
@@ -902,30 +905,24 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
       ? zh
         ? `Zeus ${version} 等待重启`
         : `Zeus ${version} ready to restart`
-      : props.state.phase === 'failed'
+      : props.state.phase === 'manual'
         ? zh
-          ? `Zeus ${version} · ${props.state.failure?.title ?? '更新未完成'}`
-          : `Zeus ${version} · ${props.state.failure?.title ?? 'Update incomplete'}`
-        : props.state.phase === 'manual'
+          ? `Zeus ${version} · 下载新版`
+          : `Zeus ${version} · Download new version`
+        : props.state.phase === 'retrying'
           ? zh
-            ? `Zeus ${version} · 下载新版`
-            : `Zeus ${version} · Download new version`
-          : props.state.phase === 'retrying'
+            ? `Zeus ${version} 等待重试`
+            : `Zeus ${version} waiting to retry`
+          : props.state.phase === 'preparing'
             ? zh
-              ? `Zeus ${version} 等待重试`
-              : `Zeus ${version} waiting to retry`
-            : props.state.phase === 'preparing'
-              ? zh
-                ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
-                : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
-              : zh
-                ? `Zeus ${version} 可用`
-                : `Zeus ${version} available`;
+              ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
+              : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
+            : zh
+              ? `Zeus ${version} 可用`
+              : `Zeus ${version} available`;
   const icon =
     props.state.phase === 'ready' ? (
       <CheckCircle aria-hidden="true" weight="fill" />
-    ) : props.state.phase === 'failed' ? (
-      <WarningCircle aria-hidden="true" weight="fill" />
     ) : props.state.phase === 'preparing' || props.state.phase === 'retrying' ? (
       <SpinnerGap className="automatic-update-indicator-spinner" aria-hidden="true" />
     ) : (
@@ -1041,15 +1038,11 @@ export function formatRuntimeTerminalEnv(env: RuntimeSettings['terminalEnv']): s
 export interface ProjectConfigFormState {
   defaultModel: string;
   defaultWorkMode: ProjectConfig['defaultWorkMode'];
-  defaultTaskPrompt: string;
-  scanIgnoreDirectories: string;
-  indexScope: ProjectConfig['scan']['indexScope'];
   languagePrimary: string;
   languageAdditional: string;
   packageManagers: string;
   manifestPaths: string;
   databaseConnectionName: string;
-  databaseSchemaPaths: string;
   telegramAlias: string;
   allowShell: boolean;
   allowGitWrite: boolean;
@@ -1063,11 +1056,6 @@ export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectI
     serviceTierPreferences: config?.serviceTierPreferences ?? [],
     defaultModel: config?.defaultModel ?? null,
     defaultWorkMode: config?.defaultWorkMode ?? 'plan',
-    defaultTaskPrompt: config?.defaultTaskPrompt ?? '',
-    scan: {
-      ignoreDirectories: config?.scan?.ignoreDirectories ?? ['node_modules', 'dist', '.tmp', 'coverage'],
-      indexScope: config?.scan?.indexScope ?? 'project',
-    },
     language: {
       primary: config?.language?.primary ?? 'typescript',
       additional: config?.language?.additional ?? [],
@@ -1082,7 +1070,6 @@ export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectI
     },
     database: {
       connectionName: config?.database?.connectionName ?? null,
-      schemaPaths: config?.database?.schemaPaths ?? [],
     },
     telegram: {
       alias: config?.telegram?.alias ?? null,
@@ -1099,30 +1086,21 @@ export function toProjectConfigForm(config?: ProjectConfig): ProjectConfigFormSt
     projectId: '',
     defaultModel: null,
     defaultWorkMode: 'plan',
-    defaultTaskPrompt: '',
-    scan: {
-      ignoreDirectories: ['node_modules', 'dist', '.tmp', 'coverage'],
-      indexScope: 'project',
-    },
     language: { primary: 'typescript', additional: [] },
     dependencies: { packageManagers: [], manifestPaths: [] },
     vcs: { isGitRepository: false, gitRoot: null },
-    database: { connectionName: null, schemaPaths: [] },
+    database: { connectionName: null },
     telegram: { alias: null },
     security: { allowShell: false, allowGitWrite: false },
   };
   return {
     defaultModel: normalized.defaultModel ?? '',
     defaultWorkMode: normalized.defaultWorkMode,
-    defaultTaskPrompt: normalized.defaultTaskPrompt,
-    scanIgnoreDirectories: normalized.scan.ignoreDirectories.join(', '),
-    indexScope: normalized.scan.indexScope,
     languagePrimary: normalized.language.primary,
     languageAdditional: normalized.language.additional.join(', '),
     packageManagers: normalized.dependencies.packageManagers.join(', '),
     manifestPaths: normalized.dependencies.manifestPaths.join(', '),
     databaseConnectionName: redactDatabaseConnectionName(normalized.database.connectionName),
-    databaseSchemaPaths: normalized.database.schemaPaths.join(', '),
     telegramAlias: normalized.telegram.alias ?? '',
     allowShell: normalized.security.allowShell,
     allowGitWrite: normalized.security.allowGitWrite,
@@ -1168,12 +1146,7 @@ export function formatProjectDependencies(form: ProjectConfigFormState, copy: Re
 
 export function formatProjectDatabase(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
   const connectionName = redactDatabaseConnectionName(form.databaseConnectionName) || copy.unsetConnectionName;
-  const schemaPaths = parseProjectConfigList(form.databaseSchemaPaths).join(', ') || copy.unsetSchemaPaths;
-  return `${connectionName} · ${schemaPaths}`;
-}
-
-export function formatProjectDatabaseHelp(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
-  return isExternalDatabaseUri(form.databaseConnectionName) ? copy.externalDatabaseHelp : copy.localSchemaHelp;
+  return connectionName;
 }
 
 export function isExternalDatabaseUri(value: string | null | undefined): boolean {
@@ -1233,29 +1206,6 @@ export function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): R
     adapterCliPaths: settings?.adapterCliPaths ?? defaultSettings.adapterCliPaths,
     terminalEnv: settings?.terminalEnv ?? defaultSettings.terminalEnv,
     shell: { ...defaultSettings.shell, ...settings?.shell },
-  };
-}
-
-export function normalizeCodeMapSettings(settings?: Partial<CodeMapSettings>): CodeMapSettings {
-  const defaultSettings: CodeMapSettings = {
-    defaultScanScope: 'project',
-    defaultIgnoreDirectories: ['node_modules', 'dist', '.tmp', 'coverage'],
-    maxCallChainDepth: 3,
-    showLowConfidenceEdges: false,
-    layoutAlgorithm: 'hierarchical',
-    graphCacheStrategy: 'sqlite',
-    tableRelationInference: 'foreign_key_and_name',
-    aiSummaryEnabled: false,
-    incrementalScanEnabled: true,
-    performanceMonitoringEnabled: false,
-    moduleFlowManualNotes: '',
-  };
-  return {
-    ...defaultSettings,
-    ...settings,
-    defaultIgnoreDirectories: Array.isArray(settings?.defaultIgnoreDirectories) ? settings.defaultIgnoreDirectories : defaultSettings.defaultIgnoreDirectories,
-    maxCallChainDepth: typeof settings?.maxCallChainDepth === 'number' ? settings.maxCallChainDepth : defaultSettings.maxCallChainDepth,
-    moduleFlowManualNotes: typeof settings?.moduleFlowManualNotes === 'string' ? settings.moduleFlowManualNotes : defaultSettings.moduleFlowManualNotes,
   };
 }
 

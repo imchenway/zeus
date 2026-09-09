@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -27,8 +27,6 @@ import { TaskGitDiffTable } from '../task/TaskGitDiffTable.js';
 import type { TaskGitFileDiff } from './sessionTypes.js';
 
 type ChangeAction = 'undo' | 'reapply';
-/** 沿用审核页的差异渲染上限，避免超大补丁阻塞界面。 */
-const maximumRenderedDiffLines = 2_000;
 
 /** 文件摘要始终允许进入审阅；正文缺失时由既有读取入口补齐。 */
 export function TurnChangeCard(props: {
@@ -152,6 +150,12 @@ export function TurnDiffWorkspace(props: {
   comments?: ConversationCodeComment[];
   onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
+  /** 事件只读取最新回调，父会话输入不让可见代码行重新渲染。 */
+  const callbacksRef = useRef(props);
+  callbacksRef.current = props;
+  /** 权限变化仍会更新行号操作入口。 */
+  const canComment = Boolean(props.onCommentsChange);
+  const canOpen = Boolean(props.onOpenFile);
   const zh = props.language === 'zh-CN';
   const [activeFileId, setActiveFileId] = useState(props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
   const titleRef = useRef<HTMLSpanElement | null>(null);
@@ -174,9 +178,11 @@ export function TurnDiffWorkspace(props: {
   /** 普通文件与没有读取能力的页面始终展示原始差异。 */
   const renderedMarkdown = markdownFile && Boolean(props.onLoadPreview) && viewMode === 'preview';
   /** 将本轮补丁转换为交付页共用的双栏数据，避免重复维护布局与高亮。 */
-  const diff = useMemo(() => turnFileDiff(activeFile), [activeFile]);
+  const diff = useMemo(() => (renderedMarkdown ? null : turnFileDiff(activeFile)), [activeFile, renderedMarkdown]);
   const activePath = activeFile ? commentPath(activeFile) : null;
-  const comments = (props.comments ?? []).filter((comment) => comment.position.path === activePath);
+  const comments = useMemo(() => (props.comments ?? []).filter((comment) => comment.position.path === activePath), [props.comments, activePath]);
+  /** 只为实际评论和当前草稿登记位置，不遍历代码行。 */
+  const annotationLines = useMemo(() => [...comments.map((comment) => comment.position), ...(draftPosition ? [draftPosition] : [])], [comments, draftPosition]);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -198,16 +204,20 @@ export function TurnDiffWorkspace(props: {
     setRangeStart(null);
   }, [activeFile?.id]);
 
-  function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
-    if (!props.onCommentsChange) return;
-    const diffHunk = activeFile ? nearbyDiffHunk(activeFile.unifiedDiff, position) : undefined;
-    const next = existingId
-      ? (props.comments ?? []).map((comment) => (comment.id === existingId ? { ...comment, body } : comment))
-      : [...(props.comments ?? []), { id: crypto.randomUUID(), body, position, ...(diffHunk ? { diffHunk } : {}) }];
-    props.onCommentsChange(next);
-    setDraftPosition(null);
-    setEditingCommentId(null);
-  }
+  /** 评论保存使用最新草稿集合，避免稳定回调保留过期数据。 */
+  const saveComment = useCallback(
+    (position: ConversationCodeCommentPosition, body: string, existingId?: string): void => {
+      if (!callbacksRef.current.onCommentsChange) return;
+      const diffHunk = activeFile ? nearbyDiffHunk(activeFile.unifiedDiff, position) : undefined;
+      const next = existingId
+        ? (callbacksRef.current.comments ?? []).map((comment) => (comment.id === existingId ? { ...comment, body } : comment))
+        : [...(callbacksRef.current.comments ?? []), { id: crypto.randomUUID(), body, position, ...(diffHunk ? { diffHunk } : {}) }];
+      callbacksRef.current.onCommentsChange(next);
+      setDraftPosition(null);
+      setEditingCommentId(null);
+    },
+    [activeFile],
+  );
 
   async function operate(): Promise<void> {
     if (!action || !props.onOperate || busy) return;
@@ -223,95 +233,102 @@ export function TurnDiffWorkspace(props: {
     }
   }
 
-  async function openFile(file: TurnChangeFile, line?: number): Promise<void> {
-    if (!props.onOpenFile) return;
+  /** 打开源码只在点击时读取最新入口。 */
+  const openFile = useCallback(async (file: TurnChangeFile, line?: number): Promise<void> => {
+    if (!callbacksRef.current.onOpenFile) return;
     setError(null);
     try {
-      await props.onOpenFile(file, line);
+      await callbacksRef.current.onOpenFile(file, line);
     } catch (openError) {
       setError(openError);
     }
-  }
+  }, []);
 
   /** 评论始终使用所在侧的行号；只有当前工作区存在的一侧允许打开源码。 */
-  function renderLineNumber(line: number, side: ConversationCodeCommentSide): ReactNode {
-    /** 撤销后工作区恢复旧文件，其余稳定状态按新文件定位。 */
-    const currentSide = changeSet.state === 'undone' || changeSet.state === 'reapplying' ? 'left' : 'right';
-    return (
-      <>
-        {activePath && props.onCommentsChange ? (
-          <button
-            type="button"
-            className="session-code-comment-add"
-            aria-label={zh ? `评论${side === 'left' ? '旧' : '新'}文件第 ${line} 行` : `Comment on ${side === 'left' ? 'old' : 'new'} line ${line}`}
-            onClick={(event) => {
-              /** 跨侧点击不延续选择，避免混用旧文件与新文件行号。 */
-              const useRange = event.shiftKey && rangeStart?.side === side;
-              /** 反向选择仍按递增顺序保存起点。 */
-              const startLine = useRange ? Math.min(rangeStart.line, line) : line;
-              /** 评论挂在选择范围的末行。 */
-              const endLine = useRange ? Math.max(rangeStart.line, line) : line;
-              setRangeStart({ line, side });
-              setEditingCommentId(null);
-              setDraftPosition({ path: activePath, line: endLine, side, ...(startLine !== endLine ? { startLine, startSide: side } : {}) });
-            }}
-          >
-            +
-          </button>
-        ) : null}
-        {side === currentSide && activeFile && props.onOpenFile ? (
-          <button type="button" className="session-diff-line-number" aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`} onClick={() => void openFile(activeFile, line)}>
-            {line}
-          </button>
-        ) : (
-          <span className="session-diff-line-number">{line}</span>
-        )}
-      </>
-    );
-  }
+  const renderLineNumber = useCallback(
+    (line: number, side: ConversationCodeCommentSide): ReactNode => {
+      /** 撤销后工作区恢复旧文件，其余稳定状态按新文件定位。 */
+      const currentSide = changeSet.state === 'undone' || changeSet.state === 'reapplying' ? 'left' : 'right';
+      return (
+        <>
+          {activePath && canComment ? (
+            <button
+              type="button"
+              className="session-code-comment-add"
+              aria-label={zh ? `评论${side === 'left' ? '旧' : '新'}文件第 ${line} 行` : `Comment on ${side === 'left' ? 'old' : 'new'} line ${line}`}
+              onClick={(event) => {
+                /** 跨侧点击不延续选择，避免混用旧文件与新文件行号。 */
+                const useRange = event.shiftKey && rangeStart?.side === side;
+                /** 反向选择仍按递增顺序保存起点。 */
+                const startLine = useRange ? Math.min(rangeStart.line, line) : line;
+                /** 评论挂在选择范围的末行。 */
+                const endLine = useRange ? Math.max(rangeStart.line, line) : line;
+                setRangeStart({ line, side });
+                setEditingCommentId(null);
+                setDraftPosition({ path: activePath, line: endLine, side, ...(startLine !== endLine ? { startLine, startSide: side } : {}) });
+              }}
+            >
+              +
+            </button>
+          ) : null}
+          {side === currentSide && activeFile && canOpen ? (
+            <button type="button" className="session-diff-line-number" aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`} onClick={() => void openFile(activeFile, line)}>
+              {line}
+            </button>
+          ) : (
+            <span className="session-diff-line-number">{line}</span>
+          )}
+        </>
+      );
+    },
+    [changeSet.state, activePath, canComment, canOpen, rangeStart, activeFile, zh, openFile],
+  );
 
   /** 将已保存评论和编辑草稿放在各自的旧／新文件行下，保留原有评论操作。 */
-  function renderLineComments(line: number, side: ConversationCodeCommentSide): ReactNode {
-    /** 同号的左右两行不能共享评论。 */
-    const lineComments = comments.filter((comment) => comment.position.line === line && comment.position.side === side);
-    /** 草稿只属于当前路径下的一个行位置。 */
-    const draftHere = draftPosition?.line === line && draftPosition.side === side && draftPosition.path === activePath;
-    if (!lineComments.length && !draftHere) return null;
-    return (
-      <>
-        {lineComments.map((comment) =>
-          editingCommentId === comment.id ? (
-            <CodeCommentPanel
-              key={comment.id}
-              language={props.language}
-              position={comment.position}
-              comment={comment}
-              onCancel={() => setEditingCommentId(null)}
-              onSave={(body) => saveComment(comment.position, body, comment.id)}
-              onDelete={() => {
-                props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
-                setEditingCommentId(null);
-              }}
-            />
-          ) : (
-            <span key={comment.id} className="session-saved-code-comment">
-              <strong>{zh ? '本地评论' : 'Local comment'}</strong>
-              <span>{comment.body}</span>
-              <span className="session-saved-code-comment-actions">
-                <button type="button" onClick={() => setEditingCommentId(comment.id)}>
-                  {zh ? '编辑' : 'Edit'}
-                </button>
-                <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
-                  {zh ? '删除' : 'Delete'}
-                </button>
+  const renderLineComments = useCallback(
+    (line: number, side: ConversationCodeCommentSide): ReactNode => {
+      /** 同号的左右两行不能共享评论。 */
+      const lineComments = comments.filter((comment) => comment.position.line === line && comment.position.side === side);
+      /** 草稿只属于当前路径下的一个行位置。 */
+      const draftHere = draftPosition?.line === line && draftPosition.side === side && draftPosition.path === activePath;
+      if (!lineComments.length && !draftHere) return null;
+      return (
+        <>
+          {lineComments.map((comment) =>
+            editingCommentId === comment.id ? (
+              <CodeCommentPanel
+                key={comment.id}
+                language={props.language}
+                position={comment.position}
+                comment={comment}
+                onCancel={() => setEditingCommentId(null)}
+                onSave={(body) => saveComment(comment.position, body, comment.id)}
+                onDelete={() => {
+                  callbacksRef.current.onCommentsChange?.((callbacksRef.current.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                  setEditingCommentId(null);
+                }}
+              />
+            ) : (
+              <span key={comment.id} className="session-saved-code-comment">
+                <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+                <span>{comment.body}</span>
+                <span className="session-saved-code-comment-actions">
+                  <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                    {zh ? '编辑' : 'Edit'}
+                  </button>
+                  <button type="button" onClick={() => callbacksRef.current.onCommentsChange?.((callbacksRef.current.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                    {zh ? '删除' : 'Delete'}
+                  </button>
+                </span>
               </span>
-            </span>
-          ),
-        )}
-        {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
-      </>
-    );
-  }
+            ),
+          )}
+          {draftHere && draftPosition ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+        </>
+      );
+    },
+    [comments, draftPosition, activePath, editingCommentId, props.language, zh, saveComment],
+  );
 
   return (
     <section className="session-context-workspace session-turn-diff-workspace" aria-label={zh ? '变更审核' : 'Change review'}>
@@ -405,11 +422,6 @@ export function TurnDiffWorkspace(props: {
                 )
               ) : (
                 <>
-                  {diff.truncated ? (
-                    <p className="session-turn-diff-truncated" role="status">
-                      {zh ? `差异过大，仅显示前 ${maximumRenderedDiffLines} 行（共 ${diff.totalLines} 行）。` : `Diff is too large; showing the first ${maximumRenderedDiffLines} of ${diff.totalLines} lines.`}
-                    </p>
-                  ) : null}
                   {changeSet.contentProjection === 'summary' ? (
                     <p className="session-turn-diff-empty" role="status">
                       {props.loading
@@ -439,7 +451,15 @@ export function TurnDiffWorkspace(props: {
                         <span title={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span>
                         <span title={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span>
                       </div>
-                      <TaskGitDiffTable diff={diff.fileDiff} hasSelection zh={zh} renderLineNumber={renderLineNumber} renderLineComments={renderLineComments} />
+                      <TaskGitDiffTable
+                        diff={diff}
+                        hasSelection
+                        zh={zh}
+                        annotationLines={annotationLines}
+                        focusAnnotation={draftPosition ?? comments.find((comment) => comment.id === editingCommentId)?.position}
+                        renderLineNumber={renderLineNumber}
+                        renderLineComments={renderLineComments}
+                      />
                     </div>
                   )}
                 </>
@@ -587,9 +607,9 @@ function localizedChangeType(file: TurnChangeFile, language: SessionUiLanguage):
   return labels[file.changeType];
 }
 
-/** 解析本轮补丁的原始行号并沿用渲染上限，输出交付页已有的差异数据结构。 */
-function turnFileDiff(file: TurnChangeFile | null): { fileDiff: TaskGitFileDiff | null; totalLines: number; truncated: boolean } {
-  if (!file) return { fileDiff: null, totalLines: 0, truncated: false };
+/** 解析完整补丁的原始行号；可视区域渲染保留全部差异的访问能力。 */
+function turnFileDiff(file: TurnChangeFile | null): TaskGitFileDiff | null {
+  if (!file) return null;
   /** 末尾换行不是额外的代码行；只规范化传输中的换行符。 */
   const rawLines = file.unifiedDiff.replace(/\r\n?/gu, '\n').split('\n');
   if (rawLines.at(-1) === '') rawLines.pop();
@@ -608,7 +628,7 @@ function turnFileDiff(file: TurnChangeFile | null): { fileDiff: TaskGitFileDiff 
   let oldLine = 0;
   /** 右侧行号只随上下文和新增行前进。 */
   let newLine = 0;
-  for (const raw of rawLines.slice(0, maximumRenderedDiffLines)) {
+  for (const raw of rawLines) {
     if (raw.startsWith('diff ') || raw.startsWith('index ')) {
       hunk = null;
       continue;
@@ -635,5 +655,5 @@ function turnFileDiff(file: TurnChangeFile | null): { fileDiff: TaskGitFileDiff 
       hunk.lines.push({ type: 'metadata', content: raw, oldLineNumber: null, newLineNumber: null });
     }
   }
-  return { fileDiff, totalLines: rawLines.length, truncated: rawLines.length > maximumRenderedDiffLines };
+  return fileDiff;
 }

@@ -1,8 +1,10 @@
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { type ClipboardEventHandler, type CompositionEventHandler, type FocusEventHandler, type KeyboardEvent, type RefObject, type UIEventHandler, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ClipboardEventHandler, type CompositionEventHandler, type FocusEventHandler, type KeyboardEvent, type RefObject, type UIEventHandler, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
 import type { PluginSkillReference } from './sessionTypes.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
+import { autosizeTextarea } from './textareaAutosize.js';
 
 type StructuredTokenKind = 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
 
@@ -66,7 +68,7 @@ export interface StructuredComposerInputProps {
   onPlanMode(): void;
   onGoalMode(): void;
   onOpenComputerSettings?(): void;
-  onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void;
+  onKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onCompositionStart?: CompositionEventHandler<HTMLTextAreaElement>;
   onCompositionEnd?: CompositionEventHandler<HTMLTextAreaElement>;
@@ -89,6 +91,25 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   /** 固定显示层的可视区域，只同步内部滚动，避免文字移出输入框。 */
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const composingRef = useRef(false);
+  /** 只在原生粘贴已写入草稿后切换展示，保留浏览器的选区替换及撤销记录。 */
+  const previewAfterPasteRef = useRef(false);
+  /** 预览绑定原文，发送清空或外部修改草稿时自动退出。 */
+  const [previewValue, setPreviewValue] = useState<string | null>(null);
+  /** 预览成为可聚焦的阅读区域，避免焦点留在隐藏的原文输入框。 */
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  /** 预览只改变展示，不参与结构化标签或发送正文的计算。 */
+  const showingPreview = Boolean(props.value.trim()) && previewValue === props.value;
+
+  useLayoutEffect(() => {
+    if (showingPreview) previewRef.current?.focus({ preventScroll: true });
+    else if (props.textareaRef.current) autosizeTextarea(props.textareaRef.current);
+  }, [showingPreview, props.textareaRef]);
+
+  /** 切换回原文时恢复原生输入框及其已有选区，不重建编辑节点。 */
+  function editMarkdownSource(): void {
+    setPreviewValue(null);
+    requestAnimationFrame(() => props.textareaRef.current?.focus({ preventScroll: true }));
+  }
 
   useEffect(() => {
     let active = true;
@@ -150,6 +171,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   useEffect(() => {
     setTokens((current) => current.filter((token) => props.value.slice(token.start, token.end) === token.label));
     if (!props.value) setTrigger(null);
+    if (!props.value) setPreviewValue(null);
   }, [props.value]);
 
   useEffect(() => {
@@ -342,7 +364,47 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const activeDescendant = trigger && options[activeOption] ? `${listboxId}-${safeDomId(options[activeOption]!.id)}` : undefined;
   return (
     <div className="structured-composer-root">
-      <div className="structured-composer-editor">
+      {props.value.trim() ? (
+        <div className="structured-composer-format-actions">
+          <button
+            type="button"
+            disabled={props.disabled}
+            aria-pressed={showingPreview}
+            onClick={() => {
+              if (showingPreview) editMarkdownSource();
+              else {
+                setTrigger(null);
+                setPreviewValue(props.value);
+              }
+            }}
+          >
+            {showingPreview ? (zh ? '编辑原文' : 'Edit source') : zh ? '预览格式' : 'Preview formatting'}
+          </button>
+        </div>
+      ) : null}
+      {showingPreview ? (
+        <div
+          ref={previewRef}
+          className="structured-composer-preview"
+          role="region"
+          tabIndex={0}
+          aria-label={zh ? '消息格式预览，按 Escape 编辑原文' : 'Message preview, press Escape to edit source'}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || props.disabled) return;
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              editMarkdownSource();
+            } else if (event.key === 'Enter' && !event.shiftKey) {
+              // 预览仍使用调用方的发送条件，避免绕过忙碌、只读或输入法保护。
+              props.onKeyDown(event);
+            }
+          }}
+        >
+          <ConversationMarkdown text={props.value} streamId={`composer:${listboxId}`} phase="final" language={props.language} />
+        </div>
+      ) : null}
+      <div className="structured-composer-editor" hidden={showingPreview}>
         <div ref={mirrorRef} className="structured-composer-mirror" aria-hidden="true">
           {renderMirror(props.value, tokens)}
         </div>
@@ -359,6 +421,11 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           value={props.value}
           disabled={props.disabled}
           onChange={(event) => updateValue(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onInput={(event) => {
+            // 即使选中全文后粘贴相同文本，也能在原生插入结束后进入预览。
+            if (previewAfterPasteRef.current) setPreviewValue(event.currentTarget.value);
+            previewAfterPasteRef.current = false;
+          }}
           onClick={(event) => updateTrigger(event.currentTarget.selectionStart)}
           onKeyUp={(event) => {
             if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) updateTrigger(event.currentTarget.selectionStart);
@@ -375,7 +442,12 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
             requestAnimationFrame(() => updateTrigger(event.currentTarget.selectionStart));
           }}
           onBlur={props.onBlur}
-          onPaste={props.onPaste}
+          onPaste={(event) => {
+            previewAfterPasteRef.current = false;
+            props.onPaste?.(event);
+            if (event.defaultPrevented || props.disabled || composingRef.current) return;
+            previewAfterPasteRef.current = hasMarkdownFormatting(event.clipboardData.getData('text/plain'));
+          }}
           onKeyDown={handleKeyDown}
           onScroll={(event) => {
             if (mirrorRef.current) {
@@ -386,7 +458,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           }}
         />
       </div>
-      {trigger ? (
+      {trigger && !showingPreview ? (
         <div className="structured-composer-menu" id={listboxId} role="listbox" aria-label={trigger.kind === '@' ? (zh ? '选择数字员工' : 'Select digital employees') : zh ? '选择命令' : 'Select command'}>
           {options.map((option, index) => (
             <div
@@ -433,12 +505,18 @@ function selectionFromTokens(value: string, tokens: StructuredToken[]): Structur
   promptText += value.slice(cursor);
   return {
     displayText: value,
-    promptText: promptText.replaceAll(/[ \t]{2,}/gu, ' ').trim(),
+    // 空格、制表符和行尾双空格具有 Markdown 语义，不能为清理标签间距而压缩正文。
+    promptText,
     expertMentions: ordered.filter((token) => token.kind === 'expert').map((token) => ({ employeeId: token.stableId })),
     skillReferences: ordered.filter((token) => token.kind === 'skill').map((token) => ({ id: token.stableId })),
     pluginReferences: ordered.filter((token) => token.kind === 'plugin' || token.kind === 'plugin-skill').map((token) => ({ kind: token.kind === 'plugin' ? ('plugin' as const) : ('skill' as const), id: token.stableId })),
     computerUseRequested: ordered.some((token) => token.kind === 'computer'),
   };
+}
+
+/** ponytail: 只用格式标记决定是否自动预览；完整语法交给现有渲染器，未识别的格式可手动预览。 */
+function hasMarkdownFormatting(value: string): boolean {
+  return /(?:^|\n) {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d+[.)]\s|`{3}|~{3}|\|?[ \t]*:?-+:?[ \t]*\|)|(?:\*\*|__|~~|`)[^\n]+(?:\*\*|__|~~|`)|!?\[[^\]\n]+\]\([^)\n]+\)/u.test(value);
 }
 
 function findTrigger(value: string, caret: number): TriggerRange | null {

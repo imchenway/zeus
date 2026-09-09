@@ -44,10 +44,7 @@ import {
   type ExecutionHostTransition,
   type GitDiffSummary,
   type GitOperationConfirmation,
-  type GraphConversationHistoryItem,
-  type GraphQuestionAnswer,
-  type GraphViewSnapshot,
-  type GraphViewType,
+  type ConversationHistoryItem,
   type ProjectConfig,
   type ProjectConversationAttentionState,
   type ProjectDatabaseSecretSnapshot,
@@ -73,10 +70,10 @@ import {
 } from '../../apiClient.js';
 
 export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'settings';
-export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
+export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
-export type ProjectCodeWorkspaceMode = 'source' | 'graph' | 'commands';
-export type ProjectWorkspaceEntryId = 'tasks' | 'git' | 'source' | 'graph' | 'commands';
+export type ProjectCodeWorkspaceMode = 'source' | 'commands';
+export type ProjectWorkspaceEntryId = 'tasks' | 'git' | 'source' | 'commands';
 export type ProjectWorkspaceEntry = Readonly<{
   id: ProjectWorkspaceEntryId;
   shortcutKey: '1' | '2' | '3' | '4' | '5';
@@ -87,8 +84,7 @@ export const PROJECT_WORKSPACE_ENTRIES = [
   { id: 'tasks', shortcutKey: '1', section: 'tasks', codeMode: undefined },
   { id: 'git', shortcutKey: '2', section: 'git', codeMode: undefined },
   { id: 'source', shortcutKey: '3', section: 'code', codeMode: 'source' },
-  { id: 'graph', shortcutKey: '4', section: 'code', codeMode: 'graph' },
-  { id: 'commands', shortcutKey: '5', section: 'code', codeMode: 'commands' },
+  { id: 'commands', shortcutKey: '4', section: 'code', codeMode: 'commands' },
 ] as const satisfies readonly ProjectWorkspaceEntry[];
 export type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 export type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
@@ -116,8 +112,8 @@ export type TaskConversationDrawerTarget =
     }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-export type SettingsCategory = 'general' | 'usage' | 'memory' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'im' | 'zentao' | 'security' | 'commands' | 'git' | 'release' | 'data';
-export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+export type SettingsCategory = 'general' | 'usage' | 'memory' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
+export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 export type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 export type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -255,6 +251,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'updateZentaoInstance'
     | 'deleteZentaoInstance'
     | 'clearZentaoInstancePassword'
+    | 'revealZentaoInstancePassword'
     | 'verifyZentaoInstance'
     | 'loadSelectablePiModels'
     | 'loadProjectModelSelection'
@@ -416,13 +413,13 @@ export type TaskRuntimeControlHandlerResult =
   | {
       snapshot: DashboardSnapshot;
       task?: TaskRecord;
-      conversation?: GraphConversationHistoryItem;
+      conversation?: ConversationHistoryItem;
       runtimeError?: { message: string };
     };
 export type NormalizedTaskRuntimeControlHandlerResult = {
   snapshot: DashboardSnapshot;
   task?: TaskRecord;
-  conversation?: GraphConversationHistoryItem;
+  conversation?: ConversationHistoryItem;
   runtimeError?: { message: string };
 };
 export type TaskRuntimeConversationNavigation = {
@@ -432,7 +429,7 @@ export type TaskRuntimeConversationNavigation = {
   hash: '#project-sessions';
 };
 
-export function shouldRefreshConversationForRuntimeEvent(event: ZeusRealtimeEvent, conversation: Pick<GraphConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
+export function shouldRefreshConversationForRuntimeEvent(event: ZeusRealtimeEvent, conversation: Pick<ConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
   if (event.type !== 'runtime.session.ended') return false;
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : undefined;
   return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
@@ -442,19 +439,19 @@ export const realtimeRuntimeConversationMessageLimit = 2_000;
 export const realtimeRuntimeConversationByteLimit = 4 * 1024 * 1024;
 export const realtimeRuntimeConversationEncoder = new TextEncoder();
 
-export function isRuntimeConversationOutputEvent(event: ZeusRealtimeEvent, conversation: Pick<GraphConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
+export function isRuntimeConversationOutputEvent(event: ZeusRealtimeEvent, conversation: Pick<ConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
   if (event.type !== 'runtime.session.output' && event.type !== 'runtime.session.error') return false;
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : undefined;
   return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
 }
 
-export function appendRuntimeOutputEventsToConversation(conversation: GraphConversationHistoryItem, events: readonly ZeusRealtimeEvent[], language: 'zh-CN' | 'en-US'): GraphConversationHistoryItem {
+export function appendRuntimeOutputEventsToConversation(conversation: ConversationHistoryItem, events: readonly ZeusRealtimeEvent[], language: 'zh-CN' | 'en-US'): ConversationHistoryItem {
   if (!conversation.sessionId) return conversation;
   const matchingEvents = events.filter((event) => event.payload.sessionId === conversation.sessionId);
   if (matchingEvents.length === 0) return conversation;
   const isRealtimeRuntimeMessage = (source: string): boolean => source === 'runtime_stdout_realtime' || source === 'runtime_stderr_realtime' || source === 'runtime_realtime_projection';
-  const persistedMessages = [] as GraphConversationHistoryItem['messages'];
-  const realtimeMessages = [] as GraphConversationHistoryItem['messages'];
+  const persistedMessages = [] as ConversationHistoryItem['messages'];
+  const realtimeMessages = [] as ConversationHistoryItem['messages'];
   const existingLogIds = new Set<string>();
   for (const message of conversation.messages) {
     const runtimeLogId = typeof message.metadata.runtimeLogId === 'string' ? message.metadata.runtimeLogId : null;
@@ -521,7 +518,7 @@ export function appendRuntimeOutputEventsToConversation(conversation: GraphConve
   return { ...conversation, status: 'running', updatedAt: latestCreatedAt, messages: [...persistedMessages, ...kept] };
 }
 
-export function applyRuntimeEndedEventToConversation(conversation: GraphConversationHistoryItem, event: ZeusRealtimeEvent, language: 'zh-CN' | 'en-US'): GraphConversationHistoryItem {
+export function applyRuntimeEndedEventToConversation(conversation: ConversationHistoryItem, event: ZeusRealtimeEvent, language: 'zh-CN' | 'en-US'): ConversationHistoryItem {
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : null;
   if (!sessionId || conversation.sessionId !== sessionId) return conversation;
   const status = typeof event.payload.status === 'string' ? event.payload.status : conversation.status;
@@ -560,12 +557,10 @@ export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusR
 }
 
 export type WorkMode = ProjectConfig['defaultWorkMode'];
-export type CodeMapToolPanel = 'search' | 'qa' | 'mermaid' | 'entities';
 export type DiagramExportFormat = 'mermaid' | 'plantuml';
-export type GraphNodeTaskFeedback = 'idle' | 'creating' | 'created' | 'failed';
-export type GraphSourceOpenFeedback = 'idle' | 'opening' | 'opened' | 'failed';
 export type AppShellSettingsSavePayload = Pick<
   AppShellSettings,
+  | 'networkProxy'
   | 'appLanguage'
   | 'appearance'
   | 'webviewDebugEnabled'
@@ -786,9 +781,6 @@ export function upsertProjectConversationChoiceSnapshot(snapshot: NativeProjectC
     : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationStageUpdatedDesc);
   return { projectId: metadata.projectId, choices, items: choices };
 }
-
-export const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
-export const GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS = 2400;
 export const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;
 export const taskManagementStatusLabels: Record<AppLanguage, Record<string, string>> = {
   'zh-CN': {
@@ -851,36 +843,6 @@ export function createSessionWorkspaceTask(task: TaskRecord, settings: AppShellS
     })),
   };
 }
-export const graphNodeTypeFilterValues = ['', 'file', 'function', 'package', 'api', 'table', 'column', 'control_flow', 'aggregate'] as const;
-export const graphEdgeTypeFilterValues = [
-  '',
-  'declares',
-  'contains',
-  'calls',
-  'reads_table',
-  'writes_table',
-  'awaits_call',
-  'branch_false',
-  'branch_true',
-  'control_flow',
-  'emits',
-  'executes',
-  'executes_sql',
-  'exposes_api',
-  'handles_api',
-  'loop_back',
-  'loop_break',
-  'loop_continue',
-  'module_depends_on',
-  'next_control_flow',
-  'promise_catch',
-  'promise_then',
-  'references',
-  'resolves_to',
-  'try_catch',
-  'try_finally',
-  'uses_column',
-] as const;
 
 /** 动作入口在真实提交、扫描、读取中时统一挂载 busy 属性，让 CSS 产品态接管而不是只靠 disabled 变灰。 */
 export function controlBusyProps(isBusy: boolean): ControlBusyProps {
@@ -1008,6 +970,8 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
   const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
   const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
   return {
+    // 代理草稿随通用设置保存；其他偏好更新继续携带原值。
+    networkProxy: settings.networkProxy,
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
     webviewDebugEnabled: settings.webviewDebugEnabled,
@@ -1194,16 +1158,6 @@ export function buildRuntimeSessionTaskDraft(session: Pick<AiRuntimeSession, 'co
   };
 }
 
-export function buildGraphConversationTaskIntent(appLanguage: AppLanguage): string {
-  // 图谱问答转任务的 intent 属于 UI 动作语义，必须跟随当前界面语言；图谱来源和会话事实仍由后端保留原文。
-  return getLanguageCopy(appLanguage).codeMapWorkspace.graphConversationTaskIntent;
-}
-
-export function buildGraphNodeTaskIntent(appLanguage: AppLanguage): string {
-  // 图谱节点转任务的 intent 只描述动作意图；真实节点名、路径和来源继续由后端从图谱事实读取。
-  return getLanguageCopy(appLanguage).codeMapWorkspace.graphNodeTaskIntent;
-}
-
 export function buildProjectDirectoryResolution(selectedPath: string | null | undefined, appLanguage: AppLanguage): { path: string | null; description: string } {
   const copy = getLanguageCopy(appLanguage).sidebar;
   if (selectedPath) return { path: selectedPath, description: copy.selectedRepositoryDescription };
@@ -1309,7 +1263,7 @@ export function normalizeMainNavTarget(hash: string | undefined): MainNavTarget 
   const target = hash?.replace(/^#/, '');
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
-  if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
+  if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target?.startsWith('settings-')) return 'settings';
@@ -1360,64 +1314,9 @@ export function resolveTaskRuntimeConversationNavigation(action: 'run' | 'pause'
   };
 }
 
-export function resolveInitialGraphProjectId(initialGraphView: GraphViewSnapshot | undefined, explicitProjectId: string | undefined, projects: ProjectRecord[]): string | undefined {
-  if (!initialGraphView) return undefined;
-  if (explicitProjectId) {
-    const explicitProject = projects.find((project) => project.id === explicitProjectId);
-    // 启动恢复态传入 projectId 时也必须反查图谱归属；旧版全局“系统架构图”不能因为显式 id 被硬贴到另一个项目。
-    return explicitProject && canAttachInitialGraphViewToProject(initialGraphView, explicitProject) ? explicitProjectId : undefined;
-  }
-  if (projects.length !== 1) return undefined;
-  const [project] = projects;
-  if (!project) return undefined;
-  // 初始图谱来自恢复态或预览态；只有项目身份明确匹配，或旧版 Zeus 自身的全局图谱恢复，才允许自动挂到当前项目。
-  if (!canAttachInitialGraphViewToProject(initialGraphView, project)) return undefined;
-  return project.id;
-}
-
-export const projectGraphTitleSuffixes = ['系统架构图', '模块图', '表关系图', '模块详情图', '接口时序图', '模块流程图', '方法逻辑图'];
-
-export function isProjectGraphViewForProject(graphView: GraphViewSnapshot, project: Pick<ProjectRecord, 'id' | 'name'> | undefined, options: { requireProjectIdentity?: boolean } = {}): boolean {
-  if (!project) return false;
-  // 项目级图谱响应一旦携带归属元数据，就必须和当前项目完全匹配；缺省元数据仅为旧预览数据/旧全局接口兼容。
-  if (graphView.projectId && graphView.projectId !== project.id) return false;
-  if (graphView.projectName && graphView.projectName !== project.name) return false;
-  if (!isProjectGraphViewTitleForProject(graphView, project, options)) return false;
-  if (options.requireProjectIdentity && !graphView.projectId && !graphView.projectName) return false;
-  return true;
-}
-
-export function isProjectGraphViewTitleForProject(graphView: Pick<GraphViewSnapshot, 'title'>, project: Pick<ProjectRecord, 'name'>, options: { requireProjectIdentity?: boolean } = {}): boolean {
-  if (typeof graphView.title !== 'string') return true;
-  const title = graphView.title.trim();
-  const projectName = project.name.trim();
-  if (!title || !projectName) return true;
-  const normalizedTitle = title.toLocaleLowerCase();
-  const normalizedProjectName = projectName.toLocaleLowerCase();
-  const hasStandardGraphSuffix = projectGraphTitleSuffixes.some((suffix) => title === suffix || title.endsWith(` ${suffix}`));
-  if (!hasStandardGraphSuffix) return true;
-  // 标准图谱标题是用户最先看到的事实来源；只要是项目级图谱，就必须以当前项目名开头，避免 A 项目被旧响应盖上 B 项目 metadata 后继续显示 B 图谱。
-  if (normalizedTitle.startsWith(`${normalizedProjectName} `)) return true;
-  return !options.requireProjectIdentity && title === projectGraphTitleSuffixes.find((suffix) => suffix === title);
-}
-
-export function canAttachInitialGraphViewToProject(graphView: GraphViewSnapshot, project: Pick<ProjectRecord, 'id' | 'name'>): boolean {
-  if (graphView.projectId || graphView.projectName) {
-    return isProjectGraphViewForProject(graphView, project);
-  }
-  const normalizedProjectName = project.name.trim().toLocaleLowerCase();
-  // 旧版全局 scan-current 没有 projectId/projectName，但 Zeus 自身历史图谱仍要能恢复；非 Zeus 项目不能吃到 “Zeus 系统架构图”。
-  if (normalizedProjectName === 'zeus') return true;
-  const normalizedGraphTitle = typeof graphView.title === 'string' ? graphView.title.trim().toLocaleLowerCase() : '';
-  return normalizedProjectName === 'zeus' || normalizedGraphTitle === normalizedProjectName || normalizedGraphTitle.startsWith(`${normalizedProjectName} `);
-}
-
 /** 首屏只打开一个真实工作区；预览或恢复态带有明确数据时进入对应入口，避免把所有内容铺成一页。 */
 export function inferInitialMainNavTarget(props: {
   initialMainNavTarget?: LegacyMainNavTarget;
-  initialGraphView?: GraphViewSnapshot;
-  initialGraphAnswer?: GraphQuestionAnswer;
-  initialGraphConversations?: GraphConversationHistoryItem[];
   initialTaskEvents?: TaskEventRecord[];
   initialGitDiff?: GitDiffSummary;
   initialGitConfirmation?: GitOperationConfirmation;
@@ -1446,7 +1345,7 @@ export function inferInitialMainNavTarget(props: {
   if (typeof window !== 'undefined' && window.location.hash) return readCurrentMainNavTarget();
   if (props.initialSecuritySecrets || props.initialReleaseStatus || props.initialSecurityAuditLogs?.length || props.initialLocalError) return 'settings';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret || props.initialArchivedProjects?.length) return 'projects';
-  if (props.initialGitDiff || props.initialGitConfirmation || props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length) return 'projects';
+  if (props.initialGitDiff || props.initialGitConfirmation) return 'projects';
   if (
     props.initialTaskEvents?.length ||
     props.initialArchivedTasks?.length ||
@@ -1467,9 +1366,6 @@ export function inferInitialMainNavTarget(props: {
 
 export function inferInitialProjectSection(props: {
   initialMainNavTarget?: LegacyMainNavTarget;
-  initialGraphView?: GraphViewSnapshot;
-  initialGraphAnswer?: GraphQuestionAnswer;
-  initialGraphConversations?: GraphConversationHistoryItem[];
   initialTaskEvents?: TaskEventRecord[];
   initialTaskTemplates?: TaskTemplateRecord[];
   initialRuntimeStatus?: RuntimeStatusSnapshot;
@@ -1489,7 +1385,7 @@ export function inferInitialProjectSection(props: {
   if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret) return 'project-settings';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
-  if (props.initialMainNavTarget === 'code-map' || props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
+  if (props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
   if (props.initialMainNavTarget === 'conversations' || props.initialMainNavTarget === 'runtime' || props.initialMainNavTarget === 'dashboard') return 'sessions';
   if (
     props.initialTaskEvents?.length ||
@@ -1504,7 +1400,6 @@ export function inferInitialProjectSection(props: {
   )
     return 'sessions';
   if (props.initialArchivedProjects?.length) return 'code';
-  if (props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length || props.initialGitDiff || props.initialGitConfirmation) return 'code';
   return 'tasks';
 }
 
@@ -1514,10 +1409,6 @@ export function syncRecordFromSnapshot<T extends { id: string }>(current: T | un
 
 export function selectCreatedProjectTask(snapshot: DashboardSnapshot, previousTaskIds: Set<string>, projectId: string): TaskRecord | undefined {
   return snapshot.tasks.find((task) => task.projectId === projectId && !previousTaskIds.has(task.id)) ?? snapshot.tasks.find((task) => task.projectId === projectId);
-}
-
-export function selectCreatedGraphNodeTask(snapshot: DashboardSnapshot, previousTaskIds: Set<string>, projectId: string): TaskRecord | undefined {
-  return selectCreatedProjectTask(snapshot, previousTaskIds, projectId);
 }
 
 export function normalizeProjectLocalPath(localPath: string): string {
@@ -1563,12 +1454,6 @@ export function orderProjectsByPinnedIds(projects: ProjectRecord[], pinnedProjec
     return 0;
   });
 }
-
-export const graphViewOptions: Array<{ type: GraphViewType }> = [{ type: 'architecture' }, { type: 'module' }, { type: 'table' }, { type: 'module_detail' }, { type: 'api_sequence' }, { type: 'module_flow' }, { type: 'method_logic' }];
-
-export const codeMapToolPanels: Array<{
-  id: CodeMapToolPanel;
-}> = [{ id: 'search' }, { id: 'qa' }, { id: 'mermaid' }, { id: 'entities' }];
 
 export function TaskCreateFieldAttachments(props: {
   field: TaskCreateAttachmentField;
@@ -2543,10 +2428,6 @@ export function NativeControlRow(props: { title: string; description?: string; c
   );
 }
 
-export function formatProjectScanStatus(status: ProjectRecord['scanStatus'], copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']): string {
-  return copy.scanStatuses[status as keyof typeof copy.scanStatuses] ?? status;
-}
-
 export function ProjectArchiveWorkbench(props: {
   projects: ProjectRecord[];
   copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectArchive'];
@@ -2583,7 +2464,6 @@ export function ProjectArchiveWorkbench(props: {
                 <small>{project.localPath}</small>
               </span>
               <span className="project-archive-command-rail">
-                <small>{formatProjectScanStatus(project.scanStatus, props.codeCopy)}</small>
                 <button type="button" onClick={() => void props.onRestore(project.id)}>
                   {props.copy.restore}
                 </button>
@@ -2602,4 +2482,49 @@ export type LocalUiErrorSnapshot = {
   action: string;
   message: string;
   occurredAt: string;
+};
+
+/** 为水平工具栏提供左右键、Home 和 End 焦点导航。 */
+export const handleInlineRailKeyboardNavigation = (event: ReactKeyboardEvent<HTMLElement>) => {
+  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'Home' && event.key !== 'End') return;
+
+  const inlineRailItems = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-inline-rail-item="true"]:not([disabled])'));
+  if (inlineRailItems.length === 0) return;
+
+  // Decision rail 与二级菜单按 macOS toolbar 语义处理：Tab 进入，左右键在同一组动作内移动焦点。
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeIndex = activeElement ? inlineRailItems.findIndex((item) => item === activeElement || item.contains(activeElement)) : -1;
+  const currentIndex = activeIndex >= 0 ? activeIndex : 0;
+  let nextIndex = currentIndex;
+
+  if (event.key === 'ArrowRight') nextIndex = Math.min(currentIndex + 1, inlineRailItems.length - 1);
+  if (event.key === 'ArrowLeft') nextIndex = Math.max(currentIndex - 1, 0);
+  if (event.key === 'Home') nextIndex = 0;
+  if (event.key === 'End') nextIndex = inlineRailItems.length - 1;
+
+  event.preventDefault();
+  inlineRailItems[nextIndex]?.focus();
+};
+
+/** 为来源列表提供上下键与首尾项导航。 */
+export const handleSourceListKeyboardNavigation = (event: ReactKeyboardEvent<HTMLElement>) => {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
+
+  const sourceListItems = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-source-list-item="true"]:not([disabled])'));
+  if (sourceListItems.length === 0) return;
+
+  // source-list 使用 roving focus：当前选中行保留 tabIndex=0，方向键只在列表内部移动焦点，不触发页面级滚动。
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeIndex = activeElement ? sourceListItems.findIndex((item) => item === activeElement || item.contains(activeElement)) : -1;
+  const rovingIndex = sourceListItems.findIndex((item) => item.getAttribute('tabindex') === '0');
+  const currentIndex = activeIndex >= 0 ? activeIndex : Math.max(rovingIndex, 0);
+  let nextIndex = currentIndex;
+
+  if (event.key === 'ArrowDown') nextIndex = Math.min(currentIndex + 1, sourceListItems.length - 1);
+  if (event.key === 'ArrowUp') nextIndex = Math.max(currentIndex - 1, 0);
+  if (event.key === 'Home') nextIndex = 0;
+  if (event.key === 'End') nextIndex = sourceListItems.length - 1;
+
+  event.preventDefault();
+  sourceListItems[nextIndex]?.focus();
 };

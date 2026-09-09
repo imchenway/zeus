@@ -1,10 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, lstatSync, realpathSync } from 'node:fs';
-import { chmod, mkdir, open, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
+import { chmod, mkdir, open, rename, stat, statfs, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import type { ReadOnlyValidationDescriptor, TokenUsageBreakdown } from '@zeus/shared';
-import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import { migrateCommandCenterSchema } from './commands.js';
 import { migrateArtifactStoreSchema } from './artifactStore.js';
 import { migrateCommandDeliverySchema } from './commandDeliveryStore.js';
@@ -109,8 +108,8 @@ const builtInTaskTemplates = [
     id: 'task_template_architecture_analysis',
     sortOrder: 6,
     name: '架构分析',
-    description: '基于真实图谱理解模块边界、依赖和演进风险。',
-    promptTemplate: '请基于 {{graph_context}} 分析架构边界、依赖方向、风险点和改造顺序。',
+    description: '基于真实源码理解模块边界、依赖和演进风险。',
+    promptTemplate: '请基于 {{project_context}} 分析架构边界、依赖方向、风险点和改造顺序。',
   },
   {
     id: 'task_template_sql_optimization',
@@ -128,14 +127,6 @@ const NATIVE_SQLITE_BACKUP_SUFFIX = '.pre-native-sqlite.bak';
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 const SQLITE_BACKUP_FREE_SPACE_RESERVE_BYTES = 64 * 1024 * 1024;
 const LEGACY_PROCESSED_PROVIDER_EVENTS_SETTING_KEY = 'codex.native.processed_provider_events';
-
-let sqlModulePromise: Promise<SqlJsStatic> | undefined;
-
-/** 加载 sql.js SQLite 引擎；保持单例，避免每次打开数据库都重复初始化 wasm。 */
-async function loadSqlModule(): Promise<SqlJsStatic> {
-  sqlModulePromise ??= initSqlJs();
-  return sqlModulePromise;
-}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -881,103 +872,6 @@ function storageWriteError(message: string, cause: unknown): Error {
   return cause instanceof Error ? new Error(`${message} ${cause.message}`, { cause }) : new Error(`${message} ${String(cause)}`);
 }
 
-export interface SqliteSchemaIntrospectionSnapshot {
-  sourcePath: string;
-  statements: Array<{
-    type: 'table' | 'index' | 'trigger' | 'view';
-    name: string;
-    sql: string;
-  }>;
-}
-
-/** 只读读取用户配置的 SQLite 文件 schema；不执行迁移、不写回目标数据库。 */
-export async function introspectSqliteSchema(filePath: string): Promise<SqliteSchemaIntrospectionSnapshot> {
-  const SQL = await loadSqlModule();
-  const bytes = await readFile(filePath);
-  const sqlite = new SQL.Database(bytes);
-  try {
-    const tableNames = selectSqliteObjects(sqlite, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
-      .map((row) => String(row.name ?? ''))
-      .filter(Boolean);
-    const statements: SqliteSchemaIntrospectionSnapshot['statements'] = tableNames.map((tableName) => ({
-      type: 'table',
-      name: tableName,
-      sql: renderSqliteCreateTable(sqlite, tableName),
-    }));
-    statements.push(...tableNames.flatMap((tableName) => renderSqliteCreateIndexes(sqlite, tableName)));
-    statements.push(
-      ...selectSqliteObjects(sqlite, `SELECT type, name, sql FROM sqlite_master WHERE type IN ('trigger', 'view') AND sql IS NOT NULL ORDER BY type, name`).flatMap((row) => {
-        if ((row.type === 'trigger' || row.type === 'view') && typeof row.name === 'string' && typeof row.sql === 'string') {
-          return [
-            {
-              type: row.type as 'trigger' | 'view',
-              name: row.name,
-              sql: row.sql,
-            },
-          ];
-        }
-        return [];
-      }),
-    );
-    return { sourcePath: filePath, statements };
-  } finally {
-    sqlite.close();
-  }
-}
-
-function selectSqliteObjects(sqlite: SqlJsDatabase, sql: string): Array<Record<string, SqlJsValue>> {
-  const stmt = sqlite.prepare(sql);
-  const rows: Array<Record<string, SqlJsValue>> = [];
-  try {
-    while (stmt.step()) rows.push(stmt.getAsObject() as Record<string, SqlJsValue>);
-  } finally {
-    stmt.free();
-  }
-  return rows;
-}
-
-function renderSqliteCreateTable(sqlite: SqlJsDatabase, tableName: string): string {
-  const columns = selectSqliteObjects(sqlite, `PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`);
-  const foreignKeys = selectSqliteObjects(sqlite, `PRAGMA foreign_key_list(${quoteSqliteIdentifier(tableName)})`);
-  const columnLines = columns.map((column) => {
-    const parts = [
-      quoteSqliteIdentifier(String(column.name)),
-      String(column.type || 'TEXT').toUpperCase(),
-      Number(column.notnull ?? 0) === 1 ? 'NOT NULL' : '',
-      Number(column.pk ?? 0) === 1 ? 'PRIMARY KEY' : '',
-      column.dflt_value !== null && column.dflt_value !== undefined ? `DEFAULT ${String(column.dflt_value)}` : '',
-    ].filter(Boolean);
-    return `  ${parts.join(' ')}`;
-  });
-  const foreignKeyLines = foreignKeys.map((foreignKey) => `  FOREIGN KEY (${quoteSqliteIdentifier(String(foreignKey.from))}) REFERENCES ${quoteSqliteIdentifier(String(foreignKey.table))}(${quoteSqliteIdentifier(String(foreignKey.to))})`);
-  return `CREATE TABLE ${quoteSqliteIdentifier(tableName)} (\n${[...columnLines, ...foreignKeyLines].join(',\n')}\n)`;
-}
-
-function renderSqliteCreateIndexes(sqlite: SqlJsDatabase, tableName: string): SqliteSchemaIntrospectionSnapshot['statements'] {
-  return selectSqliteObjects(sqlite, `PRAGMA index_list(${quoteSqliteIdentifier(tableName)})`)
-    .filter((index) => String(index.origin ?? 'c') === 'c')
-    .flatMap((index) => {
-      const indexName = String(index.name ?? '');
-      if (!indexName || indexName.startsWith('sqlite_')) return [];
-      const columns = selectSqliteObjects(sqlite, `PRAGMA index_info(${quoteSqliteIdentifier(indexName)})`)
-        .map((column) => quoteSqliteIdentifier(String(column.name ?? '')))
-        .filter((name) => name !== '""');
-      if (columns.length === 0) return [];
-      const unique = Number(index.unique ?? 0) === 1 ? 'UNIQUE ' : '';
-      return [
-        {
-          type: 'index' as const,
-          name: indexName,
-          sql: `CREATE ${unique}INDEX ${quoteSqliteIdentifier(indexName)} ON ${quoteSqliteIdentifier(tableName)} (${columns.join(', ')})`,
-        },
-      ];
-    });
-}
-
-function quoteSqliteIdentifier(value: string): string {
-  return `"${value.replace(/"/gu, '""')}"`;
-}
-
 function migrateTaskBoardSchema(db: ZeusDatabase): void {
   db.execute(`
     CREATE TABLE IF NOT EXISTS task_board_views (
@@ -1094,6 +988,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
       zeusDb.execute(`UPDATE conversation_legacy_write_fence SET current_writer_open = 1 WHERE singleton = 1`);
     }
     migrateCoreSchema(zeusDb);
+    migrateRetiredCodeGraph(zeusDb);
     migrateTaskBoardSchema(zeusDb);
     migrateRetiredUnitTestTemplate(zeusDb);
     migrateTaskManagementStatus(zeusDb);
@@ -1462,7 +1357,6 @@ function migrateCoreSchema(db: ZeusDatabase): void {
       default_model TEXT,
       default_work_mode TEXT,
       default_template_id TEXT,
-      scan_status TEXT NOT NULL DEFAULT 'not_scanned',
       archived INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -1675,7 +1569,6 @@ function migrateCoreSchema(db: ZeusDatabase): void {
       additions INTEGER NOT NULL DEFAULT 0,
       deletions INTEGER NOT NULL DEFAULT 0,
       diff_hunk_path TEXT,
-      linked_graph_nodes_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `);
@@ -2874,4 +2767,25 @@ function formatTaskCode(sequence: number): string {
 
 function normalizeTaskSequence(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/** 移除可重建图谱数据和废弃设置；保留任务、会话正文及其历史来源。 */
+function migrateRetiredCodeGraph(db: ZeusDatabase): void {
+  /** 清理完成后记录一次，避免启动时重复扫描业务设置。 */
+  const migrationId = '20260908_retire_code_graph';
+  if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.durableTransactionSync(() => {
+    // 这些表只存扫描结果，删除不会改变项目源码或用户创建的任务。
+    db.execute('DROP TABLE IF EXISTS graph_views; DROP TABLE IF EXISTS project_edges; DROP TABLE IF EXISTS project_nodes; DROP TABLE IF EXISTS code_symbols;');
+    for (const [table, column] of [
+      ['projects', 'scan_status'],
+      ['git_changes', 'linked_graph_nodes_json'],
+    ] as const) {
+      if (db.select<{ name: string }>(`PRAGMA table_info(${table})`).some((entry) => entry.name === column)) db.execute(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+    }
+    db.execute("DELETE FROM settings WHERE key = 'codeMap.settings'");
+    db.execute(`UPDATE settings SET value_json = json_remove(value_json, '$.cache', '$.lastCacheClearAt') WHERE key = 'app.shell.settings' AND json_valid(value_json)`);
+    db.execute(`UPDATE settings SET value_json = json_remove(value_json, '$.scan', '$.defaultTaskPrompt', '$.database.schemaPaths') WHERE key LIKE 'project.config.%' AND json_valid(value_json)`);
+    recordSchemaMigration(db, { migrationId, description: '删除图谱派生表与专用设置', checksumSource: 'retire-code-graph:derived-tables,scan-status,git-links,settings' });
+  });
 }

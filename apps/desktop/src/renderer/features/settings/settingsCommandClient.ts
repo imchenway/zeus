@@ -8,10 +8,8 @@ export const settingsClientCommandTypes = {
   projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
-  projectionCacheClear: 'settings.projection_cache.clear',
   settingsImport: 'settings.import',
   dataImport: 'settings.business_data.import',
-  codeMapSettingsPut: 'settings.code_map.put',
 } as const;
 
 type SettingsClientCommandType = (typeof settingsClientCommandTypes)[keyof typeof settingsClientCommandTypes];

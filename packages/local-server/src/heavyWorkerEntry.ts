@@ -1,19 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parentPort, workerData } from 'node:worker_threads';
-import { scanProjectSource } from '@zeus/code-indexer';
 import { getGitDiff, getGitStatus } from '@zeus/git-core';
-import { buildProjectGraph } from '@zeus/graph-engine';
-import {
-  heavyWorkerProtocolVersion,
-  type CodeMapHeavyWorkerInput,
-  type CodeMapHeavyWorkerResult,
-  type GitDiffHeavyWorkerResult,
-  type GitStatusHeavyWorkerResult,
-  type HeavyWorkerInput,
-  type HeavyWorkerMessage,
-  type HeavyWorkerProgressStage,
-  type HeavyWorkerResult,
-} from './heavyWorkerContracts.js';
+import { heavyWorkerProtocolVersion, type GitDiffHeavyWorkerResult, type GitStatusHeavyWorkerResult, type HeavyWorkerInput, type HeavyWorkerMessage, type HeavyWorkerProgressStage, type HeavyWorkerResult } from './heavyWorkerContracts.js';
 
 function post(message: HeavyWorkerMessage): void {
   if (!parentPort) throw new Error('Heavy Worker 缺少父进程消息端口。');
@@ -29,7 +17,7 @@ function parseInput(value: unknown): HeavyWorkerInput {
   const input = value as Partial<HeavyWorkerInput>;
   if (
     input.protocolVersion !== heavyWorkerProtocolVersion ||
-    (input.kind !== 'code_map_scan' && input.kind !== 'git_diff' && input.kind !== 'git_status') ||
+    (input.kind !== 'git_diff' && input.kind !== 'git_status') ||
     typeof input.jobId !== 'string' ||
     !input.jobId ||
     typeof input.rootPath !== 'string' ||
@@ -39,9 +27,6 @@ function parseInput(value: unknown): HeavyWorkerInput {
     input.maxResultBytes <= 0
   ) {
     throw workerError('ZEUS_HEAVY_WORKER_INPUT_INVALID', 'Heavy Worker 输入身份、类型或预算无效。');
-  }
-  if (input.kind === 'code_map_scan' && (typeof input.projectName !== 'string' || !input.projectName || !Array.isArray(input.ignoreDirectories) || !Array.isArray(input.additionalFiles))) {
-    throw workerError('ZEUS_HEAVY_WORKER_INPUT_INVALID', '代码地图 Worker 输入缺少项目名、忽略目录或附加文件。');
   }
   return input as HeavyWorkerInput;
 }
@@ -78,7 +63,6 @@ async function run(): Promise<void> {
 }
 
 async function executeJob(input: HeavyWorkerInput): Promise<HeavyWorkerResult> {
-  if (input.kind === 'code_map_scan') return executeCodeMapJob(input);
   progress(input, 'git_process_started', 1, 2);
   if (input.kind === 'git_diff') {
     const diff = await getGitDiff(input.rootPath);
@@ -89,20 +73,6 @@ async function executeJob(input: HeavyWorkerInput): Promise<HeavyWorkerResult> {
   const status = await getGitStatus(input.rootPath);
   const result = withVerifiedResultRef(input, { status }) as GitStatusHeavyWorkerResult;
   progress(input, 'git_projection_built', 2, 2);
-  return result;
-}
-
-async function executeCodeMapJob(input: CodeMapHeavyWorkerInput): Promise<CodeMapHeavyWorkerResult> {
-  const scan = await scanProjectSource({
-    rootPath: input.rootPath,
-    projectName: input.projectName,
-    ignoreDirectories: input.ignoreDirectories,
-    additionalFiles: input.additionalFiles,
-  });
-  progress(input, 'source_indexed', 1, 2);
-  const graph = buildProjectGraph(scan);
-  const result = withVerifiedResultRef(input, { scan, graph }) as CodeMapHeavyWorkerResult;
-  progress(input, 'graph_built', 2, 2);
   return result;
 }
 

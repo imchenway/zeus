@@ -4,10 +4,12 @@ import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/r
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
+import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
-import { TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
+import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
+import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
 import type { ConversationCodeComment, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
@@ -24,6 +26,8 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的粘贴、预览、编辑和发送原文。', answer: '', activities: [] },
+  { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
   { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
@@ -83,6 +87,8 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
+  if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
   if (props.scene.query === 'review') return <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
@@ -117,6 +123,190 @@ export function SessionQaApp(props: { scene: QaScene }) {
   );
 }
 
+/** 展示已确认的会话提示；错误、正文和变更卡片均使用真实组件。 */
+function ErrorLayoutQa() {
+  /** 主题只影响预览，不修改应用设置。 */
+  const [dark, setDark] = useState(false);
+  /** 文件审核只展示预览反馈，不读取或操作工作区。 */
+  const [review, setReview] = useState(false);
+  /** 沿用用户截图中的错误码和原始说明，不假设消息已经发送或取消。 */
+  const error = { code: 'ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', message: '这条消息已取消、替换或离开待发送状态，不会再次发送。' };
+  /** 合成消息复现未确认状态，预览不提供重发入口。 */
+  const pending: NativeSessionItemBuffer = {
+    key: 'preview-pending',
+    conversationId: 'preview',
+    threadId: 'preview',
+    turnId: 'preview-turn',
+    itemId: 'preview-pending',
+    type: 'userMessage',
+    phase: 'user',
+    text: '',
+    status: 'paused',
+    optimistic: true,
+    resources: [],
+    payload: { deliveryError: error },
+  };
+  /** 回复文字用于对照截图中的正文边缘，不代表本次新增交付结果。 */
+  const answer: NativeSessionItemBuffer = {
+    ...pending,
+    key: 'preview-answer',
+    itemId: 'preview-answer',
+    type: 'agentMessage',
+    phase: 'final',
+    status: 'completed',
+    optimistic: false,
+    payload: {},
+    updatedAt: '2026-09-08T12:16:00Z',
+    text: '已实现：粘贴 Markdown 后自动显示格式，表格支持横向滚动；点击“编辑原文”可继续修改。\n\nlint、类型检查、构建及模拟粘贴、编辑、提交检查通过。真实剪贴板、原生快捷键、输入法和截图仍待验收。',
+  };
+  /** 固定文件摘要只提供截图相同的视觉参照，撤销限制保持可见。 */
+  const changeSet: TurnChangeSet = {
+    id: 'preview-changes',
+    projectId: 'preview',
+    conversationId: 'preview',
+    turnId: 'preview-turn',
+    providerTurnId: 'preview-turn',
+    state: 'unavailable',
+    fileCount: 7,
+    addedLines: 258,
+    deletedLines: 25,
+    unifiedDiff: '',
+    preImageDigest: null,
+    postImageDigest: null,
+    conflict: null,
+    unavailableReason: '连续修改之间的文件内容或权限不一致，无法安全撤销或重新应用。',
+    createdAt: '2026-09-08T12:16:00Z',
+    updatedAt: '2026-09-08T12:16:00Z',
+    files: [
+      ['apps/desktop/qa/session-core-qa.tsx', 63, 7],
+      ['apps/desktop/src/renderer/session/ConversationComposer.tsx', 2, 1],
+      ['apps/desktop/src/renderer/session/session.css', 54, 0],
+      ['apps/desktop/src/renderer/session/StructuredComposerInput.tsx', 110, 15],
+      ['apps/desktop/src/renderer/session/useConversationInputResources.ts', 20, 1],
+      ['apps/desktop/src/renderer/session/SessionWorkspace.tsx', 7, 1],
+      ['docs/ZEUS-0375_输入框粘贴Markdown展示.md', 2, 0],
+    ].map(([path, addedLines, deletedLines], index) => ({
+      id: String(index),
+      oldPath: String(path),
+      newPath: String(path),
+      changeType: 'modified',
+      addedLines: Number(addedLines),
+      deletedLines: Number(deletedLines),
+      unifiedDiff: '',
+      preHash: null,
+      postHash: null,
+      reversible: false,
+      unavailableReason: null,
+    })),
+  };
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <div>
+          <h1>会话错误提示</h1>
+          <p>已确认样式 · 直接展示会话组件</p>
+        </div>
+        <nav aria-label="预览切换">
+          <Button aria-pressed={dark} onClick={() => setDark(!dark)}>
+            {dark ? '浅色' : '深色'}
+          </Button>
+        </nav>
+      </header>
+      <div className="session-transcript">
+        <MessageDeliveryOutcomeFeedback item={pending} language="zh-CN" />
+        <ThreadItemView item={answer} language="zh-CN" showAssistantActions />
+        <TurnChangeCard changeSet={changeSet} language="zh-CN" onReview={() => setReview(true)} />
+      </div>
+      {review ? (
+        <p className="qa-error-layout-note" role="status">
+          这是文件摘要预览，未读取工作区或执行撤销。<Button onClick={() => setReview(false)}>收起</Button>
+        </p>
+      ) : null}
+      <ApplicationErrorDialogHost language="zh-CN" />
+    </main>
+  );
+}
+
+/** 使用真实会话输入组件验收粘贴，只在本页记录发送结果，不调用模型。 */
+function ComposerMarkdownQa() {
+  /** 地址参数覆盖窄分栏、深色和英文。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 草稿沿用真实输入框回写路径。 */
+  const [state, setState] = useState(createInitialSessionState);
+  /** 展示提交内容，便于比较缩进、转义和技能调用是否保留。 */
+  const [submitted, setSubmitted] = useState('');
+  /** 只读状态可在预览期间切换，核对发送和编辑禁用条件。 */
+  const [readOnly, setReadOnly] = useState(false);
+  /** 保留真实文本框，模拟浏览器粘贴事件与默认插入，不访问系统剪贴板。 */
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 用户提供的十二列表格，保留转义、长编号及前导零。 */
+  const sample = String.raw`| id | batch\_tag | pick\_bill\_date | delivery\_spot\_id | pick\_bill\_id | pick\_bill\_no | collect\_status | begin\_collect\_time | end\_collect\_time | allocate\_dtl | delete\_flag | update\_time |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2093161985053044748 | 2093161985044656133 | 20260828 | 00000852 | 2093161972491100160 | 000126082800428 | 5 | 2026-08-28 15:40:15 | 2026-08-28 15:40:44 | 1 | 0 | 2026-08-28 18:07:13 |`;
+  return (
+    <main
+      className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${parameters.has('dark') ? 'dark' : 'light'}`}
+      data-theme={parameters.has('dark') ? 'dark' : 'light'}
+      style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
+    >
+      <h1>粘贴 Markdown</h1>
+      <p>粘贴表格后查看格式，用“编辑原文”或 Escape 继续修改，Enter 记录发送内容。</p>
+      <label>
+        <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.currentTarget.checked)} />
+        只读
+      </label>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          /** 模拟事件只在原文可编辑时运行，防止隐藏输入框承接样例。 */
+          const textarea = textareaRef.current;
+          if (!textarea || textarea.closest('[hidden]')) return;
+          textarea.focus();
+          /** 仅使用固定样例构造粘贴内容。 */
+          const data = new DataTransfer();
+          data.setData('text/plain', sample);
+          if (textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))) document.execCommand('insertText', false, sample);
+        }}
+      >
+        模拟粘贴表格
+      </button>
+      <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', boxSizing: 'border-box', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%', marginBlock: 24 }}>
+        <ConversationComposer
+          textareaRef={textareaRef}
+          state={state}
+          language={parameters.has('en') ? 'en-US' : 'zh-CN'}
+          readOnly={readOnly}
+          permissionMode="auto"
+          collaborationMode="default"
+          capabilities={{
+            generationId: 'qa',
+            initializedAt: '',
+            projectId: 'qa',
+            preferredModel: 'qa-model',
+            models: [{ id: 'qa-model', model: 'qa-model', displayName: '验收模型', supportedReasoningEfforts: [], serviceTiers: [] }],
+            codexAccount: { generationId: 'qa', requiresOpenaiAuth: false, signedIn: false, accountType: null, planType: null },
+          }}
+          onDraftChange={(draft) => setState((current) => ({ ...current, draft }))}
+          onSubmit={(_delivery, settings) => {
+            // 当前验收页不加载技能目录，提交正文必须逐字符等于原始草稿。
+            if (settings?.promptText !== state.draft) throw new Error('格式预览改变了发送原文。');
+            setSubmitted(`原文逐字符一致：是\n${JSON.stringify(settings, null, 2)}`);
+            setState((current) => ({ ...current, draft: '' }));
+          }}
+          onInterrupt={() => undefined}
+        />
+      </div>
+      <output aria-label="当前草稿" style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {JSON.stringify(state.draft)}
+      </output>
+      <pre aria-label="发送内容" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {submitted}
+      </pre>
+    </main>
+  );
+}
+
 /** 复用真实询问组件的手动验收入口，不连接或冒充真实模型。 */
 function QuestionQa() {
   /** 同一真实组件入口覆盖语言、主题和窄分栏。 */
@@ -125,6 +315,10 @@ function QuestionQa() {
   const language = parameters.has('en') ? 'en-US' : 'zh-CN';
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
   const scenario = parameters.get('case') ?? 'single';
+  /** PLAN 真实已答题记录用于对照，跨轮次场景复现用户反馈。 */
+  const synchronous = scenario === 'plan' || scenario === 'multiple';
+  /** 另发消息属于新的执行轮次，不能依赖原题仍在首屏。 */
+  const asNewMessage = scenario === 'newturn' || scenario === 'closed';
   /** 独立问题身份避免各场景草稿串用。 */
   const identity = `qa-question-${scenario}`;
   /** 答复送达通过按钮推进，以便观察接收和送达的区别。 */
@@ -135,14 +329,17 @@ function QuestionQa() {
   const [calls, setCalls] = useState(0);
   /** 保存当前已接收的回答。 */
   const [answers, setAnswers] = useState<Record<string, { answers: string[] }>>({
-    question_1: { answers: [scenario === 'freeform' || parameters.has('custom') ? '不需要你测\n请继续完成样式优化，并保留长文本换行。' : '手动调整后，关闭再打开同一个任务的代码交付窗口'] },
+    question_1: { answers: [scenario === 'newturn' ? '0.3.111' : scenario === 'freeform' || parameters.has('custom') ? '不需要你测\n请继续完成样式优化，并保留长文本换行。' : '手动调整后，关闭再打开同一个任务的代码交付窗口'] },
     ...(scenario === 'multi' ? { question_2: { answers: ['上次的屏幕'] } } : {}),
   });
   /** 与截图一致的长标题和选项，也覆盖只有自由输入的问题。 */
   const questions = [
     {
-      title: '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
-      ...(scenario === 'freeform' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
+      title:
+        scenario === 'newturn'
+          ? '能看到最新模型的那位用户，Zeus「关于」里显示的具体版本号是多少？需要确认是否也是 0.3.111，才能排除安装包版本差异。'
+          : '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
+      ...(scenario === 'freeform' || scenario === 'newturn' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
     },
     ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
   ];
@@ -165,6 +362,7 @@ function QuestionQa() {
   const reply: NativeSessionItemBuffer = {
     ...item,
     key: `${identity}-reply`,
+    turnId: asNewMessage ? 'qa-answer-turn' : item.turnId,
     itemId: `${identity}-reply`,
     providerItemId: delivery === 'resolved' ? `${identity}-reply` : undefined,
     type: 'userMessage',
@@ -172,20 +370,43 @@ function QuestionQa() {
     status: delivery === 'resolved' ? 'completed' : 'steering',
     optimistic: delivery !== 'resolved',
     text: formatAsyncQuestionAnswer(asyncMessageQuestions(item.payload), answers),
-    payload: { delivery: 'steer_now', questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers } },
+    payload: {
+      delivery: asNewMessage ? 'queue' : 'steer_now',
+      questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers, questions: asyncMessageQuestions(item.payload), ...(asNewMessage ? { asNewMessage: true } : {}) },
+    },
   };
   /** 单独保留账本模式，避免只验同一页同时有问答的情况。 */
-  const showReply = Boolean(delivery) && !parameters.has('ledger');
+  const showReply = Boolean(delivery) && !parameters.has('ledger') && !synchronous;
   /** 只建立组件需要的会话状态，其余沿用生产初始值。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: item.conversationId,
-    activeTurnId: item.turnId,
+    activeTurnId: asNewMessage && delivery ? reply.turnId : item.turnId,
     transportState: 'ready',
     conversationState: 'active_prework',
-    items: { ...(parameters.has('orphan') ? {} : { [identity]: item }), ...(showReply ? { [reply.key]: reply } : {}) },
-    itemOrder: [...(parameters.has('orphan') ? [] : [identity]), ...(showReply ? [reply.key] : [])],
-    terminalTurnIds: scenario === 'closed' ? { [item.turnId]: 'completed' } : {},
+    items: { ...(parameters.has('orphan') || synchronous ? {} : { [identity]: item }), ...(showReply ? { [reply.key]: reply } : {}) },
+    itemOrder: [...(parameters.has('orphan') || synchronous ? [] : [identity]), ...(showReply ? [reply.key] : [])],
+    terminalTurnIds: { ...(asNewMessage ? { [item.turnId]: 'completed' as const } : {}), ...(parameters.has('finished') ? { [reply.turnId]: 'completed' as const } : {}) },
+    pendingRequests:
+      synchronous && delivery
+        ? [
+            {
+              id: identity,
+              conversationId: item.conversationId,
+              turnId: item.turnId,
+              itemId: identity,
+              generationId: 'qa',
+              type: 'request_user_input',
+              status: 'resolved',
+              payload: { questions: asyncMessageQuestions(item.payload) },
+              response: { answers },
+              containsSecret: false,
+              expiresAt: null,
+              createdAt: '',
+              resolvedAt: '',
+            },
+          ]
+        : [],
   };
 
   /** 模拟有延迟的接收；失败场景必须保留真实表单中的选择和输入。 */
@@ -202,7 +423,7 @@ function QuestionQa() {
       <style>{'.qa-page { display: block !important; box-sizing: border-box; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
       <h1>PLAN 与异步询问共用表单验收</h1>
       <nav aria-label="询问场景">
-        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered'].map((name) => (
+        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
           <a key={name} href={`?questions&case=${name}`} style={{ marginRight: 16 }}>
             {name}
           </a>
@@ -416,7 +637,7 @@ function CopyErrorQa() {
         </nav>
       </header>
       <div className="qa-themes">
-        <section className="qa-theme theme-light" data-theme="light">
+        <section className="qa-theme theme-light session-codex-parity-v1" data-theme="light">
           <h2>{zh ? '消息处理' : 'Message processing'}</h2>
           {phase === 'complete' ? (
             <p role="status">{zh ? '已完成处理。' : 'Processing complete.'}</p>

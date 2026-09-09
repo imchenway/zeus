@@ -19,9 +19,10 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
   const inFlight = new Map<string, Promise<void>>();
   const lastCheckStartedAt = new Map<string, number>();
 
-  function hasLocalProviderWork(conversationId: string): boolean {
-    if (ports.submissions.listByConversation(conversationId).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')) return true;
-    return ports.turns.listByConversation(conversationId).some((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
+  /** 只避让正在写入的提交；已接纳轮次和后续排队消息不能阻止漏事件恢复。 */
+  function hasProviderDispatch(conversationId: string): boolean {
+    if (ports.submissions.listByConversation(conversationId).some((submission) => submission.status === 'dispatching')) return true;
+    return ports.turns.listByConversation(conversationId).some((turn) => turn.status === 'dispatching');
   }
 
   function needsProjectListCatchUp(conversationId: string): boolean {
@@ -31,7 +32,7 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
     return ports.turns.listByConversation(conversationId).some((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
   }
 
-  function synchronize(input: { conversationId: string; minimumIntervalMs?: number; skipDuringLocalWork?: boolean }): Promise<void> {
+  function synchronize(input: { conversationId: string; minimumIntervalMs?: number }): Promise<void> {
     const existing = inFlight.get(input.conversationId);
     if (existing) return existing;
     const startedAt = Date.now();
@@ -57,11 +58,13 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
       await ports.ensureGenerationReconciled([conversation.id]);
       const current = ports.getConversation(conversation.id);
       if (!current || current.archived || !current.providerThreadId) return;
-      // 同一世代已经完成权威对账后，当前发送/运行轮次继续只由实时事件推进。
-      // 这时才允许跳过普通历史水位轮询，避免与 turn/start 竞争 app-server 通道。
-      if (input.skipDuringLocalWork && hasLocalProviderWork(current.id)) return;
+      // 同一世代也可能漏收实时事件；运行态必须允许补同步，只避让发送窗口。
+      if (hasProviderDispatch(current.id)) return;
       if (!(await providerWaterlineAdvanced(ports, current))) return;
-      await ports.reconcile(current);
+      /** 读取期间可能开始新发送或切换会话，旧读取不能继续推进该会话。 */
+      const refreshed = ports.getConversation(current.id);
+      if (ports.isClosed() || !refreshed || refreshed.archived || refreshed.providerThreadId !== current.providerThreadId || hasProviderDispatch(current.id)) return;
+      await ports.reconcile(refreshed);
       await ports.persist();
     })();
     const tracked = work.finally(() => {
@@ -74,8 +77,8 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
   return {
     synchronizeOpenConversation(input: { conversationId: string }): Promise<void> {
       // 打开会话的周期读取只负责兜底补齐移动端遗漏事件；实时流仍是主链路。
-      // 30 秒间隔和本地活动态隔离可以避免它重新进入用户发送热路径。
-      return synchronize({ conversationId: input.conversationId, minimumIntervalMs: 30_000, skipDuringLocalWork: true });
+      // 30 秒间隔和发送窗口隔离可以避免它重新进入用户发送热路径。
+      return synchronize({ conversationId: input.conversationId, minimumIntervalMs: 30_000 });
     },
     async synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void> {
       // 项目列表可能包含数十到上百条空闲历史。逐条恢复并读取完整轮次会制造
@@ -83,12 +86,13 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
       // 空闲会话仍由 Remote Control 实时事件或“当前打开会话”精确追赶。
       const conversationIds = [...new Set(input.conversationIds)].filter(needsProjectListCatchUp);
       for (let index = 0; index < conversationIds.length; index += 4) {
-        await Promise.all(conversationIds.slice(index, index + 4).map((conversationId) => synchronize({ conversationId, minimumIntervalMs: 30_000, skipDuringLocalWork: true })));
+        await Promise.all(conversationIds.slice(index, index + 4).map((conversationId) => synchronize({ conversationId, minimumIntervalMs: 30_000 })));
       }
     },
   };
 }
 
+/** 活动轮次的身份和状态可能不变，仍需读取其持续增加的正文与过程。 */
 async function providerWaterlineAdvanced(ports: CodexRemoteControlConversationSyncPorts, conversation: ZeusConversationWithMessagesRecord): Promise<boolean> {
   const providerThreadId = conversation.providerThreadId;
   if (!providerThreadId) return false;
@@ -101,6 +105,6 @@ async function providerWaterlineAdvanced(ports: CodexRemoteControlConversationSy
   const local = ports.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === latest.id);
   if (!local) return true;
   const providerState = classifySnapshotTurn(latest);
-  if (providerState === 'active') return local.status !== 'running' && local.status !== 'waiting' && local.status !== 'dispatching';
+  if (providerState === 'active') return true;
   return providerState === 'unknown' || providerState !== local.status;
 }

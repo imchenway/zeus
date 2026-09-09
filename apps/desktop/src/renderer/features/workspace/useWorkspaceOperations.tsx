@@ -7,7 +7,7 @@ import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
+import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type AiRuntimeSession,
@@ -24,8 +24,7 @@ import {
   type TaskStatusFilter,
   ZeusApiError,
 } from '../../apiClient.js';
-import { normalizeCodeMapSettings, normalizeProjectConfig, normalizeRuntimeSettings, parseNumericList, resolveRuntimeNormalizedLogPath, toProjectConfigForm } from './WorkspaceChrome.js';
-import { CodeMapView } from '../graph/CodeMapView.js';
+import { normalizeProjectConfig, normalizeRuntimeSettings, parseNumericList, resolveRuntimeNormalizedLogPath, toProjectConfigForm } from './WorkspaceChrome.js';
 import { buildGitHunkReviewKey, buildGitOperationExecutionInput, formatGitOperationLabel, formatRuntimeLogLine, toSafeAppShellImport } from './workspaceFormatters.js';
 import {
   adjustProjectSidebarWidthForKeyboard,
@@ -56,7 +55,6 @@ import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions) {
   const {
     actionState,
-    activeGraphView,
     activeNavTarget,
     activeProjectId,
     activeProjectIdRef,
@@ -66,12 +64,9 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     activeTaskTableColumns,
     appShellSettings,
     appShellSettingsRef,
-    codeMapSettings,
-    codeWorkspaceCopy,
     codexConfigImportResult,
     conversationDraftOpen,
     currentProjectTasks,
-    expandedTaskIds,
     externalApiKeyInput,
     firstProjectId,
     genericShellCriticalConfirmed,
@@ -85,14 +80,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     gitStashRef,
     gitSwitchBranchName,
     gitTargetRef,
-    graphAnswer,
-    graphConversationPage,
-    graphConversationSearch,
-    graphConversations,
-    graphNodeTaskFeedback,
-    graphSearchResult,
-    graphSourceOpenFeedback,
-    lastGraphNodeTaskId,
     loadTaskBoard,
     mergeTaskRecord,
     nativeConversationHotCacheRef,
@@ -134,8 +121,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     runtimeShowArchived,
     runtimeTaskIdentityRef,
     saveTaskTableLayoutThenLeaveRef,
-    scanState,
-    selectedGraphConversation,
     selectedNativeConversation,
     selectedNativeConversationPresentation,
     selectedProject,
@@ -146,7 +131,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setActiveNavTarget,
     setActiveProjectSection,
     setAppShellSettings,
-    setCodeMapSettings,
     setCodexConfigImportError,
     setCodexConfigImportLoading,
     setCodexConfigImportPreview,
@@ -162,7 +146,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setGitDiff,
     setGitHunkDecisions,
     setGitOperationStatus,
-    setGraphConversationSearch,
     setLatestConversationContentVisible,
     setPatchExportStatus,
     setProjectCodeWorkspaceMode,
@@ -230,7 +213,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     taskPageViewMode,
     taskStatusFilter,
     taskTableLayoutDirty,
-    taskViewMode,
     taskWorkspaceCopy,
     telegramAllowedUserIdsInput,
     telegramNotificationChatIdsInput,
@@ -245,17 +227,9 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   } = state;
   const newConversationDrafts = useMemo<NewConversationDraftStore>(() => new Map(), [newConversationFocusRequest]);
   const {
-    archiveGraphConversation,
-    askGraph,
     chooseNativeConversationAttachments,
-    createTaskFromGraphConversation,
-    createTaskFromGraphNode,
     effectiveTaskStatusSettingsTargetId,
     executeNewConversationProjectGit,
-    loadGraphConversationDetail,
-    loadGraphConversations,
-    openGraphSourceFromCodeMap,
-    openGraphView,
     openTaskConversation,
     openTaskCreateModal,
     openTaskCopyModal,
@@ -269,12 +243,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     refreshOpenTaskEvents,
     reopenTaskFromConversation,
     requestTaskTerminalCleanupConfirmation,
-    restoreGraphConversation,
     retryTaskModelPush,
-    scanActiveProjectGraph,
-    searchGraph,
     selectNewConversationProject,
-    selectProjectCodeWorkspaceMode,
     startNativeConversation,
     startProjectConversation,
     taskDetailPaneConversationState,
@@ -286,59 +256,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     updateTaskManagementStatus,
     updateTaskRelationships,
   } = domainActions;
-  function handleCodeMapAction(): void {
-    requestWorkspaceLeave(() => {
-      setActiveNavTarget('projects');
-      setActiveProjectSection('code');
-      void selectProjectCodeWorkspaceMode('graph');
-    });
-  }
-
-  function renderProjectCodeMapStage(): ReactNode {
-    if (!activeGraphView) return null;
-    return (
-      <section className="project-code-map-stage" aria-label={codeWorkspaceCopy.graphDrawerAria}>
-        {/* 图谱按首次进入模式再加载；源码工作台离开时释放监听器，返回后再从偏好和磁盘恢复。 */}
-        <CodeMapView
-          isActive={activeProjectSection === 'code'}
-          graphView={activeGraphView}
-          searchResult={graphSearchResult}
-          graphAnswer={graphAnswer}
-          graphConversations={graphConversations}
-          graphConversationPage={graphConversationPage}
-          selectedGraphConversation={selectedGraphConversation}
-          graphConversationSearch={graphConversationSearch}
-          graphNodeTaskFeedback={graphNodeTaskFeedback}
-          graphNodeTaskTargetId={lastGraphNodeTaskId}
-          graphSourceOpenFeedback={graphSourceOpenFeedback}
-          scanState={scanState}
-          onGraphConversationSearchChange={setGraphConversationSearch}
-          onLoadGraphConversations={loadGraphConversations}
-          onLoadGraphConversation={loadGraphConversationDetail}
-          onArchiveGraphConversation={archiveGraphConversation}
-          onRestoreGraphConversation={restoreGraphConversation}
-          onCreateTaskFromGraphConversation={createTaskFromGraphConversation}
-          onLoadView={openGraphView}
-          onLoadGraphNeighborhood={activeProjectId && props.onLoadProjectGraphNeighborhood ? (nodeId, depth) => props.onLoadProjectGraphNeighborhood!(activeProjectId, nodeId, depth) : props.onLoadGraphNeighborhood}
-          onSearchGraph={searchGraph}
-          onAskGraph={askGraph}
-          onCreateTaskFromNode={createTaskFromGraphNode}
-          onOpenGraphSource={openGraphSourceFromCodeMap}
-          onScanGraph={() => {
-            void scanActiveProjectGraph();
-          }}
-          onOpenChanges={() => {
-            setProjectPanel('diff');
-            void loadGitDiff();
-          }}
-          onExportMermaidDiagramFile={props.onExportMermaidDiagramFile}
-          onExportPlantUmlDiagramFile={props.onExportPlantUmlDiagramFile}
-          codeMapSettings={codeMapSettings}
-          appLanguage={appShellSettings.appLanguage}
-        />
-      </section>
-    );
-  }
 
   function toggleTaskSelection(taskId: string, selected: boolean): void {
     setSelectedTaskIds((ids) => {
@@ -572,10 +489,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       }
       if (props.onLoadRuntimeAdapters) setRuntimeAdapters(await props.onLoadRuntimeAdapters());
       if (props.onLoadRuntimeSettings) setRuntimeSettings(normalizeRuntimeSettings(await props.onLoadRuntimeSettings()));
-      if (props.onLoadCodeMapSettings) {
-        const settings = normalizeCodeMapSettings(await props.onLoadCodeMapSettings());
-        setCodeMapSettings(settings);
-      }
       if (props.onLoadProjectConfig && firstProjectId) {
         const loadedConfig = normalizeProjectConfig(await props.onLoadProjectConfig(firstProjectId), firstProjectId);
         setProjectConfig(loadedConfig);
@@ -864,29 +777,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
   }
 
-  async function saveTaskViewPreferences(input: { viewMode?: TaskWorkspaceViewMode; expandedTaskIds?: string[] }): Promise<void> {
-    if (!activeProjectId) return;
-    const nextSettings = normalizeRendererAppShellSettings({
-      ...appShellSettings,
-      taskViewModeByProject: {
-        ...(appShellSettings.taskViewModeByProject ?? {}),
-        [activeProjectId]: input.viewMode ?? taskViewMode,
-      },
-      taskExpandedIdsByProject: {
-        ...(appShellSettings.taskExpandedIdsByProject ?? {}),
-        [activeProjectId]: input.expandedTaskIds ?? expandedTaskIds,
-      },
-    });
-    setAppShellSettings(nextSettings);
-    if (!props.onSaveAppShellSettings) return;
-    try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
-      setAppShellSettings((currentSettings) => mergeAppShellSettingsSaveResponse({ currentSettings, savedSettings }));
-    } catch (error) {
-      recordLocalError('task-view-preference-save', error);
-    }
-  }
-
   async function saveTaskTableLayout(scope: 'project' | 'global'): Promise<boolean> {
     if (scope === 'project' && !activeProjectId) return false;
     const normalizedDraft = normalizeTaskTableColumnPreferences(activeTaskTableColumns);
@@ -1038,21 +928,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setTaskTableLayoutScopeDialogOpen(false);
   }
 
-  async function clearLocalCaches(): Promise<void> {
-    if (!props.onClearLocalCaches) return;
-    setActionState('loading-runtime');
-    try {
-      const cleared = await props.onClearLocalCaches();
-      setAppShellSettings((current) => ({
-        ...current,
-        lastCacheClearAt: cleared.clearedAt,
-      }));
-      setActionState('idle');
-    } catch (error) {
-      recordLocalError('renderer-action', error);
-    }
-  }
-
   async function clearNetworkCache(): Promise<void> {
     if (!window.zeus?.clearNetworkCache) return;
     setActionState('loading-runtime');
@@ -1089,7 +964,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
               settings: {
                 appShell: toSafeAppShellImport(selected.snapshot.settings.appShell),
                 runtime: selected.snapshot.settings.runtime,
-                codeMap: selected.snapshot.settings.codeMap,
                 telegramNotification: selected.snapshot.settings.telegramNotification,
                 telegramSecurity: selected.snapshot.settings.telegramSecurity,
               },
@@ -1118,7 +992,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
                   taskStatusFilterByProject: normalizeTaskStatusFilterByProject(appShellSettings.taskStatusFilterByProject),
                 },
                 runtime: runtimeSettings,
-                codeMap: codeMapSettings,
                 telegramNotification: telegramNotificationSettings,
                 telegramSecurity: telegramSecuritySettings,
               },
@@ -1126,10 +999,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       );
       if (props.onLoadAppShellSettings) setAppShellSettings(normalizeRendererAppShellSettings(await props.onLoadAppShellSettings()));
       if (props.onLoadRuntimeSettings) setRuntimeSettings(normalizeRuntimeSettings(await props.onLoadRuntimeSettings()));
-      if (props.onLoadCodeMapSettings) {
-        const settings = normalizeCodeMapSettings(await props.onLoadCodeMapSettings());
-        setCodeMapSettings(settings);
-      }
       if (props.onLoadTelegramNotificationSettings) {
         const settings = await props.onLoadTelegramNotificationSettings();
         setTelegramNotificationSettings(settings);
@@ -2194,7 +2063,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     checkReleaseUpdate,
     checkRuntimeAdapter,
     clearExternalApiKey,
-    clearLocalCaches,
     clearNetworkCache,
     clearTaskSelection,
     clearTelegramBotToken,
@@ -2215,7 +2083,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     exportLocalSettings,
     exportRuntimeLogs,
     generateRuntimeSessionSummary,
-    handleCodeMapAction,
     handleMainNavigate,
     handleProjectSidebarResizeKeyDown,
     handleProjectSidebarResizePointerDown,
@@ -2239,7 +2106,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     rejectGenericRuntimeConfirmation,
     rejectGitOperation,
     renderNativeConversationWorkspace,
-    renderProjectCodeMapStage,
     renderTaskDetailPaneContent,
     repositoryPickerLabel,
     requestWorkspaceLeave,
@@ -2256,7 +2122,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     saveTaskPageViewMode,
     saveTaskStatusFilter,
     saveTaskTableLayout,
-    saveTaskViewPreferences,
     saveTelegramBotToken,
     saveTelegramNotificationSettings,
     saveTelegramSecuritySettings,

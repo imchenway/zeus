@@ -1,3 +1,4 @@
+import { parseJsonObject } from './localServerPlatformSupport.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
@@ -17,10 +18,11 @@ import {
   readCodexProviderRuntimeHealth,
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
-import { type ProjectGraph } from '@zeus/graph-engine';
-import { type ProjectConfigSnapshot } from './projectCore.js';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
+import { normalizeNetworkProxySettings } from '@zeus/shared';
+import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
+export { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
 import {
   cloneTaskManagementStatusConfig,
   type ReadOnlyValidationDescriptor,
@@ -63,7 +65,6 @@ import {
   ExecutionHostWorkRepository,
   GitSnapshotRepository,
   IdempotencyRequestRepository,
-  introspectSqliteSchema,
   LongTermMemoryRepository,
   PluginRepository,
   ProjectionDatabaseRuntimeManager,
@@ -73,7 +74,6 @@ import {
   ProviderEventReceiptRepository,
   RuntimeSessionRepository,
   SettingRepository,
-  type SqlValue,
   TaskBoardRepository,
   TaskEnvironmentRepository,
   TaskEventFileProjectionRepository,
@@ -100,12 +100,9 @@ import { type TelegramMessageSender, type TelegramPollingService, type TelegramU
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, appendFileSync, existsSync, constants as fsConstants, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { BrowserAutomationPort } from './browserAutomation.js';
-import { clearPersistedGraphCache, compactProjectGraphForRuntimeCache, persistScanAndGraph } from './codeIntelligenceGraphCache.js';
-import { applyCodeMapSettingsToGraph, parseJsonObject, resolveCodeMapScanRoot, resolveConfiguredSqliteDatabase, resolveImportedSchemaFiles } from './codeIntelligenceGraphStore.js';
-import { isUnsafeCodeMapScanRoot, UnsafeCodeMapScanRootError } from './codeMapScanBoundary.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
 import { createZeusSkillService } from './zeusSkillService.js';
 import { createZeusPluginService } from './zeusPluginService.js';
@@ -138,23 +135,12 @@ import { ExecutionHostMutationAdmissionFence } from './executionHostHandoffApi.j
 import { ExecutionHostStopCommandApplication } from './executionHostStopCommandApplication.js';
 import { GitCommandApplication } from './gitCommandApplication.js';
 import { createGitIntegrationOperations } from './gitIntegrationOperations.js';
-import { GraphConversationCommandApplication } from './graphConversationCommandApplication.js';
-import { activateHeavyWorkerJobs, closeHeavyWorkerJobs, runCodeMapHeavyJob, runGitDiffHeavyJob, runGitStatusHeavyJob } from './heavyWorkerPool.js';
+import { ConversationStartCommandApplication } from './conversationStartCommandApplication.js';
+import { activateHeavyWorkerJobs, closeHeavyWorkerJobs, runGitDiffHeavyJob, runGitStatusHeavyJob } from './heavyWorkerPool.js';
 import { IntegrationCommandApplication } from './integrationCommandApplication.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
 import { registerLocalServerPlatformRoutes } from './localServerPlatformRoutes.js';
-import {
-  type AppShellSettingsSnapshot,
-  codeMapSettingsKey,
-  type CodeMapSettingsSnapshot,
-  codexRemoteControlEnabledSettingKey,
-  defaultCodeMapSettings,
-  normalizeAppShellSettings,
-  normalizeCodeMapSettings,
-  normalizeRuntimeSettings,
-  runtimeSettingsKey,
-  type TaskAgentRunStatus,
-} from './localServerSettingsNormalization.js';
+import { type AppShellSettingsSnapshot, codexRemoteControlEnabledSettingKey, normalizeAppShellSettings, normalizeRuntimeSettings, runtimeSettingsKey, type TaskAgentRunStatus } from './localServerSettingsNormalization.js';
 import { createLocalServerSupportOperations, normalizeTelegramNotificationSettings, normalizeTelegramSecuritySettings } from './localServerSupportOperations.js';
 import { applyLocalCorsHeaders, isAllowedLocalAppOrigin, isPathInsideProjectRoot, normalizeHeaderValue, resolveRegisteredRuntimeAdapter } from './localServerPlatformSupport.js';
 import { ManagedPortableContextStore } from './managedPortableContextStore.js';
@@ -185,8 +171,6 @@ import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusData
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 import { isReadOnlyValidationExternalRead, readOnlyValidationCapabilityError, readOnlyValidationSkippedCapabilities } from './readOnlyValidation.js';
 export { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
-
-export type { GraphEdgeDetail, GraphNeighborhood, GraphSearchResult, GraphViewSnapshot } from './codeIntelligenceGraphStore.js';
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
@@ -335,7 +319,7 @@ type ZeusFastifyLifecycle = FastifyInstance & {
   prepareZeusShutdown?: () => Promise<void>;
 };
 
-export interface GraphConversationHistoryItem {
+export interface ConversationHistoryItem {
   id: string;
   projectId: string;
   taskId: string | null;
@@ -357,8 +341,8 @@ export interface GraphConversationHistoryItem {
   }>;
 }
 
-export interface GraphConversationHistoryPage {
-  items: GraphConversationHistoryItem[];
+export interface ConversationHistoryPage {
+  items: ConversationHistoryItem[];
   total: number;
   limit: number;
   offset: number;
@@ -378,7 +362,6 @@ export interface DashboardSnapshot {
     telegram: { enabled: boolean; reason: string };
   };
   git: GitStatusSummary;
-  graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
 
 export interface RuntimeStatusSnapshot {
@@ -757,7 +740,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (!readOnlyValidation) commandDeliveries.sealUnreceiptedProviderWritesAsUnknown(new Date().toISOString());
   const conversationCommands = new ConversationCommandApplication({ db, deliveries: commandDeliveries, redactSensitiveText, now: () => new Date() });
   const conversationDispatchCommands = new ConversationDispatchCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
-  const graphConversationCommands = new GraphConversationCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
+  const conversationStartCommands = new ConversationStartCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
   const conversationQueueCoreMutations = new ConversationQueueCoreMutationApplication({
     submissions: conversationSubmissions,
     execution: conversationExecution,
@@ -804,11 +787,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         restoredAt: new Date().toISOString(),
       });
   const executionHostDispatchMayResume = !readOnlyValidation && executionHostHandoffRecovery.outcome !== 'recovery_required';
-  const recoveredInterruptedScans = executionHostDispatchMayResume ? projects.recoverInterruptedScans() : 0;
-  if (recoveredInterruptedScans > 0) {
-    // 上次进程在扫描中崩溃时不会进入 catch 分支；启动时恢复为 failed，避免项目永久停在“扫描中”且无法重试。
-    await db.save();
-  }
   const server = Fastify({ logger: false });
   const apiPerformance = new LocalApiPerformanceCollector();
   const executionHostMutationFence = new ExecutionHostMutationAdmissionFence(readOnlyValidation || executionHostDispatchMayResume ? 'open' : 'recovery_required');
@@ -846,8 +824,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const readGitDiff = async (cwd: string): Promise<GitDiffSummary> => (await runGitDiffHeavyJob(cwd)).diff;
   const releaseEnvironment = process.env;
   const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest));
-  const activeProjectGraphScanIds = new Set<string>();
-  const graphScanCommandOwners = new Map<string, string>();
   const telegramRuntimeConfirmations = new Map<string, TelegramRuntimeConfirmation>();
   const telegramRuntimeSummarySentLogCounts = new Map<string, Set<number>>();
   const telegramCommandRunMessages = new Map<string, { chatId: number; messageId?: number }>();
@@ -913,11 +889,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   };
   if (!readOnlyValidation) await runRuntimeLogRetention();
   traceStartup('runtime_retention_ready');
-  let codeMapSettings: CodeMapSettingsSnapshot = normalizeCodeMapSettings(settings.getJson<CodeMapSettingsSnapshot>(codeMapSettingsKey)) ?? defaultCodeMapSettings;
   let codexRemoteControlEnabled = settings.getJson<boolean>(codexRemoteControlEnabledSettingKey) === true;
-  let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
+  /** 固定本次宿主的生效值；后台任务继续运行时，重新开窗也不得提前切换浏览器代理。 */
+  const activeNetworkProxy = normalizeNetworkProxySettings(appShellSettings.networkProxy);
+  applyNetworkProxyAtStartup(activeNetworkProxy);
+  // 只读端点沿用本地 API 的认证；保存仍走既有设置命令，不增加独立写入口。
+  server.get('/api/settings/network-proxy', async () => activeNetworkProxy);
   if (newDatabase) {
     appShellSettings = { ...appShellSettings, modelSetupStatus: 'pending' };
     settings.setJson(appShellSettingsKey, appShellSettings);
@@ -1590,13 +1569,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return capabilities.modelBudgets[model.model] ?? null;
   };
 
-  async function activateCurrentCodexConfiguration(): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
+  async function activateCurrentCodexConfiguration(input: { syncSubscriptionModels?: boolean } = {}): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
     if (!codexAppServerManager.activateFreshGeneration) {
       throw nativeApiError('ZEUS_CODEX_CONFIG_HOT_RELOAD_UNAVAILABLE', '当前 Codex 运行服务不支持配置热启用。');
     }
     const capabilities = await codexAppServerManager.activateFreshGeneration({
       commandPath: currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      requireFreshModels: input.syncSubscriptionModels === true,
     });
     return { runtimeReloaded: true, runtimeGenerationId: capabilities.generationId, restartRequired: false };
   }
@@ -2210,23 +2190,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     set appShellSettings(value: AppShellSettingsSnapshot) {
       appShellSettings = value;
     },
-    get codeMapSettings() {
-      return codeMapSettings;
-    },
-    set codeMapSettings(value: CodeMapSettingsSnapshot) {
-      codeMapSettings = value;
-    },
     get codexRemoteControlEnabled() {
       return codexRemoteControlEnabled;
     },
     set codexRemoteControlEnabled(value: boolean) {
       codexRemoteControlEnabled = value;
-    },
-    get memoryGraphCache() {
-      return memoryGraphCache;
-    },
-    set memoryGraphCache(value: ProjectGraph | null) {
-      memoryGraphCache = value;
     },
     get nativeEventSaveTimer() {
       return nativeEventSaveTimer;
@@ -2689,7 +2657,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     });
   }
 
-  function persistReadonlyGitDiffSnapshot(input: { projectId: string; taskId: string; diff: GitDiffSummary; graphRoot: string }): void {
+  function persistReadonlyGitDiffSnapshot(input: { projectId: string; taskId: string; diff: GitDiffSummary }): void {
     gitSnapshots.createSnapshot({
       projectId: input.projectId,
       taskId: input.taskId,
@@ -2702,7 +2670,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       createdAt: new Date().toISOString(),
     });
     for (const change of buildReadonlyGitChanges(input.diff)) {
-      const linkedGraphNodes = readCurrentGraphNodeIdsBySourceRef(change.filePath, input.graphRoot);
       gitSnapshots.createChange({
         projectId: input.projectId,
         taskId: input.taskId,
@@ -2710,120 +2677,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         changeType: change.changeType,
         additions: change.additions,
         deletions: change.deletions,
-        linkedGraphNodes,
         createdAt: new Date().toISOString(),
       });
     }
-  }
-
-  async function runCodeMapScan(input: { projectName: string; rootPath: string; projectConfig?: ProjectConfigSnapshot; graphProjectName?: string }): Promise<Record<string, unknown>> {
-    publishRealtimeEvent('project.scan.started', {
-      projectName: input.projectName,
-      rootPath: input.rootPath,
-    });
-    const scanStartedAt = Date.now();
-    const scanRoot = resolveCodeMapScanRoot(input.rootPath, codeMapSettings);
-    if (isUnsafeCodeMapScanRoot(scanRoot)) {
-      // 全局 scan-current 历史入口不能因为 packaged cwd=/ 而扫描整台机器；项目页也必须拒绝根目录项目。
-      throw new UnsafeCodeMapScanRootError();
-    }
-    const importedSchemaFiles = [...resolveImportedSchemaFiles(input.rootPath, input.projectConfig), ...(await writeConfiguredDatabaseSchemaFiles(input.rootPath, input.projectConfig))];
-    // 扫描进度只描述真实执行阶段，不提前伪造文件数、节点数或视图数。
-    publishRealtimeEvent('project.scan.progress', {
-      projectName: input.projectName,
-      rootPath: scanRoot,
-      stage: 'resolve_scope',
-      message: '解析代码地图扫描范围',
-    });
-    publishRealtimeEvent('project.scan.progress', {
-      projectName: input.projectName,
-      rootPath: scanRoot,
-      stage: 'index_source',
-      message: '扫描真实源码文件',
-    });
-    const graphProjectName = input.graphProjectName ?? input.projectName;
-    const { scan, graph: workerGraph, resultRef } = await runCodeMapHeavyJob(scanRoot, graphProjectName, codeMapSettings.defaultIgnoreDirectories, importedSchemaFiles);
-    publishRealtimeEvent('project.scan.progress', {
-      projectName: input.projectName,
-      rootPath: scan.rootPath,
-      stage: 'build_graph',
-      message: '构建真实代码图谱',
-      fileCount: scan.files.length,
-      symbolCount: scan.symbols.length,
-      importedSchemaFileCount: importedSchemaFiles.length,
-    });
-    const graph = applyCodeMapSettingsToGraph(workerGraph, codeMapSettings);
-    const runtimeGraph = compactProjectGraphForRuntimeCache(graph);
-    publishRealtimeEvent('project.scan.progress', {
-      projectName: input.projectName,
-      rootPath: scan.rootPath,
-      stage: 'cache_graph',
-      message: '按图缓存策略保存扫描结果',
-      nodeCount: runtimeGraph.nodes.length,
-      edgeCount: runtimeGraph.edges.length,
-      viewCount: runtimeGraph.views.length,
-      graphCacheStrategy: codeMapSettings.graphCacheStrategy,
-      fullNodeCount: graph.nodes.length,
-      fullEdgeCount: graph.edges.length,
-    });
-    if (codeMapSettings.graphCacheStrategy === 'memory') {
-      memoryGraphCache = runtimeGraph;
-      await projectionDatabases.enqueueIndexWrite((projectionDb) => clearPersistedGraphCache(projectionDb, scan.projectName));
-    } else if (codeMapSettings.graphCacheStrategy === 'disabled') {
-      memoryGraphCache = null;
-      await projectionDatabases.enqueueIndexWrite((projectionDb) => clearPersistedGraphCache(projectionDb, scan.projectName));
-    } else {
-      memoryGraphCache = null;
-      await projectionDatabases.enqueueIndexWrite((projectionDb) => persistScanAndGraph(projectionDb, scan, runtimeGraph));
-    }
-    await db.save();
-    const baseResult = {
-      projectName: input.projectName,
-      graphProjectName: scan.projectName,
-      rootPath: scan.rootPath,
-      fileCount: scan.files.length,
-      symbolCount: scan.symbols.length,
-      fullNodeCount: graph.nodes.length,
-      fullEdgeCount: graph.edges.length,
-      retainedNodeCount: runtimeGraph.nodes.length,
-      retainedEdgeCount: runtimeGraph.edges.length,
-      nodeCount: runtimeGraph.nodes.length,
-      edgeCount: runtimeGraph.edges.length,
-      viewCount: runtimeGraph.views.length,
-      importedSchemaFileCount: importedSchemaFiles.length,
-      heavyWorkerResultRef: resultRef,
-    };
-    const result = codeMapSettings.performanceMonitoringEnabled
-      ? {
-          ...baseResult,
-          // 性能监控只暴露本次真实扫描耗时，不生成后台常驻指标或虚假历史曲线。
-          performance: { durationMs: Math.max(0, Date.now() - scanStartedAt) },
-        }
-      : baseResult;
-    publishRealtimeEvent('project.scan.completed', result);
-    return result;
-  }
-
-  async function writeConfiguredDatabaseSchemaFiles(projectRootPath: string, config?: ProjectConfigSnapshot): Promise<Array<{ absolutePath: string; relativePath: string }>> {
-    const sqliteConnection = resolveConfiguredSqliteDatabase(projectRootPath, config);
-    if (!sqliteConnection) return [];
-    const snapshot = await introspectSqliteSchema(sqliteConnection.absolutePath);
-    if (snapshot.statements.length === 0) return [];
-    const outputPath = join(localLogDirectory, 'schema-introspection', sanitizeRuntimeFileName(sqliteConnection.relativePath), 'schema.sql');
-    mkdirSync(dirname(outputPath), { recursive: true });
-    const ddl = [
-      `-- Zeus database introspection source: sqlite:${sqliteConnection.relativePath}`,
-      `-- Generated from a real local SQLite schema at scan time; this file is a cache, not seed data.`,
-      ...snapshot.statements.map((statement) => `${statement.sql.replace(/;\\s*$/u, '')};`),
-      '',
-    ].join('\n');
-    writeFileSync(outputPath, ddl, 'utf8');
-    return [
-      {
-        absolutePath: outputPath,
-        relativePath: `database-introspection/${sqliteConnection.relativePath}.sql`,
-      },
-    ];
   }
 
   // 延迟绑定用于打破工厂循环，依赖只能在其 owner 装配完成后被调用。
@@ -2862,7 +2718,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     platformMutableState,
     projects,
     publishRealtimeEvent,
-    readCurrentGraphSummaryForProject: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['readCurrentGraphSummaryForProject']>) => supportOperations.readCurrentGraphSummaryForProject(...args),
     readGitDiff,
     readProjectConfig: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['readProjectConfig']>) => supportOperations.readProjectConfig(...args),
     readTelegramToken: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['readTelegramToken']>) => supportOperations.readTelegramToken(...args),
@@ -2872,13 +2727,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     resolveResponsesRuntime,
     resolveTaskManagementStatusConfigForProject,
     runtimeSessions,
-    searchCurrentGraphNodesForProject: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['searchCurrentGraphNodesForProject']>) => supportOperations.searchCurrentGraphNodesForProject(...args),
     taskAttachmentRoot,
     taskPushContentAttachmentFields: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['taskPushContentAttachmentFields']>) => supportOperations.taskPushContentAttachmentFields(...args),
     taskStatusEventTitle,
     tasks,
     telegramCommandRouteError: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['telegramCommandRouteError']>) => supportOperations.telegramCommandRouteError(...args),
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     trustedConversationAttachmentRoots,
   });
   const {
@@ -2912,9 +2766,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     moveTaskToCancelled,
     parseTelegramLogsArgs,
     formatTelegramTaskLogs,
-    formatTelegramGraphAsk,
-    answerProjectGraphQuestion,
-    persistGraphQuestionConversation,
     formatTelegramTaskDiff,
     requireTelegramPollingService,
   } = taskRuntimeOperations;
@@ -2930,7 +2781,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     dataLayout,
     db,
     findProjectByRef,
-    formatTelegramGraphAsk,
     formatTelegramTaskDiff,
     formatTelegramTaskLogs,
     isNativeApiRecord,
@@ -2983,20 +2833,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     readProjectDatabaseSecretSnapshot,
     readProjectConfig,
     buildRuntimeProcessEnv,
-    readCurrentGraphSummary,
-    readCurrentGraphSummaryByProject,
-    resolveGraphProjectName,
-    readCurrentGraphNodeByIdForProject,
-    readCurrentGraphViewForProject,
-    formatProjectScopedGraphViewTitle,
-    readCurrentGraphView,
-    attachGraphViewPerformance,
-    searchCurrentGraphNodes,
-    readCurrentGraphNodeById,
-    readCurrentGraphNodeIdsBySourceRef,
-    readCurrentGraphEdgesByNodeId,
-    readCurrentGraphEdgeDetail,
-    readCurrentGraphNeighborhood,
     markRuntimeSessionConversationsInactive,
     persistRuntimeConversationSummary,
     stopPersistedOrphanRuntimeSession,
@@ -3099,7 +2935,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     ensureNativeConversationExecutionContext,
     taskWorkspaces,
     tasks,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     transitionTaskStatus,
     trustedConversationAttachmentRoots,
   });
@@ -3380,9 +3216,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskStatusEventTitle,
     terminalEvents,
     activateCurrentCodexConfiguration,
-    activeProjectGraphScanIds,
     aiRuntimeManager,
-    answerProjectGraphQuestion,
     apiPerformance,
     appShellSettingsKey,
     appendAuditLog,
@@ -3391,7 +3225,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     artifactStore,
     assertRequestedAgentKind,
     assertTelegramCommandInputKeys,
-    attachGraphViewPerformance,
     auditLogs,
     authorizeReleaseNotesRequest,
     getBoundPort: () => boundPort,
@@ -3456,12 +3289,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     flushPendingNativeDeltaEvents,
     flushRuntimeLogFileWrites,
     flushRuntimePersistenceWrites,
-    formatProjectScopedGraphViewTitle,
     getProjectDatabasePasswordSecretKey,
     getTelegramPollingService,
     gitCommands,
-    graphConversationCommands,
-    graphScanCommandOwners,
+    conversationStartCommands,
     inferNativeConversationSnapshotState,
     inspectTaskPushAttachments,
     inspectTaskTerminalCleanup,
@@ -3490,7 +3321,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseTelegramDispatchPreviewInput,
     parseTelegramNotificationSettingsInput,
     parseTelegramSecuritySettingsInput,
-    persistGraphQuestionConversation,
     piNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
@@ -3503,15 +3333,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     publishNativeConversationEvent,
     publishRealtimeEvent,
     readCodexRemoteControlStandalone,
-    readCurrentGraphEdgeDetail,
-    readCurrentGraphEdgesByNodeId,
-    readCurrentGraphNeighborhood,
-    readCurrentGraphNodeById,
-    readCurrentGraphNodeByIdForProject,
-    readCurrentGraphSummary,
-    readCurrentGraphSummaryByProject,
-    readCurrentGraphView,
-    readCurrentGraphViewForProject,
     readGitDiff,
     readGitStatus,
     readOnlyValidation,
@@ -3528,7 +3349,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     requireCodexRemoteControlCommandPath,
     requireNativeQueueConversation,
     requireTelegramPollingService,
-    resolveGraphProjectName,
     resolveNativeConversationExecutionRoot,
     resolveTaskIntegrationRequest,
     resolveTaskManagementStatusConfigForProject,
@@ -3537,13 +3357,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     restoreNativeConversation,
     retryTaskIntegrationAiPreparation,
     revokeReleaseNotesCapability,
-    runCodeMapScan,
     runRuntimeLogRetention,
     runtimeEphemeralCapabilities,
     runtimeSessionCommands,
     runtimeSessionDataDirectory,
     runtimeTerminalStatus,
-    searchCurrentGraphNodes,
     secretStore,
     sendNativeConversationApiError,
     sendTaskGitApiError,
@@ -3571,7 +3389,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     telegramNotificationSettingsKey,
     telegramSecuritySettingsKey,
     telegramTaskNotificationTitle,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     toNativeDurableAcceptance,
     toNativeInterruptAcceptance,
     toNativeQueueApiSnapshot,
@@ -3586,14 +3404,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     usageRefreshInFlight,
     workManagementCommands,
     workspaceGitCommands,
-    writeTaskCompletionToGraphNode,
     zentaoCredentials,
   });
   const unsubscribeCodexRpcRetries = codexAppServerManager.subscribeRpcRetries((progress) => {
     publishRealtimeEvent('codex.rpc.retrying', { ...progress });
   });
+  /** 所有窗口收到目录变更后重新读取，后台失败不冒充更新完成。 */
+  const unsubscribeCodexModels = codexAppServerManager.subscribe((event) => {
+    if (readOnlyValidation || (event.method !== 'zeus/models/updated' && event.method !== 'zeus/models/sync_failed')) return;
+    const state = codexAppServerManager.getState();
+    if (state.type !== 'ready' || state.generationId !== event.generationId) return;
+    // 目录事件仅传递刷新状态，不转发账号或供应商的任意回包。
+    publishRealtimeEvent('codex.models.changed', { generationId: event.generationId, succeeded: event.method === 'zeus/models/updated' });
+  });
   closeLocalServerResources = async () => {
     unsubscribeCodexRpcRetries();
+    unsubscribeCodexModels();
     await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
   };
   projectGitQueries = platformRoutes.projectGitQueries;
@@ -3787,39 +3613,7 @@ function toPassiveRuntimeStatus(runtimeSettings: RuntimeSettingsSnapshot): {
   };
 }
 
-function writeTaskCompletionToGraphNode(
-  db: {
-    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
-    execute: (sql: string, params?: SqlValue[]) => void;
-  },
-  task: ZeusTaskRecord,
-): { nodeId: string; sourceRef: string; taskId: string } | undefined {
-  const context = parseJsonObject(task.sourceContextJson);
-  const graphNode = context.graphNode && typeof context.graphNode === 'object' ? (context.graphNode as { id?: unknown; sourceRef?: unknown }) : undefined;
-  const nodeId = typeof graphNode?.id === 'string' ? graphNode.id : undefined;
-  if (!nodeId) return undefined;
-  const row = db.get<{ id: string; source_ref: string; metadata_json: string }>(`SELECT id, source_ref, metadata_json FROM project_nodes WHERE id = ? LIMIT 1`, [nodeId]);
-  if (!row) return undefined;
-  const metadata = parseJsonObject(row.metadata_json);
-  const existingRecentTasks = Array.isArray(metadata.recentTasks) ? metadata.recentTasks : [];
-  const recentTask = {
-    taskId: task.id,
-    title: task.title,
-    status: task.status,
-    completedAt: task.updatedAt,
-  };
-  const recentTasks = [recentTask, ...existingRecentTasks.filter((item) => !isSameTaskSummary(item, task.id))].slice(0, 5);
-  const existingRiskTags = Array.isArray(metadata.riskTags) ? metadata.riskTags.filter((item): item is string => typeof item === 'string') : [];
-  const riskTags = Array.from(new Set([...existingRiskTags, 'task_completed']));
-  db.execute('UPDATE project_nodes SET metadata_json = ? WHERE id = ?', [JSON.stringify({ ...metadata, recentTasks, riskTags }), nodeId]);
-  return { nodeId, sourceRef: row.source_ref, taskId: task.id };
-}
-
-function isSameTaskSummary(value: unknown, taskId: string): boolean {
-  return Boolean(value && typeof value === 'object' && 'taskId' in value && (value as { taskId?: unknown }).taskId === taskId);
-}
-
-function toGraphConversationHistoryItem(conversation: ZeusConversationWithMessagesRecord): GraphConversationHistoryItem {
+function toConversationHistoryItem(conversation: ZeusConversationWithMessagesRecord): ConversationHistoryItem {
   return {
     id: conversation.id,
     projectId: conversation.projectId,

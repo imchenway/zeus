@@ -312,12 +312,12 @@ export const httpReadEffectPolicy = Object.freeze({
     }),
     Object.freeze({
       id: 'workspace-filesystem-read-family',
-      operationPatterns: Object.freeze(['^GET /api/code-map(?:/|$)', '^GET /api/projects/:projectId/scan-status$', '^GET /api/tasks/:taskId/(?:diff|integrations)(?:/|$)', '^GET /api/diagnostics/storage/artifacts$']),
+      operationPatterns: Object.freeze(['^GET /api/tasks/:taskId/(?:diff|integrations)(?:/|$)', '^GET /api/diagnostics/storage/artifacts$']),
       effects: Object.freeze(['copied_db', 'filesystem_workspace', 'git']),
       externalInValidation: true,
       validation: Object.freeze({
         disposition: 'fail_closed',
-        representativePaths: Object.freeze(['/api/code-map/status', '/api/projects/project_read_only_validation_probe/scan-status', '/api/tasks/task_probe/diff', '/api/tasks/task_probe/integrations', '/api/diagnostics/storage/artifacts']),
+        representativePaths: Object.freeze(['/api/tasks/task_probe/diff', '/api/tasks/task_probe/integrations', '/api/diagnostics/storage/artifacts']),
       }),
     }),
     Object.freeze({

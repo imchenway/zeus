@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
+import { cleanPackageArtifacts } from './clean-package-artifacts.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -156,31 +157,6 @@ async function verifyCodesignPackagedApp(appPath) {
   await run('/usr/bin/codesign', buildCodesignVerifyArgs(appPath));
 }
 
-function readPackagedAppInfo(appPath, key) {
-  return execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')], {
-    encoding: 'utf8',
-  }).trim();
-}
-
-function verifyPackagedAppIdentity(appPath, variant) {
-  const expected =
-    variant === 'test'
-      ? {
-          bundleId: 'dev.hypha.zeus.test',
-          name: 'Zeus Test',
-          executable: 'Zeus Test',
-        }
-      : { bundleId: 'dev.hypha.zeus', name: 'Zeus', executable: 'Zeus' };
-  const actual = {
-    bundleId: readPackagedAppInfo(appPath, 'CFBundleIdentifier'),
-    name: readPackagedAppInfo(appPath, 'CFBundleName'),
-    executable: readPackagedAppInfo(appPath, 'CFBundleExecutable'),
-  };
-  if (actual.bundleId !== expected.bundleId || actual.name !== expected.name || actual.executable !== expected.executable) {
-    throw new Error(`Zeus 打包身份不一致：variant=${variant} expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)} app=${appPath}`);
-  }
-}
-
 async function prepareElectronDist(version, arch) {
   const zipName = electronZipFileName(version, arch);
   const cacheRoot = join(homedir(), 'Library', 'Caches', 'electron');
@@ -233,9 +209,11 @@ export async function packageMac({ dmg = false } = {}) {
     cwd: rootDir,
     env: packageEnv,
   });
-  verifyPackagedAppIdentity(appPath, variant);
   verifyPackagedApp(appPath);
   await verifyCodesignPackagedApp(appPath);
+  /** 只在打包和校验成功后回收同一身份、架构的旧安装包，失败时保留原有产物。 */
+  const obsolete = await cleanPackageArtifacts(outputRoot, { apply: true, variant, arch });
+  console.log(`Zeus 打包完成，已清理 ${obsolete.length} 个旧安装包配套文件，保留对应身份与架构的最新版本。`);
 }
 
 const invokedScriptPath = process.argv[1];

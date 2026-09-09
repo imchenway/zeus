@@ -3,22 +3,11 @@ import type { ProjectRecord } from '../projects/projectContracts.js';
 import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
 import type { TaskEventRecord, TaskRecord, TaskTableColumnPreferences, TaskTableEnumSortOrders, TaskTemplateRecord } from '../tasks/taskContracts.js';
 import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../telegram/telegramContracts.js';
-
-export interface CodeMapSettings {
-  defaultScanScope: 'project' | 'src' | 'custom';
-  defaultIgnoreDirectories: string[];
-  maxCallChainDepth: number;
-  showLowConfidenceEdges: boolean;
-  layoutAlgorithm: 'hierarchical' | 'force' | 'dagre';
-  graphCacheStrategy: 'sqlite' | 'memory' | 'disabled';
-  tableRelationInference: 'foreign_key_and_name' | 'foreign_key_only' | 'name_only' | 'disabled';
-  aiSummaryEnabled: boolean;
-  incrementalScanEnabled: boolean;
-  performanceMonitoringEnabled: boolean;
-  moduleFlowManualNotes: string;
-}
+import type { NetworkProxySettings } from '@zeus/shared';
 
 export interface AppShellSettings {
+  /** 完全退出并重开应用后使用的网络代理。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -56,18 +45,14 @@ export interface AppShellSettings {
     exportSupported: boolean;
     redactsSecrets: boolean;
   };
-  cache: {
-    codeIndex: boolean;
-    graphView: boolean;
-    layout: boolean;
-  };
-  lastCacheClearAt: string | null;
 }
 
-export type UpdateAppShellSettingsRequest = Pick<
-  AppShellSettings,
-  'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'
+/** 与服务端局部更新保持一致，省略的偏好保留原值。 */
+export type UpdateAppShellSettingsRequest = Partial<
+  Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'>
 > & {
+  /** 省略时保留当前代理，兼容其他设置的局部保存。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -92,12 +77,6 @@ export type UpdateAppShellSettingsRequest = Pick<
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 };
 
-export interface ClearLocalCachesResult {
-  cleared: boolean;
-  clearedCaches: Array<'code-index' | 'graph-view' | 'layout'>;
-  clearedAt: string;
-}
-
 export interface LocalSettingsExportSnapshot {
   app: 'Zeus';
   schemaVersion: 1;
@@ -108,7 +87,6 @@ export interface LocalSettingsExportSnapshot {
   settings: {
     appShell: AppShellSettings;
     runtime: RuntimeSettings;
-    codeMap: CodeMapSettings;
     telegramNotification: TelegramNotificationSettings;
     telegramSecurity: TelegramSecuritySettings;
   };
@@ -119,7 +97,6 @@ export interface ImportLocalSettingsRequest {
   settings: {
     appShell?: UpdateAppShellSettingsRequest;
     runtime?: RuntimeSettings;
-    codeMap?: CodeMapSettings;
     telegramNotification?: TelegramNotificationSettings;
     telegramSecurity?: TelegramSecuritySettings;
   };

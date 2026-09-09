@@ -22,7 +22,6 @@ export interface ZeusGitChangeRecord {
   additions: number;
   deletions: number;
   diffHunkPath: string | null;
-  linkedGraphNodesJson: string;
   createdAt: string;
 }
 
@@ -45,7 +44,6 @@ export interface CreateGitChangeInput {
   additions?: number;
   deletions?: number;
   diffHunkPath?: string;
-  linkedGraphNodes?: string[];
   createdAt: string;
 }
 
@@ -103,13 +101,12 @@ export class GitSnapshotRepository {
       additions: input.additions ?? 0,
       deletions: input.deletions ?? 0,
       diffHunkPath: input.diffHunkPath ?? null,
-      linkedGraphNodesJson: JSON.stringify(input.linkedGraphNodes ?? []),
       createdAt: input.createdAt,
     };
     this.db.execute(
-      `INSERT INTO git_changes (id, task_id, project_id, file_path, change_type, additions, deletions, diff_hunk_path, linked_graph_nodes_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [record.id, record.taskId, record.projectId, record.filePath, record.changeType, record.additions, record.deletions, record.diffHunkPath, record.linkedGraphNodesJson, record.createdAt],
+      `INSERT INTO git_changes (id, task_id, project_id, file_path, change_type, additions, deletions, diff_hunk_path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [record.id, record.taskId, record.projectId, record.filePath, record.changeType, record.additions, record.deletions, record.diffHunkPath, record.createdAt],
     );
     return record;
   }
@@ -127,7 +124,7 @@ export class GitSnapshotRepository {
   listChanges(taskId: string): ZeusGitChangeRecord[] {
     return this.db
       .select<DbGitChangeRow>(
-        `SELECT id, task_id, project_id, file_path, change_type, additions, deletions, diff_hunk_path, linked_graph_nodes_json, created_at
+        `SELECT id, task_id, project_id, file_path, change_type, additions, deletions, diff_hunk_path, created_at
        FROM git_changes WHERE task_id = ? ORDER BY file_path ASC, created_at ASC`,
         [taskId],
       )
@@ -190,7 +187,6 @@ interface DbGitChangeRow {
   additions: number;
   deletions: number;
   diff_hunk_path: string | null;
-  linked_graph_nodes_json: string;
   created_at: string;
 }
 
@@ -229,7 +225,6 @@ function mapGitChangeRow(row: DbGitChangeRow): ZeusGitChangeRecord {
     additions: row.additions,
     deletions: row.deletions,
     diffHunkPath: row.diff_hunk_path,
-    linkedGraphNodesJson: row.linked_graph_nodes_json,
     createdAt: row.created_at,
   };
 }

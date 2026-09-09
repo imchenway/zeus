@@ -16,6 +16,8 @@ export interface IntegrationApiClient {
   updateZentaoInstance: (instanceId: string, input: SaveZentaoInstanceRequest) => Promise<ZentaoInstanceRecord>;
   deleteZentaoInstance: (instanceId: string) => Promise<void>;
   clearZentaoInstancePassword: (instanceId: string) => Promise<ZentaoInstanceRecord>;
+  /** 用户主动查看当前实例密码；不得用于列表加载或预取。 */
+  revealZentaoInstancePassword: (instanceId: string) => Promise<{ password: string | null }>;
   verifyZentaoInstance: (instanceId: string) => Promise<ZentaoInstanceVerifyResult>;
   loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
   loadProjectModelSelection: (projectId: string) => Promise<ProjectModelSelection>;
@@ -96,6 +98,8 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionModelsRefresh, 'models_refresh', 'POST', '/models/refresh', {}) as ReturnType<IntegrationApiClient['refreshModelConnectionModels']>,
     diagnoseModelConnection: (connectionId) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionDiagnose, 'diagnose', 'POST', '/diagnose', {}) as ReturnType<IntegrationApiClient['diagnoseModelConnection']>,
     loadZentaoInstances: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadZentaoInstances']>> }>('/api/zentao-instances')).items,
+    // 密码响应由服务端禁止缓存，前端只在当前编辑器内短暂保留。
+    revealZentaoInstancePassword: (instanceId) => transport.request(`${zentaoInstancePath(instanceId)}/password`),
     createZentaoInstance: async (input) => {
       const body = await buildIntegrationCommandRequest({
         commandType: integrationClientCommandTypes.zentaoInstanceCreate,

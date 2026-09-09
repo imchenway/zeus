@@ -1,3 +1,5 @@
+import type { SendConversationMessageResult } from './conversationContracts.js';
+import type { ConversationHistoryItem } from '../conversations/conversationContracts.js';
 import type {
   ArchivedConversationChoicesSnapshot,
   CodexConversationCapabilities,
@@ -34,15 +36,18 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from '../../session/sessionTypes.js';
-import type { GraphConversationHistoryItem } from '../graph/graphContracts.js';
 import type { ZeusRealtimeEvent } from '../../transport/dashboardClientContracts.js';
 import type { NativeProjectConversationChoiceGroupsSnapshot } from './conversationContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildConversationCommandRequest, conversationClientCommandTypes } from './conversationCommandClient.js';
 import { buildConversationDispatchCommandRequest, conversationDispatchClientCommandTypes, forgetConversationDispatchCommandRequest } from './conversationDispatchCommandClient.js';
-import { buildGraphConversationCommandRequest, graphConversationClientCommandTypes } from './graphConversationCommandClient.js';
+import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from './conversationStartCommandClient.js';
 
 export interface ConversationApiClient {
+  /** 读取旧会话正文，保留已有历史查看行为。 */
+  loadLegacyConversation: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
+  /** 向既有普通会话发送消息。 */
+  sendConversationMessage: (projectId: string, conversationId: string, content: string) => Promise<SendConversationMessageResult>;
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   loadProjectConversationChoiceGroups: (projectId: string) => Promise<NativeProjectConversationChoiceGroupsSnapshot>;
@@ -87,8 +92,8 @@ export interface ConversationApiClient {
   loadNativeSubagents: (projectId: string, conversationId: string) => Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread: (projectId: string, conversationId: string, threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   loadNativeConversationChoice: (projectId: string, conversationId: string) => Promise<NativeConversationChoice>;
-  archiveNativeConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
-  restoreConversationArchive: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
+  archiveNativeConversation: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
+  restoreConversationArchive: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeFilePreview: (projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
@@ -134,13 +139,16 @@ export interface ConversationApiClient {
 
 export function createConversationApiClient(transport: LocalApiTransport): ConversationApiClient {
   return {
+    loadLegacyConversation: (projectId, conversationId) => transport.request<ConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}`),
+    sendConversationMessage: (projectId, conversationId, content) =>
+      transport.request<SendConversationMessageResult>(`/api/projects/${projectId}/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ content }) }),
     loadArchivedConversations: () => transport.request<ArchivedConversationChoicesSnapshot>('/api/conversations/archived'),
     loadProjectConversationChoices: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
     loadProjectConversationChoiceGroups: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/conversation-choice-groups`),
     startProjectConversation: async (projectId, input) => {
       const { idempotencyKey, ...body } = input;
-      const commandBody = await buildGraphConversationCommandRequest({
-        commandType: graphConversationClientCommandTypes.projectConversationCreate,
+      const commandBody = await buildConversationStartCommandRequest({
+        commandType: conversationStartClientCommandTypes.projectConversationCreate,
         scopeKind: 'project',
         scopeId: projectId,
         operationSeed: idempotencyKey,
@@ -156,8 +164,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadCodexConversationCapabilities: async (projectId) => normalizeCapabilities(await transport.request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`)),
     startNativeConversation: async (taskId, input) => {
       const { idempotencyKey, ...body } = input;
-      const commandBody = await buildGraphConversationCommandRequest({
-        commandType: graphConversationClientCommandTypes.taskConversationCreate,
+      const commandBody = await buildConversationStartCommandRequest({
+        commandType: conversationStartClientCommandTypes.taskConversationCreate,
         scopeKind: 'task',
         scopeId: taskId,
         operationSeed: idempotencyKey,
@@ -204,11 +212,11 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadNativeConversationChoice: (projectId, conversationId) => transport.request(`${conversationPath(projectId, conversationId)}/choice`),
     archiveNativeConversation: async (projectId, conversationId) => {
       const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.archive, conversationId, value: {} });
-      return transport.request<GraphConversationHistoryItem>(`${conversationPath(projectId, conversationId)}/archive`, jsonRequest('POST', body));
+      return transport.request<ConversationHistoryItem>(`${conversationPath(projectId, conversationId)}/archive`, jsonRequest('POST', body));
     },
     restoreConversationArchive: async (projectId, conversationId) => {
       const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.restore, conversationId, value: {} });
-      return transport.request<GraphConversationHistoryItem>(`${conversationPath(projectId, conversationId)}/restore`, jsonRequest('POST', body));
+      return transport.request<ConversationHistoryItem>(`${conversationPath(projectId, conversationId)}/restore`, jsonRequest('POST', body));
     },
     loadConversationResourcePreview: (projectId, conversationId, resourceId) => transport.request<ConversationResourcePreview>(`${conversationPath(projectId, conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`),
     loadTurnChangeFilePreview: (projectId, conversationId, turnId, changeSetId, fileId) =>

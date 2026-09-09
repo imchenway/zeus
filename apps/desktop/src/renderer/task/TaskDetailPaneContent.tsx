@@ -636,7 +636,7 @@ function TaskImmediateSelect<T extends string>(props: {
   );
 }
 
-/** 所属项目修改需明确提交，并展示关系解除的影响；失败保留目标便于调整。 */
+/** 低频项目操作默认折叠；修改需明确提交，失败保留目标便于调整。 */
 function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'projects' | 'language' | 'busy' | 'onUpdateTaskContent' | 'onCopyTask'>) {
   /** 默认保持当前项目，仅按钮提交时执行修改。 */
   const [projectId, setProjectId] = useState(props.task.projectId);
@@ -646,6 +646,8 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
   const [error, setError] = useState('');
   /** 跟随应用的语言设置。 */
   const zh = props.language === 'zh-CN';
+  /** 折叠时展示实际归属，不把尚未提交的目标当成当前项目。 */
+  const currentProjectName = props.projects.find((project) => project.id === props.task.projectId)?.name ?? props.task.projectId;
 
   /** 保存经过现有串行编辑队列，冲突时提示用户检查最新任务。 */
   async function moveTask(): Promise<void> {
@@ -670,45 +672,47 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
   }
 
   return (
-    <section className="task-detail-block" aria-label={zh ? '所属项目' : 'Project'}>
-      <label className="task-detail-relationship-control">
-        <span>{zh ? '所属项目' : 'Project'}</span>
-        <select
+    <details className="task-detail-block task-detail-project-settings">
+      <summary>
+        <span>{zh ? '项目设置' : 'Project settings'}</span>
+        <small title={currentProjectName}>{currentProjectName}</small>
+      </summary>
+      <div className="task-detail-project-settings-content">
+        <ZeusSelect
+          size="compact"
+          ariaLabel={zh ? '选择目标项目' : 'Choose target project'}
           value={projectId}
-          onChange={(event) => {
-            setProjectId(event.currentTarget.value);
+          options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+          emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
+          onChange={(value) => {
+            setProjectId(value);
             setError('');
           }}
           disabled={props.busy || saving}
-        >
-          {props.projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {projectId !== props.task.projectId ? (
-        <p className="task-flow-context">
-          {zh
-            ? '移动后使用目标项目的新编号与初始状态，解除原项目内的父子和关联关系。子任务留在原项目。'
-            : 'Moving assigns a new project number and initial status, and removes parent, child and related-task links. Child tasks stay in the original project.'}
-        </p>
-      ) : null}
-      <div className="task-detail-section-heading">
-        <Button variant="secondary" size="compact" busy={saving} disabled={props.busy || projectId === props.task.projectId} onClick={() => void moveTask()}>
-          {saving ? (zh ? '正在移动…' : 'Moving…') : zh ? '移动到此项目' : 'Move to project'}
-        </Button>
-        <Button variant="secondary" size="compact" disabled={props.busy || saving} onClick={() => props.onCopyTask(props.task)}>
-          {zh ? '复制到其他项目' : 'Copy to another project'}
-        </Button>
+        />
+        {projectId !== props.task.projectId ? (
+          <p className="task-flow-context">
+            {zh
+              ? '移动后使用目标项目的新编号与初始状态，解除原项目内的父子和关联关系。子任务留在原项目。'
+              : 'Moving assigns a new project number and initial status, and removes parent, child and related-task links. Child tasks stay in the original project.'}
+          </p>
+        ) : null}
+        <div className="task-detail-project-actions">
+          <Button variant="secondary" size="compact" busy={saving} disabled={props.busy || projectId === props.task.projectId} onClick={() => void moveTask()}>
+            {saving ? (zh ? '正在移动…' : 'Moving…') : zh ? '移动到此项目' : 'Move to project'}
+          </Button>
+          <Button variant="secondary" size="compact" disabled={props.busy || saving} onClick={() => props.onCopyTask(props.task)}>
+            {zh ? '复制到其他项目' : 'Copy to another project'}
+          </Button>
+        </div>
+        {error ? (
+          <p role="alert" className="task-inline-edit-feedback is-error">
+            {error}
+          </p>
+        ) : null}
       </div>
-      {error ? (
-        <p role="alert" className="task-inline-edit-feedback is-error">
-          {error}
-        </p>
-      ) : null}
-    </section>
+    </details>
   );
 }
 
@@ -1136,16 +1140,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </span>
       </section>
 
-      <TaskProjectActions
-        key={`${props.task.id}:${props.task.projectId}`}
-        task={props.task}
-        projects={props.projects}
-        language={props.language}
-        busy={props.busy}
-        onUpdateTaskContent={props.onUpdateTaskContent}
-        onCopyTask={props.onCopyTask}
-      />
-
       <TaskDigitalEmployeePanel
         taskId={props.task.id}
         projectId={props.task.projectId}
@@ -1435,6 +1429,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </ol>
         )}
       </section>
+
+      <TaskProjectActions
+        key={`${props.task.id}:${props.task.projectId}`}
+        task={props.task}
+        projects={props.projects}
+        language={props.language}
+        busy={props.busy}
+        onUpdateTaskContent={props.onUpdateTaskContent}
+        onCopyTask={props.onCopyTask}
+      />
 
       <section className="task-detail-action-rail" aria-label={props.copy.primaryActionsTitle}>
         {props.modelPushEntry?.error ? (

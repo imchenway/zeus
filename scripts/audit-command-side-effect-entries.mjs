@@ -16,7 +16,7 @@ const slices = [
   slice('telegram', ['--require-telegram-command-slice'], ['telegramCommandApplication.ts', 'telegramPollingApi.ts'], ['features/telegram/telegramCommandClient.ts']),
   slice('git', ['--require-git-command-slice'], ['gitCommandApplication.ts', 'gitCommandRoutes.ts'], ['features/git/gitCommandClient.ts']),
   slice('workspace-git', ['--require-workspace-git-command-slice'], ['workspaceGitCommandApplication.ts', 'workspaceGitCommandRoutes.ts'], ['features/git/workspaceGitCommandClient.ts']),
-  slice('graph-conversation', ['--require-graph-conversation-create-command-slice'], ['graphConversationCommandApplication.ts', 'graphConversationCommandRoutes.ts'], ['features/conversations/graphConversationCommandClient.ts']),
+  slice('conversation-start', ['--require-conversation-start-create-command-slice'], ['conversationStartCommandApplication.ts', 'conversationStartCommandRoutes.ts'], ['features/conversations/conversationStartCommandClient.ts']),
   slice('work-management-task', ['--require-work-management-task-command-slice'], ['workManagementCommandApplication.ts', 'workManagementTaskCommandRoutes.ts'], ['features/work-management/workManagementCommandClient.ts']),
   slice('execution-host-stop', ['--require-execution-host-stop-command-slice'], ['executionHostStopCommandApplication.ts', 'executionHostControlApi.ts'], [], ['apps/desktop/src/main/executionHostStopCommand.ts']),
 ];

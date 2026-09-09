@@ -12,8 +12,8 @@ const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
 const releaseFiles = ['package.json', 'apps/desktop/package.json'];
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
+// 仓库其他目录中的 Markdown 仍按文档处理；本地任务记录统一由 docs/ 路径识别。
 const documentationWhitespaceExtensions = new Set(['.md', '.mdx', '.markdown']);
-const documentationHtmlExtensions = new Set(['.html', '.htm']);
 const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
 const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
 let activeReleaseStage = '初始化发布';
@@ -335,11 +335,10 @@ function inspectGitDiffCheck(input) {
   return { warnings, autoFixable };
 }
 
+// 本地任务记录及验收证据的普通空白只提示；冲突标记等其他问题仍阻断发布。
 function isDocumentationWhitespaceWarning(issue) {
   if (!isWhitespaceIssue(issue.message)) return false;
-  const extension = extname(issue.path).toLocaleLowerCase();
-  if (documentationWhitespaceExtensions.has(extension)) return true;
-  return documentationHtmlExtensions.has(extension) && issue.path.startsWith('docs/');
+  return issue.path.startsWith('docs/') || documentationWhitespaceExtensions.has(extname(issue.path).toLocaleLowerCase());
 }
 
 function normalizeGitDiffCheckPath(path) {
@@ -1100,6 +1099,7 @@ function describeReleaseFailureImpact(state) {
   return `已保留 ${state.tag} 的发布恢复状态，未完成阶段不会被冒充为成功。`;
 }
 
+// 按已报告的实际原因引导恢复，避免将本地候选问题误导为网络故障。
 function describeReleaseRecovery(state) {
-  return state ? '排除上述原因后重新运行 pnpm release；脚本会读取本地恢复状态，并在继续任何远程写入前复验外部事实。' : '检查网络与 GitHub 访问后重新运行 pnpm release；本次没有需要回滚的远程写入。';
+  return state ? '排除上述原因后重新运行 pnpm release；脚本会读取本地恢复状态，并在继续任何远程写入前复验外部事实。' : '排除上述原因后重新运行 pnpm release；本次没有需要回滚的远程写入。';
 }

@@ -75,11 +75,12 @@ import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
-import { resolveModelCapability } from './modelSelection.js';
+import { hasAvailableConversationModel, resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { modelSetupRequestedEvent, reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 
@@ -1640,6 +1641,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
+  /** 浏览器标签与文件标题直接挂在会话顶栏，避免内容上方再叠一层工具栏。 */
+  const [contextToolbarHost, setContextToolbarHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
@@ -1648,8 +1651,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
-  const [computerStopBusy, setComputerStopBusy] = useState(false);
-  const [computerStopError, setComputerStopError] = useState<unknown>(null);
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
   const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
@@ -1701,15 +1702,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useApplicationErrorDialog(serviceTierPreferenceError, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
-  useApplicationErrorDialog(computerStopError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  const computerControlIdentity = props.conversation?.nativeSession?.id
-    ? {
-        conversationId: props.conversation.id,
-        sessionId: props.conversation.nativeSession.id,
-      }
-    : null;
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
   useEffect(() => {
     if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) {
@@ -1951,6 +1943,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape') return;
+    // 格式预览先退出阅读状态，避免编辑草稿时触发中断确认。
+    if (event.target instanceof Element && event.target.closest('.structured-composer-preview')) return;
     if (event.target instanceof Element && event.target.closest('.session-composer-shell[data-goal-input="true"]')) return;
     const planRequest = pendingRequests.length === 0 ? pendingPlanImplementationRequests[0] : undefined;
     if (planRequest) {
@@ -2364,17 +2358,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       onKeyDownCapture={handleWorkspaceKeyDownCapture}
       onPointerDownCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
       }}
       onFocusCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
       }}
     >
       {displayedHeader ? (
-        <header className="session-thread-header" data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
+        <header className="session-thread-header" data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || undefined} data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
           <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
             <span className="session-thread-title-row">
               {displayedHeader.taskId && actions.onOpenTaskDetail ? (
@@ -2432,31 +2426,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
             </div>
           </div>
+          <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
           <div className="session-thread-header-actions">
-            {!legacy && computerControlIdentity && window.zeus?.stopComputerUse ? (
-              <button
-                type="button"
-                className="session-browser-toggle session-computer-stop"
-                disabled={computerStopBusy}
-                aria-busy={computerStopBusy || undefined}
-                title={props.language === 'zh-CN' ? '立即停止电脑操作' : 'Stop computer actions now'}
-                onClick={() => {
-                  setComputerStopBusy(true);
-                  setComputerStopError(null);
-                  void window.zeus!.stopComputerUse!(computerControlIdentity)
-                    .catch((error) => setComputerStopError(error))
-                    .finally(() => setComputerStopBusy(false));
-                }}
-              >
-                <X aria-hidden="true" weight="bold" />
-                <span>{props.language === 'zh-CN' ? '停止控制' : 'Stop control'}</span>
-              </button>
-            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
                 className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
                 aria-pressed={browserOpen}
+                aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
                 title={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
                 onClick={(event) => {
                   contextReturnFocusRef.current = event.currentTarget;
@@ -2469,7 +2446,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 }}
               >
                 <GlobeSimple aria-hidden="true" weight="regular" />
-                <span>{props.language === 'zh-CN' ? '浏览器' : 'Browser'}</span>
               </button>
             ) : null}
             {!legacy && props.conversation && props.state ? (
@@ -2706,12 +2682,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                       {contextWorkspace.kind === 'browser' ? (
                         <BrowserWorkspace
+                          toolbarHost={contextToolbarHost}
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
                           suspended={browserResizing || quickActionsPopoverOpen}
                           expanded={contextFullWidth}
+                          canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}
                           onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
                           onResetSize={() => {
@@ -2745,6 +2723,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       ) : null}
                       {contextWorkspace.kind === 'source' ? (
                         <SourceWorkspace
+                          canSplit={browserLayoutWidth > 840}
+                          toolbarHost={contextToolbarHost}
                           preview={contextWorkspace.preview}
                           viewMode={contextWorkspace.viewMode}
                           onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
@@ -2961,6 +2941,9 @@ function NewConversationComposer(props: {
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
+  /** 接入结果只属于原草稿，切换项目或卸载时取消。 */
+  const modelSetupRequestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => modelSetupRequestRef.current?.abort(), [props.owner?.projectId]);
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
@@ -3030,6 +3013,8 @@ function NewConversationComposer(props: {
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
   const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
+  /** 空目录和未登录的订阅目录均允许点击发送进入接入引导。 */
+  const needsModelSetup = Boolean(capabilities && !hasAvailableConversationModel(capabilities));
   const goalAvailable = Boolean(capabilities?.goals?.supported && capabilities?.goals?.enabled && selectedModel?.agentKind !== 'pi');
   const goalInputActive = goalInputOpen && goalAvailable;
   const goalCount = [...goalObjective.trim()].length;
@@ -3081,7 +3066,31 @@ function NewConversationComposer(props: {
     const submittedContent = overrides.content ?? structured.promptText;
     const submittedDisplayText = overrides.content === undefined ? structured.displayText : overrides.content;
     const submittedGoal = (overrides.goalObjective ?? (goalInputActive ? goalObjective : '')).trim();
-    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || !selectedModel || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
+    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || (!selectedModel && !needsModelSetup) || (!submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal)) return;
+    if (needsModelSetup) {
+      setLocalError(null);
+      modelSetupRequestRef.current?.abort();
+      /** 同一次接入只刷新此项目和此草稿，不自动创建会话或发送消息。 */
+      const request = new AbortController();
+      modelSetupRequestRef.current = request;
+      /** 显式选中的供应商模型加入项目后，刷新目录并预选供用户确认。 */
+      const conversationContext: ConversationModelSetupContext = {
+        projectId: props.owner.projectId,
+        signal: request.signal,
+        onComplete: async (reference) => {
+          /** 读取最新目录；失败保留引导和全部草稿内容。 */
+          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId);
+          if (request.signal.aborted) return;
+          /** 订阅登录优先选用可用的订阅模型，自定义接入遵循用户明确选择。 */
+          const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
+          if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+          setCapabilities(refreshed);
+          setSelectedModelId(model.id);
+        },
+      };
+      window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { conversationContext } }));
+      return;
+    }
     if (submittedGoal && structured.expertMentions.length > 0) {
       setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
       return;
@@ -3388,7 +3397,15 @@ function NewConversationComposer(props: {
                 className="session-send-button"
                 aria-label={goalInputActive ? copy.createGoal : copy.send}
                 onClick={() => void submit(goalInputActive ? { content: content.trim() ? content : goalObjective, goalObjective } : {})}
-                disabled={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || !props.owner || !selectedModel || (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0)}
+                disabled={
+                  submitting ||
+                  executionContextBusy ||
+                  capabilitiesLoading ||
+                  inputResources.processing ||
+                  !props.owner ||
+                  (!selectedModel && !needsModelSetup) ||
+                  (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0)
+                }
                 aria-busy={submitting || undefined}
               >
                 {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}

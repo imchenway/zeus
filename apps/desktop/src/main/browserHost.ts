@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, open, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
@@ -290,6 +290,25 @@ export class BrowserHost implements BrowserAutomationPort {
     ipcMain.handle('zeus:browser:get-snapshot', (event, conversationId: unknown) => {
       this.requireRendererWindow(event);
       return this.snapshotFor(requireNonEmptyString(conversationId, 'conversationId'));
+    });
+    // 系统菜单覆盖原生网页，选择结果仍交回现有操作入口执行。
+    ipcMain.handle('zeus:browser:show-menu', (event, input: unknown) => {
+      /** 菜单只允许本应用渲染器打开，位置限制在所属窗口内。 */
+      const window = this.requireRendererWindow(event);
+      const value = asRecord(input);
+      const bounds = window.getContentBounds();
+      const english = value.language === 'en-US';
+      return new Promise<string | null>((resolveSelection) => {
+        /** 固定菜单项不接收网页提供的文案或可执行动作。 */
+        const menu = Menu.buildFromTemplate([
+          { label: english ? 'New tab' : '新建标签', click: () => resolveSelection('new_tab') },
+          { label: english ? 'Reload' : '重新加载', click: () => resolveSelection('reload') },
+          { type: 'separator' },
+          { label: english ? 'Reset split width' : '恢复默认分栏宽度', enabled: value.canSplit === true, click: () => resolveSelection('reset_size') },
+          { label: english ? 'Close browser' : '关闭浏览器', click: () => resolveSelection('close') },
+        ]);
+        menu.popup({ window, x: Math.min(bounds.width, Math.max(0, Math.round(finiteNumber(value.x, 0)))), y: Math.min(bounds.height, Math.max(0, Math.round(finiteNumber(value.y, 0)))), callback: () => resolveSelection(null) });
+      });
     });
     ipcMain.handle('zeus:browser:open-tab', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);
@@ -718,6 +737,7 @@ export class BrowserHost implements BrowserAutomationPort {
     return window;
   }
 
+  /** 同一会话中的相同地址复用标签并重新加载，空白页仍允许主动新建。 */
   private async openTab(
     window: BrowserWindow,
     input: {
@@ -726,9 +746,14 @@ export class BrowserHost implements BrowserAutomationPort {
     },
   ): Promise<ZeusBrowserConversationSnapshot> {
     if (!this.settings.enabled) throw new Error('The built-in browser is disabled in Settings.');
+    /** 沿用统一地址校验与规范化，保留查询参数和锚点的页面语义。 */
     const url = input.url ? normalizeBrowserUrl(input.url) : 'about:blank';
-    const id = `browser-tab-${randomUUID()}`;
-    const tab: LiveBrowserTab = {
+    /** 在首次异步加载前登记标签，连续点击也只会命中同一实例。 */
+    const existing = url === 'about:blank' ? undefined : [...this.tabs.values()].find((candidate) => candidate.snapshot.conversationId === input.conversationId && candidate.snapshot.url === url);
+    /** 已打开标签沿用原身份和批注。 */
+    const id = existing?.snapshot.id ?? `browser-tab-${randomUUID()}`;
+    /** 新建与刷新共用加载、持久化和界面通知流程。 */
+    const tab: LiveBrowserTab = existing ?? {
       snapshot: {
         ...emptyTabSnapshot({ id, conversationId: input.conversationId, url, now: this.now() }),
         loading: url !== 'about:blank',
@@ -738,6 +763,9 @@ export class BrowserHost implements BrowserAutomationPort {
       documentGeneration: 1,
       consoleLogs: [],
     };
+    if (tab.ownerWindowId !== undefined && tab.ownerWindowId !== window.id) this.detachTab(id);
+    tab.ownerWindowId = window.id;
+    tab.snapshot = { ...tab.snapshot, loading: url !== 'about:blank', updatedAt: this.now() };
     this.tabs.set(id, tab);
     this.activeTabByConversation.set(input.conversationId, id);
     const view = this.ensureView(tab, false);
@@ -747,7 +775,8 @@ export class BrowserHost implements BrowserAutomationPort {
       // 标签和浏览器工作面先进入可交互状态，网页继续在 WebContents 内按正常导航生命周期加载。
       void loadUserFacingBrowserUrl(view.webContents, url).then(() => {
         if (this.tabs.get(id) !== tab || view.webContents.isDestroyed()) return;
-        tab.snapshot = { ...tab.snapshot, loading: false, updatedAt: this.now() };
+        // 连续刷新可能终止上一轮导航，加载状态始终以当前网页为准。
+        tab.snapshot = { ...tab.snapshot, loading: view.webContents.isLoading(), updatedAt: this.now() };
         this.schedulePersist();
         this.emitSnapshot(input.conversationId);
       });

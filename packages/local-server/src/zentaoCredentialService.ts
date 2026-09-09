@@ -16,6 +16,8 @@ export interface ZentaoCredentialService {
   update(id: string, input: SaveZentaoInstanceRequest): Promise<ZentaoInstanceRecord>;
   remove(id: string): Promise<void>;
   clearPassword(id: string): Promise<ZentaoInstanceRecord>;
+  /** 仅供用户主动查看单个已配置实例，列表始终只返回存在状态。 */
+  revealPassword(id: string): Promise<string | null>;
   verify(id: string): Promise<ZentaoInstanceVerifyResult>;
 }
 
@@ -143,6 +145,11 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
       const existing = await requireInstance(id);
       await options.secretStore.deleteSecret(zentaoSecretAccount(id));
       return { ...existing, passwordConfigured: false, updatedAt: now() };
+    },
+    /** 先验证实例存在，再读取所属密码，禁止将任意钥匙串键当作实例标识。 */
+    async revealPassword(id) {
+      await requireInstance(id);
+      return (await options.secretStore.getSecret(zentaoSecretAccount(id))) ?? null;
     },
     async verify(id) {
       const checkedAt = now();

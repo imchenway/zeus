@@ -3,14 +3,13 @@ import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
 import './agentdesk-theme.css';
+import './settings/settings.css';
 import type { WorkspacePageProps } from './features/workspace/workspaceContracts.js';
 import { useWorkspaceQueryState } from './features/workspace/useWorkspaceQueryState.js';
 import { useWorkspaceDomainActions } from './features/workspace/useWorkspaceDomainActions.js';
 import { useWorkspaceOperations } from './features/workspace/useWorkspaceOperations.js';
 import { useWorkspaceLifecycle } from './features/workspace/useWorkspaceLifecycle.js';
 import { WorkspaceView } from './features/workspace/WorkspaceView.js';
-
-export { buildMermaidDiagramExport, buildMermaidDiagramSource, buildPlantUmlDiagramExport, buildPlantUmlDiagramSource, type MermaidDiagramExportFile, type PlantUmlDiagramExportFile } from './features/graph/diagramExport.js';
 export {
   type MainNavTarget,
   type SettingsCategory,
@@ -51,8 +50,6 @@ export {
   resolveTaskTableColumnsSaveResponse,
   mergeAppShellSettingsSaveResponse,
   buildRuntimeSessionTaskDraft,
-  buildGraphConversationTaskIntent,
-  buildGraphNodeTaskIntent,
   buildProjectDirectoryResolution,
   buildTemplateTaskDraft,
   buildDefaultTaskDraft,
@@ -61,7 +58,6 @@ export {
   normalizeTaskRuntimeControlHandlerResult,
   resolveTaskRuntimeActionRoute,
   resolveTaskRuntimeConversationNavigation,
-  isProjectGraphViewForProject,
   type LocalUiErrorSnapshot,
 } from './features/workspace/workspaceSupport.js';
 export {
@@ -75,23 +71,6 @@ export {
   buildGitDiffDecisionSummary,
   isGenericShellCriticalConfirmationSatisfied,
 } from './features/workspace/workspaceFormatters.js';
-export {
-  type GraphNodeActionMenuItem,
-  buildGraphNodeActionMenu,
-  type AggregatedGraphNode,
-  type AggregatedGraphEdge,
-  buildGraphNeighborhoodSlice,
-  buildVisibleGraphSlice,
-  buildGraphQuestionRequest,
-  type GraphSearchFilterInput,
-  buildGraphSearchRequest,
-  normalizeGraphMinConfidence,
-  isAggregatedGraphNode,
-  buildAggregatedGraphNodes,
-  buildAggregatedGraphEdges,
-  buildGraphCanvasLayout,
-  buildGraphCanvasViewport,
-} from './features/graph/GraphCanvas.js';
 export { resolveRuntimeNormalizedLogPath } from './features/workspace/WorkspaceChrome.js';
 /** Zeus 主界面：展示真实 API snapshot；无真实记录时才展示空状态。 */
 export function WorkspacePage(props: WorkspacePageProps) {

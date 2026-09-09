@@ -10,8 +10,10 @@ import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { Button } from '../../ui/Button.js';
+import { FormDialog } from '../../ui/FormDialog.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { SkillSelector } from '../skills/SkillSelector.js';
 import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from './automationContracts.js';
 
@@ -19,6 +21,7 @@ type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; max
 type View = 'tasks' | 'inbox';
 const allProjectsValue = '__all_projects__';
 
+/** 自动化目录与收件箱使用全局控件，编辑及删除复用表单弹窗。 */
 export function AutomationsWorkspace(props: { client: DashboardClient | null; projects: ProjectRecord[]; language: 'zh-CN' | 'en-US'; onOpenConversation: (run: AutomationRunRecord) => Promise<void> }) {
   const zh = props.language === 'zh-CN';
   const [view, setView] = useState<View>('tasks');
@@ -34,10 +37,41 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(props.projects));
   const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
-  const editorHeadingRef = useRef<HTMLHeadingElement>(null);
+  /** 删除前保留任务，只有确认成功才关闭弹窗。 */
+  const [pendingDelete, setPendingDelete] = useState<AutomationTaskRecord | null>(null);
+  /** 模型刷新独立于自动化表单与运行记录。 */
+  const modelRevisionRef = useRef(0);
+  /** 目录按当前编辑的项目读取。 */
+  const modelProjectId = draft.projectIds[0] ?? props.projects[0]?.id;
+
+  useEffect(() => {
+    const client = props.client;
+    if (!client || !modelProjectId) return;
+    /** 切换项目后，旧目录读取不能覆盖当前模型选项。 */
+    let disposed = false;
+    const refreshModels = (): void => {
+      const revision = ++modelRevisionRef.current;
+      void client
+        .loadCodexConversationCapabilities(modelProjectId)
+        .then((next) => {
+          if (!disposed && revision === modelRevisionRef.current) setModels(next.models.filter((model) => model.available !== false));
+        })
+        .catch(() => {
+          // 网络恢复后的目录通知会重试，不打断自动化草稿编辑。
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    return () => {
+      disposed = true;
+      modelRevisionRef.current += 1;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refreshModels);
+    };
+  }, [props.client, modelProjectId]);
 
   async function refresh(): Promise<void> {
     if (!props.client) return;
+    /** 页面读取与目录通知共用代次，避免迟到结果回写。 */
+    const modelRevision = ++modelRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -45,7 +79,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       const [nextTasks, nextInbox, capabilities] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), projectId ? props.client.loadCodexConversationCapabilities(projectId) : Promise.resolve(null)]);
       setTasks(nextTasks);
       setInbox(nextInbox);
-      setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
+      if (modelRevision === modelRevisionRef.current) setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
       setDraft((current) => {
         if (current.modelId || !capabilities?.models.length) return current;
         const preferred = capabilities.models.find((model) => model.model === capabilities.preferredModel) ?? capabilities.models[0]!;
@@ -169,14 +203,15 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     (!draft.skillId && draft.pluginIds.length === 0) ||
     (!extensionsLoading && !extensionsError && Boolean(extensionCatalog) && (!draft.skillId || extensionCatalog!.skills.some((skill) => skill.id === draft.skillId)) && draft.pluginIds.every((id) => availablePluginIds.has(id)));
 
+  /** 创建时重置草稿，弹窗负责初始焦点。 */
   function startCreate(): void {
     setEditingId('new');
     setDraft(emptyDraft(props.projects, modelOptions[0]?.model));
     setFullAccessAcknowledged(false);
     setError(null);
-    requestAnimationFrame(() => editorHeadingRef.current?.focus());
   }
 
+  /** 编辑沿用已保存配置，不改变运行状态。 */
   function startEdit(task: AutomationTaskRecord): void {
     setEditingId(task.id);
     setDraft({
@@ -208,12 +243,12 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     });
     setFullAccessAcknowledged(false);
     setError(null);
-    requestAnimationFrame(() => editorHeadingRef.current?.focus());
   }
 
+  /** 保存期间锁定表单，权限确认仍按既有服务流程执行。 */
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (!props.client || !editingId) return;
+    if (!props.client || !editingId || busyId) return;
     setBusyId(editingId);
     setError(null);
     try {
@@ -229,14 +264,18 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     }
   }
 
-  async function mutate(id: string, operation: () => Promise<unknown>): Promise<void> {
+  /** 所有列表操作共用等待状态，避免同时提交后互相覆盖反馈。 */
+  async function mutate(id: string, operation: () => Promise<unknown>): Promise<boolean> {
+    if (busyId) return false;
     setBusyId(id);
     setError(null);
     try {
       await operation();
       await refresh();
+      return true;
     } catch (cause) {
       setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -254,15 +293,15 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     <section className="automations-workspace" aria-labelledby="automations-title">
       <header className="automations-header">
         <div>
-          <span className="automations-kicker">ZEUS AUTOMATIONS</span>
           <h1 id="automations-title">{zh ? '自动化' : 'Automations'}</h1>
           <p>{zh ? '按设定的时间和项目自动执行指令，并查看每次运行的结果。' : 'Run instructions automatically for selected projects on a schedule, and view the result of each run.'}</p>
         </div>
         <div className="automations-header-actions">
-          <button type="button" className="automations-icon-button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} disabled={loading}>
+          <Button aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} busy={loading} disabled={loading || Boolean(busyId)}>
             <Refresh aria-hidden="true" />
-          </button>
-          <Button variant="primary" onClick={startCreate}>
+            {zh ? '刷新' : 'Refresh'}
+          </Button>
+          <Button variant="primary" onClick={startCreate} disabled={loading || Boolean(busyId)}>
             <Plus aria-hidden="true" />
             {zh ? '新建自动化' : 'New automation'}
           </Button>
@@ -282,18 +321,22 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         </button>
       </nav>
 
-      {error ? (
+      {error && !editingId && !pendingDelete ? (
         <p className="automations-error" role="alert">
           {error}
         </p>
       ) : null}
-      <div className={`automations-layout${editingId ? ' has-editor' : ''}`}>
+      <div className="automations-layout">
         <div className="automations-list" aria-busy={loading}>
           {view === 'tasks' ? (
-            tasks.length ? (
+            loading && !tasks.length ? (
+              <div className="automations-empty" role="status">
+                {zh ? '正在读取自动化…' : 'Loading automations…'}
+              </div>
+            ) : tasks.length ? (
               tasks.map((task) => (
                 <article className="automation-row" key={task.id} data-status={task.status}>
-                  <button type="button" className="automation-row-main" onClick={() => startEdit(task)}>
+                  <button type="button" className="automation-row-main" disabled={Boolean(busyId)} onClick={() => startEdit(task)}>
                     <span className="automation-status-dot" aria-hidden="true" />
                     <span>
                       <strong>{task.name}</strong>
@@ -304,36 +347,29 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     <span className="automation-row-schedule">{scheduleLabel(task, zh)}</span>
                   </button>
                   <div className="automation-row-actions">
-                    <button
-                      type="button"
+                    <Button
+                      className="automation-icon-action"
                       title={zh ? '立即运行' : 'Run now'}
                       aria-label={`${zh ? '立即运行' : 'Run'} ${task.name}`}
-                      disabled={busyId === task.id || task.status !== 'active'}
-                      onClick={() => void mutate(task.id, () => props.client!.runAutomation(task.id))}
+                      busy={busyId === `run:${task.id}`}
+                      disabled={Boolean(busyId) || task.status !== 'active'}
+                      onClick={() => void mutate(`run:${task.id}`, () => props.client!.runAutomation(task.id))}
                     >
                       <Play aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      className="automation-icon-action"
                       title={task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '恢复' : 'Resume'}
                       aria-label={`${task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '恢复' : 'Resume'} ${task.name}`}
-                      disabled={busyId === task.id}
-                      onClick={() => void mutate(task.id, () => props.client!.setAutomationStatus(task.id, task.status === 'active' ? 'paused' : 'active'))}
+                      busy={busyId === `status:${task.id}`}
+                      disabled={Boolean(busyId)}
+                      onClick={() => void mutate(`status:${task.id}`, () => props.client!.setAutomationStatus(task.id, task.status === 'active' ? 'paused' : 'active'))}
                     >
                       {task.status === 'active' ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      title={zh ? '删除' : 'Delete'}
-                      aria-label={`${zh ? '删除' : 'Delete'} ${task.name}`}
-                      disabled={busyId === task.id}
-                      onClick={() => {
-                        if (globalThis.confirm(zh ? `删除“${task.name}”？历史运行仍保留。` : `Delete “${task.name}”? Run history will remain.`)) void mutate(task.id, () => props.client!.deleteAutomation(task.id));
-                      }}
-                    >
+                    </Button>
+                    <Button className="automation-icon-action" variant="danger" title={zh ? '删除' : 'Delete'} aria-label={`${zh ? '删除' : 'Delete'} ${task.name}`} disabled={Boolean(busyId)} onClick={() => setPendingDelete(task)}>
                       <Trash aria-hidden="true" />
-                    </button>
+                    </Button>
                   </div>
                 </article>
               ))
@@ -360,14 +396,14 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   </div>
                   <div className="automation-inbox-actions">
                     {run.conversationId ? (
-                      <button type="button" onClick={() => void props.onOpenConversation(run)}>
+                      <Button disabled={Boolean(busyId)} onClick={() => void props.onOpenConversation(run)}>
                         {zh ? '打开会话' : 'Open conversation'}
-                      </button>
+                      </Button>
                     ) : null}
                     {run.unread ? (
-                      <button type="button" onClick={() => void mutate(run.id, () => props.client!.acknowledgeAutomationRun(run.id))}>
+                      <Button busy={busyId === `read:${run.id}`} disabled={Boolean(busyId)} onClick={() => void mutate(`read:${run.id}`, () => props.client!.acknowledgeAutomationRun(run.id))}>
                         {zh ? '标为已读' : 'Mark read'}
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 </article>
@@ -377,212 +413,237 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             <EmptyState title={zh ? '收件箱很安静' : 'Inbox is quiet'} body={zh ? '自动化的运行结果和需要你处理的问题会显示在这里。' : 'Automation results and requests for your attention appear here.'} />
           )}
         </div>
-
-        {editingId ? (
-          <form className="automation-editor" onSubmit={(event) => void submit(event)}>
-            <header>
-              <div>
-                <span>{editingId === 'new' ? (zh ? '新建' : 'New') : zh ? '编辑' : 'Edit'}</span>
-                <h2 ref={editorHeadingRef} tabIndex={-1}>
-                  {draft.name || (zh ? '未命名自动化' : 'Untitled automation')}
-                </h2>
-              </div>
-              <button type="button" onClick={() => setEditingId(null)}>
-                {zh ? '关闭' : 'Close'}
-              </button>
-            </header>
-            <div className="automation-editor-scroll">
-              <label>
-                <span>{zh ? '名称' : 'Name'}</span>
-                <input required maxLength={120} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })} />
-              </label>
-              <label>
-                <span>{zh ? '指令' : 'Instruction'}</span>
-                <textarea required rows={7} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
-              </label>
-              <fieldset>
-                <legend>{zh ? '目标项目' : 'Target projects'}</legend>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择目标项目' : 'Choose target projects'}
-                  value=""
-                  selectedValues={projectSelectionValues}
-                  options={projectOptions}
-                  onChange={(value) => {
-                    if (value === allProjectsValue) {
-                      setDraft({ ...draft, projectIds: allProjectsSelected ? [] : props.projects.map((project) => project.id) });
-                      return;
-                    }
-                    setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
-                  }}
-                  triggerLabel={projectTriggerLabel}
-                  disabled={!props.projects.length}
-                  searchable={props.projects.length > 8}
-                  searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
-                  emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
-                />
-              </fieldset>
-              <div className="automation-form-grid">
-                <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
-                <label>
-                  <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
-                  <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
-                </label>
-              </div>
-              <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
-              <label>
-                <span>{zh ? '使用模型' : 'Model'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择模型' : 'Select a model'}
-                  value={selectedModelValue}
-                  options={exactModelOptions}
-                  onChange={(value) => {
-                    const option = modelOptions.find((candidate) => candidate.value === value);
-                    if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
-                  }}
-                  searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-                  emptyLabel={zh ? '没有可用模型' : 'No available models'}
-                  triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
-                  disabled={!modelOptions.length}
-                />
-              </label>
-              <div className="automation-form-grid">
-                <label>
-                  <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
-                    value={reasoningEffort}
-                    options={reasoningOptions}
-                    onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
-                    disabled={!selectedModel}
-                    searchable={false}
-                  />
-                </label>
-                <SelectField
-                  label={zh ? '权限' : 'Permission'}
-                  value={draft.permissionMode ?? 'read-only'}
-                  options={[
-                    ['read-only', zh ? '只读' : 'Read only'],
-                    ['auto', zh ? '需审批写入' : 'Approve writes'],
-                    ['full-access', zh ? '完全访问' : 'Full access'],
-                  ]}
-                  onChange={(value) => {
-                    setDraft({ ...draft, permissionMode: value as AutomationPermissionMode });
-                    setFullAccessAcknowledged(false);
-                  }}
-                />
-              </div>
-              {draft.permissionMode === 'full-access' ? (
-                <label className="automation-risk-ack">
-                  <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
-                  <span>
-                    {zh ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。' : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}
-                  </span>
-                </label>
-              ) : null}
-              <div className="automation-form-grid">
-                <SelectField
-                  label={zh ? '会话模式' : 'Conversation mode'}
-                  value={draft.conversationMode ?? 'independent'}
-                  options={[
-                    ['independent', zh ? '每次独立会话' : 'Independent conversation'],
-                    ['original', zh ? '追加原会话' : 'Append to original'],
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
-                />
-                <SelectField
-                  label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
-                  value={draft.blockStrategy ?? 'serial'}
-                  options={[
-                    ['serial', zh ? '排队等待' : 'Wait in line'],
-                    ['discard', zh ? '跳过新运行' : 'Skip the new run'],
-                    ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
-                />
-              </div>
-              {draft.conversationMode === 'original' ? (
-                <label>
-                  <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
-                  <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
-                </label>
-              ) : null}
-              <details>
-                <summary>{zh ? '插件、用量限制与记录保留' : 'Plugins, usage limits, and history retention'}</summary>
-                <div className="automation-form-grid">
-                  <label>
-                    <span>Skill</span>
-                    <SkillSelector
-                      client={props.client}
-                      value={draft.skillId ?? ''}
-                      onChange={(value) => setDraft({ ...draft, skillId: value || null })}
-                      language={props.language}
-                      catalog={extensionCatalog}
-                      disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
-                      ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
-                    />
-                  </label>
-                  <label>
-                    <span>Plugins</span>
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
-                      value=""
-                      selectedValues={draft.pluginIds}
-                      options={pluginOptions}
-                      onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
-                      triggerLabel={pluginTriggerLabel}
-                      disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
-                      searchable
-                      searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
-                      emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
-                    />
-                  </label>
-                </div>
-                {extensionsError ? (
-                  <small className="automation-capability-error" role="alert">
-                    {extensionsError}
-                  </small>
-                ) : null}
-                <div className="automation-form-grid">
-                  <label>
-                    <span>{zh ? '最多等待运行数' : 'Maximum waiting runs'}</span>
-                    <input type="number" min="1" max="10000" value={draft.queueCapacity ?? 10} onChange={(event) => setDraft({ ...draft, queueCapacity: event.currentTarget.valueAsNumber })} />
-                  </label>
-                  <label>
-                    <span>{zh ? '保留天数' : 'Retention days'}</span>
-                    <input type="number" min="1" max="3650" value={draft.retentionDays ?? 30} onChange={(event) => setDraft({ ...draft, retentionDays: event.currentTarget.valueAsNumber })} />
-                  </label>
-                </div>
-                <div className="automation-form-grid">
-                  <label>
-                    <span>{zh ? '每日运行上限' : 'Runs per day'}</span>
-                    <input type="number" min="1" value={draft.maxRunsPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxRunsPerDayText: event.currentTarget.value })} />
-                  </label>
-                  <label>
-                    <span>{zh ? '每日用量上限（Token）' : 'Daily usage limit (tokens)'}</span>
-                    <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
-                  </label>
-                </div>
-                <label className="automation-check">
-                  <input type="checkbox" checked={draft.fastMode === true} onChange={(event) => setDraft({ ...draft, fastMode: event.currentTarget.checked })} />
-                  <span>{zh ? '启用 Fast 服务档位（仅在模型支持时）' : 'Use Fast service tier when supported'}</span>
-                </label>
-              </details>
-            </div>
-            <footer>
-              <Button variant="secondary" type="button" onClick={() => setEditingId(null)}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button variant="primary" type="submit" busy={busyId === editingId} disabled={!draft.projectIds.length || !selectedModel || !extensionsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}>
-                {zh ? '保存并启用' : 'Save and enable'}
-              </Button>
-            </footer>
-          </form>
-        ) : null}
       </div>
+      {editingId ? (
+        <FormDialog
+          className="automation-editor"
+          title={editingId === 'new' ? (zh ? '新建自动化' : 'New automation') : zh ? '编辑自动化' : 'Edit automation'}
+          zh={zh}
+          busy={Boolean(busyId)}
+          submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
+          submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !draft.projectIds.length || !selectedModel || !extensionsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
+          onClose={() => setEditingId(null)}
+          onSubmit={(event) => void submit(event)}
+        >
+          {error ? (
+            <p className="automations-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <fieldset className="automation-form-section">
+            <legend>{zh ? '执行内容' : 'Instructions and projects'}</legend>
+            <label>
+              <span>{zh ? '名称' : 'Name'}</span>
+              <input required maxLength={120} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })} />
+            </label>
+            <label>
+              <span>{zh ? '指令' : 'Instruction'}</span>
+              <textarea required rows={7} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
+            </label>
+            <div className="automation-form-field">
+              <span>{zh ? '目标项目' : 'Target projects'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择目标项目' : 'Choose target projects'}
+                value=""
+                selectedValues={projectSelectionValues}
+                options={projectOptions}
+                onChange={(value) => {
+                  if (value === allProjectsValue) {
+                    setDraft({ ...draft, projectIds: allProjectsSelected ? [] : props.projects.map((project) => project.id) });
+                    return;
+                  }
+                  setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
+                }}
+                triggerLabel={projectTriggerLabel}
+                disabled={!props.projects.length}
+                searchable={props.projects.length > 8}
+                searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+                emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
+              />
+            </div>
+          </fieldset>
+          <fieldset className="automation-form-section">
+            <legend>{zh ? '运行安排' : 'Schedule'}</legend>
+            <div className="automation-form-grid">
+              <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
+              <label>
+                <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
+                <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
+              </label>
+            </div>
+            <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
+          </fieldset>
+          <fieldset className="automation-form-section">
+            <legend>{zh ? '模型与权限' : 'Model and permissions'}</legend>
+            <label>
+              <span>{zh ? '使用模型' : 'Model'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择模型' : 'Select a model'}
+                value={selectedModelValue}
+                options={exactModelOptions}
+                onChange={(value) => {
+                  const option = modelOptions.find((candidate) => candidate.value === value);
+                  if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
+                }}
+                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                emptyLabel={zh ? '没有可用模型' : 'No available models'}
+                triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
+                disabled={!modelOptions.length}
+              />
+            </label>
+            <div className="automation-form-grid">
+              <label>
+                <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
+                  value={reasoningEffort}
+                  options={reasoningOptions}
+                  onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
+                  disabled={!selectedModel}
+                  searchable={false}
+                />
+              </label>
+              <SelectField
+                label={zh ? '权限' : 'Permission'}
+                value={draft.permissionMode ?? 'read-only'}
+                options={[
+                  ['read-only', zh ? '只读' : 'Read only'],
+                  ['auto', zh ? '需审批写入' : 'Approve writes'],
+                  ['full-access', zh ? '完全访问' : 'Full access'],
+                ]}
+                onChange={(value) => {
+                  setDraft({ ...draft, permissionMode: value as AutomationPermissionMode });
+                  setFullAccessAcknowledged(false);
+                }}
+              />
+            </div>
+            {draft.permissionMode === 'full-access' ? (
+              <label className="automation-risk-ack">
+                <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
+                <span>{zh ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。' : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}</span>
+              </label>
+            ) : null}
+          </fieldset>
+          <fieldset className="automation-form-section">
+            <legend>{zh ? '运行方式' : 'Run behavior'}</legend>
+            <div className="automation-form-grid">
+              <SelectField
+                label={zh ? '会话模式' : 'Conversation mode'}
+                value={draft.conversationMode ?? 'independent'}
+                options={[
+                  ['independent', zh ? '每次独立会话' : 'Independent conversation'],
+                  ['original', zh ? '追加原会话' : 'Append to original'],
+                ]}
+                onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
+              />
+              <SelectField
+                label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
+                value={draft.blockStrategy ?? 'serial'}
+                options={[
+                  ['serial', zh ? '排队等待' : 'Wait in line'],
+                  ['discard', zh ? '跳过新运行' : 'Skip the new run'],
+                  ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
+                ]}
+                onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
+              />
+            </div>
+            {draft.conversationMode === 'original' ? (
+              <label>
+                <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
+                <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
+              </label>
+            ) : null}
+          </fieldset>
+          <details>
+            <summary>{zh ? '插件、用量限制与记录保留' : 'Plugins, usage limits, and history retention'}</summary>
+            <div className="automation-form-grid">
+              <label>
+                <span>{zh ? '技能' : 'Skill'}</span>
+                <SkillSelector
+                  client={props.client}
+                  value={draft.skillId ?? ''}
+                  onChange={(value) => setDraft({ ...draft, skillId: value || null })}
+                  language={props.language}
+                  catalog={extensionCatalog}
+                  disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
+                  ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
+                />
+              </label>
+              <label>
+                <span>{zh ? '插件' : 'Plugins'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
+                  value=""
+                  selectedValues={draft.pluginIds}
+                  options={pluginOptions}
+                  onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
+                  triggerLabel={pluginTriggerLabel}
+                  disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
+                  searchable
+                  searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
+                  emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
+                />
+              </label>
+            </div>
+            {extensionsError ? (
+              <small className="automation-capability-error" role="alert">
+                {extensionsError}
+              </small>
+            ) : null}
+            <div className="automation-form-grid">
+              <label>
+                <span>{zh ? '最多等待运行数' : 'Maximum waiting runs'}</span>
+                <input type="number" min="1" max="10000" value={draft.queueCapacity ?? 10} onChange={(event) => setDraft({ ...draft, queueCapacity: event.currentTarget.valueAsNumber })} />
+              </label>
+              <label>
+                <span>{zh ? '保留天数' : 'Retention days'}</span>
+                <input type="number" min="1" max="3650" value={draft.retentionDays ?? 30} onChange={(event) => setDraft({ ...draft, retentionDays: event.currentTarget.valueAsNumber })} />
+              </label>
+            </div>
+            <div className="automation-form-grid">
+              <label>
+                <span>{zh ? '每日运行上限' : 'Runs per day'}</span>
+                <input type="number" min="1" value={draft.maxRunsPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxRunsPerDayText: event.currentTarget.value })} />
+              </label>
+              <label>
+                <span>{zh ? '每日用量上限（Token）' : 'Daily usage limit (tokens)'}</span>
+                <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
+              </label>
+            </div>
+            <label className="automation-check">
+              <input type="checkbox" checked={draft.fastMode === true} onChange={(event) => setDraft({ ...draft, fastMode: event.currentTarget.checked })} />
+              <span>{zh ? '启用 Fast 服务档位（仅在模型支持时）' : 'Use Fast service tier when supported'}</span>
+            </label>
+          </details>
+        </FormDialog>
+      ) : null}
+      {pendingDelete ? (
+        <FormDialog
+          title={zh ? `删除“${pendingDelete.name}”？` : `Delete “${pendingDelete.name}”?`}
+          description={zh ? '此自动化将不再接受新的运行，历史运行记录会保留。' : 'This automation will no longer accept new runs. Run history is kept.'}
+          zh={zh}
+          busy={Boolean(busyId)}
+          danger
+          submitLabel={zh ? '删除自动化' : 'Delete automation'}
+          onClose={() => setPendingDelete(null)}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void mutate(`delete:${pendingDelete.id}`, () => props.client!.deleteAutomation(pendingDelete.id)).then((deleted) => {
+              if (deleted) setPendingDelete(null);
+            });
+          }}
+        >
+          {error ? (
+            <p className="automations-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </FormDialog>
+      ) : null}
     </section>
   );
 }

@@ -32,10 +32,6 @@ export const workManagementCommandTypes = {
   taskRestore: 'work_management.task.restore',
   taskTemplateCreate: 'work_management.task_template.create',
   taskFromTemplateCreate: 'work_management.task.from_template.create',
-  taskFromGraphConversationCreate: 'work_management.task.from_graph_conversation.create',
-  taskFromGraphNodeCreate: 'work_management.task.from_graph_node.create',
-  taskFromGraphViewCreate: 'work_management.task.from_graph_view.create',
-  taskGraphNodeLink: 'work_management.task.graph_node.link',
   taskIntegrationStart: 'work_management.task.integration.start',
   taskIntegrationConflictResolve: 'work_management.task.integration.conflict.resolve',
   taskIntegrationFinalize: 'work_management.task.integration.finalize',
@@ -139,7 +135,7 @@ export class WorkManagementCommandApplicationError extends Error {
 }
 
 /**
- * 项目、任务、模板和图谱建任务共享的公开命令边界。Core mutation 与 accepted receipt
+ * 项目、任务和模板共享的公开命令边界。Core mutation 与 accepted receipt
  * 在同一耐久事务提交；真实 Git/Runtime 操作必须走带 write marker 的 external_operation。
  */
 export class WorkManagementCommandApplication {

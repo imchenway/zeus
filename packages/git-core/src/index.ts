@@ -836,7 +836,7 @@ export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceB
     try {
       await runGit(input.cwd, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', branchHeadSha]);
     } catch (error) {
-      const conflictFiles = splitLines(await readGitStdout(input.cwd, ['diff', '--name-only', '--diff-filter=U']));
+      const conflictFiles = await readTaskIntegrationConflictPaths(input.cwd);
       if (conflictFiles.length === 0) throw error;
       return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles };
     }
@@ -887,28 +887,64 @@ export async function getRemoteTrackingBranchHead(cwd: string, remoteName: strin
  * 该函数不会选择文件、猜测提交说明、访问远端或静默合并来源分支。
  */
 export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Promise<CommitTaskWorkspaceResult> {
+  /** 提交前重新读取文件状态，不把页面打开时的路径当作当前事实。 */
   const review = await getTaskWorkspaceReview(input.cwd, input.ignoredPaths);
   if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Task workspace is detached and cannot be committed.');
   if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve all conflicts before committing.');
+  /** 共享目录和子仓库仍由各自的工作区负责提交。 */
   const ignored = (input.ignoredPaths ?? []).map((path) => requireSafeWorkspacePath(path));
-  const paths = input.selectedPaths.map((path) => requireSafeWorkspacePath(path));
+  /** 用户勾选的是当前文件名，保留特殊字符并去重。 */
+  const selectedPaths = [...new Set(input.selectedPaths.map((path) => requireSafeWorkspacePath(path)))];
+  /** 同一文件可以同时存在暂存和未暂存修改。 */
+  const filesByPath = new Map([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => [file.path, file]));
+  /** 已消失或已提交的选择必须在格式化和暂存前明确拒绝。 */
+  const stalePaths = selectedPaths.filter((path) => !filesByPath.has(path));
+  /** 重命名必须同时提交旧路径的删除，复制操作则不包含来源文件。 */
+  const paths = [
+    ...new Set(
+      selectedPaths.flatMap((path) => {
+        /** 使用本次读取的 Git 重命名关系，不接受前端自行指定来源路径。 */
+        const file = filesByPath.get(path);
+        return file?.originalPath && (file.indexStatus === 'R' || file.workingTreeStatus === 'R') ? [requireSafeWorkspacePath(file.originalPath), path] : [path];
+      }),
+    ),
+  ];
   if (paths.some((path) => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`)))) {
     throw gitCoreError('ZEUS_TASK_GIT_PATH_INVALID', 'Shared paths and nested repositories cannot be committed from their parent workspace.');
   }
-  const formattedPaths = await formatTaskCommitPaths(input.cwd, paths);
+  if (stalePaths.length > 0) throw gitCoreError('ZEUS_TASK_COMMIT_SELECTION_CHANGED', `所选文件状态已变化，本次未提交。请刷新代码交付页后重新选择：${stalePaths.join(', ')}`);
+  // 重命名旧位置若又出现文件，按路径提交会夹带其内容，必须先让用户明确选择。
+  for (const path of paths.filter((path) => !selectedPaths.includes(path))) {
+    /** 仅不存在的旧路径可以随重命名自动纳入删除；读取失败不能当作不存在。 */
+    const entry = await lstat(resolve(input.cwd, path)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (entry) throw gitCoreError('ZEUS_TASK_COMMIT_SELECTION_CHANGED', `重命名来源位置又出现文件，本次未提交。请刷新并确认是否同时选择：${path}`);
+  }
+  /** 合并提交仍要求完整选择，且先校验再改写文件。 */
   const mergeHeadSha = await readGitStdout(input.cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
   if (mergeHeadSha) {
+    /** 展开的重命名路径也属于本次选择。 */
     const selected = new Set(paths);
+    /** 沿用父仓库的共享目录排除规则。 */
     const mergePaths = [...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => file.path).filter((path) => !ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`)));
+    /** 缺少任一修改时，不开始格式化或暂存。 */
     const omitted = mergePaths.filter((path) => !selected.has(path));
     if (omitted.length > 0) {
       throw gitCoreError('ZEUS_TASK_MERGE_COMMIT_INCOMPLETE', `Merge commits must include every changed path: ${omitted.join(', ')}`);
     }
   }
+  /** 已暂存删除的路径不再属于 index，不能再次 git add；仍保留在提交范围中。 */
+  const stagePaths = paths.length > 0 ? splitNullRecords((await runGit(input.cwd, ['--literal-pathspecs', 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...paths])).stdout) : [];
+  /** 只整理用户选择的现存文件，不格式化重命名来源处可能重新创建的文件。 */
+  const formattedPaths = await formatTaskCommitPaths(input.cwd, selectedPaths);
   // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
-  if (ignored.length > 0) await runGit(input.cwd, ['reset', '-q', 'HEAD', '--', ...ignored]);
-  if (paths.length > 0) await runGit(input.cwd, ['add', '-A', '--', ...paths]);
-  const stagedNames = paths.length > 0 ? splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only', '--', ...paths])) : [];
+  if (ignored.length > 0) await runGit(input.cwd, ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...ignored]);
+  if (stagePaths.length > 0) await runGit(input.cwd, ['--literal-pathspecs', 'add', '-A', '--', ...stagePaths]);
+  /** 从暂存结果确定最终路径；关闭重命名折叠以保留两端，排除新增后又删除的空变化。 */
+  const stagedNames = paths.length > 0 ? splitNullRecords((await runGit(input.cwd, ['--literal-pathspecs', 'diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...paths])).stdout) : [];
+  /** 仅在 Git 提交成功返回后标记完成。 */
   let committed = false;
   if (mergeHeadSha) {
     // 合并提交不能按路径局部提交；即使冲突全部选择来源侧而没有净差异，也必须结束 MERGE_HEAD。
@@ -916,10 +952,11 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
     committed = true;
   } else if (stagedNames.length > 0) {
     // 只提交用户本次选中的路径；其他预先暂存的改动继续留在 index，不得绕过本次门禁混入提交。
-    await runGit(input.cwd, ['commit', '-m', requireSafeGitText(input.message, 'commit message'), '--', ...paths]);
+    await runGit(input.cwd, ['--literal-pathspecs', 'commit', '-m', requireSafeGitText(input.message, 'commit message'), '--', ...stagedNames]);
     committed = true;
   }
 
+  /** 返回真实分支提交，供上层更新交付状态。 */
   const headSha = await resolveCommit(input.cwd, 'HEAD');
   return { branch: review.branch, headSha, committed, formattedPaths };
 }
@@ -1103,7 +1140,7 @@ export async function startTaskBranchIntegration(input: {
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }
   } catch (error) {
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     if (conflictFiles.length === 0) throw error;
     return {
       integrationPath,
@@ -1157,7 +1194,7 @@ export async function startTaskIntegrationAttempt(input: {
     if (registered.branch !== conflictBranch || registered.detached) {
       throw gitCoreError('ZEUS_TASK_CONFLICT_BRANCH_MISMATCH', 'The conflict worktree is not attached to its recorded conflict branch.');
     }
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     return {
       integrationPath,
       targetBranch,
@@ -1182,7 +1219,7 @@ export async function startTaskIntegrationAttempt(input: {
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }
   } catch (error) {
-    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
     if (conflictFiles.length === 0) {
       await cleanupTaskIntegrationWorktree({ repositoryPath: context.topLevel, integrationPath }).catch(() => undefined);
       throw error;
@@ -1202,10 +1239,15 @@ export async function startTaskIntegrationAttempt(input: {
   };
 }
 
+/** 以 NUL 分隔读取真实冲突路径，保留中文、引号和空白；查询失败时抛错，不能误报冲突已清空。 */
+export async function readTaskIntegrationConflictPaths(cwd: string): Promise<string[]> {
+  return splitNullRecords((await runGit(cwd, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout);
+}
+
 /** 读取三方冲突内容：source 是来源分支，task 是任务分支，result 是当前可编辑结果。 */
 export async function readTaskIntegrationConflict(integrationPath: string, path: string): Promise<TaskIntegrationConflictFile> {
   const safePath = requireSafeWorkspacePath(path);
-  const conflicts = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const conflicts = await readTaskIntegrationConflictPaths(integrationPath);
   if (!conflicts.includes(safePath)) throw gitCoreError('ZEUS_TASK_CONFLICT_NOT_FOUND', `Conflict file is no longer unresolved: ${safePath}`);
   const [base, source, task, result] = await Promise.all([
     readGitStageText(integrationPath, 1, safePath),
@@ -1225,7 +1267,7 @@ export async function writeTaskIntegrationResolution(integrationPath: string, pa
   if (!isPathInside(integrationPath, absolutePath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Conflict path escapes the integration worktree: ${safePath}`);
   await writeFile(absolutePath, content, 'utf8');
   await runGit(integrationPath, ['add', '--', safePath]);
-  const remainingConflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const remainingConflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
   return { path: safePath, remainingConflictFiles };
 }
 
@@ -1241,7 +1283,7 @@ export async function writeTaskIntegrationDraft(integrationPath: string, path: s
 
 /** 冲突全部解决后生成合入候选提交；仍有冲突时拒绝继续。 */
 export async function completeTaskIntegrationCommit(input: { integrationPath: string; mode: 'merge' | 'squash'; commitMessage: string }): Promise<{ resultHeadSha: string }> {
-  const conflicts = splitLines(await readGitStdout(input.integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+  const conflicts = await readTaskIntegrationConflictPaths(input.integrationPath);
   if (conflicts.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve every conflict before completing the integration commit.');
   const mergeHead = await readGitStdout(input.integrationPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
   const staged = splitLines(await readGitStdout(input.integrationPath, ['diff', '--cached', '--name-only']));
@@ -1742,12 +1784,12 @@ function safePathSegment(value: string): string {
     .slice(0, 64);
 }
 
+/** 校验工作区相对路径并保留原始文件名，首尾空白也是合法路径的一部分。 */
 function requireSafeWorkspacePath(value: string): string {
-  const normalized = value.trim();
-  if (!normalized || isAbsolute(normalized) || normalized === '..' || normalized.startsWith(`..${sep}`) || relative('.', normalized).startsWith(`..${sep}`) || normalized.includes('\0')) {
+  if (!value || isAbsolute(value) || value === '..' || value.startsWith(`..${sep}`) || relative('.', value).startsWith(`..${sep}`) || value.includes('\0')) {
     throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid workspace-relative path: ${value}`);
   }
-  return normalized;
+  return value;
 }
 
 /** 项目显式使用本地 Prettier 时，只整理本次提交选中的现存普通文件。 */
@@ -2749,9 +2791,7 @@ function splitLines(value: string): string[] {
   return value ? value.split('\n').filter(Boolean) : [];
 }
 
+/** 拆分 Git 原始路径记录，仅丢弃结尾的空记录，不裁剪文件名。 */
 function splitNullRecords(value: string): string[] {
-  return value
-    .split('\0')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return value.split('\0').filter(Boolean);
 }

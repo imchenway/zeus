@@ -1,5 +1,5 @@
+import type { ConversationHistoryItem } from '../conversations/conversationContracts.js';
 import type { TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
-import type { GraphConversationHistoryItem } from '../graph/graphContracts.js';
 import type { AiRuntimeSession } from '../runtime/runtimeContracts.js';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
@@ -298,21 +298,6 @@ export interface UpdateTaskRequest {
   allowGitCommit?: boolean;
 }
 
-export interface CreateTaskFromGraphNodeRequest {
-  projectId: string;
-  intent?: string;
-  idempotencyKey: string;
-}
-
-export interface CreateProjectGraphTaskRequest {
-  intent?: string;
-}
-
-export interface LinkGraphNodeRequest {
-  nodeId: string;
-  reason?: string;
-}
-
 export interface CreateTaskTemplateRequest {
   projectId?: string;
   name: string;
@@ -331,7 +316,7 @@ export interface CreateTaskFromTemplateRequest {
 
 export interface TaskRuntimeControlResult {
   task: TaskRecord;
-  conversation: GraphConversationHistoryItem;
+  conversation: ConversationHistoryItem;
   runtimeSession?: AiRuntimeSession;
   runtimeError?: {
     message: string;

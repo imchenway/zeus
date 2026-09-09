@@ -1,3 +1,4 @@
+import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
 import {
   checkAiCliAdapter,
@@ -23,7 +24,6 @@ import {
   type GitPatchExport,
   readTaskIntegrationConflict,
 } from '@zeus/git-core';
-import { type ProjectGraph } from '@zeus/graph-engine';
 import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
 import { cloneTaskManagementStatusConfig, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
@@ -70,11 +70,6 @@ import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fa
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { clearAllPersistedGraphCaches } from './codeIntelligenceGraphCache.js';
-import { type GraphViewSnapshot, hasDatabaseUriPassword, resolveCodeMapScanRoot } from './codeIntelligenceGraphStore.js';
-import { CodeIntelligenceQueryApplication } from './codeIntelligenceQueryApplication.js';
-import { registerCodeIntelligenceQueryRoutes } from './codeIntelligenceQueryRoutes.js';
-import { isUnsafeCodeMapScanRoot } from './codeMapScanBoundary.js';
 import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
 import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
 import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js';
@@ -99,13 +94,14 @@ import { registerConversationSyncRoutes } from './conversationSyncRoutes.js';
 import { registerExecutionHostControlApi } from './executionHostControlApi.js';
 import { createPollingAdmissionPause, registerExecutionHostHandoffApi } from './executionHostHandoffApi.js';
 import { registerGitCommandRoutes } from './gitCommandRoutes.js';
-import { graphConversationReject, isExplicitGraphConversationRejection, registerGraphConversationCommandRoutes } from './graphConversationCommandRoutes.js';
-import { GraphConversationCommandApplication, graphConversationCommandTypes, graphConversationInputSha256 } from './graphConversationCommandApplication.js';
+import { readTaskIntegrationSnapshot } from './gitIntegrationOperations.js';
+import { conversationStartReject, isExplicitConversationStartRejection, registerConversationStartCommandRoutes } from './conversationStartCommandRoutes.js';
+import { ConversationStartCommandApplication, conversationStartCommandTypes, conversationStartInputSha256 } from './conversationStartCommandApplication.js';
 import { closeHeavyWorkerJobs, heavyWorkerPoolSnapshot } from './heavyWorkerPool.js';
 import type {
   DashboardSnapshot,
-  GraphConversationHistoryItem,
-  GraphConversationHistoryPage,
+  ConversationHistoryItem,
+  ConversationHistoryPage,
   ProjectDatabaseSecretSnapshot,
   ReleaseStatusSnapshot,
   RuntimeStatusSnapshot,
@@ -130,20 +126,15 @@ import {
 } from './localDataTransfer.js';
 import {
   type AppShellSettingsSnapshot,
-  type ClearCacheResult,
-  codeMapSettingsKey,
-  type CodeMapSettingsSnapshot,
   codexRemoteControlEnabledSettingKey,
   type ImportLocalSettingsBody,
   type ImportLocalSettingsResult,
   type LocalSettingsExportSnapshot,
-  normalizeCodeMapSettings,
   normalizeImportedRuntimeSettings,
   patchAppShellSettings,
   projectConfigSettingsPrefix,
   runtimeSettingsKey,
   type UpdateAppShellSettingsBody,
-  type UpdateCodeMapSettingsBody,
   type UpdateRuntimeSettingsBody,
 } from './localServerSettingsNormalization.js';
 import { MemoryContextApplicationService, registerMemoryContextApi } from './memoryContextApi.js';
@@ -200,13 +191,11 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   conversationTurns: ConversationTurnRepository;
   conversations: ConversationRepository;
   isNativeApiRecord(value: unknown): value is Record<string, unknown>;
-  graphConversationCommands: GraphConversationCommandApplication;
+  conversationStartCommands: ConversationStartCommandApplication;
   mapTaskRepositoriesWithConcurrency<Input, Output>(items: Input[], operation: (item: Input, index: number) => Promise<Output>, concurrency?: number): Promise<Output[]>;
   platformMutableState: {
     appShellSettings: AppShellSettingsSnapshot;
-    codeMapSettings: CodeMapSettingsSnapshot;
     codexRemoteControlEnabled: boolean;
-    memoryGraphCache: ProjectGraph | null;
     nativeEventSaveTimer: ReturnType<typeof setTimeout> | null;
     removeStorageWriteFaultListener: (() => void) | null;
     runtimeSettings: RuntimeSettingsSnapshot;
@@ -256,9 +245,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     taskStatusEventTitle,
     terminalEvents,
     activateCurrentCodexConfiguration,
-    activeProjectGraphScanIds,
     aiRuntimeManager,
-    answerProjectGraphQuestion,
     apiPerformance,
     appShellSettingsKey,
     appendAuditLog,
@@ -267,7 +254,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     artifactStore,
     assertRequestedAgentKind,
     assertTelegramCommandInputKeys,
-    attachGraphViewPerformance,
     auditLogs,
     authorizeReleaseNotesRequest,
     getBoundPort,
@@ -332,12 +318,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     flushPendingNativeDeltaEvents,
     flushRuntimeLogFileWrites,
     flushRuntimePersistenceWrites,
-    formatProjectScopedGraphViewTitle,
     getProjectDatabasePasswordSecretKey,
     getTelegramPollingService,
     gitCommands,
-    graphConversationCommands,
-    graphScanCommandOwners,
+    conversationStartCommands,
     inferNativeConversationSnapshotState,
     inspectTaskPushAttachments,
     inspectTaskTerminalCleanup,
@@ -366,7 +350,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     parseTelegramDispatchPreviewInput,
     parseTelegramNotificationSettingsInput,
     parseTelegramSecuritySettingsInput,
-    persistGraphQuestionConversation,
     piNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
@@ -379,15 +362,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     publishNativeConversationEvent,
     publishRealtimeEvent,
     readCodexRemoteControlStandalone,
-    readCurrentGraphEdgeDetail,
-    readCurrentGraphEdgesByNodeId,
-    readCurrentGraphNeighborhood,
-    readCurrentGraphNodeById,
-    readCurrentGraphNodeByIdForProject,
-    readCurrentGraphSummary,
-    readCurrentGraphSummaryByProject,
-    readCurrentGraphView,
-    readCurrentGraphViewForProject,
     readGitDiff,
     readGitStatus,
     readOnlyValidation,
@@ -404,7 +378,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     requireCodexRemoteControlCommandPath,
     requireNativeQueueConversation,
     requireTelegramPollingService,
-    resolveGraphProjectName,
     resolveNativeConversationExecutionRoot,
     resolveTaskIntegrationRequest,
     resolveTaskManagementStatusConfigForProject,
@@ -413,13 +386,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     restoreNativeConversation,
     retryTaskIntegrationAiPreparation,
     revokeReleaseNotesCapability,
-    runCodeMapScan,
     runRuntimeLogRetention,
     runtimeEphemeralCapabilities,
     runtimeSessionCommands,
     runtimeSessionDataDirectory,
     runtimeTerminalStatus,
-    searchCurrentGraphNodes,
     secretStore,
     sendNativeConversationApiError,
     sendTaskGitApiError,
@@ -447,7 +418,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     telegramNotificationSettingsKey,
     telegramSecuritySettingsKey,
     telegramTaskNotificationTitle,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     toNativeDurableAcceptance,
     toNativeInterruptAcceptance,
     toNativeQueueApiSnapshot,
@@ -462,7 +433,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     usageRefreshInFlight,
     workManagementCommands,
     workspaceGitCommands,
-    writeTaskCompletionToGraphNode,
     zentaoCredentials,
   } = dependencies;
   let closeLocalServerResources: () => Promise<void>;
@@ -666,7 +636,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     tasks,
     sharedPaths: projectSharedPaths,
     readConfig: readProjectConfig,
-    readGraphSummary: (project) => readCurrentGraphSummaryByProject(resolveGraphProjectName(project)),
     git: {
       readOverviewStatus: (project) => (readOnlyValidation ? Promise.resolve(projectGitQueries.unsupportedStatus('只读验证模式不访问正式项目 Git；仅展示复制库中的项目与任务投影。')) : projectGitQueries.readStatus(project.id)),
     },
@@ -932,7 +901,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (operation.running || operation.finalizing) activeTaskIntegrationOperationIds.add(operationId);
       }
       return {
-        activeProjectGraphScans: activeProjectGraphScanIds.size,
         activeHeavyWorkerJobs: workers.activeJobs,
         queuedHeavyWorkerJobs: workers.queuedJobs,
         // active 冲突交付在等待用户继续时只有持久化身份，不持有进程或写事务；
@@ -975,7 +943,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         telegram: readOnlyValidation ? getTelegramConfigurationState(undefined, []) : getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
       },
       git: readOnlyValidation ? projectGitQueries.unsupportedStatus('只读验证模式不访问仓库或启动 Heavy Worker；仅展示复制库中的持久投影。') : await readGitStatus(projectRoot),
-      graph: readCurrentGraphSummary(),
     };
   });
 
@@ -1070,7 +1037,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         };
       }>,
       reply,
-    ): Promise<GraphConversationHistoryPage | unknown> => {
+    ): Promise<ConversationHistoryPage | unknown> => {
       const projectId = String(request.params.projectId);
       const project = projects.getById(projectId);
       if (!project) {
@@ -1089,7 +1056,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       });
       return {
         ...page,
-        items: page.items.map(toGraphConversationHistoryItem),
+        items: page.items.map(toConversationHistoryItem),
       };
     },
   );
@@ -1108,7 +1075,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     isTaskTerminal: taskManagementStatusIsTerminal,
     goalCapability: conversationGoalCapability,
     toConversationChoice: (conversation) => conversationChoiceQueries.toChoice(conversation),
-    toConversationHistoryItem: toGraphConversationHistoryItem,
+    toConversationHistoryItem: toConversationHistoryItem,
     appendAuditLog,
     publishNativeEvent: publishNativeConversationEvent,
     sendNativeError: sendNativeConversationApiError,
@@ -1271,153 +1238,56 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       }),
   });
 
-  type PreparedGraphProject = { kind: 'project'; project: ZeusProjectRecord; scanKey?: string };
-  type PreparedGraphTask = { kind: 'task'; project: ZeusProjectRecord; task: ZeusTaskRecord };
-  type PreparedCurrentGraph = { kind: 'current'; scanKey: string };
+  type PreparedConversationProject = { kind: 'project'; project: ZeusProjectRecord };
+  type PreparedConversationTask = { kind: 'task'; project: ZeusProjectRecord; task: ZeusTaskRecord };
 
-  registerGraphConversationCommandRoutes({
+  registerConversationStartCommandRoutes({
     server,
-    application: graphConversationCommands,
+    application: conversationStartCommands,
     operations: {
       prepareProjectConversation: async ({ projectId, value }) => {
         const project = projects.getById(projectId);
-        if (!project) graphConversationReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
+        if (!project) conversationStartReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
         assertRequestedAgentKind(value);
-        if (value.mode !== 'create') graphConversationReject(400, 'ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
-        return { kind: 'project', project } satisfies PreparedGraphProject;
+        if (value.mode !== 'create') conversationStartReject(400, 'ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
+        return { kind: 'project', project } satisfies PreparedConversationProject;
       },
       startProjectConversation: ({ prepared, value, operationIdentity, markExternalWriteStarted }) => {
-        const { project } = requirePreparedGraphProject(prepared);
+        const { project } = requirePreparedConversationProject(prepared);
         return executeProjectConversationIdempotent(project, value, operationIdentity, markExternalWriteStarted);
       },
       prepareTaskConversation: async ({ taskId, value }) => {
         const task = tasks.getById(taskId);
-        if (!task) graphConversationReject(404, 'ZEUS_TASK_NOT_FOUND', 'Task not found');
+        if (!task) conversationStartReject(404, 'ZEUS_TASK_NOT_FOUND', 'Task not found');
         if (taskManagementStatusIsTerminal(task)) {
-          graphConversationReject(409, 'ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.');
+          conversationStartReject(409, 'ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.');
         }
         const project = projects.getById(task.projectId);
-        if (!project) graphConversationReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
+        if (!project) conversationStartReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
         assertRequestedAgentKind(value);
-        return { kind: 'task', project, task } satisfies PreparedGraphTask;
+        return { kind: 'task', project, task } satisfies PreparedConversationTask;
       },
       startTaskConversation: ({ prepared, value, operationIdentity, markExternalWriteStarted }) => {
-        const { project, task } = requirePreparedGraphTask(prepared);
+        const { project, task } = requirePreparedConversationTask(prepared);
         return executeTaskConversationIdempotent(project, task, value, operationIdentity, markExternalWriteStarted);
       },
-      prepareProjectScan: async ({ projectId, operationIdentity }) => {
-        const project = projects.getById(projectId);
-        if (!project) graphConversationReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
-        assertSafeGraphScanRoot(project.localPath);
-        reserveGraphScan(project.id, operationIdentity);
-        return { kind: 'project', project, scanKey: project.id } satisfies PreparedGraphProject;
-      },
-      runProjectScan: async ({ prepared }) => {
-        const { project } = requirePreparedGraphProject(prepared);
-        projects.updateScanStatus(project.id, 'scanning');
-        await db.save();
-        return toPublicGraphScanResult(
-          await runCodeMapScan({
-            projectName: project.name,
-            graphProjectName: resolveGraphProjectName(project),
-            rootPath: project.localPath,
-            projectConfig: readProjectConfig(project.id),
-          }),
-        );
-      },
-      commitProjectScanAccepted: ({ prepared }) => {
-        const { project } = requirePreparedGraphProject(prepared);
-        projects.updateScanStatus(project.id, 'completed');
-      },
-      commitProjectScanFailure: ({ prepared, error }) => {
-        const { project } = requirePreparedGraphProject(prepared);
-        projects.updateScanStatus(project.id, 'failed');
-        const message = redactSensitiveText(error instanceof Error ? error.message : String(error)).text;
-        db.afterCommit(() => {
-          publishRealtimeEvent('project.scan.failed', { projectName: project.name, rootPath: project.localPath, message });
-        });
-      },
-      releaseProjectScan: ({ prepared, operationIdentity }) => {
-        const value = requirePreparedGraphProject(prepared);
-        if (value.scanKey) releaseGraphScan(value.scanKey, operationIdentity);
-      },
-      prepareGraphAsk: async ({ projectId }) => {
-        const project = projects.getById(projectId);
-        if (!project) graphConversationReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
-        return { kind: 'project', project } satisfies PreparedGraphProject;
-      },
-      askGraph: async ({ prepared, question, operationIdentity }) => {
-        const { project } = requirePreparedGraphProject(prepared);
-        const answer = await answerProjectGraphQuestion(project, question, operationIdentity);
-        persistGraphQuestionConversation(answer);
-        await db.save();
-        return answer;
-      },
-      prepareCurrentScan: async ({ operationIdentity }) => {
-        assertSafeGraphScanRoot(projectRoot);
-        const scanKey = `current:${projectRoot}`;
-        reserveGraphScan(scanKey, operationIdentity);
-        return { kind: 'current', scanKey } satisfies PreparedCurrentGraph;
-      },
-      runCurrentScan: async () =>
-        toPublicGraphScanResult(
-          await runCodeMapScan({
-            projectName: 'Zeus',
-            rootPath: projectRoot,
-          }),
-        ),
-      releaseCurrentScan: ({ prepared, operationIdentity }) => releaseGraphScan(requirePreparedCurrentGraph(prepared).scanKey, operationIdentity),
-      isExplicitRejection: isExplicitGraphConversationRejection,
+      isExplicitRejection: isExplicitConversationStartRejection,
     },
     sendNativeError: sendNativeConversationApiError,
   });
 
-  function requirePreparedGraphProject(value: unknown): PreparedGraphProject {
+  function requirePreparedConversationProject(value: unknown): PreparedConversationProject {
     if (!isNativeApiRecord(value) || value.kind !== 'project' || !isNativeApiRecord(value.project)) {
-      graphConversationReject(500, 'ZEUS_GRAPH_CONVERSATION_PREPARE_MISSING', 'Prepared project command context is unavailable.');
+      conversationStartReject(500, 'ZEUS_CONVERSATION_START_PREPARE_MISSING', 'Prepared project command context is unavailable.');
     }
-    return value as unknown as PreparedGraphProject;
+    return value as unknown as PreparedConversationProject;
   }
 
-  function requirePreparedGraphTask(value: unknown): PreparedGraphTask {
+  function requirePreparedConversationTask(value: unknown): PreparedConversationTask {
     if (!isNativeApiRecord(value) || value.kind !== 'task' || !isNativeApiRecord(value.project) || !isNativeApiRecord(value.task)) {
-      graphConversationReject(500, 'ZEUS_GRAPH_CONVERSATION_PREPARE_MISSING', 'Prepared task conversation context is unavailable.');
+      conversationStartReject(500, 'ZEUS_CONVERSATION_START_PREPARE_MISSING', 'Prepared task conversation context is unavailable.');
     }
-    return value as unknown as PreparedGraphTask;
-  }
-
-  function requirePreparedCurrentGraph(value: unknown): PreparedCurrentGraph {
-    if (!isNativeApiRecord(value) || value.kind !== 'current' || typeof value.scanKey !== 'string') {
-      graphConversationReject(500, 'ZEUS_GRAPH_CONVERSATION_PREPARE_MISSING', 'Prepared current graph context is unavailable.');
-    }
-    return value as unknown as PreparedCurrentGraph;
-  }
-
-  function assertSafeGraphScanRoot(rootPath: string): void {
-    if (isUnsafeCodeMapScanRoot(resolveCodeMapScanRoot(rootPath, platformMutableState.codeMapSettings))) {
-      graphConversationReject(400, 'ZEUS_UNSAFE_GRAPH_SCAN_ROOT', 'Refusing to scan an unsafe filesystem root.');
-    }
-  }
-
-  function reserveGraphScan(scanKey: string, operationIdentity: string): void {
-    const owner = graphScanCommandOwners.get(scanKey);
-    if (activeProjectGraphScanIds.has(scanKey) && owner !== operationIdentity) {
-      graphConversationReject(409, 'ZEUS_GRAPH_SCAN_ALREADY_RUNNING', 'Graph scan is already running for this project.');
-    }
-    graphScanCommandOwners.set(scanKey, operationIdentity);
-    activeProjectGraphScanIds.add(scanKey);
-  }
-
-  function releaseGraphScan(scanKey: string, operationIdentity: string): void {
-    if (graphScanCommandOwners.get(scanKey) !== operationIdentity) return;
-    graphScanCommandOwners.delete(scanKey);
-    activeProjectGraphScanIds.delete(scanKey);
-  }
-
-  function toPublicGraphScanResult(result: Record<string, unknown>): Record<string, unknown> {
-    const publicResult = { ...result };
-    delete publicResult.heavyWorkerResultRef;
-    return publicResult;
+    return value as unknown as PreparedConversationTask;
   }
 
   server.get('/api/projects/:projectId/conversations/:conversationId/goal', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string } }>, reply) => {
@@ -1514,7 +1384,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         Params: { projectId: string; conversationId: string };
       }>,
       reply,
-    ): Promise<GraphConversationHistoryItem | unknown> => {
+    ): Promise<ConversationHistoryItem | unknown> => {
       const project = projects.getById(request.params.projectId);
       if (!project) {
         return reply.code(404).send({
@@ -1946,7 +1816,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               action: 'project.config.updated',
               resourceType: 'project',
               resourceId: project.id,
-              payload: { defaultWorkMode: nextConfig.defaultWorkMode, indexScope: nextConfig.scan.indexScope, language: nextConfig.language.primary },
+              payload: { defaultWorkMode: nextConfig.defaultWorkMode, language: nextConfig.language.primary },
             });
             return nextConfig;
           },
@@ -2041,14 +1911,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/tasks/:taskId/integrations', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
     const task = tasks.getById(request.params.taskId);
     if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
-    return { taskId: task.id, items: taskIntegrations.listByTask(task.id), integrations: taskIntegrations.listByTask(task.id) };
+    try {
+      /** 只读验收沿用复制库投影；正常打开交付页时读取真实冲突路径，不改写历史记录。 */
+      const items = readOnlyValidation ? taskIntegrations.listByTask(task.id) : await Promise.all(taskIntegrations.listByTask(task.id).map(readTaskIntegrationSnapshot));
+      return { taskId: task.id, items, integrations: items };
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
   });
 
   server.get('/api/tasks/:taskId/integrations/:integrationId/conflict', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string } }>, reply) => {
     const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
-    const path = request.query.path?.trim();
+    /** 查询参数传递真实文件名，首尾空白不属于可清理的输入噪声。 */
+    const path = request.query.path;
     if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
     try {
       return await readTaskIntegrationConflict(resolved.integration.integrationPath, path);
@@ -2117,10 +1994,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     taskTemplates,
     conversations,
     resolveDefaultManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
-    readGraphNodeForProject: readCurrentGraphNodeByIdForProject,
-    readGraphViewForProject: readCurrentGraphViewForProject,
-    readGraphEdgesByNode: readCurrentGraphEdgesByNodeId,
-    readGraphEdge: readCurrentGraphEdgeDetail,
     recordTaskEvent,
     appendAuditLog,
     afterCommit: (callback) => db.afterCommit(callback),
@@ -2136,10 +2009,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     createUserTask: (input, taskId, context) => workManagementCoreOperations.createUserTask(input, taskId, context),
     createTaskTemplate: (input, templateId, context) => workManagementCoreOperations.createTaskTemplate(input, templateId, context),
     createTaskFromTemplate: (templateId, input, taskId, context) => workManagementCoreOperations.createTaskFromTemplate(templateId, input, taskId, context),
-    createTaskFromGraphConversation: (projectId, conversationId, input, taskId, context) => workManagementCoreOperations.createTaskFromGraphConversation(projectId, conversationId, input, taskId, context),
-    createTaskFromGraphNode: (projectId, nodeId, input, taskId, context) => workManagementCoreOperations.createTaskFromGraphNode(projectId, nodeId, input, taskId, context),
-    createTaskFromGraphView: (projectId, viewId, input, taskId, context) => workManagementCoreOperations.createTaskFromGraphView(projectId, viewId, input, taskId, context),
-    linkTaskGraphNode: (taskId, input, context) => workManagementCoreOperations.linkTaskGraphNode(taskId, input, context),
   });
 
   const workManagementTaskEffects = new WorkManagementTaskEffectService({
@@ -2244,7 +2113,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       platformMutableState.telegramNotificationSettings.enabled &&
       (!platformMutableState.telegramNotificationSettings.silentMode || isCriticalTelegramTaskStatus(status)) &&
       platformMutableState.telegramNotificationSettings.chatIds.length > 0,
-    scheduleGraphCompletion: (task) => projectionDatabases.enqueueIndexWrite((projection) => writeTaskCompletionToGraphNode(projection, task)).then(() => undefined),
   });
 
   registerWorkManagementTaskCommandRoutes({
@@ -2336,27 +2204,26 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(preset.pluginReferences.length > 0 ? { pluginReferences: preset.pluginReferences } : {}),
         };
         const request = imInternalCommandRequest({
-          commandType: graphConversationCommandTypes.projectConversationCreate,
+          commandType: conversationStartCommandTypes.projectConversationCreate,
           scopeKind: 'project',
           scopeId: project.id,
           operationIdentity,
           input: value,
-          inputSha256: graphConversationInputSha256(value),
+          inputSha256: conversationStartInputSha256(value),
         });
-        const parsed = graphConversationCommands.parse<Record<string, unknown>>({
+        const parsed = conversationStartCommands.parse<Record<string, unknown>>({
           value: request,
-          commandType: graphConversationCommandTypes.projectConversationCreate,
+          commandType: conversationStartCommandTypes.projectConversationCreate,
           scopeKind: 'project',
           scopeId: project.id,
         });
-        const executed = await graphConversationCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
+        const executed = await conversationStartCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
           parsed,
           destinationId: 'project-conversation-create',
           resourceId: project.id,
           externalOperationId: `conversation.project.create:${project.id}:${parsed.operationIdentity}`,
-          manualExternalWriteStart: true,
           invoke: (markExternalWriteStarted) => executeProjectConversationIdempotent(project, value, parsed.operationIdentity, markExternalWriteStarted),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
         const body = executed.result.body as { conversation?: { id?: unknown } };
         const conversationId = typeof body.conversation?.id === 'string' ? body.conversation.id : '';
@@ -2390,7 +2257,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           destinationId: 'conversation-message-dispatch',
           resourceId: conversationId,
           externalOperationId: `conversation-message:${conversationId}:${operationIdentity}`,
-          manualExternalWriteStart: true,
           invoke: (markExternalWriteStarted) =>
             executeConversationDispatchMessage({
               params: { projectId, conversationId },
@@ -2398,7 +2264,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               operationIdentity,
               providerWriteLifecycle: { markPrepared: async () => undefined, markRpcStarted: markExternalWriteStarted },
             }),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
       },
       interruptConversation: async ({ projectId, conversationId, operationIdentity }) => {
@@ -2428,7 +2294,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
                 : await codexNativeCoordinator.interruptTurn({ conversationId, providerTurnId: turn.providerTurnId! });
             return { operation, acknowledged: true };
           },
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
         return true;
       },
@@ -2451,7 +2317,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: conversationId,
           externalOperationId: `provider-queue-resume:${conversationId}`,
           invoke: () => codexNativeCoordinator.resumeInterruptedQueue({ conversationId }),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
         return true;
       },
@@ -2559,7 +2425,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: requestId,
           externalOperationId: `provider-server-request:${requestId}`,
           invoke: () => executeConversationDispatchRequestResponse({ params: { projectId, conversationId, requestId }, response, operationIdentity }),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
       },
       getPendingPlan: ({ projectId, conversationId }) => {
@@ -2592,7 +2458,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: requestId,
           externalOperationId: `plan-implementation-response:${requestId}`,
           invoke: () => codexNativeCoordinator.respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
         const accepted = conversationPlanActions.getById(requestId);
         if (!accepted || accepted.conversationId !== conversationId || conversations.getRecordById(conversationId)?.projectId !== projectId)
@@ -2790,16 +2656,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(preset.skillId ? { skillId: preset.skillId } : {}),
           ...(preset.pluginReferences.length > 0 ? { pluginReferences: preset.pluginReferences } : {}),
         };
-        const request = imInternalCommandRequest({ commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id, operationIdentity, input: value, inputSha256: graphConversationInputSha256(value) });
-        const parsed = graphConversationCommands.parse<Record<string, unknown>>({ value: request, commandType: graphConversationCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id });
-        const executed = await graphConversationCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
+        const request = imInternalCommandRequest({ commandType: conversationStartCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id, operationIdentity, input: value, inputSha256: conversationStartInputSha256(value) });
+        const parsed = conversationStartCommands.parse<Record<string, unknown>>({ value: request, commandType: conversationStartCommandTypes.taskConversationCreate, scopeKind: 'task', scopeId: task.id });
+        const executed = await conversationStartCommands.executeExternal<Record<string, unknown>, { statusCode: number; body: unknown }>({
           parsed,
           destinationId: 'task-conversation-create',
           resourceId: task.id,
           externalOperationId: `conversation.task.create:${task.id}:${operationIdentity}`,
-          manualExternalWriteStart: true,
           invoke: (markExternalWriteStarted) => executeTaskConversationIdempotent(project, task, value, operationIdentity, markExternalWriteStarted),
-          isExplicitRejection: isExplicitGraphConversationRejection,
+          isExplicitRejection: isExplicitConversationStartRejection,
         });
         const body = executed.result.body as { conversation?: { id?: unknown } };
         const conversationId = typeof body.conversation?.id === 'string' ? body.conversation.id : '';
@@ -3009,20 +2874,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return diff;
   });
 
-  const codeIntelligenceQueries = new CodeIntelligenceQueryApplication({
-    projects,
-    resolveGraphProjectName,
-    readEdge: readCurrentGraphEdgeDetail,
-    readNeighborhood: readCurrentGraphNeighborhood,
-    search: searchCurrentGraphNodes,
-    readView: readCurrentGraphView,
-    readNode: readCurrentGraphNodeById,
-    readEdgesByNodeId: readCurrentGraphEdgesByNodeId,
-    attachViewPerformance: (view, startedAtMs) => attachGraphViewPerformance(view as unknown as GraphViewSnapshot, startedAtMs),
-    formatProjectViewTitle: (view, projectName) => formatProjectScopedGraphViewTitle(view as unknown as GraphViewSnapshot, projectName),
-  });
-  registerCodeIntelligenceQueryRoutes({ server, application: codeIntelligenceQueries });
-
   server.get('/api/git/status', async () => readGitStatus(projectRoot));
 
   server.get('/api/git/diff', async (): Promise<GitDiffSummary> => readGitDiff(projectRoot));
@@ -3087,6 +2938,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/model-connections', async () => ({ items: await modelConnections.list() }));
 
   server.get('/api/zentao-instances', async () => ({ items: await zentaoCredentials.list() }));
+
+  // 密码查看沿用本机来源与令牌校验，不进入缓存、命令回执或审计明文。
+  server.get('/api/zentao-instances/:instanceId/password', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    /** 只有用户主动调用独立读取入口时才获取密码。 */
+    const password = await zentaoCredentials.revealPassword(request.params.instanceId);
+    appendAuditLog({ actorType: 'local_api', action: 'zentao.instance.password.viewed', resourceType: 'zentao_instance', resourceId: request.params.instanceId, payload: {} });
+    return { password };
+  });
 
   server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
 
@@ -3251,47 +3111,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
   });
 
-  const clearCodeGraphCache = async (request: FastifyRequest<{ Body: SettingsCommandRequest<Record<string, never>> }>, reply: FastifyReply): Promise<ClearCacheResult | unknown> => {
-    try {
-      const parsed = settingsCommands.parse<Record<string, never>>({
-        value: request.body,
-        commandType: settingsCommandTypes.projectionCacheClear,
-        scopeKind: 'settings',
-        expectedScopeId: () => 'projection-cache',
-      });
-      if (Object.keys(parsed.input).length !== 0) return reply.code(400).send({ error: 'ZEUS_SETTINGS_COMMAND_INVALID', message: 'Projection cache clear input must be empty.' });
-      const clearedAt = now().toISOString();
-      const mutation = await settingsCommands.executeExternal({
-        parsed,
-        destinationId: 'projection_database_cache',
-        resourceId: 'code-graph-cache',
-        externalOperationId: `${parsed.operationIdentity}:projection-clear`,
-        invoke: async () => {
-          await projectionDatabases.enqueueIndexWrite((projectionDb) => clearAllPersistedGraphCaches(projectionDb));
-          return { result: { cleared: true, clearedCaches: ['code-index', 'graph-view', 'layout'] as const, clearedAt }, settings: { ...platformMutableState.appShellSettings, lastCacheClearAt: clearedAt } };
-        },
-        mutateAcceptedBusinessState: (result) => {
-          settings.setJson(appShellSettingsKey, result.settings);
-          appendAuditLog({
-            actorType: 'local_api',
-            action: 'settings.code_graph_cache.cleared',
-            resourceType: 'code_graph_cache',
-            payload: { clearedCaches: result.result.clearedCaches, clearedAt: result.result.clearedAt },
-          });
-        },
-      });
-      platformMutableState.memoryGraphCache = null;
-      platformMutableState.appShellSettings = mutation.result.settings;
-      return mutation.result.result;
-    } catch (error) {
-      const mapped = settingsCommandHttpError(error, redactSensitiveText);
-      return reply.code(mapped.statusCode).send(mapped.body);
-    }
-  };
-  server.post('/api/settings/code-graph-cache/clear', clearCodeGraphCache);
-  // 保留旧端点供升级期间仍连接旧 Renderer 的窗口使用；产品文案不再把图谱投影称为全部缓存。
-  server.post('/api/settings/cache/clear', clearCodeGraphCache);
-
   server.get('/api/settings/export', async (): Promise<LocalSettingsExportSnapshot> => {
     const exportedAt = new Date().toISOString();
     return {
@@ -3302,7 +3121,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       settings: {
         appShell: platformMutableState.appShellSettings,
         runtime: platformMutableState.runtimeSettings,
-        codeMap: platformMutableState.codeMapSettings,
         telegramNotification: platformMutableState.telegramNotificationSettings,
         telegramSecurity: platformMutableState.telegramSecuritySettings,
       },
@@ -3322,11 +3140,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       // 全部字段先完成 parse/normalize/关联约束计划，之后才允许写 Artifact、SQLite 或文件。
       const plannedAppShell = parsed.input.settings.appShell ? patchAppShellSettings(platformMutableState.appShellSettings, parsed.input.settings.appShell, settingsIdentityCatalog) : null;
       const plannedRuntime = parsed.input.settings.runtime ? normalizeImportedRuntimeSettings(parsed.input.settings.runtime) : null;
-      const plannedCodeMap = parsed.input.settings.codeMap ? normalizeCodeMapSettings(parsed.input.settings.codeMap) : null;
       const plannedTelegramNotification = parsed.input.settings.telegramNotification ? normalizeImportedTelegramNotificationSettings(parsed.input.settings.telegramNotification) : null;
       const plannedTelegramSecurity = parsed.input.settings.telegramSecurity ? normalizeImportedTelegramSecuritySettings(parsed.input.settings.telegramSecurity) : null;
       if (parsed.input.settings.runtime && !plannedRuntime) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'runtime settings are invalid or unsafe' });
-      if (parsed.input.settings.codeMap && !plannedCodeMap) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'codeMap settings are invalid' });
       if (parsed.input.settings.telegramNotification && !plannedTelegramNotification) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'telegram notification settings are invalid' });
       if (parsed.input.settings.telegramSecurity && !plannedTelegramSecurity) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'telegram security settings are invalid' });
       if (plannedAppShell && Object.prototype.hasOwnProperty.call(parsed.input.settings.appShell, 'taskManagementStatusByProject')) {
@@ -3344,7 +3160,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           }
         }
       }
-      const importedSettings = [plannedAppShell && 'app-shell', plannedRuntime && 'runtime', plannedCodeMap && 'code-map', plannedTelegramNotification && 'telegram-notification', plannedTelegramSecurity && 'telegram-security'].filter(
+      const importedSettings = [plannedAppShell && 'app-shell', plannedRuntime && 'runtime', plannedTelegramNotification && 'telegram-notification', plannedTelegramSecurity && 'telegram-security'].filter(
         (value): value is string => typeof value === 'string',
       );
       const importedAt = now().toISOString();
@@ -3358,12 +3174,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           publicResult,
           sourceArtifact: await settingsCommands.stageImportArtifact({ parsed: parsed as ParsedSettingsCommand<object>, value: parsed.input, kind: 'settings' }),
           retention: plannedRuntime ? await runRuntimeLogRetention(plannedRuntime.logRetentionDays) : null,
-          planned: { appShell: plannedAppShell, runtime: plannedRuntime, codeMap: plannedCodeMap, telegramNotification: plannedTelegramNotification, telegramSecurity: plannedTelegramSecurity },
+          planned: { appShell: plannedAppShell, runtime: plannedRuntime, telegramNotification: plannedTelegramNotification, telegramSecurity: plannedTelegramSecurity },
         }),
         mutateAcceptedBusinessState: (result) => {
           if (result.planned.appShell) settings.setJson(appShellSettingsKey, result.planned.appShell);
           if (result.planned.runtime) settings.setJson(runtimeSettingsKey, result.planned.runtime);
-          if (result.planned.codeMap) settings.setJson(codeMapSettingsKey, result.planned.codeMap);
           if (result.planned.telegramNotification) settings.setJson(telegramNotificationSettingsKey, result.planned.telegramNotification);
           if (result.planned.telegramSecurity) settings.setJson(telegramSecuritySettingsKey, result.planned.telegramSecurity);
           appendAuditLog({
@@ -3383,7 +3198,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       });
       if (mutation.result.planned.appShell) platformMutableState.appShellSettings = mutation.result.planned.appShell;
       if (mutation.result.planned.runtime) platformMutableState.runtimeSettings = mutation.result.planned.runtime;
-      if (mutation.result.planned.codeMap) platformMutableState.codeMapSettings = mutation.result.planned.codeMap;
       if (mutation.result.planned.telegramNotification) platformMutableState.telegramNotificationSettings = mutation.result.planned.telegramNotification;
       if (mutation.result.planned.telegramSecurity) platformMutableState.telegramSecuritySettings = mutation.result.planned.telegramSecurity;
       return mutation.result.publicResult;
@@ -3443,48 +3257,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         },
       });
       return mutation.result.publicResult;
-    } catch (error) {
-      const mapped = settingsCommandHttpError(error, redactSensitiveText);
-      return reply.code(mapped.statusCode).send(mapped.body);
-    }
-  });
-
-  server.get('/api/code-map/settings', async (): Promise<CodeMapSettingsSnapshot> => platformMutableState.codeMapSettings);
-
-  server.put('/api/code-map/settings', async (request: FastifyRequest<{ Body: SettingsCommandRequest<UpdateCodeMapSettingsBody> }>, reply) => {
-    try {
-      const parsed = settingsCommands.parse<UpdateCodeMapSettingsBody>({
-        value: request.body,
-        commandType: settingsCommandTypes.codeMapSettingsPut,
-        scopeKind: 'settings',
-        expectedScopeId: () => 'code-map',
-      });
-      const nextSettings = normalizeCodeMapSettings(parsed.input);
-      if (!nextSettings) return reply.code(400).send({ error: 'ZEUS_INVALID_CODE_MAP_SETTINGS', message: 'code map settings must use supported ranges and safe ignore directory names' });
-      const mutation = settingsCommands.executeCore({
-        parsed,
-        destinationId: 'code_map_settings',
-        resourceId: codeMapSettingsKey,
-        mutateBusinessState: () => {
-          settings.setJson(codeMapSettingsKey, nextSettings);
-          appendAuditLog({
-            actorType: 'local_api',
-            action: 'settings.code_map.updated',
-            resourceType: 'settings',
-            resourceId: codeMapSettingsKey,
-            payload: {
-              defaultScanScope: nextSettings.defaultScanScope,
-              ignoreDirectoryCount: nextSettings.defaultIgnoreDirectories.length,
-              maxCallChainDepth: nextSettings.maxCallChainDepth,
-              layoutAlgorithm: nextSettings.layoutAlgorithm,
-              moduleFlowManualNotesLength: nextSettings.moduleFlowManualNotes.length,
-            },
-          });
-          return nextSettings;
-        },
-      });
-      platformMutableState.codeMapSettings = mutation.result;
-      return platformMutableState.codeMapSettings;
     } catch (error) {
       const mapped = settingsCommandHttpError(error, redactSensitiveText);
       return reply.code(mapped.statusCode).send(mapped.body);

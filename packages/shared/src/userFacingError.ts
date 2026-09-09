@@ -273,6 +273,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['共享目录和嵌套仓库中的文件不能随上层仓库提交。请到所属仓库中提交。', 'Files in shared folders or nested repositories cannot be committed with the parent repository. Commit them in their own repository.'],
   ],
   [['ZEUS_TASK_MERGE_COMMIT_INCOMPLETE'], ['合并提交必须包含本次合并的全部修改，请选择所有相关文件。', 'A merge commit must include all changes from the merge. Select all relevant files.']],
+  [['ZEUS_TASK_COMMIT_SELECTION_CHANGED'], ['所选文件状态已变化，本次未提交。请刷新代码交付页后重新选择文件。', 'The selected files have changed. Nothing was committed. Refresh code delivery and select the files again.', 'check']],
   [['ZEUS_TASK_REMOTE_DIVERGED'], ['远端分支包含本地尚未取得的提交，推送已停止。请先拉取并处理分支差异。', 'The remote branch has commits missing locally, so the push stopped. Pull and reconcile the branches first.']],
   [
     ['ZEUS_TASK_REMOTE_VERIFICATION_FAILED'],
@@ -574,6 +575,21 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [['ZEUS_UPDATE_DOWNLOAD_INTERRUPTED'], ['更新下载中断，当前版本仍可使用。可以重新下载。', 'The update download was interrupted. You can keep using the current version and download again.', 'retry']],
   [
+    ['ZEUS_RELEASE_MANIFEST_NETWORK'],
+    [
+      '无法连接 GitHub 更新服务，请检查网络或代理设置后重新检查更新。当前版本仍可使用。',
+      'Could not connect to the GitHub update service. Check your network or proxy settings and try again. You can keep using the current version.',
+      'retry',
+    ],
+  ],
+  [['ZEUS_RELEASE_MANIFEST_TIMEOUT'], ['读取 GitHub 更新清单超时，请稍后重新检查更新。当前版本仍可使用。', 'Reading the GitHub update manifest timed out. Try again later. You can keep using the current version.', 'retry']],
+  [['ZEUS_RELEASE_MANIFEST_HTTP_TRANSIENT'], ['GitHub 更新服务暂时不可用或请求受限，请稍后重新检查更新。', 'The GitHub update service is temporarily unavailable or rate limited. Try again later.', 'retry']],
+  [
+    ['ZEUS_RELEASE_MANIFEST_HTTP_REJECTED'],
+    ['GitHub 更新清单无法访问，请查看错误详情中的响应状态。当前版本仍可使用。', 'The GitHub update manifest is not accessible. See the response status in the error details. You can keep using the current version.'],
+  ],
+  [['ZEUS_RELEASE_MANIFEST_INVALID'], ['收到的更新清单不完整或格式不正确，已停止本次更新。请稍后重新检查更新。', 'The update manifest is incomplete or invalid, so this update was stopped. Check for updates again later.']],
+  [
     ['unauthorized', 'invalid_api_key', 'authentication_error'],
     ['AI 服务拒绝了登录信息。请在设置中检查登录状态或访问密钥（API Key）。', 'The AI service rejected the credentials. Check your sign-in or API key in Settings.', 'model_settings'],
   ],
@@ -782,6 +798,15 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_CODEX_LOGIN_TIMED_OUT'], ['登录等待超时，配置已保留。请重新登录。', 'Sign-in timed out. Your configuration is preserved; try again.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_FAILED'], ['这次 Codex 登录未完成，请重新登录；具体原因可查看详情。', 'This Codex sign-in did not complete. Sign in again and check the details for the cause.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_UNAVAILABLE'], ['这次 Codex 登录已失效，请重新发起登录。', 'This Codex sign-in is no longer available. Start a new sign-in.', 'sign_in']],
+  [['ZEUS_CODEX_MODEL_SYNC_FAILED'], ['账号已登录，但订阅模型尚未同步成功。请检查网络和模型来源配置后重试。', 'Signed in, but subscription models have not synced. Check the network and model source configuration, then retry.', 'retry']],
+  [
+    ['ZEUS_CODEX_MODEL_CATALOG_FIXED'],
+    [
+      '账号已登录，但固定的本地模型名单阻止了订阅模型更新。请取消 model_catalog_json 配置后重试。',
+      'Signed in, but a fixed local model catalog prevents subscription model updates. Remove the model_catalog_json override and retry.',
+      'retry',
+    ],
+  ],
   [['ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED'], ['无法打开官方登录页，请检查系统浏览器后重试。', 'Could not open the official sign-in page. Check your system browser and retry.', 'sign_in']],
   [['ZEUS_CODEX_CONFIG_ACTIVATION_REQUIRED'], ['配置已导入，但尚未启用。请重试启用。', 'Configuration was imported but is not active. Retry activation.', 'settings']],
   [

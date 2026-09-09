@@ -7,6 +7,7 @@ import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/di
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
+import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
@@ -20,7 +21,8 @@ type AppLanguage = 'zh-CN' | 'en-US';
 
 interface SourceTab {
   document: ProjectSourceDocument;
-  draft: string;
+  /** 编辑期间保留文档树，跨进程保存时才展开全文。 */
+  draft: string | Text;
   dirty: boolean;
   saving: boolean;
   externalChange: boolean;
@@ -156,14 +158,22 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const document = await bridge.saveProjectSourceFile({
           projectId: props.project.id,
           relativePath,
-          content: tab.draft,
+          content: tab.draft.toString(),
           expectedRevision: tab.document.revision,
           eol: tab.document.eol,
           hasBom: tab.document.hasBom,
         });
-        setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, document, draft: document.content, dirty: false, saving: false, externalChange: false } : candidate)));
+        /** 保存期间继续输入时保留新草稿，不能用较早的磁盘回执覆盖它。 */
+        const editedWhileSaving = tabsRef.current.find((candidate) => candidate.document.relativePath === relativePath)?.draft !== tab.draft;
+        setTabs((current) =>
+          current.map((candidate) =>
+            candidate.document.relativePath === relativePath
+              ? { ...candidate, document, draft: candidate.draft === tab.draft ? document.content : candidate.draft, dirty: candidate.draft !== tab.draft, saving: false, externalChange: false }
+              : candidate,
+          ),
+        );
         setNotice(zh ? `已保存 ${relativePath}` : `Saved ${relativePath}`);
-        return true;
+        return !editedWhileSaving;
       } catch (saveError) {
         setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: false, externalChange: true } : candidate)));
         setError(saveError);
@@ -222,7 +232,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             cursorLine: 1,
             cursorColumn: 1,
           }));
-        // 恢复偏好期间可能已收到图谱跳转或用户打开请求，不能覆盖新标签与草稿。
+        // 恢复偏好期间可能已收到用户打开请求，不能覆盖新标签与草稿。
         setTabs((current) => {
           const openPaths = new Set(current.map((tab) => tab.document.relativePath));
           return [...current, ...restoredTabs.filter((tab) => !openPaths.has(tab.document.relativePath))].slice(0, 20);
@@ -438,7 +448,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const document = await bridge.saveProjectSourceFile({
           projectId: props.project.id,
           relativePath: entry.relativePath,
-          content: sourceTab.draft,
+          content: sourceTab.draft.toString(),
           expectedRevision: emptyDocument.revision,
           eol: sourceTab.document.eol,
           hasBom: sourceTab.document.hasBom,
@@ -646,11 +656,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     path={activeTab.document.relativePath}
                     language={activeTab.document.language}
                     content={activeTab.draft}
+                    savedContent={activeTab.document.content}
                     readOnly={false}
                     revealLine={activeTab.revealLine}
-                    onChange={(content) =>
-                      setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty: content !== tab.document.content, revealLine: null } : tab)))
-                    }
+                    onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLine: null } : tab)))}
                     onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
                     onSave={() => void saveTab(activeTab.document.relativePath)}
                     onSaveAll={() => void saveAll()}

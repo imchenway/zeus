@@ -1440,7 +1440,7 @@ export class ConversationRepository {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
     }
     const timestamp = nowIso();
-    // 归档只隐藏会话列表，不删除消息，保证图谱问答证据链可恢复。
+    // 归档只隐藏会话列表，不删除消息，保证历史正文可恢复。
     this.db.execute(`UPDATE conversations SET archived = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [1, timestamp]);
     syncConversationStage(this.db, conversationId, timestamp);
     const archived = this.getById(conversationId);

@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 type UsageClient = {
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
@@ -155,7 +156,7 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
                 </select>
               </label>
             </div>
-            <LocalOverview snapshot={snapshot} language={props.language} />
+            <LocalOverview key={`${range}:${projectId}:${model}`} snapshot={snapshot} language={props.language} />
           </UsageSection>
         </>
       ) : null}
@@ -301,35 +302,45 @@ function UsageHeatmap(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'to
   );
 }
 
+/** 各明细独立分页，过滤条件变更时由父级重新挂载并回到第一页。 */
 function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[]; language: Language }) {
+  /** 用户请求页；最新数据缩短时立即夹紧显示范围。 */
+  const [requestedPage, setRequestedPage] = useState(1);
+  /** 当前可展示页。 */
+  const page = settingsPage(props.rows.length, requestedPage);
   if (props.rows.length === 0) return null;
   return (
     <section className="codex-usage-table-wrap">
       <h3>{props.title}</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>{props.language === 'zh-CN' ? '名称' : 'Name'}</th>
-            <th>Token</th>
-            <th>{props.language === 'zh-CN' ? '命中率' : 'Cache hit'}</th>
-            <th>Credits</th>
-            <th>USD</th>
-            <th>{props.language === 'zh-CN' ? '覆盖率' : 'Coverage'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.rows.map((row) => (
-            <tr key={row.id}>
-              <th scope="row">{row.label}</th>
-              <td>{formatTokens(row.totalTokens, props.language)}</td>
-              <td>{formatPercent(row.cacheHitRate, props.language)}</td>
-              <td>{formatEstimate(row.estimatedCredits, 'credits', props.language)}</td>
-              <td>{formatEstimate(row.apiEquivalentUsd, 'usd', props.language)}</td>
-              <td>{formatPercent(row.priceCoverage, props.language)}</td>
+      <div className="codex-usage-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{props.language === 'zh-CN' ? '名称' : 'Name'}</th>
+              <th>Token</th>
+              <th>{props.language === 'zh-CN' ? '命中率' : 'Cache hit'}</th>
+              <th>Credits</th>
+              <th>USD</th>
+              <th>{props.language === 'zh-CN' ? '覆盖率' : 'Coverage'}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {props.rows.slice((page - 1) * settingsPageSize, page * settingsPageSize).map((row) => (
+              <tr key={row.id}>
+                <th scope="row" title={row.label}>
+                  {row.label}
+                </th>
+                <td>{formatTokens(row.totalTokens, props.language)}</td>
+                <td>{formatPercent(row.cacheHitRate, props.language)}</td>
+                <td>{formatEstimate(row.estimatedCredits, 'credits', props.language)}</td>
+                <td>{formatEstimate(row.apiEquivalentUsd, 'usd', props.language)}</td>
+                <td>{formatPercent(row.priceCoverage, props.language)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <SettingsPagination label={props.title} total={props.rows.length} page={page} onChange={setRequestedPage} language={props.language} />
     </section>
   );
 }
@@ -348,7 +359,8 @@ function formatPercent(value: number | null, language: Language): string {
 
 function formatEstimate(value: number | null, kind: 'credits' | 'usd', language: Language): string {
   if (value === null) return text[language].noPrice;
-  const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
+  // 常规估算保留两位小数，微小费用保留四位，避免大量无意义尾数撑宽表格。
+  const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: value > 0 && value < 0.01 ? 4 : 2 }).format(value);
   return kind === 'usd' ? `~$${formatted}` : `~${formatted}`;
 }
 

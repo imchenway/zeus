@@ -258,7 +258,7 @@ contextBridge.exposeInMainWorld('zeus', {
   importBusinessDataSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-business-data-snapshot'),
   clearNetworkCache: () => ipcRenderer.invoke('zeus:clear-network-cache'),
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
-  openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
+  openSource: (source: unknown) => ipcRenderer.invoke('zeus:open-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
   activateRequestingWindow: () => ipcRenderer.invoke('zeus:activate-requesting-window'),
   getAutomaticUpdateIndicator: () => ipcRenderer.invoke('zeus:automatic-update-indicator:get'),
@@ -272,8 +272,6 @@ contextBridge.exposeInMainWorld('zeus', {
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   openTurnChangeFile: (request: unknown) => ipcRenderer.invoke('zeus:turn-change-file:open', request),
-  exportMermaidDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-mermaid-diagram', payload),
-  exportPlantUmlDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-plantuml-diagram', payload),
   notifyAppShellSettingsChanged: (settings: unknown) => ipcRenderer.invoke('zeus:app-shell-settings-changed', settings),
   notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
   setUnsavedChangeState: (key: string, dirty: boolean) => ipcRenderer.send('zeus:unsaved-change-state', { key, dirty }),
@@ -311,6 +309,8 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:app-close-frontmost-layer', handler);
     return () => ipcRenderer.removeListener('zeus:app-close-frontmost-layer', handler);
   },
+  /** 打开系统浏览器菜单，仅返回用户选择，不直接执行动作。 */
+  showBrowserMenu: (input: unknown) => ipcRenderer.invoke('zeus:browser:show-menu', input),
   getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
   activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),

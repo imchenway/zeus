@@ -1,16 +1,18 @@
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
 import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { SyntaxHighlightedLine, useDeferredSyntaxHighlightedLines, useSyntaxHighlightedLines } from '../code/SyntaxHighlightedCode.js';
+import type { EditorView } from '@codemirror/view';
+import type { CodeTextChange } from '../code/CodeEditor.js';
+
+/** 冲突文件打开时才加载代码编辑器。 */
+const ConflictCodeEditor = lazy(() => import('../code/ConflictCodeEditor.js').then((module) => ({ default: module.ConflictCodeEditor })));
 import {
   applyConflictDocumentEdit,
   applyConflictSideAction,
@@ -24,8 +26,6 @@ import {
   serializeConflictForAi,
 } from './taskConflictModel.js';
 
-type LineKind = 'added' | 'modified' | 'conflict';
-
 interface CodeSnippet {
   text: string;
   startOffset: number;
@@ -37,6 +37,7 @@ interface CodeSnippet {
 
 export { countConflictBlocks, resolveSimpleConflictDraft } from './taskConflictModel.js';
 
+/** 冲突选择与手工编辑共用文件草稿，保存由交付页统一执行。 */
 export function TaskGitConflictWorkspace(props: {
   zh: boolean;
   busy: boolean;
@@ -52,18 +53,22 @@ export function TaskGitConflictWorkspace(props: {
   projectId: string;
 }) {
   const document = props.conflict;
+  /** 同一输入事件内可能包含多个编辑事务，后一个必须使用刚产生的草稿。 */
+  const editingDocumentRef = useRef(document);
+  editingDocumentRef.current = document;
   const blocks = document?.blocks ?? [];
   const unresolvedCount = countUnresolvedConflictBlocks(document);
   const [selectedBlockIndex, setSelectedBlockIndex] = useState(0);
-  const [viewMode, setViewMode] = useState<'focused' | 'full'>('focused');
+  /** 默认展示完整文件，处理冲突后仍可继续编辑上下文。 */
+  const [viewMode, setViewMode] = useState<'focused' | 'full'>('full');
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
   const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
   const [aiSkillId, setAiSkillId] = useState('');
   const currentFileResolved = document !== null && unresolvedCount === 0;
-  const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
-  const activeBlock = currentFileResolved ? null : selectedBlock;
+  /** 手工处理完成也保留当前编辑器，避免首个字符触发卸载和焦点丢失。 */
+  const activeBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
   const deferredDocument = useDeferredValue(document);
   const simpleResolution = useMemo(() => (deferredDocument ? resolveSimpleConflictDocument(deferredDocument) : null), [deferredDocument]);
   const simpleResolutionReady = deferredDocument === document;
@@ -72,7 +77,7 @@ export function TaskGitConflictWorkspace(props: {
   useEffect(() => {
     setMergeFeedback(null);
     setSelectedBlockIndex(0);
-    setViewMode('focused');
+    setViewMode('full');
     setUndoDraft(null);
     setAiPermissionOpen(false);
   }, [props.conflictPath, document?.fingerprint]);
@@ -139,13 +144,16 @@ export function TaskGitConflictWorkspace(props: {
     }
   }
 
-  function editDocument(content: string): void {
-    if (!document) return;
-    const next = applyConflictDocumentEdit(document, content);
-    if (next === document) return;
-    setUndoDraft(document);
+  function editDocument(content: string, change: CodeTextChange): void {
+    /** 读取最新事务结果，避免连续编辑使用上一帧的文档偏移。 */
+    const currentDocument = editingDocumentRef.current;
+    if (!currentDocument) return;
+    const next = applyConflictDocumentEdit(currentDocument, content, change);
+    if (next === currentDocument) return;
+    editingDocumentRef.current = next;
+    setUndoDraft(currentDocument);
     props.onDocumentChange(next);
-    if (activeBlock) selectNextPending(next, activeBlock.id);
+    // 输入期间不跳转冲突；用户通过导航或选入操作决定何时离开当前编辑位置。
     const manualCount = next.blocks.filter((block) => block.status === 'manual').length;
     setMergeFeedback(props.zh ? `中间编辑已记录，${manualCount} 个冲突块按手工结果处理，保存前不会写入文件。` : `The center edit is recorded. ${manualCount} conflict block(s) are now manual; the file is unchanged until you save.`);
   }
@@ -240,7 +248,7 @@ export function TaskGitConflictWorkspace(props: {
               }
             >
               <MagicWand aria-hidden="true" weight="regular" />
-              <span>{props.zh ? '合并简单冲突' : 'Merge simple conflicts'}</span>
+              <span>{simpleFailureText ? (props.zh ? '无可自动合并项' : 'No simple merges') : props.zh ? '合并简单冲突' : 'Merge simple conflicts'}</span>
             </Button>
             <Button
               variant="primary"
@@ -339,15 +347,15 @@ export function TaskGitConflictWorkspace(props: {
           </p>
         ) : null}
 
-        {viewMode === 'full' ? (
+        {viewMode === 'full' || !activeBlock ? (
           <FullFileColumns
             zh={props.zh}
             path={props.conflictPath}
             document={document}
             disabled={!document || props.busy}
-            targetTitle={props.zh ? '来源分支' : 'Source branch'}
+            targetTitle={props.zh ? '来源分支（只读）' : 'Source branch (read-only)'}
             resultTitle={props.zh ? '合并结果（可编辑）' : 'Merge result (editable)'}
-            taskTitle={props.zh ? '任务分支' : 'Task branch'}
+            taskTitle={props.zh ? '任务分支（只读）' : 'Task branch (read-only)'}
             initialBlock={activeBlock}
             onResultChange={editDocument}
             onSideAction={chooseSide}
@@ -365,21 +373,13 @@ export function TaskGitConflictWorkspace(props: {
             onResultChange={editDocument}
             onSideAction={chooseSide}
           />
-        ) : (
-          <div className="task-git-conflict-review-complete" role="status">
-            <CheckCircle aria-hidden="true" weight="fill" />
-            <strong>{props.zh ? '当前文件冲突已全部处理' : 'All conflicts in this file are processed'}</strong>
-            <span>{props.zh ? '结果仍是未保存的草稿。可先查看完整文件，确认后点击下方“保存该文件并继续”。' : 'The result is still an unsaved draft. Review the full file, then choose “Save file and continue” below.'}</span>
-            <Button variant="secondary" size="compact" onClick={() => setViewMode('full')} disabled={!document || props.busy}>
-              {props.zh ? '查看完整文件' : 'View full file'}
-            </Button>
-          </div>
-        )}
+        ) : null}
       </main>
     </div>
   );
 }
 
+/** 明确解释禁用原因，避免把需要人工判断的冲突误认为功能失效。 */
 function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailureReason, number>>, zh: boolean): string {
   const labels: Array<[SimpleConflictFailureReason, string, string]> = [
     ['same_position_insertions', '同一位置新增内容的先后顺序不确定', 'different insertions at the same position have no certain order'],
@@ -389,7 +389,7 @@ function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailure
   ];
   const details = labels.filter(([reason]) => (reasons[reason] ?? 0) > 0).map(([, chinese, english]) => (zh ? chinese : english));
   if (details.length === 0) return zh ? '当前修改无法确定安全的自动合并结果，请人工确认。' : 'No deterministic safe merge was found; manual review is required.';
-  return zh ? `魔法棒未处理：${details.join('；')}，需要人工确认。` : `Magic merge skipped this conflict: ${details.join('; ')}. Manual review is required.`;
+  return zh ? `无法自动合并：${details.join('；')}。请在冲突行旁选入或移除，或直接编辑中间结果。` : `Cannot merge automatically: ${details.join('; ')}. Include or exclude changes beside the conflict, or edit the center result.`;
 }
 
 function FocusedConflictColumns(props: {
@@ -402,21 +402,21 @@ function FocusedConflictColumns(props: {
   targetTitle: string;
   resultTitle: string;
   taskTitle: string;
-  onResultChange: (content: string) => void;
+  onResultChange: (content: string, change: CodeTextChange) => void;
   onSideAction: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
 }) {
   const sourceSnippet = useMemo(() => buildSideSnippet(props.document.source, props.block, 'source'), [props.document.source, props.block]);
   const taskSnippet = useMemo(() => buildSideSnippet(props.document.task, props.block, 'task'), [props.document.task, props.block]);
   const resultSnippet = useMemo(() => buildOffsetSnippet(props.document.visibleContent, props.block.visibleStart, props.block.visibleEnd), [props.document.visibleContent, props.block.visibleStart, props.block.visibleEnd]);
-  const sourceRef = useRef<HTMLPreElement>(null);
-  const resultRef = useRef<HTMLTextAreaElement>(null);
-  const taskRef = useRef<HTMLPreElement>(null);
+  const sourceRef = useRef<EditorView>(null);
+  const resultRef = useRef<EditorView>(null);
+  const taskRef = useRef<EditorView>(null);
 
-  function syncScroll(source: HTMLElement): void {
+  function syncScroll(source: EditorView): void {
     for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
       if (!pane || pane === source) continue;
-      if (Math.abs(pane.scrollTop - source.scrollTop) > 1) pane.scrollTop = source.scrollTop;
-      if (Math.abs(pane.scrollLeft - source.scrollLeft) > 1) pane.scrollLeft = source.scrollLeft;
+      if (Math.abs(pane.scrollDOM.scrollTop - source.scrollDOM.scrollTop) > 1) pane.scrollDOM.scrollTop = source.scrollDOM.scrollTop;
+      if (Math.abs(pane.scrollDOM.scrollLeft - source.scrollDOM.scrollLeft) > 1) pane.scrollDOM.scrollLeft = source.scrollDOM.scrollLeft;
     }
   }
 
@@ -428,20 +428,28 @@ function FocusedConflictColumns(props: {
         title={props.targetTitle}
         path={props.path}
         snippet={sourceSnippet}
+        block={props.block}
         side="source"
         state={props.block.sourceState}
         disabled={props.disabled}
         onScroll={syncScroll}
-        onAction={(action) => props.onSideAction(props.block, 'source', action)}
+        onSideAction={props.onSideAction}
       />
       <FocusedResultEditor
+        zh={props.zh}
         textareaRef={resultRef}
         title={props.resultTitle}
         path={props.path}
         snippet={resultSnippet}
         disabled={props.disabled}
         onScroll={syncScroll}
-        onChange={(content) => props.onResultChange(`${props.document.visibleContent.slice(0, resultSnippet.startOffset)}${content}${props.document.visibleContent.slice(resultSnippet.endOffset)}`)}
+        onChange={(content, change) =>
+          props.onResultChange(`${props.document.visibleContent.slice(0, resultSnippet.startOffset)}${content}${props.document.visibleContent.slice(resultSnippet.endOffset)}`, {
+            ...change,
+            from: change.from + resultSnippet.startOffset,
+            to: change.to + resultSnippet.startOffset,
+          })
+        }
       />
       <FocusedSidePane
         zh={props.zh}
@@ -449,92 +457,101 @@ function FocusedConflictColumns(props: {
         title={props.taskTitle}
         path={props.path}
         snippet={taskSnippet}
+        block={props.block}
         side="task"
         state={props.block.taskState}
         disabled={props.disabled}
         onScroll={syncScroll}
-        onAction={(action) => props.onSideAction(props.block, 'task', action)}
+        onSideAction={props.onSideAction}
       />
     </div>
   );
 }
 
+/** 聚焦视图的侧栏与完整文件共用行旁操作。 */
 function FocusedSidePane(props: {
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
-  paneRef: RefObject<HTMLPreElement | null>;
+  paneRef: RefObject<EditorView | null>;
   title: string;
   path: string;
   snippet: CodeSnippet;
+  /** 当前片段所对应的权威冲突块。 */
+  block: ConflictBlock;
   side: ConflictSide;
   state: ConflictSideState;
   disabled: boolean;
-  onAction: (action: Exclude<ConflictSideState, 'pending'>) => void;
-  onScroll: (source: HTMLElement) => void;
+  /** 行旁按钮修改父页面的冲突草稿。 */
+  onSideAction: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
+  onScroll: (source: EditorView) => void;
 }) {
-  const lineKinds = useMemo(() => conflictLineKinds(props.snippet), [props.snippet]);
-  const pointsRight = props.side === 'source';
+  /** 单个冲突的标记身份不随其他页面状态变化。 */
+  const blocks = useMemo(() => [props.block], [props.block]);
   return (
     <section className={`task-git-conflict-code-pane task-git-conflict-side-pane is-${props.state}`}>
       <header className="task-git-conflict-pane-header">
         <strong>{props.title}</strong>
-        <span className="task-git-conflict-side-actions">
-          <button type="button" className="task-git-conflict-accept" onClick={() => props.onAction('accepted')} disabled={props.disabled} aria-label={`${props.title}: ${props.zh ? '选入' : 'Include'}`} title={props.zh ? '选入' : 'Include'}>
-            {pointsRight ? <ArrowRight aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
-            <span>{props.zh ? '选入' : 'Include'}</span>
-          </button>
-          <button
-            type="button"
-            className="task-git-conflict-ignore"
-            onClick={() => props.onAction('ignored')}
-            disabled={props.disabled}
-            aria-label={`${props.title}: ${props.zh ? '忽略' : 'Ignore'}`}
-            title={props.zh ? '忽略这一侧' : 'Ignore this side'}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </span>
       </header>
       <small className="task-git-conflict-side-state">{sideStateLabel(props.state, props.zh)}</small>
-      <pre ref={props.paneRef} className="task-git-highlighted-code" onScroll={(event) => props.onScroll(event.currentTarget)}>
-        <ConflictCodeLines content={props.snippet.text} path={props.path} lineKinds={lineKinds} lineNumberOffset={props.snippet.startLine - 1} />
-      </pre>
+      <Suspense fallback={<p role="status">{props.zh ? '正在打开代码…' : 'Opening code…'}</p>}>
+        <ConflictCodeEditor
+          zh={props.zh}
+          path={props.path}
+          label={props.title}
+          content={props.snippet.text}
+          readOnly
+          blocks={blocks}
+          side={props.side}
+          actionsDisabled={props.disabled}
+          contentOffset={props.snippet.startOffset}
+          onSideAction={props.onSideAction}
+          lineOffset={props.snippet.startLine - 1}
+          range={{ from: props.snippet.conflictStartLine, to: props.snippet.conflictEndLine }}
+          onView={(view) => {
+            props.paneRef.current = view;
+          }}
+          onScroll={props.onScroll}
+        />
+      </Suspense>
     </section>
   );
 }
 
 function FocusedResultEditor(props: {
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  /** 沿用当前界面的操作语言。 */
+  zh: boolean;
+  textareaRef: RefObject<EditorView | null>;
   title: string;
   path: string;
   snippet: CodeSnippet;
   disabled: boolean;
-  onChange: (content: string) => void;
-  onScroll: (source: HTMLElement) => void;
+  onChange: (content: string, change: CodeTextChange) => void;
+  onScroll: (source: EditorView) => void;
 }) {
-  const highlightRef = useRef<HTMLPreElement>(null);
-  const lineKinds = useMemo(() => conflictLineKinds(props.snippet), [props.snippet]);
-
-  function syncScroll(): void {
-    if (!props.textareaRef.current || !highlightRef.current) return;
-    highlightRef.current.scrollTop = props.textareaRef.current.scrollTop;
-    highlightRef.current.scrollLeft = props.textareaRef.current.scrollLeft;
-    props.onScroll(props.textareaRef.current);
-  }
-
   return (
-    <label className="task-git-conflict-result-pane">
+    <section className="task-git-conflict-result-pane">
       <strong>{props.title}</strong>
-      <span className="task-git-conflict-edit-surface">
-        <pre ref={highlightRef} className="task-git-highlighted-code" aria-hidden="true">
-          <DeferredConflictCodeLines content={props.snippet.text} path={props.path} lineKinds={lineKinds} lineNumberOffset={props.snippet.startLine - 1} />
-        </pre>
-        <textarea ref={props.textareaRef} value={props.snippet.text} onChange={(event) => props.onChange(event.target.value)} onScroll={syncScroll} disabled={props.disabled} spellCheck={false} aria-label={props.title} />
-      </span>
-    </label>
+      <Suspense fallback={<p role="status">{props.title}</p>}>
+        <ConflictCodeEditor
+          zh={props.zh}
+          path={props.path}
+          label={props.title}
+          content={props.snippet.text}
+          readOnly={props.disabled}
+          lineOffset={props.snippet.startLine - 1}
+          range={{ from: props.snippet.conflictStartLine, to: props.snippet.conflictEndLine }}
+          onView={(view) => {
+            props.textareaRef.current = view;
+          }}
+          onChange={props.onChange}
+          onScroll={props.onScroll}
+        />
+      </Suspense>
+    </section>
   );
 }
 
+/** 完整文件在各侧冲突行提供选入与移除，中间结果始终保留可编辑区域。 */
 function FullFileColumns(props: {
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
@@ -545,35 +562,42 @@ function FullFileColumns(props: {
   resultTitle: string;
   taskTitle: string;
   initialBlock: ConflictBlock | null;
-  onResultChange: (content: string) => void;
+  onResultChange: (content: string, change: CodeTextChange) => void;
   onSideAction: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
 }) {
-  const sourceRef = useRef<HTMLTextAreaElement>(null);
-  const resultRef = useRef<HTMLTextAreaElement>(null);
-  const taskRef = useRef<HTMLTextAreaElement>(null);
-  const documentRef = useRef(props.document);
-  documentRef.current = props.document;
+  const sourceRef = useRef<EditorView>(null);
+  const resultRef = useRef<EditorView>(null);
+  const taskRef = useRef<EditorView>(null);
+  /** 只在导航到另一个冲突时定位，连续编辑不重复扫描前文。 */
+  const initialLine = useMemo(() => countLines(props.document?.visibleContent ?? '', props.initialBlock?.visibleStart ?? 0), [props.path, props.initialBlock?.id]);
 
-  useEffect(() => {
-    // 只在进入文件或切换冲突块时定位；受控文本每次输入都不应重置用户滚动位置。
-    const currentDocument = documentRef.current;
-    const top = Math.max(0, ((props.initialBlock ? countNewlines(currentDocument?.visibleContent.slice(0, props.initialBlock.visibleStart) ?? '') : 0) - 4) * 18.6);
-    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) if (pane) pane.scrollTop = top;
-  }, [props.path, props.initialBlock?.id]);
-
-  function syncScroll(source: HTMLTextAreaElement): void {
+  function syncScroll(source: EditorView): void {
     for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
       if (!pane || pane === source) continue;
-      if (Math.abs(pane.scrollTop - source.scrollTop) > 1) pane.scrollTop = source.scrollTop;
-      if (Math.abs(pane.scrollLeft - source.scrollLeft) > 1) pane.scrollLeft = source.scrollLeft;
+      if (Math.abs(pane.scrollDOM.scrollTop - source.scrollDOM.scrollTop) > 1) pane.scrollDOM.scrollTop = source.scrollDOM.scrollTop;
+      if (Math.abs(pane.scrollDOM.scrollLeft - source.scrollDOM.scrollLeft) > 1) pane.scrollDOM.scrollLeft = source.scrollDOM.scrollLeft;
     }
   }
 
   if (!props.document) return <div className="task-git-conflict-columns is-full" />;
   return (
     <div className="task-git-conflict-columns is-full">
-      <FullFilePane zh={props.zh} path={props.path} textareaRef={sourceRef} title={props.targetTitle} content={props.document.source} readOnly onScroll={syncScroll} />
       <FullFilePane
+        revealLine={countLines(props.document.source, Math.max(0, props.initialBlock?.sourceStart ?? 0))}
+        zh={props.zh}
+        path={props.path}
+        textareaRef={sourceRef}
+        title={props.targetTitle}
+        content={props.document.source}
+        readOnly
+        side="source"
+        actionsDisabled={props.disabled}
+        blocks={props.document.blocks}
+        onSideAction={props.onSideAction}
+        onScroll={syncScroll}
+      />
+      <FullFilePane
+        revealLine={initialLine}
         zh={props.zh}
         path={props.path}
         textareaRef={resultRef}
@@ -583,100 +607,67 @@ function FullFileColumns(props: {
         onChange={props.onResultChange}
         onScroll={syncScroll}
         blocks={props.document.blocks}
-        onSideAction={props.onSideAction}
       />
-      <FullFilePane zh={props.zh} path={props.path} textareaRef={taskRef} title={props.taskTitle} content={props.document.task} readOnly onScroll={syncScroll} />
+      <FullFilePane
+        revealLine={countLines(props.document.task, Math.max(0, props.initialBlock?.taskStart ?? 0))}
+        zh={props.zh}
+        path={props.path}
+        textareaRef={taskRef}
+        title={props.taskTitle}
+        content={props.document.task}
+        readOnly
+        side="task"
+        actionsDisabled={props.disabled}
+        blocks={props.document.blocks}
+        onSideAction={props.onSideAction}
+        onScroll={syncScroll}
+      />
     </div>
   );
 }
 
+/** 每个文件栏复用代码编辑器，参照内容和选择操作使用独立的禁用状态。 */
 function FullFilePane(props: {
+  /** 当前冲突在完整文件中的一基行号。 */
+  revealLine: number;
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
   path: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textareaRef: RefObject<EditorView | null>;
   title: string;
   content: string;
   readOnly: boolean;
+  /** 侧栏的选入箭头朝向中间结果。 */
+  side?: ConflictSide;
+  /** 参照内容只读不影响选入，只有页面忙碌时禁用操作。 */
+  actionsDisabled?: boolean;
   blocks?: ConflictBlock[];
-  onChange?: (content: string) => void;
+  onChange?: (content: string, change: CodeTextChange) => void;
   onSideAction?: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
-  onScroll: (source: HTMLTextAreaElement) => void;
+  onScroll: (source: EditorView) => void;
 }) {
-  const [scrollTop, setScrollTop] = useState(0);
-  const highlightRef = useRef<HTMLPreElement>(null);
-  const lineKinds = useMemo(() => fullFileLineKinds(props.content, props.blocks), [props.content, props.blocks]);
   return (
-    <section className={`task-git-conflict-code-pane task-git-conflict-full-pane${props.blocks ? ' is-result' : ''}`}>
+    <section className={`task-git-conflict-code-pane task-git-conflict-full-pane${props.side ? '' : ' is-result'}`}>
       <strong>{props.title}</strong>
-      <span className="task-git-conflict-full-editor-surface">
-        <pre ref={highlightRef} className="task-git-highlighted-code" aria-hidden="true">
-          {props.blocks ? <DeferredConflictCodeLines content={props.content} path={props.path} lineKinds={lineKinds} /> : <ConflictCodeLines content={props.content} path={props.path} lineKinds={lineKinds} />}
-        </pre>
-        <textarea
-          ref={props.textareaRef}
-          value={props.content}
+      <Suspense fallback={<p role="status">{props.zh ? '正在打开代码…' : 'Opening code…'}</p>}>
+        <ConflictCodeEditor
+          zh={props.zh}
+          path={props.path}
+          label={props.title}
+          content={props.content}
           readOnly={props.readOnly}
-          onChange={props.onChange ? (event) => props.onChange?.(event.target.value) : undefined}
-          onScroll={(event) => {
-            if (highlightRef.current) {
-              highlightRef.current.scrollTop = event.currentTarget.scrollTop;
-              highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
-            }
-            props.onScroll(event.currentTarget);
-            if (props.blocks) setScrollTop(event.currentTarget.scrollTop);
+          revealLine={props.revealLine}
+          blocks={props.blocks}
+          side={props.side}
+          actionsDisabled={props.actionsDisabled}
+          onSideAction={props.onSideAction}
+          onChange={props.onChange}
+          onView={(view) => {
+            props.textareaRef.current = view;
           }}
-          spellCheck={false}
-          aria-label={props.title}
+          onScroll={props.onScroll}
         />
-        {props.blocks && props.onSideAction ? (
-          <div className="task-git-conflict-full-controls" aria-label={props.zh ? '冲突块处理控制' : 'Conflict block actions'}>
-            {props.blocks.map((block) => {
-              const top = countNewlines(props.content.slice(0, block.visibleStart)) * 18.6 - scrollTop;
-              return (
-                <span key={block.id} className={`task-git-conflict-full-control is-${block.status}`} style={{ top }}>
-                  <button
-                    type="button"
-                    onClick={() => props.onSideAction?.(block, 'source', 'accepted')}
-                    disabled={props.readOnly}
-                    aria-label={props.zh ? '选入来源分支' : 'Include source branch'}
-                    title={props.zh ? '选入来源分支' : 'Include source branch'}
-                  >
-                    <ArrowRight aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => props.onSideAction?.(block, 'source', 'ignored')}
-                    disabled={props.readOnly}
-                    aria-label={props.zh ? '忽略来源分支' : 'Ignore source branch'}
-                    title={props.zh ? '忽略来源分支' : 'Ignore source branch'}
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => props.onSideAction?.(block, 'task', 'ignored')}
-                    disabled={props.readOnly}
-                    aria-label={props.zh ? '忽略任务分支' : 'Ignore task branch'}
-                    title={props.zh ? '忽略任务分支' : 'Ignore task branch'}
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => props.onSideAction?.(block, 'task', 'accepted')}
-                    disabled={props.readOnly}
-                    aria-label={props.zh ? '选入任务分支' : 'Include task branch'}
-                    title={props.zh ? '选入任务分支' : 'Include task branch'}
-                  >
-                    <ArrowLeft aria-hidden="true" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        ) : null}
-      </span>
+      </Suspense>
     </section>
   );
 }
@@ -710,48 +701,6 @@ function buildSideSnippet(content: string, block: ConflictBlock, side: ConflictS
   if (start >= 0 && end >= start) return buildOffsetSnippet(content, start, end);
   const text = side === 'source' ? block.source : block.task;
   return { text, startOffset: 0, endOffset: text.length, startLine: block.startLine, conflictStartLine: 0, conflictEndLine: Math.max(1, countNewlines(text) + 1) };
-}
-
-function conflictLineKinds(snippet: CodeSnippet): Map<number, LineKind> {
-  const kinds = new Map<number, LineKind>();
-  for (let line = snippet.conflictStartLine; line < snippet.conflictEndLine; line += 1) kinds.set(line, 'conflict');
-  return kinds;
-}
-
-function ConflictCodeLines(props: { content: string; path: string; lineKinds: Map<number, LineKind>; lineNumberOffset?: number }) {
-  const lines = useSyntaxHighlightedLines(props.path, props.content);
-  return lines.map((line, index) => (
-    <span key={index} className="task-git-code-line" data-kind={props.lineKinds.get(index)}>
-      <span className="task-git-code-line-number">{(props.lineNumberOffset ?? 0) + index + 1}</span>
-      <code>
-        <SyntaxHighlightedLine line={line} empty="" />
-      </code>
-      {index < lines.length - 1 ? '\n' : null}
-    </span>
-  ));
-}
-
-function DeferredConflictCodeLines(props: { content: string; path: string; lineKinds: Map<number, LineKind>; lineNumberOffset?: number }) {
-  const lines = useDeferredSyntaxHighlightedLines(props.path, props.content);
-  return lines.map((line, index) => (
-    <span key={index} className="task-git-code-line" data-kind={props.lineKinds.get(index)}>
-      <span className="task-git-code-line-number">{(props.lineNumberOffset ?? 0) + index + 1}</span>
-      <code>
-        <SyntaxHighlightedLine line={line} empty="" />
-      </code>
-      {index < lines.length - 1 ? '\n' : null}
-    </span>
-  ));
-}
-
-function fullFileLineKinds(content: string, blocks: ConflictBlock[] | undefined): Map<number, LineKind> {
-  const kinds = new Map<number, LineKind>();
-  for (const block of blocks ?? []) {
-    const startLine = countNewlines(content.slice(0, block.visibleStart));
-    const endLine = startLine + Math.max(1, countNewlines(content.slice(block.visibleStart, block.visibleEnd)) + 1);
-    for (let line = startLine; line < endLine; line += 1) kinds.set(line, 'conflict');
-  }
-  return kinds;
 }
 
 function countLines(content: string, offset: number): number {

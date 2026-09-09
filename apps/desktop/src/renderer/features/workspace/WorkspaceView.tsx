@@ -1,6 +1,8 @@
+import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
+import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
@@ -12,6 +14,8 @@ import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from '../../settings/LegacyChatImportSettings.js';
 import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
+import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
+import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
 import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
 import { ZentaoSettingsPane } from '../../settings/ZentaoSettingsPane.js';
@@ -44,8 +48,7 @@ import {
   ProjectWorkspaceModeToolbar,
   SidebarNav,
 } from './WorkspaceChrome.js';
-import { formatGraphConversationStatus, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
-import { handleInlineRailKeyboardNavigation, RuntimeXtermPane } from '../graph/GraphCanvas.js';
+import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
   browserNativeConversationStartStorage,
   controlBusyProps,
@@ -61,7 +64,6 @@ import {
   formatReleaseWaitingForItems,
   formatRuntimeAdapterDisplayName,
   formatRuntimeSessionStatus,
-  NativeControlRow,
   type NativeConversationAppClient,
   NativeSettingsPane,
   PROJECT_SIDEBAR_MIN_WIDTH,
@@ -133,7 +135,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const { state, domainActions, operations } = input;
   const {
     actionState,
-    activeGraphView,
     activeNavTarget,
     activeProjectId,
     activeProjectSection,
@@ -156,22 +157,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     codexLegacyImportSnapshot,
     codexUsageRevision,
     conversationDrawer,
-    creatingGitConfirmationBusy,
     creatingProjectBusy,
     creatingTaskBusy,
     currentProjectTasks,
     currentTaskConversationChoices,
     dataPortabilityStatusCopy,
-    expandedTaskIds,
-    externalApiKeyInput,
     genericShellCriticalConfirmed,
     genericShellRisk,
-    gitBranchName,
     gitDiffCopy,
-    gitRemote,
-    gitTargetRef,
-    graphAnswer,
-    graphConversations,
     loadTaskBoard,
     loadingDiffBusy,
     loadingRuntimeBusy,
@@ -221,11 +214,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     runtimeSettings,
     runtimeShowArchived,
     runtimeStatus,
-    scanBusy,
-    scanState,
     secondaryDrawerCopy,
-    securityAuditLogs,
-    securitySecrets,
     selectNoResults,
     selectSearchPlaceholder,
     selectedNativeConversation,
@@ -233,13 +222,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     selectedProject,
     selectedTaskIds,
     sessionWorkspaceCopy,
-    setActiveNavTarget,
-    setActiveProjectSection,
     setAppShellSettings,
     setConversationDrawer,
-    setExternalApiKeyInput,
-    setGitBranchName,
-    setGitRemote,
     setPendingProjectDeleteId,
     setProjectCreateError,
     setProjectCreateForm,
@@ -269,7 +253,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setTaskTableLayoutDraft,
     setTaskTableLayoutScopeDialogOpen,
     setTaskTagFilter,
-    setTelegramAllowedUserIdsInput,
     settingsCategory,
     settingsWorkspaceCopy,
     snapshot,
@@ -313,9 +296,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskTagFilter,
     taskTemplates,
     taskTerminalCleanupConfirmation,
-    taskViewMode,
     taskWorkspaceCopy,
-    telegramAllowedUserIdsInput,
     uiCopy,
     updatingTaskBusy,
     visibleTasks,
@@ -333,12 +314,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     closeTaskCreateModal,
     closeTaskGitReview,
     closeTaskModelPush,
-    codeMapActionLabel,
     createCurrentProject,
-    currentRuntimeAdapterDisplayName,
     deleteProject,
     effectiveTaskStatusSettingsTargetId,
-    loadGraphConversationDetail,
     materializeTaskCreateResources,
     openProjectCreateDialog,
     openTaskConflictAiConversation,
@@ -361,7 +339,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     runStorageRecoveryPreflightAndRestart,
     revealProjectInFinder,
     selectNativeConversation,
-    selectProjectCodeWorkspaceMode,
     submitTaskCreateModal,
     submitTaskModelPush,
     taskDetailPaneTask,
@@ -384,15 +361,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     cancelTaskTableLayoutScopeDialog,
     checkReleaseUpdate,
     checkRuntimeAdapter,
-    clearExternalApiKey,
-    clearLocalCaches,
     clearNetworkCache,
     clearTaskSelection,
     closeTaskDetail,
     confirmAndStartGenericRuntime,
     copyRuntimeLogs,
     createGenericRuntimeConfirmation,
-    createGitConfirmation,
     createTaskFromRuntimeSession,
     createTaskFromTemplate,
     deleteRuntimeSession,
@@ -402,7 +376,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     exportLocalSettings,
     exportRuntimeLogs,
     generateRuntimeSessionSummary,
-    handleCodeMapAction,
     handleMainNavigate,
     handleProjectSidebarResizeKeyDown,
     handleProjectSidebarResizePointerDown,
@@ -425,24 +398,19 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     refreshRuntimeSessions,
     rejectGenericRuntimeConfirmation,
     renderNativeConversationWorkspace,
-    renderProjectCodeMapStage,
     renderTaskDetailPaneContent,
     repositoryPickerLabel,
     resetProjectSidebarWidth,
-    resetSecurity,
     resizeRuntimeSession,
     restoreRuntimeSession,
     runBulkTaskDelete,
     runBulkTaskStatusChange,
     saveAppShellSettings,
-    saveExternalApiKey,
     saveRuntimeSettings,
     saveSourceWorkspaceAndLeave,
     saveTaskPageViewMode,
     saveTaskStatusFilter,
     saveTaskTableLayout,
-    saveTaskViewPreferences,
-    saveTelegramSecuritySettings,
     sendRuntimeInput,
     setRuntimeSessionFavorite,
     startCodexLegacyImport,
@@ -484,6 +452,28 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   });
   const runtimeTimeoutUnit = durationUnitForSeconds(runtimeSettings.executionTimeoutSeconds);
   const runtimeTimeoutValue = runtimeSettings.executionTimeoutSeconds / durationUnitSeconds(runtimeTimeoutUnit);
+  /** 侧栏选项与当前详情相互关联，键盘和读屏均可定位内容。 */
+  const settingsPanelId = useId();
+  /** 归档筛选只作用于当前列表，不修改任何会话。 */
+  const [archiveQuery, setArchiveQuery] = useState('');
+  /** 分页状态随列表缩短自动夹紧。 */
+  const [archiveRequestedPage, setArchiveRequestedPage] = useState(1);
+  /** 列表变化时一次关联项目和任务，搜索时不再逐条扫描全部任务。 */
+  const archiveItems = useMemo(() => {
+    /** 任务编号和标题来自当前任务记录。 */
+    const tasks = new Map(snapshot.tasks.map((task) => [task.id, task]));
+    /** 项目名称来自当前项目记录。 */
+    const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
+    return archivedConversations.map((conversation) => ({ conversation, task: tasks.get(conversation.taskId ?? ''), project: projects.get(conversation.projectId) }));
+  }, [archivedConversations, snapshot.tasks, snapshot.projects]);
+  /** 标题、项目与任务编号使用相同的检索词。 */
+  const normalizedArchiveQuery = archiveQuery.trim().toLocaleLowerCase();
+  /** 空检索直接复用列表，不额外生成数组。 */
+  const filteredArchives = normalizedArchiveQuery
+    ? archiveItems.filter(({ conversation, task, project }) => `${conversation.title} ${task?.title ?? ''} ${task?.taskCode ?? ''} ${project?.name ?? ''}`.toLocaleLowerCase().includes(normalizedArchiveQuery))
+    : archiveItems;
+  /** 当前展示页始终对应有效记录范围。 */
+  const archivePage = settingsPage(filteredArchives.length, archiveRequestedPage);
   const normalizedSettingsQuery = settingsSearchQuery.trim().toLocaleLowerCase();
   const settingsGroups = [
     {
@@ -494,7 +484,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         ['memory', settingsWorkspaceCopy.categories.memory, settingsWorkspaceCopy.localStatus],
         ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
         ['employees', settingsWorkspaceCopy.categories.employees, settingsWorkspaceCopy.localStatus],
-        ['security', settingsWorkspaceCopy.categories.security, settingsWorkspaceCopy.protectedStatus],
       ],
     },
     {
@@ -503,16 +492,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
         ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
         ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
-        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 机器人' : 'IM Bots', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+        // IM 接入名称同时用于侧栏展示与设置搜索。
+        ['im', appShellSettings.appLanguage === 'zh-CN' ? 'IM 接入' : 'IM Integrations', runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
         ['zentao', settingsWorkspaceCopy.categories.zentao, settingsWorkspaceCopy.localStatus],
       ],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.coding,
-      items: [
-        ['commands', settingsWorkspaceCopy.categories.commands, settingsWorkspaceCopy.localStatus],
-        ['git', settingsWorkspaceCopy.categories.git, settingsWorkspaceCopy.protectedStatus],
-      ],
+      items: [['commands', settingsWorkspaceCopy.categories.commands, settingsWorkspaceCopy.localStatus]],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.maintenance,
@@ -533,7 +520,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
 
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' ? ' session-codex-parity-v1' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
@@ -799,23 +786,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
                     onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                     onDirtyChange={setSourceWorkspaceDirty}
-                    onOpenExternal={(relativePath, line) => void props.onOpenGraphSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                    onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
                   />
-                </div>
-              ) : null}
-              {visitedCodeWorkspaceModes.has('graph') ? (
-                <div className="project-code-mode-pane project-code-graph-pane" hidden={projectCodeWorkspaceMode !== 'graph'}>
-                  {activeGraphView ? (
-                    renderProjectCodeMapStage()
-                  ) : (
-                    <section className="project-code-mode-empty" aria-live="polite">
-                      <strong>{scanBusy ? codeWorkspaceCopy.scanning : codeWorkspaceCopy.graphTitle}</strong>
-                      <span>{scanState === 'failed' ? codeWorkspaceCopy.retryScan : codeWorkspaceCopy.waitingRealScan}</span>
-                      <Button variant="primary" busy={scanBusy} onClick={() => void selectProjectCodeWorkspaceMode('graph')}>
-                        {codeMapActionLabel()}
-                      </Button>
-                    </section>
-                  )}
                 </div>
               ) : null}
               {visitedCodeWorkspaceModes.has('commands') ? (
@@ -939,11 +911,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       listState={!props.snapshot ? 'loading' : 'ready'}
                       activeProjectId={activeProjectId}
                       pageViewMode={taskPageViewMode}
-                      viewMode={taskViewMode}
                       taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
                       taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
                       taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
-                      expandedTaskIds={expandedTaskIds}
                       onSearchChange={setTaskSearchQuery}
                       onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
                       onTagFilterChange={setTaskTagFilter}
@@ -952,17 +922,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       onCreateTask={() => openTaskCreateModal()}
                       onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
                       onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
-                      onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
                       onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
                       onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
                       onUpdateTaskBoard={updateTaskBoardSettings}
                       onMoveTaskBoardTask={moveTaskBoardTask}
                       onLoadTaskAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                      onToggleTaskExpanded={(taskId) =>
-                        void saveTaskViewPreferences({
-                          expandedTaskIds: expandedTaskIds.includes(taskId) ? expandedTaskIds.filter((id) => id !== taskId) : [...expandedTaskIds, taskId],
-                        })
-                      }
                       onToggleTaskSelection={toggleTaskSelection}
                       onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                       onClearTaskSelection={clearTaskSelection}
@@ -1467,57 +1431,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     </section>
                   ) : null}
 
-                  {conversationDrawer === 'context' ? (
-                    <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-context conversation-context-workbench" aria-label={secondaryDrawerCopy.contextLabel}>
-                      <div className="drawer-header-row">
-                        <strong>{secondaryDrawerCopy.contextLabel}</strong>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveNavTarget('projects');
-                            setActiveProjectSection('code');
-                            void handleCodeMapAction();
-                          }}
-                        >
-                          {secondaryDrawerCopy.openGraph}
-                        </button>
-                      </div>
-                      <section className="conversation-context-scope-row" aria-label={secondaryDrawerCopy.graphScopeAria}>
-                        <span className="conversation-context-row-copy">
-                          <strong>{secondaryDrawerCopy.graphContextTitle}</strong>
-                          <small>{secondaryDrawerCopy.graphContextHelp}</small>
-                        </span>
-                        <span className="conversation-context-row-meta">{secondaryDrawerCopy.graphContextMetrics(snapshot.graph.nodeCount, snapshot.graph.edgeCount, snapshot.graph.viewCount)}</span>
-                      </section>
-                      {graphAnswer ? (
-                        <div className="graph-context-answer-row conversation-context-answer-row">
-                          <span className="conversation-context-row-copy">
-                            <strong>{secondaryDrawerCopy.graphAnswerTitle}</strong>
-                            <small>{graphAnswer.sessionId ? secondaryDrawerCopy.runtimeSession(graphAnswer.sessionId) : secondaryDrawerCopy.insufficientRuntimeSession}</small>
-                          </span>
-                          <span className="conversation-context-row-meta">{graphAnswer.answer}</span>
-                        </div>
-                      ) : null}
-                      {graphConversations.length > 0 ? (
-                        <div className="conversation-context-graph-list" aria-label={secondaryDrawerCopy.graphConversationListAria}>
-                          {graphConversations.slice(0, 4).map((conversation) => (
-                            <button type="button" className="conversation-context-graph-row" key={conversation.id} onClick={() => loadGraphConversationDetail(conversation.id)}>
-                              {/* 上下文抽屉只提供图谱问答来源选择：标题、摘要和状态同一行呈现，避免回退成通用对象卡片。 */}
-                              <span className="conversation-context-graph-copy">
-                                <strong>{conversation.title}</strong>
-                                <small>{conversation.summary || conversation.sessionId || conversation.projectId}</small>
-                              </span>
-                              <span className="conversation-context-graph-meta">
-                                <span>{formatGraphConversationStatus(conversation.status, appShellSettings.appLanguage)}</span>
-                                <small>{conversation.archived ? secondaryDrawerCopy.archived : secondaryDrawerCopy.openable}</small>
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-                  ) : null}
-
                   {conversationDrawer === 'changes' ? (
                     <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-changes conversation-change-workbench" aria-label={secondaryDrawerCopy.changesLabel}>
                       <div className="drawer-header-row">
@@ -1643,19 +1556,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     <span className="settings-sidebar-group-title" role="presentation">
                       {group.group}
                     </span>
-                    {group.items.map(([id, label, badge]) => (
+                    {group.items.map(([id, label]) => (
                       <button
                         key={id}
+                        id={`${settingsPanelId}-${id}`}
                         type="button"
                         className={`settings-section-button ${settingsCategory === id ? 'selected' : ''}`}
                         role="tab"
+                        aria-controls={settingsPanelId}
                         aria-selected={settingsCategory === id}
                         tabIndex={settingsNavigationTabStop === id ? 0 : -1}
                         data-inline-rail-item="true"
                         onClick={() => setSettingsCategory(id)}
                       >
                         <span className="settings-section-label">{label}</span>
-                        {badge ? <span className="settings-section-badge">{badge}</span> : null}
                       </button>
                     ))}
                   </div>
@@ -1663,148 +1577,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </nav>
               {visibleSettingsItems.length === 0 ? <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的设置分段' : 'No matching settings sections'}</p> : null}
             </aside>
-            <section className="settings-detail-pane" aria-label={settingsWorkspaceCopy.detailPaneAria}>
+            <section key={settingsCategory} id={settingsPanelId} role="tabpanel" tabIndex={0} className="settings-detail-pane" aria-labelledby={`${settingsPanelId}-${settingsCategory}`}>
               <div className="settings-content-column">
-                {settingsCategory === 'general' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.general}>
-                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.general}</h2>
-                    <section className="settings-mode-pane" aria-labelledby="settings-work-mode-title">
-                      <header className="settings-section-heading">
-                        <strong id="settings-work-mode-title">{settingsWorkspaceCopy.workModeTitle}</strong>
-                        <span>{settingsWorkspaceCopy.workModeDescription}</span>
-                      </header>
-                      <div className="settings-mode-row">
-                        <button
-                          type="button"
-                          className={`settings-mode-card ${appShellSettings.developerModeEnabled ? 'selected' : ''}`}
-                          aria-pressed={appShellSettings.developerModeEnabled}
-                          onClick={() =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              developerModeEnabled: true,
-                            }))
-                          }
-                        >
-                          <span className="settings-mode-icon" aria-hidden="true" />
-                          <span className="settings-mode-copy">
-                            <strong>{settingsWorkspaceCopy.engineeringModeTitle}</strong>
-                            <small>{settingsWorkspaceCopy.engineeringModeDescription}</small>
-                          </span>
-                          <span className="settings-mode-radio" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          className={`settings-mode-card ${!appShellSettings.developerModeEnabled ? 'selected' : ''}`}
-                          aria-pressed={!appShellSettings.developerModeEnabled}
-                          onClick={() =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              developerModeEnabled: false,
-                            }))
-                          }
-                        >
-                          <span className="settings-mode-icon" aria-hidden="true" />
-                          <span className="settings-mode-copy">
-                            <strong>{settingsWorkspaceCopy.dailyModeTitle}</strong>
-                            <small>{settingsWorkspaceCopy.dailyModeDescription}</small>
-                          </span>
-                          <span className="settings-mode-radio" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </section>
-                    <section className="settings-product-section" aria-labelledby="settings-permissions-title">
-                      <header className="settings-section-heading">
-                        <strong id="settings-permissions-title">{settingsWorkspaceCopy.permissionsTitle}</strong>
-                      </header>
-                      <NativeSettingsPane label={settingsWorkspaceCopy.permissionsTitle} className="settings-permission-pane">
-                        <NativeControlRow title={settingsWorkspaceCopy.defaultPermissionTitle} description={settingsWorkspaceCopy.defaultPermissionDescription} className="settings-permission-row">
-                          <span className="settings-row-status">{settingsWorkspaceCopy.protectedStatus}</span>
-                        </NativeControlRow>
-                        <NativeControlRow title={settingsWorkspaceCopy.autoReviewTitle} description={settingsWorkspaceCopy.autoReviewDescription} className="settings-permission-row">
-                          <span className="settings-row-status">{runtimeSettings.autoConfirmationPolicy === 'never' ? settingsWorkspaceCopy.waitingStatus : settingsWorkspaceCopy.protectedStatus}</span>
-                        </NativeControlRow>
-                        <NativeControlRow title={settingsWorkspaceCopy.fullAccessTitle} description={settingsWorkspaceCopy.fullAccessDescription} className="settings-permission-row settings-permission-danger-row">
-                          <span className="settings-row-status">{settingsWorkspaceCopy.waitingStatus}</span>
-                        </NativeControlRow>
-                      </NativeSettingsPane>
-                    </section>
-                    <section className="settings-product-section" aria-labelledby="settings-general-title">
-                      <header className="settings-section-heading">
-                        <strong id="settings-general-title">{settingsWorkspaceCopy.generalPaneTitle}</strong>
-                      </header>
-                      <NativeSettingsPane label={settingsWorkspaceCopy.generalPaneTitle}>
-                        <NativeControlRow title={settingsWorkspaceCopy.appLanguageTitle} description={settingsWorkspaceCopy.appLanguageDescription}>
-                          <ZeusSelect
-                            size="roomy"
-                            ariaLabel={settingsWorkspaceCopy.appLanguageTitle}
-                            value={appShellSettings.appLanguage}
-                            onChange={(value) =>
-                              setAppShellSettings((current) => ({
-                                ...current,
-                                appLanguage: value,
-                              }))
-                            }
-                            searchPlaceholder={selectSearchPlaceholder}
-                            emptyLabel={selectNoResults}
-                            options={[
-                              { value: 'zh-CN', label: uiCopy.languages['zh-CN'] },
-                              { value: 'en-US', label: uiCopy.languages['en-US'] },
-                            ]}
-                          />
-                        </NativeControlRow>
-                        <NativeControlRow title={settingsWorkspaceCopy.appearanceTitle} description={settingsWorkspaceCopy.appearanceDescription}>
-                          <ZeusSelect
-                            size="roomy"
-                            ariaLabel={settingsWorkspaceCopy.appearanceTitle}
-                            value={appShellSettings.appearance}
-                            onChange={(value) =>
-                              setAppShellSettings((current) => ({
-                                ...current,
-                                appearance: value,
-                              }))
-                            }
-                            searchPlaceholder={selectSearchPlaceholder}
-                            emptyLabel={selectNoResults}
-                            options={[
-                              { value: 'system', label: uiCopy.appearance.system },
-                              { value: 'light', label: uiCopy.appearance.light },
-                              { value: 'dark', label: uiCopy.appearance.dark },
-                            ]}
-                          />
-                        </NativeControlRow>
-                        <NativeControlRow title={settingsWorkspaceCopy.desktopNotificationsTitle} description={settingsWorkspaceCopy.desktopNotificationsDescription}>
-                          <span className="settings-switch-control" aria-label={settingsWorkspaceCopy.desktopNotificationsSwitchAria}>
-                            <span className="settings-switch-copy">
-                              <strong>{appShellSettings.desktopNotificationsEnabled ? settingsWorkspaceCopy.notificationsEnabled : settingsWorkspaceCopy.notificationsDisabled}</strong>
-                              <small>{appShellSettings.desktopNotificationsEnabled ? settingsWorkspaceCopy.notificationsEnabledHelp : settingsWorkspaceCopy.notificationsDisabledHelp}</small>
-                            </span>
-                            <span className="settings-switch-state">
-                              <input
-                                className="native-switch-input"
-                                aria-label={settingsWorkspaceCopy.desktopNotificationsInputAria}
-                                type="checkbox"
-                                checked={appShellSettings.desktopNotificationsEnabled}
-                                onChange={(event) =>
-                                  setAppShellSettings((current) => ({
-                                    ...current,
-                                    desktopNotificationsEnabled: event.currentTarget.checked,
-                                  }))
-                                }
-                              />
-                              {/* 开关保留原生 checkbox 可访问性，外层只承担状态文案和布局。 */}
-                              <span className="native-switch-track" aria-hidden="true" />
-                            </span>
-                          </span>
-                        </NativeControlRow>
-                        <NativeControlRow title={settingsWorkspaceCopy.saveSettingsTitle} description={settingsWorkspaceCopy.saveSettingsDescription}>
-                          <button type="button" onClick={saveAppShellSettings} disabled={!props.onSaveAppShellSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.save}
-                          </button>
-                        </NativeControlRow>
-                      </NativeSettingsPane>
-                    </section>
-                  </section>
-                ) : null}
+                {settingsCategory === 'general' ? <GeneralSettingsPane value={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onChange={setAppShellSettings} /> : null}
                 {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
                 {settingsCategory === 'memory' && props.nativeConversationClient ? (
                   <MemorySettingsPane
@@ -1905,349 +1680,263 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 ) : null}
                 {settingsCategory === 'runtime' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.runtime}>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.runtime.paneTitle} className="deep-settings-pane runtime-settings-pane">
-                      <section className="settings-state-row settings-runtime-cli-state-row" aria-label={settingsWorkspaceCopy.runtime.cliStatusAria}>
-                        <strong>{runtime.aiCli.name}</strong>
-                        <span>{runtime.aiCli.available ? settingsWorkspaceCopy.runtime.detected : settingsWorkspaceCopy.runtime.waitingConfiguration}</span>
-                      </section>
-                      <section className="settings-config-row runtime-adapter-select-row" aria-label={settingsWorkspaceCopy.runtime.defaultAdapterAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.defaultAdapterTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.defaultAdapterDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <ZeusSelect
-                            size="roomy"
-                            ariaLabel={settingsWorkspaceCopy.runtime.defaultAdapterAria}
-                            value={runtimeSettings.defaultAdapterId}
-                            onChange={(value) =>
-                              setRuntimeSettings((current) => ({
-                                ...current,
-                                defaultAdapterId: value,
-                              }))
-                            }
-                            searchPlaceholder={selectSearchPlaceholder}
-                            emptyLabel={selectNoResults}
-                            options={
-                              runtimeAdapters.length === 0
-                                ? [{ value: 'codex', label: settingsWorkspaceCopy.runtime.codexCliDisplayName }]
-                                : runtimeAdapters.map((adapter) => ({
-                                    value: adapter.id,
-                                    label: formatRuntimeAdapterDisplayName(adapter.id, runtimeAdapters, settingsWorkspaceCopy.runtime),
-                                  }))
-                            }
-                          />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.adapterActionMeta}</span>
-                        </span>
-                      </section>
-                      <section className="settings-state-row settings-runtime-default-state-row" aria-label={settingsWorkspaceCopy.runtime.currentDefaultAria}>
-                        <strong>{settingsWorkspaceCopy.runtime.currentDefaultTitle}</strong>
-                        <span>{currentRuntimeAdapterDisplayName}</span>
-                        <em>{settingsWorkspaceCopy.runtime.currentDefault(currentRuntimeAdapterDisplayName)}</em>
-                      </section>
-                      <section className="settings-config-row runtime-adapter-model-row" aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.adapterModelTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.adapterModelDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <input
-                            aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}
-                            value={runtimeSettings.adapterModels[runtimeSettings.defaultAdapterId] ?? ''}
-                            onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setRuntimeSettings((current) => ({
-                                ...current,
-                                adapterModels: {
-                                  ...current.adapterModels,
-                                  [current.defaultAdapterId]: value,
-                                },
-                              }));
-                            }}
-                          />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.modelMeta}</span>
-                        </span>
-                      </section>
-                      <section className="settings-config-row runtime-default-args-row" aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.defaultArgsTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.defaultArgsDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <input
-                            aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}
-                            value={formatRuntimeDefaultArgs(runtimeSettings.adapterDefaultArgs[runtimeSettings.defaultAdapterId] ?? ['--ask-for-approval', 'never'])}
-                            onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setRuntimeSettings((current) => ({
-                                ...current,
-                                adapterDefaultArgs: {
-                                  ...current.adapterDefaultArgs,
-                                  [current.defaultAdapterId]: parseRuntimeDefaultArgsText(value),
-                                },
-                              }));
-                            }}
-                          />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.argsMeta}</span>
-                        </span>
-                      </section>
-                      <section className="settings-config-row runtime-cli-path-row" aria-label={settingsWorkspaceCopy.runtime.cliPathAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.cliPathTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.cliPathDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <input
-                            aria-label={settingsWorkspaceCopy.runtime.cliPathAria}
-                            value={runtimeSettings.adapterCliPaths[runtimeSettings.defaultAdapterId] ?? ''}
-                            onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setRuntimeSettings((current) => ({
-                                ...current,
-                                adapterCliPaths: {
-                                  ...current.adapterCliPaths,
-                                  [current.defaultAdapterId]: value,
-                                },
-                              }));
-                            }}
-                          />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">PATH</span>
-                        </span>
-                      </section>
-                      <section className="settings-state-row settings-runtime-timeout-state-row" aria-label={settingsWorkspaceCopy.runtime.timeoutAria}>
-                        <strong>{settingsWorkspaceCopy.runtime.timeoutTitle}</strong>
-                        <span>{settingsWorkspaceCopy.runtime.seconds(runtimeSettings.executionTimeoutSeconds)}</span>
-                        <em>{settingsWorkspaceCopy.runtime.logRetention(runtimeSettings.logRetentionDays)}</em>
-                      </section>
-                      <section className="settings-state-row settings-runtime-confirmation-policy-row" aria-label={settingsWorkspaceCopy.runtime.autoConfirmAria}>
-                        <strong>{settingsWorkspaceCopy.runtime.autoConfirmTitle}</strong>
-                        <span>{settingsWorkspaceCopy.runtime.autoConfirmPolicies[runtimeSettings.autoConfirmationPolicy]}</span>
-                        <em>{settingsWorkspaceCopy.runtime.autoConfirmHighRiskBoundary}</em>
-                      </section>
-                      <section className="settings-config-row runtime-timeout-row" aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.timeoutSecondsTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.timeoutSecondsDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <input
-                            aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}
-                            type="number"
-                            min={1}
-                            max={315_360_000 / durationUnitSeconds(runtimeTimeoutUnit)}
-                            value={String(runtimeTimeoutValue)}
-                            onChange={(event) => {
-                              const value = event.currentTarget.valueAsNumber;
-                              if (!Number.isInteger(value) || value < 1) return;
-                              setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, value * durationUnitSeconds(runtimeTimeoutUnit)) }));
-                            }}
-                          />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <select
-                            className="settings-action-meta runtime-timeout-unit-select"
-                            aria-label={appShellSettings.appLanguage === 'zh-CN' ? '执行超时单位' : 'Execution timeout unit'}
-                            value={runtimeTimeoutUnit}
-                            onChange={(event) => {
-                              const unit = event.currentTarget.value as RuntimeDurationUnit;
-                              setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, runtimeTimeoutValue * durationUnitSeconds(unit)) }));
-                            }}
-                          >
-                            <option value="seconds">{appShellSettings.appLanguage === 'zh-CN' ? '秒' : 'Seconds'}</option>
-                            <option value="minutes">{appShellSettings.appLanguage === 'zh-CN' ? '分钟' : 'Minutes'}</option>
-                            <option value="hours">{appShellSettings.appLanguage === 'zh-CN' ? '小时' : 'Hours'}</option>
-                            <option value="days">{appShellSettings.appLanguage === 'zh-CN' ? '天' : 'Days'}</option>
-                          </select>
-                        </span>
-                      </section>
-                      <section className="settings-matrix-row runtime-advanced-row" aria-label={settingsWorkspaceCopy.runtime.advancedAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.runtime.advancedTitle}</strong>
-                          <small>{settingsWorkspaceCopy.runtime.advancedDescription}</small>
-                        </span>
-                        <span className="settings-row-field settings-runtime-advanced-field-list">
-                          {/* 高级 Runtime 参数保持在同一设置行内，用显式双字段区域承载真实 shell 与 env 输入，避免回到纵向表单堆。 */}
-                          <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-shell-field">
-                            <span>{settingsWorkspaceCopy.runtime.shellPathTitle}</span>
+                    <header className="settings-page-heading">
+                      <span>
+                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.runtime}</h2>
+                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理本机运行环境、远程接管与配置导入。' : 'Local runtime, remote control and configuration import.'}</p>
+                      </span>
+                    </header>
+                    <details className="settings-disclosure">
+                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '本机运行环境' : 'Local runtime settings'}</summary>
+                      <p>
+                        {appShellSettings.appLanguage === 'zh-CN'
+                          ? '工具路径用于定位本机程序；默认模型、参数与超时用于命令行运行。会话模型和权限在会话中选择。'
+                          : 'Tool paths locate local programs. Default models, arguments and timeouts apply to command-line runs. Conversation models and permissions are chosen in each conversation.'}
+                      </p>
+                      <NativeSettingsPane label={settingsWorkspaceCopy.runtime.paneTitle} className="deep-settings-pane runtime-settings-pane">
+                        <section className="settings-state-row settings-runtime-cli-state-row" aria-label={settingsWorkspaceCopy.runtime.cliStatusAria}>
+                          <strong>{runtime.aiCli.name}</strong>
+                          <span>{runtime.aiCli.available ? settingsWorkspaceCopy.runtime.detected : settingsWorkspaceCopy.runtime.waitingConfiguration}</span>
+                        </section>
+                        <section className="settings-config-row runtime-adapter-select-row" aria-label={settingsWorkspaceCopy.runtime.defaultAdapterAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.defaultAdapterTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.defaultAdapterDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
+                            <ZeusSelect
+                              size="regular"
+                              ariaLabel={settingsWorkspaceCopy.runtime.defaultAdapterAria}
+                              value={runtimeSettings.defaultAdapterId}
+                              onChange={(value) =>
+                                setRuntimeSettings((current) => ({
+                                  ...current,
+                                  defaultAdapterId: value,
+                                }))
+                              }
+                              searchPlaceholder={selectSearchPlaceholder}
+                              emptyLabel={selectNoResults}
+                              options={
+                                runtimeAdapters.length === 0
+                                  ? [{ value: 'codex', label: settingsWorkspaceCopy.runtime.codexCliDisplayName }]
+                                  : runtimeAdapters.map((adapter) => ({
+                                      value: adapter.id,
+                                      label: formatRuntimeAdapterDisplayName(adapter.id, runtimeAdapters, settingsWorkspaceCopy.runtime),
+                                    }))
+                              }
+                            />
+                          </span>
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.adapterActionMeta}</span>
+                          </span>
+                        </section>
+                        <section className="settings-config-row runtime-adapter-model-row" aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.adapterModelTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.adapterModelDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
                             <input
-                              aria-label={settingsWorkspaceCopy.runtime.shellPathAria}
-                              value={runtimeSettings.shell.path ?? ''}
+                              aria-label={settingsWorkspaceCopy.runtime.adapterModelAria}
+                              value={runtimeSettings.adapterModels[runtimeSettings.defaultAdapterId] ?? ''}
                               onChange={(event) => {
                                 const value = event.currentTarget.value;
                                 setRuntimeSettings((current) => ({
                                   ...current,
-                                  shell: {
-                                    ...current.shell,
-                                    path: value || null,
+                                  adapterModels: {
+                                    ...current.adapterModels,
+                                    [current.defaultAdapterId]: value,
                                   },
                                 }));
                               }}
                             />
                           </span>
-                          <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-env-field">
-                            <span>{settingsWorkspaceCopy.runtime.terminalEnvTitle}</span>
-                            <textarea
-                              aria-label={settingsWorkspaceCopy.runtime.terminalEnvAria}
-                              value={formatRuntimeTerminalEnv(runtimeSettings.terminalEnv)}
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.modelMeta}</span>
+                          </span>
+                        </section>
+                        <section className="settings-config-row runtime-default-args-row" aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.defaultArgsTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.defaultArgsDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
+                            <input
+                              aria-label={settingsWorkspaceCopy.runtime.defaultArgsAria}
+                              value={formatRuntimeDefaultArgs(runtimeSettings.adapterDefaultArgs[runtimeSettings.defaultAdapterId] ?? ['--ask-for-approval', 'never'])}
                               onChange={(event) => {
                                 const value = event.currentTarget.value;
                                 setRuntimeSettings((current) => ({
                                   ...current,
-                                  terminalEnv: parseRuntimeTerminalEnvText(value),
+                                  adapterDefaultArgs: {
+                                    ...current.adapterDefaultArgs,
+                                    [current.defaultAdapterId]: parseRuntimeDefaultArgsText(value),
+                                  },
                                 }));
                               }}
                             />
                           </span>
-                          <small>{settingsWorkspaceCopy.runtime.advancedHelp}</small>
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{runtimeSettings.shell.login ? settingsWorkspaceCopy.runtime.loginShell : settingsWorkspaceCopy.runtime.nonLoginShell}</span>
-                        </span>
-                      </section>
-                      <button type="button" onClick={saveRuntimeSettings} disabled={!props.onSaveRuntimeSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                        {settingsWorkspaceCopy.runtime.saveDefaultAdapter}
-                      </button>
-                    </NativeSettingsPane>
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">{settingsWorkspaceCopy.runtime.argsMeta}</span>
+                          </span>
+                        </section>
+                        <section className="settings-config-row runtime-cli-path-row" aria-label={settingsWorkspaceCopy.runtime.cliPathAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.cliPathTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.cliPathDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
+                            <input
+                              aria-label={settingsWorkspaceCopy.runtime.cliPathAria}
+                              value={runtimeSettings.adapterCliPaths[runtimeSettings.defaultAdapterId] ?? ''}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                setRuntimeSettings((current) => ({
+                                  ...current,
+                                  adapterCliPaths: {
+                                    ...current.adapterCliPaths,
+                                    [current.defaultAdapterId]: value,
+                                  },
+                                }));
+                              }}
+                            />
+                          </span>
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">PATH</span>
+                          </span>
+                        </section>
+                        <section className="settings-config-row runtime-timeout-row" aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.timeoutSecondsTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.timeoutSecondsDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
+                            <input
+                              aria-label={settingsWorkspaceCopy.runtime.timeoutSecondsAria}
+                              type="number"
+                              min={1}
+                              max={315_360_000 / durationUnitSeconds(runtimeTimeoutUnit)}
+                              value={String(runtimeTimeoutValue)}
+                              onChange={(event) => {
+                                const value = event.currentTarget.valueAsNumber;
+                                if (!Number.isInteger(value) || value < 1) return;
+                                setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, value * durationUnitSeconds(runtimeTimeoutUnit)) }));
+                              }}
+                            />
+                          </span>
+                          <span className="settings-row-action-rail">
+                            <select
+                              className="settings-action-meta runtime-timeout-unit-select"
+                              aria-label={appShellSettings.appLanguage === 'zh-CN' ? '执行超时单位' : 'Execution timeout unit'}
+                              value={runtimeTimeoutUnit}
+                              onChange={(event) => {
+                                const unit = event.currentTarget.value as RuntimeDurationUnit;
+                                setRuntimeSettings((current) => ({ ...current, executionTimeoutSeconds: Math.min(315_360_000, runtimeTimeoutValue * durationUnitSeconds(unit)) }));
+                              }}
+                            >
+                              <option value="seconds">{appShellSettings.appLanguage === 'zh-CN' ? '秒' : 'Seconds'}</option>
+                              <option value="minutes">{appShellSettings.appLanguage === 'zh-CN' ? '分钟' : 'Minutes'}</option>
+                              <option value="hours">{appShellSettings.appLanguage === 'zh-CN' ? '小时' : 'Hours'}</option>
+                              <option value="days">{appShellSettings.appLanguage === 'zh-CN' ? '天' : 'Days'}</option>
+                            </select>
+                          </span>
+                        </section>
+                        <section className="settings-matrix-row runtime-advanced-row" aria-label={settingsWorkspaceCopy.runtime.advancedAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.runtime.advancedTitle}</strong>
+                            <small>{settingsWorkspaceCopy.runtime.advancedDescription}</small>
+                          </span>
+                          <span className="settings-row-field settings-runtime-advanced-field-list">
+                            {/* 高级 Runtime 参数保持在同一设置行内，用显式双字段区域承载真实 shell 与 env 输入，避免回到纵向表单堆。 */}
+                            <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-shell-field">
+                              <span>{settingsWorkspaceCopy.runtime.shellPathTitle}</span>
+                              <input
+                                aria-label={settingsWorkspaceCopy.runtime.shellPathAria}
+                                value={runtimeSettings.shell.path ?? ''}
+                                onChange={(event) => {
+                                  const value = event.currentTarget.value;
+                                  setRuntimeSettings((current) => ({
+                                    ...current,
+                                    shell: {
+                                      ...current.shell,
+                                      path: value || null,
+                                    },
+                                  }));
+                                }}
+                              />
+                            </span>
+                            <span className="settings-inline-field settings-runtime-advanced-field settings-runtime-env-field">
+                              <span>{settingsWorkspaceCopy.runtime.terminalEnvTitle}</span>
+                              <textarea
+                                aria-label={settingsWorkspaceCopy.runtime.terminalEnvAria}
+                                value={formatRuntimeTerminalEnv(runtimeSettings.terminalEnv)}
+                                onChange={(event) => {
+                                  const value = event.currentTarget.value;
+                                  setRuntimeSettings((current) => ({
+                                    ...current,
+                                    terminalEnv: parseRuntimeTerminalEnvText(value),
+                                  }));
+                                }}
+                              />
+                            </span>
+                            <small>{settingsWorkspaceCopy.runtime.advancedHelp}</small>
+                          </span>
+                          <span className="settings-row-action-rail">
+                            <span className="settings-action-meta">{runtimeSettings.shell.login ? settingsWorkspaceCopy.runtime.loginShell : settingsWorkspaceCopy.runtime.nonLoginShell}</span>
+                          </span>
+                        </section>
+                        <button type="button" onClick={saveRuntimeSettings} disabled={!props.onSaveRuntimeSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                          {settingsWorkspaceCopy.runtime.saveDefaultAdapter}
+                        </button>
+                      </NativeSettingsPane>
+                    </details>
                     <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient?.remoteControl ?? null} />
-                    <LegacyChatImportSettings
-                      language={appShellSettings.appLanguage}
-                      snapshot={codexLegacyImportSnapshot}
-                      loading={codexLegacyImportLoading}
-                      busy={codexLegacyImportBusy}
-                      error={codexLegacyImportError}
-                      onRefresh={refreshCodexLegacyImports}
-                      onImport={startCodexLegacyImport}
-                    />
-                    <CodexConfigImportSettings
-                      language={appShellSettings.appLanguage}
-                      preview={codexConfigImportPreview}
-                      result={codexConfigImportResult}
-                      loading={codexConfigImportLoading}
-                      error={codexConfigImportError}
-                      onRefresh={refreshCodexConfigImport}
-                      onImport={importCodexConfig}
-                      onActivate={activateCodexConfig}
-                    />
+                    <details className="settings-disclosure">
+                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '旧会话导入' : 'Import older conversations'}</summary>
+                      <LegacyChatImportSettings
+                        language={appShellSettings.appLanguage}
+                        snapshot={codexLegacyImportSnapshot}
+                        loading={codexLegacyImportLoading}
+                        busy={codexLegacyImportBusy}
+                        error={codexLegacyImportError}
+                        onRefresh={refreshCodexLegacyImports}
+                        onImport={startCodexLegacyImport}
+                      />
+                    </details>
+                    <details className="settings-disclosure">
+                      <summary>{appShellSettings.appLanguage === 'zh-CN' ? '从 Codex App 导入配置' : 'Import Codex App configuration'}</summary>
+                      <CodexConfigImportSettings
+                        language={appShellSettings.appLanguage}
+                        preview={codexConfigImportPreview}
+                        result={codexConfigImportResult}
+                        loading={codexConfigImportLoading}
+                        error={codexConfigImportError}
+                        onRefresh={refreshCodexConfigImport}
+                        onImport={importCodexConfig}
+                        onActivate={activateCodexConfig}
+                      />
+                    </details>
                   </section>
                 ) : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'models' ? (
                   <>
+                    <header className="settings-page-heading">
+                      <span>
+                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.models}</h2>
+                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理模型服务与可用模型。' : 'Manage model providers and available models.'}</p>
+                      </span>
+                    </header>
                     <CodexAccountSettings controller={modelSetup} />
                     <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
                   </>
                 ) : null}
                 {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
                 {settingsCategory === 'im' ? <ImRobotSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'security' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.security}>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.security.paneTitle} className="deep-settings-pane security-settings-pane">
-                      <section className="settings-secret-row security-secret-row" aria-label={settingsWorkspaceCopy.security.externalApiKeyAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.security.externalApiKeyTitle}</strong>
-                          <small>
-                            {settingsWorkspaceCopy.security.externalApiKeyHelp(
-                              securitySecrets.externalApiKey.configured ? settingsWorkspaceCopy.security.externalApiKeyConfigured : settingsWorkspaceCopy.security.externalApiKeyNotConfigured,
-                            )}
-                          </small>
-                        </span>
-                        <span className="settings-row-field settings-sensitive-field">
-                          <span>{settingsWorkspaceCopy.security.externalApiKeyFieldLabel}</span>
-                          <input aria-label={settingsWorkspaceCopy.security.externalApiKeyAria} type="password" value={externalApiKeyInput} onChange={(event) => setExternalApiKeyInput(event.currentTarget.value)} />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={saveExternalApiKey} disabled={!externalApiKeyInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.security.saveApiKey}
-                          </button>
-                          <button type="button" onClick={clearExternalApiKey} disabled={!props.onClearExternalApiKey || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.security.clearApiKey}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-secret-row security-whitelist-row" aria-label={settingsWorkspaceCopy.security.allowlistAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.security.allowlistTitle}</strong>
-                          <small>{settingsWorkspaceCopy.security.allowlistDescription}</small>
-                        </span>
-                        <span className="settings-row-field settings-sensitive-field">
-                          <span>{settingsWorkspaceCopy.security.allowlistFieldLabel}</span>
-                          <input aria-label={settingsWorkspaceCopy.security.allowlistFieldAria} value={telegramAllowedUserIdsInput} onChange={(event) => setTelegramAllowedUserIdsInput(event.currentTarget.value)} />
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={saveTelegramSecuritySettings} disabled={!props.onSaveTelegramSecuritySettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.security.saveAllowlist}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-danger-row security-danger-row" aria-label={settingsWorkspaceCopy.security.exposureRiskAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.security.exposureRiskTitle}</strong>
-                          <small>{settingsWorkspaceCopy.security.exposureRiskDescription}</small>
-                        </span>
-                        <span className="settings-row-field">{settingsWorkspaceCopy.security.exposureRiskResetHelp}</span>
-                        <span className="settings-row-action-rail">
-                          <Button variant="danger" size="compact" onClick={resetSecurity} disabled={!props.onResetSecurity} busy={loadingRuntimeBusy}>
-                            {settingsWorkspaceCopy.security.resetSecurity}
-                          </Button>
-                        </span>
-                      </section>
-                      <section className="settings-audit-row security-audit-row" aria-label={settingsWorkspaceCopy.security.auditAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.security.auditTitle}</strong>
-                          <small>{settingsWorkspaceCopy.security.auditDescription}</small>
-                        </span>
-                        <span className="settings-row-field settings-evidence-list">
-                          {securityAuditLogs.length === 0 ? <span>{settingsWorkspaceCopy.security.emptyAudit}</span> : securityAuditLogs.slice(0, 6).map((entry) => <code key={entry.id}>{entry.action}</code>)}
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <span className="settings-action-meta">{settingsWorkspaceCopy.security.latestAudit}</span>
-                        </span>
-                      </section>
-                    </NativeSettingsPane>
-                  </section>
-                ) : null}
-                {settingsCategory === 'git' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.git}>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.git.paneTitle} className="deep-settings-pane git-settings-pane">
-                      <NativeControlRow title={settingsWorkspaceCopy.git.branchNameTitle} description={settingsWorkspaceCopy.git.branchNameDescription} className="git-settings-field-row">
-                        <input aria-label={settingsWorkspaceCopy.git.branchNameAria} value={gitBranchName} onChange={(event) => setGitBranchName(event.currentTarget.value)} />
-                      </NativeControlRow>
-                      <NativeControlRow title={settingsWorkspaceCopy.git.remoteTitle} description={settingsWorkspaceCopy.git.remoteDescription} className="git-settings-field-row">
-                        <input aria-label={settingsWorkspaceCopy.git.remoteAria} value={gitRemote} onChange={(event) => setGitRemote(event.currentTarget.value)} />
-                      </NativeControlRow>
-                      <section className="settings-danger-row git-confirmation-risk-row" aria-label={settingsWorkspaceCopy.git.confirmationAria}>
-                        <span className="settings-row-copy git-confirmation-risk-copy">
-                          <strong>{settingsWorkspaceCopy.git.confirmationTitle}</strong>
-                          <small>{settingsWorkspaceCopy.git.confirmationDescription}</small>
-                        </span>
-                        <span className="settings-row-field git-confirmation-risk-meta">
-                          {/* Git 写操作必须保留二次确认和审计，按钮只创建确认单，不直接改仓库。 */}
-                          <span>{settingsWorkspaceCopy.git.targetBranch(gitBranchName)}</span>
-                          <small>{settingsWorkspaceCopy.git.remoteTarget(gitRemote, gitTargetRef)}</small>
-                        </span>
-                        <span className="settings-row-action-rail git-confirmation-risk-rail">
-                          <Button variant="danger" size="compact" onClick={() => createGitConfirmation('branch')} disabled={!gitBranchName.trim()} busy={creatingGitConfirmationBusy}>
-                            {settingsWorkspaceCopy.git.requestBranchConfirmation}
-                          </Button>
-                          <Button variant="danger" size="compact" onClick={() => createGitConfirmation('push')} disabled={!gitRemote.trim() || !gitTargetRef.trim()} busy={creatingGitConfirmationBusy}>
-                            {settingsWorkspaceCopy.git.requestPushConfirmation}
-                          </Button>
-                        </span>
-                      </section>
-                    </NativeSettingsPane>
-                  </section>
-                ) : null}
                 {settingsCategory === 'commands' && props.commandClient ? <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'release' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.release}>
+                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.release}</h2>
                     {releaseLoadState !== 'ready' ? (
                       <section className="settings-product-section" aria-busy={releaseLoadState === 'loading'}>
                         <p role="status">
@@ -2267,38 +1956,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       </section>
                     ) : (
                       <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
-                        <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
-                          <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
-                          <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
-                          <em>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</em>
-                        </section>
-                        <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
-                          <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
-                          <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
-                          <em>{settingsWorkspaceCopy.release.notarizationDescription}</em>
-                        </section>
-                        <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
-                          <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
-                          <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
-                          <em>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</em>
-                        </section>
-                        <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
-                            <small>{settingsWorkspaceCopy.release.detailDescription}</small>
-                          </span>
-                          <span className="settings-row-field settings-evidence-list">
-                            <span>
-                              {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
-                            </span>
-                            {releaseStatus.autoUpdate.changelogPath ? <small>{releaseStatus.autoUpdate.changelogPath}</small> : null}
-                            <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
-                            <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
-                          </span>
-                          <span className="settings-row-action-rail">
-                            <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
-                          </span>
-                        </section>
                         <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
                           <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
                             <span className="release-update-copy">
@@ -2319,7 +1976,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
                             <span className="release-update-copy">
                               <strong>{settingsWorkspaceCopy.release.versionTitle}</strong>
-                              <small>{releaseUpdateStatus.checkedAt ? settingsWorkspaceCopy.release.checkedAt(releaseUpdateStatus.checkedAt) : settingsWorkspaceCopy.release.notChecked}</small>
+                              <small>
+                                {releaseUpdateStatus.checkedAt
+                                  ? settingsWorkspaceCopy.release.checkedAt(formatArchivedConversationDate(releaseUpdateStatus.checkedAt, appShellSettings.appLanguage))
+                                  : settingsWorkspaceCopy.release.notChecked}
+                              </small>
                             </span>
                             <span className="release-update-field">
                               <span>{settingsWorkspaceCopy.release.currentVersion(releaseUpdateStatus.currentVersion)}</span>
@@ -2330,6 +1991,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               <a href={releaseUpdateStatus.releasePageUrl}>GitHub Release</a>
                             </span>
                           </section>
+                        </section>
+                        <details className="settings-disclosure release-technical-details">
+                          <summary>{appShellSettings.appLanguage === 'zh-CN' ? '安装包与发布详情' : 'Package and release details'}</summary>
                           <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
                             <span className="release-update-copy">
                               <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
@@ -2357,13 +2021,46 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               )}
                             </span>
                           </section>
-                        </section>
+                          <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
+                            <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
+                            <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
+                            <em>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</em>
+                          </section>
+                          <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
+                            <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
+                            <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
+                            <em>{settingsWorkspaceCopy.release.notarizationDescription}</em>
+                          </section>
+                          <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
+                            <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
+                            <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
+                            <em>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</em>
+                          </section>
+                          <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
+                            <span className="settings-row-copy">
+                              <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
+                              <small>{settingsWorkspaceCopy.release.detailDescription}</small>
+                            </span>
+                            <span className="settings-row-field settings-evidence-list">
+                              <span>
+                                {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
+                              </span>
+                              {releaseStatus.autoUpdate.changelogPath ? <small>{releaseStatus.autoUpdate.changelogPath}</small> : null}
+                              <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
+                              <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
+                            </span>
+                            <span className="settings-row-action-rail">
+                              <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
+                            </span>
+                          </section>
+                        </details>
                       </NativeSettingsPane>
                     )}
                   </section>
                 ) : null}
                 {settingsCategory === 'data' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.data}>
+                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.data}</h2>
                     <NativeSettingsPane label={settingsWorkspaceCopy.data.paneTitle} className="deep-settings-pane data-settings-pane">
                       <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.portabilityAria}>
                         <span className="settings-row-copy">
@@ -2390,9 +2087,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         </span>
                         <span className="settings-row-field" />
                         <span className="settings-row-action-rail">
-                          <button type="button" onClick={clearLocalCaches} disabled={!props.onClearLocalCaches || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.data.clearCache}
-                          </button>
                           <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.data.clearNetworkCache}
                           </button>
@@ -2403,6 +2097,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
                           <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
                         </span>
+                        <input
+                          type="search"
+                          className="settings-list-search"
+                          aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
+                          placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
+                          value={archiveQuery}
+                          onChange={(event) => {
+                            setArchiveQuery(event.currentTarget.value);
+                            setArchiveRequestedPage(1);
+                          }}
+                        />
                         <span className="settings-archived-conversation-list" aria-live="polite">
                           {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
                           {archivedConversationLoadState === 'error' ? (
@@ -2412,10 +2117,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               </button>
                             </span>
                           ) : null}
-                          {archivedConversationLoadState === 'ready' && archivedConversations.length === 0 ? <small>{settingsWorkspaceCopy.data.emptyArchivedConversations}</small> : null}
-                          {archivedConversations.map((conversation) => {
-                            const task = snapshot.tasks.find((candidate) => candidate.id === conversation.taskId);
-                            const project = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
+                          {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
+                            <small>{normalizedArchiveQuery ? (appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的归档会话。' : 'No matching archived conversations.') : settingsWorkspaceCopy.data.emptyArchivedConversations}</small>
+                          ) : null}
+                          {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
                             return (
                               <span className="settings-archived-conversation-item" key={conversation.id}>
                                 <span className="settings-archived-conversation-copy">
@@ -2434,6 +2139,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             );
                           })}
                         </span>
+                        <SettingsPagination
+                          label={settingsWorkspaceCopy.data.archivedConversationsTitle}
+                          language={appShellSettings.appLanguage}
+                          total={filteredArchives.length}
+                          page={archivePage}
+                          onChange={setArchiveRequestedPage}
+                          disabled={archivedConversationLoadState === 'loading'}
+                        />
                       </section>
                     </NativeSettingsPane>
                   </section>

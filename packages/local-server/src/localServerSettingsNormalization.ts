@@ -3,6 +3,7 @@ import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
 import { listAiCliAdapters, parseModelRef, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
+import { normalizeNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
 
 interface TelegramNotificationSettingsSnapshot {
   enabled: boolean;
@@ -17,34 +18,6 @@ interface TelegramSecuritySettingsSnapshot {
 export interface SettingsIdentityCatalog {
   hasProjectId(projectId: string): boolean;
   hasTaskTemplateId(templateId: string): boolean;
-}
-
-export interface CodeMapSettingsSnapshot {
-  defaultScanScope: 'project' | 'src' | 'custom';
-  defaultIgnoreDirectories: string[];
-  maxCallChainDepth: number;
-  showLowConfidenceEdges: boolean;
-  layoutAlgorithm: 'hierarchical' | 'force' | 'dagre';
-  graphCacheStrategy: 'sqlite' | 'memory' | 'disabled';
-  tableRelationInference: 'foreign_key_and_name' | 'foreign_key_only' | 'name_only' | 'disabled';
-  aiSummaryEnabled: boolean;
-  incrementalScanEnabled: boolean;
-  performanceMonitoringEnabled: boolean;
-  moduleFlowManualNotes: string;
-}
-
-export interface UpdateCodeMapSettingsBody {
-  defaultScanScope?: unknown;
-  defaultIgnoreDirectories?: unknown;
-  maxCallChainDepth?: unknown;
-  showLowConfidenceEdges?: unknown;
-  layoutAlgorithm?: unknown;
-  graphCacheStrategy?: unknown;
-  tableRelationInference?: unknown;
-  aiSummaryEnabled?: unknown;
-  incrementalScanEnabled?: unknown;
-  performanceMonitoringEnabled?: unknown;
-  moduleFlowManualNotes?: unknown;
 }
 
 export interface UpdateRuntimeSettingsBody {
@@ -396,6 +369,8 @@ export function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
 }
 
 export interface AppShellSettingsSnapshot {
+  /** 完全退出并重开应用后使用的网络代理。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -433,15 +408,11 @@ export interface AppShellSettingsSnapshot {
     exportSupported: boolean;
     redactsSecrets: boolean;
   };
-  cache: {
-    codeIndex: boolean;
-    graphView: boolean;
-    layout: boolean;
-  };
-  lastCacheClearAt: string | null;
 }
 
 export interface UpdateAppShellSettingsBody {
+  /** 省略时保留当前代理；显式提交和导入均经过相同校验。 */
+  networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
   /** 只用于之后新建项目的完整供应商模型引用。 */
@@ -476,12 +447,6 @@ export interface UpdateAppShellSettingsBody {
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 }
 
-export interface ClearCacheResult {
-  cleared: boolean;
-  clearedCaches: Array<'code-index' | 'graph-view' | 'layout'>;
-  clearedAt: string;
-}
-
 export interface LocalSettingsExportSnapshot {
   app: 'Zeus';
   schemaVersion: 1;
@@ -492,7 +457,6 @@ export interface LocalSettingsExportSnapshot {
   settings: {
     appShell: AppShellSettingsSnapshot;
     runtime: RuntimeSettingsSnapshot;
-    codeMap: CodeMapSettingsSnapshot;
     telegramNotification: TelegramNotificationSettingsSnapshot;
     telegramSecurity: TelegramSecuritySettingsSnapshot;
   };
@@ -503,7 +467,6 @@ export interface ImportLocalSettingsBody {
   settings?: {
     appShell?: UpdateAppShellSettingsBody;
     runtime?: RuntimeSettingsSnapshot;
-    codeMap?: UpdateCodeMapSettingsBody;
     telegramNotification?: TelegramNotificationSettingsSnapshot;
     telegramSecurity?: TelegramSecuritySettingsSnapshot;
   };
@@ -515,7 +478,6 @@ export interface ImportLocalSettingsResult {
   importedAt: string;
 }
 export const runtimeSettingsKey = 'runtime.settings';
-export const codeMapSettingsKey = 'codeMap.settings';
 export const codexRemoteControlEnabledSettingKey = 'codex.remote_control.enabled';
 export const projectConfigSettingsPrefix = 'project.config.';
 export const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
@@ -529,95 +491,10 @@ export const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
   logRetentionDays: 30,
   autoConfirmationPolicy: 'never',
 };
-export const defaultCodeMapSettings: CodeMapSettingsSnapshot = {
-  defaultScanScope: 'project',
-  defaultIgnoreDirectories: ['node_modules', 'dist', '.tmp', 'coverage'],
-  maxCallChainDepth: 3,
-  showLowConfidenceEdges: false,
-  layoutAlgorithm: 'hierarchical',
-  graphCacheStrategy: 'sqlite',
-  tableRelationInference: 'foreign_key_and_name',
-  aiSummaryEnabled: false,
-  incrementalScanEnabled: true,
-  performanceMonitoringEnabled: false,
-  moduleFlowManualNotes: '',
-};
-export function normalizeCodeMapSettings(value: unknown): CodeMapSettingsSnapshot | null {
-  if (value === undefined) return defaultCodeMapSettings;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as UpdateCodeMapSettingsBody;
-  const defaultScanScope = isCodeMapScanScope(raw.defaultScanScope) ? raw.defaultScanScope : defaultCodeMapSettings.defaultScanScope;
-  const defaultIgnoreDirectories = normalizeCodeMapIgnoreDirectories(raw.defaultIgnoreDirectories);
-  const maxCallChainDepth = normalizeIntegerRange(raw.maxCallChainDepth, defaultCodeMapSettings.maxCallChainDepth, 1, 10);
-  if (!defaultIgnoreDirectories || maxCallChainDepth === null) return null;
-  const layoutAlgorithm = isCodeMapLayoutAlgorithm(raw.layoutAlgorithm) ? raw.layoutAlgorithm : defaultCodeMapSettings.layoutAlgorithm;
-  const graphCacheStrategy = isGraphCacheStrategy(raw.graphCacheStrategy) ? raw.graphCacheStrategy : defaultCodeMapSettings.graphCacheStrategy;
-  const tableRelationInference = isTableRelationInference(raw.tableRelationInference) ? raw.tableRelationInference : defaultCodeMapSettings.tableRelationInference;
-  const moduleFlowManualNotes = normalizeCodeMapManualNotes(raw.moduleFlowManualNotes);
-  if (moduleFlowManualNotes === null) return null;
-  return {
-    defaultScanScope,
-    defaultIgnoreDirectories,
-    maxCallChainDepth,
-    showLowConfidenceEdges: raw.showLowConfidenceEdges === true,
-    layoutAlgorithm,
-    graphCacheStrategy,
-    tableRelationInference,
-    aiSummaryEnabled: raw.aiSummaryEnabled === true,
-    incrementalScanEnabled: raw.incrementalScanEnabled !== false,
-    performanceMonitoringEnabled: raw.performanceMonitoringEnabled === true,
-    moduleFlowManualNotes,
-  };
-}
-
-export function normalizeCodeMapManualNotes(value: unknown): string | null {
-  if (value === undefined) return defaultCodeMapSettings.moduleFlowManualNotes;
-  if (typeof value !== 'string') return null;
-  // 人工流程草稿只保存本机说明，不参与图谱事实生成；限制长度避免设置快照被日志/大文本污染。
-  if (value.includes('\u0000') || value.length > 4000) return null;
-  return value.trim();
-}
-
-export function normalizeCodeMapIgnoreDirectories(value: unknown): string[] | null {
-  if (value === undefined) return defaultCodeMapSettings.defaultIgnoreDirectories;
-  if (!Array.isArray(value)) return null;
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') return null;
-    const directory = item.trim();
-    if (!isSafeCodeMapIgnoreDirectory(directory)) return null;
-    if (!seen.has(directory)) {
-      seen.add(directory);
-      items.push(directory);
-    }
-  }
-  return items;
-}
-
-export function isSafeCodeMapIgnoreDirectory(value: string): boolean {
-  return /^[A-Za-z0-9._-]+$/.test(value) && !value.includes('..') && value.length > 0 && value.length <= 80;
-}
 
 export function normalizeIntegerRange(value: unknown, fallback: number, min: number, max: number): number | null {
   if (value === undefined) return fallback;
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : null;
-}
-
-export function isCodeMapScanScope(value: unknown): value is CodeMapSettingsSnapshot['defaultScanScope'] {
-  return value === 'project' || value === 'src' || value === 'custom';
-}
-
-export function isCodeMapLayoutAlgorithm(value: unknown): value is CodeMapSettingsSnapshot['layoutAlgorithm'] {
-  return value === 'hierarchical' || value === 'force' || value === 'dagre';
-}
-
-export function isGraphCacheStrategy(value: unknown): value is CodeMapSettingsSnapshot['graphCacheStrategy'] {
-  return value === 'sqlite' || value === 'memory' || value === 'disabled';
-}
-
-export function isTableRelationInference(value: unknown): value is CodeMapSettingsSnapshot['tableRelationInference'] {
-  return value === 'foreign_key_and_name' || value === 'foreign_key_only' || value === 'name_only' || value === 'disabled';
 }
 
 export function normalizeRuntimeSettings(value: RuntimeSettingsSnapshot | undefined): RuntimeSettingsSnapshot {
@@ -667,6 +544,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
   const appLanguage: AppLanguage = value?.appLanguage === 'en-US' ? 'en-US' : 'zh-CN';
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
+    networkProxy: normalizeNetworkProxySettings(value?.networkProxy),
     appLanguage,
     appearance,
     webviewDebugEnabled: value?.webviewDebugEnabled === true,
@@ -703,8 +581,6 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
       exportSupported: true,
       redactsSecrets: true,
     },
-    cache: { codeIndex: true, graphView: true, layout: true },
-    lastCacheClearAt: typeof value?.lastCacheClearAt === 'string' ? value.lastCacheClearAt : null,
   };
 }
 
@@ -719,6 +595,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
   return normalizeAppShellSettings(
     {
       ...current,
+      networkProxy: input.networkProxy === undefined ? current.networkProxy : normalizeNetworkProxySettings(input.networkProxy),
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
       webviewDebugEnabled: typeof input.webviewDebugEnabled === 'boolean' ? input.webviewDebugEnabled : current.webviewDebugEnabled,

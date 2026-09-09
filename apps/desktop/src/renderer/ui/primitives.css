@@ -233,10 +233,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   animation: zeus-object-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
 }
 
-.macos-ai-app .code-map-floating-surface {
-  animation: zeus-side-panel-enter var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
-}
-
 .macos-ai-app .project-source-tree-backdrop {
   animation: zeus-modal-backdrop-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
 }
@@ -1175,7 +1171,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .session-codex-parity-v1 .session-interaction-dock,
   .session-codex-parity-v1 .session-switch-target-dock,
   .session-codex-parity-v1 :where(.session-queued-messages, .session-creation-status, .session-transport-failure),
-  .macos-ai-app .code-map-floating-surface,
   .macos-ai-app .project-source-tree-backdrop,
   .macos-ai-app details[open] > :not(summary),
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop,

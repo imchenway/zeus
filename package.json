@@ -1,6 +1,6 @@
 {
   "name": "zeus",
-  "version": "0.3.111",
+  "version": "0.3.112",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "package:mac": "pnpm --filter @zeus/desktop package:mac",
     "package:mac:test": "pnpm --filter @zeus/desktop package:mac:test",
     "package:mac:release": "pnpm --filter @zeus/desktop package:mac:release",
+    "package:clean": "node scripts/clean-package-artifacts.mjs",
     "release": "node scripts/release-all.mjs",
     "release:gate": "node scripts/run-release-gate.mjs",
     "release:commands:sync": "pnpm --filter @zeus/shared build && node scripts/sync-release-commands.mjs",
@@ -53,7 +54,6 @@
     "fastify": "^5.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "sql.js": "^1.13.0",
     "tsx": "^4.20.3",
     "ws": "^8.18.2"
   },
@@ -62,7 +62,6 @@
     "@types/node": "^24.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/sql.js": "^1.4.11",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "42.4.0",

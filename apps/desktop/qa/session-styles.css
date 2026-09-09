@@ -15,6 +15,63 @@ body {
   margin: 0;
 }
 
+/* 预览沿用会话留白和正文列宽，所有调整只在本页生效。 */
+.macos-ai-app.zeus-shell.qa-error-layout {
+  display: block;
+  box-sizing: border-box;
+  min-height: 100vh;
+  height: auto;
+  overflow: auto;
+  color: var(--session-text);
+  /* 应用外壳使用强制玻璃背景，独立预览恢复会话画布底色。 */
+  background: var(--session-canvas) !important;
+}
+
+/* 将演示切换与会话内容分开，窄屏允许按钮自然换行。 */
+.qa-error-layout-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: var(--session-thread-max);
+  padding: 28px var(--session-gutter) 16px;
+}
+
+.qa-error-layout-heading h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.qa-error-layout-heading p {
+  margin: 8px 0 0;
+  color: var(--session-text-muted);
+  font-size: 13px;
+}
+
+.qa-error-layout-heading nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qa-error-layout-heading [aria-pressed='true'] {
+  background: var(--session-selected);
+  border-color: var(--session-text-muted);
+}
+
+/* 预览操作记录沿用正文列宽。 */
+.qa-error-layout-note {
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+}
+
+/* 独立预览未经过应用入口的尺寸重置，详情弹窗将内边距计入窄屏宽度。 */
+body:has(.qa-error-layout) .application-error-dialog {
+  box-sizing: border-box;
+}
+
 .qa-page {
   min-height: 100vh;
   padding: 32px;
@@ -65,11 +122,6 @@ body {
   border-radius: 14px 14px 4px 14px;
   color: #fff;
   background: #405de6;
-}
-
-.qa-answer {
-  margin-top: 24px;
-  line-height: 1.65;
 }
 
 .qa-scenes {

@@ -65,13 +65,9 @@ import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skil
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type DashboardSnapshot,
-  type GraphConversationHistoryItem,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  type GraphViewType,
+  type ConversationHistoryItem,
   type ProjectGitAction,
   type ProjectGitActionResponse,
-  type ProjectRecord,
   type SaveProjectConfigRequest,
   type TaskBoardOpenMode,
   type TaskManagementStatus,
@@ -89,7 +85,6 @@ import { errorToLocalUiMessage, normalizeProjectConfig, parseProjectConfigList, 
 import {
   isTaskModelPushOriginCurrent,
   appendRuntimeOutputEventsToConversation,
-  applyRuntimeEndedEventToConversation,
   beginNativeConversationChoiceTaskLoad,
   browserNativeConversationStartStorage,
   buildTaskCreateInitialForm,
@@ -102,7 +97,6 @@ import {
   getLanguageCopy,
   isDefinitiveNativeConversationStartRejection,
   isProjectConversationAttentionState,
-  isProjectGraphViewForProject,
   isRuntimeConversationOutputEvent,
   type NativeConversationAppClient,
   normalizeCodeWorkspaceByProject,
@@ -113,7 +107,6 @@ import {
   resolveConversationNavigationId,
   resolveNativeConversationSelectionPresentation,
   resolveTaskManagementStatusConfig,
-  selectCreatedGraphNodeTask,
   selectCreatedProjectTask,
   shouldRefreshConversationForRuntimeEvent,
   shouldRefreshNativeConversationListForRealtimeEvent,
@@ -129,6 +122,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
+import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -143,34 +137,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   const refreshTaskModelPushRepositories = useProjectRepositoryDiscovery(state);
   const {
     actionState,
-    activeGraphView,
-    activeGraphViewTypeRef,
-    activeNavTarget,
     activeProjectId,
     activeProjectIdRef,
-    activeProjectSection,
     activeTaskManagementStatusIds,
     appShellSettings,
     appShellSettingsRef,
     archivedConversationRefreshPromiseRef,
-    codeWorkspaceCopy,
     codeWorkspacePreferenceTimerRef,
-    conversationDraftOpen,
     conversationNotificationRef,
     createProjectConfigForm,
     creatingProjectBusy,
     gitDiff,
-    graphConversationDetailRequestVersionRef,
-    graphConversationListRequestVersionRef,
-    graphConversationPage,
-    graphConversationTaskIdentityRef,
-    graphConversations,
-    graphNodeTaskIdentityRef,
-    graphProjectId,
-    graphQuestionRequestVersionRef,
-    graphScanRequestVersionRef,
-    graphSearchRequestVersionRef,
-    graphViewRequestVersionRef,
     loadTaskBoard,
     mergeTaskRecord,
     nativeConversationChoiceLoadCoordinator,
@@ -193,7 +170,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     projectDirectoryChoosing,
     projectEditForm,
     projectSharedWritablePaths,
-    projectSourceWorkspaceRef,
     projectTaskModelPushManagementStatus,
     projectedTaskConversationChoices,
     props,
@@ -204,10 +180,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     restoringArchivedConversationId,
     runtimeAdapters,
     runtimeSettings,
-    scanBusy,
-    scanState,
     selectedNativeConversationIdRef,
-    selectedProject,
     selectedTaskConversationRef,
     setActionState,
     setActiveNavTarget,
@@ -220,15 +193,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setConversationDraftOpen,
     setConversationDrawer,
     setFocusedArchivedConversation,
-    setGraphAnswer,
-    setGraphConversationPage,
-    setGraphConversations,
-    setGraphNodeTaskFeedback,
-    setGraphProjectId,
-    setGraphSearchResult,
-    setGraphSourceOpenFeedback,
-    setGraphView,
-    setLastGraphNodeTaskId,
     setLocalError,
     setNativeConversationChoiceProjectStates,
     setNativeConversationChoiceTaskStates,
@@ -255,8 +219,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setProjectWorkspaceConfigError,
     setProjectWorkspaceConfigStatus,
     setRestoringArchivedConversationId,
-    setScanState,
-    setSelectedGraphConversation,
     setSelectedNativeConversationId,
     setSelectedNativeConversationPresentation,
     setSelectedTaskIds,
@@ -418,18 +380,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const events = pendingRuntimeConversationEvents;
       pendingRuntimeConversationEvents = [];
       const sessionIds = new Set(events.map((event) => event.payload.sessionId).filter((sessionId): sessionId is string => typeof sessionId === 'string'));
-      const appendEvents = (conversation: GraphConversationHistoryItem): GraphConversationHistoryItem =>
+      const appendEvents = (conversation: ConversationHistoryItem): ConversationHistoryItem =>
         conversation.sessionId && sessionIds.has(conversation.sessionId) ? appendRuntimeOutputEventsToConversation(conversation, events, appShellSettings.appLanguage) : conversation;
-      setGraphConversations((current) => {
-        let changed = false;
-        const next = current.map((conversation) => {
-          const updated = appendEvents(conversation);
-          if (updated !== conversation) changed = true;
-          return updated;
-        });
-        return changed ? next : current;
-      });
-      setSelectedGraphConversation((current) => (current ? appendEvents(current) : current));
+      setNativeLegacyConversationDetails((current) => Object.fromEntries(Object.entries(current).map(([id, conversation]) => [id, appendEvents(conversation)])));
     };
     const queueRuntimeConversationEvent = (event: ZeusRealtimeEvent): void => {
       pendingRuntimeConversationEvents.push(event);
@@ -533,6 +486,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
+        if (event.type === 'codex.models.changed') {
+          // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
+          if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+          return;
+        }
         if (event.type === 'codex.rpc.retrying') {
           const operationIdentity = typeof event.payload.operationIdentity === 'string' ? event.payload.operationIdentity : null;
           const method = typeof event.payload.method === 'string' ? event.payload.method : null;
@@ -644,14 +602,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (!shouldRefreshConversationForRuntimeEvent(event, conversation)) return;
         if (!conversation) return;
         flushRuntimeConversationEvents();
-        setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event, appShellSettings.appLanguage) : candidate)));
-        setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event, appShellSettings.appLanguage) : current));
       },
       (state) => {
         connectionState = state;
         statusSyncGeneration += 1;
         clearStatusSyncRetry();
         if (state === 'connected') {
+          // 断线期间可能错过目录事件，连接恢复后补读当前快照。
+          window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
           statusSyncAttempt = 0;
           synchronizeActiveProjectConversationStatus();
           clearStatusSnapshotTimer();
@@ -683,6 +641,34 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     reconcileNativeConversationProjectionStates,
     updateTaskModelPushPendingByTask,
   ]);
+
+  useEffect(() => {
+    /** 后台同步只替换目录，不重建任务表单或覆盖用户选择。 */
+    const client = props.nativeConversationClient;
+    const projectId = loadedTaskModelPushCapabilities?.projectId ?? taskModelPushRuntimeCapabilities?.projectId;
+    if (!taskModelPushTaskId || !projectId || !client?.loadCodexConversationCapabilities) return;
+    /** 关闭弹窗、切换任务或新一轮读取后丢弃迟到结果。 */
+    let disposed = false;
+    let requestSequence = 0;
+    const refresh = (): void => {
+      const sequence = ++requestSequence;
+      const request = taskModelPushCapabilityRequestRef.current;
+      void client.loadCodexConversationCapabilities!(projectId)
+        .then((capabilities) => {
+          if (disposed || sequence !== requestSequence || request !== taskModelPushCapabilityRequestRef.current) return;
+          setTaskModelPushRuntimeCapabilities(capabilities);
+          setTaskModelPushCapabilities((current) => (current?.taskId === taskModelPushTaskId && current.projectId === projectId ? { ...current, models: capabilities.models, preferredModel: capabilities.preferredModel } : current));
+        })
+        .catch((error: unknown) => {
+          if (!disposed && sequence === requestSequence) recordLocalError('task-model-catalog-refresh', error);
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      disposed = true;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [props.nativeConversationClient, taskModelPushTaskId, loadedTaskModelPushCapabilities?.projectId, taskModelPushRuntimeCapabilities?.projectId]);
 
   const taskDetailPaneTaskSource = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
   const taskDetailPaneTask = taskDetailPaneTaskSource ? projectTaskModelPushManagementStatus(taskDetailPaneTaskSource) : undefined;
@@ -967,11 +953,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const input: SaveProjectConfigRequest = {
       defaultModel: projectConfigForm.defaultModel.trim() || null,
       defaultWorkMode: projectConfigForm.defaultWorkMode,
-      defaultTaskPrompt: projectConfigForm.defaultTaskPrompt.trim(),
-      scan: {
-        ignoreDirectories: parseProjectConfigList(projectConfigForm.scanIgnoreDirectories),
-        indexScope: projectConfigForm.indexScope,
-      },
       language: {
         primary: projectConfigForm.languagePrimary.trim() || 'typescript',
         additional: parseProjectConfigList(projectConfigForm.languageAdditional),
@@ -982,7 +963,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       },
       database: {
         connectionName: projectConfigForm.databaseConnectionName.trim() || null,
-        schemaPaths: parseProjectConfigList(projectConfigForm.databaseSchemaPaths),
       },
       telegram: {
         alias: projectConfigForm.telegramAlias.trim() || null,
@@ -1091,330 +1071,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  async function searchGraph(query: string, nodeType?: string, edgeType?: string, minConfidence?: number): Promise<void> {
-    if ((!props.onSearchProjectGraph && !props.onSearchGraph) || scanState === 'scanning') return;
-    if (!query.trim() && !nodeType?.trim() && !edgeType?.trim()) {
-      // 清空检索条件时直接恢复当前完整视图；置信度仍由画布本地过滤，避免空查询被后端结果上限截断。
-      graphSearchRequestVersionRef.current += 1;
-      setGraphSearchResult(undefined);
-      return;
-    }
-    const requestVersion = ++graphSearchRequestVersionRef.current;
-    const projectId = activeProjectId;
-    const requestedViewType = activeGraphViewTypeRef.current;
-    try {
-      let result: GraphSearchResult | undefined;
-      if (props.onSearchProjectGraph && activeProjectId) {
-        // 项目抽屉内的搜索必须绑定当前选中项目，避免误读全局当前仓库图谱。
-        result = await props.onSearchProjectGraph(activeProjectId, query, nodeType, edgeType, minConfidence);
-      } else if (props.onSearchGraph) {
-        result = await props.onSearchGraph(query, nodeType, edgeType, minConfidence);
-      }
-      if (requestVersion !== graphSearchRequestVersionRef.current || activeProjectIdRef.current !== projectId || activeGraphViewTypeRef.current !== requestedViewType) return;
-      setGraphSearchResult(result);
-    } catch (error) {
-      if (requestVersion !== graphSearchRequestVersionRef.current) return;
-      recordLocalError('graph-search', error);
-    }
-  }
-
-  async function askGraph(question: string): Promise<void> {
-    if (!props.onAskGraph || !activeProjectId || scanState === 'scanning') return;
-    const normalizedQuestion = question.trim();
-    if (!normalizedQuestion) return;
-    const requestVersion = ++graphQuestionRequestVersionRef.current;
-    const projectId = activeProjectId;
-    const requestedViewType = activeGraphViewTypeRef.current;
-    try {
-      // 图谱问答必须走真实后端 Runtime，不在前端编造 AI 结论。
-      const answer = await props.onAskGraph(activeProjectId, normalizedQuestion);
-      if (requestVersion !== graphQuestionRequestVersionRef.current || activeProjectIdRef.current !== projectId || activeGraphViewTypeRef.current !== requestedViewType) return;
-      setGraphAnswer(answer);
-      if (props.onLoadGraphConversations) {
-        await loadGraphConversations({
-          query: undefined,
-          offset: 0,
-          archived: false,
-        });
-      }
-    } catch (error) {
-      if (requestVersion !== graphQuestionRequestVersionRef.current) return;
-      recordLocalError('graph-question', error);
-    }
-  }
-
-  function upsertGraphConversation(conversation: GraphConversationHistoryItem): void {
-    const existed = graphConversations.some((item) => item.id === conversation.id);
-    setGraphConversations((current) => {
-      return [conversation, ...current.filter((item) => item.id !== conversation.id)].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    });
-    if (!existed) setGraphConversationPage((page) => ({ ...page, total: Math.max(page.total + 1, graphConversations.length + 1) }));
-    setSelectedGraphConversation(conversation);
-  }
-
-  async function loadGraphConversations(input: { query?: string; offset?: number; archived?: boolean } = {}): Promise<void> {
-    if (!props.onLoadGraphConversations || !activeProjectId) return;
-    const requestVersion = ++graphConversationListRequestVersionRef.current;
-    const projectId = activeProjectId;
-    try {
-      const page = await props.onLoadGraphConversations(projectId, {
-        query: input.query,
-        limit: graphConversationPage.limit,
-        offset: input.offset ?? graphConversationPage.offset,
-        archived: input.archived ?? graphConversationPage.archived,
-      });
-      if (requestVersion !== graphConversationListRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      setGraphConversations(page.items);
-      setGraphConversationPage({
-        total: page.total,
-        limit: page.limit,
-        offset: page.offset,
-        query: page.query,
-        archived: page.archived,
-      });
-      setSelectedGraphConversation(page.items[0]);
-    } catch (error) {
-      if (requestVersion !== graphConversationListRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      recordLocalError('graph-conversations', error);
-    }
-  }
-
-  async function loadGraphConversationDetail(conversationId: string): Promise<void> {
-    if (!activeProjectId) return;
-    const requestVersion = ++graphConversationDetailRequestVersionRef.current;
-    const projectId = activeProjectId;
-    if (!props.onLoadGraphConversation) {
-      setSelectedGraphConversation(graphConversations.find((conversation) => conversation.id === conversationId));
-      return;
-    }
-    try {
-      const conversation = await props.onLoadGraphConversation(projectId, conversationId);
-      if (requestVersion !== graphConversationDetailRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      upsertGraphConversation(conversation);
-    } catch (error) {
-      if (requestVersion !== graphConversationDetailRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      recordLocalError('graph-conversation-load', error);
-    }
-  }
-
-  async function archiveGraphConversation(conversationId: string): Promise<void> {
-    if (!props.onArchiveGraphConversation || !activeProjectId) return;
-    const projectId = activeProjectId;
-    try {
-      await props.onArchiveGraphConversation(projectId, conversationId);
-      if (activeProjectIdRef.current !== projectId) return;
-      await loadGraphConversations({
-        query: graphConversationPage.query ?? undefined,
-        offset: graphConversationPage.offset,
-        archived: graphConversationPage.archived,
-      });
-    } catch (error) {
-      recordLocalError('graph-conversation-archive', error);
-    }
-  }
-
-  async function restoreGraphConversation(conversationId: string): Promise<void> {
-    if (!props.onRestoreGraphConversation || !activeProjectId) return;
-    const projectId = activeProjectId;
-    try {
-      await props.onRestoreGraphConversation(projectId, conversationId);
-      if (activeProjectIdRef.current !== projectId) return;
-      await loadGraphConversations({
-        query: graphConversationPage.query ?? undefined,
-        offset: graphConversationPage.offset,
-        archived: graphConversationPage.archived,
-      });
-    } catch (error) {
-      recordLocalError('graph-conversation-restore', error);
-    }
-  }
-
-  useEffect(() => {
-    if (activeNavTarget !== 'conversations' || activeProjectSection !== 'sessions' || conversationDraftOpen || !activeProjectId || !props.onLoadGraphConversations) return;
-    // 进入项目会话页时读取 app-server 会话列表，确保任务创建出的会话和后续消息都来自本地 API。
-    void loadGraphConversations({
-      query: graphConversationPage.query ?? undefined,
-      offset: 0,
-      archived: false,
-    });
-  }, [activeNavTarget, activeProjectSection, activeProjectId, conversationDraftOpen]);
-
-  function resetGraphWorkspace(projectId?: string): void {
-    graphViewRequestVersionRef.current += 1;
-    graphSearchRequestVersionRef.current += 1;
-    graphQuestionRequestVersionRef.current += 1;
-    graphScanRequestVersionRef.current += 1;
-    graphConversationListRequestVersionRef.current += 1;
-    graphConversationDetailRequestVersionRef.current += 1;
-    activeGraphViewTypeRef.current = undefined;
-    setGraphProjectId(projectId);
-    setGraphView(undefined);
-    setGraphSearchResult(undefined);
-    setGraphAnswer(undefined);
-    setGraphConversations([]);
-    setSelectedGraphConversation(undefined);
-    setGraphConversationPage({ total: 0, limit: graphConversationPage.limit, offset: 0, query: null, archived: false });
-    setGraphNodeTaskFeedback('idle');
-    setGraphSourceOpenFeedback('idle');
-  }
-
-  function acceptLoadedProjectGraphView(projectId: string, loadedGraphView: GraphViewSnapshot, expectedProject: ProjectRecord | undefined, options?: { preserveExisting?: boolean }): boolean {
-    if (!isProjectGraphViewForProject(loadedGraphView, expectedProject, { requireProjectIdentity: true })) {
-      // 所有项目级图谱入口都必须先校验项目身份；失败时只清空当前代码页并显示可恢复错误，不能把旧 Zeus 图谱挂到新项目。
-      if (!options?.preserveExisting) resetGraphWorkspace(projectId);
-      recordLocalError('graph-view-project-mismatch', new Error(`Graph view belongs to ${loadedGraphView.projectId ?? loadedGraphView.projectName ?? 'another project'}`));
-      setScanState('failed');
-      return false;
-    }
-    setGraphProjectId(projectId);
-    setGraphView(loadedGraphView);
-    activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
-    return true;
-  }
-
-  async function openProjectGraphView(projectId: string, viewType: GraphViewType = 'architecture'): Promise<GraphViewSnapshot | undefined> {
-    if (!props.onLoadProjectGraphView) return undefined;
-    const requestVersion = ++graphViewRequestVersionRef.current;
-    setScanState('scanning');
-    try {
-      const loadedGraphView = await props.onLoadProjectGraphView(projectId, viewType);
-      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) {
-        // 用户已经切换到其他项目时，晚到的旧图谱响应不能覆盖当前代码页，也不能让按钮停在扫描中。
-        return loadedGraphView;
-      }
-      if (loadedGraphView.viewType !== viewType) {
-        recordLocalError('graph-view-open', new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`));
-        setScanState('failed');
-        return undefined;
-      }
-      const expectedProject = snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
-      if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject)) return undefined;
-      setScanState('idle');
-      return loadedGraphView;
-    } catch (error) {
-      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return undefined;
-      // 投影可被清理或重建，缺少缓存时由入口继续扫描，不提前弹出已恢复的错误。
-      if (error instanceof ZeusApiError && error.error === 'ZEUS_GRAPH_VIEW_NOT_FOUND') return undefined;
-      recordLocalError('graph-view-open', error);
-      setScanState('failed');
-      return undefined;
-    }
-  }
-
-  async function openGraphView(viewType: GraphViewType = 'architecture'): Promise<void> {
-    if (!props.onLoadProjectGraphView && !props.onLoadGraphView) return;
-    const requestVersion = ++graphViewRequestVersionRef.current;
-    const projectId = activeProjectId;
-    graphSearchRequestVersionRef.current += 1;
-    graphQuestionRequestVersionRef.current += 1;
-    // 视图切换时先清空旧搜索切片，避免上一视图的节点和边被套进新视图标题与布局。
-    setGraphSearchResult(undefined);
-    setGraphAnswer(undefined);
-    setScanState('scanning');
-    try {
-      if (props.onLoadProjectGraphView && projectId) {
-        const loadedGraphView = await props.onLoadProjectGraphView(projectId, viewType);
-        if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-        if (loadedGraphView.viewType !== viewType) throw new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`);
-        const expectedProject = snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
-        if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject)) return;
-      } else if (!projectId && props.onLoadGraphView) {
-        const loadedGraphView = await props.onLoadGraphView(viewType);
-        if (requestVersion !== graphViewRequestVersionRef.current) return;
-        if (loadedGraphView.viewType !== viewType) throw new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`);
-        setGraphView(loadedGraphView);
-        activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
-        setGraphProjectId(projectId);
-      }
-      setScanState('idle');
-    } catch (error) {
-      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      recordLocalError('graph-view-open', error);
-      setScanState('failed');
-    }
-  }
-
   async function selectProjectCodeWorkspaceMode(mode: ProjectCodeWorkspaceMode): Promise<void> {
     setProjectCodeWorkspaceMode(mode);
     setVisitedCodeWorkspaceModes((current) => new Set(current).add(mode));
     if (typeof window !== 'undefined') window.history.replaceState(null, '', mode === 'commands' ? '#project-commands' : `#project-code-${mode}`);
-    if (mode !== 'graph' || !activeProjectId || !selectedProject) return;
-    const currentGraphReady = graphProjectId === activeProjectId && activeGraphView && isProjectGraphViewForProject(activeGraphView, selectedProject, { requireProjectIdentity: true });
-    if (currentGraphReady) return;
-    resetGraphWorkspace(activeProjectId);
-    if (selectedProject.scanStatus === 'completed') {
-      const loadedGraphView = await openProjectGraphView(activeProjectId, 'architecture');
-      if (loadedGraphView) return;
-    }
-    await scanActiveProjectGraph();
-  }
-
-  function codeMapActionLabel(): string {
-    if (scanBusy) return codeWorkspaceCopy.scanning;
-    if (scanState === 'failed') return codeWorkspaceCopy.retryScan;
-    return codeWorkspaceCopy.openGraph;
-  }
-
-  async function scanActiveProjectGraph(): Promise<void> {
-    if (!props.onScanProjectGraph && !props.onScanCurrentGraph) return;
-    let scanRequestVersion = ++graphScanRequestVersionRef.current;
-    const projectId = activeProjectId;
-    const refreshViewType = activeGraphViewTypeRef.current ?? 'architecture';
-    const hasCurrentGraphSnapshot = Boolean(activeGraphView && graphProjectId === projectId);
-    setScanState('scanning');
-    try {
-      if (props.onScanProjectGraph && projectId) {
-        if (hasCurrentGraphSnapshot) {
-          // 重新扫描期间继续保留上一个可用快照；只有新快照成功加载后才原子替换，失败时用户仍能查看原图。
-          graphViewRequestVersionRef.current += 1;
-          graphSearchRequestVersionRef.current += 1;
-          graphQuestionRequestVersionRef.current += 1;
-          setGraphSearchResult(undefined);
-          setGraphAnswer(undefined);
-        } else {
-          resetGraphWorkspace(projectId);
-          scanRequestVersion = graphScanRequestVersionRef.current;
-        }
-        const nextSnapshot = await props.onScanProjectGraph(projectId);
-        setSnapshot(nextSnapshot);
-        if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-        if (props.onLoadProjectGraphView) {
-          const viewRequestVersion = ++graphViewRequestVersionRef.current;
-          const loadedGraphView = await props.onLoadProjectGraphView(projectId, refreshViewType);
-          if (viewRequestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-          if (loadedGraphView.viewType !== refreshViewType) throw new Error(`Requested ${refreshViewType}, received ${loadedGraphView.viewType}`);
-          const expectedProject = nextSnapshot.projects.find((project) => project.id === projectId) ?? snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
-          if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject, { preserveExisting: hasCurrentGraphSnapshot })) return;
-        }
-      } else if (!projectId && props.onScanCurrentGraph) {
-        if (hasCurrentGraphSnapshot) {
-          graphViewRequestVersionRef.current += 1;
-          graphSearchRequestVersionRef.current += 1;
-          graphQuestionRequestVersionRef.current += 1;
-          setGraphSearchResult(undefined);
-          setGraphAnswer(undefined);
-        } else {
-          resetGraphWorkspace(projectId);
-          scanRequestVersion = graphScanRequestVersionRef.current;
-        }
-        setSnapshot(await props.onScanCurrentGraph());
-        if (props.onLoadGraphView) {
-          const viewRequestVersion = ++graphViewRequestVersionRef.current;
-          const loadedGraphView = await props.onLoadGraphView(refreshViewType);
-          if (viewRequestVersion !== graphViewRequestVersionRef.current) return;
-          if (loadedGraphView.viewType !== refreshViewType) throw new Error(`Requested ${refreshViewType}, received ${loadedGraphView.viewType}`);
-          setGraphView(loadedGraphView);
-          activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
-          setGraphProjectId(projectId);
-        }
-      }
-      if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      setScanState('idle');
-    } catch (error) {
-      if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
-      recordLocalError('graph-scan', error);
-      setScanState('failed');
-    }
   }
 
   function resetProjectCreateDialog(): void {
@@ -1479,24 +1139,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         description: uiCopy.sidebar.selectedRepositoryDescription,
         defaultModel: appShellSettings.newProjectDefaultModelRef || createProjectConfigForm.defaultModel.trim() || appShellSettings.defaultModel || null,
         defaultWorkMode: createProjectConfigForm.defaultWorkMode,
-        defaultTaskPrompt: createProjectConfigForm.defaultTaskPrompt.trim(),
       });
       const selectedCreatedProject = nextSnapshot.projects.find((project) => normalizeProjectLocalPath(project.localPath) === localPath);
       setSnapshot(nextSnapshot);
-      if (selectedCreatedProject) {
-        activeProjectIdRef.current = selectedCreatedProject.id;
-        setProjectDetail(selectedCreatedProject);
-        setTaskDetail(undefined);
-        setTaskDetailPaneTaskId(undefined);
-        setConversationDraftOpen(false);
-        setProjectEditForm({
-          name: selectedCreatedProject.name,
-          localPath: selectedCreatedProject.localPath,
-          description: selectedCreatedProject.description ?? '',
-          note: selectedCreatedProject.note ?? '',
-        });
-        if (activeProjectSection === 'code') resetGraphWorkspace(selectedCreatedProject.id);
-      }
       setActionState('idle');
       resetProjectCreateDialog();
       if (selectedCreatedProject) {
@@ -1530,87 +1175,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function refreshArchivedProjects(): Promise<void> {
     if (!props.onLoadArchivedProjects) return;
     setArchivedProjects(await props.onLoadArchivedProjects());
-  }
-
-  async function openGraphSourceFromCodeMap(source: { sourceRef: string; lineStart?: number }): Promise<void> {
-    const projectRoot = selectedProject?.localPath.replace(/\/+$/u, '');
-    const normalizedSource = source.sourceRef.replaceAll('\\', '/');
-    const relativePath = projectRoot && normalizedSource.startsWith(`${projectRoot}/`) ? normalizedSource.slice(projectRoot.length + 1) : normalizedSource.startsWith('/') ? null : normalizedSource.replace(/^\.\//u, '');
-    if (relativePath) {
-      setGraphSourceOpenFeedback('opening');
-      try {
-        await selectProjectCodeWorkspaceMode('source');
-        // 源码工作区按页面生命周期挂载；先切回源码页，等待一次绘制使命令式句柄就绪。
-        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-        const sourceWorkspace = projectSourceWorkspaceRef.current;
-        if (!sourceWorkspace) throw new Error('源码工作区尚未完成挂载。');
-        await sourceWorkspace.openFile(relativePath, source.lineStart);
-        setGraphSourceOpenFeedback('opened');
-        return;
-      } catch (error) {
-        recordLocalError('renderer-action', error);
-      }
-    }
-    if (!props.onOpenGraphSource) {
-      setGraphSourceOpenFeedback('failed');
-      return;
-    }
-    setGraphSourceOpenFeedback('opening');
-    try {
-      const result = await props.onOpenGraphSource({ ...source, projectRoot: selectedProject?.localPath });
-      if (result.opened) {
-        setGraphSourceOpenFeedback('opened');
-      } else {
-        setGraphSourceOpenFeedback('failed');
-      }
-    } catch (error) {
-      setGraphSourceOpenFeedback('failed');
-      recordLocalError('renderer-action', error);
-    }
-  }
-
-  async function createTaskFromGraphNode(nodeId: string): Promise<void> {
-    if (!props.onCreateTaskFromGraphNode || !activeProjectId) return;
-    const previousTaskIds = new Set(snapshot.tasks.map((task) => task.id));
-    setLastGraphNodeTaskId(nodeId);
-    setGraphNodeTaskFeedback('creating');
-    setActionState('creating-task');
-    try {
-      const identityKey = `${activeProjectId}:${nodeId}`;
-      const idempotencyKey = graphNodeTaskIdentityRef.current.get(identityKey) ?? createSessionOperationId();
-      graphNodeTaskIdentityRef.current.set(identityKey, idempotencyKey);
-      const nextSnapshot = await props.onCreateTaskFromGraphNode(nodeId, activeProjectId, idempotencyKey);
-      const createdTask = selectCreatedGraphNodeTask(nextSnapshot, previousTaskIds, activeProjectId);
-      setSnapshot(nextSnapshot);
-      if (createdTask) {
-        // 从代码图谱创建任务后立即回到任务主路径；只清搜索和标签，不覆盖用户按项目记住的状态筛选。
-        setConversationDraftOpen(false);
-        setActiveProjectSection('tasks');
-        setTaskSearchQuery('');
-        setTaskTagFilter('');
-        setTaskDetail(createdTask);
-      }
-      setGraphNodeTaskFeedback('created');
-      graphNodeTaskIdentityRef.current.delete(identityKey);
-      setActionState('idle');
-    } catch (error) {
-      setGraphNodeTaskFeedback('failed');
-      recordLocalError('renderer-action', error);
-    }
-  }
-
-  async function createTaskFromGraphConversation(conversationId: string): Promise<void> {
-    if (!props.onCreateTaskFromGraphConversation || !activeProjectId) return;
-    setActionState('creating-task');
-    try {
-      const idempotencyKey = graphConversationTaskIdentityRef.current.get(conversationId) ?? createSessionOperationId();
-      graphConversationTaskIdentityRef.current.set(conversationId, idempotencyKey);
-      setSnapshot(await props.onCreateTaskFromGraphConversation(activeProjectId, conversationId, idempotencyKey));
-      graphConversationTaskIdentityRef.current.delete(conversationId);
-      setActionState('idle');
-    } catch (error) {
-      recordLocalError('renderer-action', error);
-    }
   }
 
   /** 新建与复制共用提交身份，目标项目参与去重以免重试落入错误项目。 */
@@ -2003,7 +1567,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setNativeLegacyMessageError(null);
       return;
     }
-    if (!props.onLoadGraphConversation) {
+    if (!props.onLoadLegacyConversation) {
       setNativeLegacyMessageLoadState('error');
       setNativeLegacyMessageError('Legacy conversation details are unavailable; no messages can be referenced safely.');
       return;
@@ -2011,7 +1575,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setNativeLegacyMessageLoadState('loading');
     setNativeLegacyMessageError(null);
     try {
-      const loaded = await loadLegacyConversationDetail(conversation, props.onLoadGraphConversation);
+      const loaded = await loadLegacyConversationDetail(conversation, props.onLoadLegacyConversation);
       const detail = loaded.detail;
       setNativeLegacyConversationDetails((current) => ({ ...current, [loaded.sourceConversationId]: detail }));
       if (detail.messages.length === 0) {
@@ -3341,8 +2905,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     addTaskCreateAttachments,
     applyThirdPartyTaskExtract,
     archiveConversation,
-    archiveGraphConversation,
-    askGraph,
     authorizeTaskCreateFiles,
     changedFiles,
     chooseNativeConversationAttachments,
@@ -3351,21 +2913,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     closeTaskCreateModal,
     closeTaskGitReview,
     closeTaskModelPush,
-    codeMapActionLabel,
     createCurrentProject,
-    createTaskFromGraphConversation,
-    createTaskFromGraphNode,
     currentRuntimeAdapterDisplayName,
     deleteProject,
     effectiveTaskStatusSettingsTargetId,
     executeNewConversationProjectGit,
-    loadGraphConversationDetail,
-    loadGraphConversations,
     loadProjectConfig,
     loadProjectWorkspaceConfig,
     materializeTaskCreateResources,
-    openGraphSourceFromCodeMap,
-    openGraphView,
     openProjectCreateDialog,
     openTaskConflictAiConversation,
     openTaskConversation,
@@ -3394,9 +2949,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     renameProjectDisplayName,
     reopenTaskFromConversation,
     requestTaskTerminalCleanupConfirmation,
-    resetGraphWorkspace,
     resolveTaskTerminalCleanupConfirmation,
-    restoreGraphConversation,
     restoreProject,
     restoreTaskConversation,
     retryTaskModelPush,
@@ -3405,8 +2958,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     saveProjectConfig,
     saveProjectWorkspaceConfig,
     saveTaskModelPushServiceTierPreference,
-    scanActiveProjectGraph,
-    searchGraph,
     selectNativeConversation,
     selectNewConversationProject,
     selectProjectCodeWorkspaceMode,

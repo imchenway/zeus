@@ -71,3 +71,13 @@ export function isPathInsideProjectRoot(candidatePath: string, projectRoot: stri
   const relativePath = relative(resolve(projectRoot), resolve(candidatePath));
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativePath.startsWith('/') && !relativePath.startsWith('\\'));
 }
+
+/** 读取历史 JSON 对象；损坏或非对象内容按空上下文处理。 */
+export function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}

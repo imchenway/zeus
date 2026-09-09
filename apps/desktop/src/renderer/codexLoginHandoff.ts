@@ -75,7 +75,7 @@ export async function authenticateCodexWithBrowser(input: {
         input.onLoginId(null);
         // 登录前的运行实例冻结了未认证目录；复用现有代际切换，保留旧实例正在执行的轮次。
         input.onPreparingModels();
-        await input.client.activateCodexConfig();
+        await input.client.activateCodexConfig({ syncSubscriptionModels: true });
         if (!input.isCurrent()) return;
         /** 新实例重新读取真实账号，避免登录前的账号缓存进入成功反馈。 */
         const account = await input.client.loadCodexAccount();

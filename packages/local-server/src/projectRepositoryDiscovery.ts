@@ -2,7 +2,7 @@ import { discoverGitRepositories } from '@zeus/git-core';
 import type { ProjectRepositoryDiscovery } from '@zeus/shared';
 import type { ProjectRepository, ProjectRepositoryRegistrationRepository, SettingRepository, ZeusDatabase, ZeusProjectRecord } from '@zeus/storage';
 
-/** 仓库发现记录与项目其他设置共用持久存储，不复用代码图谱扫描状态。 */
+/** 仓库发现记录与项目其他设置共用持久存储。 */
 const discoverySettingsPrefix = 'project-repository-discovery:';
 
 /** 请求身份用于拒绝目录切换和较新扫描发生后的过期结果。 */

@@ -224,7 +224,7 @@ declare global {
       }>;
       clearNetworkCache: () => Promise<{ cleared: boolean; clearedAt: string }>;
       exportPatchToFile: (patch: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
-      openGraphSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
+      openSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
         opened: boolean;
         filePath: string | null;
         lineStart?: number | null;
@@ -251,8 +251,6 @@ declare global {
         mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
         error?: string;
       }>;
-      exportMermaidDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.mermaid'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
-      exportPlantUmlDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.plantuml'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       notifyAppShellSettingsChanged: (settings: {
         appLanguage: 'zh-CN' | 'en-US';
         appearance: 'light' | 'dark' | 'system';
@@ -284,6 +282,8 @@ declare global {
       onNativeNewConversation: (listener: () => void) => () => void;
       onNativeCloseActiveContextTab: (listener: () => void) => () => void;
       onNativeCloseFrontmostLayer: (listener: () => void) => () => void;
+      /** 系统菜单保持原生网页可见，并返回选择或取消。 */
+      showBrowserMenu: (input: { x: number; y: number; language: 'zh-CN' | 'en-US'; canSplit: boolean }) => Promise<'new_tab' | 'reload' | 'reset_size' | 'close' | null>;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;

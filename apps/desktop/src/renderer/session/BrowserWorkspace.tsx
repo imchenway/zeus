@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
@@ -9,20 +10,24 @@ import { CrosshairSimpleIcon as CrosshairSimple } from '@phosphor-icons/react/di
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
-import { RectangleIcon as Rectangle } from '@phosphor-icons/react/dist/csr/Rectangle';
 import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
+/** 浏览器正文保持原生视图，标签栏可挂到会话顶栏。 */
 interface BrowserWorkspaceProps {
+  /** 会话顶栏的固定挂载位置；独立预览时直接显示在正文上方。 */
+  toolbarHost?: HTMLElement | null;
   conversationId: string;
   initialSnapshot?: ZeusBrowserConversationSnapshot | null;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
   suspended?: boolean;
   expanded?: boolean;
+  /** 窄窗口自动全宽，避免提供点击后没有变化的分栏操作。 */
+  canSplit?: boolean;
   onClose: () => void;
   onToggleExpanded: () => void;
   onResetSize: () => void;
@@ -32,7 +37,9 @@ interface BrowserWorkspaceProps {
 const copy = {
   'zh-CN': {
     title: '内置浏览器',
-    address: '输入网址或搜索内容',
+    address: '输入网址',
+    stop: '停止加载',
+    splitUnavailable: '窗口较窄，已自动全宽显示',
     newTab: '新建标签',
     back: '后退',
     forward: '前进',
@@ -60,7 +67,6 @@ const copy = {
     close: '关闭浏览器',
     expand: '展开浏览器',
     collapse: '恢复左右分栏',
-    resetSize: '恢复默认分栏宽度',
     more: '更多浏览器操作',
     unavailable: '此处无法使用内置浏览器。',
     loading: '正在打开内置浏览器…',
@@ -69,7 +75,9 @@ const copy = {
   },
   'en-US': {
     title: 'Built-in browser',
-    address: 'Enter a URL or search',
+    address: 'Enter a URL',
+    stop: 'Stop loading',
+    splitUnavailable: 'This window is too narrow for split view',
     newTab: 'New tab',
     back: 'Back',
     forward: 'Forward',
@@ -97,7 +105,6 @@ const copy = {
     close: 'Close browser',
     expand: 'Expand browser',
     collapse: 'Restore split view',
-    resetSize: 'Reset split width',
     more: 'More browser actions',
     unavailable: 'The built-in browser is unavailable here.',
     loading: 'Opening the built-in browser…',
@@ -109,6 +116,8 @@ const copy = {
 export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const labels = copy[props.language];
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  /** 标签横向溢出时始终将当前标签带回可见区域。 */
+  const activeTabButtonRef = useRef<HTMLButtonElement | null>(null);
   const focusCursorRef = useRef(0);
   const closedTabIdsRef = useRef(new Set<string>());
   const stageRef = useRef(props.onStageComments);
@@ -125,6 +134,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   });
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
+
+  useEffect(() => {
+    activeTabButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTab?.id, props.toolbarHost]);
 
   useEffect(() => {
     let active = true;
@@ -247,6 +260,25 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     };
   }, [activeTab?.id, commentsOpen, props.conversationId, props.suspended, snapshot?.pendingApprovals.length]);
 
+  /** 使用系统菜单覆盖网页；动作继续复用已有命令和分栏状态。 */
+  async function openMoreMenu(trigger: HTMLButtonElement): Promise<void> {
+    if (moreOpen) return;
+    setMoreOpen(true);
+    try {
+      const rect = trigger.getBoundingClientRect();
+      const action = await window.zeus!.showBrowserMenu({ x: rect.left, y: rect.bottom, language: props.language, canSplit: props.canSplit !== false });
+      if (action === 'new_tab') await addTab();
+      else if (action === 'reload') await command({ action: 'reload' });
+      else if (action === 'reset_size') props.onResetSize();
+      else if (action === 'close') props.onClose();
+    } catch (menuError) {
+      setError(menuError);
+    } finally {
+      setMoreOpen(false);
+      if (trigger.isConnected) trigger.focus();
+    }
+  }
+
   async function command(commandValue: ZeusBrowserCommand): Promise<void> {
     if (!activeTab || !window.zeus?.runBrowserCommand) return;
     setError(null);
@@ -269,11 +301,19 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   }
 
   async function activateTab(tabId: string): Promise<void> {
-    if (window.zeus?.activateBrowserTab) setSnapshot(await window.zeus.activateBrowserTab({ conversationId: props.conversationId, tabId }));
+    try {
+      if (window.zeus?.activateBrowserTab) setSnapshot(await window.zeus.activateBrowserTab({ conversationId: props.conversationId, tabId }));
+    } catch (activationError) {
+      setError(activationError);
+    }
   }
 
   async function addTab(): Promise<void> {
-    if (window.zeus?.openBrowserTab) setSnapshot(await window.zeus.openBrowserTab({ conversationId: props.conversationId }));
+    try {
+      if (window.zeus?.openBrowserTab) setSnapshot(await window.zeus.openBrowserTab({ conversationId: props.conversationId }));
+    } catch (openError) {
+      setError(openError);
+    }
   }
 
   async function closeTab(tabId: string): Promise<void> {
@@ -350,41 +390,57 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     );
   }
 
+  /** 标签由浏览器自身管理，移到顶栏后仍复用原有切换和关闭动作。 */
+  const tabStrip = (
+    <div className="browser-tab-strip">
+      <div className="browser-tabs" role="tablist" aria-label={labels.title}>
+        {snapshot.tabs.map((tab) => (
+          <div key={tab.id} className={`browser-tab-shell ${tab.id === snapshot.activeTabId ? 'selected' : ''}`}>
+            <button
+              ref={tab.id === snapshot.activeTabId ? activeTabButtonRef : undefined}
+              type="button"
+              role="tab"
+              title={tab.url}
+              aria-selected={tab.id === snapshot.activeTabId}
+              className="browser-tab"
+              onClick={() => void activateTab(tab.id)}
+            >
+              <GlobeSimple aria-hidden="true" weight="regular" />
+              <span>{tab.url === 'about:blank' ? labels.newTab : tab.title || tab.url}</span>
+              {tab.loading ? <span className="browser-tab-loading" aria-hidden="true" /> : null}
+            </button>
+            <button type="button" className="browser-tab-close" aria-label={labels.closeTab} title={labels.closeTab} onClick={() => void closeTab(tab.id)}>
+              <span className="browser-tab-close-surface" aria-hidden="true">
+                <X weight="bold" />
+              </span>
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="browser-new-tab" aria-label={labels.newTab} title={labels.newTab} onClick={() => void addTab()}>
+        <Plus aria-hidden="true" weight="bold" />
+      </button>
+      <span className="browser-tab-strip-spacer" aria-hidden="true" />
+      <span className="browser-view-actions">
+        <button
+          type="button"
+          disabled={props.canSplit === false}
+          aria-label={props.expanded ? labels.collapse : labels.expand}
+          title={props.canSplit === false ? labels.splitUnavailable : props.expanded ? labels.collapse : labels.expand}
+          onClick={props.onToggleExpanded}
+        >
+          {props.expanded ? <ArrowsInSimple aria-hidden="true" weight="regular" /> : <ArrowsOutSimple aria-hidden="true" weight="regular" />}
+        </button>
+        <button type="button" aria-label={labels.close} title={labels.close} onClick={props.onClose}>
+          <X aria-hidden="true" weight="regular" />
+        </button>
+      </span>
+    </div>
+  );
+
   return (
     <section className="browser-workspace" aria-label={labels.title}>
-      <div className="browser-tab-strip">
-        <div className="browser-tabs" role="tablist" aria-label={labels.title}>
-          {snapshot.tabs.map((tab) => (
-            <div key={tab.id} className={`browser-tab-shell ${tab.id === snapshot.activeTabId ? 'selected' : ''}`}>
-              <button type="button" role="tab" aria-selected={tab.id === snapshot.activeTabId} className="browser-tab" onClick={() => void activateTab(tab.id)}>
-                <GlobeSimple aria-hidden="true" weight="regular" />
-                <span>{tab.title || tab.url || labels.newTab}</span>
-                {tab.loading ? <span className="browser-tab-loading" aria-hidden="true" /> : null}
-              </button>
-              <button type="button" className="browser-tab-close" aria-label={labels.closeTab} title={labels.closeTab} onClick={() => void closeTab(tab.id)}>
-                <span className="browser-tab-close-surface" aria-hidden="true">
-                  <X weight="bold" />
-                </span>
-              </button>
-            </div>
-          ))}
-        </div>
-        <button type="button" className="browser-new-tab" aria-label={labels.newTab} title={labels.newTab} onClick={() => void addTab()}>
-          <Plus aria-hidden="true" weight="bold" />
-        </button>
-        <span className="browser-tab-strip-spacer" aria-hidden="true" />
-        <span className="browser-view-actions">
-          <button type="button" aria-label={props.expanded ? labels.collapse : labels.expand} title={props.expanded ? labels.collapse : labels.expand} onClick={props.onToggleExpanded}>
-            {props.expanded ? <ArrowsInSimple aria-hidden="true" weight="regular" /> : <ArrowsOutSimple aria-hidden="true" weight="regular" />}
-          </button>
-          <button type="button" aria-label={labels.resetSize} title={labels.resetSize} onClick={props.onResetSize}>
-            <Rectangle aria-hidden="true" weight="regular" />
-          </button>
-          <button type="button" aria-label={labels.close} title={labels.close} onClick={props.onClose}>
-            <SidebarSimple aria-hidden="true" weight="regular" />
-          </button>
-        </span>
-      </div>
+      {props.toolbarHost ? createPortal(tabStrip, props.toolbarHost) : tabStrip}
 
       {activeTab.annotationMode && draftComments.length > 0 ? (
         <div className="browser-toolbar browser-annotation-toolbar">
@@ -430,11 +486,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
             <button type="button" aria-label={labels.forward} title={labels.forward} disabled={!activeTab.canGoForward} onClick={() => void command({ action: 'forward' })}>
               <ArrowRight aria-hidden="true" weight="regular" />
             </button>
-            <button type="button" aria-label={labels.reload} title={labels.reload} onClick={() => void command(activeTab.loading ? { action: 'stop' } : { action: 'reload' })}>
+            <button
+              type="button"
+              aria-label={activeTab.loading ? labels.stop : labels.reload}
+              title={activeTab.loading ? labels.stop : labels.reload}
+              onClick={() => void command(activeTab.loading ? { action: 'stop' } : { action: 'reload' })}
+            >
               {activeTab.loading ? <X aria-hidden="true" weight="regular" /> : <ArrowsClockwise aria-hidden="true" weight="regular" />}
             </button>
           </span>
           <form className="browser-address-form" onSubmit={(event) => void navigate(event)}>
+            <GlobeSimple aria-hidden="true" />
             <input
               value={addressFocused ? address : displayBrowserAddress(address)}
               aria-label={labels.address}
@@ -464,36 +526,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               <span className="browser-annotate-label">{activeTab.annotationMode ? labels.annotatingMode : labels.annotate}</span>
               <kbd>⌘.</kbd>
             </button>
-            <span
-              className="browser-more"
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
-              }}
-            >
-              <button type="button" className="browser-more-trigger" aria-label={labels.more} title={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
-                <DotsThreeVertical aria-hidden="true" weight="bold" />
-              </button>
-              {moreOpen ? (
-                <span className="browser-more-menu" role="menu" aria-label={labels.more}>
-                  <button type="button" role="menuitem" onClick={() => void addTab().finally(() => setMoreOpen(false))}>
-                    {labels.newTab}
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => void command({ action: 'reload' }).finally(() => setMoreOpen(false))}>
-                    {labels.reload}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMoreOpen(false);
-                      props.onClose();
-                    }}
-                  >
-                    {labels.close}
-                  </button>
-                </span>
-              ) : null}
-            </span>
+            <button type="button" className="browser-more-trigger" aria-label={labels.more} title={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => void openMoreMenu(event.currentTarget)}>
+              <DotsThreeVertical aria-hidden="true" weight="bold" />
+            </button>
           </span>
         </div>
       )}

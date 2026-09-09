@@ -1,3 +1,4 @@
+import type { TaskTemplateRecord, CreateTaskTemplateRequest, CreateTaskFromTemplateRequest } from './taskContracts.js';
 import type { TaskBoardMoveRequest, TaskBoardViewSettings, TaskBoardViewSnapshot, TaskManagementStatus } from '@zeus/shared';
 import type {
   CreateTaskRequest,
@@ -18,6 +19,10 @@ import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTra
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
 
 export interface TaskApiClient {
+  loadTaskTemplates: (projectId?: string) => Promise<TaskTemplateRecord[]>;
+  createTaskTemplate: (input: CreateTaskTemplateRequest) => Promise<TaskTemplateRecord>;
+  createTaskFromTemplate: (templateId: string, input: CreateTaskFromTemplateRequest) => Promise<TaskRecord>;
+
   createTask: (input: CreateTaskRequest) => Promise<TaskRecord>;
   loadTasks: (input: LoadTasksRequest) => Promise<TaskRecord[]>;
   loadTaskBoard: (projectId: string) => Promise<TaskBoardViewSnapshot>;
@@ -52,6 +57,36 @@ export interface TaskApiClient {
 
 export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient {
   return {
+    loadTaskTemplates: (projectId) => transport.request<TaskTemplateRecord[]>(`/api/task-templates${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    createTaskTemplate: async (input) => {
+      const body = await buildWorkManagementCommandRequest({
+        commandType: workManagementClientCommandTypes.taskTemplateCreate,
+        scopeKind: 'project',
+        scopeId: () => input.projectId ?? 'global',
+        operationPrefix: 'task_template_',
+        value: input,
+      });
+      return transport.request<TaskTemplateRecord>('/api/task-templates', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+    createTaskFromTemplate: async (templateId, input) => {
+      const { idempotencyKey, ...body } = input;
+      const commandBody = await buildWorkManagementCommandRequest({
+        commandType: workManagementClientCommandTypes.taskFromTemplateCreate,
+        scopeKind: 'task',
+        scopeId: (operationIdentity) => operationIdentity,
+        operationPrefix: 'task_',
+        operationSeed: idempotencyKey,
+        value: body,
+      });
+      return transport.request<TaskRecord>(`/api/task-templates/${templateId}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify(commandBody),
+      });
+    },
+
     createTask: async (input) => {
       const { idempotencyKey, ...body } = input;
       const commandBody = await buildWorkManagementCommandRequest({

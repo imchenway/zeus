@@ -1,7 +1,7 @@
 import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
-import { getGitBranchHead, getGitRepositoryContext, type ProjectGitAction } from '@zeus/git-core';
+import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
 import {
   parseCanonicalRequestUserInputQuestions,
   renderTaskPushLayoutText,
@@ -48,7 +48,7 @@ import { type FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { parseJsonObject } from './codeIntelligenceGraphStore.js';
+import { parseJsonObject } from './localServerPlatformSupport.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
@@ -260,7 +260,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     taskStages,
     taskWorkspaces,
     tasks,
-    toGraphConversationHistoryItem,
+    toConversationHistoryItem,
     trustedConversationAttachmentRoots,
   } = dependencies;
 
@@ -1054,7 +1054,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return {
       statusCode: 201,
       body: {
-        conversation: toGraphConversationHistoryItem(updatedConversation),
+        conversation: toConversationHistoryItem(updatedConversation),
         ...(runtimeSession ? { runtimeSession } : {}),
         ...(runtimeError ? { runtimeError } : {}),
       },
@@ -1221,7 +1221,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const questions = source?.itemType === 'agentMessage' && source.status === 'completed' ? asyncMessageQuestions(parseJsonObject(source.payloadJson)) : [];
       const validation = validateCanonicalRequestUserInputAnswers({ questions }, answer.answers);
       if (!questions.length || validation || !Object.keys(answer.answers ?? {}).length) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', validation ?? '无法确认原问题及完整回答。');
-      questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
+      // 原题始终来自已落账的 Provider 记录，不接受客户端传入的题目内容。
+      questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, questions, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
       content = formatAsyncQuestionAnswer(questions, questionAnswer.answers);
       if ((questionAnswer.asNewMessage ? 'queue' : 'steer_now') !== delivery || (!questionAnswer.asNewMessage && body.expectedTurnId !== questionAnswer.providerTurnId)) {
         throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答必须进入原轮次；作为新消息发送需要明确选择。');
@@ -2798,7 +2799,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         );
       } else if (body.source === 'conflict_resolution') {
         const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
-        const conflictPath = typeof body.conflictPath === 'string' ? body.conflictPath.trim() : '';
+        /** 从交付页传来的文件名必须原样进入 AI 准备流程。 */
+        const conflictPath = typeof body.conflictPath === 'string' ? body.conflictPath : '';
         const conflictContent = typeof body.conflictContent === 'string' ? body.conflictContent : null;
         const conflictFingerprintValue = (body as Record<string, unknown>).conflictFingerprint;
         const conflictFingerprint = typeof conflictFingerprintValue === 'string' ? conflictFingerprintValue.trim() : '';
@@ -2808,7 +2810,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (conflictContent.length > 2_000_000) throw nativeApiError('ZEUS_TASK_CONFLICT_TOO_LARGE', '当前冲突草稿过大，无法交给 AI 处理。');
         const resolved = resolveTaskIntegrationRequest(task.id, integrationId);
         if ('error' in resolved) throw nativeApiError(resolved.error.error, resolved.error.message);
-        if (resolved.project.id !== project.id || resolved.integration.state !== 'conflicted' || !resolved.integration.conflictFiles.includes(conflictPath)) {
+        // 冲突成员资格以现存 Git 工作区为准，不能继续拿旧记录中的显示转义路径校验。
+        if (
+          resolved.project.id !== project.id ||
+          resolved.integration.state !== 'conflicted' ||
+          !resolved.integration.integrationPath ||
+          !(await readTaskIntegrationConflictPaths(resolved.integration.integrationPath)).includes(conflictPath)
+        ) {
           throw nativeApiError('ZEUS_TASK_INTEGRATION_NOT_CONFLICTED', '当前合入没有这项待 AI 处理的冲突。');
         }
         const permissionMode = parseConversationPermissionMode(body.permissionMode);

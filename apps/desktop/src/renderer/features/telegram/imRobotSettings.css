@@ -56,7 +56,7 @@
     flex-shrink: 0;
   }
 
-  /* 平台栏只突出可用入口；其他平台以原生展开目录展示，不伪造品牌图标。 */
+  /* 平台栏只展示当前可接入的 Telegram。 */
   .im-platform-bar {
     display: flex;
     align-items: center;
@@ -94,53 +94,6 @@
     color: #fff;
     inline-size: 20px;
     block-size: 20px;
-  }
-  .im-platform-directory {
-    margin-inline-start: auto;
-  }
-  .im-platform-directory summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-block-size: 32px;
-    color: var(--zeus-product-muted);
-    cursor: pointer;
-    list-style: none;
-    border-radius: 6px;
-    padding-inline: 6px;
-  }
-  .im-platform-directory summary::-webkit-details-marker {
-    display: none;
-  }
-  .im-platform-directory summary svg {
-    inline-size: 14px;
-    block-size: 14px;
-    transition: transform 120ms ease;
-  }
-  .im-platform-directory[open] {
-    flex-basis: 100%;
-  }
-  .im-platform-directory[open] summary {
-    justify-content: flex-end;
-  }
-  .im-platform-directory[open] summary svg {
-    transform: rotate(180deg);
-  }
-  .im-platform-options {
-    padding: 12px 0 0;
-    color: var(--zeus-product-muted);
-    font-size: 12px;
-  }
-  .im-platform-options ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 24px;
-    padding: 12px 0 0;
-    margin: 0;
-    list-style: none;
-  }
-  .im-platform-options li {
-    color: var(--zeus-product-text);
   }
 
   /* 反馈独立出现，加载失败不再同时显示正在加载。 */
@@ -321,13 +274,9 @@
     font-size: 12px;
     line-height: 1.65;
   }
-  .im-preset-row select {
+  .im-preset-row .im-select-control {
     inline-size: 250px;
     max-inline-size: 100%;
-  }
-  /* 原生下拉箭头被全局重置隐藏，在此恢复平台自带的选择提示。 */
-  select {
-    appearance: auto;
   }
   .im-access-note {
     display: flex;
@@ -416,10 +365,8 @@
   .im-danger-action {
     border-color: transparent;
     color: var(--zeus-danger-text);
-    padding-inline: 0;
   }
-  :is(.im-secondary-action, .im-danger-action):hover:not(:disabled),
-  .im-platform-directory summary:hover {
+  :is(.im-secondary-action, .im-danger-action):hover:not(:disabled) {
     background: var(--zeus-control-bg-hover);
     color: var(--zeus-product-text);
   }
@@ -435,7 +382,7 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  :is(button, a, input, select, summary):focus-visible {
+  :is(button, a, input, select):focus-visible {
     outline: 2px solid var(--im-accent);
     outline-offset: 3px;
     box-shadow: none;
@@ -528,6 +475,30 @@
   }
   .im-form-field :is(input, select) {
     inline-size: 100%;
+  }
+  /* 保留原生选择交互，用独立箭头统一三个下拉框的右侧留白，避免系统箭头贴边。 */
+  .im-select-control {
+    position: relative;
+    display: block;
+    min-inline-size: 0;
+  }
+  :is(.im-form-field, .im-setting-row) .im-select-control select {
+    appearance: none;
+    inline-size: 100%;
+    padding-inline-end: 36px;
+  }
+  .im-select-control > svg {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: 12px;
+    inline-size: 14px;
+    block-size: 14px;
+    transform: translateY(-50%);
+    color: var(--zeus-product-muted);
+    pointer-events: none;
+  }
+  .im-select-control:has(select:disabled) > svg {
+    opacity: 0.5;
   }
   .im-field-hint {
     display: flex;
@@ -650,7 +621,7 @@
     .im-preset-row {
       grid-template-columns: 20px minmax(0, 1fr);
     }
-    .im-preset-row select {
+    .im-preset-row .im-select-control {
       grid-column: 2;
       inline-size: 100%;
     }
@@ -708,9 +679,9 @@
     inline-size: calc(100% - 32px);
   }
 }
-/* 用户减少动态效果时关闭开关与展开箭头的过渡。 */
+/* 用户减少动态效果时关闭开关过渡。 */
 @media (prefers-reduced-motion: reduce) {
-  .macos-ai-app.zeus-shell .im-robot-settings :is(.im-switch, .im-switch::before, summary svg) {
+  .macos-ai-app.zeus-shell .im-robot-settings :is(.im-switch, .im-switch::before) {
     transition: none;
   }
 }

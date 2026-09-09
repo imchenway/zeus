@@ -1,5 +1,5 @@
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
-import { classifyAssistantMessage } from '@zeus/shared';
+import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -26,7 +26,7 @@ import { type ConversationFileLocation, type ConversationOpenTarget, type Conver
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary } from './SessionReasoningSummary.js';
-import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -100,6 +100,7 @@ const sessionConnectionSymbol = (
   </span>
 );
 
+/** 会话错误和消息状态共用警示图标，不依赖背景颜色区分提示。 */
 const turnFailureSymbol = (
   <span className="session-turn-failure-icon" aria-hidden="true">
     <svg viewBox="0 0 24 24">
@@ -1220,18 +1221,41 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
   );
 }
 
+/** 沿用既有会话提示外观，具体状态的文案、操作和播报级别由调用方保留。 */
+function ConversationNotice(props: { children: ReactNode; label: string; role?: 'alert' | 'status'; deliveryState?: 'unconfirmed' | 'failed' | 'provider-stop-pending' | 'interaction-recovery-pending' }) {
+  return (
+    <section
+      className={`session-turn-failure${props.deliveryState ? ' session-message-delivery-feedback' : ''}`}
+      data-state={props.deliveryState}
+      role={props.role ?? 'alert'}
+      aria-live={props.role === 'status' ? 'polite' : 'assertive'}
+      aria-label={props.label}
+    >
+      {turnFailureSymbol}
+      <div className="session-turn-failure-message">{props.children}</div>
+    </section>
+  );
+}
+
+/** 模型返回错误保留独立名称，避免与消息发送状态混淆。 */
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
+  /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
   return (
-    <article className="session-turn-failure" role="alert" aria-label={zh ? '模型返回错误' : 'Model error'}>
-      {turnFailureSymbol}
-      <VisibleApplicationError className="session-turn-failure-message" error={props.failure} language={zh ? 'zh-CN' : 'en'} />
-    </article>
+    <ConversationNotice label={zh ? '模型返回错误' : 'Model error'}>
+      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    </ConversationNotice>
   );
 }
 
 export type TranscriptRow =
-  | { kind: 'item'; key: string; item: NativeSessionItemBuffer }
+  | {
+      kind: 'item';
+      key: string;
+      item: NativeSessionItemBuffer;
+      /** 结构化回答与 PLAN 已答题共用回显，作为处理过程行参与分组。 */
+      questionAnswer?: AnsweredRequestHistoryProps['request'];
+    }
   | { kind: 'answered_request'; key: string; request: NativePendingRequest }
   | {
       kind: 'activity';
@@ -1343,6 +1367,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       />
     );
   }
+  // 已送达的异步回答直接使用 PLAN 已答题组件，不再套用户消息及其操作栏。
+  if (row.questionAnswer && row.item.status === 'completed' && !row.item.optimistic) return <AnsweredRequestHistory request={row.questionAnswer} language={options.props.language} />;
   if (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question') {
     return <AsyncQuestionMessage item={row.item} state={options.props.state} language={options.props.language} onOpen={row.item.status === 'completed' ? options.props.onOpenAsyncQuestion : undefined} />;
   }
@@ -1377,7 +1403,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
-        questionAnswer={asyncQuestionAnswerHistory(row.item, options.props.state)}
+        questionAnswer={row.questionAnswer}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}
         isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
@@ -1480,22 +1506,25 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
   );
 }
 
+/** 问题暂不可用时保留停止入口，外观与其他会话提示一致。 */
 function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage; turnId: string; onInterrupt?: (turnId: string) => void | Promise<void> }): ReactNode {
+  /** 等待停止完成期间禁用重复操作。 */
   const [stopping, setStopping] = useState(false);
+  /** 沿用当前轮次的停止操作，不改变回答或队列状态。 */
   const stop = () => {
     if (!props.onInterrupt || stopping) return;
     setStopping(true);
     void Promise.resolve(props.onInterrupt(props.turnId)).finally(() => setStopping(false));
   };
   return (
-    <section className="session-message-delivery-feedback" data-state="unconfirmed" role="alert" aria-live="assertive">
+    <ConversationNotice deliveryState="unconfirmed" label={props.language === 'zh-CN' ? '问题暂不可用' : 'Question unavailable'}>
       <span>{props.language === 'zh-CN' ? 'AI 正在等待你的回答，但 Zeus 暂时无法显示可回答的问题。' : 'The AI is waiting for your answer, but Zeus cannot currently display a question you can respond to.'}</span>
       <div className="session-message-delivery-actions">
         <button type="button" disabled={!props.onInterrupt || stopping} onClick={stop}>
           {stopping ? (props.language === 'zh-CN' ? '正在停止…' : 'Stopping…') : props.language === 'zh-CN' ? '停止当前任务' : 'Stop current turn'}
         </button>
       </div>
-    </section>
+    </ConversationNotice>
   );
 }
 
@@ -1521,16 +1550,16 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const localAcceptanceFailure = Boolean(props.item.optimistic && !props.submissionId && props.clientUserMessageId);
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
-      <section className="session-message-delivery-feedback" data-state="interaction-recovery-pending" role="status" aria-live="polite">
+      <ConversationNotice deliveryState="interaction-recovery-pending" role="status" label={props.language === 'zh-CN' ? '正在恢复对话' : 'Restoring conversation'}>
         {props.language === 'zh-CN' ? '正在恢复对话并继续处理你的回答…' : 'Restoring the conversation to continue with your answer…'}
-      </section>
+      </ConversationNotice>
     );
   }
   if (pausedReason === 'provider_stop_pending') {
     return (
-      <section className="session-message-delivery-feedback" data-state="provider-stop-pending" role="status" aria-live="polite">
+      <ConversationNotice deliveryState="provider-stop-pending" role="status" label={props.language === 'zh-CN' ? '正在确认运行状态' : 'Checking run status'}>
         {props.language === 'zh-CN' ? '正在确认上次运行已停止，确认后将自动继续' : 'Confirming the previous run has stopped. This message will continue automatically afterward.'}
-      </section>
+      </ConversationNotice>
     );
   }
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
@@ -1557,7 +1586,7 @@ export function MessageDeliveryOutcomeFeedback(props: {
   };
 
   return (
-    <section className="session-message-delivery-feedback" data-state={feedbackState} role="alert" aria-live="assertive">
+    <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
       <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       <div className="session-message-delivery-actions">
         {(explanation.action === 'sign_in' || explanation.action === 'model_settings' || explanation.action === 'choose_model') && props.onOpenAiSettings ? (
@@ -1625,7 +1654,7 @@ export function MessageDeliveryOutcomeFeedback(props: {
         ) : null}
       </div>
       {actionError ? <VisibleApplicationError error={actionError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
-    </section>
+    </ConversationNotice>
   );
 }
 
@@ -1674,7 +1703,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-/** 轮次过程统一折叠，用户输入始终保留在主会话流，包括同轮中途补充。 */
+/** 问答与执行记录统一进入轮次过程；普通用户输入继续保留在主会话流。 */
 export function projectTranscriptTurnRows(
   rows: readonly TranscriptRow[],
   activeTurnId: string | null = null,
@@ -1688,7 +1717,7 @@ export function projectTranscriptTurnRows(
   const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   const openingUserRowKeyByTurn = new Map<string, string>();
   for (const row of orderedRows) {
-    if (row.kind !== 'item' || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
+    if (row.kind !== 'item' || row.questionAnswer || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
     openingUserRowKeyByTurn.set(row.item.turnId, row.key);
   }
 
@@ -1866,6 +1895,8 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
+  // 异步答复是已回答询问，和 PLAN 答题一样进入处理过程，不再充当开场用户消息。
+  if (row.questionAnswer) return true;
   // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
   if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
@@ -1991,6 +2022,17 @@ export function projectTranscriptRows(
   terminalTurnIds: NativeSessionState['terminalTurnIds'] = {},
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
+  /** 问答关系只计算一次，同时决定卡片内容、所在位置和原问题去重。 */
+  const questionAnswers = new Map(items.map((item) => [item.key, asyncQuestionAnswerHistory(item, items)]));
+  /** 只有能完整展示的有效回答才接管原问题，失败答案保留重新回答入口。 */
+  const answeredQuestionIds = new Set(
+    items.flatMap((item) => {
+      if (!questionAnswers.get(item.key)) return [];
+      /** 已校验的结构化身份不使用正文、时间或当前轮次猜测关联。 */
+      const answer = item.payload.questionAnswer as AsyncQuestionAnswer;
+      return [`${answer.providerTurnId}/${answer.providerItemId}`];
+    }),
+  );
   const candidateActiveTurnId = historyOnly ? null : activeTurnId && items.some((item) => item.turnId === activeTurnId) ? activeTurnId : latestLiveTurnId(items);
   // Provider 可能在终态到达后仍留下一条 in_progress reasoning；终态表优先，不能把旧摘要重新判成当前执行。
   const effectiveActiveTurnId = candidateActiveTurnId && !terminalTurnIds[candidateActiveTurnId] ? candidateActiveTurnId : null;
@@ -2049,13 +2091,15 @@ export function projectTranscriptRows(
       rows.push({ kind: 'answered_request', key: `answered-request:${entry.request.id}`, request: entry.request });
     } else {
       const item = entry.item;
+      // 答案卡片已完整承载原题和选项，不在主会话流重复展示同一个问题。
+      if (itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && answeredQuestionIds.has(`${item.turnId}/${item.providerItemId ?? item.itemId}`)) continue;
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
         // Provider 的状态型 reasoning 仍只显示活动轮最新一条；显式思考详情属于阶段过程，默认收起但不能丢弃。
         if (normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item)) continue;
         if (!isOperationalActivityItem(item)) {
-          rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
+          rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item, questionAnswer: questionAnswers.get(item.key) });
         } else {
           if (emittedActivityStages.has(stageIdentity)) continue;
           emittedActivityStages.add(stageIdentity);

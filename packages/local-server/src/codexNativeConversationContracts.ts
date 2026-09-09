@@ -494,22 +494,6 @@ export interface SnoozeNativeRequestInput {
   requestId: string;
 }
 
-export interface StartNativeEphemeralConversationInput {
-  /** 公开父 Command 派生的稳定子资源身份；Graph 问答不得在重连时改号。 */
-  conversationId?: string;
-  submissionId?: string;
-  projectId: string;
-  projectLocalPath: string;
-  title: string;
-  prompt: string;
-  model: string;
-  skill?: NativeConversationSkillInput;
-  effort?: string;
-  serviceTier?: string | null;
-  idempotencyKey: string;
-  clientUserMessageId: string;
-}
-
 export interface NativeTurnResult {
   conversationId: string;
   providerThreadId: string;

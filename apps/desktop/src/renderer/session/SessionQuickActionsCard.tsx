@@ -302,11 +302,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           className={`session-quick-actions-trigger ${open ? 'selected' : ''}`}
           aria-expanded={open}
           aria-haspopup="dialog"
+          aria-label={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           onClick={() => setOpen((current) => !current)}
         >
           <GitDiff aria-hidden="true" weight="regular" />
-          <span>{zh ? '环境' : 'Environment'}</span>
         </button>
       )}
 

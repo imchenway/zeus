@@ -3,7 +3,7 @@ import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { type MainNavTarget, type SettingsCategory, WorkspacePage } from './WorkspacePage.js';
 
-export { buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
+export { buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
 
 type AppProps = Omit<ComponentProps<typeof WorkspacePage>, 'shellNavigation'>;
 
@@ -64,7 +64,7 @@ function initialMainRoute(props: AppProps): MainNavTarget {
   if (typeof window !== 'undefined' && window.location.hash) return routeFromHash(window.location.hash);
   if (props.initialSecuritySecrets || props.initialReleaseStatus || props.initialSecurityAuditLogs?.length || props.initialLocalError) return 'settings';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret || props.initialArchivedProjects?.length) return 'projects';
-  if (props.initialGitDiff || props.initialGitConfirmation || props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length) return 'projects';
+  if (props.initialGitDiff || props.initialGitConfirmation) return 'projects';
   if ((props.snapshot?.tasks.length ?? 0) > 0) return 'conversations';
   return 'projects';
 }
@@ -75,8 +75,6 @@ function initialSettingsCategory(props: AppProps): SettingsCategory {
   if (props.initialMainNavTarget === 'settings-data') return 'data';
   if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'im';
   if (props.initialRuntimeSettings || props.initialRuntimeStatus) return 'runtime';
-  if (props.initialSecuritySecrets || props.initialSecurityAuditLogs?.length) return 'security';
-  if (props.initialGitConfirmation && props.initialMainNavTarget === 'settings') return 'git';
   if (props.initialReleaseStatus) return 'release';
   return 'general';
 }
@@ -85,7 +83,7 @@ function routeFromHash(hash: string | undefined): MainNavTarget {
   const target = hash?.replace(/^#/, '');
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
-  if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
+  if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target.startsWith('settings-')) return 'settings';
@@ -101,4 +99,4 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];

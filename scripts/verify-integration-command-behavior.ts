@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import Fastify from 'fastify';
 import type { ModelConnectionRecord, ProjectModelSelection } from '../packages/ai-runtime/src/index.js';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
-import { ArtifactStore, CommandDeliveryRepository, createZeusDatabase, type AppendAuditLogInput } from '../packages/storage/src/index.js';
+import { ArtifactStore, CommandDeliveryRepository, SettingRepository, createZeusDatabase, type AppendAuditLogInput } from '../packages/storage/src/index.js';
 import {
   IntegrationCommandApplication,
   integrationCommandInputSha256,
@@ -17,7 +17,7 @@ import {
 } from '../packages/local-server/src/integrationCommandApplication.js';
 import { registerIntegrationCommandRoutes } from '../packages/local-server/src/integrationCommandRoutes.js';
 import type { ModelConnectionService, SaveModelConnectionRequest } from '../packages/local-server/src/modelConnectionService.js';
-import type { ZentaoCredentialService } from '../packages/local-server/src/zentaoCredentialService.js';
+import { createZentaoCredentialService, type ZentaoCredentialService } from '../packages/local-server/src/zentaoCredentialService.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-integration-command-probe-'));
 const observed: Record<string, unknown> = {};
@@ -32,6 +32,37 @@ try {
     const deliveries = new CommandDeliveryRepository(db);
     const artifacts = new ArtifactStore(db, join(probeRoot, 'artifacts'), () => now().toISOString(), { minimumFreeBytes: 0 });
     const application = new IntegrationCommandApplication({ db, deliveries, artifacts, redactSensitiveText, now, maximumProbeEntries: 4, probeReplayTtlMs: 1_000 });
+    /** 用临时数据库和内存凭据验证显式查看密码，不读取系统钥匙串。 */
+    const credentialSecrets = new Map<string, string>();
+    /** 复用真实凭据服务，验证列表与查看入口的隔离。 */
+    const credentials = createZentaoCredentialService({
+      settings: new SettingRepository(db),
+      secretStore: {
+        getSecret: async (account) => credentialSecrets.get(account),
+        setSecret: async (account, value) => {
+          credentialSecrets.set(account, value);
+        },
+        deleteSecret: async (account) => {
+          credentialSecrets.delete(account);
+        },
+      },
+      save: async () => undefined,
+    });
+    /** 独立实例用于检查密码保存、查看与清除。 */
+    const instance = await credentials.create({ baseUrl: 'https://settings-probe.invalid', account: 'settings-probe', password: secretSentinel });
+    assertProbe(!JSON.stringify(await credentials.list()).includes(secretSentinel), '实例列表不得返回密码。');
+    assertProbe((await credentials.revealPassword(instance.id)) === secretSentinel, '显式查看必须返回所属实例的已存密码。');
+    /** 任意实例标识不能越过存在性验证。 */
+    let missingInstanceRejected = false;
+    try {
+      await credentials.revealPassword('missing');
+    } catch {
+      missingInstanceRejected = true;
+    }
+    assertProbe(missingInstanceRejected, '不存在的实例不得用于读取凭据。');
+    await credentials.clearPassword(instance.id);
+    assertProbe((await credentials.revealPassword(instance.id)) === null, '清除后查看必须返回空值。');
+    observed.zentaoPassword = { listRedacted: true, explicitRead: true, missingInstanceRejected, cleared: true };
     const auditEntries: AppendAuditLogInput[] = [];
     const secrets = new Map<string, string>();
     let modelCreateInvocations = 0;
@@ -367,6 +398,7 @@ function fakeZentaoService(): ZentaoCredentialService {
     update: async (id) => record(id),
     remove: async () => undefined,
     clearPassword: async (id) => ({ ...record(id), passwordConfigured: false }),
+    revealPassword: async () => null,
     verify: async () => ({ ok: true, code: 'verified', checkedAt: now().toISOString(), message: 'probe verified' }),
   };
 }
