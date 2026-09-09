@@ -3,6 +3,9 @@ import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
+import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { ListIcon as List } from '@phosphor-icons/react/dist/csr/List';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -780,7 +783,9 @@ export function SidebarNav(props: {
                       aria-expanded={expanded}
                       onClick={() => toggleProjectCollapsed(project.id, expanded)}
                     >
-                      <span aria-hidden="true">›</span>
+                      <span aria-hidden="true">
+                        <CaretRight weight="regular" />
+                      </span>
                     </button>
                   }
                   disclosurePlacement="trailing"
@@ -801,7 +806,7 @@ export function SidebarNav(props: {
                   actions={
                     <>
                       <button type="button" className="project-settings-button" aria-label={`${copy.projectSettingsPrefix}${copy.labelSeparator}${project.name}`} onClick={() => props.onOpenProjectSection(project, 'project-settings')}>
-                        ⚙
+                        <GearSix aria-hidden="true" weight="regular" />
                       </button>
                       <div className={`project-row-actions ${menuOpen ? 'open' : ''} ${menuClosing ? 'closing' : ''}`.trim()} onKeyDown={(event) => handleProjectMoreMenuKeyDown(event, project.id)}>
                         <button
@@ -820,7 +825,7 @@ export function SidebarNav(props: {
                           aria-controls={menuVisible ? `project-more-menu-${project.id}` : undefined}
                           onClick={(event) => toggleProjectMoreMenu(project.id, event.currentTarget)}
                         >
-                          ···
+                          <DotsThreeVertical aria-hidden="true" weight="regular" />
                         </button>
                       </div>
                       {projectMorePopover ? (projectMenuPortalHost ? createPortal(projectMorePopover, projectMenuPortalHost) : projectMorePopover) : null}
@@ -863,7 +868,9 @@ export function SidebarNav(props: {
       <AutomaticUpdateIndicatorButton state={props.automaticUpdateIndicator} language={props.appLanguage} onOpen={props.onOpenAutomaticUpdate} />
       <section className="project-global-settings" aria-label={copy.globalSettingsLabel}>
         <button type="button" className={props.activeNavTarget === 'settings' ? 'active' : ''} onClick={() => props.onNavigate('settings')}>
-          <span aria-hidden="true">⚙</span>
+          <span aria-hidden="true">
+            <GearSix weight="regular" />
+          </span>
           {copy.settings}
         </button>
       </section>

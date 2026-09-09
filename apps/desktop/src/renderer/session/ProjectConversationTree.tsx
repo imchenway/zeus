@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -231,7 +232,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       onClick={() => props.onToggleStatusGroup?.(project.projectId, statusGroup.statusId)}
                     >
                       <span className="session-conversation-status-group-chevron" aria-hidden="true">
-                        ›
+                        <CaretRight weight="regular" />
                       </span>
                       <strong>{statusGroup.statusLabel}</strong>
                     </button>

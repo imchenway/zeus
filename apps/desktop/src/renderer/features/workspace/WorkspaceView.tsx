@@ -829,7 +829,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
 
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
           <section className="workspace-view workspace-view-project-git">
-            <ProjectGitWorkbench key={selectedProject.id} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
+            <ProjectGitWorkbench
+              key={selectedProject.id}
+              project={selectedProject}
+              projects={snapshot.projects}
+              client={props.nativeConversationClient}
+              language={appShellSettings.appLanguage}
+              onSelectProject={(project) => openProjectSection(project, 'git')}
+            />
           </section>
         ) : null}
 

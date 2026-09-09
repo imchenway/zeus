@@ -147,6 +147,7 @@ export type ProjectGitAction =
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
+  | { type: 'apply_patch'; patch: string; reverse?: boolean }
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
@@ -155,6 +156,8 @@ export type ProjectGitAction =
   | { type: 'checkout_revision'; revision: string; smart?: boolean }
   | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean }
   | { type: 'delete_branch'; branchName: string }
+  | { type: 'revert'; revision: string }
+  | { type: 'cherry_pick'; revision: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean }

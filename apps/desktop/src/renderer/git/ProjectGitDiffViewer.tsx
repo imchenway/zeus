@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type UIEvent as ReactUIEvent } fr
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
-import type { DashboardClient, GitDiffHunk, GitDiffLine, GitDiffSummary } from '../apiClient.js';
+import type { DashboardClient, GitDiffHunk, GitDiffLine, GitDiffSummary, GitFileDiff } from '../apiClient.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SyntaxHighlightedLine, useSyntaxHighlightedSegments, type HighlightedLine } from '../code/SyntaxHighlightedCode.js';
 
@@ -114,7 +114,14 @@ export function ProjectGitDiffWindow(props: {
   );
 }
 
-export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean }) {
+export function SideBySideDiff(props: {
+  diff: GitDiffSummary | null;
+  zh: boolean;
+  title?: string;
+  fill?: boolean;
+  onHunkAction?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void;
+  hunkActionLabel?: string;
+}) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
@@ -143,6 +150,15 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
           </button>
         </span>
       </header>
+      {props.onHunkAction && file.hunks.length > 0 ? (
+        <div className="project-git-diff-hunk-actions" aria-label={props.zh ? '代码块操作' : 'Hunk actions'}>
+          {file.hunks.map((hunk, index) => (
+            <button key={`${hunk.header}:${index}`} type="button" onClick={() => props.onHunkAction?.(file, hunk, index)} title={hunk.header}>
+              {props.hunkActionLabel ?? (props.zh ? '应用代码块' : 'Apply hunk')} {index + 1}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {mode === 'side-by-side' ? (
         <div className="project-git-diff-side-by-side">
           <div className="project-git-diff-side-head">
