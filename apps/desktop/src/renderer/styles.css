@@ -1812,7 +1812,7 @@ a {
 .macos-ai-app .extension-source-tabs button[aria-pressed='true'] {
   background: var(--zeus-product-panel);
   color: var(--zeus-product-text);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+  box-shadow: none;
   font-weight: 600;
 }
 
@@ -4583,7 +4583,7 @@ a {
 }
 .project-git-diff-mode button.is-active {
   background: var(--zeus-product-panel);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+  box-shadow: none;
   color: var(--zeus-product-text);
 }
 .project-git-diff-mode svg {
@@ -6170,7 +6170,7 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app .workspace-view-project-settings .project-settings-section-tabs button[aria-selected='true'] {
   background: var(--zeus-product-panel);
-  box-shadow: 0 1px 2px color-mix(in oklab, black 10%, transparent);
+  box-shadow: none;
   color: var(--zeus-control-text);
 }
 
@@ -8684,7 +8684,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .startup-failure-button.is-primary {
   background: light-dark(#6155d8, #b9adff);
   border-color: light-dark(#574bc8, #c5bbff);
-  box-shadow: 0 1px 2px rgb(35 25 82 / 0.12);
+  box-shadow: none;
   color: light-dark(#fff, #29214d);
 }
 
@@ -14100,7 +14100,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   background: var(--zeus-product-accent);
   border: 1px solid color-mix(in oklch, var(--zeus-product-accent) 86%, black);
   border-radius: 10px;
-  box-shadow: 0 10px 22px color-mix(in oklch, var(--zeus-product-accent) 20%, transparent);
+  box-shadow: none;
   color: white;
   display: inline-flex;
   font-size: 12px;
@@ -14113,9 +14113,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .task-empty-state-primary-action:hover:not(:disabled),
 .macos-ai-app .task-empty-state-primary-action:focus-visible {
-  box-shadow:
-    var(--zeus-control-focus),
-    0 10px 22px color-mix(in oklch, var(--zeus-product-accent) 20%, transparent);
+  box-shadow: var(--zeus-control-focus);
   outline: none;
 }
 
@@ -17746,7 +17744,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-table-status-segment[aria-pressed='true'] {
   background: var(--zeus-product-panel-muted);
-  box-shadow: 0 1px 2px oklch(30% 0.004 255 / 0.08);
+  box-shadow: none;
   color: var(--zeus-product-text);
 }
 
@@ -20852,7 +20850,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .project-code-mode-toolbar nav button.active {
   color: var(--zeus-control-text);
   background: var(--zeus-product-panel);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+  box-shadow: none;
 }
 .project-code-mode-toolbar nav button:focus-visible {
   outline: 2px solid var(--zeus-control-focus);
@@ -20913,7 +20911,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-radius: 7px;
   color: var(--zeus-control-muted-text);
   background: var(--zeus-product-panel);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-table-board-settings-trigger svg {
@@ -20987,7 +20985,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-radius: 7px;
   color: var(--zeus-control-text);
   background: var(--zeus-product-panel);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-board-command-row .task-board-command-actions > button svg {
@@ -21343,7 +21341,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-color: var(--zeus-segment-line);
   border-radius: 7px;
   background: var(--zeus-segment-bg);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 3%) inset;
+  box-shadow: none;
 }
 
 .macos-ai-app .task-table-status-segment,
@@ -21355,13 +21353,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-table-view-pill[aria-pressed='true'] {
   border-color: var(--zeus-segment-line);
   background: var(--zeus-segment-selected-bg);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 7%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-table-new-task-button {
   min-block-size: 30px;
   border-radius: 6px;
-  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-table-board-settings-trigger {
@@ -21372,7 +21370,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-color: var(--zeus-control-border);
   border-radius: 6px;
   background: var(--zeus-native-surface, var(--zeus-product-panel));
-  box-shadow: 0 1px 1px rgb(0 0 0 / 4%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-table-board-settings-trigger span {
@@ -21723,7 +21721,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-control-text);
   border-color: var(--zeus-segment-line);
   background: var(--zeus-segment-selected-bg);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 7%);
+  box-shadow: none;
 }
 
 .macos-ai-app .task-board-settings-dialog {
