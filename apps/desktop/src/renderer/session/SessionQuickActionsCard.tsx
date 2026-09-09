@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
@@ -73,7 +74,8 @@ interface SourceRow {
   resource?: ConversationResource;
 }
 
-const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1440;
+/** 为环境卡预留 332px 后，仍能容纳 768px 正文和两侧留白。 */
+const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1200;
 const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
@@ -276,10 +278,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     props.onOpenGitReview(taskId, workspace.id, 'commit');
   }
 
+  /** 优先携带会话绑定的工作区，避免列表暂缺时误选其他分支。 */
   function openDelivery(): void {
     if (!taskId || !props.onOpenGitDelivery) return;
     setOpen(false);
-    props.onOpenGitDelivery(taskId, workspace?.id ?? props.conversation.workspaceId ?? null);
+    props.onOpenGitDelivery(taskId, props.conversation.workspaceId ?? workspace?.id ?? null);
   }
 
   function openCommands(): void {
@@ -311,7 +314,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           onClick={() => setOpen((current) => !current)}
         >
-          <GitDiff aria-hidden="true" weight="regular" />
+          <Desktop aria-hidden="true" weight="regular" />
         </button>
       )}
 
