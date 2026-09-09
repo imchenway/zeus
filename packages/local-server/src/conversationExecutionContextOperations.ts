@@ -131,7 +131,9 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     });
     const persistedContext = contextualSubmission ? parseJsonObject(contextualSubmission.inputJson).context : undefined;
     const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
-    const environment = conversation.environmentId ? taskEnvironments.getById(conversation.environmentId) : undefined;
+    /** 旧会话可能仅由工作区关联环境；路径查询与实际恢复必须读取同一身份。 */
+    const environmentId = conversation.environmentId ?? workspace?.environmentId;
+    const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
     const project = projects.getById(conversation.projectId);
     if (conversation.taskId) {
       const conflictExecution = taskConflictExecutionForConversation(conversation);
@@ -141,12 +143,12 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         const projectPath = project?.localPath ? resolve(project.localPath) : null;
         return projectPath && existsSync(projectPath) && statSync(projectPath).isDirectory() ? projectPath : null;
       }
-      const projectPath = project?.localPath ? resolve(project.localPath) : null;
-      const environmentPath = environment?.rootPath ? resolve(environment.rootPath) : null;
-      if (environmentPath && existsSync(environmentPath) && environmentPath !== projectPath) return environmentPath;
-      const workspacePath = workspace?.worktreePath ? resolve(workspace.worktreePath) : null;
-      if (workspacePath && existsSync(workspacePath) && workspacePath !== projectPath) return workspacePath;
-      return null;
+      /** 目录暂时不存在仍保留隔离身份，不能把排队快照冻结到项目主目录。 */
+      const task = tasks.getById(conversation.taskId);
+      if (!project || !task || !workspace || executionMode !== 'worktree') return null;
+      /** 和实际恢复采用同一原路径或确定性重建路径。 */
+      const executionRoot = resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
+      return executionRoot !== resolve(project.localPath) && isPathInsideRoot(executionRoot, join(dirname(resolve(project.localPath)), '.zeus-worktrees')) ? executionRoot : null;
     }
     return isNativeApiRecord(persistedContext) && typeof persistedContext.projectLocalPath === 'string' && persistedContext.projectLocalPath.trim()
       ? persistedContext.projectLocalPath
@@ -164,12 +166,30 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
   }): Promise<{ projectLocalPath: string; writableRoots: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null> {
     const lockConversation = conversations.getById(input.conversationId);
+    if (!lockConversation) return null;
+    // 共用目录准备可以合并，但各会话自己的归档边界不能被另一条会话的并发恢复绕过。
+    if (lockConversation.archived) {
+      if (input.mode !== 'restore') throw nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+      /** 已归档会话仍沿用任务重新打开流程。 */
+      const task = lockConversation.taskId ? tasks.getById(lockConversation.taskId) : undefined;
+      if (task && taskManagementStatusIsTerminal(task) && !taskConversationReopenInProgressIds.has(lockConversation.id)) {
+        throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', '请先重新打开任务并恢复这条已归档会话。');
+      }
+    }
     const lockKey = `${lockConversation?.projectId ?? 'conversation'}:${lockConversation?.environmentId ?? lockConversation?.workspaceId ?? input.conversationId}`;
     const existing = taskConversationExecutionContextPromises.get(lockKey);
     if (existing) return existing;
     const promise = (async () => {
       const conversation = conversations.getById(input.conversationId);
-      if (!conversation || !conversation.taskId || (conversation.archived && input.mode !== 'restore') || (conversation.providerState === 'archived' && input.mode !== 'restore')) return null;
+      if (!conversation) return null;
+      // 归档是产品会话的继续边界；Provider 内部归档和任务状态不代替这个判断。
+      if (conversation.archived && input.mode !== 'restore') throw nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+      if (!conversation.taskId) {
+        /** 项目会话同样使用所属项目或已记录的路径，Pi 重启后不能退回宿主启动目录。 */
+        const executionRoot = resolveNativeConversationExecutionRoot(conversation);
+        if (!executionRoot || !existsSync(executionRoot) || !statSync(executionRoot).isDirectory()) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录不存在或不可用。');
+        return { projectLocalPath: resolve(executionRoot), writableRoots: [resolve(executionRoot)] };
+      }
       const project = projects.getById(conversation.projectId);
       const task = tasks.getById(conversation.taskId);
       const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
@@ -177,9 +197,6 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
       if (!project || !task) {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task conversation no longer has a recoverable task workspace.');
-      }
-      if (taskManagementStatusIsTerminal(task) && !taskConversationReopenInProgressIds.has(conversation.id)) {
-        throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.');
       }
       const executionMode = taskConversationExecutionWorkspaceMode(conversation, project);
       if (executionMode === 'direct') {
@@ -235,10 +252,9 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       }
       const projectRoot = resolve(project.localPath);
       const worktreeContainerRoot = resolve(join(dirname(projectRoot), '.zeus-worktrees'));
-      const environmentRoot = resolve(
-        environment?.rootPath && resolve(environment.rootPath) !== projectRoot ? environment.rootPath : buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id),
-      );
-      if (environmentRoot === projectRoot || !isPathInsideRoot(environmentRoot, worktreeContainerRoot)) {
+      /** 与入队时冻结的路径一致，旧式单仓会话也优先沿用登记的工作区。 */
+      const environmentRoot = resolveNativeConversationExecutionRoot(conversation);
+      if (!environmentRoot || environmentRoot === projectRoot || !isPathInsideRoot(environmentRoot, worktreeContainerRoot)) {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The recorded task workspace path is unsafe; Zeus will not use the project root as a fallback.');
       }
 
@@ -273,10 +289,20 @@ export function createConversationExecutionContextOperations(dependencies: Conve
             sourceRef,
             sourceBranch: member.sourceBranch,
             existingBranch: true,
+            // 只处理已结束工作区在原登记位置留下的回收残留；普通工作区仍拒绝目录占用。
+            preserveUnregisteredDirectory: (member.state === 'merged' || member.state === 'reclaimed') && member.worktreePath !== null && resolve(member.worktreePath) === memberWorktreePath,
             ...(member.remoteName && member.remoteBranch ? { existingRemoteRef: `${member.remoteName}/${member.remoteBranch}` } : {}),
             worktreePath: memberWorktreePath,
           });
           prepared.push({ workspace: member, prepared: restored });
+          if (restored.preservedDirectory) {
+            recordTaskEvent({
+              taskId: task.id,
+              eventType: 'task.conversation.worktree.preserved',
+              title: `任务工作区按分支恢复，原目录已保留：${restored.preservedDirectory}`,
+              payload: { conversationId: conversation.id, workspaceId: member.id, worktreePath: restored.worktreePath, preservedDirectory: restored.preservedDirectory },
+            });
+          }
         }
         if (needsEnvironmentContainer) overlayTaskEnvironmentSharedPaths(environmentRoot, sharedPaths);
       } catch (error) {

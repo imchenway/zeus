@@ -20,6 +20,8 @@ const projectId = `project_${randomUUID().replaceAll('-', '')}`;
 const providerThreadId = `thread_${randomUUID().replaceAll('-', '')}`;
 const firstProviderTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
 const secondProviderTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
+/** 额度故障恢复后必须在同一线程建立的新轮次。 */
+const quotaRecoveryTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
 let runningServer: RunningZeusLocalServer | null = null;
 
 try {
@@ -121,9 +123,10 @@ try {
     completedAt: new Date().toISOString(),
     items: [],
   };
+  /** 为正常续发、额度恢复和两种回显顺序分别预留轮次。 */
   const restartedProvider = createRestartProbeManager({
     providerThreadId,
-    turnIds: [secondProviderTurnId, ...Array.from({ length: 4 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
+    turnIds: [secondProviderTurnId, quotaRecoveryTurnId, ...Array.from({ length: 4 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
     initialTurns: [completedFirstTurn],
   });
   runningServer = await startProbeServer(restartedProvider.manager, 'after-restart');
@@ -158,6 +161,48 @@ try {
   const queue = Array.isArray(snapshotBody.queue) ? snapshotBody.queue : [];
   const secondQueueEntry = queue.find((entry) => isRecord(entry) && entry.clientMessageId === secondClientMessageId);
   assertBehavior(!secondQueueEntry || secondQueueEntry.status !== 'queued', '新消息仍停留在 queued，未真正进入 Provider。');
+
+  // 复现额度耗尽后线程保留 systemError；恢复额度不应要求重建产品会话或重发失败轮次。
+  await waitFor(async () => {
+    /** Provider 接收请求早于服务落库，必须等第二轮的接纳事实已可查询。 */
+    const activeQueue = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+    return isRecord(activeQueue.body.state) && activeQueue.body.state.type === 'active' && activeQueue.body.state.turnId === secondProviderTurnId;
+  }, '第二轮尚未持久接纳。');
+  await restartedProvider.failLatestTurn();
+  // 用户是在界面显示本轮失败后恢复额度，先等待真实服务处理完失败通知。
+  await waitFor(async () => {
+    /** 队列查询使用服务的实际运行投影，不用固定延迟猜测事件处理完成。 */
+    const failedQueue = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+    return isRecord(failedQueue.body.state) && (failedQueue.body.state.type === 'idle' || failedQueue.body.state.type === 'paused');
+  }, '服务尚未收口额度失败轮次。');
+  /** 用户额度恢复后明确提交的下一条消息。 */
+  const continueClientMessageId = `message_${randomUUID().replaceAll('-', '')}`;
+  /** 沿用正常消息入口及真实统一队列，只控制外部 Provider 回执。 */
+  const continueInput = { content: '额度已恢复，继续', idempotencyKey: `queue_${randomUUID().replaceAll('-', '')}`, clientUserMessageId: continueClientMessageId, delivery: 'queue' };
+  /** 原会话中的新消息接纳结果。 */
+  const continued = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: commandRequest({
+      commandType: 'conversation.message.submit',
+      scopeKind: 'product_conversation',
+      scopeId: conversationId,
+      operationIdentity: continueClientMessageId,
+      input: continueInput,
+      inputSha256: conversationDispatchInputSha256(continueInput),
+    }),
+  });
+  assertBehavior(continued.status === 202, `额度恢复后的继续消息接纳失败：${continued.status}`);
+  try {
+    await waitFor(() => restartedProvider.startTurnInputs.length === 2, '上一轮已失败结束，但 systemError 仍阻止新消息发起下一轮。', 8_000);
+  } catch (error) {
+    /** 失败时保留真实队列原因，避免把探针超时混同为具体产品根因。 */
+    const currentQueue = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+    /** 快照用于定位旧失败轮次与新提交之间的持久关联。 */
+    const currentSnapshot = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/snapshot-v2`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${JSON.stringify({ queue: currentQueue.body, snapshot: currentSnapshot.body })}`);
+  }
+  assertBehavior(restartedProvider.startTurnInputs[1]?.clientUserMessageId === continueClientMessageId, '额度恢复后重发了旧消息。');
+  assertBehavior(restartedProvider.startTurnInputs[1]?.threadId === providerThreadId, '额度恢复后丢失了原线程身份。');
 
   // 两种到达顺序都走真实消息命令、事件投影和队列调度；未知请求不能被重发。
   for (const echoOrder of ['before', 'after'] as const) {
@@ -204,6 +249,7 @@ try {
         manualRetryRequired: false,
         lostReceiptEchoOrders: ['before', 'after'],
         queuedFollowupsSentOnce: true,
+        quotaFailureCanContinue: true,
         temporaryDatabaseCleanup: 'finally',
       },
       null,
@@ -250,6 +296,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   publishUserMessage(index: number): Promise<void>;
   /** 结束活动轮以唤醒下一条消息。 */
   completeTurn(index: number): Promise<void>;
+  /** 控制真实服务收到的失败终态通知，不调用付费模型。 */
+  failLatestTurn(): Promise<void>;
 } {
   const generationId = `generation_${randomUUID().replaceAll('-', '')}`;
   const capabilities: CodexCapabilitiesSnapshot = {
@@ -323,7 +371,10 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   };
   const threadSnapshot = (): CodexThreadSnapshot => ({
     id: input.providerThreadId,
-    status: { type: turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? 'active' : 'idle', ...(turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? { activeFlags: [] } : {}) },
+    status: {
+      type: turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? 'active' : turns.at(-1)?.status === 'failed' ? 'systemError' : 'idle',
+      ...(turns.some((turn) => String(turn.status).toLowerCase() === 'active') ? { activeFlags: [] } : {}),
+    },
     turns: [...turns],
     providerSettings: { generationId, sequence: 1, model: 'gpt-5.6-sol', effort: 'low', serviceTier: null },
   });
@@ -390,6 +441,16 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     },
     publishUserMessage,
     completeTurn,
+    /** 失败与回显共用递增序号，避免后续事件被当作重复通知。 */
+    async failLatestTurn() {
+      /** 故障只结束最新轮次，旧历史和线程身份保持真实关联。 */
+      const turn = turns.at(-1);
+      assertBehavior(turn, '没有可结束的 Provider 轮次。');
+      turn.status = 'failed';
+      turn.completedAt = new Date().toISOString();
+      turn.error = { message: '账户额度已用尽', codexErrorInfo: 'usageLimitExceeded' };
+      await emit('turn/completed', { threadId: input.providerThreadId, turn });
+    },
     get readThreadCalls() {
       return readThreadCalls;
     },
@@ -423,6 +484,7 @@ async function requestJson(server: RunningZeusLocalServer, path: string, input: 
   return { status: response.status, body: text ? (JSON.parse(text) as JsonObject) : {} };
 }
 
+/** 等待同步或真实 HTTP 状态，避免固定延迟掩盖恢复竞态。 */
 async function waitFor(condition: () => boolean | Promise<boolean>, message: string, timeoutMs = 5_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {

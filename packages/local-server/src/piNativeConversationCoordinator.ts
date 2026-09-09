@@ -51,8 +51,9 @@ import type {
 import { projectConversationTurnFailure } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
-import type { NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
+import type { CreateCodexNativeConversationCoordinatorOptions, NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
 import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
+import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
@@ -104,6 +105,8 @@ interface PiRunContext {
 }
 
 export interface CreatePiNativeConversationCoordinatorOptions {
+  /** 各模型共用工作目录恢复与产品归档边界。 */
+  ensureExecutionContext: CreateCodexNativeConversationCoordinatorOptions['ensureExecutionContext'];
   db: ZeusDatabase;
   commandDeliveries: CommandDeliveryRepository;
   conversations: ConversationRepository;
@@ -269,6 +272,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const existingConversation = options.conversations.getById(input.conversationId);
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
+    }
+    if (existingConversation?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    if (existingConversation && !input.holdDispatch) {
+      /** 切换模型后首次派发也先恢复原任务目录，再准备工具和模型请求。 */
+      const executionContext = await options.ensureExecutionContext({ conversationId: existingConversation.id, mode: 'dispatch' });
+      if (executionContext) input = { ...input, cwd: executionContext.projectLocalPath };
     }
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const rawPathReferences = orderedAttachments.flatMap((attachment) => (attachment.localPath ? [{ name: attachment.name, path: attachment.localPath }] : []));
@@ -790,7 +799,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     const createdAt = options.now();
-    const cwd = context?.cwd ?? resolveConversationCwd(input.conversation);
+    /** 续发和重启恢复都使用当前产品工作区，不根据首条消息猜测目录。 */
+    const executionContext = await options.ensureExecutionContext({ conversationId: input.conversation.id, mode: 'dispatch' });
+    if (!executionContext) throw piError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录尚未准备完成。');
+    const cwd = executionContext.projectLocalPath;
+    if (context && resolve(context.cwd) !== resolve(cwd)) {
+      // 已运行的原生会话不可静默改到另一目录；由统一模型切换链路处理真正的工作区变化。
+      throw piError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '当前模型会话的工作目录与任务记录不一致。');
+    }
     const skillRoot = input.skill ? resolveSkillResourceRoot(input.skill) : null;
     const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...(skillRoot ? [skillRoot] : [])]);
     let attachmentInput: PiAttachmentResolution = { attachments: input.attachments ?? [], images: [], pathReferences: [], allowedRoots: allowedResourceRoots };
@@ -1072,6 +1088,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function queueHeldMessage(input: {
+    /** 入队时保留统一路由选定的目录身份，不在此恢复或猜测工作目录。 */
+    cwd: string;
     /** 原异步问题的答复关联。 */
     questionAnswer?: AsyncQuestionAnswer;
     conversation: ZeusConversationWithMessagesRecord;
@@ -1096,10 +1114,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
-    const first = options.submissions.getFirstByConversation(input.conversation.id);
-    const firstInput = first ? asRecord(JSON.parse(first.inputJson)) : {};
-    const firstContext = asRecord(firstInput.context);
-    const cwd = typeof firstContext.projectLocalPath === 'string' ? firstContext.projectLocalPath : process.cwd();
+    if (options.conversations.getRecordById(input.conversation.id)?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    const cwd = input.cwd;
     const createdAt = options.now();
     const submission = options.submissions.createOrGet({
       id: input.submissionId,
@@ -1151,7 +1167,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   async function dispatchNextQueued(conversationId: string): Promise<void> {
     if ([...runs.values()].some((run) => run.conversationId === conversationId)) return;
     const conversation = options.conversations.getById(conversationId);
-    if (!conversation?.nativeSessionId || conversation.agentKind !== 'pi') return;
+    if (!conversation?.nativeSessionId || conversation.archived || conversation.agentKind !== 'pi') return;
     const next = options.submissions.listQueueByConversation(conversationId).find((submission) => submission.status === 'queued' && !submission.providerTurnId);
     if (!next || next.executionSnapshotId) return;
     const persisted = asRecord(JSON.parse(next.inputJson));
@@ -1191,6 +1207,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     clientUserMessageId: string;
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
   }) {
+    if (options.conversations.getRecordById(input.conversation.id)?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     const run = runs.get(input.expectedTurnId);
     if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 插话目标不是当前执行轮次。');
     const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
@@ -1209,6 +1226,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       createdAt,
       dispatchedAt: createdAt,
     });
+    // 队首引导复用既有提交时，先占住派发态，防止异步等待期间被下一轮队列再次选中。
+    if (submission.status === 'queued') options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt });
     projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
@@ -1238,6 +1257,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         nativeSessionId: context.session.nativeSessionId,
         nativeTurnId: input.expectedTurnId,
       });
+      options.submissions.updateStatus(submission.id, 'paused', { pausedReason: isPiProviderExplicitRejection(error) ? 'runtime_rejected' : 'outcome_unknown', error: projectConversationTurnFailure(error), updatedAt: options.now() });
+      await options.db.save();
+      publish('conversation.queue.changed', input.conversation.id, {});
       throw error;
     }
     try {
@@ -1261,6 +1283,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         nativeSessionId: context.session.nativeSessionId,
         nativeTurnId: accepted.nativeRunId,
       });
+      options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'outcome_unknown', error: projectConversationTurnFailure(error), updatedAt: options.now() });
+      await options.db.save();
+      publish('conversation.queue.changed', input.conversation.id, {});
       throw error;
     }
     publish('conversation.queue.changed', input.conversation.id, { turnId: run.providerTurnId, submissionId: submission.id });
@@ -1989,6 +2014,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
   }
 
+  /** 恢复产品归档标记，工作目录在下一次实际派发前统一准备。 */
   async function restoreArchivedConversation(input: { conversationId: string }): Promise<void> {
     const conversation = requirePiConversation(input.conversationId);
     if (!conversation.archived) return;
@@ -1997,6 +2023,88 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     publish('conversation.thread.unarchived', conversation.id, {
       providerState: conversation.providerState,
       agentKind: 'pi',
+    });
+  }
+
+  /** 只恢复用户明确选择的暂停原因；实际发送仍由统一队列负责。 */
+  async function resumeQueue(input: { conversationId: string; reason: 'interrupted' | 'recovery_required' }): Promise<void> {
+    /** 本地状态与当前执行内核都必须确认上一轮已经结束。 */
+    const conversation = requirePiConversation(input.conversationId);
+    if (conversation.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    if ([...runs.values()].some((run) => run.conversationId === conversation.id) || options.turns.getLatestActiveByConversation(conversation.id) || options.requests.listPendingByConversation(conversation.id).length > 0) {
+      throw piError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', '上一轮尚未结束，请先检查处理状态。');
+    }
+    /** 未知送达优先阻塞；不能通过继续按钮消除原消息的核对要求。 */
+    const submissions = options.submissions.listByConversation(conversation.id);
+    if (submissions.some((submission) => submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown')) {
+      throw piError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '消息是否送达尚未确认，请先检查处理状态。');
+    }
+    /** 只改变相应的暂停项，不连带重发已失败的历史轮次。 */
+    const paused = submissions.filter((submission) => submission.status === 'paused' && submission.pausedReason === input.reason);
+    if (paused.length === 0) throw piError('ZEUS_NATIVE_QUEUE_NOT_INTERRUPTED', '没有可按此操作继续的暂停消息。');
+    if (paused.some((submission) => !hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission))) {
+      throw piError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '暂停消息缺少明确的未发送证据，不能自动重发。');
+    }
+    await options.ensureExecutionContext({ conversationId: conversation.id, mode: 'recover_queue' });
+    // 目录准备期间可能有新的状态变化，必须重新核对原暂停项后才修改。
+    if (
+      options.conversations.getRecordById(conversation.id)?.archived ||
+      options.turns.getLatestActiveByConversation(conversation.id) ||
+      options.requests.listPendingByConversation(conversation.id).length > 0 ||
+      paused.some((submission) => {
+        /** 同一毫秒内也可能变化，必须同时复验暂停原因和写前证据。 */
+        const current = options.submissions.getById(submission.id);
+        return !current || current.updatedAt !== submission.updatedAt || current.status !== 'paused' || current.pausedReason !== input.reason || !hasUnwrittenSubmissionEvidence(options.commandDeliveries, current);
+      })
+    ) {
+      throw piError('ZEUS_NATIVE_QUEUE_STALE', '会话或暂停消息已变化，请刷新后继续。');
+    }
+    options.db.transaction(() => {
+      for (const submission of paused) options.submissions.updateStatus(submission.id, 'queued');
+      options.conversations.updateAgentRuntime(conversation.id, { providerState: 'ready', status: 'open' });
+    });
+    await options.db.save();
+    publish('conversation.queue.changed', conversation.id, {});
+  }
+
+  /** Pi 的队首纯文本引导沿用原提交身份，不误发到 Codex。 */
+  async function sendQueuedNow(input: { conversationId: string; submissionId: string }) {
+    /** 同一队首、同一活动轮次和同一模型配置才允许引导。 */
+    const conversation = requirePiConversation(input.conversationId);
+    /** 统一队列保存的原提交。 */
+    const submission = options.submissions.getById(input.submissionId);
+    if (!submission || submission.conversationId !== conversation.id || submission.status !== 'queued') throw piError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '这条消息已不在队列中。');
+    if (options.submissions.listQueueByConversation(conversation.id)[0]?.id !== submission.id) throw piError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。');
+    /** 当前正在运行的 Pi 轮次。 */
+    const run = [...runs.values()].find((entry) => entry.conversationId === conversation.id);
+    if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '当前没有可以引导的 Pi 轮次。');
+    /** 资源类输入继续进入下一轮，不能只发送文字而丢失附件。 */
+    const persisted = asRecord(JSON.parse(submission.inputJson));
+    if (
+      persisted.taskPushLayout ||
+      persisted.skill ||
+      persisted.conversationContext ||
+      persisted.browserCommentContent ||
+      (Array.isArray(persisted.attachments) && persisted.attachments.length > 0) ||
+      (Array.isArray(persisted.browserComments) && persisted.browserComments.length > 0)
+    ) {
+      throw piError('ZEUS_PI_STEER_RESOURCES_UNSUPPORTED', 'Pi 当前轮次只支持纯文本引导，附带资源的消息请保留在队列中。');
+    }
+    /** 换模型的排队消息不能插入旧模型的轮次。 */
+    const snapshot = submission.executionSnapshotId ? options.execution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
+    /** 当前模型的冻结配置。 */
+    const segment = options.execution.currentSegment(conversation.id);
+    /** 路由指纹包含模型、权限和工作目录。 */
+    const currentSnapshot = segment?.executionSnapshotId ? options.execution.getExecutionSnapshot(segment.executionSnapshotId) : undefined;
+    if (!snapshot || snapshot.routeFingerprint !== currentSnapshot?.routeFingerprint) throw piError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '这条消息使用不同的执行配置，请等待下一轮发送。');
+    if (!hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission)) throw piError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '消息是否送达尚未确认，请先检查处理状态。');
+    return steerMessage({
+      conversation,
+      submissionId: submission.id,
+      content: stringArg(persisted.text, '消息内容'),
+      expectedTurnId: run.providerTurnId,
+      idempotencyKey: submission.idempotencyKey,
+      clientUserMessageId: submission.clientMessageId,
     });
   }
 
@@ -2016,6 +2124,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     submitMessage,
     queueHeldMessage,
     steerMessage,
+    sendQueuedNow,
+    resumeQueue,
     archiveConversation,
     restoreArchivedConversation,
     async interruptTurn(input: { conversation: ZeusConversationWithMessagesRecord; providerTurnId: string }): Promise<{ submissionId: string | null }> {
@@ -2454,12 +2564,6 @@ function isPersistedPiMessageEvidence(message: { source: string; providerThreadI
   } catch {
     return false;
   }
-}
-
-function resolveConversationCwd(conversation: ZeusConversationWithMessagesRecord): string {
-  const first = conversation.messages.find((message) => message.role === 'user');
-  const metadata = first ? asRecord(JSON.parse(first.metadataJson || '{}')) : {};
-  return typeof metadata.cwd === 'string' ? metadata.cwd : process.cwd();
 }
 
 /** 为一次完整 Assistant 响应生成稳定且不会与同轮其他响应冲突的展示阶段身份。 */

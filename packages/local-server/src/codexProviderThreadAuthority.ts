@@ -2,9 +2,10 @@ import type { CodexAppServerManager, CodexResponsesRuntime, CodexThreadRuntimeSt
 import type { ConversationSubmissionRepository, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
-import { coordinatorError, isRecord, requireString, serializeError } from './codexNativeConversationPolicy.js';
+import { coordinatorError, isRecord, requireString, serializeError, snapshotConfirmsIdleProviderThread } from './codexNativeConversationPolicy.js';
 
-type ProviderThreadAuthority = { type: 'active'; turnId: string; status: Extract<CodexThreadRuntimeStatus, { type: 'active' }> } | { type: 'idle'; status: Extract<CodexThreadRuntimeStatus, { type: 'idle' | 'notLoaded' }> };
+/** 可继续的失败线程仍保留 Provider 原始状态，不伪造为成功。 */
+type ProviderThreadAuthority = { type: 'active'; turnId: string; status: Extract<CodexThreadRuntimeStatus, { type: 'active' }> } | { type: 'idle'; status: Extract<CodexThreadRuntimeStatus, { type: 'idle' | 'notLoaded' | 'systemError' }> };
 
 interface ProviderActiveObserver {
   conversationId: string;
@@ -91,7 +92,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
   }
 
   function requiresProviderTurnProjection(conversation: ZeusConversationWithMessagesRecord, providerStatus: CodexThreadRuntimeStatus): boolean {
-    if (providerStatus.type === 'active') return true;
+    if (providerStatus.type === 'active' || providerStatus.type === 'systemError') return true;
     // 未知写入需要读取已有轮次寻找原提交身份，不能仅靠线程空闲推断未发送。
     if (options.submissions.listByConversation(conversation.id).some((submission) => submission.submissionOutcome === 'outcome_unknown')) return true;
     const state = options.runStates.get(conversation.id) ?? options.inferRunState(conversation);
@@ -223,9 +224,6 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (!providerStatus) {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread omitted its authoritative runtime status.');
     }
-    if (providerStatus.type === 'systemError') {
-      throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', 'Provider thread is in systemError state.');
-    }
     // 空闲 Provider + 本地安全边界已经足以允许下一轮派发。完整轮次历史属于投影面，
     // 不能继续作为每次“继续”的同步前置；只有任一侧仍有未终结轮次时才必须追平。
     if (requiresProviderTurnProjection(conversation, providerStatus)) {
@@ -234,6 +232,10 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     assertCurrent(conversation.id, providerThreadId, generationId);
     const current = options.requireConversation(conversation.id);
     const snapshot = options.projectedProviderThreadSnapshot(conversation.id, metadata);
+    // 额度或单轮错误不永久封住线程；先核对真实轮次，未知或仍在执行时继续阻止派发。
+    if (providerStatus.type === 'systemError' && !snapshotConfirmsIdleProviderThread(snapshot)) {
+      throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', '模型线程仍有错误，尚未确认上一轮已经结束。');
+    }
     if (!generationId) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread has no authoritative runtime generation.');
     options.reconcileConversationSnapshot(current, snapshot, generationId, { preserveUnsentQueue: true });
     const state = options.runStates.get(conversation.id) ?? options.inferRunState(options.requireConversation(conversation.id));
@@ -255,7 +257,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (first.type === 'active' && hasCurrentSubscription(providerThreadId)) return first;
     const confirmed = first.type === 'active' ? first : await readAndProject(options.requireConversation(conversation.id));
     if (confirmed.type === 'active' && hasCurrentSubscription(providerThreadId)) return confirmed;
-    if (confirmed.status.type === 'idle' && hasCurrentSubscription(providerThreadId)) return confirmed;
+    if (confirmed.type === 'idle' && confirmed.status.type !== 'notLoaded' && hasCurrentSubscription(providerThreadId)) return confirmed;
 
     const responsesRuntime = await options.responsesRuntimeFor(context);
     assertOpen();
@@ -286,7 +288,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     options.persistThreadProviderSettings(conversation.id, resumed);
     const afterResume = await readAndProject(options.requireConversation(conversation.id));
     if (afterResume.type === 'active') return afterResume;
-    if (afterResume.status.type !== 'idle') {
+    if (afterResume.status.type === 'notLoaded') {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread remained notLoaded after resume.');
     }
     return afterResume;

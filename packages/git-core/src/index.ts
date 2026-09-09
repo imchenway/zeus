@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -104,6 +104,8 @@ export interface PrepareTaskWorktreeInput {
   worktreePath?: string;
   includeLocalChanges?: boolean;
   ignoredPaths?: string[];
+  /** 仅恢复已交付或已回收的任务时，允许完整保留失去 Git 登记的残留目录后重建。 */
+  preserveUnregisteredDirectory?: boolean;
 }
 
 export interface PreparedTaskWorktree {
@@ -115,6 +117,8 @@ export interface PreparedTaskWorktree {
   headSha: string;
   reused: boolean;
   localChangesApplied: boolean;
+  /** 原目录完整保留的位置；上层必须记录，不能把残留文件静默当作已恢复的代码。 */
+  preservedDirectory?: string;
 }
 
 export interface TaskWorkspaceReview {
@@ -549,12 +553,18 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   }
 
   const worktreePath = input.worktreePath ? resolve(input.worktreePath) : buildTaskWorktreePath(context.topLevel, input.projectSlug, input.taskCode, input.workspaceId);
-  /** 既有目录只允许为空；不能把遗留文件、其他工作区或符号链接当成本次创建产物。 */
+  /** 先识别原目录；任何读取失败都不能当成目录不存在。 */
   const existingPath = await lstat(worktreePath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  if (existingPath && (!existingPath.isDirectory() || existingPath.isSymbolicLink() || (await readdir(worktreePath)).length > 0)) {
+  /** 仅普通非空目录可能属于失败回收的残留；符号链接和文件始终拒绝接管。 */
+  const occupiedDirectory = existingPath?.isDirectory() && (await readdir(worktreePath)).length > 0;
+  /** 包括嵌套仓库在内，任何 Git 身份都不能随回收残留移动；递归读取不跟随符号链接。 */
+  const containsGitIdentity = occupiedDirectory && input.existingBranch && input.preserveUnregisteredDirectory && (await readdir(worktreePath, { recursive: true, withFileTypes: true })).some((entry) => entry.name === '.git');
+  /** Git 仍登记该路径时，即使标记文件丢失，也不能移动另一个分支或游离工作区。 */
+  const pathRegistered = context.worktrees.some((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(worktreePath));
+  if (existingPath && (!existingPath.isDirectory() || (occupiedDirectory && (!input.existingBranch || !input.preserveUnregisteredDirectory || containsGitIdentity || pathRegistered)))) {
     throw gitCoreError('ZEUS_TASK_WORKTREE_PATH_OCCUPIED', `任务工作目录已有内容，且未登记为所需分支的工作区；已保留原文件：${worktreePath}`);
   }
   await mkdir(dirname(worktreePath), { recursive: true });
@@ -564,7 +574,22 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   }
   /** 只有 Git 确认创建成功后，才拥有失败回滚时清理该目录的权限。 */
   let worktreeCreated = false;
+  /** 保留目录位于任务环境外，后续回收环境或创建失败回滚都不会删除它。 */
+  let preservedDirectory: string | undefined;
   try {
+    if (occupiedDirectory) {
+      // 分支不可恢复时不移动原文件；只使用本机已有的任务分支或记录的远端引用。
+      if (!localBranchExists && !context.remoteBranches.includes(input.existingRemoteRef?.trim() ?? '')) {
+        throw gitCoreError('ZEUS_TASK_BRANCH_NOT_FOUND', `Existing task branch is not available locally or on its recorded remote: ${branchName}`);
+      }
+      /** 在仓库旁的独立保留区创建唯一目录，不覆盖任何旧备份。 */
+      const preservationRoot = join(dirname(context.topLevel), '.zeus-preserved-worktrees');
+      await mkdir(preservationRoot, { recursive: true });
+      /** 原目录整体移动，保留文件、权限、符号链接和未提交内容。 */
+      const preservedPath = join(await mkdtemp(join(preservationRoot, `${safePathSegment(input.taskCode)}-`)), basename(worktreePath));
+      await rename(worktreePath, preservedPath);
+      preservedDirectory = preservedPath;
+    }
     if (input.existingBranch) {
       if (localBranchExists) {
         await runGit(context.topLevel, ['worktree', 'add', worktreePath, branchName]);
@@ -590,9 +615,11 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
       headSha,
       reused: false,
       localChangesApplied,
+      ...(preservedDirectory ? { preservedDirectory } : {}),
     };
   } catch (error) {
     if (worktreeCreated) await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath, branchName, removeBranch: !input.existingBranch }).catch(() => undefined);
+    if (preservedDirectory) throw new Error(`任务工作区恢复未完成；原目录保留在 ${preservedDirectory}。${commandFailureDetail(error)}`, { cause: error });
     throw error;
   }
 }
