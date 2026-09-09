@@ -1466,9 +1466,10 @@ export function TaskCreateFieldAttachments(props: {
   );
 }
 
+/** 创建和复制共用内容表单，第三方读取完成后回到草稿确认。 */
 export function TaskCreateModal(props: {
   open: boolean;
-  /** 可创建任务的项目列表，复制和新建共用目标选择。 */
+  /** 复制任务可选择目标项目；新建任务沿用打开时的项目。 */
   projects: ProjectRecord[];
   /** 切换项目时由上层解除原项目的父任务选择。 */
   onProjectChange: (projectId: string) => void;
@@ -1499,6 +1500,12 @@ export function TaskCreateModal(props: {
   const interactionOpen = usePresenceOpen() && props.open;
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
+  /** 附加设置由底部操作栏展开，默认不占正文空间。 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 展开后定位附加字段，长表单中也能直接编辑。 */
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  /** 第三方导入独占当前步骤，避免链接读取与任务编辑混在一起。 */
+  const [thirdPartyOpen, setThirdPartyOpen] = useState(false);
   /** 当前草稿的第三方来源链接。 */
   const [thirdPartyLinkInput, setThirdPartyLinkInput] = useState('');
   /** 读取期间锁定草稿，避免提交或编辑与异步回填竞争。 */
@@ -1510,6 +1517,8 @@ export function TaskCreateModal(props: {
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   useEffect(() => {
     if (interactionOpen) {
+      setSettingsOpen(false);
+      setThirdPartyOpen(false);
       setThirdPartyLinkInput('');
       setThirdPartyParsing(false);
       setThirdPartyHint(null);
@@ -1519,8 +1528,18 @@ export function TaskCreateModal(props: {
       pasteShortcutFallbackTokenRef.current += 1;
     };
   }, [interactionOpen]);
+  /** 用户展开设置后滚到字段区，并让键盘从优先级开始操作。 */
+  useEffect(() => {
+    if (!settingsOpen) return;
+    settingsPanelRef.current?.scrollIntoView({ block: 'nearest' });
+    settingsPanelRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+  }, [settingsOpen]);
+  /** 从导入步骤返回后，键盘可直接核对或继续填写任务标题。 */
+  useEffect(() => {
+    if (interactionOpen && !thirdPartyOpen) props.titleInputRef.current?.focus();
+  }, [interactionOpen, thirdPartyOpen, props.titleInputRef]);
   if (!props.open) return null;
-  const describedBy = props.error ? 'task-create-error' : undefined;
+  const describedBy = thirdPartyOpen ? 'task-create-third-party-help' : props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
   /** 附件处理只阻止提交和切换任务结构，不禁用正在输入的文字框。 */
   const textInputDisabled = props.busy || thirdPartyParsing;
@@ -1580,6 +1599,7 @@ export function TaskCreateModal(props: {
     /** 同步占用请求身份，阻止同一轮事件内的重复解析。 */
     const request = Symbol();
     thirdPartyRequestRef.current = request;
+    setThirdPartyOpen(true);
     setThirdPartyParsing(true);
     setThirdPartyHint(null);
     try {
@@ -1589,6 +1609,7 @@ export function TaskCreateModal(props: {
       if (result.kind === 'ok') {
         props.onApplyThirdPartyTaskInfo(result);
         setThirdPartyHint({ tone: 'ok', text: props.copy.taskCreateThirdPartyApplied(result.title || result.objectId, result.provider, result.attachments.length, result.attachmentFailedCount) });
+        setThirdPartyOpen(false);
       } else if (result.kind === 'login_required') {
         setThirdPartyHint({ tone: 'error', text: props.copy.taskCreateThirdPartyLoginRequired, openUrl: result.sourceUrl });
       } else if (result.kind === 'unsupported') {
@@ -1608,6 +1629,14 @@ export function TaskCreateModal(props: {
         setThirdPartyParsing(false);
       }
     }
+  }
+
+  /** 返回手动填写时注销读取回执，保留链接与草稿，避免迟到结果覆盖编辑。 */
+  function handleThirdPartyBack(): void {
+    thirdPartyRequestRef.current = null;
+    setThirdPartyParsing(false);
+    setThirdPartyHint(null);
+    setThirdPartyOpen(false);
   }
 
   /** 打开失败要留在当前草稿明确提示，不能让登录按钮静默失效。 */
@@ -1706,6 +1735,11 @@ export function TaskCreateModal(props: {
         aria-describedby={describedBy}
         onPaste={handleTaskCreateClipboardPaste}
         onSubmit={(event) => {
+          if (thirdPartyOpen) {
+            event.preventDefault();
+            void handleThirdPartyLinkParse(thirdPartyLinkInput);
+            return;
+          }
           if (interactionBusy) {
             event.preventDefault();
             return;
@@ -1716,247 +1750,62 @@ export function TaskCreateModal(props: {
       >
         <header className="task-create-modal-header">
           <strong id="task-create-modal-title" className="task-create-modal-heading">
-            {props.form.copiedFromTaskId ? (props.copy.taskCountPrefix === 'Tasks' ? 'Copy task' : '复制任务') : props.copy.taskCreateDialogTitle}
+            {thirdPartyOpen ? props.copy.taskCreateThirdPartyLinkLabel : props.form.copiedFromTaskId ? (props.copy.taskCountPrefix === 'Tasks' ? 'Copy task' : '复制任务') : props.copy.taskCreateDialogTitle}
           </strong>
-          <button type="button" className="task-create-modal-close" aria-label={props.copy.taskCreateClose} onClick={props.onClose} disabled={interactionBusy}>
-            ×
-          </button>
+          <div className="task-create-modal-header-actions">
+            {!thirdPartyOpen ? (
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => {
+                  setThirdPartyHint(null);
+                  setThirdPartyOpen(true);
+                }}
+                disabled={interactionBusy}
+              >
+                {props.copy.taskCreateThirdPartyLinkLabel}
+              </Button>
+            ) : null}
+            <button type="button" className="task-create-modal-close" aria-label={props.copy.taskCreateClose} onClick={props.onClose} disabled={interactionBusy}>
+              ×
+            </button>
+          </div>
         </header>
         <div className="task-create-modal-body">
-          <p className="task-flow-context">
-            {props.form.copiedFromTaskId
-              ? props.copy.taskCountPrefix === 'Tasks'
-                ? 'Copy content, tags and attachments into a new task. History and relationships stay with the original.'
-                : '复制正文、标签和附件为新任务，原任务的执行历史和任务关系保留在原处。'
-              : props.copy.taskCountPrefix === 'Tasks'
-                ? 'Describe the task. Choose a model when you push.'
-                : '先描述任务，推送时再选择模型。'}
-          </p>
-          <label className="task-create-field">
-            <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Target project' : '目标项目'}</span>
-            <select value={props.form.projectId} onChange={(event) => props.onProjectChange(event.currentTarget.value)} disabled={interactionBusy} required>
-              {props.projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="task-create-field task-create-title-field">
-            <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
-            <input
-              ref={props.titleInputRef}
-              id="task-create-title-input"
-              className="task-create-title-input"
-              value={props.form.title}
-              placeholder={props.copy.taskCreateTitlePlaceholder}
-              aria-labelledby="task-create-title-label"
-              aria-invalid={props.error ? true : undefined}
-              aria-describedby={props.error ? 'task-create-error' : undefined}
-              onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
-              disabled={textInputDisabled}
-            />
-          </div>
-          <div className="task-create-two-column-row">
-            <div className="task-create-field task-create-type-field">
-              <span id="task-create-type-label">{props.copy.taskCreateTypeLabel}</span>
-              <ZeusSelect
-                size="regular"
-                className="task-create-type-select"
-                ariaLabel={props.copy.taskCreateTypeLabel}
-                value={props.form.taskType}
-                options={taskTypeOptions}
-                onChange={props.onTaskTypeChange}
-                searchable={false}
+          {thirdPartyOpen ? (
+            <div id="task-create-third-party-panel" className="task-create-field task-create-third-party-field">
+              <span id="task-create-third-party-label">{props.copy.taskCreateThirdPartyUrlLabel}</span>
+              <input
+                autoFocus
+                id="task-create-third-party-input"
+                className="task-create-title-input task-create-third-party-input"
+                value={thirdPartyLinkInput}
+                placeholder={props.copy.taskCreateThirdPartyLinkPlaceholder}
+                aria-labelledby="task-create-third-party-label"
+                aria-describedby="task-create-third-party-help task-create-third-party-feedback"
+                aria-invalid={thirdPartyHint?.tone === 'error' ? true : undefined}
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => {
+                  setThirdPartyLinkInput(event.currentTarget.value);
+                  setThirdPartyHint(null);
+                }}
+                onPaste={(event) => {
+                  /** 仅粘贴完整链接才自动读取，逐字输入由按钮或回车确认。 */
+                  const pastedLink = extractThirdPartyTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
+                  if (!pastedLink || interactionBusy) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setThirdPartyLinkInput(pastedLink);
+                  void handleThirdPartyLinkParse(pastedLink);
+                }}
                 disabled={interactionBusy}
               />
-            </div>
-          </div>
-          {props.form.taskType === 'requirement' ? (
-            <div className="task-create-field task-create-description-field">
-              <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
-              <TaskCreateFieldAttachments
-                field="description"
-                attachments={props.form.attachments}
-                copy={props.copy}
-                disabled={interactionBusy}
-                onRemove={props.onRemoveAttachment}
-                onRestoreText={restoreTaskCreateText}
-                onLoadPreview={props.onLoadAttachmentPreview}
-                onOpenAttachment={props.onOpenAttachment}
-              />
-              <textarea
-                id="task-create-description-input"
-                className="task-create-description-input"
-                value={props.form.description}
-                placeholder={props.copy.taskCreateDescriptionPlaceholder}
-                aria-labelledby="task-create-description-label"
-                onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
-                disabled={textInputDisabled}
-              />
-            </div>
-          ) : null}
-          {props.form.taskType === 'defect' ? (
-            <>
-              <div className="task-create-field task-create-description-field">
-                <span id="task-create-defect-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
-                <TaskCreateFieldAttachments
-                  field="defectCurrentState"
-                  attachments={props.form.attachments}
-                  copy={props.copy}
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                />
-                <textarea
-                  id="task-create-defect-current-state-input"
-                  className="task-create-description-input"
-                  value={props.form.defectCurrentState}
-                  placeholder={props.copy.taskCreateCurrentStatePlaceholder}
-                  aria-labelledby="task-create-defect-current-state-label"
-                  onChange={(event) => props.onFormChange('defectCurrentState', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-              <div className="task-create-field task-create-description-field">
-                <span id="task-create-defect-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
-                <TaskCreateFieldAttachments
-                  field="defectExpectedOutcome"
-                  attachments={props.form.attachments}
-                  copy={props.copy}
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                />
-                <textarea
-                  id="task-create-defect-expected-outcome-input"
-                  className="task-create-description-input"
-                  value={props.form.defectExpectedOutcome}
-                  placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
-                  aria-labelledby="task-create-defect-expected-outcome-label"
-                  onChange={(event) => props.onFormChange('defectExpectedOutcome', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-              <div className="task-create-field task-create-description-field">
-                <span id="task-create-defect-reproduction-steps-label">{props.copy.taskCreateReproductionStepsLabel}</span>
-                <TaskCreateFieldAttachments
-                  field="defectReproductionSteps"
-                  attachments={props.form.attachments}
-                  copy={props.copy}
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                />
-                <textarea
-                  id="task-create-defect-reproduction-steps-input"
-                  className="task-create-description-input"
-                  value={props.form.defectReproductionSteps}
-                  placeholder={props.copy.taskCreateReproductionStepsPlaceholder}
-                  aria-labelledby="task-create-defect-reproduction-steps-label"
-                  onChange={(event) => props.onFormChange('defectReproductionSteps', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-            </>
-          ) : null}
-          {props.form.taskType === 'optimization' ? (
-            <>
-              <div className="task-create-field task-create-description-field">
-                <span id="task-create-optimization-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
-                <TaskCreateFieldAttachments
-                  field="optimizationCurrentState"
-                  attachments={props.form.attachments}
-                  copy={props.copy}
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                />
-                <textarea
-                  id="task-create-optimization-current-state-input"
-                  className="task-create-description-input"
-                  value={props.form.optimizationCurrentState}
-                  placeholder={props.copy.taskCreateCurrentStatePlaceholder}
-                  aria-labelledby="task-create-optimization-current-state-label"
-                  onChange={(event) => props.onFormChange('optimizationCurrentState', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-              <div className="task-create-field task-create-description-field">
-                <span id="task-create-optimization-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
-                <TaskCreateFieldAttachments
-                  field="optimizationExpectedOutcome"
-                  attachments={props.form.attachments}
-                  copy={props.copy}
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                />
-                <textarea
-                  id="task-create-optimization-expected-outcome-input"
-                  className="task-create-description-input"
-                  value={props.form.optimizationExpectedOutcome}
-                  placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
-                  aria-labelledby="task-create-optimization-expected-outcome-label"
-                  onChange={(event) => props.onFormChange('optimizationExpectedOutcome', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-            </>
-          ) : null}
-          <div className="task-create-options">
-            <div className="task-create-field task-create-third-party-field">
-              <span id="task-create-third-party-label">{props.copy.taskCreateThirdPartyLinkLabel}</span>
-              <div className="task-create-third-party-row">
-                <input
-                  id="task-create-third-party-input"
-                  className="task-create-title-input task-create-third-party-input"
-                  value={thirdPartyLinkInput}
-                  placeholder={props.copy.taskCreateThirdPartyLinkPlaceholder}
-                  aria-labelledby="task-create-third-party-label"
-                  onChange={(event) => {
-                    setThirdPartyLinkInput(event.currentTarget.value);
-                    setThirdPartyHint(null);
-                  }}
-                  onPaste={(event) => {
-                    /** 仅粘贴完整链接才自动读取，逐字输入由按钮或回车确认。 */
-                    const pastedLink = extractThirdPartyTaskLink(safelyReadClipboardData(event.clipboardData, 'text/plain'));
-                    if (!pastedLink || interactionBusy) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setThirdPartyLinkInput(pastedLink);
-                    void handleThirdPartyLinkParse(pastedLink);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !interactionBusy) {
-                      event.preventDefault();
-                      void handleThirdPartyLinkParse(thirdPartyLinkInput);
-                    }
-                  }}
-                  disabled={interactionBusy}
-                />
-                <Button
-                  variant="secondary"
-                  size="regular"
-                  className="task-create-third-party-parse-button"
-                  busy={thirdPartyParsing}
-                  disabled={interactionBusy || thirdPartyParsing || !thirdPartyLinkInput.trim()}
-                  onClick={() => void handleThirdPartyLinkParse(thirdPartyLinkInput)}
-                >
-                  {thirdPartyParsing ? props.copy.taskCreateThirdPartyParsing : props.copy.taskCreateThirdPartyParse}
-                </Button>
-              </div>
-              <small className={`task-create-third-party-hint${thirdPartyHint ? ` task-create-third-party-hint-${thirdPartyHint.tone}` : ''}`} role={thirdPartyHint ? 'status' : undefined}>
+              <small id="task-create-third-party-help" className="task-create-third-party-hint">
+                {props.copy.taskCreateThirdPartyLinkHelp}
+              </small>
+              <small id="task-create-third-party-feedback" className={`task-create-third-party-hint${thirdPartyHint ? ` task-create-third-party-hint-${thirdPartyHint.tone}` : ''}`} role="status">
                 {thirdPartyHint
                   ? [
                       thirdPartyHint.text,
@@ -1966,74 +1815,293 @@ export function TaskCreateModal(props: {
                         </button>
                       ) : null,
                     ]
-                  : props.copy.taskCreateThirdPartyLinkHelp}
+                  : thirdPartyParsing
+                    ? props.copy.taskCreateThirdPartyParsing
+                    : null}
               </small>
             </div>
-            <div className="task-create-field task-create-priority-field">
-              <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
-              <ZeusSelect
-                size="regular"
-                className="task-create-priority-select"
-                ariaLabel={props.copy.taskCreatePriorityLabel}
-                value={props.form.priority}
-                options={props.copy.taskCreatePriorityOptions}
-                onChange={props.onPriorityChange}
-                searchable={false}
-                disabled={interactionBusy}
-              />
-            </div>
-            <div className="task-create-field task-create-parent-field">
-              <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}
-                value={props.form.parentTaskId ?? ''}
-                options={[
-                  { value: '', label: props.copy.taskCountPrefix === 'Tasks' ? 'No parent (root task)' : '无父任务（根任务）' },
-                  ...props.parentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
-                ]}
-                onChange={(value) => props.onParentChange(value || null)}
-                searchPlaceholder={props.copy.selectSearchPlaceholder}
-                emptyLabel={props.copy.selectNoResults}
-                disabled={interactionBusy}
-              />
-            </div>
-            <div className="task-create-field task-create-tags-field">
-              <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
-              <TaskCreateFieldAttachments
-                field="tags"
-                attachments={props.form.attachments}
-                copy={props.copy}
-                disabled={interactionBusy}
-                onRemove={props.onRemoveAttachment}
-                onRestoreText={restoreTaskCreateText}
-                onLoadPreview={props.onLoadAttachmentPreview}
-                onOpenAttachment={props.onOpenAttachment}
-              />
-              <input
-                id="task-create-tags-input"
-                className="task-create-tags-input"
-                value={props.form.tags}
-                placeholder={props.copy.taskCreateTagsPlaceholder}
-                aria-labelledby="task-create-tags-label"
-                onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
-                disabled={textInputDisabled}
-              />
-            </div>
-          </div>
-          {props.error ? (
-            <p className="task-create-error" id="task-create-error" role="alert">
-              {props.error}
-            </p>
-          ) : null}
+          ) : (
+            <>
+              {thirdPartyHint?.tone === 'ok' ? (
+                <small className="task-create-third-party-hint task-create-third-party-hint-ok" role="status">
+                  {thirdPartyHint.text}
+                </small>
+              ) : null}
+              {props.form.copiedFromTaskId ? (
+                <>
+                  <p className="task-flow-context">
+                    {props.copy.taskCountPrefix === 'Tasks' ? 'Copy content, tags and attachments into a new task. History and relationships stay with the original.' : '复制正文、标签和附件为新任务，原任务的执行历史和任务关系保留在原处。'}
+                  </p>
+                  <label className="task-create-field">
+                    <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Target project' : '目标项目'}</span>
+                    <select value={props.form.projectId} onChange={(event) => props.onProjectChange(event.currentTarget.value)} disabled={interactionBusy} required>
+                      {props.projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : null}
+              <div className="task-create-field task-create-title-field">
+                <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
+                <input
+                  ref={props.titleInputRef}
+                  id="task-create-title-input"
+                  className="task-create-title-input"
+                  value={props.form.title}
+                  placeholder={props.copy.taskCreateTitlePlaceholder}
+                  aria-labelledby="task-create-title-label"
+                  aria-invalid={props.error ? true : undefined}
+                  aria-describedby={props.error ? 'task-create-error' : undefined}
+                  onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
+                  disabled={textInputDisabled}
+                />
+              </div>
+              <div className="task-create-two-column-row">
+                <div className="task-create-field task-create-type-field">
+                  <span id="task-create-type-label">{props.copy.taskCreateTypeLabel}</span>
+                  <ZeusSelect
+                    size="regular"
+                    className="task-create-type-select"
+                    ariaLabel={props.copy.taskCreateTypeLabel}
+                    value={props.form.taskType}
+                    options={taskTypeOptions}
+                    onChange={props.onTaskTypeChange}
+                    searchable={false}
+                    disabled={interactionBusy}
+                  />
+                </div>
+              </div>
+              {props.form.taskType === 'requirement' ? (
+                <div className="task-create-field task-create-description-field">
+                  <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
+                  <TaskCreateFieldAttachments
+                    field="description"
+                    attachments={props.form.attachments}
+                    copy={props.copy}
+                    disabled={interactionBusy}
+                    onRemove={props.onRemoveAttachment}
+                    onRestoreText={restoreTaskCreateText}
+                    onLoadPreview={props.onLoadAttachmentPreview}
+                    onOpenAttachment={props.onOpenAttachment}
+                  />
+                  <textarea
+                    id="task-create-description-input"
+                    className="task-create-description-input"
+                    value={props.form.description}
+                    placeholder={props.copy.taskCreateDescriptionPlaceholder}
+                    aria-labelledby="task-create-description-label"
+                    onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
+                    disabled={textInputDisabled}
+                  />
+                </div>
+              ) : null}
+              {props.form.taskType === 'defect' ? (
+                <>
+                  <div className="task-create-field task-create-description-field">
+                    <span id="task-create-defect-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="defectCurrentState"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <textarea
+                      id="task-create-defect-current-state-input"
+                      className="task-create-description-input"
+                      value={props.form.defectCurrentState}
+                      placeholder={props.copy.taskCreateCurrentStatePlaceholder}
+                      aria-labelledby="task-create-defect-current-state-label"
+                      onChange={(event) => props.onFormChange('defectCurrentState', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                  <div className="task-create-field task-create-description-field">
+                    <span id="task-create-defect-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="defectExpectedOutcome"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <textarea
+                      id="task-create-defect-expected-outcome-input"
+                      className="task-create-description-input"
+                      value={props.form.defectExpectedOutcome}
+                      placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
+                      aria-labelledby="task-create-defect-expected-outcome-label"
+                      onChange={(event) => props.onFormChange('defectExpectedOutcome', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                  <div className="task-create-field task-create-description-field">
+                    <span id="task-create-defect-reproduction-steps-label">{props.copy.taskCreateReproductionStepsLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="defectReproductionSteps"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <textarea
+                      id="task-create-defect-reproduction-steps-input"
+                      className="task-create-description-input"
+                      value={props.form.defectReproductionSteps}
+                      placeholder={props.copy.taskCreateReproductionStepsPlaceholder}
+                      aria-labelledby="task-create-defect-reproduction-steps-label"
+                      onChange={(event) => props.onFormChange('defectReproductionSteps', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                </>
+              ) : null}
+              {props.form.taskType === 'optimization' ? (
+                <>
+                  <div className="task-create-field task-create-description-field">
+                    <span id="task-create-optimization-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="optimizationCurrentState"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <textarea
+                      id="task-create-optimization-current-state-input"
+                      className="task-create-description-input"
+                      value={props.form.optimizationCurrentState}
+                      placeholder={props.copy.taskCreateCurrentStatePlaceholder}
+                      aria-labelledby="task-create-optimization-current-state-label"
+                      onChange={(event) => props.onFormChange('optimizationCurrentState', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                  <div className="task-create-field task-create-description-field">
+                    <span id="task-create-optimization-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="optimizationExpectedOutcome"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <textarea
+                      id="task-create-optimization-expected-outcome-input"
+                      className="task-create-description-input"
+                      value={props.form.optimizationExpectedOutcome}
+                      placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
+                      aria-labelledby="task-create-optimization-expected-outcome-label"
+                      onChange={(event) => props.onFormChange('optimizationExpectedOutcome', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                </>
+              ) : null}
+              {settingsOpen ? (
+                <div ref={settingsPanelRef} id="task-create-options" className="task-create-options">
+                  <div className="task-create-field task-create-priority-field">
+                    <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
+                    <ZeusSelect
+                      size="regular"
+                      className="task-create-priority-select"
+                      ariaLabel={props.copy.taskCreatePriorityLabel}
+                      value={props.form.priority}
+                      options={props.copy.taskCreatePriorityOptions}
+                      onChange={props.onPriorityChange}
+                      searchable={false}
+                      disabled={interactionBusy}
+                    />
+                  </div>
+                  <div className="task-create-field task-create-parent-field">
+                    <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
+                    <ZeusSelect
+                      size="regular"
+                      ariaLabel={props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}
+                      value={props.form.parentTaskId ?? ''}
+                      options={[
+                        { value: '', label: props.copy.taskCountPrefix === 'Tasks' ? 'No parent (root task)' : '无父任务（根任务）' },
+                        ...props.parentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
+                      ]}
+                      onChange={(value) => props.onParentChange(value || null)}
+                      searchPlaceholder={props.copy.selectSearchPlaceholder}
+                      emptyLabel={props.copy.selectNoResults}
+                      disabled={interactionBusy}
+                    />
+                  </div>
+                  <div className="task-create-field task-create-tags-field">
+                    <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
+                    <TaskCreateFieldAttachments
+                      field="tags"
+                      attachments={props.form.attachments}
+                      copy={props.copy}
+                      disabled={interactionBusy}
+                      onRemove={props.onRemoveAttachment}
+                      onRestoreText={restoreTaskCreateText}
+                      onLoadPreview={props.onLoadAttachmentPreview}
+                      onOpenAttachment={props.onOpenAttachment}
+                    />
+                    <input
+                      id="task-create-tags-input"
+                      className="task-create-tags-input"
+                      value={props.form.tags}
+                      placeholder={props.copy.taskCreateTagsPlaceholder}
+                      aria-labelledby="task-create-tags-label"
+                      onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
+                      disabled={textInputDisabled}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {props.error ? (
+                <p className="task-create-error" id="task-create-error" role="alert">
+                  {props.error}
+                </p>
+              ) : null}
+            </>
+          )}
         </div>
         <footer className="task-create-modal-footer">
-          <Button variant="secondary" size="regular" className="task-create-cancel-button" onClick={props.onClose} disabled={interactionBusy}>
-            {props.copy.taskCreateCancel}
-          </Button>
-          <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={interactionBusy}>
-            {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
-          </Button>
+          {thirdPartyOpen ? (
+            <>
+              <Button variant="secondary" size="regular" onClick={handleThirdPartyBack} disabled={props.busy || resourcesBusy}>
+                {props.copy.taskCreateThirdPartyBack}
+              </Button>
+              <Button type="submit" variant="primary" size="regular" busy={thirdPartyParsing} disabled={interactionBusy || !thirdPartyLinkInput.trim()}>
+                {thirdPartyParsing ? props.copy.taskCreateThirdPartyParsing : props.copy.taskCreateThirdPartyParse}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" size="regular" className="task-create-cancel-button" onClick={props.onClose} disabled={interactionBusy}>
+                {props.copy.taskCreateCancel}
+              </Button>
+              <Button variant="secondary" size="regular" className="task-create-settings-toggle" aria-expanded={settingsOpen} aria-controls="task-create-options" onClick={() => setSettingsOpen((open) => !open)} disabled={interactionBusy}>
+                {props.copy.taskCreateMoreSettings}
+              </Button>
+              <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={interactionBusy}>
+                {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
+              </Button>
+            </>
+          )}
         </footer>
       </form>
     </ModalPortal>
