@@ -1,6 +1,7 @@
 import { CaretLeftIcon } from '@phosphor-icons/react/dist/csr/CaretLeft';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { Button } from '../ui/Button.js';
+import { ZeusSelect } from '../ZeusSelect.js';
 
 /** 设置中的长列表统一每页十条，避免将整个历史一次铺满页面。 */
 export const settingsPageSize = 10;
@@ -41,16 +42,15 @@ export function SettingsPagination(props: {
         <Button size="compact" aria-label={`${props.label} ${zh ? '上一页' : 'previous page'}`} disabled={props.disabled || page === 1} onClick={() => props.onChange(page - 1)}>
           <CaretLeftIcon aria-hidden="true" />
         </Button>
-        <label>
-          <span className="visually-hidden">{zh ? '选择页码' : 'Choose page'}</span>
-          <select value={page} disabled={props.disabled} onChange={(event) => props.onChange(Number(event.currentTarget.value))}>
-            {Array.from({ length: pages }, (_, index) => (
-              <option key={index + 1} value={index + 1}>
-                {zh ? `第 ${index + 1} / ${pages} 页` : `${index + 1} / ${pages}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={`${props.label} ${zh ? '选择页码' : 'Choose page'}`}
+          value={String(page)}
+          disabled={props.disabled}
+          searchable={pages > 10}
+          onChange={(value) => props.onChange(Number(value))}
+          options={Array.from({ length: pages }, (_, index) => ({ value: String(index + 1), label: zh ? `第 ${index + 1} / ${pages} 页` : `${index + 1} / ${pages}` }))}
+        />
         <Button size="compact" aria-label={`${props.label} ${zh ? '下一页' : 'next page'}`} disabled={props.disabled || page === pages} onClick={() => props.onChange(page + 1)}>
           <CaretRightIcon aria-hidden="true" />
         </Button>

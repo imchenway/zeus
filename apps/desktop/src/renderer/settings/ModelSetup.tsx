@@ -364,6 +364,29 @@ export function useModelSetup(input: {
     }
   }
 
+  /** 仅在官方退出成功后清除显示；发生未知结果时要求重新检查。 */
+  async function logoutAccount(): Promise<void> {
+    if (!input.client || operation !== 'idle') return;
+    if (!window.confirm(zh ? '退出 Zeus 的 Codex 订阅账号？之后使用订阅模型需要重新登录。' : 'Sign out of Codex in Zeus? Subscription models will require signing in again.')) return;
+    /** 使此前的账号检查回执失效。 */
+    const request = ++requestRef.current;
+    setOperation('checking');
+    setError(null);
+    try {
+      await input.client.logoutCodexAccount();
+      if (requestRef.current !== request) return;
+      setAccount(null);
+      setAccountChecked(true);
+    } catch (failure) {
+      if (requestRef.current !== request) return;
+      setAccount(null);
+      setAccountChecked(false);
+      setError(userFacingErrorCause(failure));
+    } finally {
+      if (requestRef.current === request) setOperation('idle');
+    }
+  }
+
   /** 打开已有官方安装指引，不自动下载安装外部工具。 */
   async function openInstallGuide(): Promise<void> {
     /** 安装指引继续经过既有安全打开入口。 */
@@ -396,6 +419,7 @@ export function useModelSetup(input: {
     skipImport,
     importConfig,
     checkAccount,
+    logoutAccount,
     openInstallGuide,
   };
 }
@@ -415,7 +439,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
     <section className="settings-product-section model-setup-account" aria-label={zh ? 'Codex 订阅' : 'Codex subscription'}>
       <header className="settings-section-heading">
         <strong>Codex {zh ? '订阅' : 'subscription'}</strong>
-        <span>
+        <span className="account-sign-in-state" data-signed-in={signedIn || undefined}>
           {signedIn
             ? zh
               ? `已登录${account.planType ? ` · ${account.planType}` : ''}`
@@ -431,12 +455,17 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
       </header>
       <p>{zh ? '通过 ChatGPT 账号登录，仅用于 Zeus。第三方模型服务在下方管理。' : 'Sign in with ChatGPT for Zeus. Manage third-party model services below.'}</p>
       <div className="model-setup-actions">
-        <Button onClick={() => controller.open('codex')}>{signedIn ? (zh ? '重新登录' : 'Sign in again') : zh ? '登录 Codex' : 'Sign in to Codex'}</Button>
+        {signedIn ? (
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.logoutAccount()}>
+            {zh ? '退出登录' : 'Sign out'}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => controller.open('codex')}>
+            {zh ? '登录 Codex' : 'Sign in to Codex'}
+          </Button>
+        )}
         <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking'} onClick={() => void controller.checkAccount()}>
           {zh ? '检查状态' : 'Check status'}
-        </Button>
-        <Button variant="secondary" onClick={() => controller.open('choose')}>
-          {zh ? '接入设置' : 'Connection setup'}
         </Button>
       </div>
       {!controller.step && controller.error ? <p role="status">{typeof controller.error === 'string' ? controller.error : <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />}</p> : null}

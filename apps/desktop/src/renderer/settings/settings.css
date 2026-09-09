@@ -106,7 +106,7 @@
     block-size: 34px;
     padding: 0 10px 0 31px;
     border: 1px solid var(--zeus-product-line-soft);
-    border-radius: 7px;
+    border-radius: 5px;
     background: var(--zeus-card-background);
     color: inherit;
     font: inherit;
@@ -261,7 +261,7 @@
   }
 
   /* 原生按钮与已有 Button 共用尺寸；图标按钮和整行选择在下方声明对应布局。 */
-  .settings-content-column :where(button, a.settings-action) {
+  .settings-content-column :where(button:not(.digital-employee-list-row):not(.task-field-tab):not(.employee-avatar-option), a.settings-action) {
     box-sizing: border-box;
     display: inline-flex;
     justify-content: center;
@@ -272,7 +272,7 @@
     block-size: auto;
     padding: 6px 12px;
     border: 1px solid var(--zeus-control-border);
-    border-radius: 7px;
+    border-radius: 5px;
     box-shadow: none;
     background: var(--zeus-card-background);
     color: var(--zeus-product-text);
@@ -321,12 +321,13 @@
     margin: 0;
     padding: 6px 10px;
     border: 1px solid var(--zeus-control-border);
-    border-radius: 7px;
+    border-radius: 5px;
     background: var(--zeus-card-background);
     color: var(--zeus-product-text);
     font-size: 13px;
     font-weight: 400;
     line-height: 20px;
+    box-shadow: none;
   }
   .settings-content-column textarea {
     block-size: auto;
@@ -356,20 +357,44 @@
     border-color: var(--zeus-product-accent);
     background: var(--zeus-product-selected);
   }
-  .settings-content-column .native-switch-input {
-    inline-size: 100%;
-    block-size: 100%;
-  }
+  /* 输入和滑轨必须占据同一个网格，透明输入不能参与横向排版。 */
   .settings-switch-state {
     position: relative;
-    display: inline-flex;
-    inline-size: 38px;
+    display: inline-grid;
+    grid-template-areas: 'switch';
+    inline-size: 40px;
     block-size: 24px;
-    flex: 0 0 38px;
+    flex: 0 0 40px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .settings-switch-state > :where(.native-switch-input, .native-switch-track) {
+    grid-area: switch;
+    inline-size: 40px;
+    block-size: 24px;
+  }
+  .settings-switch-state .native-switch-input {
+    opacity: 0;
+    min-block-size: 0;
+    margin: 0;
   }
   .settings-switch-state .native-switch-track {
-    inline-size: 38px;
-    block-size: 24px;
+    box-shadow: none;
+  }
+  .settings-switch-state .native-switch-track::before {
+    inline-size: 18px;
+    block-size: 18px;
+    inset-block-start: 2px;
+    inset-inline-start: 2px;
+    box-shadow: none;
+    background: white;
+  }
+  .settings-switch-state .native-switch-input:checked + .native-switch-track::before {
+    transform: translateX(16px);
+  }
+  .settings-switch-state:has(:disabled) {
+    opacity: 0.45;
   }
 
   /* 常规设置行固定说明与控件两列；运行环境等三列内容采用同一对齐线。 */
@@ -429,6 +454,11 @@
     justify-content: flex-end;
     gap: 8px;
     min-inline-size: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
   }
   .settings-row-action-rail:empty {
     display: none;
@@ -464,7 +494,7 @@
     font-size: 12px;
   }
 
-  /* 高级内容以原生折叠组织，不再将只读技术详情置于主操作之前。 */
+  /* 诊断明细按需查阅，页面主体始终完整展示。 */
   .settings-disclosure {
     min-inline-size: 0;
     border-block: 1px solid var(--zeus-product-line-soft);
@@ -484,24 +514,6 @@
   .settings-disclosure > :last-child:not(summary) {
     margin-block-end: 16px;
   }
-  .settings-permission-help dl {
-    display: grid;
-    gap: 14px;
-    padding-block-end: 12px;
-  }
-  .settings-permission-help dl > div {
-    display: grid;
-    grid-template-columns: 100px minmax(0, 1fr);
-    gap: 16px;
-  }
-  .settings-permission-help dt {
-    font-weight: 600;
-  }
-  .settings-permission-help dd {
-    margin: 0;
-    color: var(--zeus-product-muted);
-  }
-
   /* 供应商、禅道共用主从布局；只框住可编辑工作区，不再重复套页面卡片。 */
   .model-connections-layout {
     grid-template-columns: 168px minmax(0, 1fr);
@@ -957,7 +969,7 @@
     padding: 6px 8px;
   }
 
-  /* 更新主操作与版本优先展示；安装包、签名等信息折叠但仍可查阅。 */
+  /* 更新主操作与版本优先展示，安装包与签名信息直接列明。 */
   .release-update-workbench {
     display: grid;
     gap: 0;
@@ -987,7 +999,7 @@
     box-sizing: border-box;
     padding: 6px 12px;
     border: 1px solid var(--zeus-control-border);
-    border-radius: 7px;
+    border-radius: 5px;
     color: var(--zeus-product-text);
     font-size: 13px;
     line-height: 20px;
@@ -1164,4 +1176,527 @@
   .macos-ai-app.zeus-shell .settings-reference-shell :where(button, input, select, textarea) {
     transition: none;
   }
+}
+
+/* 设置页的内容布局独立于系统动画偏好。 */
+.macos-ai-app.zeus-shell .settings-reference-shell {
+  /* 专用结构先定义内容归属，避免通用按钮规则改变选择行和头像排列。 */
+  .settings-heading-actions,
+  .model-connections-heading > .settings-heading-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .settings-save-status[data-state='saved'] {
+    color: var(--zeus-product-muted);
+  }
+  .settings-save-status:empty {
+    display: none;
+  }
+  .settings-content-column .zeus-button {
+    box-shadow: none;
+    background-image: none;
+    transform: none;
+  }
+  .settings-content-column .zeus-button[data-variant='primary'] {
+    background: var(--zeus-product-accent);
+  }
+  .settings-content-column .zeus-button::before,
+  .settings-content-column .zeus-button::after {
+    box-shadow: none;
+    background-image: none;
+  }
+  .settings-content-column :where(.zeus-select-trigger, input, textarea) {
+    box-shadow: none;
+  }
+  .settings-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-inline-size: 0;
+  }
+  .settings-form-grid > label {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .settings-form-wide {
+    grid-column: 1 / -1;
+  }
+  .settings-duration-field {
+    display: grid;
+    grid-template-columns: minmax(80px, 1fr) 110px;
+    gap: 8px;
+  }
+  .runtime-settings-section {
+    padding-top: 24px;
+    border-top: 1px solid var(--zeus-product-line-soft);
+  }
+  .task-fields-workspace {
+    display: grid;
+    grid-template-columns: 148px minmax(0, 1fr);
+    gap: 28px;
+  }
+  .task-field-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    padding-inline-end: 16px;
+  }
+  .task-field-tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    text-align: start;
+    padding: 10px 12px;
+    border-radius: 5px;
+    color: var(--zeus-product-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .task-field-tab[aria-current='page'] {
+    background: var(--zeus-product-accent-soft);
+    color: var(--zeus-product-accent);
+    font-weight: 600;
+  }
+  .task-field-detail {
+    min-inline-size: 0;
+    border: 0;
+    padding: 0;
+    margin: 0;
+  }
+  .task-field-detail .task-enum-order-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .task-field-detail .task-status-config-scope {
+    max-inline-size: none;
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+  }
+  .task-field-detail .task-status-config-list {
+    border: 0;
+    padding: 0;
+  }
+  .task-field-detail .task-status-config-color {
+    gap: 8px;
+  }
+  .task-field-detail .task-enum-order-editor {
+    border: 0;
+  }
+  .task-field-detail .task-enum-order-editor > header {
+    padding: 0 0 12px;
+  }
+  .digital-employee-page-heading {
+    align-items: start;
+  }
+  .digital-employee-page-heading p {
+    max-inline-size: 680px;
+    color: var(--zeus-product-muted);
+  }
+  .digital-employee-master-detail {
+    grid-template-columns: 224px minmax(0, 1fr);
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+    gap: 26px;
+    min-block-size: 520px;
+    background: transparent;
+  }
+  .digital-employee-list-pane {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .digital-employee-list-row {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    align-items: center;
+    justify-content: start;
+    gap: 12px;
+    padding: 10px;
+    border: 0;
+    border-radius: 6px;
+    text-align: start;
+    background: transparent;
+    color: var(--zeus-product-text);
+    box-shadow: none;
+  }
+  .digital-employee-list-row > span {
+    min-inline-size: 0;
+    display: grid;
+    gap: 3px;
+  }
+  .digital-employee-list-row.is-selected {
+    background: var(--zeus-product-accent-soft);
+    box-shadow: none;
+  }
+  .digital-employee-list-row strong {
+    font-size: 13px;
+  }
+  .digital-employee-avatar {
+    display: block;
+    inline-size: 46px;
+    block-size: 48px;
+    border: 0;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--zeus-product-muted) 5%, transparent);
+    object-fit: contain;
+    object-position: bottom;
+  }
+  .digital-employee-editor-pane {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .digital-employee-form {
+    padding: 22px 0;
+  }
+  .digital-employee-editor-actions {
+    padding: 16px 0;
+    border-top: 1px solid var(--zeus-product-line-soft);
+    background: transparent;
+  }
+  .employee-identity-heading {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--zeus-product-line-soft);
+  }
+  .employee-identity-heading > .digital-employee-avatar {
+    inline-size: 104px;
+    block-size: 116px;
+    background: transparent;
+  }
+  .employee-identity-heading > div {
+    display: grid;
+    gap: 7px;
+  }
+  .employee-identity-heading > div > span {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .employee-avatar-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .employee-avatar-option {
+    display: grid;
+    place-items: center;
+    inline-size: 46px;
+    block-size: 50px;
+    padding: 3px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--zeus-product-panel);
+    cursor: pointer;
+  }
+  .employee-avatar-option[aria-pressed='true'] {
+    border-color: var(--zeus-product-accent);
+    background: var(--zeus-product-accent-soft);
+  }
+  .employee-avatar-option img {
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: contain;
+  }
+  .employee-avatar-option:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+  .settings-archive-filters {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .settings-archive-filters .settings-list-search {
+    margin: 0;
+  }
+  .settings-archived-conversation-item {
+    min-block-size: 58px;
+    padding: 9px 0;
+    gap: 16px;
+  }
+  .settings-archived-conversation-copy {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 20px;
+    row-gap: 2px;
+  }
+  .settings-archived-conversation-copy strong {
+    grid-column: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-archived-conversation-copy > small {
+    grid-column: 1;
+  }
+  .settings-archive-date {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: center;
+    font-size: 12px;
+    color: var(--zeus-product-muted);
+    white-space: nowrap;
+  }
+  .remote-connection-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    padding-block: 16px;
+    border-bottom: 1px solid var(--zeus-product-line-soft);
+  }
+  .remote-connection-summary > .settings-row-copy {
+    grid-column: 1;
+  }
+  .remote-connection-summary > .remote-status {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+  }
+  .remote-status {
+    color: var(--zeus-product-muted);
+  }
+  .remote-status[data-connected='true'],
+  .account-sign-in-state[data-signed-in='true'] {
+    color: var(--zeus-success-text, #247747);
+  }
+  .remote-connection-summary .settings-row-action-rail {
+    grid-column: 1 / -1;
+    justify-content: start;
+  }
+  .remote-host-details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 24px;
+    padding-block: 18px;
+    border-bottom: 1px solid var(--zeus-product-line-soft);
+  }
+  .remote-host-details > div {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .remote-host-details code {
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
+  .remote-host-details > small {
+    grid-column: 1 / -1;
+  }
+  .remote-device-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 16px;
+    align-items: center;
+    padding-block: 9px;
+    border-bottom: 1px solid var(--zeus-product-line-soft);
+  }
+  .remote-device-row > button {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  .remote-device-row > small {
+    grid-column: 1;
+  }
+  .codex-remote-control-standalone {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .codex-remote-control-standalone code {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    font-size: 12px;
+  }
+  .legacy-import-settings {
+    display: grid;
+    gap: 16px;
+    padding-block: 24px;
+    border-top: 1px solid var(--zeus-product-line-soft);
+  }
+  .legacy-import-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+  }
+  .legacy-import-heading > span {
+    min-inline-size: 0;
+    display: grid;
+    gap: 5px;
+  }
+  .legacy-import-heading > button {
+    flex-shrink: 0;
+  }
+  .legacy-import-history {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+    padding: 0;
+    list-style: none;
+  }
+  .legacy-import-history li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-block: 10px;
+    border-bottom: 1px solid var(--zeus-product-line-soft);
+  }
+  .legacy-import-history strong {
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+  .legacy-import-command-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .release-technical-details {
+    display: grid;
+    gap: 0;
+    padding-top: 24px;
+  }
+  .release-technical-details > h3 {
+    margin-bottom: 8px;
+  }
+  .release-technical-details .settings-state-row {
+    grid-template-columns: 160px minmax(0, 1fr);
+    padding-block: 12px;
+    gap: 8px 24px;
+  }
+  .release-technical-details .settings-state-row > em {
+    grid-column: 2;
+    font-size: 12px;
+    font-style: normal;
+    color: var(--zeus-product-muted);
+  }
+  .release-update-command-rail {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .model-definition-details {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 0 16px;
+  }
+  .model-definition-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .model-route-form {
+    gap: 10px;
+  }
+  .model-capability-summary {
+    margin: 0;
+    background: transparent;
+    border: 0;
+    padding: 0;
+  }
+  .model-capability-summary > div {
+    padding: 4px 8px 4px 0;
+  }
+  .model-connection-editor .model-connection-actions {
+    justify-content: start;
+    gap: 8px;
+  }
+  @media (max-width: 1000px) {
+    .digital-employee-list-row {
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px;
+    }
+    .digital-employee-list-row .digital-employee-avatar {
+      inline-size: 36px;
+      block-size: 42px;
+    }
+    .settings-form-grid,
+    .legacy-import-history,
+    .remote-host-details {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .digital-employee-master-detail,
+    .task-fields-workspace {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .digital-employee-list-pane,
+    .task-field-nav {
+      flex-direction: row;
+      overflow-x: auto;
+      border: 0;
+      padding: 0 0 12px;
+    }
+    .digital-employee-list-row {
+      flex: 0 0 190px;
+    }
+    .task-field-tab {
+      flex-shrink: 0;
+    }
+    .settings-archived-conversation-copy {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-archive-date {
+      grid-row: auto;
+      grid-column: 1;
+    }
+    .settings-archive-filters {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
+
+/* 记忆编辑器使用现有模态层，窗口内滚动且不挤压列表。 */
+.macos-ai-app.zeus-shell.settings-editor-portal .settings-reference-shell {
+  display: block;
+  width: min(720px, calc(100vw - 48px));
+  height: auto;
+  border: 0;
+  padding: 0;
+  background: var(--zeus-product-panel);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.macos-ai-app.zeus-shell.settings-editor-portal .settings-editor-dialog {
+  width: 100%;
+  max-height: calc(100dvh - 80px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 26px;
+}
+.macos-ai-app.zeus-shell.settings-editor-portal .memory-editor {
+  margin-top: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 页码选择与 IM 保存反馈沿用设置页的紧凑布局。 */
+.macos-ai-app .settings-pagination .zeus-select {
+  inline-size: 132px;
+}
+.macos-ai-app.zeus-shell .settings-reference-shell .im-page-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.macos-ai-app.zeus-shell .settings-reference-shell .im-page-heading > p {
+  grid-column: 1 / -1;
+}
+.macos-ai-app.zeus-shell .settings-reference-shell .memory-editor {
+  min-inline-size: 0;
 }

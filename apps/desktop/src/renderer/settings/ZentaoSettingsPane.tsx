@@ -1,3 +1,4 @@
+import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
 import { useEffect, useRef, useState } from 'react';
 import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
 import { EyeSlashIcon } from '@phosphor-icons/react/dist/csr/EyeSlash';
@@ -22,6 +23,12 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
   const [draft, setDraft] = useState<ZentaoInstanceDraft>(() => emptyDraft());
   const [status, setStatus] = useState<'loading' | 'idle' | 'saving' | 'deleting' | 'verifying' | 'revealing'>('loading');
   const [message, setMessage] = useState<string | null>(null);
+  /** 保存结果与验证、删除反馈分别显示。 */
+  const [saveState, setSaveState] = useState<SettingsSaveState>('idle');
+  /** 保存指纹不包含钥匙串读取的密码。 */
+  const savedDraft = useRef('');
+  /** 防止失焦与点击在同一帧重复创建。 */
+  const savingRef = useRef(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** 保存过的密码与替换草稿分开，查看不会导致密码再次写入。 */
   const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
@@ -63,7 +70,11 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
   /** 选中实例即填入公开账号；密码保持空草稿并只显示遮挡提示。 */
   function selectInstance(instance: ZentaoInstanceRecord): void {
     hidePassword();
-    setDraft({ id: instance.id, baseUrl: `${instance.host}${instance.basePath}`, account: instance.account, password: '' });
+    /** 记录真实回读值用于跳过未修改的输入。 */
+    const next = { id: instance.id, baseUrl: `${instance.host}${instance.basePath}`, account: instance.account, password: '' };
+    savedDraft.current = JSON.stringify(next);
+    setDraft(next);
+    setSaveState('idle');
     setConfirmDelete(false);
     setMessage(null);
   }
@@ -120,17 +131,21 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
   }
 
   async function save(): Promise<void> {
-    if (!props.client || busy) return;
+    if (!props.client || busy || savingRef.current || savedDraft.current === JSON.stringify(draft)) return;
+    savingRef.current = true;
+    setSaveState('saving');
     setStatus('saving');
     setMessage(null);
     try {
       const input = buildSaveInput();
       const saved = draft.id ? await props.client.updateZentaoInstance(draft.id, input) : await props.client.createZentaoInstance(input);
       await reloadInstances(saved.id);
-      setMessage(input.password ? (zh ? '禅道实例已保存，密码只写入 macOS 钥匙串。' : 'ZenTao instance saved. The password is stored only in the macOS Keychain.') : zh ? '禅道实例已保存。' : 'ZenTao instance saved.');
+      setSaveState('saved');
     } catch (error) {
+      setSaveState('failed');
       setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
     } finally {
+      savingRef.current = false;
       setStatus('idle');
     }
   }
@@ -194,6 +209,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           <h2 className="settings-page-title">{zh ? '第三方接入' : 'Third-party integrations'}</h2>
           <p>{zh ? '连接外部任务系统，自动读取链接中的任务信息。' : 'Connect task systems and read task information from links.'}</p>
         </span>
+        <SettingsSaveStatus status={saveState} language={props.language} />
       </header>
       <header className="settings-section-heading model-connections-heading">
         <span>
@@ -233,7 +249,15 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           ))}
         </nav>
 
-        <fieldset disabled={busy} className="model-connection-editor" aria-label={zh ? '禅道实例编辑器' : 'ZenTao instance editor'}>
+        <fieldset
+          onInput={() => setSaveState('idle')}
+          disabled={busy}
+          onBlurCapture={(event) => {
+            if (draft.id && event.target instanceof HTMLInputElement) void save();
+          }}
+          className="model-connection-editor"
+          aria-label={zh ? '禅道实例编辑器' : 'ZenTao instance editor'}
+        >
           <div className="model-connection-field-grid">
             <label className="model-connection-wide-field">
               <span>{zh ? '实例地址' : 'Instance URL'}</span>
@@ -288,9 +312,11 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           </div>
 
           <footer className="model-connection-actions">
-            <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.baseUrl.trim()}>
-              {zh ? '保存实例' : 'Save instance'}
-            </Button>
+            {!draft.id || saveState === 'failed' ? (
+              <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.baseUrl.trim()}>
+                {draft.id ? (zh ? '重试保存' : 'Retry save') : zh ? '创建实例' : 'Create instance'}
+              </Button>
+            ) : null}
             {draft.id ? (
               <Button variant="secondary" size="compact" onClick={() => void verify()} disabled={busy} busy={status === 'verifying'}>
                 {zh ? '验证登录' : 'Verify sign-in'}

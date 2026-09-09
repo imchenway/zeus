@@ -617,6 +617,17 @@ export function createCodexRuntimeGenerationManager(
     activateFreshGeneration(input) {
       return enqueueActivation(input, true);
     },
+    /** 全部实例共享账户凭据，退出后不能沿用其他实例的旧快照。 */
+    invalidateAccountState() {
+      for (const entry of entriesByGeneration.values()) entry.manager.invalidateAccountState();
+    },
+    async logoutAccount() {
+      try {
+        await requireActiveEntry().manager.logoutAccount();
+      } finally {
+        for (const entry of entriesByGeneration.values()) entry.manager.invalidateAccountState();
+      }
+    },
     async readAccount(input = {}) {
       return requireActiveEntry().manager.readAccount(input);
     },

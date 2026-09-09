@@ -67,6 +67,8 @@ export function registerCodexPublicCommandRoutes(options: {
     ensureReady(): Promise<void>;
     startLogin(): Promise<CodexChatGptLogin>;
     cancelLogin(loginId: string): Promise<void>;
+    /** 主动退出，不接收秘密参数。 */
+    logout(): Promise<void>;
   };
   remoteControl: {
     ensureReady(enabled?: boolean): Promise<void>;
@@ -310,6 +312,29 @@ export function registerCodexPublicCommandRoutes(options: {
         // 启动运行环境尚未发送登录请求，失败应保留为外部操作开始前失败。
         beforeWrite: () => options.account.ensureReady(),
         invoke: () => options.account.startLogin(),
+      });
+      return executed.result;
+    } catch (error) {
+      return sendCommandError(reply, error, () => options.sendNativeError(reply, error));
+    }
+  });
+
+  // 退出沿用外部命令回执，结果未知时不自动重放。
+  server.post('/api/codex/account/logout', async (request, reply) => {
+    try {
+      /** 请求身份和空参数在统一边界校验。 */
+      const parsed = application.parse<Record<string, never>>({ value: request.body, commandType: codexPublicCommandTypes.accountLogout, scopeKind: 'provider_account', scopeId: codexPublicCommandScopeIds.account });
+      assertExactInputKeys(parsed.input, [], parsed.command.commandType);
+      /** 同一命令通过已有账本复用结果。 */
+      const executed = await application.executeExternal({
+        parsed,
+        destinationId: 'codex:account',
+        resourceId: 'codex-account',
+        beforeWrite: () => options.account.ensureReady(),
+        invoke: async () => {
+          await options.account.logout();
+          return { signedOut: true as const };
+        },
       });
       return executed.result;
     } catch (error) {

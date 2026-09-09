@@ -11,7 +11,7 @@ interface CodexRemoteControlSettingsProps {
 const copy = {
   'zh-CN': {
     title: 'Zeus 会话远程接管',
-    intro: '让 Codex iOS 或其他已授权客户端远程操作 Zeus 执行现场。启用不会中断当前工作；已在进行的轮次保留在原宿主，完成后的后续轮次再接入远程。',
+    intro: '配对手机或其他设备，远程继续 Zeus 会话。当前工作完成后自动接入，不会中断正在进行的轮次。',
     unavailable: '当前环境没有可用的 Codex 远程接管接口。',
     loading: '正在读取远程接管状态…',
     refresh: '刷新',
@@ -135,13 +135,13 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
         <span>{labels.intro}</span>
       </header>
       <section className="native-settings-pane" aria-label={labels.title}>
-        <section className="settings-config-row" aria-label={stateLabel}>
+        <section className="remote-connection-summary" aria-label={stateLabel}>
           <span className="settings-row-copy">
             <strong>{snapshot?.enabled ? labels.enabled : labels.disabled}</strong>
             <small>{labels.statusHelp}</small>
           </span>
-          <span className="settings-row-field">
-            <span>{stateLabel}</span>
+          <span className="remote-status" data-connected={snapshot?.status.status === 'connected'}>
+            {stateLabel}
           </span>
           <span className="settings-row-action-rail">
             <button type="button" disabled={busy || !props.client} onClick={() => void controller.reload()}>
@@ -187,12 +187,15 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
           </section>
         ) : null}
         {snapshot ? (
-          <section className="settings-state-row" aria-label={labels.server}>
-            <strong>{labels.server}</strong>
-            <span>{snapshot.status.serverName}</span>
-            <em>
-              {labels.environment}: {snapshot.status.environmentId ?? '—'}
-            </em>
+          <section className="remote-host-details" aria-label={labels.server}>
+            <div>
+              <strong>{labels.server}</strong>
+              <span>{snapshot.status.serverName}</span>
+            </div>
+            <div>
+              <strong>{labels.environment}</strong>
+              <code>{snapshot.status.environmentId ?? '—'}</code>
+            </div>
             <small>{labels.hostNameHelp}</small>
           </section>
         ) : null}
@@ -229,7 +232,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
           </span>
           <span className="settings-row-field settings-evidence-list">
             {snapshot?.clients.map((device) => (
-              <span key={device.clientId}>
+              <span className="remote-device-row" key={device.clientId}>
                 <strong>{device.displayName || device.deviceModel || device.platform || device.clientId}</strong>
                 <small>{[device.platform, device.osVersion, device.appVersion].filter(Boolean).join(' · ')}</small>
                 <button
