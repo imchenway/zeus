@@ -252,7 +252,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     if (thread.id !== providerThreadId) throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while recovering a stopped turn.');
     const status = thread.status;
     if (!status) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread omitted its authoritative runtime status.');
-    if (status.type === 'systemError') throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', 'Provider thread is in systemError state.');
+    // 线程可能保留上一轮失败标记，停止结果以同一线程中目标轮次的真实终态为准。
     const page = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded', priority: 'control' });
     const target = page.data.find((turn) => turn.id === providerTurnId);
     if (!target) throw coordinatorError('ZEUS_PROVIDER_STOP_TURN_MISSING', 'The stopped Provider turn is missing from its original thread.');

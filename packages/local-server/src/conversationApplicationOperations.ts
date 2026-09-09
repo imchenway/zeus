@@ -940,6 +940,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!conversation || conversation.projectId !== params.projectId || conversation.transportKind !== 'codex_native') {
       throw Object.assign(nativeApiError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation not found'), { statusCode: 404 });
     }
+    // 队列编辑、重试、插话和交互答复沿用产品归档边界。
+    if (conversation.archived) throw Object.assign(nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。'), { statusCode: 409 });
     return conversation;
   }
 
@@ -953,12 +955,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found'), { statusCode: 404 });
     const conversation = conversations.getById(input.params.conversationId);
     if (!conversation || conversation.projectId !== project.id) throw Object.assign(nativeApiError('ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found'), { statusCode: 404 });
-    if (conversation.taskId) {
+    if (conversation.archived && conversation.taskId) {
       const task = tasks.getById(conversation.taskId);
       if (task && taskManagementStatusIsTerminal(task)) {
         throw Object.assign(nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.'), { statusCode: 409 });
       }
     }
+    // 未归档会话可继续；任务完成或交付不另行封住发送入口。
+    if (conversation.archived) throw Object.assign(nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。'), { statusCode: 409 });
     assertRequestedAgentKind(input.body);
     if (conversation.agentKind === 'claude') throw Object.assign(nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', 'Claude Agent 当前尚未开放。'), { statusCode: 409 });
     const idempotencyKey = typeof input.body.idempotencyKey === 'string' ? input.body.idempotencyKey.trim() : '';
@@ -1397,6 +1401,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (selectedAgentKind === 'pi') {
         if (delivery === 'queue') {
           return piNativeCoordinator.queueHeldMessage({
+            cwd: executionRoot,
             conversation,
             submissionId: reservedSubmissionId ?? `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-queued`).digest('hex').slice(0, 24)}`,
             content: providerContent,

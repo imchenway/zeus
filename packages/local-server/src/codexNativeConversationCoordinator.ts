@@ -107,7 +107,7 @@ import type { ConversationSegmentLifecycle } from './conversationExecutionCoordi
 import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
 import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
-import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
+import { archiveUnboundConversationLocally, hasUnwrittenConversationEvidence, hasUnwrittenSubmissionEvidence, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
 import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
 import { createCodexServiceTierDowngrade } from './codexServiceTierDowngrade.js';
@@ -247,6 +247,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function assertSubmissionDispatchable(submissionId: string): void {
     assertOpen();
     const current = options.submissions.getById(submissionId);
+    if (current && options.conversations.getRecordById(current.conversationId)?.archived) {
+      throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    }
     if (!current || current.providerTurnId || (current.status !== 'queued' && current.status !== 'dispatching')) {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '这条消息已取消、替换或离开待发送状态，不会再次发送。');
     }
@@ -637,6 +640,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
+    if (options.conversations.getRecordById(conversationId)?.archived) {
+      throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    }
     const queuedCount = options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: content,
@@ -739,6 +745,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function dispatchContextForSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
     const latest = contextWithLatestNextTurnSettings(submission.conversationId, contextFromSubmission(submission));
+    /** 目录准备已经核对持久身份；旧提交不能把实际执行路径改回回收前的快照。 */
+    const prepared = contexts.get(submission.conversationId);
+    if (prepared) {
+      latest.projectLocalPath = prepared.projectLocalPath;
+      latest.writableRoots = prepared.writableRoots;
+      latest.executionWorkspaceMode = prepared.executionWorkspaceMode;
+    }
     const controlMode = planControlModeForSubmission(submission);
     if (!controlMode) return latest;
     // 计划控制动作的模式属于动作语义，排队期间不能被下一轮设置覆盖。
@@ -1115,12 +1128,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await input.segmentLifecycle.prepare(submission);
     await persist();
     assertSubmissionDispatchable(submission.id);
+    // Provider 内部归档不改变未归档产品会话的继续资格。
+    if (!input.segmentLifecycle.requiresNewSegment && conversation.providerState === 'archived') {
+      await restoreArchivedProviderThread(conversation.id);
+      conversation = requireConversation(conversation.id);
+    }
     let state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if (!input.segmentLifecycle.requiresNewSegment && state.type === 'paused' && state.reason === 'recovery_required') {
+    if (!input.segmentLifecycle.requiresNewSegment && state.type === 'paused' && (state.reason === 'recovery_required' || state.reason === 'interrupted')) {
       conversation = await recoverPausedConversation(conversation.id, 'dispatch');
       state = runStates.get(conversation.id) ?? inferRunState(conversation);
     }
     assertSubmissionDispatchable(submission.id);
+    // 旧轮次已结束时允许切换模型；未知送达和停止待确认仍保留原边界。
+    if (
+      input.segmentLifecycle.requiresNewSegment &&
+      state.type === 'paused' &&
+      ['recovery_required', 'interrupted', 'provider_archived'].includes(state.reason) &&
+      !options.turns.getLatestActiveByConversation(conversation.id) &&
+      !options.requests.listPendingByConversation(conversation.id).length &&
+      !options.submissions.listByConversation(conversation.id).some((entry) => entry.submissionOutcome === 'outcome_unknown' || entry.pausedReason === 'outcome_unknown' || (entry.status === 'paused' && entry.providerTurnId))
+    )
+      state = { type: 'idle' };
     runStates.set(conversation.id, state);
     if (state.type !== 'idle') {
       if (state.type === 'active' && conversation.providerThreadId) providerThreadAuthority.observe(conversation.id, conversation.providerThreadId);
@@ -1304,21 +1332,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function recoverPausedConversation(conversationId: string, mode: 'submit' | 'dispatch' | 'recover_queue' | 'restore'): Promise<ZeusConversationWithMessagesRecord> {
     let conversation = requireConversation(conversationId);
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if (state.type !== 'paused' || state.reason !== 'recovery_required') return conversation;
+    if (state.type !== 'paused' || (state.reason !== 'recovery_required' && state.reason !== 'interrupted')) return conversation;
     await ensureConversationExecutionContext(conversation.id, mode);
     assertOpen();
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
     if (!conversation.providerThreadId) {
-      const recoverableBeforeProviderStart =
-        context.executionWorkspaceMode === 'direct' &&
-        options.submissions.listByConversation(conversation.id).some((submission) => {
-          if (submission.status !== 'paused' || submission.providerTurnId || submission.pausedReason !== 'recovery_required') return false;
-          return submission.errorJson ? parseJsonRecord(submission.errorJson).code === 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE' : false;
-        });
-      if (!recoverableBeforeProviderStart) {
+      if (!hasUnwrittenConversationEvidence(options, conversation)) {
         throw coordinatorError('ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', 'The paused conversation has no provider thread that can be safely resumed.');
       }
-      // 该错误发生在 Provider RPC 之前；恢复原提交是安全重试，不会重复创建线程或重复发送。
+      // 完整账本证明从未写出时，直接目录与隔离目录采用相同恢复规则。
       runStates.set(conversation.id, { type: 'idle' });
       return conversation;
     }
@@ -1850,8 +1872,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function recoverQueue(input: RecoverNativeQueueInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
-    if (conversation.archived || conversation.providerState === 'archived') {
-      throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', 'The provider conversation must be restored explicitly before its queue can be recovered.');
+    if (conversation.archived) {
+      throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     }
     if (input.intent === 'check') {
       // 未绑定线程时没有外部事实可读；不得为检查创建线程或准备工作目录。
@@ -1876,6 +1898,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       // 已进入终态轮次但缺少送达证据的内容不能由普通队列恢复自动重发，否则可能造成重复用户消息。
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'A user message has an unconfirmed delivery result and cannot be resent automatically.');
     }
+    if (conversation.providerState === 'archived') {
+      await restoreArchivedProviderThread(conversation.id);
+      conversation = requireConversation(conversation.id);
+    }
     try {
       await ensureConversationExecutionContext(conversation.id, 'recover_queue');
       const state = runStates.get(conversation.id) ?? inferRunState(conversation);
@@ -1892,11 +1918,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       throw error;
     }
-    for (const submission of options.submissions.listByConversation(conversation.id)) {
-      if (submission.status === 'paused' && submission.pausedReason === 'recovery_required' && !submission.providerTurnId) {
-        options.submissions.updateStatus(submission.id, 'queued');
-      }
-    }
+    /** 全部候选先完成写前核对，避免中途失败时留下部分已重入队的消息。 */
+    const recoverable = options.submissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && submission.pausedReason === 'recovery_required' && !submission.providerTurnId);
+    if (recoverable.some((submission) => !hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission))) throw coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '暂停消息缺少明确的未发送证据，不能自动重发。');
+    for (const submission of recoverable) options.submissions.updateStatus(submission.id, 'queued');
     const recoveredState = runStates.get(conversation.id) ?? inferRunState(requireConversation(conversation.id));
     if (recoveredState.type === 'active' || recoveredState.type === 'waiting') {
       runStates.set(conversation.id, recoveredState);

@@ -872,7 +872,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       ),
     [appShellSettings, snapshot.tasks],
   );
-  const conversationTreeHiddenTaskIds = useMemo(() => new Set([...terminalTaskIds, ...Object.keys(optimisticTerminalTaskStatuses)]), [optimisticTerminalTaskStatuses, terminalTaskIds]);
+  /** 任务状态不能隐藏仍未归档的会话；正在结束任务的本次操作仍保持界面锁定。 */
+  const conversationTreeHiddenTaskIds = useMemo(
+    () => new Set([...terminalTaskIds].filter((taskId) => !nativeConversationChoicesByTask[taskId]?.choices.some((choice) => !choice.archived)).concat(Object.keys(optimisticTerminalTaskStatuses))),
+    [nativeConversationChoicesByTask, optimisticTerminalTaskStatuses, terminalTaskIds],
+  );
   const projectedTaskConversationChoices = useMemo(
     () =>
       Object.fromEntries(
@@ -1185,7 +1189,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const optimisticNativeSessionTaskStatus = nativeSessionTaskRecord ? optimisticTerminalTaskStatuses[nativeSessionTaskRecord.id] : undefined;
   const effectiveNativeSessionTaskRecord = nativeSessionTaskRecord && optimisticNativeSessionTaskStatus ? { ...nativeSessionTaskRecord, managementStatus: optimisticNativeSessionTaskStatus } : nativeSessionTaskRecord;
   const nativeSessionTaskStatusConfig = effectiveNativeSessionTaskRecord ? resolveTaskManagementStatusConfig(appShellSettings, effectiveNativeSessionTaskRecord.projectId) : null;
+  /** 已归档会话、新建会话和任务结束中的操作沿用重新打开入口；未归档原会话可以继续。 */
   const nativeSessionTaskReadOnly = Boolean(
+    (selectedNativeConversation?.archived !== false || optimisticNativeSessionTaskStatus) &&
     effectiveNativeSessionTaskRecord &&
     nativeSessionTaskStatusConfig &&
     (resolveTaskManagementStatus(effectiveNativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.completedStatusId ||

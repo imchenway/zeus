@@ -1113,7 +1113,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       queueSendNow: async ({ params, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await codexNativeCoordinator.sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId });
+        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId });
         const updatedConversation = conversations.getById(conversation.id);
         const submission = conversationSubmissions.getById(params.submissionId);
         if (!updatedConversation || !submission) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native send-now acceptance was not persisted.');
@@ -1196,6 +1196,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       queueResume: async ({ params }) => {
         const conversation = requireNativeQueueConversation(params);
+        if (conversation.agentKind === 'pi') {
+          await piNativeCoordinator.resumeQueue({ conversationId: conversation.id, reason: 'interrupted' });
+          return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
+        }
         return codexNativeCoordinator.resumeInterruptedQueue({ conversationId: conversation.id });
       },
       queueRecover: async ({ params, intent }) => {
@@ -1206,6 +1210,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (intent === 'continue' && conflictAttempt?.state === 'failed') {
           await retryTaskIntegrationAiPreparation(conversation, conflictAttempt);
           return toNativeQueueApiSnapshot(conversation);
+        }
+        if (conversation.agentKind === 'pi') {
+          await piNativeCoordinator.resumeQueue({ conversationId: conversation.id, reason: 'recovery_required' });
+          return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
         }
         return codexNativeCoordinator.recoverQueue({ conversationId: conversation.id, intent });
       },
@@ -1260,7 +1268,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       prepareTaskConversation: async ({ taskId, value }) => {
         const task = tasks.getById(taskId);
         if (!task) conversationStartReject(404, 'ZEUS_TASK_NOT_FOUND', 'Task not found');
-        if (taskManagementStatusIsTerminal(task)) {
+        // 新建仍遵循任务状态；继续已存在且未归档的会话由会话入口核对资格。
+        if (value.mode !== 'resume' && taskManagementStatusIsTerminal(task)) {
           conversationStartReject(409, 'ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.');
         }
         const project = projects.getById(task.projectId);
