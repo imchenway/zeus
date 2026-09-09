@@ -95,8 +95,8 @@
   color: var(--session-text-muted);
   display: inline-flex;
   justify-content: center;
-  block-size: 30px;
-  inline-size: 30px;
+  block-size: 36px;
+  inline-size: 36px;
   padding: 0;
 }
 
@@ -108,8 +108,8 @@
 }
 
 .session-codex-parity-v1 .session-quick-actions-trigger svg {
-  block-size: 15px;
-  inline-size: 15px;
+  block-size: 20px;
+  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card {
@@ -160,14 +160,17 @@
   inline-size: 0;
 }
 
-/* 常驻卡片挂在完整顶部状态区之后，让摘要栏展开高度自然参与避让。 */
+/* 常驻卡片独立占用右侧空间；收起后归还会话宽度。 */
 .session-codex-parity-v1 .session-quick-actions-persistent-host {
-  block-size: 0;
   flex: 0 0 0;
-  inline-size: 100%;
+  min-inline-size: 0;
   pointer-events: none;
   position: relative;
   z-index: 30;
+}
+
+.session-codex-parity-v1 .session-quick-actions-persistent-host:has(> .session-quick-actions-card[data-presentation='persistent']:not([hidden])) {
+  flex-basis: 332px;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card > header,
@@ -6340,8 +6343,8 @@
   color: var(--session-text-muted);
   display: inline-flex;
   justify-content: center;
-  block-size: 30px;
-  inline-size: 30px;
+  block-size: 36px;
+  inline-size: 36px;
   padding: 0;
 }
 
@@ -6353,6 +6356,7 @@
 }
 
 .session-codex-parity-v1 .session-browser-toggle:focus-visible,
+.session-codex-parity-v1 .session-quick-actions-trigger:focus-visible,
 .session-codex-parity-v1 .browser-tab-strip button:focus-visible,
 .session-codex-parity-v1 .browser-workspace button:focus-visible,
 .session-codex-parity-v1 .browser-workspace input:focus-visible {
@@ -6362,8 +6366,8 @@
 }
 
 .session-codex-parity-v1 .session-browser-toggle svg {
-  block-size: 15px;
-  inline-size: 15px;
+  block-size: 20px;
+  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .browser-workspace {

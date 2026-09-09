@@ -309,7 +309,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           if (cancelled) return;
           setWorkspaceDetails(details);
           setDetailStates(states);
-          initializeDeliverySelection(details, workspaceSnapshot.items, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+          initializeDeliverySelection(details, workspaceSnapshot.items, initialConversationWorkspaceIdRef.current, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
           selectionInitializedRef.current = true;
           setSnapshotRevision((current) => current + 1);
         });
@@ -407,7 +407,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setWorkspaceDetails(details);
     setDetailStates(states);
     setIntegrations(integrationSnapshot.items);
-    preserveDeliverySelection(details, workspaceSnapshot.items, selectionInitializedRef.current, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+    preserveDeliverySelection(details, workspaceSnapshot.items, initialConversationWorkspaceIdRef.current, selectionInitializedRef.current, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
     selectionInitializedRef.current = true;
     const recoverable = integrationSnapshot.items.find((candidate) => candidate.workspaceId === preferredWorkspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
     setIntegration(recoverable ?? null);
@@ -1291,27 +1291,35 @@ async function loadWorkspaceDetailCollection(client: DeliveryClient, taskId: str
   return { details, states };
 }
 
+/** 会话入口只默认勾选所在分支的可交付仓库；无会话上下文的任务入口保留整体选择。 */
 function initializeDeliverySelection(
   details: Record<string, TaskWorkspaceSnapshot>,
   workspaces: TaskWorkspaceIndexSnapshot[],
+  currentConversationWorkspaceId: string | null | undefined,
   setSelectedWorkspaceIds: Dispatch<SetStateAction<string[]>>,
   setSelectedPathsByWorkspace: Dispatch<SetStateAction<Record<string, string[]>>>,
 ): void {
-  const selectedIds = workspaces.filter((workspace) => isDeliverableWorkspace(details[workspace.id])).map((workspace) => workspace.id);
+  /** 与文件树按分支分组保持一致，覆盖同分支的多个仓库；工作区缺失时不扩大范围。 */
+  const currentBranch = workspaces.find((workspace) => workspace.id === currentConversationWorkspaceId)?.branchName;
+  /** 仅为默认选中的仓库初始化文件勾选。 */
+  const selectedIds = workspaces.filter((workspace) => (!currentConversationWorkspaceId || workspace.branchName === currentBranch) && isDeliverableWorkspace(details[workspace.id])).map((workspace) => workspace.id);
+  /** 仓库选择与文件选择使用同一范围。 */
   const selectedPaths = Object.fromEntries(selectedIds.map((workspaceId) => [workspaceId, collectWorkingFiles(details[workspaceId]).map((file) => file.path)]));
   setSelectedWorkspaceIds(selectedIds);
   setSelectedPathsByWorkspace(selectedPaths);
 }
 
+/** 刷新保留用户的勾选；首次加载失败后的重试仍使用原会话分支。 */
 function preserveDeliverySelection(
   details: Record<string, TaskWorkspaceSnapshot>,
   workspaces: TaskWorkspaceIndexSnapshot[],
+  currentConversationWorkspaceId: string | null | undefined,
   initialized: boolean,
   setSelectedWorkspaceIds: Dispatch<SetStateAction<string[]>>,
   setSelectedPathsByWorkspace: Dispatch<SetStateAction<Record<string, string[]>>>,
 ): void {
   if (!initialized) {
-    initializeDeliverySelection(details, workspaces, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
+    initializeDeliverySelection(details, workspaces, currentConversationWorkspaceId, setSelectedWorkspaceIds, setSelectedPathsByWorkspace);
     return;
   }
   const availableIds = new Set(workspaces.map((workspace) => workspace.id));

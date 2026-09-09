@@ -2572,7 +2572,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               >
                 <div className="session-conversation-pane">
                   {!displayedHeader ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
-                  <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}
@@ -2662,6 +2661,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     </p>
                   ) : null}
                 </div>
+                {/* 常驻环境卡与会话并排占位，让正文和输入框一起避让。 */}
+                <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                 {props.conversation ? (
                   <aside
                     className="session-browser-sidecar session-context-sidecar"
