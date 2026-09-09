@@ -14,6 +14,53 @@ export const defaultNetworkProxySettings: NetworkProxySettings = { mode: 'defaul
 /** 本地连接不经过代理；Node HTTP 与 fetch 对 IPv6 分别需要裸地址和方括号写法。 */
 export const networkProxyLoopbackBypass = 'localhost,127.0.0.1,::1,[::1]';
 
+/** 表单分别保留文本，允许用户先输入主机再输入端口。 */
+export interface NetworkProxyAddressFields {
+  /** 代理服务器连接协议。 */
+  protocol: 'http' | 'https';
+  /** 不含协议、路径或端口的主机名；支持 IPv6。 */
+  host: string;
+  /** 保留未完成输入，提交时才转换并校验。 */
+  port: string;
+}
+
+/** 单条网络链路的检查结果，不返回响应正文或可能含秘密的错误原文。 */
+export interface NetworkProxyConnectionResult {
+  /** 收到 HTTP 响应时返回状态码，包含目标网站的拒绝响应。 */
+  statusCode?: number;
+  /** 失败按超时、代理认证或连接错误区分。 */
+  error?: 'timeout' | 'authentication' | 'connection';
+}
+
+/** 两条网络链路分别报告，不将浏览器可用误报为模型可用。 */
+export interface NetworkProxyCheckResult {
+  /** Chromium 网络检查。 */
+  browser: NetworkProxyConnectionResult;
+  /** 模型宿主使用的 Node 网络检查。 */
+  node: NetworkProxyConnectionResult;
+}
+
+/** 已有 URL 自动拆分；标准端口即使被 URL 规范化省略也能回填。 */
+export function networkProxyAddressFields(settings: NetworkProxySettings): NetworkProxyAddressFields {
+  if (!settings.url) return { protocol: 'http', host: '', port: '' };
+  /** 持久化地址仍需经过统一校验。 */
+  const url = new URL(normalizeNetworkProxySettings(settings).url);
+  return { protocol: url.protocol === 'https:' ? 'https' : 'http', host: url.hostname, port: url.port || (url.protocol === 'https:' ? '443' : '80') };
+}
+
+/** 独立输入框统一组装为原有存储格式，不引入第二套代理状态。 */
+export function networkProxySettingsFromFields(mode: NetworkProxySettings['mode'], fields: NetworkProxyAddressFields, bypass: string): NetworkProxySettings {
+  if (mode !== 'manual') return normalizeNetworkProxySettings({ mode });
+  if (fields.protocol !== 'http' && fields.protocol !== 'https') throw new NetworkProxySettingsError('请选择 HTTP 或 HTTPS 代理。');
+  /** 显式端口只接受十进制整数，禁止空值、零、科学计数法和越界值。 */
+  const port = fields.port.trim();
+  if (!/^\d{1,5}$/u.test(port) || Number(port) < 1 || Number(port) > 65535) throw new NetworkProxySettingsError('端口号须为 1 到 65535 的整数。');
+  /** 拒绝把完整地址或内嵌端口当成主机；裸 IPv6 由 URL 负责最终校验。 */
+  const host = fields.host.trim();
+  if (!host || /[\s/@?#\\]/u.test(host) || (host.includes(':') && !host.startsWith('[') && host.split(':').length < 3) || /^\[.*\].+$/u.test(host)) throw new NetworkProxySettingsError('主机名只填写域名或 IP，协议和端口请使用独立输入框。');
+  return normalizeNetworkProxySettings({ mode, url: `${fields.protocol}://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${Number(port)}`, bypass });
+}
+
 /** 输入错误不携带原始地址，防止账号密码进入日志。 */
 export class NetworkProxySettingsError extends Error {
   /** 供设置接口区分输入错误与保存失败。 */
@@ -40,6 +87,7 @@ export function normalizeNetworkProxySettings(value: unknown): NetworkProxySetti
     throw new NetworkProxySettingsError('代理地址或端口无效。');
   }
   if (url.username || url.password || address.includes('@')) throw new NetworkProxySettingsError('代理地址不能包含账号密码；请使用本机代理客户端提供的无认证地址。');
+  if (url.port === '0') throw new NetworkProxySettingsError('端口号须为 1 到 65535 的整数。');
   if (!url.hostname || url.pathname !== '/' || url.search || url.hash || /[?#]/u.test(address)) throw new NetworkProxySettingsError('代理地址只能包含协议、主机和端口，不能包含路径、查询参数或片段。');
   /** 统一采用主机或后缀语义，不接受各平台解释不同的端口、CIDR 和任意通配符。 */
   const bypass = [

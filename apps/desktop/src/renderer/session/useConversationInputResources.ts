@@ -2,11 +2,13 @@ import { reportApplicationError, type ApplicationErrorLanguage } from '../ui/App
 import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
+import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
+import { retainInputFocus } from '../ui/retainInputFocus.js';
 
 interface UseConversationInputResourcesOptions {
   /** 附件处理失败跟随当前页面语言。 */
   language: ApplicationErrorLanguage;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textareaRef: RefObject<ComposerInputHandle | null>;
   text: string;
   disabled: boolean;
   onTextChange: (text: string) => void;
@@ -18,7 +20,7 @@ interface UseConversationInputResourcesOptions {
 export interface ConversationInputResourceHandlers {
   processing: boolean;
   dragging: boolean;
-  handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void;
+  handlePaste(event: ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   handlePasteShortcut(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   handleDragEnter(event: DragEvent<HTMLElement>): void;
   handleDragOver(event: DragEvent<HTMLElement>): void;
@@ -45,6 +47,8 @@ export function useConversationInputResources(options: UseConversationInputResou
 
   const runResourceOperation = useCallback(async (operation: () => Promise<void>) => {
     if (latest.current.disabled) return;
+    /** 附件处理完成后继续在原位置输入，用户已转移焦点时不干预。 */
+    const restoreFocus = retainInputFocus(latest.current.textareaRef.current);
     setProcessingCount((current) => current + 1);
     try {
       await operation();
@@ -52,6 +56,7 @@ export function useConversationInputResources(options: UseConversationInputResou
       latest.current.onError(reportApplicationError(error, { language: latest.current.language }));
     } finally {
       if (mounted.current) setProcessingCount((current) => Math.max(0, current - 1));
+      restoreFocus();
     }
   }, []);
 
@@ -94,7 +99,7 @@ export function useConversationInputResources(options: UseConversationInputResou
   );
 
   const handlePaste = useCallback(
-    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    (event: ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
       pasteGeneration.current += 1;
       if (latest.current.disabled) return;
       const files = dataTransferFiles(event.clipboardData);
@@ -107,18 +112,16 @@ export function useConversationInputResources(options: UseConversationInputResou
       // 粘贴时读取共享门槛，避免打包分块循环加载时把尚未初始化的值复制为常量。
       if (text.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD) return;
       event.preventDefault();
-      materializeLongText(text, currentSelection(event.currentTarget));
+      materializeLongText(text, currentSelection(latest.current.textareaRef.current, latest.current.text.length));
     },
     [addFiles, materializeLongText],
   );
 
   const handlePasteShortcut = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
-      // 格式预览只转发发送按键，不从阅读区域读取原生文本选区。
-      if (!(event.currentTarget instanceof HTMLTextAreaElement)) return;
       if (latest.current.disabled || event.key.toLocaleLowerCase() !== 'v' || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
       const generation = ++pasteGeneration.current;
-      const selection = currentSelection(event.currentTarget);
+      const selection = currentSelection(latest.current.textareaRef.current, latest.current.text.length);
       globalThis.setTimeout(() => {
         if (!mounted.current || generation !== pasteGeneration.current || latest.current.disabled) return;
         void runResourceOperation(async () => {
@@ -190,10 +193,11 @@ interface TextSelection {
   end: number;
 }
 
-function currentSelection(textarea: HTMLTextAreaElement): TextSelection {
+/** 从普通输入或 Markdown 编辑器读取原文选区，未挂载时追加到末尾。 */
+function currentSelection(textarea: ComposerInputHandle | null, fallback = 0): TextSelection {
   return {
-    start: textarea.selectionStart ?? textarea.value.length,
-    end: textarea.selectionEnd ?? textarea.value.length,
+    start: textarea?.selectionStart ?? fallback,
+    end: textarea?.selectionEnd ?? fallback,
   };
 }
 

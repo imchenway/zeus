@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
@@ -39,6 +40,8 @@ interface SessionQuickActionsCardProps {
   state: NativeSessionState;
   task: { id: string; title: string } | null;
   persistentHost?: HTMLElement | null;
+  /** 浏览器展开时将环境信息放进独立布局区，保留网页可见性。 */
+  dockHost?: HTMLElement | null;
   forceCollapsed?: boolean;
   suppressed?: boolean;
   capabilities?: CodexConversationCapabilities | null;
@@ -71,7 +74,8 @@ interface SourceRow {
   resource?: ConversationResource;
 }
 
-const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1440;
+/** 为环境卡预留 332px 后，仍能容纳 768px 正文和两侧留白。 */
+const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1200;
 const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
@@ -115,6 +119,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
   const popoverOpen = cardVisible && !persistent;
+  /** 手动展开的环境侧栏仍由顶部按钮控制。 */
+  const docked = !persistent && Boolean(props.dockHost);
 
   useLayoutEffect(() => {
     props.onPopoverOpenChange?.(popoverOpen);
@@ -196,7 +202,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   useEffect(() => {
     if (!open) return;
     const closeFromOutside = (event: PointerEvent): void => {
-      if (rootRef.current?.contains(event.target as Node)) return;
+      if (rootRef.current?.contains(event.target as Node) || cardRef.current?.contains(event.target as Node)) return;
+      if (docked) return;
       setOpen(false);
     };
     const closeFromKeyboard = (event: KeyboardEvent): void => {
@@ -212,7 +219,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       window.removeEventListener('pointerdown', closeFromOutside, true);
       window.removeEventListener('keydown', closeFromKeyboard, true);
     };
-  }, [open]);
+  }, [open, docked]);
 
   useLayoutEffect(() => {
     if (!cardVisible) return;
@@ -271,10 +278,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     props.onOpenGitReview(taskId, workspace.id, 'commit');
   }
 
+  /** 优先携带会话绑定的工作区，避免列表暂缺时误选其他分支。 */
   function openDelivery(): void {
     if (!taskId || !props.onOpenGitDelivery) return;
     setOpen(false);
-    props.onOpenGitDelivery(taskId, workspace?.id ?? props.conversation.workspaceId ?? null);
+    props.onOpenGitDelivery(taskId, props.conversation.workspaceId ?? workspace?.id ?? null);
   }
 
   function openCommands(): void {
@@ -306,18 +314,18 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           onClick={() => setOpen((current) => !current)}
         >
-          <GitDiff aria-hidden="true" weight="regular" />
+          <Desktop aria-hidden="true" weight="regular" />
         </button>
       )}
 
       {cardMounted ? (
-        <SessionQuickActionsCardMount persistent={persistent} host={props.persistentHost}>
+        <SessionQuickActionsCardMount persistent={persistent || docked} host={docked ? props.dockHost : props.persistentHost}>
           <section
             ref={cardRef}
             className="session-quick-actions-card"
-            data-presentation={persistent ? 'persistent' : 'popover'}
+            data-presentation={persistent ? 'persistent' : docked ? 'docked' : 'popover'}
             data-sources-expanded={showAllSources || undefined}
-            role={persistent ? 'region' : 'dialog'}
+            role={persistent || docked ? 'region' : 'dialog'}
             aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}
             hidden={props.suppressed || undefined}
           >

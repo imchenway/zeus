@@ -1,3 +1,4 @@
+import type { DigitalEmployeeAvatarId } from '@zeus/shared';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type {
   DigitalEmployeeAutomationActionKind,
@@ -17,6 +18,8 @@ export interface DigitalEmployeeTemplateDraft {
   description: string;
   role: string;
   domain: string;
+  /** 草稿保存预置头像身份。 */
+  avatarId: DigitalEmployeeAvatarId | null;
   skillIds: string[];
   prompt: string;
   agentKind: 'codex' | 'pi';
@@ -65,6 +68,7 @@ export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = {
   description: '',
   role: '',
   domain: '',
+  avatarId: null,
   skillIds: [],
   prompt: '',
   agentKind: 'codex',
@@ -98,6 +102,7 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
     description: record.description,
     role: record.role,
     domain: record.domain,
+    avatarId: record.avatarId ?? null,
     skillIds: [...record.skillIds],
     prompt: record.prompt,
     agentKind: record.agentKind,
@@ -138,6 +143,7 @@ export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmplo
     description: draft.description.trim(),
     role: draft.role.trim(),
     domain: draft.domain.trim(),
+    avatarId: draft.avatarId,
     skillIds: draft.skillIds,
     prompt: draft.prompt.trim(),
     agentKind: draft.agentKind,

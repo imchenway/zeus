@@ -969,6 +969,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           .then(() => undefined),
       startLogin: () => codexAppServerManager.startChatGptLogin(),
       cancelLogin: (loginId) => codexAppServerManager.cancelChatGptLogin({ loginId }),
+      logout: () => codexAppServerManager.logoutAccount(),
     },
     remoteControl: {
       ensureReady: ensureCodexRemoteControlReady,

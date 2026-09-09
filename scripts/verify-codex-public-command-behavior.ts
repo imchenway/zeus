@@ -19,6 +19,24 @@ try {
   db.execute(`CREATE TABLE codex_public_probe_projection (id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   await db.save();
 
+  /** 退出使用独立命令身份；成功回执重读不得再次调用外部账号操作。 */
+  const logout = parseRequest('logout', codexPublicCommandTypes.accountLogout, {});
+  let logoutInvocations = 0;
+  const executeLogout = () =>
+    application.executeExternal({
+      parsed: logout,
+      destinationId: 'codex:account',
+      resourceId: codexPublicCommandScopeIds.account,
+      invoke: async () => {
+        logoutInvocations += 1;
+        return { signedOut: true };
+      },
+    });
+  await executeLogout();
+  const logoutReplay = await executeLogout();
+  assertBehavior(logoutReplay.result.signedOut && logoutReplay.replayed && logoutInvocations === 1, '退出回执必须复用，不能重复写出。');
+  observed.logoutInvocations = logoutInvocations;
+
   const accepted = parseRequest('accepted', codexPublicCommandTypes.accountLoginStart, {});
   let acceptedInvocations = 0;
   const largeResult = { loginId: 'login-artifact-result', payload: 'x'.repeat(1_250_000) };

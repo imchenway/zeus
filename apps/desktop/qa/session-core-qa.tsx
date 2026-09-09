@@ -16,6 +16,8 @@ import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
 import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
+import type { ComposerInputHandle } from '../src/renderer/session/MarkdownComposerEditor.js';
+import { buildTaskCreateInitialForm, getLanguageCopy, TaskCreateModal } from '../src/renderer/features/workspace/workspaceSupport.js';
 
 interface QaScene {
   query: string;
@@ -26,7 +28,8 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
-  { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的粘贴、预览、编辑和发送原文。', answer: '', activities: [] },
+  { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
+  { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
@@ -88,6 +91,7 @@ export function sceneFromSearch(search: string): QaScene {
 
 export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
+  if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
   if (props.scene.query === 'review') return <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
@@ -235,14 +239,32 @@ function ComposerMarkdownQa() {
   const [state, setState] = useState(createInitialSessionState);
   /** 展示提交内容，便于比较缩进、转义和技能调用是否保留。 */
   const [submitted, setSubmitted] = useState('');
-  /** 只读状态可在预览期间切换，核对发送和编辑禁用条件。 */
+  /** 只读状态可在编辑期间切换，核对发送和编辑禁用条件。 */
   const [readOnly, setReadOnly] = useState(false);
-  /** 保留真实文本框，模拟浏览器粘贴事件与默认插入，不访问系统剪贴板。 */
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 保留统一输入接口，样例通过真实编辑器的粘贴处理插入，不访问系统剪贴板。 */
+  const textareaRef = useRef<ComposerInputHandle | null>(null);
   /** 用户提供的十二列表格，保留转义、长编号及前导零。 */
   const sample = String.raw`| id | batch\_tag | pick\_bill\_date | delivery\_spot\_id | pick\_bill\_id | pick\_bill\_no | collect\_status | begin\_collect\_time | end\_collect\_time | allocate\_dtl | delete\_flag | update\_time |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2093161985053044748 | 2093161985044656133 | 20260828 | 00000852 | 2093161972491100160 | 000126082800428 | 5 | 2026-08-28 15:40:15 | 2026-08-28 15:40:44 | 1 | 0 | 2026-08-28 18:07:13 |`;
+  /** 可以替换样例，检查普通文本、命令及 Markdown 的同一粘贴路径。 */
+  const [pasteSample, setPasteSample] = useState(sample);
+  /** 仅普通浏览器 QA 注入附件返回值，不接触原生剪贴板或磁盘。 */
+  useEffect(() => {
+    if (window.zeus) return;
+    window.zeus = {
+      authorizeConversationFiles: async () => {
+        await nextQaTask();
+        await nextQaTask();
+        return { resources: [{ name: '焦点检查.txt', kind: 'file', mime: 'text/plain', uploadRef: `qa:${crypto.randomUUID()}` }], failedCount: 0 };
+      },
+    } as NonNullable<Window['zeus']>;
+    return () => {
+      delete window.zeus;
+    };
+  }, []);
+  /** 焦点检查结果直接显示，明确区分模拟附件与原生剪贴板。 */
+  const [focusResult, setFocusResult] = useState('');
   return (
     <main
       className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${parameters.has('dark') ? 'dark' : 'light'}`}
@@ -250,7 +272,8 @@ function ComposerMarkdownQa() {
       style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
     >
       <h1>粘贴 Markdown</h1>
-      <p>粘贴表格后查看格式，用“编辑原文”或 Escape 继续修改，Enter 记录发送内容。</p>
+      <p>Markdown 默认排版，点击内容直接修改；Shift+Enter 换行，Enter 记录发送原文。</p>
+      <textarea aria-label="粘贴样例" value={pasteSample} onChange={(event) => setPasteSample(event.currentTarget.value)} style={{ display: 'block', width: '100%', height: 72, marginBlock: 12 }} />
       <label>
         <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.currentTarget.checked)} />
         只读
@@ -259,18 +282,50 @@ function ComposerMarkdownQa() {
         type="button"
         disabled={readOnly}
         onClick={() => {
-          /** 模拟事件只在原文可编辑时运行，防止隐藏输入框承接样例。 */
-          const textarea = textareaRef.current;
-          if (!textarea || textarea.closest('[hidden]')) return;
-          textarea.focus();
+          textareaRef.current?.focus();
+          /** 目标为真实编辑节点，CodeMirror 的粘贴处理负责插入与撤销。 */
+          const editor = document.querySelector('.structured-composer-editor [contenteditable="true"]');
+          if (!editor) return;
           /** 仅使用固定样例构造粘贴内容。 */
           const data = new DataTransfer();
-          data.setData('text/plain', sample);
-          if (textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))) document.execCommand('insertText', false, sample);
+          data.setData('text/plain', pasteSample);
+          editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
         }}
       >
-        模拟粘贴表格
+        模拟粘贴
       </button>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          const control = document.querySelector<HTMLElement>('.structured-composer-editor [role="textbox"]');
+          if (control && textareaRef.current) void checkAttachmentFocus(control, textareaRef.current).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
+        }}
+      >
+        检查附件粘贴焦点
+      </button>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          const control = document.querySelector<HTMLElement>('.structured-composer-editor [role="textbox"]');
+          const other = document.querySelector<HTMLElement>('textarea[aria-label="粘贴样例"]');
+          if (control && textareaRef.current && other) void checkAttachmentFocus(control, textareaRef.current, other).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
+        }}
+      >
+        检查主动转移焦点
+      </button>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          const control = document.querySelector<HTMLElement>('.structured-composer-editor [role="textbox"]');
+          if (control && textareaRef.current) void checkAttachmentFocus(control, textareaRef.current, null).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
+        }}
+      >
+        检查意外失焦恢复
+      </button>
+      <output aria-label="附件焦点检查">{focusResult}</output>
       <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', boxSizing: 'border-box', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%', marginBlock: 24 }}>
         <ConversationComposer
           textareaRef={textareaRef}
@@ -287,6 +342,8 @@ function ComposerMarkdownQa() {
             models: [{ id: 'qa-model', model: 'qa-model', displayName: '验收模型', supportedReasoningEfforts: [], serviceTiers: [] }],
             codexAccount: { generationId: 'qa', requiresOpenaiAuth: false, signedIn: false, accountType: null, planType: null },
           }}
+          onAddAttachments={(attachments) => setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
+          onRemoveAttachment={(attachment) => setState((current) => ({ ...current, attachments: current.attachments.filter((candidate) => candidate !== attachment) }))}
           onDraftChange={(draft) => setState((current) => ({ ...current, draft }))}
           onSubmit={(_delivery, settings) => {
             // 当前验收页不加载技能目录，提交正文必须逐字符等于原始草稿。
@@ -304,6 +361,101 @@ function ComposerMarkdownQa() {
         {submitted}
       </pre>
     </main>
+  );
+}
+
+/** 让浏览器提交本轮 React 更新，模拟附件读取跨越事件循环。 */
+function nextQaTask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 在真实编辑节点上粘贴文件，检查处理中可输入、完成后的焦点和原选区。 */
+async function checkAttachmentFocus(control: HTMLElement, input: ComposerInputHandle, other?: HTMLElement | null): Promise<string> {
+  input.focus();
+  input.setSelectionRange(0, Math.min(2, input.value.length));
+  /** 原文选区不应因为添加附件而移动到末尾。 */
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  const count = document.querySelectorAll('.pending-resource-card').length;
+  const data = new DataTransfer();
+  data.items.add(new File(['qa'], '焦点检查.txt', { type: 'text/plain' }));
+  control.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  await nextQaTask();
+  if (control.matches(':disabled') || document.activeElement !== control) throw new Error('附件处理中输入框丢失焦点或被禁用');
+  if (other) other.focus();
+  else if (other === null) control.blur();
+  // 读取结果、附件回写和焦点完成回调分别推进，不用延长固定等待掩盖失败。
+  await nextQaTask();
+  await nextQaTask();
+  await nextQaTask();
+  if (document.querySelectorAll('.pending-resource-card').length <= count) throw new Error('附件未进入真实输入组件');
+  if (document.activeElement !== (other ?? control)) throw new Error(other ? '主动转移焦点后被抢回' : '附件完成后光标丢失');
+  if (!other && (input.selectionStart !== start || input.selectionEnd !== end)) throw new Error('附件改变了原选区');
+  return other ? '通过：附件已加入，用户新焦点保持不变' : other === null ? '通过：意外失焦后恢复原输入框及选区' : '通过：附件已加入，处理中可输入，光标与选区保持不变';
+}
+
+/** 真实任务创建表单；地址参数选择需求、缺陷或优化，以及对应粘贴字段。 */
+function TaskPasteFocusQa() {
+  /** 本页只更新草稿，不提交任务。 */
+  const parameters = new URLSearchParams(window.location.search);
+  const [form, setForm] = useState(() => ({
+    ...buildTaskCreateInitialForm('zh-CN'),
+    projectId: 'qa',
+    taskType: (parameters.get('type') ?? 'requirement') as 'requirement' | 'defect' | 'optimization',
+    title: '附件焦点检查',
+    description: '继续输入任务说明',
+    defectCurrentState: '当前状态',
+    defectExpectedOutcome: '预期结果',
+    defectReproductionSteps: '复现步骤',
+    optimizationCurrentState: '当前状态',
+    optimizationExpectedOutcome: '预期结果',
+    tags: '焦点',
+  }));
+  /** 保留真实标题控件供弹窗初始焦点使用。 */
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  /** 页面打开后运行一次现有组件的粘贴检查，结果显示在弹窗提示区。 */
+  const [result, setResult] = useState('正在检查附件粘贴焦点');
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const control = document.getElementById(`task-create-${parameters.get('field') ?? 'description'}-input`);
+      if (!(control instanceof HTMLTextAreaElement) && !(control instanceof HTMLInputElement)) {
+        setResult('失败：目标字段未挂载');
+        return;
+      }
+      void checkAttachmentFocus(control, control, parameters.has('move') ? (titleRef.current ?? undefined) : undefined).then(setResult, (error) => setResult(`失败：${String(error)}`));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <TaskCreateModal
+      open
+      projects={[]}
+      copy={getLanguageCopy('zh-CN').taskWorkspace}
+      form={form}
+      busy={false}
+      titleInputRef={titleRef}
+      parentTasks={[]}
+      error={result}
+      onProjectChange={(projectId) => setForm((current) => ({ ...current, projectId }))}
+      onFormChange={(field, value) => setForm((current) => ({ ...current, [field]: value }))}
+      onTaskTypeChange={(taskType) => setForm((current) => ({ ...current, taskType: taskType as typeof current.taskType }))}
+      onPriorityChange={(priority) => setForm((current) => ({ ...current, priority }))}
+      onParentChange={(parentTaskId) => setForm((current) => ({ ...current, parentTaskId }))}
+      onReadClipboardResources={async () => {
+        await nextQaTask();
+        await nextQaTask();
+        return { resources: [{ path: `qa:${crypto.randomUUID()}`, name: '焦点检查.txt', kind: 'file', mimeType: 'text/plain' }], text: '' };
+      }}
+      onAuthorizeFiles={async () => ({ resources: [], failedCount: 0 })}
+      onMaterializeResources={async () => []}
+      onAddAttachments={(attachments) => setForm((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
+      onRemoveAttachment={(path) => setForm((current) => ({ ...current, attachments: current.attachments.filter((attachment) => attachment.path !== path) }))}
+      onParseThirdPartyLink={async () => ({ kind: 'unsupported' })}
+      onApplyThirdPartyTaskInfo={() => undefined}
+      onOpenThirdPartyLink={async () => false}
+      onClose={() => undefined}
+      onSubmit={(event) => event.preventDefault()}
+    />
   );
 }
 

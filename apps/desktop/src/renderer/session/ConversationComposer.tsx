@@ -34,6 +34,7 @@ import { presentModelOptions } from '../modelOptionPresentation.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
+import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -48,7 +49,7 @@ export interface ComposerRuntimeSettings {
 export interface ConversationComposerProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
-  textareaRef?: RefObject<HTMLTextAreaElement | null>;
+  textareaRef?: RefObject<ComposerInputHandle | null>;
   capabilities?: CodexConversationCapabilities | null;
   serviceTierPreferences?: readonly ProjectModelServiceTierPreference[];
   onServiceTierPreferenceChange?: (model: NonNullable<CodexConversationCapabilities['models'][number]>, selection: NativeServiceTierSelection) => void | Promise<void>;
@@ -133,7 +134,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const initialServiceTier = initialPreference
     ? projectModelServiceTierSelection(props.serviceTierPreferences, initialCapability)
     : selectionFromEffectiveServiceTier(props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : null);
-  const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
+  const fallbackRef = useRef<ComposerInputHandle | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const composingRef = useRef(false);
   const structuredSelectionRef = useRef<StructuredComposerSelection>({ displayText: props.state.draft, promptText: props.state.draft, expertMentions: [], skillReferences: [], pluginReferences: [], computerUseRequested: false });
@@ -212,11 +213,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
   ]);
 
   useLayoutEffect(() => {
-    if (textareaRef.current) autosizeTextarea(textareaRef.current);
+    if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
   }, [editorValue, goalDraft, goalInputActive, textareaRef]);
 
   useEffect(() => {
-    // 拼音尚未上屏时由 textarea 本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
+    // 拼音尚未上屏时由编辑器本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
     if (!composingRef.current) setEditorValue(props.state.draft);
   }, [props.state.draft]);
 
@@ -228,7 +229,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    const view = textarea?.ownerDocument.defaultView;
+    if (!(textarea instanceof HTMLTextAreaElement)) return;
+    const view = textarea.ownerDocument.defaultView;
     if (!textarea || !view) return;
     const resize = () => autosizeTextarea(textarea);
     view.addEventListener('resize', resize);
@@ -314,7 +316,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     await setGoalObjective(argument, true);
   }
 
-  /** 原文和格式预览共用发送条件；粘贴快捷键只在原文输入框处理。 */
+  /** 普通输入与 Markdown 输入共用发送条件和附件快捷键。 */
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void {
     if (!goalInputActive) inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({
@@ -401,7 +403,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
         />
         {goalInputActive ? (
           <textarea
-            ref={textareaRef}
+            ref={(element) => {
+              textareaRef.current = element;
+            }}
             aria-label={copy.goalInput}
             aria-keyshortcuts="Enter Shift+Enter Escape Meta+A Control+A"
             placeholder={copy.goalPlaceholder}
@@ -453,16 +457,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
               composingRef.current = true;
               setIsComposing(true);
             }}
-            onCompositionEnd={(event) => {
-              const nextValue = event.currentTarget.value;
+            onCompositionEnd={(nextValue) => {
               composingRef.current = false;
               setIsComposing(false);
               setEditorValue(nextValue);
               props.onDraftChange(nextValue);
             }}
-            onBlur={(event) => {
+            onBlur={(nextValue) => {
               if (!composingRef.current) return;
-              const nextValue = event.currentTarget.value;
               composingRef.current = false;
               setIsComposing(false);
               setEditorValue(nextValue);

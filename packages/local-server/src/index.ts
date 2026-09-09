@@ -22,7 +22,7 @@ import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
-export { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
+export { applyNetworkProxyAtStartup, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
 import {
   cloneTaskManagementStatusConfig,
   type ReadOnlyValidationDescriptor,

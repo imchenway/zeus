@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { CodexBootstrapAdditionalContext, PortableConversationContext } from '@zeus/shared';
+import { userFacingErrorCause, type CodexBootstrapAdditionalContext, type PortableConversationContext } from '@zeus/shared';
 import type { CommandDeliveryRepository, ConversationExecutionRepository, ConversationRuntimeKind, ConversationSubmissionRepository, ZeusConversationSubmissionRecord, ZeusDatabase } from '@zeus/storage';
 import { applyPortableContextCompaction, planPortableContextCompaction, type PortableContextCompactionPlan, type PortableContextTargetCapabilities, PortableConversationContextBuilder } from './conversationPortableContext.js';
 import type { ManagedPortableContextStore } from './managedPortableContextStore.js';
@@ -212,15 +212,7 @@ export class ConversationExecutionCoordinator {
           }
           await this.options.db.save();
         } catch (error) {
-          const failedAt = this.options.now();
-          try {
-            if (switchOperationId) this.options.execution.failBeforeProviderWrite(switchOperationId, serializeError(error), failedAt);
-            else this.options.execution.pauseCurrentSubmissionBeforeProviderWrite(input.conversationId, submissionId, serializeError(error), failedAt);
-            await this.options.db.save();
-          } catch (compensationError) {
-            this.releaseLease(input.conversationId, submissionId);
-            throw new AggregateError([error, compensationError], '统一会话派发预备与补偿事务同时失败。');
-          }
+          // 业务失败由调用方统一交给 fail 收口，避免预备失败被重复结算；本地占用立即释放。
           this.releaseLease(input.conversationId, submissionId);
           throw error;
         }
@@ -569,7 +561,7 @@ function stableCompactionTurnId(conversationId: string, segmentId: string, submi
 function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
     const candidate = error as Error & { code?: unknown };
-    return { name: error.name, message: error.message, code: typeof candidate.code === 'string' ? candidate.code : null };
+    return { name: error.name, message: error.message, code: typeof candidate.code === 'string' ? candidate.code : null, ...(error.cause ? { cause: userFacingErrorCause(error.cause) } : {}) };
   }
   return { message: String(error) };
 }

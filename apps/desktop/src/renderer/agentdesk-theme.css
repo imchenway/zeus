@@ -243,25 +243,6 @@
   color: var(--agentdesk-text);
 }
 
-.macos-ai-app.zeus-shell :where(.zeus-button[data-button-variant='primary'], button.primary, button[data-variant='primary'], .button-primary) {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--agentdesk-accent) 88%, white), var(--agentdesk-accent));
-  border-color: color-mix(in srgb, var(--agentdesk-accent) 74%, transparent);
-  box-shadow: 0 10px 24px -16px rgb(40 102 247 / 0.72);
-  color: #fff;
-}
-
-.macos-ai-app.zeus-shell :where(.zeus-button[data-button-variant='primary'], button.primary, button[data-variant='primary'], .button-primary):is(:hover, :focus-visible):not(:disabled) {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--agentdesk-accent-strong) 88%, white), var(--agentdesk-accent-strong));
-  border-color: var(--agentdesk-accent-strong);
-  color: #fff;
-}
-
-.macos-ai-app.zeus-shell :where(.zeus-button[data-button-variant='danger'], button.danger, button[data-variant='danger']) {
-  background: rgb(220 38 38 / 0.1);
-  border-color: rgb(220 38 38 / 0.28);
-  color: #b4232d;
-}
-
 .macos-ai-app.zeus-shell :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
   background: color-mix(in srgb, var(--agentdesk-control) 88%, transparent);
   box-shadow: inset 0 1px 1px rgb(15 23 42 / 0.05);
@@ -372,9 +353,7 @@
   background: color-mix(in srgb, var(--agentdesk-accent) 14%, var(--agentdesk-surface-strong));
   border-color: color-mix(in srgb, var(--agentdesk-accent) 32%, var(--agentdesk-border));
   color: var(--agentdesk-accent-strong);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 35%),
-    var(--agentdesk-shadow-soft);
+  box-shadow: none;
 }
 
 /* 下划线式 Tab 保持原有信息结构，只统一命中区圆角和品牌色。 */
@@ -610,21 +589,13 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(40 102 247 / 14%);
   border-color: rgb(40 102 247 / 22%);
   color: var(--agentdesk-accent-strong);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 44%);
+  box-shadow: none;
 }
 
 .macos-ai-app.zeus-shell :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
   background: rgb(255 255 255 / 55%);
   border-color: rgb(255 255 255 / 68%);
   box-shadow: inset 0 1px 2px rgb(39 79 115 / 8%);
-}
-
-.macos-ai-app.zeus-shell :where(.zeus-button[data-button-variant='primary'], button.primary, button[data-variant='primary'], .button-primary) {
-  background: linear-gradient(180deg, #4f82ff, #2866f7);
-  border-color: rgb(40 102 247 / 70%);
-  box-shadow:
-    0 10px 22px -14px rgb(40 102 247 / 78%),
-    inset 0 1px 0 rgb(255 255 255 / 24%);
 }
 
 .macos-ai-app.zeus-shell :where(.status-success, [data-status='success'], [data-state='completed'], [data-state='succeeded']) {
@@ -814,20 +785,18 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none;
 }
 
-.macos-ai-app.zeus-shell
-  :is(.zeus-button[data-button-variant='primary'], button.primary, button[data-variant='primary'], .button-primary, [class*='-primary-action'], [class*='-primary-button'], .session-send-button, .menu-bar-usage-primary-action) {
+/* 旧入口的主操作保留纯色强调；标准 Button 的尺寸和状态只由原语负责。 */
+.macos-ai-app.zeus-shell :is(button.primary, button[data-variant='primary'], .button-primary, [class*='-primary-action'], [class*='-primary-button'], .session-send-button, .menu-bar-usage-primary-action):where(:not(.zeus-button)) {
   min-block-size: 32px;
   padding-inline: 14px;
   border-radius: var(--agentdesk-radius-control);
-  background: linear-gradient(180deg, #4f82ff, #2866f7);
-  border-color: rgb(40 102 247 / 72%);
-  box-shadow:
-    0 8px 18px -12px rgb(40 102 247 / 82%),
-    inset 0 1px 0 rgb(255 255 255 / 24%);
+  background: var(--zeus-product-accent);
+  border-color: var(--zeus-product-accent);
+  box-shadow: none;
   color: #fff;
 }
 
-.macos-ai-app.zeus-shell :is(.zeus-button[data-button-variant='danger'], button.danger, button[data-variant='danger'], [class*='-danger-action'], [class*='-danger-button']) {
+.macos-ai-app.zeus-shell :is(button.danger, button[data-variant='danger'], [class*='-danger-action'], [class*='-danger-button']):where(:not(.zeus-button)) {
   min-block-size: 32px;
   border-radius: var(--agentdesk-radius-control);
   background: rgb(224 72 82 / 12%);
@@ -1615,7 +1584,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: var(--zeus-card-shadow-soft) !important;
 }
 
-/* Tab 轨道有轻微悬浮感；轨道内部的按钮继续使用各自的激活语义。 */
+/* 分段导航使用扁平轨道，选中项依靠底色区分，不增加投影或高光。 */
 .macos-ai-app.zeus-shell
   :where(
     .project-workspace-mode-toolbar nav,
@@ -1632,7 +1601,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
   border: 1px solid var(--zeus-card-border) !important;
-  box-shadow: var(--zeus-card-shadow-soft) !important;
+  box-shadow: none !important;
 }
 
 /* 项目主导航使用扁平按钮，图标与文字作为整体水平、垂直居中。 */
@@ -3153,13 +3122,13 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--session-canvas) !important;
 }
 
-/* 所有项目页共用外框：Tab 左对齐内容卡片，上下间隔均为 12px。 */
+/* 所有项目页共用外框：外围留白保持 12px，导航与内容卡片的间距收紧为 4px。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) {
   --project-frame-gap: 12px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: var(--project-frame-gap) !important;
+  gap: 4px !important;
   padding: var(--project-frame-gap) !important;
   min-inline-size: 0;
   min-block-size: 0;

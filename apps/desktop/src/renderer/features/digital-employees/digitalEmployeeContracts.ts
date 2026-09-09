@@ -1,3 +1,4 @@
+import type { DigitalEmployeeAvatarId } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
@@ -57,6 +58,8 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
+  /** 未选择时按岗位使用默认头像。 */
+  avatarId?: DigitalEmployeeAvatarId | null;
   /** 允许的 Zeus Skill 稳定身份集合。 */
   skillIds: string[];
   prompt: string;
@@ -162,6 +165,8 @@ export interface DigitalEmployeeTemplateInput {
   description?: string;
   role: string;
   domain?: string;
+  /** 预置头像的稳定身份。 */
+  avatarId?: DigitalEmployeeAvatarId | null;
   skillIds?: string[];
   prompt: string;
   agentKind?: DigitalEmployeeAgentKind;

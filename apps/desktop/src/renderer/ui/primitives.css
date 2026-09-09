@@ -386,21 +386,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   max-inline-size: 100%;
 }
 
-/* Button：结构、尺寸、语义变体和交互状态由原语统一，业务页面不借用其他页面 class。 */
+/* 普通操作按钮统一扁平外观；图标与文案保持间距并作为整体居中，所有入口共用此规则。 */
 .macos-ai-app .zeus-button[data-zeus-primitive='button'] {
   align-items: center;
   appearance: none;
   background: var(--zeus-control-bg);
   border: 1px solid var(--zeus-control-border);
   border-radius: 8px;
+  box-shadow: none;
   color: var(--zeus-control-text);
   display: inline-flex;
   font: inherit;
   font-size: var(--zeus-form-action-font-size);
   font-weight: 650;
+  gap: 8px;
   justify-content: center;
-  line-height: 1;
+  line-height: 1.4;
   max-inline-size: 100%;
+  padding-block: 0;
   padding-inline: var(--zeus-form-action-padding-inline);
   text-align: center;
   transition:
@@ -408,6 +411,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
     border-color var(--zeus-button-motion),
     color var(--zeus-button-motion);
   white-space: nowrap;
+}
+
+/* 图标独立占位，避免 SVG 的基线空隙与文字挤在一起；纯图标按钮仍整体居中。 */
+.macos-ai-app .zeus-button[data-zeus-primitive='button'] > svg {
+  display: block;
+  flex: 0 0 auto;
+  inline-size: 16px;
+  block-size: 16px;
 }
 
 .macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-size='compact'] {

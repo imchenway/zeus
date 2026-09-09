@@ -95,8 +95,8 @@
   color: var(--session-text-muted);
   display: inline-flex;
   justify-content: center;
-  block-size: 30px;
-  inline-size: 30px;
+  block-size: 36px;
+  inline-size: 36px;
   padding: 0;
 }
 
@@ -108,8 +108,8 @@
 }
 
 .session-codex-parity-v1 .session-quick-actions-trigger svg {
-  block-size: 15px;
-  inline-size: 15px;
+  block-size: 20px;
+  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card {
@@ -160,14 +160,17 @@
   inline-size: 0;
 }
 
-/* 常驻卡片挂在完整顶部状态区之后，让摘要栏展开高度自然参与避让。 */
+/* 常驻卡片独立占用右侧空间；收起后归还会话宽度。 */
 .session-codex-parity-v1 .session-quick-actions-persistent-host {
-  block-size: 0;
   flex: 0 0 0;
-  inline-size: 100%;
+  min-inline-size: 0;
   pointer-events: none;
   position: relative;
   z-index: 30;
+}
+
+.session-codex-parity-v1 .session-quick-actions-persistent-host:has(> .session-quick-actions-card[data-presentation='persistent']:not([hidden])) {
+  flex-basis: 332px;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card > header,
@@ -2269,24 +2272,37 @@
   will-change: auto !important;
 }
 
-/* 思考摘要与当前状态共用连续扫光；固定纹理宽度让长摘要和短状态保持相同速度。 */
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
-.session-codex-parity-v1 .session-current-status-text {
-  animation: session-text-sweep 2.4s linear infinite;
-  background: linear-gradient(90deg, var(--session-text-muted) 0%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 100%) repeat-x;
-  background-clip: text;
-  /* 每轮恰好移动一块首尾同色的纹理，去掉纯色停留段与循环回跳。 */
-  background-size: 160px 100%;
-  color: transparent;
-  -webkit-background-clip: text;
+/* 原文固定参与排版；扫光只移动一层遮罩，不再依赖正反图层同步复位。 */
+.session-codex-parity-v1 .session-sweep-text {
+  /* 一轮移动一个纹理宽度；短状态与长摘要均以每秒 120 像素扫过。 */
+  --session-text-sweep-width: 120px;
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 遮罩平铺后每轮匀速移动一个纹理宽度，首尾完全重合，不在任何文字位置停留。 */
+.session-codex-parity-v1 .session-sweep-text-light {
+  animation: session-text-sweep 1s linear infinite;
+  color: color-mix(in oklab, var(--session-text-muted) 35%, var(--session-canvas));
+  inset: 0;
+  mask-image: linear-gradient(90deg, transparent, #000, transparent);
+  mask-repeat: repeat;
+  mask-size: var(--session-text-sweep-width) 100%;
+  pointer-events: none;
+  position: absolute;
+  user-select: none;
+}
+
+/* 副本固定覆盖原文，只有遮罩推进；不再依赖两层动画相互抵消位移。 */
+.session-codex-parity-v1 .session-sweep-text-light::before {
+  content: attr(data-text);
 }
 
 @media (prefers-reduced-motion: reduce), (forced-colors: active) {
-  .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
-  .session-codex-parity-v1 .session-current-status-text {
-    animation: none;
-    background: none;
-    color: var(--session-text-muted);
+  .session-codex-parity-v1 .session-sweep-text-light {
+    display: none;
   }
 }
 
@@ -5155,16 +5171,14 @@
   resize: none;
 }
 
-.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
-.session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
+.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
   border: 0;
   box-shadow: none;
   outline: 0;
 }
 
 @media (forced-colors: active) {
-  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible,
-  .session-codex-parity-v1 .ai-workspace .structured-composer-editor > textarea:focus-visible {
+  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
     outline: 1px solid CanvasText;
     outline-offset: 2px;
   }
@@ -6340,8 +6354,8 @@
   color: var(--session-text-muted);
   display: inline-flex;
   justify-content: center;
-  block-size: 30px;
-  inline-size: 30px;
+  block-size: 36px;
+  inline-size: 36px;
   padding: 0;
 }
 
@@ -6353,6 +6367,7 @@
 }
 
 .session-codex-parity-v1 .session-browser-toggle:focus-visible,
+.session-codex-parity-v1 .session-quick-actions-trigger:focus-visible,
 .session-codex-parity-v1 .browser-tab-strip button:focus-visible,
 .session-codex-parity-v1 .browser-workspace button:focus-visible,
 .session-codex-parity-v1 .browser-workspace input:focus-visible {
@@ -6362,8 +6377,8 @@
 }
 
 .session-codex-parity-v1 .session-browser-toggle svg {
-  block-size: 15px;
-  inline-size: 15px;
+  block-size: 20px;
+  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .browser-workspace {
@@ -6399,16 +6414,16 @@
   border-block-end: 1px solid var(--session-line-soft);
   display: flex;
   flex: 0 0 40px;
-  gap: 4px;
+  gap: 6px;
   min-inline-size: 0;
   padding: 4px 8px;
 }
 
 .session-codex-parity-v1 .browser-tabs {
-  align-items: center;
+  align-items: stretch;
   display: flex;
   flex: 0 1 auto;
-  gap: 4px;
+  gap: 2px;
   min-inline-size: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -6422,12 +6437,12 @@
   align-items: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 9px 9px 3px 3px;
+  border-radius: 8px 8px 0 0;
   display: flex;
-  flex: 0 1 210px;
+  flex: 0 1 200px;
   min-block-size: 36px;
   min-inline-size: 120px;
-  max-inline-size: 230px;
+  max-inline-size: 220px;
   overflow: hidden;
   padding-inline-end: 2px;
 }
@@ -6440,7 +6455,7 @@
   background: var(--session-canvas);
   border-color: var(--session-line-soft);
   border-block-end-color: var(--session-canvas);
-  min-inline-size: 160px;
+  min-inline-size: 140px;
 }
 
 .session-codex-parity-v1 .browser-tab-strip .browser-tab {
@@ -6863,6 +6878,8 @@
 
 .session-codex-parity-v1 .session-browser-sidecar {
   border-inline-start: 1px solid var(--session-divider);
+  /* 分隔线包含在共享宽度内，保证顶栏和正文落在同一条竖线上。 */
+  box-sizing: border-box;
   flex: 0 0 auto;
   min-block-size: 0;
   min-inline-size: 0;
@@ -9441,124 +9458,112 @@
     min-inline-size: 0;
   }
 }
-/* ZEUS-0427：原生 textarea 保持唯一输入表面，镜像层只投影结构化标签。 */
+/* 会话正文始终在同一个 Markdown 编辑器中输入与排版。 */
 .session-codex-parity-v1 .structured-composer-root {
   min-inline-size: 0;
   position: relative;
 }
 
 .session-codex-parity-v1 .structured-composer-editor {
-  display: grid;
   min-inline-size: 0;
-  position: relative;
 }
 
-/* 预览与原文共用输入框位置；隐藏时保留原生节点和撤销历史。 */
-.session-codex-parity-v1 .structured-composer-editor[hidden] {
-  display: none;
-}
-
-/* 格式切换保持轻量，编辑入口始终可通过键盘访问。 */
-.session-codex-parity-v1 .structured-composer-format-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-block-end: 4px;
-}
-
-.session-codex-parity-v1 .structured-composer-format-actions > button {
+.session-codex-parity-v1 .structured-composer-editor .cm-editor {
   background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: var(--session-text-muted);
-  cursor: pointer;
+  color: var(--session-text);
   font: inherit;
-  font-size: 12px;
-  padding: 4px 6px;
+  outline: none;
 }
 
-/* 长内容由预览区纵向滚动，宽表继续复用渲染器的唯一横向滚动容器。 */
-.session-codex-parity-v1 .structured-composer-preview {
+/* 输入区随内容增长，超长内容由编辑器内部滚动。 */
+.session-codex-parity-v1 .structured-composer-editor .cm-scroller {
+  font: inherit;
+  line-height: 1.45;
   max-block-size: 34vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.session-codex-parity-v1 .structured-composer-editor .cm-content {
+  box-sizing: border-box;
+  caret-color: var(--session-text);
   min-block-size: 48px;
   min-inline-size: 0;
-  overflow-y: auto;
-  padding: 4px 5px;
-}
-
-.session-codex-parity-v1 .structured-composer-preview:focus-visible,
-.session-codex-parity-v1 .structured-composer-format-actions > button:focus-visible {
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: -1px;
-}
-
-.session-codex-parity-v1 .structured-composer-preview > .session-markdown {
-  font: inherit;
   inline-size: 100%;
-}
-
-.session-codex-parity-v1 .structured-composer-preview .table-node-wrapper {
-  border-radius: 0;
-  margin-block: 0 4px;
-}
-
-/* 标识符及日期不折行、不改写，所有列都可横向查看。 */
-.session-codex-parity-v1 .structured-composer-preview .table-node :where(th, td) {
-  min-inline-size: max-content;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .structured-composer-editor > textarea,
-.session-codex-parity-v1 .structured-composer-mirror {
-  appearance: none;
-  border: 0;
-  box-sizing: border-box;
-  font: inherit;
-  grid-area: 1 / 1;
-  inline-size: 100%;
-  line-height: 1.45;
-  margin: 0;
-  max-block-size: 34vh;
-  min-block-size: 48px;
-  overflow-wrap: break-word;
-  padding: 4px 5px;
-  /* 两层始终预留相同滚动条空间，避免长文出现不同的换行位置。 */
-  scrollbar-gutter: stable;
+  flex: 1 1 0;
+  padding: 4px 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea {
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  caret-color: var(--session-text);
-  color: transparent !important;
-  -webkit-text-fill-color: transparent;
-  outline: 0;
-  overflow-y: hidden;
-  position: relative;
-  resize: none;
-  z-index: 1;
+.session-codex-parity-v1 .structured-composer-editor .cm-line {
+  padding-inline: 5px;
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea::placeholder {
+.session-codex-parity-v1 .structured-composer-editor .cm-placeholder {
   color: var(--session-text-muted);
-  -webkit-text-fill-color: var(--session-text-muted);
 }
 
-.session-codex-parity-v1 .structured-composer-editor > textarea::selection {
+.session-codex-parity-v1 .structured-composer-editor ::selection {
   background: color-mix(in srgb, var(--session-accent) 22%, transparent);
 }
 
-.session-codex-parity-v1 .structured-composer-mirror {
-  color: var(--session-text);
-  /* 显示层固定覆盖原生输入区，全文在此区域内滚动且不参与输入框高度计算。 */
-  inset: 0;
-  max-block-size: none;
-  min-block-size: 0;
-  overflow: hidden;
-  pointer-events: none;
-  position: absolute;
-  z-index: 0;
+.session-codex-parity-v1 .structured-composer-editor [aria-disabled='true'] {
+  cursor: default;
+}
+
+/* Markdown 字形只改变显示，不重写正文或空白。 */
+.session-codex-parity-v1 .composer-md-heading,
+.session-codex-parity-v1 .composer-md-strong {
+  font-weight: 650;
+}
+.session-codex-parity-v1 .composer-md-h1 {
+  font-size: 1.5em;
+}
+.session-codex-parity-v1 .composer-md-h2 {
+  font-size: 1.3em;
+}
+.session-codex-parity-v1 .composer-md-h3 {
+  font-size: 1.15em;
+}
+.session-codex-parity-v1 .composer-md-emphasis {
+  font-style: italic;
+}
+.session-codex-parity-v1 .composer-md-strike {
+  text-decoration: line-through;
+}
+.session-codex-parity-v1 .composer-md-link {
+  color: var(--session-accent);
+  text-decoration: underline;
+}
+.session-codex-parity-v1 .composer-md-code,
+.session-codex-parity-v1 .composer-md-code-block {
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  background: color-mix(in srgb, var(--session-text) 5%, transparent);
+}
+.session-codex-parity-v1 .composer-md-quote {
+  border-inline-start: 3px solid var(--session-border);
+  color: var(--session-text-muted);
+}
+
+/* 表格复用正文渲染与横向滚动，长编号和前导零原样显示。 */
+.session-codex-parity-v1 .composer-md-table {
+  min-inline-size: 0;
+  padding: 4px 5px;
+}
+.session-codex-parity-v1 .composer-md-table .session-markdown {
+  font: inherit;
+}
+.session-codex-parity-v1 .composer-md-table .table-node :where(th, td) {
+  min-inline-size: max-content;
+  white-space: nowrap;
+  cursor: text;
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 .structured-composer-editor .cm-focused {
+    outline: 1px solid CanvasText;
+  }
 }
 
 .session-codex-parity-v1 .structured-composer-token {
@@ -11040,13 +11045,13 @@
   }
 }
 
-/* 位移与文字扫光的纹理宽度相等，循环首尾显示完全一致。 */
+/* 单层遮罩按完整纹理周期循环，文字与副本始终固定。 */
 @keyframes session-text-sweep {
   from {
-    background-position: 0 0;
+    mask-position: 0 0;
   }
   to {
-    background-position: 160px 0;
+    mask-position: var(--session-text-sweep-width) 0;
   }
 }
 
@@ -11462,6 +11467,13 @@
 }
 
 /* 浏览器标签和文件标题共用最上方一行，操作图标保持固定宽度。 */
+.session-codex-parity-v1 .session-context-header-tools {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-context-toolbar-host {
   app-region: no-drag;
   display: flex;
@@ -11479,16 +11491,33 @@
   align-items: stretch;
   background: color-mix(in srgb, var(--session-text) 6%, var(--session-canvas));
   box-sizing: border-box;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--session-context-width);
+  gap: 0;
   min-block-size: 46px;
-  padding: 6px 12px 0;
+  padding: 0;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
   align-content: center;
-  flex: 0 1 160px;
-  max-inline-size: 20%;
-  padding-block-end: 6px;
+  max-inline-size: none;
+  padding: 6px 12px;
+}
+
+/* 顶栏与正文使用同一分栏宽度，标签起点固定在分隔线上。 */
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
+  align-items: stretch;
+  border-inline-start: 1px solid var(--session-divider);
+  padding: 6px 8px 0;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-title-copy {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
+  border-inline-start: 0;
+  grid-column: 2;
 }
 
 /* 标签打开时顶栏只保留任务名称，将阅读空间交给页面；收起后恢复摘要。 */
@@ -11522,11 +11551,77 @@
   font-size: 12px;
 }
 
-/* 窄窗口优先保留可操作标签和关闭入口，任务名称仍可从会话导航查看。 */
-@media (max-width: 759px) {
-  .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
-    display: none;
-  }
+/* 环境侧栏参与真实布局，原生网页随占位区调整尺寸而不隐藏。 */
+.session-codex-parity-v1 .session-browser-environment-host:empty {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-browser-pane[data-environment-open='true'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-browser-environment-host {
+  border-inline-start: 1px solid var(--session-line-soft);
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-quick-actions-card[data-presentation='docked'] {
+  block-size: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-block-size: 100%;
+  position: static;
+}
+
+/* 窄面板上下排列，保留网页的阅读宽度；环境信息独立滚动。 */
+.session-codex-parity-v1 .session-browser-pane[data-environment-open='true'][data-environment-stacked='true'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, min(38%, 300px)) minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-browser-pane[data-environment-stacked='true'] > .session-browser-environment-host {
+  border-inline-start: 0;
+  border-block-end: 1px solid var(--session-line-soft);
+  grid-row: 1;
+}
+
+.session-codex-parity-v1 .browser-find-bar {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.session-codex-parity-v1 .browser-find-bar input {
+  background: var(--session-control-hover);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 6px;
+  color: var(--session-text);
+  flex: 1;
+  min-inline-size: 0;
+  padding: 6px 8px;
+}
+
+.session-codex-parity-v1 .browser-find-bar button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  min-block-size: 28px;
+  min-inline-size: 28px;
+}
+
+.session-codex-parity-v1 .browser-find-bar button:hover {
+  background: var(--session-control-hover);
 }
 
 /* 浏览器工具只在可执行时响应，停用态与悬停态保持清晰区别。 */

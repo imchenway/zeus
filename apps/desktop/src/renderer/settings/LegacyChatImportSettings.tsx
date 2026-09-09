@@ -81,14 +81,16 @@ export function LegacyChatImportSettings(props: LegacyChatImportSettingsProps) {
               <input
                 type="checkbox"
                 checked={selected.has(entry.sourceConversationId)}
-                onChange={(event) =>
+                onChange={(event) => {
+                  /** 在状态更新前读取事件值。 */
+                  const checked = event.currentTarget.checked;
                   setSelected((current) => {
                     const next = new Set(current);
-                    if (event.currentTarget.checked) next.add(entry.sourceConversationId);
+                    if (checked) next.add(entry.sourceConversationId);
                     else next.delete(entry.sourceConversationId);
                     return next;
-                  })
-                }
+                  });
+                }}
               />
               <span>
                 <strong>{entry.title}</strong>

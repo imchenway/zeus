@@ -43,6 +43,8 @@ export interface CodexApiClient {
   /** 只读取指定实例和登录编号对应的结果。 */
   loadCodexChatGptLoginStatus: (login: Pick<CodexChatGptLogin, 'generationId' | 'loginId'>) => Promise<CodexChatGptLoginStatus>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
+  /** 退出 Zeus 当前账户，外部命令不自动重放。 */
+  logoutCodexAccount: () => Promise<void>;
   startTaskModelPush: (
     taskId: string,
     input: StartTaskModelPushRequest,
@@ -178,6 +180,17 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     },
     /** 查询官方完成通知，不用上次登录留下的账号快照替代。 */
     loadCodexChatGptLoginStatus: (login) => transport.request<CodexChatGptLoginStatus>(`/api/codex/account/login/${encodeURIComponent(login.loginId)}?generationId=${encodeURIComponent(login.generationId)}`),
+    logoutCodexAccount: async () => {
+      /** 退出无秘密输入，仍携带操作身份用于回执追踪。 */
+      const body = await buildCodexPublicCommandRequest({
+        commandType: codexPublicClientCommandTypes.accountLogout,
+        scopeKind: 'provider_account',
+        scopeId: codexPublicClientScopeIds.account,
+        operationPrefix: 'codex_account_logout',
+        value: {},
+      });
+      await transport.request('/api/codex/account/logout', { method: 'POST', body: JSON.stringify(body) });
+    },
     cancelCodexChatGptLogin: async (loginId) => {
       const body = await buildCodexPublicCommandRequest({
         commandType: codexPublicClientCommandTypes.accountLoginCancel,

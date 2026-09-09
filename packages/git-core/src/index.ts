@@ -552,11 +552,21 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   }
 
   const worktreePath = input.worktreePath ? resolve(input.worktreePath) : buildTaskWorktreePath(context.topLevel, input.projectSlug, input.taskCode, input.workspaceId);
+  /** 既有目录只允许为空；不能把遗留文件、其他工作区或符号链接当成本次创建产物。 */
+  const existingPath = await lstat(worktreePath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (existingPath && (!existingPath.isDirectory() || existingPath.isSymbolicLink() || (await readdir(worktreePath)).length > 0)) {
+    throw gitCoreError('ZEUS_TASK_WORKTREE_PATH_OCCUPIED', `任务工作目录已有内容，且未登记为所需分支的工作区；已保留原文件：${worktreePath}`);
+  }
   await mkdir(dirname(worktreePath), { recursive: true });
   const localBranchExists = context.localBranches.includes(branchName);
   if (localBranchExists && !input.existingBranch) {
     throw gitCoreError('ZEUS_TASK_BRANCH_ALREADY_EXISTS', `Task branch already exists locally: ${branchName}`);
   }
+  /** 只有 Git 确认创建成功后，才拥有失败回滚时清理该目录的权限。 */
+  let worktreeCreated = false;
   try {
     if (input.existingBranch) {
       if (localBranchExists) {
@@ -571,6 +581,7 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
     } else {
       await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, sourceHeadSha]);
     }
+    worktreeCreated = true;
     const localChangesApplied = input.includeLocalChanges === true && !input.existingBranch ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath, input.ignoredPaths) : false;
     const headSha = await resolveCommit(worktreePath, 'HEAD');
     return {
@@ -584,7 +595,7 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
       localChangesApplied,
     };
   } catch (error) {
-    await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath, branchName, removeBranch: !input.existingBranch }).catch(() => undefined);
+    if (worktreeCreated) await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath, branchName, removeBranch: !input.existingBranch }).catch(() => undefined);
     throw error;
   }
 }

@@ -1,3 +1,4 @@
+import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { CommandDefinition } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -465,9 +466,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                   aria-pressed={selectedEmployeeId === employee.id}
                   onClick={() => selectEmployee(employee)}
                 >
-                  <span className="digital-employee-avatar" aria-hidden="true">
-                    {employee.role.slice(0, 1)}
-                  </span>
+                  <DigitalEmployeeAvatar {...employee} />
                   <span>
                     <strong>{employee.name}</strong>
                     <small>

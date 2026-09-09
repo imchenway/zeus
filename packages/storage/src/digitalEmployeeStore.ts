@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isZeusSkillId } from '@zeus/shared';
+import { digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, isZeusSkillId } from '@zeus/shared';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
@@ -73,6 +73,8 @@ export interface DigitalEmployeeTemplateRecord {
   description: string;
   role: string;
   domain: string;
+  /** 未选择时按岗位使用默认头像。 */
+  avatarId?: DigitalEmployeeAvatarId | null;
   /** 可用 Zeus Skill 的稳定身份集合；每次运行另行冻结内容与资源快照。 */
   skillIds: string[];
   prompt: string;
@@ -167,6 +169,8 @@ export interface CreateDigitalEmployeeTemplateInput {
   description?: string;
   role: string;
   domain?: string;
+  /** 预置头像的稳定身份。 */
+  avatarId?: DigitalEmployeeAvatarId | null;
   skillIds?: string[];
   prompt: string;
   agentKind?: DigitalEmployeeAgentKind;
@@ -424,6 +428,19 @@ export function migrateDigitalEmployeeSchema(db: ZeusDatabasePort): void {
       )
     `);
 
+    // 增量扩展不改写原迁移校验；重复启动保留用户选择的头像。
+    for (const table of ['digital_employee_templates', 'digital_employees']) {
+      /** 结构检查覆盖已有数据库与首次创建。 */
+      const columns = db.select<{ name: string }>(`PRAGMA table_info(${table})`);
+      if (!columns.some((column) => column.name === 'avatar_id')) db.execute(`ALTER TABLE ${table} ADD COLUMN avatar_id TEXT`);
+    }
+    /** 新字段单独登记，保留已有迁移校验与用户头像数据。 */
+    db.execute('INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      '20260909_digital_employee_portraits',
+      '数字员工模板和项目员工增加预置头像',
+      `sha256:${createHash('sha256').update('digital_employee_templates:avatar_id:text;digital_employees:avatar_id:text').digest('hex')}`,
+      new Date().toISOString(),
+    ]);
     const timestamp = new Date().toISOString();
     for (const template of builtInDigitalEmployeeTemplates) {
       const normalized = normalizeTemplateInput(template);
@@ -496,14 +513,15 @@ export class DigitalEmployeeTemplateRepository {
     const id = input.id ? requiredIdentity(input.id, 'template.id') : `digital_employee_template_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO digital_employee_templates
-       (id, name, description, role, domain, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode, built_in, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+       (id, name, description, role, domain, avatar_id, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode, built_in, revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
       [
         id,
         value.name,
         value.description,
         value.role,
         value.domain,
+        value.avatarId ?? null,
         JSON.stringify(value.skillIds),
         value.prompt,
         value.agentKind,
@@ -520,17 +538,33 @@ export class DigitalEmployeeTemplateRepository {
   }
 
   update(id: string, input: UpdateDigitalEmployeeTemplateInput): DigitalEmployeeTemplateRecord {
+    /** 内置模板只开放头像，工作配置和删除规则保持只读。 */
+    const candidate = this.getById(id);
+    if (candidate?.builtIn && Object.keys(input).every((key) => key === 'avatarId' || key === 'expectedRevision') && input.avatarId !== undefined) {
+      assertRevision(candidate.revision, input.expectedRevision, '数字员工模板');
+      /** 在写入边界校验头像，禁止注入文件路径。 */
+      const avatarId = input.avatarId === null ? null : oneOf(input.avatarId, digitalEmployeeAvatarIds, 'template.avatarId');
+      this.db.execute('UPDATE digital_employee_templates SET avatar_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL', [
+        avatarId,
+        nextTimestamp(candidate.updatedAt),
+        candidate.id,
+        candidate.revision,
+      ]);
+      assertChanged(this.db, '数字员工模板已被其他操作更新。');
+      return this.getById(candidate.id)!;
+    }
     const existing = this.requireMutable(id);
     assertRevision(existing.revision, input.expectedRevision, '数字员工模板');
     const value = normalizeTemplateInput({ ...existing, ...input });
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
+      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
       [
         value.name,
         value.description,
         value.role,
         value.domain,
+        value.avatarId ?? null,
         JSON.stringify(value.skillIds),
         value.prompt,
         value.agentKind,
@@ -594,11 +628,11 @@ export class DigitalEmployeeRepository {
     const id = input.id ? requiredIdentity(input.id, 'employee.id') : `digital_employee_${randomId(12)}`;
     this.db.execute(
       `INSERT INTO digital_employees
-       (id, project_id, template_id, name, description, role, domain, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode,
+       (id, project_id, template_id, name, description, role, domain, avatar_id, skill_ids_json, prompt, agent_kind, model, reasoning_effort, service_tier, permission_mode, work_mode,
         enabled, auto_claim, autonomous_exploration, max_concurrency, task_filter_json, allow_code_changes, allow_tests,
         allow_commit, allow_push, allow_merge, allow_deploy, allow_complete, deploy_command_id, revision, created_at, updated_at,
         entrypoint_kind, entrypoint_migration_state, model_policy_json, skill_policy_json, authority_policy_json, command_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         value.projectId,
@@ -607,6 +641,7 @@ export class DigitalEmployeeRepository {
         value.description,
         value.role,
         value.domain,
+        value.avatarId ?? null,
         JSON.stringify(value.skillIds),
         value.prompt,
         value.agentKind,
@@ -649,6 +684,7 @@ export class DigitalEmployeeRepository {
       description: input.template.description,
       role: input.template.role,
       domain: input.template.domain,
+      avatarId: input.template.avatarId,
       skillIds: input.template.skillIds,
       prompt: input.template.prompt,
       agentKind: input.template.agentKind,
@@ -668,7 +704,7 @@ export class DigitalEmployeeRepository {
     const value = normalized;
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?,
+      `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?,
        enabled = ?, auto_claim = ?, autonomous_exploration = ?, max_concurrency = ?, task_filter_json = ?, allow_code_changes = ?, allow_tests = ?,
        allow_commit = ?, allow_push = ?, allow_merge = ?, allow_deploy = ?, allow_complete = ?, deploy_command_id = ?, entrypoint_kind = ?, entrypoint_migration_state = ?,
        model_policy_json = ?, skill_policy_json = ?, authority_policy_json = ?, command_id = ?, revision = revision + 1, updated_at = ?
@@ -679,6 +715,7 @@ export class DigitalEmployeeRepository {
         value.description,
         value.role,
         value.domain,
+        value.avatarId ?? null,
         JSON.stringify(value.skillIds),
         value.prompt,
         value.agentKind,
@@ -1205,6 +1242,8 @@ export class DigitalEmployeeProjectEventRepository {
 }
 
 interface DigitalEmployeeTemplateRow {
+  /** 已持久保存的预置头像。 */
+  avatar_id: DigitalEmployeeAvatarId | null;
   id: string;
   name: string;
   description: string;
@@ -1305,6 +1344,7 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
     description: row.description,
     role: row.role,
     domain: row.domain,
+    avatarId: row.avatar_id,
     skillIds: parseStringList(row.skill_ids_json, 'template.skillIds'),
     prompt: row.prompt,
     agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'template.agentKind'),
@@ -1331,6 +1371,7 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
     description: row.description,
     role: row.role,
     domain: row.domain,
+    avatarId: row.avatar_id,
     skillIds: parseStringList(row.skill_ids_json, 'employee.skillIds'),
     prompt: row.prompt,
     agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'employee.agentKind'),
@@ -1424,6 +1465,7 @@ function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Requ
     description: boundedText(input.description ?? '', 'template.description', 0, 1_000),
     role: boundedText(input.role, 'template.role', 1, 120),
     domain: boundedText(input.domain ?? '', 'template.domain', 0, 120),
+    avatarId: input.avatarId == null ? null : oneOf(input.avatarId, digitalEmployeeAvatarIds, 'template.avatarId'),
     skillIds: normalizeDigitalEmployeeSkillIds(input.skillIds ?? []),
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
     agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
