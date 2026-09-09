@@ -184,7 +184,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
-    if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
     try {
       await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
       assertSubmissionDispatchable(submission.id);
@@ -197,15 +196,19 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         assertSubmissionDispatchable(submission.id);
       }
     } catch (error) {
+      // 目录恢复尚未写出消息，统一记录准备失败；取消和删除仍由生命周期保留终态。
+      await segmentLifecycle?.fail(error, now());
       if (dispatchStopped(submission.id)) {
-        await segmentLifecycle?.fail(error, now());
         return accepted(submission, 'interrupted', conversation.providerThreadId, null);
       }
-      options.submissions.updateStatus(submission.id, 'paused', {
-        pausedReason: 'recovery_required',
-        error: toRecoverySubmissionError(error),
-        updatedAt: now(),
-      });
+      // 写入前的目录失败沿用恢复入口；未知写入结果不能被通用恢复状态覆盖。
+      if (!segmentLifecycle || options.submissions.getById(submission.id)?.pausedReason === 'preflight_failed') {
+        options.submissions.updateStatus(submission.id, 'paused', {
+          pausedReason: 'recovery_required',
+          error: toRecoverySubmissionError(error),
+          updatedAt: now(),
+        });
+      }
       runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
       await persist();
       options.broadcast('conversation.native.recovery_failed', {
@@ -247,6 +250,8 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       if (options.planActions.listByConversation(conversation.id).some((request) => request.status === 'pending') && !planControlModeForSubmission(submission)) {
         return accepted(submission, 'queued', conversation.providerThreadId, null);
       }
+      // 所有恢复和等待检查通过后才占用统一执行权，提前返回不会留下活动占用。
+      if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
       const freshDispatchEnvelope = conversationSubmissionDispatchEnvelope(submission);
       const existingDelivery = options.commandDeliveries.get(freshDispatchEnvelope.commandId);
       const dispatchEnvelope = existingDelivery ? parseStoredConversationSubmissionDispatchEnvelope(existingDelivery.inbox.envelopeJson, freshDispatchEnvelope) : freshDispatchEnvelope;

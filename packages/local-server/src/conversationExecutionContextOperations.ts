@@ -291,7 +291,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         }
         if (createdEnvironmentRoot) rmSync(environmentRoot, { recursive: true, force: true });
         const detail = error instanceof Error ? error.message : String(error);
-        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `The task conversation worktree could not be restored: ${detail}`);
+        throw Object.assign(nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `The task conversation worktree could not be restored: ${detail}`), { cause: error });
       }
 
       const updatedWorkspaces = db.transaction(() => {
