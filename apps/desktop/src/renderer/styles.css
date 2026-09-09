@@ -16882,6 +16882,14 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block: 18px 8px;
 }
 
+/* 紧凑导入入口与关闭按钮并排，保留标题的可用宽度。 */
+.macos-ai-app .task-create-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .macos-ai-app .task-create-modal-footer {
   border-block-start: 0;
   border-block-end: 0;
@@ -16949,20 +16957,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
 }
 
-.macos-ai-app .task-create-third-party-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: start;
-}
-
 .macos-ai-app .task-create-third-party-input {
   min-inline-size: 0;
-}
-
-.macos-ai-app .task-create-third-party-parse-button {
-  min-block-size: 34px;
-  white-space: nowrap;
 }
 
 .macos-ai-app .task-create-third-party-hint {
@@ -22542,15 +22538,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-model-connect-link {
   justify-self: start;
 }
-/* 创建任务的附加字段始终可见，导入与标签各占一行。 */
+/* 更多设置与底部操作同排，创建按钮保持靠右。 */
+.macos-ai-app .task-create-settings-toggle {
+  margin-inline-end: auto;
+}
+/* 展开后优先级与父任务并排，标签单独一行。 */
 .macos-ai-app .task-create-options {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  padding-block-start: 16px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  padding-block-start: 12px;
 }
-.macos-ai-app .task-create-options > .task-create-third-party-field,
 .macos-ai-app .task-create-options > .task-create-tags-field {
   grid-column: 1 / -1;
 }

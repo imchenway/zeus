@@ -209,10 +209,14 @@ export const languageCopy = {
       taskCreateTitleLabel: '任务标题',
       taskCreateTitlePlaceholder: '例如：修复任务表格列可见性',
       taskCreateThirdPartyLinkLabel: '从第三方创建',
+      /** 导入步骤只收集来源链接，成功后回到草稿核对。 */
+      taskCreateThirdPartyUrlLabel: '任务链接',
+      /** 返回不会清空原草稿，读取中也可退出。 */
+      taskCreateThirdPartyBack: '返回手动填写',
       taskCreateThirdPartyLinkPlaceholder: '粘贴 GitHub Issue、Jira 或禅道详情链接',
-      taskCreateThirdPartyLinkHelp: '读取标题和正文，确认后创建。GitHub、Jira 附件保留为链接；受限内容可在 Zeus 登录后重试。',
-      taskCreateThirdPartyParse: '解析并填入',
-      taskCreateThirdPartyParsing: '解析中…',
+      taskCreateThirdPartyLinkHelp: '粘贴详情链接即可自动读取，填入后仍可编辑，确认后再创建任务。',
+      taskCreateThirdPartyParse: '读取并填入',
+      taskCreateThirdPartyParsing: '正在读取任务内容…',
       taskCreateThirdPartyApplied: (title: string, provider: string, attachmentCount = 0, attachmentFailedCount = 0) =>
         `已从 ${provider === 'github' ? 'GitHub Issue' : provider === 'jira' ? 'Jira' : '禅道'} 填入：${title}${attachmentCount > 0 ? `；已带入 ${attachmentCount} 个附件` : provider !== 'zentao' ? '；附件保留为原文链接' : attachmentFailedCount === 0 ? '；未发现可带入的附件' : ''}${attachmentFailedCount > 0 ? `；另有 ${attachmentFailedCount} 个附件下载失败` : ''}`,
       taskCreateThirdPartyLoginRequired: '需要登录或当前账号没有读取权限。请在 Zeus 中登录有权限的账号，回到这里重新解析。禅道也可在设置中配置账号。',
@@ -247,6 +251,8 @@ export const languageCopy = {
       taskCreateExpectedOutcomePlaceholder: '描述期望达到的结果',
       taskCreateReproductionStepsLabel: '复现步骤',
       taskCreateReproductionStepsPlaceholder: '描述如何复现当前问题',
+      /** 创建任务的附加字段折叠入口。 */
+      taskCreateMoreSettings: '更多设置',
       taskCreatePriorityLabel: '优先级',
       taskCreatePriorityOptions: [
         { value: 'p0', label: 'P0：立即开始处理' },
@@ -1394,10 +1400,14 @@ export const languageCopy = {
       taskCreateTitleLabel: 'Task title',
       taskCreateTitlePlaceholder: 'For example: Fix task table column visibility',
       taskCreateThirdPartyLinkLabel: 'Create from a third party',
+      /** 英文导入步骤沿用相同的链接输入与返回操作。 */
+      taskCreateThirdPartyUrlLabel: 'Task link',
+      /** 返回保留草稿内容。 */
+      taskCreateThirdPartyBack: 'Back to manual entry',
       taskCreateThirdPartyLinkPlaceholder: 'Paste a GitHub Issue, Jira, or ZenTao detail link',
-      taskCreateThirdPartyLinkHelp: 'Read the title and body, then review and create. GitHub and Jira attachments remain links. Sign in through Zeus for restricted content.',
-      taskCreateThirdPartyParse: 'Parse and fill',
-      taskCreateThirdPartyParsing: 'Parsing…',
+      taskCreateThirdPartyLinkHelp: 'Paste a detail link to read it automatically. You can edit the filled content before creating the task.',
+      taskCreateThirdPartyParse: 'Read and fill',
+      taskCreateThirdPartyParsing: 'Reading task content…',
       taskCreateThirdPartyApplied: (title: string, provider: string, attachmentCount = 0, attachmentFailedCount = 0) =>
         `Filled from ${provider === 'github' ? 'GitHub Issue' : provider === 'jira' ? 'Jira' : 'ZenTao'}: ${title}${attachmentCount > 0 ? `; imported ${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : provider !== 'zentao' ? '; attachments remain source links' : attachmentFailedCount === 0 ? '; no importable attachments found' : ''}${attachmentFailedCount > 0 ? `; ${attachmentFailedCount} attachment${attachmentFailedCount === 1 ? '' : 's'} failed to download` : ''}`,
       taskCreateThirdPartyLoginRequired: 'Sign in with an account that can access this item through Zeus, then return and retry. ZenTao credentials can also be configured in Settings.',
@@ -1432,6 +1442,8 @@ export const languageCopy = {
       taskCreateExpectedOutcomePlaceholder: 'Describe the expected result',
       taskCreateReproductionStepsLabel: 'Reproduction steps',
       taskCreateReproductionStepsPlaceholder: 'Describe how to reproduce the issue',
+      /** 创建任务的附加字段折叠入口。 */
+      taskCreateMoreSettings: 'More settings',
       taskCreatePriorityLabel: 'Priority',
       taskCreatePriorityOptions: [
         { value: 'p0', label: 'P0: Start handling immediately' },
