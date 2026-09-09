@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { AppShellSettings, CodexConfigImportPreview } from '../apiClient.js';
 import type { CodexAccountSnapshot } from '../session/sessionTypes.js';
-import { authenticateCodexWithBrowser } from '../codexLoginHandoff.js';
+import type { AiRuntimeAdapterStatus } from '../features/runtime/runtimeContracts.js';
+import { authenticateCodexWithBrowser, completeCodexSubscriptionSetup, type CodexSubscriptionSetupInput } from '../codexLoginHandoff.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError, modelSetupRequestedEvent } from '../ui/ApplicationErrorDialog.js';
 import { ModelConnectionsSettingsPane } from './ModelConnectionsSettingsPane.js';
+import { CodexInstallationGuide } from './CodexInstallationGuide.js';
 import {
   browserNativeConversationStartStorage,
   readCodexConfigImportPromptPreference,
@@ -46,7 +48,11 @@ export function useModelSetup(input: {
   /** 接入目标冻结到发起操作，迟到结果不能改变另一项任务。 */
   const targetRef = useRef<TaskModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
-  const [operation, setOperation] = useState<'idle' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
+  const [operation, setOperation] = useState<'idle' | 'detecting' | 'configuring' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking'>('idle');
+  /** 安装状态只来自主动检测，账号状态与程序就绪分别展示。 */
+  const [installationCheck, setInstallationCheck] = useState<AiRuntimeAdapterStatus | null>(null);
+  /** 官方认证已完成时，只重试模型准备，不要求用户重复登录。 */
+  const [modelsPending, setModelsPending] = useState(false);
   /** 普通提示保留原文；失败保留脱敏原因，供统一错误出口展示摘要和详情。 */
   const [error, setError] = useState<string | UserFacingErrorCause | null>(null);
   /** 账号事实来自现有认证接口，不由引导完成状态推断。 */
@@ -86,8 +92,11 @@ export function useModelSetup(input: {
     targetRef.current = target;
     setOperation('idle');
     setError(null);
+    setInstallationCheck(null);
+    setModelsPending(false);
     if (next === 'custom') setCustomVisited(true);
     setStep(next);
+    if (next === 'codex') void checkInstallation();
   }
 
   useEffect(() => {
@@ -174,7 +183,7 @@ export function useModelSetup(input: {
 
   /** 关闭只回到原工作面，不写入默认模型或引导状态。 */
   function close(): void {
-    if (operation === 'importing' || operation === 'saving' || editorBusy) return;
+    if (operation === 'importing' || operation === 'saving' || operation === 'configuring' || editorBusy) return;
     invalidate();
     setOperation('idle');
     setError(null);
@@ -188,7 +197,7 @@ export function useModelSetup(input: {
 
   /** 返回首屏保留供应商编辑器普通字段，编辑器自身负责清除密钥。 */
   function back(): void {
-    if (operation === 'importing' || operation === 'saving' || editorBusy) return;
+    if (operation === 'importing' || operation === 'saving' || operation === 'configuring' || editorBusy) return;
     invalidate();
     setOperation('idle');
     setPreview(null);
@@ -196,32 +205,129 @@ export function useModelSetup(input: {
     setStep('choose');
   }
 
-  /** 所有认证动作都由显式点击触发，使用现有官方登录接口。 */
+  /** 读取本次登录真正使用的程序，取消后的检测不再修改界面。 */
+  async function readInstallation(request: number): Promise<AiRuntimeAdapterStatus | null> {
+    if (!input.client) throw new Error('Model setup client unavailable');
+    /** 服务端每次解析最新设置与终端环境，不使用安装前的缓存。 */
+    const value = await input.client.checkRuntimeAdapter('codex');
+    if (requestRef.current !== request) return null;
+    setInstallationCheck(value);
+    return value;
+  }
+
+  /** 打开订阅页或点击重新检测时只准备程序，不自动打开授权网页。 */
+  async function checkInstallation(): Promise<void> {
+    /** 新检测替换当前等待，迟到结果不能恢复已关闭的引导。 */
+    const request = ++requestRef.current;
+    setOperation('detecting');
+    setError(null);
+    try {
+      await readInstallation(request);
+    } catch (failure) {
+      if (requestRef.current !== request) return;
+      setInstallationCheck(null);
+      setError(userFacingErrorCause(failure));
+    } finally {
+      if (requestRef.current === request) setOperation('idle');
+    }
+  }
+
+  /** 只更新 Codex 程序路径，保留其他适配器和运行设置。 */
+  async function saveCodexPath(path: string): Promise<void> {
+    if (!input.client || operation !== 'idle' || installationCheck?.installation?.mode === 'remote') return;
+    /** 保存期间禁止关闭，避免用户误以为路径没有提交。 */
+    const request = ++requestRef.current;
+    setOperation('configuring');
+    setError(null);
+    try {
+      /** 保存前读取最新设置，不能覆盖其他入口刚刚修改的配置。 */
+      const current = await input.client.settings.loadRuntimeSettings();
+      if (requestRef.current !== request) return;
+      /** 空值删除显式路径，恢复现有自动发现方式。 */
+      const adapterCliPaths = { ...current.adapterCliPaths };
+      if (path.trim()) adapterCliPaths.codex = path.trim();
+      else delete adapterCliPaths.codex;
+      await input.client.settings.saveRuntimeSettings({ ...current, adapterCliPaths });
+      if (requestRef.current !== request) return;
+      await readInstallation(request);
+    } catch (failure) {
+      if (requestRef.current !== request) return;
+      setInstallationCheck(null);
+      setError(userFacingErrorCause(failure));
+    } finally {
+      if (requestRef.current === request) setOperation('idle');
+    }
+  }
+
+  /** 首次认证和目录重试共享同一成功回交，始终保留发起任务。 */
+  function subscriptionSetup(request: number): CodexSubscriptionSetupInput {
+    if (!input.client) throw new Error('Model setup client unavailable');
+    return {
+      client: input.client,
+      isCurrent: () => requestRef.current === request,
+      onPreparingModels: () => {
+        setModelsPending(true);
+        setOperation('activating');
+      },
+      showSuccess: (value) => {
+        setModelsPending(false);
+        setAccount(value);
+        setAccountChecked(true);
+        setOperation('authenticated');
+      },
+      continueOriginalAction: () => {
+        void finish(null).catch(() => undefined);
+      },
+      recordActivationError: () => console.warn('[Zeus] 登录已成功，窗口自动激活未完成。'),
+    };
+  }
+
+  /** 认证成功后的模型失败只重试同步，避免重复打开授权页。 */
+  async function retrySubscriptionModels(): Promise<void> {
+    if (!input.client || operation !== 'idle' || !modelsPending) return;
+    /** 继续复用取消与迟到结果隔离。 */
+    const request = ++requestRef.current;
+    setOperation('detecting');
+    setError(null);
+    try {
+      /** 重试时程序仍可能被移动，先检查当前安装。 */
+      const installation = await readInstallation(request);
+      if (!installation?.available) {
+        if (requestRef.current === request) setOperation('idle');
+        return;
+      }
+      await completeCodexSubscriptionSetup(subscriptionSetup(request));
+    } catch (failure) {
+      if (requestRef.current !== request) return;
+      setOperation('idle');
+      setError(userFacingErrorCause(failure));
+    }
+  }
+
+  /** 所有认证动作先检查程序；缺少时留在安装步骤，不发起登录。 */
   async function login(): Promise<void> {
     if (!input.client) return;
     /** 记录本次操作身份，忽略取消后的迟到回执。 */
     const request = ++requestRef.current;
     setStep('codex');
-    setOperation('inspecting');
+    setOperation('detecting');
     setError(null);
+    setModelsPending(false);
     try {
+      /** 登录前再次检测，防止打开引导后程序被移动或删除。 */
+      const installation = await readInstallation(request);
+      if (!installation?.available) {
+        if (requestRef.current === request) setOperation('idle');
+        return;
+      }
+      setOperation('inspecting');
       await authenticateCodexWithBrowser({
+        ...subscriptionSetup(request),
         client: input.client,
-        isCurrent: () => requestRef.current === request,
         onLoginId: (loginId) => {
           loginIdRef.current = loginId;
           if (loginId) setOperation('authenticating');
         },
-        onPreparingModels: () => setOperation('activating'),
-        showSuccess: (value) => {
-          setAccount(value);
-          setAccountChecked(true);
-          setOperation('authenticated');
-        },
-        continueOriginalAction: () => {
-          void finish(null).catch(() => undefined);
-        },
-        recordActivationError: () => console.warn('[Zeus] 登录已成功，窗口自动激活未完成。'),
       });
     } catch (failure) {
       if (requestRef.current !== request) return;
@@ -269,7 +375,7 @@ export function useModelSetup(input: {
     setStep('codex');
   }
 
-  /** 登录直接进入官方授权，普通配置导入由单独的可选入口发起。 */
+  /** 用户选择订阅后先检查程序，只有就绪才进入官方授权。 */
   async function prepareCodex(): Promise<void> {
     if (operation === 'idle') await login();
   }
@@ -313,6 +419,16 @@ export function useModelSetup(input: {
     setOperation('checking');
     setError(null);
     try {
+      /** 检查状态同样先确认程序，缺少时原地提供安装步骤。 */
+      const installation = await readInstallation(request);
+      if (!installation?.available) {
+        if (requestRef.current === request) {
+          setAccount(null);
+          setAccountChecked(false);
+          setStep('codex');
+        }
+        return;
+      }
       /** 查询真实账号状态，不启动新的登录。 */
       const value = await input.client.loadCodexAccount();
       if (requestRef.current !== request) return;
@@ -330,9 +446,15 @@ export function useModelSetup(input: {
 
   /** 打开已有官方安装指引，不自动下载安装外部工具。 */
   async function openInstallGuide(): Promise<void> {
-    /** 安装指引继续经过既有安全打开入口。 */
-    const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url: 'https://developers.openai.com/codex/cli' });
-    if (!result.opened) setError(zh ? '无法打开官方安装指引，请检查系统浏览器。' : 'Could not open the official installation guide. Check your system browser.');
+    /** 打开浏览器后的迟到失败不能污染另一项任务的引导。 */
+    const request = requestRef.current;
+    try {
+      /** 安装指引继续经过既有安全打开入口。 */
+      const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url: 'https://developers.openai.com/codex/cli' });
+      if (requestRef.current === request && !result.opened) setError(zh ? '无法打开官方安装指引，请检查系统浏览器。' : 'Could not open the official installation guide. Check your system browser.');
+    } catch (failure) {
+      if (requestRef.current === request) setError(userFacingErrorCause(failure));
+    }
   }
 
   return {
@@ -342,6 +464,11 @@ export function useModelSetup(input: {
     open,
     taskTarget: targetRef.current,
     operation,
+    installationCheck,
+    checkInstallation,
+    saveCodexPath,
+    modelsPending,
+    retrySubscriptionModels,
     error,
     account,
     accountChecked,
@@ -412,7 +539,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
   /** 沿用当前应用语言。 */
   const zh = c.input.settings.appLanguage === 'zh-CN';
   /** 持久化期间保持当前工作面，避免中途丢失结果。 */
-  const locked = c.operation === 'importing' || c.operation === 'saving' || c.editorBusy;
+  const locked = c.operation === 'importing' || c.operation === 'saving' || c.operation === 'configuring' || c.editorBusy;
   if (!c.step) return null;
   return (
     <ModalPortal rootClassName="model-setup-portal" dismissDisabled={locked} onDismiss={c.close}>
@@ -483,37 +610,70 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
             ) : null}
           </div>
           {c.step === 'codex' ? (
-            <div className="model-setup-codex" role="status" aria-live="polite">
-              <p>
-                {c.operation === 'inspecting'
+            <div className="model-setup-codex">
+              <p role="status" aria-live="polite">
+                {c.operation === 'detecting'
                   ? zh
-                    ? '正在准备登录…'
-                    : 'Preparing sign-in…'
-                  : c.operation === 'authenticating'
+                    ? '正在检测 Codex 程序…'
+                    : 'Checking the Codex installation…'
+                  : c.operation === 'configuring'
                     ? zh
-                      ? '请在官方网页完成登录。完成后返回这里确认设置。'
-                      : 'Complete sign-in on the official page, then return here to review your settings.'
-                    : c.operation === 'activating'
+                      ? '正在保存路径并重新检测…'
+                      : 'Saving the path and checking again…'
+                    : c.operation === 'inspecting'
                       ? zh
-                        ? '正在加载订阅模型…'
-                        : 'Loading subscription models…'
-                      : c.operation === 'authenticated'
+                        ? '正在准备登录…'
+                        : 'Preparing sign-in…'
+                      : c.operation === 'authenticating'
                         ? zh
-                          ? '登录成功，正在返回 Zeus…'
-                          : 'Signed in, returning to Zeus…'
-                        : zh
-                          ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
-                          : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
+                          ? '请在官方网页完成登录。完成后返回这里确认设置。'
+                          : 'Complete sign-in on the official page, then return here to review your settings.'
+                        : c.operation === 'activating'
+                          ? zh
+                            ? '正在加载订阅模型…'
+                            : 'Loading subscription models…'
+                          : c.operation === 'authenticated'
+                            ? zh
+                              ? '登录成功，正在返回 Zeus…'
+                              : 'Signed in, returning to Zeus…'
+                            : c.modelsPending && c.installationCheck?.available
+                              ? zh
+                                ? '订阅登录已完成，模型同步尚未完成。可以直接重试同步。'
+                                : 'Sign-in completed, but model synchronization is pending. Retry synchronization to continue.'
+                              : c.installationCheck && !c.installationCheck.available
+                                ? zh
+                                  ? '完成程序准备后，即可继续订阅登录。'
+                                  : 'Prepare Codex to continue signing in.'
+                                : zh
+                                  ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
+                                  : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
               </p>
-              <Button disabled={c.operation !== 'idle'} busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'} onClick={() => void c.prepareCodex()}>
-                {zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
-              </Button>
-              <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>
-                {zh ? '导入已有配置（可选）' : 'Import configuration (optional)'}
-              </Button>
-              <Button variant="secondary" disabled={locked} onClick={() => void c.openInstallGuide()}>
-                {zh ? '查看官方安装指引' : 'Official installation guide'}
-              </Button>
+              {c.installationCheck ? (
+                <CodexInstallationGuide key={c.installationCheck.checkedAt} zh={zh} status={c.installationCheck} busy={c.operation !== 'idle'} onCheck={c.checkInstallation} onSavePath={c.saveCodexPath} onOpenGuide={c.openInstallGuide} />
+              ) : null}
+              {c.installationCheck?.available ? (
+                <>
+                  <Button
+                    disabled={c.operation !== 'idle'}
+                    busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'}
+                    onClick={() => void (c.modelsPending ? c.retrySubscriptionModels() : c.prepareCodex())}
+                  >
+                    {c.modelsPending ? (zh ? '重试同步模型' : 'Retry model synchronization') : zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
+                  </Button>
+                  {c.modelsPending ? (
+                    <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.prepareCodex()}>
+                      {zh ? '重新登录' : 'Sign in again'}
+                    </Button>
+                  ) : null}
+                  <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>
+                    {zh ? '导入已有配置（可选）' : 'Import configuration (optional)'}
+                  </Button>
+                </>
+              ) : !c.installationCheck ? (
+                <Button variant="secondary" disabled={c.operation !== 'idle'} busy={c.operation === 'detecting'} onClick={() => void c.checkInstallation()}>
+                  {zh ? '重新检测 Codex' : 'Check Codex again'}
+                </Button>
+              ) : null}
             </div>
           ) : null}
           {c.step === 'config' ? (
