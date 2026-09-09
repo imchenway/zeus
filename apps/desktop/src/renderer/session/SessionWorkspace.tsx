@@ -67,6 +67,7 @@ import { createSessionEscapeController, type SessionEscapeController, type Sessi
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { autosizeTextarea } from './textareaAutosize.js';
+import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
@@ -1627,7 +1628,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const copy = labels[props.language];
   const actions = props.actions ?? {};
   const owner: SessionConversationOwner | undefined = props.owner ?? (props.task ? { kind: 'task', projectId: props.task.projectId, projectName: props.task.projectId, taskId: props.task.id, taskTitle: props.task.title } : undefined);
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<ComposerInputHandle | null>(null);
   const workspaceIdentityRef = useRef(props.conversation?.id ?? null);
   workspaceIdentityRef.current = props.conversation?.id ?? null;
   const responseGuard = useRef(createRequestResponseGuard()).current;
@@ -1982,7 +1983,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const result = resolveSessionWorkspaceEscape({
       controller: escapeController,
       eventTarget: event.target,
-      composerTextarea: composerRef.current,
+      composerTextarea: composerRef.current?.contains(event.target instanceof Node ? event.target : null) ? event.target : null,
       repeat: event.repeat,
       openLayers: pendingRequests.length > 0 ? ['approval'] : [],
       responding: active,
@@ -2926,7 +2927,7 @@ function NewConversationComposer(props: {
   onAccepted?: () => void | Promise<void>;
 }) {
   const copy = labels[props.language];
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textareaRef = useRef<ComposerInputHandle | null>(null);
   const draftKey = props.owner?.kind === 'task' ? `task:${props.task?.id}` : 'project';
   const [restoredDraft] = useState(() => props.drafts?.get(draftKey));
   const [tokenDraft] = useState(() => restoredDraft?.tokenDraft ?? { current: [] });
@@ -3062,12 +3063,13 @@ function NewConversationComposer(props: {
   }, [collaborationMode, permissionMode, props.owner, selectedEffort, selectedModel, serviceTierSelection]);
 
   useLayoutEffect(() => {
-    if (textareaRef.current) autosizeTextarea(textareaRef.current);
+    if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
   }, [content, goalInputActive, goalObjective]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    const view = textarea?.ownerDocument.defaultView;
+    if (!(textarea instanceof HTMLTextAreaElement)) return;
+    const view = textarea.ownerDocument.defaultView;
     if (!textarea || !view) return;
     const resize = () => autosizeTextarea(textarea);
     view.addEventListener('resize', resize);
@@ -3223,7 +3225,9 @@ function NewConversationComposer(props: {
         ) : null}
         {goalInputActive ? (
           <textarea
-            ref={textareaRef}
+            ref={(element) => {
+              textareaRef.current = element;
+            }}
             aria-label={copy.goalInput}
             aria-keyshortcuts="Enter Shift+Enter Escape"
             autoFocus={props.autoFocus}

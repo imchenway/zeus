@@ -1,3 +1,4 @@
+import { retainInputFocus } from '../../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
@@ -1549,7 +1550,9 @@ export function TaskCreateModal(props: {
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
-  const interactionBusy = props.busy || resourcesBusy || thirdPartyParsing;
+  /** 附件处理只阻止提交和切换任务结构，不禁用正在输入的文字框。 */
+  const textInputDisabled = props.busy || thirdPartyParsing;
+  const interactionBusy = textInputDisabled || resourcesBusy;
 
   function handleTaskCreateModalKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
     if (event.key === 'Escape' && !interactionBusy) {
@@ -1591,11 +1594,14 @@ export function TaskCreateModal(props: {
   }
 
   async function runTaskResourceOperation(operation: () => Promise<void>): Promise<void> {
+    /** 保留粘贴来源字段的焦点，附件回填不改变用户选区。 */
+    const restoreFocus = retainInputFocus(document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setResourceProcessingCount((current) => current + 1);
     try {
       await operation();
     } finally {
       setResourceProcessingCount((current) => Math.max(0, current - 1));
+      restoreFocus();
     }
   }
 
@@ -1781,7 +1787,7 @@ export function TaskCreateModal(props: {
               aria-invalid={props.error ? true : undefined}
               aria-describedby={props.error ? 'task-create-error' : undefined}
               onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
-              disabled={interactionBusy}
+              disabled={textInputDisabled}
             />
           </div>
           <div className="task-create-two-column-row">
@@ -1819,7 +1825,7 @@ export function TaskCreateModal(props: {
                 placeholder={props.copy.taskCreateDescriptionPlaceholder}
                 aria-labelledby="task-create-description-label"
                 onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
-                disabled={interactionBusy}
+                disabled={textInputDisabled}
               />
             </div>
           ) : null}
@@ -1844,7 +1850,7 @@ export function TaskCreateModal(props: {
                   placeholder={props.copy.taskCreateCurrentStatePlaceholder}
                   aria-labelledby="task-create-defect-current-state-label"
                   onChange={(event) => props.onFormChange('defectCurrentState', event.currentTarget.value)}
-                  disabled={interactionBusy}
+                  disabled={textInputDisabled}
                 />
               </div>
               <div className="task-create-field task-create-description-field">
@@ -1866,7 +1872,7 @@ export function TaskCreateModal(props: {
                   placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
                   aria-labelledby="task-create-defect-expected-outcome-label"
                   onChange={(event) => props.onFormChange('defectExpectedOutcome', event.currentTarget.value)}
-                  disabled={interactionBusy}
+                  disabled={textInputDisabled}
                 />
               </div>
               <div className="task-create-field task-create-description-field">
@@ -1888,7 +1894,7 @@ export function TaskCreateModal(props: {
                   placeholder={props.copy.taskCreateReproductionStepsPlaceholder}
                   aria-labelledby="task-create-defect-reproduction-steps-label"
                   onChange={(event) => props.onFormChange('defectReproductionSteps', event.currentTarget.value)}
-                  disabled={interactionBusy}
+                  disabled={textInputDisabled}
                 />
               </div>
             </>
@@ -1914,7 +1920,7 @@ export function TaskCreateModal(props: {
                   placeholder={props.copy.taskCreateCurrentStatePlaceholder}
                   aria-labelledby="task-create-optimization-current-state-label"
                   onChange={(event) => props.onFormChange('optimizationCurrentState', event.currentTarget.value)}
-                  disabled={interactionBusy}
+                  disabled={textInputDisabled}
                 />
               </div>
               <div className="task-create-field task-create-description-field">
@@ -1936,7 +1942,7 @@ export function TaskCreateModal(props: {
                   placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
                   aria-labelledby="task-create-optimization-expected-outcome-label"
                   onChange={(event) => props.onFormChange('optimizationExpectedOutcome', event.currentTarget.value)}
-                  disabled={interactionBusy}
+                  disabled={textInputDisabled}
                 />
               </div>
             </>
@@ -2044,7 +2050,7 @@ export function TaskCreateModal(props: {
                 placeholder={props.copy.taskCreateTagsPlaceholder}
                 aria-labelledby="task-create-tags-label"
                 onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
-                disabled={interactionBusy}
+                disabled={textInputDisabled}
               />
             </div>
           </div>

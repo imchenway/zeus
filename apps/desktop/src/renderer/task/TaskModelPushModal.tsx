@@ -1011,7 +1011,7 @@ export function TaskModelPushModal(props: {
                 onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
                 onPaste={inputResources.handlePaste}
                 onKeyDown={inputResources.handlePasteShortcut}
-                disabled={busy}
+                disabled={resourceInputDisabled}
                 placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
               />
             </section>
