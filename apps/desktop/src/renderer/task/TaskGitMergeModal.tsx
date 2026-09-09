@@ -49,6 +49,10 @@ interface DeliveryFile {
   workingFile?: TaskGitFileStatus;
 }
 interface DeliveryFeedback {
+  /** 操作结果跟随对应按钮；没有操作归属时作为页面级提示。 */
+  action?: 'commit' | 'merge' | 'push';
+  /** 汇总与逐仓结果一同更新，避免旧结果混入下一条提示。 */
+  results?: BatchDeliveryResult[];
   tone: 'success' | 'warning' | 'info';
   text: string;
   actionLabel?: string;
@@ -183,7 +187,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [loadRevision, setLoadRevision] = useState(0);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
-  const [batchResults, setBatchResults] = useState<BatchDeliveryResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const selectionInitializedRef = useRef(false);
 
@@ -278,7 +281,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('loading');
     setError(null);
     setFeedback(null);
-    setBatchResults([]);
     setConflictWorkspaceOpen(false);
     conflictDraftsRef.current = {};
     selectionInitializedRef.current = false;
@@ -431,7 +433,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('commit');
     setError(null);
     setFeedback(null);
-    setBatchResults([]);
     try {
       const targets = selectedWorkspaceIds
         .map((selectedId) => ({ workspace: workspaceDetails[selectedId], selectedPaths: selectedPathsByWorkspace[selectedId] ?? [] }))
@@ -454,7 +455,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           }
         }),
       );
-      setBatchResults(results);
       setFeedback(batchDeliveryFeedback('commit', results, zh));
       await reload(workspaceId);
       await props.onChanged?.();
@@ -473,7 +473,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('push');
     setError(null);
     setFeedback(null);
-    setBatchResults([]);
     try {
       const results = await Promise.all(
         selectedWorkspaceIds.map(async (selectedId): Promise<BatchDeliveryResult> => {
@@ -497,7 +496,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           }
         }),
       );
-      setBatchResults(results);
       setFeedback(batchDeliveryFeedback('push', results, zh));
       await reload(workspaceId);
       await props.onChanged?.();
@@ -521,7 +519,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('merge');
     setError(null);
     setFeedback(null);
-    setBatchResults([]);
     try {
       let mergeBlockingError: string | null = null;
       const outcomes = await Promise.all(
@@ -601,7 +598,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         }),
       );
       const results = outcomes.map((outcome) => outcome.result);
-      setBatchResults(results);
       setFeedback(batchDeliveryFeedback('merge', results, zh));
       if (mergeBlockingError) setError(mergeBlockingError);
       const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && outcome.integration);
@@ -860,19 +856,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           ) : null}
         </header>
 
-        <div className={`task-git-merge-status${feedback ? ` is-${feedback.tone}` : ''}`} role="status" aria-live="polite">
-          {feedback ? (
-            <div className={`task-git-delivery-feedback is-${feedback.tone}`}>
-              <span>{feedback.text}</span>
-              {feedback.actionLabel && feedback.onAction ? (
-                <button type="button" onClick={feedback.onAction}>
-                  {feedback.actionLabel}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {batchResults.length > 0 ? <BatchDeliveryResults results={batchResults} zh={zh} /> : null}
-        </div>
+        <div className={`task-git-merge-status${feedback ? ` is-${feedback.tone}` : ''}`}>{feedback && (!feedback.action || conflictWorkspaceOpen) ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}</div>
 
         <div className="task-git-merge-content">
           {loading ? (
@@ -992,6 +976,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commitSelected()} disabled={busy || selectedCommitFileCount === 0}>
                       {zh ? `提交所选文件（${selectedCommitFileCount}）` : `Commit selected files (${selectedCommitFileCount})`}
                     </Button>
+                    {feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                   </section>
 
                   <section className="task-git-delivery-action-step">
@@ -1034,6 +1019,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void mergeSelected()} disabled={busy || selectedMergeCandidateCount === 0}>
                       {zh ? `合入所选仓库（${selectedMergeCandidateCount}）` : `Merge selected repositories (${selectedMergeCandidateCount})`}
                     </Button>
+                    {feedback?.action === 'merge' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                     {activeConflict ? (
                       <>
                         <small className="task-git-delivery-local-pending">
@@ -1065,6 +1051,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void pushSelected()} disabled={busy || selectedPushCandidateCount === 0}>
                       {zh ? `推送所选仓库（${selectedPushCandidateCount}）` : `Push selected repositories (${selectedPushCandidateCount})`}
                     </Button>
+                    {feedback?.action === 'push' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                   </section>
                 </aside>
               </div>
@@ -1234,6 +1221,23 @@ function DeliveryRepositoryFileTree(props: {
         })}
       </div>
     </aside>
+  );
+}
+
+/** 操作区与冲突处理页共用提示内容，保留逐仓结果和屏幕阅读器播报。 */
+function DeliveryFeedbackNotice(props: { feedback: DeliveryFeedback; zh: boolean }) {
+  return (
+    <div className={`task-git-delivery-notice is-${props.feedback.tone}`} role="status" aria-live="polite" aria-atomic="true">
+      <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>
+        <span>{props.feedback.text}</span>
+        {props.feedback.actionLabel && props.feedback.onAction ? (
+          <button type="button" onClick={props.feedback.onAction}>
+            {props.feedback.actionLabel}
+          </button>
+        ) : null}
+      </div>
+      {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : null}
+    </div>
   );
 }
 
@@ -1481,15 +1485,18 @@ function workingFileLabel(file: TaskGitFileStatus, zh: boolean): string {
 function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryFeedback {
   return result.localSyncStatus === 'pending'
     ? {
+        action: 'merge',
         tone: 'warning',
         text: zh ? '合入结果已保存在隔离工作区；目标分支尚未同步，处理目标目录中的阻碍后请重试。' : 'The integration result is preserved until the target worktree can be synced. Resolve the blocker, then retry sync.',
       }
     : {
+        action: 'merge',
         tone: 'success',
         text: zh ? `已合入 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged into ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
       };
 }
 
+/** 汇总批量操作，携带操作归属与逐仓结果供按钮下方呈现。 */
 function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: BatchDeliveryResult[], zh: boolean): DeliveryFeedback {
   const succeeded = results.filter((result) => result.status === 'succeeded').length;
   const skipped = results.filter((result) => result.status === 'skipped').length;
@@ -1497,6 +1504,8 @@ function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: Bat
   const failed = results.filter((result) => result.status === 'failed').length;
   const actionLabel = zh ? { commit: '提交', merge: '合入', push: '推送' }[action] : { commit: 'Commit', merge: 'Merge', push: 'Push' }[action];
   return {
+    action,
+    results,
     tone: failed > 0 || attention > 0 ? 'warning' : 'success',
     text: zh ? `${actionLabel}完成：成功 ${succeeded}，跳过 ${skipped}，待处理 ${attention}，失败 ${failed}。` : `${actionLabel} finished: ${succeeded} succeeded, ${skipped} skipped, ${attention} need attention, ${failed} failed.`,
   };

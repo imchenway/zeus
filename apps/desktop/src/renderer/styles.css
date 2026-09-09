@@ -16087,6 +16087,42 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: var(--zeus-danger-text);
 }
 
+/* 结果紧贴触发按钮；窄操作栏内将详情换到下一行，长列表独立滚动。 */
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice {
+  min-inline-size: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-success {
+  background: color-mix(in srgb, var(--zeus-success-text, #267a4c) 8%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-warning {
+  background: color-mix(in srgb, var(--zeus-warning-text, #98620d) 8%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-feedback {
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-batch-result {
+  padding: 8px 0 0;
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-batch-result li {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+}
+
+.macos-ai-app .task-git-delivery-action-step .task-git-delivery-batch-result li > small {
+  grid-column: 1 / -1;
+}
+
 .macos-ai-app .task-git-merge-header,
 .macos-ai-app .task-git-merge-footer {
   display: flex;
