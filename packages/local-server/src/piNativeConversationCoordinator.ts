@@ -856,8 +856,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
       submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
     }
-    await input.segmentLifecycle?.beginDispatch();
-    input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
     let acceptedTurnId: string | undefined;
     let acceptedTurnProjection: ReturnType<typeof options.turns.upsert> | undefined;
@@ -865,6 +863,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let runCommand: PiProviderCommandAttempt | null = null;
     const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
     try {
+      // 预备和原生身份校验也属于发送失败边界，异常必须进入下方统一收尾。
+      await input.segmentLifecycle?.beginDispatch();
+      input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
       attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], allowedResourceRoots);
       context.attachmentRoots = attachmentInput.allowedRoots;
       providerContent = appendPiConversationContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext);
@@ -999,7 +1000,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           error: { code: typeof failure.code === 'string' ? failure.code : null, message: error instanceof Error ? error.message : String(error) },
           updatedAt: options.now(),
         });
-        await input.segmentLifecycle?.rejectBeforeAcceptance(error, options.now());
+        await input.segmentLifecycle?.fail(error, options.now());
         await options.db.save();
         publish('conversation.queue.changed', input.conversation.id, { submissionId: submission.id });
       }

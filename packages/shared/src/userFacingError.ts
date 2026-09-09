@@ -281,6 +281,14 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [['ZEUS_TASK_WORKTREE_NOT_REGISTERED'], ['Git 中找不到这个任务的独立工作目录记录，请检查任务分支和目录状态。', 'Git has no record of this task’s separate working folder. Check the task branch and folder state.']],
   [
+    ['ZEUS_TASK_WORKTREE_PATH_OCCUPIED'],
+    [
+      '任务工作目录已有其他内容，暂时无法恢复。原文件已保留，请先备份并移开占用内容，再继续对话。',
+      'The task folder contains other content and cannot be restored. Existing files were preserved. Back up and move the conflicting content before continuing.',
+      'check',
+    ],
+  ],
+  [
     ['ZEUS_TASK_DISCARD_CONFIRMATION_INVALID'],
     ['输入的分支名与要放弃的分支不一致，操作未执行。请输入完整分支名确认。', 'The entered branch name does not match the branch to discard. Nothing was discarded. Enter the complete branch name to confirm.'],
   ],
@@ -880,6 +888,14 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [
     ['ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED', 'ZEUS_BROWSER_SENSITIVE_ACTION_DECLINED'],
     ['你已拒绝这次操作，AI 不会继续执行它。', 'You declined this action, so the AI will not perform it.'],
+  ],
+  [
+    ['ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE'],
+    ['任务工作目录恢复失败，暂时无法继续对话。请检查任务目录和分支后再继续。', 'The task working folder could not be restored, so the conversation cannot continue yet. Check the task folder and branch before continuing.', 'check'],
+  ],
+  [
+    ['ZEUS_CONVERSATION_EXECUTION_LEASE_HELD'],
+    ['这段对话仍有一次发送准备尚未结束，暂时不能发送下一条消息。请检查对话状态后再继续。', 'A send is still being prepared for this conversation. Check the conversation state before sending another message.', 'check'],
   ],
   [
     ['ZEUS_NATIVE_WORKTREE_UNAVAILABLE', 'ZEUS_TASK_WORKSPACE_UNAVAILABLE'],
