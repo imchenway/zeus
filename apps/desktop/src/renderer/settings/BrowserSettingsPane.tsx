@@ -16,7 +16,7 @@ const copy = {
     unavailable: '此处无法使用内置浏览器设置。',
     loading: '正在读取浏览器设置…',
     enabled: '启用内置浏览器',
-    enabledHelp: '允许你在对话中打开和批注网页，并让 AI 按授权操作浏览器。',
+    enabledHelp: '在对话中打开和批注网页，AI 可直接访问网站和操作页面，无需逐次确认。',
     webLinks: '普通网页默认打开方式',
     webLinksHelp: '选择点击对话中的网页链接或网站卡片时使用的浏览器。',
     localWeb: '本地网页默认打开方式',
@@ -35,10 +35,6 @@ const copy = {
     downloadsHelp: '默认保存在 Zeus 私有资料目录，不会申请系统“下载”文件夹权限；改为其他受保护目录后，保存设置时可能由 macOS 询问。',
     askWhere: '每次询问保存位置',
     askWhereHelp: '开启后，下载开始前显示本机保存对话框。',
-    allSites: '允许 AI 访问所有网站',
-    allSitesHelp: '关闭时，每个站点首次由 Agent 读取或操作都需要确认；敏感动作始终另行确认。',
-    fullCdp: '完整 CDP',
-    fullCdpHelp: '允许 Agent 请求任意 Chrome DevTools Protocol 方法；每次调用仍需明确确认。',
     save: '保存浏览器设置',
     saved: '浏览器设置已保存。',
     // 单个开关保存不能暗示页面中的其他草稿也已保存。
@@ -47,8 +43,6 @@ const copy = {
     clearHelp: '清除 Cookie、缓存、站点存储、站点授权和页面批注，并把现有标签重置为空白页。',
     cleared: '浏览器数据已清除。',
     clearConfirm: '将清除独立浏览器 Profile 中的登录态、站点数据、授权和批注。此操作不可撤销，确定继续吗？',
-    allSitesConfirm: '允许所有站点后，Agent 不再逐站点询问即可读取和操作页面；敏感动作仍会单独确认。确定继续吗？',
-    cdpConfirm: '完整 CDP 可绕过常规浏览器工具的能力边界并读取或修改页面。每次调用仍会确认。确定启用吗？',
     computerTitle: 'Computer Use',
     // 全局启用后会话即可按需使用，无需逐条消息选择。
     computerHelp: '启用并授予 macOS 辅助功能和录屏权限后，AI 可以在会话中按需操作其他应用。敏感操作会再次征求同意。',
@@ -85,7 +79,7 @@ const copy = {
     unavailable: 'Built-in browser settings are unavailable here.',
     loading: 'Loading browser settings…',
     enabled: 'Enable built-in browser',
-    enabledHelp: 'Open and annotate web pages in conversations, and let the AI use the browser with your permission.',
+    enabledHelp: 'Open and annotate web pages in conversations. The AI can access sites and operate pages without per-action confirmation.',
     webLinks: 'Default for web links',
     webLinksHelp: 'Choose the browser used when you open a web link or website card in a conversation.',
     localWeb: 'Default for local websites',
@@ -104,10 +98,6 @@ const copy = {
     downloadsHelp: 'The default Zeus-managed folder does not require access to the system Downloads folder. macOS may ask when you save another protected folder.',
     askWhere: 'Ask where to save each file',
     askWhereHelp: 'Shows a native save dialog before a download starts.',
-    allSites: 'Allow AI access to all websites',
-    allSitesHelp: 'When off, the Agent must ask before first reading or operating each site. Sensitive actions always ask.',
-    fullCdp: 'Full CDP',
-    fullCdpHelp: 'Lets the Agent request arbitrary Chrome DevTools Protocol methods. Every call still requires explicit approval.',
     save: 'Save browser settings',
     saved: 'Browser settings saved.',
     // 只确认本次开关已经保存。
@@ -116,8 +106,6 @@ const copy = {
     clearHelp: 'Clears cookies, cache, site storage, site grants, and page comments, then resets open tabs to blank pages.',
     cleared: 'Browser data cleared.',
     clearConfirm: 'This clears sign-in state, site data, grants, and comments from the independent browser profile. It cannot be undone. Continue?',
-    allSitesConfirm: 'Allowing all sites lets the Agent read and operate pages without per-site prompts. Sensitive actions still ask. Continue?',
-    cdpConfirm: 'Full CDP can bypass the normal browser-tool boundary to inspect or modify a page. Every call still asks. Enable it?',
     computerTitle: 'Computer Use',
     // 英文同步说明全局开关生效后的会话能力。
     computerHelp: 'After enabling this and granting macOS Accessibility and Screen Recording permissions, the AI can operate other apps as needed in conversations. Sensitive actions will ask for approval again.',
@@ -202,10 +190,8 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   }, [labels.unavailable]);
 
   /** 开关直接保存单个字段，成功后更新显示，保留其他尚未保存的输入。 */
-  async function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled' | 'externalChromeEnabled' | 'externalEdgeEnabled', value: boolean): Promise<void> {
+  async function setBoolean(key: 'enabled' | 'askWhereToSave' | 'externalChromeEnabled' | 'externalEdgeEnabled', value: boolean): Promise<void> {
     if (!settings || busy || !window.zeus?.updateBrowserSettings) return;
-    if (value && key === 'allowAgentAllSites' && !window.confirm(labels.allSitesConfirm)) return;
-    if (value && key === 'fullCdpEnabled' && !window.confirm(labels.cdpConfirm)) return;
     setBusy(true);
     setStatus(null);
     setError(null);
@@ -434,12 +420,6 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
           <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.allSites} description={labels.allSitesHelp} danger>
-          <BrowserSwitch label={labels.allSites} checked={settings.allowAgentAllSites} disabled={busy} onChange={(checked) => void setBoolean('allowAgentAllSites', checked)} />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.fullCdp} description={labels.fullCdpHelp} danger>
-          <BrowserSwitch label={labels.fullCdp} checked={settings.fullCdpEnabled} disabled={busy} onChange={(checked) => void setBoolean('fullCdpEnabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.chromeEnable} description={labels.chromeHelp}>
           <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalChromeEnabled', checked)} />

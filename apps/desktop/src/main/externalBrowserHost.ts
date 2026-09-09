@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, type IpcMainEvent } from 'electron';
+import { BrowserWindow, clipboard, ipcMain, nativeImage, type IpcMainEvent } from 'electron';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { copyFile, mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { createServer, type Server, type ServerResponse } from 'node:http';
@@ -47,7 +47,7 @@ interface SurfaceRuntime {
 }
 
 interface CreateExternalBrowserHostOptions {
-  /** 浏览器确认与安全登录窗口使用应用语言。 */
+  /** 安全登录窗口使用应用语言。 */
   language?: () => 'zh-CN' | 'en-US';
   runtimeRoot: string;
   artifactRoot: string;
@@ -63,7 +63,6 @@ const edgePreviewExtensionId = 'pcnleiehflciojdelkchdjjfefkjphef';
 const maximumNativeMessageBytes = 16 * 1024 * 1024;
 const requestTimeoutMs = 120_000;
 const waiterTimeoutMs = 15_000;
-const sensitivePattern = /\b(buy|purchase|pay|checkout|order|submit|send|publish|delete|remove|erase|confirm|authorize|transfer|sign|login|注册|登录|提交|发送|发布|购买|支付|下单|删除|移除|确认|授权|转账|签署)\b/iu;
 
 export class ExternalBrowserHost implements BrowserAutomationPort {
   private server: Server | null = null;
@@ -129,32 +128,12 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
           entries: entry ? [{ ...entry, argumentSchema: browserFrozenArgumentSchema(entry.path), unsupportedOn: browserFrozenUnsupportedSurfaceKinds(entry.path) }] : [],
         });
       }
-      if ((contract.risk === 'developer' || contract.risk === 'sensitive') && !(await this.confirmAdvanced(contract.path, contract.risk))) {
-        return textResult(`The user denied ${path}.`, false);
-      }
       if (path.startsWith('TabClipboardAPI.')) return this.performAdvancedClipboard(surface, input, path, asRecord(input.arguments.arguments));
       if (path === 'BrowserAuthTabCapability.request') return this.performBrowserAuth(surface, input);
-    } else if (isPotentiallySensitive(input) && !(await this.confirmSensitive(input.tool))) {
-      return textResult(`The user denied the sensitive ${surface} action.`, false);
     }
     try {
       const argumentsValue = withoutSurface(input.arguments);
       const identity = { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: input.callId };
-      if (requiresSensitivePreflight(input)) {
-        const preflight = await this.enqueue(surface, {
-          id: `browser-preflight-${randomUUID()}`,
-          tool: '__preflight',
-          arguments: { original: { tool: input.tool, arguments: argumentsValue } },
-          identity,
-        });
-        const projection = asRecord(parseOnlyTextJson(preflight));
-        if (
-          (!preflight.success || projection.sensitive === true || projection.unknown === true) &&
-          !(await this.confirmSensitive(`${input.tool} · ${typeof projection.descriptor === 'string' ? projection.descriptor.slice(0, 300) : '目标内容无法可靠识别'}`))
-        ) {
-          return textResult(`The user denied the sensitive ${surface} action.`, false);
-        }
-      }
       return await this.enqueue(surface, {
         id: `browser-${randomUUID()}`,
         tool: input.tool,
@@ -455,30 +434,6 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     return Boolean(connection && Date.now() - connection.lastSeenAt <= waiterTimeoutMs + 10_000);
   }
 
-  /** 说明这次浏览器授权的能力与后果，拒绝仍为默认选择。 */
-  private async confirmAdvanced(path: string, risk: 'developer' | 'sensitive'): Promise<boolean> {
-    const zh = this.options.language?.() !== 'en-US';
-    return this.showConfirmation(
-      zh ? '允许这次浏览器操作？' : 'Allow this browser action?',
-      risk === 'developer'
-        ? zh
-          ? `AI 请求使用高级浏览器功能 ${path}，可以读取或修改当前页面，范围超出普通页面操作。`
-          : `The AI requests advanced browser access through ${path}. This can read or change the page beyond normal page actions.`
-        : zh
-          ? `AI 请求 ${path}，可能上传文件、读取剪贴板或提交页面内容。`
-          : `The AI requests ${path}, which may upload files, read the clipboard, or submit page content.`,
-    );
-  }
-
-  /** 敏感操作逐次确认，语言变化不会改变授权范围。 */
-  private async confirmSensitive(tool: string): Promise<boolean> {
-    const zh = this.options.language?.() !== 'en-US';
-    return this.showConfirmation(
-      zh ? '允许这次浏览器操作？' : 'Allow this browser action?',
-      zh ? `AI 请求 ${tool}，可能提交表单、发送消息或修改账号内容。` : `The AI requests ${tool}, which may submit a form, send a message, or change account content.`,
-    );
-  }
-
   private async performBrowserAuth(surface: ExternalSurface, input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     const requestArguments = asRecord(input.arguments.arguments);
     const validation = await this.enqueue(surface, {
@@ -552,13 +507,6 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => window.show());
     });
   }
-
-  private async showConfirmation(title: string, detail: string): Promise<boolean> {
-    const options = { type: 'warning' as const, title, message: title, detail, buttons: this.options.language?.() === 'en-US' ? ['Decline', 'Allow once'] : ['拒绝', '允许一次'], defaultId: 0, cancelId: 0, noLink: true };
-    const window = BrowserWindow.getFocusedWindow();
-    const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-    return result.response === 1;
-  }
 }
 
 export function createExternalBrowserHost(options: CreateExternalBrowserHostOptions): ExternalBrowserHost {
@@ -596,22 +544,6 @@ function withoutSurface(value: Record<string, unknown>): Record<string, unknown>
   const rest = { ...value };
   delete rest.surface;
   return rest;
-}
-
-function isPotentiallySensitive(input: BrowserAutomationToolCall): boolean {
-  if (input.tool === 'click' || input.tool === 'type' || input.tool === 'press' || input.tool === 'clipboard' || input.tool === 'developer') {
-    return input.tool === 'developer' || input.tool === 'clipboard' || sensitivePattern.test(JSON.stringify(input.arguments));
-  }
-  return false;
-}
-
-function requiresSensitivePreflight(input: BrowserAutomationToolCall): boolean {
-  if (input.tool === 'click' || input.tool === 'type' || input.tool === 'press') return true;
-  if (input.tool !== 'invoke') return false;
-  const path = typeof input.arguments.path === 'string' ? input.arguments.path : '';
-  return /^(AXAPI\.(click|performSecondaryAction|setValue|typeText)|CUAAPI\.(click|double_click|keypress|type)|DomCUAAPI\.(click|double_click|keypress|type)|PlaywrightLocator\.(check|click|dblclick|fill|press|pressSequentially|selectOption|setChecked|type|uncheck))$/u.test(
-    path,
-  );
 }
 
 function requireString(value: unknown, name: string): string {
