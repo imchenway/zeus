@@ -2,16 +2,7 @@ import { defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig 
 import { type AppLanguage } from './workspaceCopy.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
-import {
-  getLanguageCopy,
-  normalizeCodeWorkspaceByProject,
-  normalizeSidebarConversationCollapsedStatusIdsByProject,
-  normalizeSidebarConversationOrganization,
-  normalizeTaskExpandedIdsByProject,
-  normalizeTaskPageViewByProject,
-  normalizeTaskStatusFilterByProject,
-  normalizeTaskViewModeByProject,
-} from './workspaceSupport.js';
+import { getLanguageCopy, normalizeCodeWorkspaceByProject, normalizeTaskExpandedIdsByProject, normalizeTaskPageViewByProject, normalizeTaskStatusFilterByProject, normalizeTaskViewModeByProject } from './workspaceSupport.js';
 
 export const GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE = 'ZEUS HIGH RISK';
 
@@ -184,8 +175,6 @@ export function toSafeAppShellImport(
       | 'defaultProjectId'
       | 'pinnedProjectIds'
       | 'collapsedProjectIds'
-      | 'sidebarConversationOrganization'
-      | 'sidebarConversationCollapsedStatusIdsByProject'
       | 'defaultModel'
       | 'defaultTaskTemplateId'
       | 'taskTableColumns'
@@ -214,8 +203,6 @@ export function toSafeAppShellImport(
     defaultProjectId: typeof raw.defaultProjectId === 'string' ? raw.defaultProjectId : null,
     pinnedProjectIds: Array.isArray(raw.pinnedProjectIds) ? raw.pinnedProjectIds.filter((id): id is string => typeof id === 'string') : [],
     collapsedProjectIds: Array.isArray(raw.collapsedProjectIds) ? raw.collapsedProjectIds.filter((id): id is string => typeof id === 'string') : [],
-    sidebarConversationOrganization: normalizeSidebarConversationOrganization(raw.sidebarConversationOrganization),
-    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(raw.sidebarConversationCollapsedStatusIdsByProject),
     defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : null,
     defaultTaskTemplateId: typeof raw.defaultTaskTemplateId === 'string' ? raw.defaultTaskTemplateId : null,
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),

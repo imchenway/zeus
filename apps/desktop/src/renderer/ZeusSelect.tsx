@@ -51,6 +51,12 @@ export interface ZeusSelectProps<T extends string> {
   popoverMinWidth?: number;
   /** 启用后使用包含选择与置顶按钮的对话框，避免在选项内嵌套按钮。 */
   pinning?: ZeusSelectPinning;
+  /** 弹层的局部外观，不影响同一选择器的其他使用位置。 */
+  popoverClassName?: string;
+  /** 列表之外的标题和操作区域，清除操作不应作为可选值。 */
+  header?: ReactNode;
+  /** 列表之外的独立操作区域，例如筛选结果的显示开关。 */
+  footer?: ReactNode;
   size: 'compact' | 'regular' | 'roomy';
 }
 
@@ -135,10 +141,10 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
     let optionWidth = 0;
     for (const { option, clone } of labelMeasurements) {
       const optionStyle = window.getComputedStyle(option);
-      const gridColumnWidths = optionStyle.gridTemplateColumns.match(/\d+(?:\.\d+)?px/gu)?.map(parseCssPixel) ?? [];
       const hasColor = option.querySelector('.zeus-select-option-color') !== null;
-      const markerWidth = hasColor ? (gridColumnWidths[0] ?? 10) : 0;
-      const checkWidth = gridColumnWidths.at(-1) ?? 16;
+      const markerWidth = hasColor ? 10 : 0;
+      // 标记可在文字前后展示，宽度不再依赖最后一列的位置。
+      const checkWidth = Math.max(16, option.querySelector('.zeus-select-option-check')?.getBoundingClientRect().width ?? 0);
       const gapCount = hasColor ? 2 : 1;
       /** 置顶按钮占据独立列，测量时为图钉和列间距预留空间。 */
       const pinWidth = option.parentElement?.classList.contains('zeus-select-option-row') ? 32 : 0;
@@ -296,20 +302,28 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     }
   };
 
-  /** 对话框允许 Tab 遍历搜索、选择与置顶；离开边界时回到原页面。 */
+  /** 顶部操作、选项、置顶与底部开关共用 Tab 顺序；离开边界时回到原页面。 */
   const handlePopoverKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
-    if (!props.pinning || event.defaultPrevented) return;
+    if ((!props.pinning && !props.header && !props.footer) || event.defaultPrevented) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
       closeListbox();
     } else if (event.key === 'Tab') {
-      /** 对话框中所有可用按钮均可通过键盘到达。 */
-      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input, button:not(:disabled)'));
-      if (event.target !== (event.shiftKey ? controls[0] : controls.at(-1))) return;
       event.preventDefault();
-      closeListbox(false);
-      if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
+      /** 普通列表保留单焦点导航，置顶对话框保留每个可用按钮的停靠点。 */
+      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(tabbableSelector)).filter((element) => element.tabIndex >= 0 && !element.matches(':disabled, [aria-disabled="true"]') && element.checkVisibility());
+      /** 当前焦点可能落在控件内部，按所属控件计算前后顺序。 */
+      const index = controls.findIndex((element) => element.contains(event.target as Node));
+      /** 移动方向沿用浏览器的 Tab 与 Shift+Tab 约定。 */
+      const direction = event.shiftKey ? -1 : 1;
+      /** 到达边界才关闭，列表与独立操作之间可以连续切换。 */
+      const next = index >= 0 ? controls[index + direction] : undefined;
+      if (next) focusElement(next);
+      else {
+        closeListbox(false);
+        if (!focusAdjacentTabStop(direction)) focusElement(triggerRef.current ?? undefined);
+      }
     }
   };
 
@@ -361,7 +375,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       if (!option.disabled) selectOption(option.value);
-    } else if (event.key === 'Tab' && !props.pinning) {
+    } else if (event.key === 'Tab' && !props.pinning && !props.header && !props.footer) {
       event.preventDefault();
       closeListbox(false);
       if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
@@ -400,7 +414,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         event.preventDefault();
         selectOption(activeOption.value);
       }
-    } else if (event.key === 'Tab' && !props.pinning) {
+    } else if (event.key === 'Tab' && !props.pinning && !props.header && !props.footer) {
       event.preventDefault();
       closeListbox(false);
       if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
@@ -456,7 +470,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         id={props.pinning ? `${rootId}-dialog` : undefined}
         role={props.pinning ? 'dialog' : undefined}
         aria-label={props.pinning ? props.ariaLabel : undefined}
-        className="zeus-select-popover"
+        className={`zeus-select-popover${props.popoverClassName ? ` ${props.popoverClassName}` : ''}`}
         data-pinnable={props.pinning ? 'true' : undefined}
         onKeyDown={handlePopoverKeyDown}
         data-motion-surface="popover"
@@ -472,6 +486,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
             : { visibility: 'hidden' }
         }
       >
+        {props.header ? <span className="zeus-select-header">{props.header}</span> : null}
         {searchable ? (
           <span className="zeus-select-search-row">
             <span className="zeus-select-search-icon" aria-hidden="true" />
@@ -567,6 +582,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
             </span>
           )}
         </span>
+        {props.footer ? <span className="zeus-select-footer">{props.footer}</span> : null}
       </span>
     </span>
   ) : null;

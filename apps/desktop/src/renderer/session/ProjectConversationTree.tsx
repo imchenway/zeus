@@ -1,4 +1,3 @@
-import { Collapsible } from '../ui/Collapsible.js';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -57,9 +56,6 @@ export interface ProjectConversationTreeProps {
   showEmptyState?: boolean;
   visibleConversationCount?: number;
   onShowMore?: () => void;
-  organization?: 'flat' | 'task_status';
-  collapsedStatusIdsByProject?: Record<string, string[]>;
-  onToggleStatusGroup?: (projectId: string, statusId: string) => void;
 }
 
 const labels = {
@@ -82,8 +78,6 @@ const labels = {
     archiveLegacyUnavailable: '旧版只读会话无法与 Codex 线程同步归档',
     archiving: '正在归档',
     showMore: '展开更多',
-    expandStatusGroup: '展开任务状态分组',
-    collapseStatusGroup: '折叠任务状态分组',
   },
   'en-US': {
     aria: 'Project conversations',
@@ -104,8 +98,6 @@ const labels = {
     archiveLegacyUnavailable: 'Legacy read-only conversations cannot be archived together with their Codex thread',
     archiving: 'Archiving',
     showMore: 'Show more',
-    expandStatusGroup: 'Expand task status group',
-    collapseStatusGroup: 'Collapse task status group',
   },
 } as const;
 
@@ -114,36 +106,23 @@ interface FlattenedConversation {
   displayTitle: string;
 }
 
-interface FlattenedStatusGroup {
-  statusId: string;
-  statusLabel: string;
-  conversations: FlattenedConversation[];
-}
-
-interface FlattenedProjectConversations {
-  project: ProjectConversationGroup;
-  flatConversations: FlattenedConversation[];
-  projectConversations: FlattenedConversation[];
-  statusGroups: FlattenedStatusGroup[];
-}
-
+/** 按会话更新时间平铺项目内容，键盘导航只包含当前可见项。 */
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   /** 在绘制禁用态之前也阻止重复点击。 */
   const archiveRequestRef = useRef<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
-  const organization = props.organization ?? 'flat';
-  const flattenedGroups = props.groups
-    .map((project) => flattenProjectConversations(project, normalizedQuery, props.language))
-    .map((group) => (normalizedQuery ? group : limitFlattenedProjectConversations(group, organization, props.visibleConversationCount)));
-  const visibleConversations = flattenedGroups.flatMap((group) => {
-    if (organization === 'flat') return group.flatConversations;
-    const collapsedStatusIds = props.collapsedStatusIdsByProject?.[group.project.projectId] ?? [];
-    return [...group.projectConversations, ...group.statusGroups.filter((statusGroup) => !collapsedStatusIds.includes(statusGroup.statusId)).flatMap((statusGroup) => statusGroup.conversations)];
+  /** 搜索命中全部展示，普通列表按项目限制首屏数量。 */
+  const flattenedGroups = props.groups.map((project) => {
+    /** 过滤后的完整列表同时作为“展开更多”的计数依据。 */
+    const conversations = flattenProjectConversations(project, normalizedQuery, props.language);
+    return { project, conversations, visibleConversations: normalizedQuery || props.visibleConversationCount === undefined ? conversations : conversations.slice(0, Math.max(0, props.visibleConversationCount)) };
   });
+  /** 焦点和上下键导航沿用实际展示的顺序。 */
+  const visibleConversations = flattenedGroups.flatMap((group) => group.visibleConversations);
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
-  const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '', props.language).flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '', props.language).map((entry) => conversationNavigationId(entry.conversation)));
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -160,6 +139,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     }
   }
 
+  /** 渲染平铺会话及其运行状态和归档入口。 */
   function renderConversationItems(conversations: FlattenedConversation[]) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
@@ -210,44 +190,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
 
   return (
     <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
-      {flattenedGroups.map(({ project, flatConversations, projectConversations, statusGroups }) => (
+      {flattenedGroups.map(({ project, conversations, visibleConversations }) => (
         <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
           {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
-          {organization === 'flat' ? (
-            <ul className="session-conversation-project-items">{renderConversationItems(flatConversations)}</ul>
-          ) : (
-            <>
-              {projectConversations.length > 0 ? <ul className="session-conversation-project-items session-conversation-project-direct-items">{renderConversationItems(projectConversations)}</ul> : null}
-              {statusGroups.map((statusGroup) => {
-                const collapsed = props.collapsedStatusIdsByProject?.[project.projectId]?.includes(statusGroup.statusId) ?? false;
-                const actionLabel = `${collapsed ? copy.expandStatusGroup : copy.collapseStatusGroup}: ${statusGroup.statusLabel}`;
-                return (
-                  <section className="session-conversation-status-group" key={statusGroup.statusId} aria-label={statusGroup.statusLabel}>
-                    <button
-                      type="button"
-                      className="session-conversation-status-group-toggle"
-                      aria-expanded={!collapsed}
-                      aria-label={actionLabel}
-                      title={actionLabel}
-                      onClick={() => props.onToggleStatusGroup?.(project.projectId, statusGroup.statusId)}
-                    >
-                      <span className="session-conversation-status-group-chevron" aria-hidden="true">
-                        ›
-                      </span>
-                      <strong>{statusGroup.statusLabel}</strong>
-                    </button>
-                    <Collapsible open={!collapsed}>
-                      <div className="session-conversation-status-group-content">
-                        <ul className="session-conversation-project-items">{renderConversationItems(statusGroup.conversations)}</ul>
-                      </div>
-                    </Collapsible>
-                  </section>
-                );
-              })}
-            </>
-          )}
-          {visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
-          {!normalizedQuery && props.onShowMore && visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) < flattenProjectConversations(project, '', props.language).flatConversations.length ? (
+          <ul className="session-conversation-project-items">{renderConversationItems(visibleConversations)}</ul>
+          {visibleConversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
+          {!normalizedQuery && props.onShowMore && visibleConversations.length < conversations.length ? (
             <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
               {copy.showMore}
             </button>
@@ -402,61 +350,14 @@ function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRu
   return 'idle';
 }
 
-function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string, language: 'zh-CN' | 'en-US'): FlattenedProjectConversations {
-  const matchesQuery = (entry: FlattenedConversation) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery);
-  const projectConversations = (project.conversations ?? [])
-    .map((conversation): FlattenedConversation => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) }))
-    .filter(matchesQuery)
+/** 合并项目直属与任务会话，按显示标题搜索，再按会话阶段更新时间排序。 */
+function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string, language: 'zh-CN' | 'en-US'): FlattenedConversation[] {
+  return [
+    ...(project.conversations ?? []).map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) })),
+    ...project.tasks.flatMap((task) => task.conversations.map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language) }))),
+  ]
+    .filter((entry) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery))
     .sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
-  const statusDefinitions = [...project.taskStatuses];
-  const statusLabels = new Map(statusDefinitions.map((status) => [status.id, status.label]));
-  const taskConversations = project.tasks.flatMap((task) => {
-    if (!statusLabels.has(task.managementStatus)) {
-      statusDefinitions.push({ id: task.managementStatus, label: task.managementStatus });
-      statusLabels.set(task.managementStatus, task.managementStatus);
-    }
-    return task.conversations
-      .map((conversation): FlattenedConversation & { managementStatus: string } => ({
-        conversation,
-        displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language),
-        managementStatus: task.managementStatus,
-      }))
-      .filter(matchesQuery);
-  });
-  const statusGroups = statusDefinitions
-    .map(
-      (status): FlattenedStatusGroup => ({
-        statusId: status.id,
-        statusLabel: status.label,
-        conversations: taskConversations.filter((entry) => entry.managementStatus === status.id).sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation)),
-      }),
-    )
-    .filter((statusGroup) => statusGroup.conversations.length > 0);
-  const flatConversations = [...projectConversations, ...taskConversations].sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
-  return { project, flatConversations, projectConversations, statusGroups };
-}
-
-function limitFlattenedProjectConversations(group: FlattenedProjectConversations, organization: 'flat' | 'task_status', maxCount?: number): FlattenedProjectConversations {
-  if (maxCount === undefined) return group;
-  const safeMaxCount = Math.max(0, maxCount);
-  if (organization === 'flat') return { ...group, flatConversations: group.flatConversations.slice(0, safeMaxCount) };
-
-  let remaining = safeMaxCount;
-  const projectConversations = group.projectConversations.slice(0, remaining);
-  remaining -= projectConversations.length;
-  const statusGroups = group.statusGroups
-    .map((statusGroup) => {
-      const conversations = statusGroup.conversations.slice(0, remaining);
-      remaining -= conversations.length;
-      return { ...statusGroup, conversations };
-    })
-    .filter((statusGroup) => statusGroup.conversations.length > 0);
-  return { ...group, flatConversations: group.flatConversations.slice(0, safeMaxCount), projectConversations, statusGroups };
-}
-
-function visibleConversationCount(group: Pick<FlattenedProjectConversations, 'flatConversations' | 'projectConversations' | 'statusGroups'>, organization: 'flat' | 'task_status'): number {
-  if (organization === 'flat') return group.flatConversations.length;
-  return group.projectConversations.length + group.statusGroups.reduce((count, statusGroup) => count + statusGroup.conversations.length, 0);
 }
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */

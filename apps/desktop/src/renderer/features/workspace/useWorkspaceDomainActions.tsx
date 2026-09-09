@@ -251,7 +251,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskTerminalCleanupConfirmation,
     setVisitedCodeWorkspaceModes,
     settingsWorkspaceCopy,
-    sidebarConversationPreferenceSaveQueueRef,
     snapshot,
     taskCreateForm,
     taskCreateReturnFocusRef,
@@ -263,7 +262,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskGitDeliveryConversationRef,
     taskGitReviewState,
     taskLocalVersionTransitionsRef,
-    taskManagementStatusReplacementsRef,
     taskModelPushCapabilities: loadedTaskModelPushCapabilities,
     taskModelPushCapabilityRequestRef,
     taskModelPushDeferredDispatchingTaskIdsRef,
@@ -320,8 +318,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               taskStatusFilterByProject: latest.taskStatusFilterByProject,
               taskViewModeByProject: latest.taskViewModeByProject,
               taskExpandedIdsByProject: latest.taskExpandedIdsByProject,
-              sidebarConversationOrganization: latest.sidebarConversationOrganization,
-              sidebarConversationCollapsedStatusIdsByProject: latest.sidebarConversationCollapsedStatusIdsByProject,
             }));
           })
           .catch((error) => recordLocalError('renderer-action', error));
@@ -329,20 +325,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     },
     [props.onSaveAppShellSettings],
   );
-  const persistSidebarConversationPreferences = useCallback((): void => {
-    const saveAppShellSettings = props.onSaveAppShellSettings;
-    if (!saveAppShellSettings) return;
-    sidebarConversationPreferenceSaveQueueRef.current = sidebarConversationPreferenceSaveQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        const latestSettings = appShellSettingsRef.current;
-        await saveAppShellSettings(toAppShellSettingsSavePayload(latestSettings, taskManagementStatusReplacementsRef.current));
-      })
-      .catch((error: unknown) => {
-        recordLocalError('sidebar-conversation-preference-save', error);
-      });
-  }, [props.onSaveAppShellSettings]);
-
   const acknowledgeNativeConversationAttention = useCallback(
     (projectId: string, conversationId: string, expectedRevision: number): void => {
       const client = props.nativeConversationClient;
@@ -2932,7 +2914,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskModelPush,
     openThirdPartyLinkInBrowser,
     persistCodeWorkspacePreference,
-    persistSidebarConversationPreferences,
     prepareNewConversationDraft,
     readTaskCreateClipboardResources,
     recordLocalError,

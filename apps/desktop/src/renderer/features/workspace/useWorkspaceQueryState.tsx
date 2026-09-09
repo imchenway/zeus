@@ -397,8 +397,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       defaultProjectId: null,
       pinnedProjectIds: [],
       collapsedProjectIds: [],
-      sidebarConversationOrganization: 'flat',
-      sidebarConversationCollapsedStatusIdsByProject: {},
       defaultModel: null,
       defaultTaskTemplateId: null,
       taskTableColumns: normalizeTaskTableColumnPreferences(),
@@ -439,9 +437,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   );
   const [taskStatusSettingsTargetId, setTaskStatusSettingsTargetId] = useState<string>(() => snapshot.projects[0]?.id ?? '__template__');
   const [taskManagementStatusReplacements, setTaskManagementStatusReplacements] = useState<Record<string, Record<string, string>>>({});
-  const taskManagementStatusReplacementsRef = useRef(taskManagementStatusReplacements);
-  const sidebarConversationPreferenceSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  taskManagementStatusReplacementsRef.current = taskManagementStatusReplacements;
   useEffect(() => {
     setAppShellSettings((current) => {
       const template = resolveTaskManagementStatusConfig(current);
@@ -1581,7 +1576,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setZeusWindowForeground,
     settingsCategory,
     settingsWorkspaceCopy,
-    sidebarConversationPreferenceSaveQueueRef,
     snapshot,
     sourceWorkspaceDirty,
     sourceWorkspaceLeaveDialogOpen,
@@ -1611,7 +1605,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskGitReviewState,
     taskLocalVersionTransitionsRef,
     taskManagementStatusReplacements,
-    taskManagementStatusReplacementsRef,
     taskModelPushAnnouncement,
     taskModelPushCapabilities,
     taskModelPushCapabilityRequestRef,

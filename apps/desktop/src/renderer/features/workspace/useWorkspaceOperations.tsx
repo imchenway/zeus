@@ -63,7 +63,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     activeTaskManagementStatusLabels,
     activeTaskTableColumns,
     appShellSettings,
-    appShellSettingsRef,
     codexConfigImportResult,
     conversationDraftOpen,
     currentProjectTasks,
@@ -236,7 +235,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     openTaskGitDelivery,
     openTaskModelPush,
     retryTaskModelPushEntry,
-    persistSidebarConversationPreferences,
     recordLocalError,
     recordTaskMutationVersion,
     refreshNativeConversationChoices,
@@ -805,8 +803,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         taskViewModeByProject: currentSettings.taskViewModeByProject,
         taskPageViewByProject: currentSettings.taskPageViewByProject,
         taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
-        sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
-        sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
       }));
       const savedPreferences = resolveTaskTableColumnsForProject(savedSettings, activeProjectId);
       setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: savedPreferences });
@@ -1571,33 +1567,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
   }
 
-  function toggleSidebarConversationOrganization(): void {
-    const currentSettings = appShellSettingsRef.current;
-    const nextSettings = normalizeRendererAppShellSettings({
-      ...currentSettings,
-      sidebarConversationOrganization: currentSettings.sidebarConversationOrganization === 'task_status' ? 'flat' : 'task_status',
-    });
-    appShellSettingsRef.current = nextSettings;
-    setAppShellSettings(nextSettings);
-    persistSidebarConversationPreferences();
-  }
-
-  function toggleSidebarConversationStatusGroup(projectId: string, statusId: string): void {
-    const currentSettings = appShellSettingsRef.current;
-    const currentStatusIds = currentSettings.sidebarConversationCollapsedStatusIdsByProject[projectId] ?? [];
-    const nextStatusIds = currentStatusIds.includes(statusId) ? currentStatusIds.filter((candidate) => candidate !== statusId) : [...currentStatusIds, statusId];
-    const nextSettings = normalizeRendererAppShellSettings({
-      ...currentSettings,
-      sidebarConversationCollapsedStatusIdsByProject: {
-        ...currentSettings.sidebarConversationCollapsedStatusIdsByProject,
-        [projectId]: nextStatusIds,
-      },
-    });
-    appShellSettingsRef.current = nextSettings;
-    setAppShellSettings(nextSettings);
-    persistSidebarConversationPreferences();
-  }
-
   function repositoryPickerLabel(): string {
     if (actionState === 'creating-project') return uiCopy.sidebar.creatingRepository;
     return uiCopy.sidebar.selectRepository;
@@ -2135,8 +2104,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     toggleAllVisibleTaskSelection,
     toggleCollapsedProject,
     togglePinnedProject,
-    toggleSidebarConversationOrganization,
-    toggleSidebarConversationStatusGroup,
     toggleTaskSelection,
     updateTaskBoardSettings,
     updateTaskManagementStatusConfigDraft,

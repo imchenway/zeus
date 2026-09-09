@@ -3116,8 +3116,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               defaultProjectId: nextSettings.defaultProjectId,
               pinnedProjectIds: nextSettings.pinnedProjectIds,
               collapsedProjectIds: nextSettings.collapsedProjectIds,
-              sidebarConversationOrganization: nextSettings.sidebarConversationOrganization,
-              sidebarConversationCollapsedStatusIdsByProject: nextSettings.sidebarConversationCollapsedStatusIdsByProject,
               defaultModel: nextSettings.defaultModel,
               defaultTaskTemplateId: nextSettings.defaultTaskTemplateId,
               taskTableColumns: nextSettings.taskTableColumns,
