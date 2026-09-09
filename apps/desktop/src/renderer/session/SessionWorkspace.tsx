@@ -2426,14 +2426,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 </span>
               ) : null}
             </span>
-            <div className="session-thread-subtitle-row">
-              {displayedHeader.contextLabel ? (
-                <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
-                  {displayedHeader.contextLabel}
-                </small>
-              ) : null}
-              {!legacy && props.state ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
-            </div>
           </div>
           <div className="session-context-header-tools">
             <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
@@ -2518,6 +2510,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 />
               ) : null}
             </div>
+          </div>
+          {/* 摘要与详情独占通栏，展开高度不再影响标题栏工具的位置。 */}
+          <div key={`runtime:${displayedHeader.conversationId}`} className="session-thread-subtitle-row">
+            {!legacy && props.state ? (
+              <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} contextLabel={displayedHeader.contextLabel ?? undefined} />
+            ) : displayedHeader.contextLabel ? (
+              <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
+                {displayedHeader.contextLabel}
+              </small>
+            ) : null}
           </div>
         </header>
       ) : null}
@@ -3521,7 +3523,8 @@ function mergeConversationAttachments(current: NativeConversationAttachment[], a
   return [...byIdentity.values()];
 }
 
-function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
+/** 将会话快照投影为共用详情，并携带所属项目的摘要名称。 */
+function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null; contextLabel?: string }) {
   const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || null;
   const effort = props.state.providerSettings?.effort?.trim() || props.state.snapshot?.nextTurnSettings?.effort?.trim() || null;
   const rawServiceTier = props.state.providerSettings?.serviceTier ?? props.state.snapshot?.nextTurnSettings?.serviceTier;
@@ -3600,7 +3603,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       nativeSessionPath: runtimeFact(nativeSession?.path ?? null, props.language === 'zh-CN' ? '暂无会话记录文件位置。' : 'The conversation record file location is unavailable.'),
     },
   };
-  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;
+  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} contextLabel={props.contextLabel} />;
 }
 
 function runtimeFact<T>(value: T | null | undefined, reason: string): NativeRuntimeFact<T> {

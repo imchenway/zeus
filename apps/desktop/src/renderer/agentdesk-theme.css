@@ -2831,56 +2831,43 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent !important;
   padding: 16px !important;
 }
-/* 统计摘要归入标题下方，保留点击展开完整信息的能力。 */
-.macos-ai-app.zeus-shell .session-thread-title-copy {
-  gap: 3px;
+/* 摘要和展开详情使用标题下方通栏，不继承项目名称或右侧工具的缩进。 */
+.macos-ai-app.zeus-shell .session-thread-subtitle-row {
+  grid-column: 1 / -1;
+  min-inline-size: 0;
 }
 .macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details {
   border: 0;
   background: transparent;
   pointer-events: auto;
-  min-width: 0;
+  min-inline-size: 0;
 }
 .macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details > summary {
-  min-block-size: 20px;
+  min-block-size: 24px;
   padding: 0;
   border-radius: 3px;
 }
-.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-summary-primary {
+.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-summary-primary {
   gap: 3px 12px;
-  font-size: 10px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 20px;
 }
-.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-summary-metric b {
+.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-summary-metric b {
   color: var(--session-text-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
-.macos-ai-app.zeus-shell .session-thread-title-copy .session-runtime-detail-groups {
-  max-height: 40vh;
-  overflow: auto;
-  padding: 10px 0;
-  border-top: 1px solid var(--session-line-soft);
+.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-detail-groups {
+  padding: 14px 0 4px;
   margin-top: 6px;
 }
-
-.macos-ai-app.zeus-shell .session-thread-subtitle-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 3px 12px;
-  min-width: 0;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-thread-project-name {
-  flex: 0 1 auto;
-  max-width: 200px;
+.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-thread-project-name {
+  color: var(--session-text-muted);
+  max-inline-size: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  line-height: 18px;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details {
-  flex: 1 1 420px;
+  line-height: 20px;
 }
 
 /* 项目侧栏保持单层列表，长标题与尾部操作分别占位。 */
