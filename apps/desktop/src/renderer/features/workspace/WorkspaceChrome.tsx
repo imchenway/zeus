@@ -1,4 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
+import { isTaskManagementStatus } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -51,6 +52,42 @@ import {
 const defaultVisibleConversationCount = 6;
 /** 每次展开更多追加的会话数量。 */
 const additionalVisibleConversationCount = 10;
+
+/** 侧栏筛选属于本机显示偏好，与项目任务页的独立筛选分开保存。 */
+const sidebarConversationFilterStorageKey = 'zeus.sidebar.conversation-filters';
+
+/** 漏斗内的状态选择与两个显示开关作为一份偏好恢复。 */
+interface SidebarConversationFilters {
+  /** 空数组表示所有任务状态及项目直属会话。 */
+  conversationStatusFilters: string[];
+  /** 筛选生效时是否隐藏没有匹配会话的项目。 */
+  hideEmptyFilteredProjects: boolean;
+  /** 每个任务是否只展示当前排序中的最新会话。 */
+  latestConversationOnly: boolean;
+}
+
+/** 首次使用或存储损坏时沿用原有默认显示。 */
+const defaultSidebarConversationFilters: SidebarConversationFilters = { conversationStatusFilters: [], hideEmptyFilteredProjects: true, latestConversationOnly: false };
+
+/** 首次挂载读取一次；按状态身份校验，不因项目目录尚未加载而丢掉已保存选择。 */
+function readSidebarConversationFilters(): SidebarConversationFilters {
+  try {
+    /** 本机存储也可能被清理或损坏，读取后逐字段校验。 */
+    const value: unknown = JSON.parse(window.localStorage.getItem(sidebarConversationFilterStorageKey) ?? 'null');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultSidebarConversationFilters;
+    /** 只接纳已知字段，避免损坏的偏好影响侧栏渲染。 */
+    const saved = value as Record<string, unknown>;
+    return {
+      conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
+        ? [...new Set(saved.conversationStatusFilters.filter((filter): filter is string => typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))))))]
+        : [],
+      hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
+      latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,
+    };
+  } catch {
+    return defaultSidebarConversationFilters;
+  }
+}
 
 /** 首次工作面复用项目创建，不引入独立引导状态或模型前置依赖。 */
 export function ProjectStartGuide(props: { language: AppLanguage; busy: boolean; available: boolean; onChooseFolder: () => void }) {
@@ -354,12 +391,21 @@ export function SidebarNav(props: {
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
-  /** 与搜索一样只影响当前窗口；重开窗口默认显示全部会话。 */
-  const [conversationStatusFilters, setConversationStatusFilters] = useState<string[]>([]);
-  /** 筛选时默认收起无匹配会话的项目，可在弹层中关闭。 */
-  const [hideEmptyFilteredProjects, setHideEmptyFilteredProjects] = useState(true);
-  /** 默认保留所有会话，按需将每个任务收为当前列表顺序的最新一条。 */
-  const [latestConversationOnly, setLatestConversationOnly] = useState(false);
+  /** 重开窗口恢复漏斗偏好；搜索文字仍保持临时输入。 */
+  const [conversationFilters, setConversationFilters] = useState(readSidebarConversationFilters);
+  /** 筛选和显示共用同一份持久偏好，避免分别恢复时出现中间态。 */
+  const { conversationStatusFilters, hideEmptyFilteredProjects, latestConversationOnly } = conversationFilters;
+  /** 只在用户操作时立即写入，避免挂载或异步目录刷新覆盖其他窗口保存的选择。 */
+  function updateConversationFilters(patch: Partial<SidebarConversationFilters>): void {
+    /** 合并本次修改，保留同一漏斗内未修改的选项。 */
+    const next = { ...conversationFilters, ...patch };
+    setConversationFilters(next);
+    try {
+      window.localStorage.setItem(sidebarConversationFilterStorageKey, JSON.stringify(next));
+    } catch (error) {
+      reportApplicationError(error, { language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
+    }
+  }
   const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();
   const [projectRenameDraft, setProjectRenameDraft] = useState('');
@@ -688,7 +734,7 @@ export function SidebarNav(props: {
               selectedValues={activeStatusFilters}
               options={statusFilterOptions}
               onChange={(value) => {
-                setConversationStatusFilters(activeStatusFilters.includes(value) ? activeStatusFilters.filter((status) => status !== value) : [...activeStatusFilters, value]);
+                updateConversationFilters({ conversationStatusFilters: activeStatusFilters.includes(value) ? activeStatusFilters.filter((status) => status !== value) : [...activeStatusFilters, value] });
                 setVisibleConversationCountByProject({});
               }}
               triggerIcon={<Funnel aria-hidden="true" weight={hasConversationFilter ? 'fill' : 'regular'} />}
@@ -706,7 +752,7 @@ export function SidebarNav(props: {
                     className="project-conversation-filter-clear"
                     disabled={!hasStatusFilter}
                     onClick={() => {
-                      setConversationStatusFilters([]);
+                      updateConversationFilters({ conversationStatusFilters: [] });
                       setVisibleConversationCountByProject({});
                     }}
                   >
@@ -725,7 +771,7 @@ export function SidebarNav(props: {
                         role="switch"
                         aria-label={copy.hideEmptyFilteredProjects}
                         checked={hideEmptyFilteredProjects}
-                        onChange={(event) => setHideEmptyFilteredProjects(event.currentTarget.checked)}
+                        onChange={(event) => updateConversationFilters({ hideEmptyFilteredProjects: event.currentTarget.checked })}
                       />
                       <span className="native-switch-track" aria-hidden="true" />
                     </span>
@@ -740,7 +786,7 @@ export function SidebarNav(props: {
                         aria-label={copy.latestConversationOnly}
                         checked={latestConversationOnly}
                         onChange={(event) => {
-                          setLatestConversationOnly(event.currentTarget.checked);
+                          updateConversationFilters({ latestConversationOnly: event.currentTarget.checked });
                           setVisibleConversationCountByProject({});
                         }}
                       />
