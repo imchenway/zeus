@@ -6,6 +6,12 @@ const inheritedProxyEnvironment = Object.fromEntries(Object.keys(networkProxyEnv
 /** 原生恢复函数只在下一次初始化时执行，不中断运行中的请求。 */
 let restoreGlobalProxy: (() => void) | undefined;
 
+/** 检查默认模式时使用最初的启动环境，避免把当前手动代理误当成默认值。 */
+export function networkProxyRuntimeEnvironment(settings: NetworkProxySettings): Record<string, string> {
+  if (settings.mode !== 'default') return networkProxyEnvironment(settings);
+  return Object.fromEntries(Object.entries(inheritedProxyEnvironment).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
 /** 在任何外部请求和模型进程启动前设置 Node 原生代理及子进程环境。 */
 export function applyNetworkProxyAtStartup(settings: NetworkProxySettings): void {
   /** Electron 已内置此能力；旧版 Node 开发环境给出明确错误，不静默直连。 */
