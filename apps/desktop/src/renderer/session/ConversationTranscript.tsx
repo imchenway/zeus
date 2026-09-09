@@ -25,7 +25,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary, SessionSweepText } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -1501,7 +1501,7 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
   };
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
-      <span className="session-current-status-text">{labels[props.kind][props.language === 'zh-CN' ? 0 : 1]}</span>
+      <SessionSweepText className="session-current-status-text" text={labels[props.kind][props.language === 'zh-CN' ? 0 : 1]} active />
     </p>
   );
 }

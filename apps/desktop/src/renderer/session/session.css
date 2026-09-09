@@ -2269,24 +2269,46 @@
   will-change: auto !important;
 }
 
-/* 思考摘要与当前状态共用连续扫光；固定纹理宽度让长摘要和短状态保持相同速度。 */
-.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
-.session-codex-parity-v1 .session-current-status-text {
-  animation: session-text-sweep 2.4s linear infinite;
-  background: linear-gradient(90deg, var(--session-text-muted) 0%, color-mix(in oklab, var(--session-text) 28%, transparent) 50%, var(--session-text-muted) 100%) repeat-x;
-  background-clip: text;
-  /* 每轮恰好移动一块首尾同色的纹理，去掉纯色停留段与循环回跳。 */
-  background-size: 160px 100%;
-  color: transparent;
-  -webkit-background-clip: text;
+/* 原文固定参与排版；扫光只平移合成图层，不再逐帧改变文字背景并触发重绘。 */
+.session-codex-parity-v1 .session-sweep-text {
+  /* 一轮移动一个纹理宽度；短状态与长摘要均以每秒 120 像素扫过。 */
+  --session-text-sweep-width: 120px;
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-sweep-text-light,
+.session-codex-parity-v1 .session-sweep-text-light::before {
+  animation: session-text-sweep 1s linear infinite;
+  position: absolute;
+  will-change: transform;
+}
+
+/* 额外保留一个纹理周期，平移时两端始终覆盖原文，循环接缝保持同色。 */
+.session-codex-parity-v1 .session-sweep-text-light {
+  color: color-mix(in oklab, var(--session-text-muted) 35%, var(--session-canvas));
+  inline-size: calc(100% + var(--session-text-sweep-width));
+  inset-block: 0;
+  inset-inline-start: calc(-1 * var(--session-text-sweep-width));
+  mask-image: repeating-linear-gradient(90deg, transparent 0, #000 calc(var(--session-text-sweep-width) / 2), transparent var(--session-text-sweep-width));
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 副本以相同节奏反向平移抵消父层位移，文字不动，只有静态渐变遮罩扫过。 */
+.session-codex-parity-v1 .session-sweep-text-light::before {
+  animation-direction: reverse;
+  content: attr(data-text);
+  inline-size: calc(100% - var(--session-text-sweep-width));
+  inset-block-start: 0;
+  inset-inline-start: 0;
 }
 
 @media (prefers-reduced-motion: reduce), (forced-colors: active) {
-  .session-codex-parity-v1 .session-reasoning-summary[data-status='active'] > .zeus-fidelity-text,
-  .session-codex-parity-v1 .session-current-status-text {
-    animation: none;
-    background: none;
-    color: var(--session-text-muted);
+  .session-codex-parity-v1 .session-sweep-text-light {
+    display: none;
   }
 }
 
@@ -11043,13 +11065,13 @@
   }
 }
 
-/* 位移与文字扫光的纹理宽度相等，循环首尾显示完全一致。 */
+/* 正反两个合成层共享匀速周期，位移抵消且首尾纹理连续。 */
 @keyframes session-text-sweep {
   from {
-    background-position: 0 0;
+    transform: translateX(0);
   }
   to {
-    background-position: 160px 0;
+    transform: translateX(var(--session-text-sweep-width));
   }
 }
 

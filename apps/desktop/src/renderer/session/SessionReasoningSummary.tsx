@@ -24,10 +24,20 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
       <span className="session-sr-only" role="status" aria-live="polite">
         {statusLabel}
       </span>
-      <span className="zeus-fidelity-text">{adaptiveText.text}</span>
+      <SessionSweepText className="zeus-fidelity-text" text={adaptiveText.text} active={props.status === 'active'} />
     </p>
   );
 });
+
+/** 摘要与运行状态共用固定文字和移动扫光层；视觉副本不参与朗读、选中或布局。 */
+export function SessionSweepText(props: { text: string; className: string; active: boolean }) {
+  return (
+    <span className={`session-sweep-text ${props.className}`}>
+      {props.text}
+      {props.active ? <span className="session-sweep-text-light" data-text={props.text} aria-hidden="true" /> : null}
+    </span>
+  );
+}
 
 /** 将协议明确标识的模型思考保留在所属阶段，并以原生可访问控件默认收起。 */
 export const SessionReasoningDetail = memo(function SessionReasoningDetail(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; onLoadContent?: (handle: string) => Promise<void> }) {
