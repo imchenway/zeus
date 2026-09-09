@@ -30,6 +30,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
   { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的执行状态和答复页脚。', answer: '', activities: [] },
   { query: 'model-select', title: '模型选择与置顶', summary: '共享选择框的分组、焦点、搜索和持久置顶。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
@@ -94,6 +95,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'queue-actions') return <QueueActionsQa />;
   if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'model-select') return <ModelSelectQa />;
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
@@ -129,6 +131,84 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 复现真实队列状态并检查生产时间线的操作入口，不连接模型或正式数据。 */
+function QueueActionsQa() {
+  /** 单条消息在正常排队、未知送达和已接纳之间切换。 */
+  const [scenario, setScenario] = useState('outcome_unknown');
+  /** 检查只读取当前场景的实际按钮。 */
+  const surface = useRef<HTMLDivElement>(null);
+  /** 回调结果用于确认检查入口沿用原有恢复操作。 */
+  const [result, setResult] = useState('等待检查');
+  /** 复用现场错误码，正文使用固定的非业务示例。 */
+  const submission = {
+    id: 'qa-submission',
+    content: '请调整执行人头像的显示。',
+    position: 1,
+    status: scenario === 'queued' ? 'queued' : scenario === 'accepted' ? 'resolved' : 'paused',
+    pausedReason: scenario === 'queued' || scenario === 'accepted' ? null : scenario,
+    providerTurnId: scenario === 'accepted' ? 'qa-turn' : null,
+    error: scenario === 'outcome_unknown' || scenario === 'recovery_required' ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: scenario === 'recovery_required' } : null,
+  };
+  /** 活动轮次确保普通队列确实处于等待，而非空闲队首交接。 */
+  const state: NativeSessionState = {
+    ...createInitialSessionState(),
+    conversationId: 'qa-queue',
+    transportState: 'ready',
+    activeTurnId: 'qa-turn',
+    startedTurnId: 'qa-turn',
+    conversationState: 'active_prework',
+    queue: { state: { type: 'active', turnId: 'qa-turn', phase: 'prework' }, submissions: [submission] },
+  };
+  /** 只比较用户可见的按钮，防止恢复状态重新暴露删除或引导。 */
+  function checkActions(): void {
+    /** 待发送消息可删除；未知送达只能核对；接纳后不再有队列操作。 */
+    const expectedDelete = scenario === 'queued' || scenario === 'recovered_unsent';
+    /** 引导只对正常排队消息开放。 */
+    const expectedSteer = scenario === 'queued';
+    /** 两类未知送达均保留检查入口。 */
+    const expectedCheck = scenario === 'outcome_unknown' || scenario === 'recovery_required';
+    if (
+      Boolean(surface.current?.querySelector('.session-queued-thread-delete')) !== expectedDelete ||
+      Boolean(surface.current?.querySelector('.session-queued-thread-steer')) !== expectedSteer ||
+      [...(surface.current?.querySelectorAll('button') ?? [])].some((button) => button.textContent === '检查处理状态') !== expectedCheck
+    ) {
+      throw new Error(`队列操作检查失败：${scenario}`);
+    }
+    setResult(`运行检查通过：${scenario}`);
+  }
+  return (
+    <main className="macos-ai-app zeus-shell qa-error-layout theme-light" data-theme="light">
+      <h1>排队消息操作</h1>
+      <nav aria-label="消息状态">
+        {['outcome_unknown', 'queued', 'recovery_required', 'recovered_unsent', 'accepted'].map((value, index) => (
+          <Button
+            key={value}
+            aria-pressed={scenario === value}
+            onClick={() => {
+              setScenario(value);
+              setResult('等待检查');
+            }}
+          >
+            {['送达未知', '正常排队', '引导待核对', '已确认未发送', '已接纳'][index]}
+          </Button>
+        ))}
+      </nav>
+      <Button onClick={checkActions}>检查操作入口</Button>
+      <p role="status">{result}</p>
+      <div ref={surface}>
+        <ConversationTranscript
+          state={state}
+          language="zh-CN"
+          transcriptHydrated
+          onSendQueuedNow={() => setScenario('accepted')}
+          onCancelQueuedSubmission={() => setResult('取消回调已触发')}
+          onRecoverQueue={() => setResult('检查处理状态回调已触发')}
+        />
+      </div>
     </main>
   );
 }
