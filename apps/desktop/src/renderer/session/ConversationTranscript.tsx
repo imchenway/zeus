@@ -1405,6 +1405,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   const queuedSubmission = queuedSubmissionForItem(row.item, options.props.state.queue);
   const queuedSubmissionId = queuedSubmission && !queuedSubmission.controlAction && !queuedSubmission.providerTurnId ? queuedSubmission.id : undefined;
+  /** 送达未知或仍需核对的消息不能按未发送队列操作；保留身份供状态检查使用。 */
+  const queuedActionsAvailable = queuedSubmissionId && queuedSubmission?.pausedReason !== 'outcome_unknown' && queuedSubmission?.pausedReason !== 'recovery_required' && !queuedSubmission?.error?.recoveryRequired;
   const queuedSteerDisabledReason = queuedSubmissionId && queuedSubmission?.status === 'queued' ? queuedSteerUnavailableReason(options.props.state, queuedSubmission, options.props.language) : undefined;
   return (
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
@@ -1433,8 +1435,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         waitingInQueue={isSubmissionWaitingInQueue(options.props.state.queue, queuedSubmission)}
         conversationRestoring={Boolean(queuedSubmission && options.props.state.queue?.waitReason === 'conversation_restoring')}
         queuedSteerDisabledReason={queuedSteerDisabledReason}
-        onSteerQueuedSubmission={queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
-        onDeleteQueuedSubmission={queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused' ? options.props.onCancelQueuedSubmission : undefined}
+        onSteerQueuedSubmission={queuedActionsAvailable && queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
+        onDeleteQueuedSubmission={queuedActionsAvailable && (queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused') ? options.props.onCancelQueuedSubmission : undefined}
         onRetryExpertExecution={options.props.onRetryQueuedSubmission}
       />
       {showPendingDeliveryFeedback ? (
@@ -1629,7 +1631,10 @@ export function MessageDeliveryOutcomeFeedback(props: {
               </button>
             ) : null}
           </>
-        ) : interactionResponseRecovery || providerStopRecoveryFailed || (genericQueueRecoveryRequired && (explanation.outcomeUnconfirmed || explanation.action === 'check' || explanation.action === 'retry')) ? (
+        ) : pausedReason === 'outcome_unknown' ||
+          interactionResponseRecovery ||
+          providerStopRecoveryFailed ||
+          (genericQueueRecoveryRequired && (explanation.outcomeUnconfirmed || explanation.action === 'check' || explanation.action === 'retry')) ? (
           <>
             {props.onRecoverQueue ? (
               <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
@@ -1670,7 +1675,8 @@ function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer,
   if (item.payload.recoveryKind === 'interaction_response' && item.status === 'queued') return true;
   if (item.status === 'failed' || item.status === 'unconfirmed') return true;
   if (item.status === 'queued') return false;
-  if (item.status === 'paused') return item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending' || item.payload.pausedReason === 'recovered_unsent';
+  if (item.status === 'paused')
+    return item.payload.pausedReason === 'outcome_unknown' || item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending' || item.payload.pausedReason === 'recovered_unsent';
   return !showActiveStatus;
 }
 
