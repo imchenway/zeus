@@ -52,6 +52,8 @@ interface LiveBrowserTab {
   ownerWindowId?: number;
   refs: Map<string, string>;
   documentGeneration: number;
+  /** 区分本页首次查找与上一处／下一处，换页后重新开始。 */
+  findText?: string;
   consoleLogs: Array<{ level: number; message: string; line: number; sourceId: string; createdAt: string }>;
 }
 
@@ -298,12 +300,36 @@ export class BrowserHost implements BrowserAutomationPort {
       const value = asRecord(input);
       const bounds = window.getContentBounds();
       const english = value.language === 'en-US';
+      /** 菜单状态来自当前标签，不能由渲染器伪造网址或导航能力。 */
+      const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
+      /** 使用真实页面缩放比例显示菜单状态。 */
+      const zoom = Math.round(this.ensureView(tab).webContents.getZoomFactor() * 100);
       return new Promise<string | null>((resolveSelection) => {
         /** 固定菜单项不接收网页提供的文案或可执行动作。 */
         const menu = Menu.buildFromTemplate([
           { label: english ? 'New tab' : '新建标签', click: () => resolveSelection('new_tab') },
-          { label: english ? 'Reload' : '重新加载', click: () => resolveSelection('reload') },
+          { label: english ? 'Close tab' : '关闭当前标签', click: () => resolveSelection('close_tab') },
+          { label: english ? 'Close other tabs' : '关闭其他标签', enabled: this.snapshotFor(tab.snapshot.conversationId).tabs.length > 1, click: () => resolveSelection('close_other_tabs') },
           { type: 'separator' },
+          { label: english ? 'Back' : '后退', enabled: tab.snapshot.canGoBack, click: () => resolveSelection('back') },
+          { label: english ? 'Forward' : '前进', enabled: tab.snapshot.canGoForward, click: () => resolveSelection('forward') },
+          { label: english ? 'Reload' : '重新加载', click: () => resolveSelection('reload') },
+          { label: english ? 'Stop loading' : '停止加载', enabled: tab.snapshot.loading, click: () => resolveSelection('stop') },
+          { type: 'separator' },
+          { label: english ? 'Find on page…' : '在页面中查找…', click: () => resolveSelection('find') },
+          { label: english ? 'Copy page link' : '复制页面链接', enabled: tab.snapshot.url !== 'about:blank', click: () => resolveSelection('copy_url') },
+          { label: english ? 'Open in default browser' : '在默认浏览器中打开', enabled: Boolean(normalizeExternalWebUrl(tab.snapshot.url)), click: () => resolveSelection('open_external') },
+          {
+            label: english ? `Zoom · ${zoom}%` : `页面缩放 · ${zoom}%`,
+            submenu: [
+              { label: english ? 'Zoom in' : '放大', enabled: zoom < 300, click: () => resolveSelection('zoom_in') },
+              { label: english ? 'Zoom out' : '缩小', enabled: zoom > 50, click: () => resolveSelection('zoom_out') },
+              { label: english ? 'Actual size · 100%' : '实际大小 · 100%', click: () => resolveSelection('zoom_reset') },
+            ],
+          },
+          { label: english ? 'Developer tools' : '开发者工具', click: () => resolveSelection('devtools') },
+          { type: 'separator' },
+          { label: value.expanded ? (english ? 'Restore split view' : '恢复左右分栏') : english ? 'Expand browser' : '展开浏览器', enabled: value.canSplit === true, click: () => resolveSelection('toggle_expanded') },
           { label: english ? 'Reset split width' : '恢复默认分栏宽度', enabled: value.canSplit === true, click: () => resolveSelection('reset_size') },
           { label: english ? 'Close browser' : '关闭浏览器', click: () => resolveSelection('close') },
         ]);
@@ -867,6 +893,7 @@ export class BrowserHost implements BrowserAutomationPort {
       },
     });
     tab.view = view;
+    tab.findText = undefined;
     view.setBackgroundColor('#f8f9fb');
     const update = (): void => {
       if (view.webContents.isDestroyed()) return;
@@ -886,6 +913,7 @@ export class BrowserHost implements BrowserAutomationPort {
     view.webContents.on('did-start-loading', update);
     view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       if (!isMainFrame || isInPlace) return;
+      tab.findText = undefined;
       tab.documentGeneration += 1;
       tab.refs.clear();
       this.invalidateAdvancedHandlesForTab(tab.snapshot.id);
@@ -958,6 +986,35 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'stop':
         view.webContents.stop();
         break;
+      case 'find':
+        if (typeof command.text !== 'string' || !command.text.trim() || command.text.length > 1000) throw new TypeError('查找内容必须为 1 至 1000 个字符。');
+        view.webContents.findInPage(command.text, { forward: command.forward !== false, findNext: tab.findText !== command.text });
+        tab.findText = command.text;
+        break;
+      case 'stop_find':
+        view.webContents.stopFindInPage('clearSelection');
+        tab.findText = undefined;
+        break;
+      case 'copy_url':
+        clipboard.writeText(tab.snapshot.url);
+        break;
+      case 'open_external': {
+        /** 外部打开仍只允许无内嵌凭据的网页地址。 */
+        const url = normalizeExternalWebUrl(tab.snapshot.url);
+        if (!url) throw new TypeError('当前地址不能在默认浏览器中打开。');
+        await this.options.openExternal(url);
+        break;
+      }
+      case 'zoom_in':
+      case 'zoom_out':
+        view.webContents.setZoomFactor(Math.min(3, Math.max(0.5, Math.round((view.webContents.getZoomFactor() + (command.action === 'zoom_in' ? 0.1 : -0.1)) * 10) / 10)));
+        break;
+      case 'zoom_reset':
+        view.webContents.setZoomFactor(1);
+        break;
+      case 'devtools':
+        view.webContents.openDevTools({ mode: 'detach' });
+        break;
       case 'set_annotation_mode':
         tab.snapshot = { ...tab.snapshot, annotationMode: command.enabled, updatedAt: this.now() };
         view.webContents.send('zeus-browser-page:command', { type: 'set_annotation_mode', enabled: command.enabled });
@@ -994,6 +1051,8 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'focus_comment':
         view.webContents.send('zeus-browser-page:command', { type: 'focus_comment', commentId: command.commentId });
         break;
+      default:
+        throw new TypeError('不支持的浏览器操作。');
     }
   }
 

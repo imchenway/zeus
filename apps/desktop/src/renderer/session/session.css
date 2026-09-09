@@ -6399,16 +6399,16 @@
   border-block-end: 1px solid var(--session-line-soft);
   display: flex;
   flex: 0 0 40px;
-  gap: 4px;
+  gap: 6px;
   min-inline-size: 0;
   padding: 4px 8px;
 }
 
 .session-codex-parity-v1 .browser-tabs {
-  align-items: center;
+  align-items: stretch;
   display: flex;
   flex: 0 1 auto;
-  gap: 4px;
+  gap: 2px;
   min-inline-size: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -6422,12 +6422,12 @@
   align-items: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 9px 9px 3px 3px;
+  border-radius: 8px 8px 0 0;
   display: flex;
-  flex: 0 1 210px;
+  flex: 0 1 200px;
   min-block-size: 36px;
   min-inline-size: 120px;
-  max-inline-size: 230px;
+  max-inline-size: 220px;
   overflow: hidden;
   padding-inline-end: 2px;
 }
@@ -6440,7 +6440,7 @@
   background: var(--session-canvas);
   border-color: var(--session-line-soft);
   border-block-end-color: var(--session-canvas);
-  min-inline-size: 160px;
+  min-inline-size: 140px;
 }
 
 .session-codex-parity-v1 .browser-tab-strip .browser-tab {
@@ -6863,6 +6863,8 @@
 
 .session-codex-parity-v1 .session-browser-sidecar {
   border-inline-start: 1px solid var(--session-divider);
+  /* 分隔线包含在共享宽度内，保证顶栏和正文落在同一条竖线上。 */
+  box-sizing: border-box;
   flex: 0 0 auto;
   min-block-size: 0;
   min-inline-size: 0;
@@ -11463,6 +11465,13 @@
 }
 
 /* 浏览器标签和文件标题共用最上方一行，操作图标保持固定宽度。 */
+.session-codex-parity-v1 .session-context-header-tools {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-context-toolbar-host {
   app-region: no-drag;
   display: flex;
@@ -11480,16 +11489,33 @@
   align-items: stretch;
   background: color-mix(in srgb, var(--session-text) 6%, var(--session-canvas));
   box-sizing: border-box;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--session-context-width);
+  gap: 0;
   min-block-size: 46px;
-  padding: 6px 12px 0;
+  padding: 0;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
   align-content: center;
-  flex: 0 1 160px;
-  max-inline-size: 20%;
-  padding-block-end: 6px;
+  max-inline-size: none;
+  padding: 6px 12px;
+}
+
+/* 顶栏与正文使用同一分栏宽度，标签起点固定在分隔线上。 */
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
+  align-items: stretch;
+  border-inline-start: 1px solid var(--session-divider);
+  padding: 6px 8px 0;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-title-copy {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
+  border-inline-start: 0;
+  grid-column: 2;
 }
 
 /* 标签打开时顶栏只保留任务名称，将阅读空间交给页面；收起后恢复摘要。 */
@@ -11523,11 +11549,77 @@
   font-size: 12px;
 }
 
-/* 窄窗口优先保留可操作标签和关闭入口，任务名称仍可从会话导航查看。 */
-@media (max-width: 759px) {
-  .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
-    display: none;
-  }
+/* 环境侧栏参与真实布局，原生网页随占位区调整尺寸而不隐藏。 */
+.session-codex-parity-v1 .session-browser-environment-host:empty {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-browser-pane[data-environment-open='true'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-browser-environment-host {
+  border-inline-start: 1px solid var(--session-line-soft);
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-quick-actions-card[data-presentation='docked'] {
+  block-size: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-block-size: 100%;
+  position: static;
+}
+
+/* 窄面板上下排列，保留网页的阅读宽度；环境信息独立滚动。 */
+.session-codex-parity-v1 .session-browser-pane[data-environment-open='true'][data-environment-stacked='true'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, min(38%, 300px)) minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-browser-pane[data-environment-stacked='true'] > .session-browser-environment-host {
+  border-inline-start: 0;
+  border-block-end: 1px solid var(--session-line-soft);
+  grid-row: 1;
+}
+
+.session-codex-parity-v1 .browser-find-bar {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.session-codex-parity-v1 .browser-find-bar input {
+  background: var(--session-control-hover);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 6px;
+  color: var(--session-text);
+  flex: 1;
+  min-inline-size: 0;
+  padding: 6px 8px;
+}
+
+.session-codex-parity-v1 .browser-find-bar button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  min-block-size: 28px;
+  min-inline-size: 28px;
+}
+
+.session-codex-parity-v1 .browser-find-bar button:hover {
+  background: var(--session-control-hover);
 }
 
 /* 浏览器工具只在可执行时响应，停用态与悬停态保持清晰区别。 */

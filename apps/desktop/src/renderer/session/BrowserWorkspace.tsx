@@ -2,6 +2,8 @@ import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ArrowsInSimpleIcon as ArrowsInSimple } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
 import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
@@ -34,6 +36,7 @@ interface BrowserWorkspaceProps {
   onStageComments: (prepared: ZeusBrowserPreparedSubmission) => void | Promise<void>;
 }
 
+/** 浏览器工具栏的中英文文案。 */
 const copy = {
   'zh-CN': {
     title: '内置浏览器',
@@ -68,6 +71,10 @@ const copy = {
     expand: '展开浏览器',
     collapse: '恢复左右分栏',
     more: '更多浏览器操作',
+    find: '在页面中查找',
+    findPrevious: '上一个匹配',
+    findNext: '下一个匹配',
+    closeFind: '关闭查找',
     unavailable: '此处无法使用内置浏览器。',
     loading: '正在打开内置浏览器…',
     loadFailed: '浏览器状态加载失败。',
@@ -106,6 +113,10 @@ const copy = {
     expand: 'Expand browser',
     collapse: 'Restore split view',
     more: 'More browser actions',
+    find: 'Find on page',
+    findPrevious: 'Previous match',
+    findNext: 'Next match',
+    closeFind: 'Close find',
     unavailable: 'The built-in browser is unavailable here.',
     loading: 'Opening the built-in browser…',
     loadFailed: 'The browser state could not be loaded.',
@@ -127,6 +138,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [addressFocused, setAddressFocused] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 查找栏占用真实高度，避免原生网页盖住输入框。 */
+  const [findOpen, setFindOpen] = useState(false);
+  /** 查询仅在用户提交时执行，避免每个字符产生跨进程写入。 */
+  const [findText, setFindText] = useState('');
+  /** 打开查找后将键盘焦点交给输入框。 */
+  const findInputRef = useRef<HTMLInputElement | null>(null);
   const [staging, setStaging] = useState(false);
   const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(snapshot ? error : null, {
@@ -134,6 +151,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   });
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
+
+  useEffect(() => {
+    if (findOpen) findInputRef.current?.focus();
+  }, [findOpen, activeTab?.id]);
 
   useEffect(() => {
     activeTabButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -262,21 +283,44 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
 
   /** 使用系统菜单覆盖网页；动作继续复用已有命令和分栏状态。 */
   async function openMoreMenu(trigger: HTMLButtonElement): Promise<void> {
-    if (moreOpen) return;
+    if (moreOpen || !activeTab) return;
     setMoreOpen(true);
     try {
       const rect = trigger.getBoundingClientRect();
-      const action = await window.zeus!.showBrowserMenu({ x: rect.left, y: rect.bottom, language: props.language, canSplit: props.canSplit !== false });
+      const action = await window.zeus!.showBrowserMenu({
+        x: rect.left,
+        y: rect.bottom,
+        conversationId: props.conversationId,
+        tabId: activeTab.id,
+        language: props.language,
+        canSplit: props.canSplit !== false,
+        expanded: Boolean(props.expanded),
+      });
       if (action === 'new_tab') await addTab();
-      else if (action === 'reload') await command({ action: 'reload' });
+      else if (action === 'close_tab') await closeTab(activeTab.id);
+      else if (action === 'close_other_tabs') {
+        for (const tab of snapshot?.tabs ?? []) {
+          if (tab.id !== activeTab.id) await closeTab(tab.id);
+        }
+      } else if (action === 'find') {
+        setFindOpen(true);
+        requestAnimationFrame(() => findInputRef.current?.focus());
+      } else if (action === 'toggle_expanded') props.onToggleExpanded();
       else if (action === 'reset_size') props.onResetSize();
       else if (action === 'close') props.onClose();
+      else if (action) await command({ action });
     } catch (menuError) {
       setError(menuError);
     } finally {
       setMoreOpen(false);
       if (trigger.isConnected) trigger.focus();
     }
+  }
+
+  /** 收起查找时清理当前页面的搜索高亮。 */
+  async function closeFind(): Promise<void> {
+    setFindOpen(false);
+    await command({ action: 'stop_find' });
   }
 
   async function command(commandValue: ZeusBrowserCommand): Promise<void> {
@@ -532,6 +576,34 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           </span>
         </div>
       )}
+
+      {findOpen ? (
+        <form
+          className="browser-find-bar"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (findText.trim()) void command({ action: 'find', text: findText });
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            void closeFind();
+          }}
+        >
+          <input ref={findInputRef} aria-label={labels.find} placeholder={labels.find} value={findText} maxLength={1000} onChange={(event) => setFindText(event.currentTarget.value)} />
+          <button type="button" aria-label={labels.findPrevious} title={labels.findPrevious} disabled={!findText.trim()} onClick={() => void command({ action: 'find', text: findText, forward: false })}>
+            <ArrowUp aria-hidden="true" />
+          </button>
+          <button type="submit" aria-label={labels.findNext} title={labels.findNext} disabled={!findText.trim()}>
+            <ArrowDown aria-hidden="true" />
+          </button>
+          <button type="button" aria-label={labels.closeFind} title={labels.closeFind} onClick={() => void closeFind()}>
+            <X aria-hidden="true" />
+          </button>
+        </form>
+      ) : null}
 
       <div className="browser-content-row">
         <div ref={viewportRef} className="browser-native-viewport" aria-label={activeTab.title || activeTab.url} />

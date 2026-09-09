@@ -189,6 +189,11 @@ export type ZeusBrowserCommand =
   | { action: 'forward' }
   | { action: 'reload' }
   | { action: 'stop' }
+  /** 页面查找复用 Chromium，搜索内容限制在当前标签内。 */
+  | { action: 'find'; text: string; forward?: boolean }
+  | { action: 'stop_find' }
+  /** 手动菜单操作只作用于经过归属校验的网页。 */
+  | { action: 'copy_url' | 'open_external' | 'zoom_in' | 'zoom_out' | 'zoom_reset' | 'devtools' }
   | { action: 'set_annotation_mode'; enabled: boolean }
   | { action: 'clear_comments' }
   | { action: 'delete_comment'; commentId: string }
