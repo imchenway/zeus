@@ -100,7 +100,7 @@ export function createAutomaticUpdateScheduler(options: CreateAutomaticUpdateSch
     const previous = persisted.indicator;
     let blockedPrepareVersion = persisted.blockedPrepareVersion;
     if (state.phase === 'failed' && state.latestVersion && state.failure?.step !== 'check') blockedPrepareVersion = state.latestVersion;
-    else if (state.phase === 'ready' || state.phase === 'manual' || state.phase === 'idle' || (state.latestVersion && state.latestVersion !== previous.latestVersion)) blockedPrepareVersion = null;
+    else if (state.phase === 'ready' || state.phase === 'manual' || state.phase === 'downloaded' || state.phase === 'idle' || (state.latestVersion && state.latestVersion !== previous.latestVersion)) blockedPrepareVersion = null;
     persisted = { ...persisted, blockedPrepareVersion, indicator: { ...state } };
     broadcastIndicator(state);
     schedulePersistence();
@@ -229,7 +229,7 @@ async function readPersistedState(path: string, currentVersion: string): Promise
 function isIndicatorState(value: unknown, currentVersion: string): value is HomebrewUpdateIndicatorState {
   if (!isRecord(value)) return false;
   return (
-    ['idle', 'available', 'manual', 'preparing', 'retrying', 'ready', 'failed'].includes(String(value.phase)) &&
+    ['idle', 'available', 'manual', 'downloaded', 'preparing', 'retrying', 'ready', 'failed'].includes(String(value.phase)) &&
     value.currentVersion === currentVersion &&
     (value.latestVersion === null || typeof value.latestVersion === 'string') &&
     typeof value.detail === 'string' &&

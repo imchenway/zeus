@@ -2840,6 +2840,13 @@ async function initializeApplication(): Promise<void> {
         isPackaged: true,
         testMode: isTestDistribution(),
         allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
+        /** 保留 macOS 下载安全检查；打开磁盘映像交给系统，不执行自动替换。 */
+        openDownloadedArtifact: async (path) => {
+          await execFile(nativeUpdateProgressHelperPath(), ['--quarantine-download', path], { timeout: 10_000 });
+          /** 系统返回空字符串才表示已接受打开请求。 */
+          const error = await shell.openPath(path);
+          if (error) throw new Error('无法打开已下载的安装包，请稍后重试。', { cause: error });
+        },
         onInstallReady: (activate) => requestUpgradeHandoffQuit(executionHostProtocolVersion, activate),
       });
       homebrewUpdateController = createHomebrewUpdateController({

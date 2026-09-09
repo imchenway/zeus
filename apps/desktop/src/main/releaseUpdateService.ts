@@ -67,6 +67,8 @@ export interface CreateReleaseUpdateServiceOptions {
   isPackaged: boolean;
   testMode: boolean;
   allowUntrustedTestUpdate: boolean;
+  /** 只打开本服务校验过的安装包，由用户通过系统界面手动安装。 */
+  openDownloadedArtifact: (path: string) => Promise<void>;
   onInstallReady: (activate: () => void | Promise<void>) => Promise<boolean>;
 }
 
@@ -90,6 +92,8 @@ export interface ReleaseUpdateService {
   /** 查询直接安装条件，正式包始终保留签名、公证和可写位置约束。 */
   manualInstallReason(update: DesktopReleaseUpdateStatus): Promise<ReleaseManualInstallReason | null>;
   download(onProgress?: (progress: ReleaseDownloadProgress) => void): Promise<DesktopReleaseUpdateOperation>;
+  /** 打开前复验当前发布清单和缓存，不执行应用替换或退出。 */
+  openDownloaded(): Promise<DesktopReleaseUpdateOperation>;
   install(): Promise<DesktopReleaseUpdateOperation>;
 }
 
@@ -137,10 +141,8 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
       exclusive(async () => {
         const update = await loadUpdateStatus(options);
         assertDownloadAllowed(update, options);
-        if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并通过下载页面手动安装。');
         await discardOutdatedHandoff(update);
         const artifact = update.artifact!;
-        if (basename(artifact.fileName) !== artifact.fileName) throw new Error('更新包文件名包含非法路径。');
         const dataLayout = existsSync(join(options.userDataPath, 'data')) ? createZeusDataLayout(options.userDataPath) : createLegacyFlatZeusDataLayout(options.userDataPath);
         const downloadDirectory = join(dataLayout.releaseUpdates, 'downloads', update.latestVersion);
         await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
@@ -158,13 +160,25 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         return {
           accepted: true,
           update,
-          reason: '更新包已下载并通过 SHA-256 校验，等待安装确认。',
+          reason: '更新包已下载并通过 SHA-256 校验，等待你选择安装操作。',
         };
+      }),
+    openDownloaded: () =>
+      exclusive(async () => {
+        /** 发布变化后只提示重新准备，不能打开之前下载的旧包。 */
+        const update = await loadUpdateStatus(options);
+        assertDownloadAllowed(update, options);
+        if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact!.sha256) {
+          return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
+        }
+        if (!(await verifyExistingArtifact(prepared.dmgPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        await options.openDownloadedArtifact(prepared.dmgPath);
+        return { accepted: true, update, reason: '已请求系统打开安装包，请结束工作并退出 Zeus 后手动替换应用。' };
       }),
     install: () =>
       exclusive(async () => {
         const update = await loadUpdateStatus(options);
-        assertDownloadAllowed(update, options);
+        assertInstallAllowed(update, options);
         await discardOutdatedHandoff(update);
         if (preparedInstallerHandoff) {
           if (preparedInstallerHandoff.updateVersion !== update.latestVersion || preparedInstallerHandoff.artifactSha256 !== update.artifact!.sha256) {
@@ -181,7 +195,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact?.sha256) {
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
-        if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并通过下载页面手动安装。');
+        if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并打开安装包手动安装。');
         // 安装前重新核对缓存，避免下载后被替换的包进入挂载与复制流程。
         if (!(await verifyExistingArtifact(prepared.dmgPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
         const transactionId = randomUUID();
@@ -287,12 +301,20 @@ async function loadUpdateStatus(options: CreateReleaseUpdateServiceOptions): Pro
   return value;
 }
 
+/** 下载只要求可信产物和匹配架构，签名、公证及协议约束留在自动安装入口。 */
 function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): void {
-  if (!options.isPackaged) throw new Error('Zeus 只允许 packaged App 执行应用内安装。');
+  if (!options.isPackaged) throw new Error('Zeus 只允许打包应用下载更新。');
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态中的当前版本与正在运行的 App 不一致。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可安装的更新。');
   if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/u.test(update.latestVersion) || update.latestVersion.length > 128) throw new Error('更新版本号无效。');
   if (update.artifact.arch !== process.arch) throw new Error('更新安装包与当前 Mac 架构不一致。');
+  if (basename(update.artifact.fileName) !== update.artifact.fileName || !update.artifact.fileName.endsWith('.dmg')) throw new Error('更新包文件名必须是无目录的 DMG 文件名。');
+  trustedReleaseDownloadUrl(update.artifact.downloadUrl, options.testMode && options.allowUntrustedTestUpdate);
+}
+
+/** 自动替换应用始终保留正式签名、公证和执行宿主协议门禁。 */
+function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): void {
+  assertDownloadAllowed(update, options);
   if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
     throw new Error('更新包未同时通过签名、公证和协议兼容门禁。');
@@ -301,6 +323,8 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
 
 /** 流式下载并校验大小和摘要，完整校验通过后才公开缓存文件。 */
 async function downloadVerifiedArtifact(input: { url: string; targetPath: string; expectedSha256: string; expectedSizeBytes: number | null; testMode: boolean; onProgress?: (progress: ReleaseDownloadProgress) => void }): Promise<void> {
+  /** 即使命中缓存，也必须先确认本次发布的下载来源可信。 */
+  const source = trustedReleaseDownloadUrl(input.url, input.testMode);
   input.onProgress?.({ phase: 'verifying' });
   if (await verifyExistingArtifact(input.targetPath, input.expectedSha256, input.expectedSizeBytes)) return;
   const temporaryPath = `${input.targetPath}.${randomUUID()}.partial`;
@@ -310,16 +334,12 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
   /** 限制界面更新频率，下载仍按每个数据块完整写入。 */
   let lastProgressAt = 0;
   try {
-    const source = new URL(input.url);
     if (source.protocol === 'file:') {
-      if (!input.testMode || !isUnderTemporaryDirectory(fileURLToPath(source))) throw new Error('本地更新源只允许用于隔离测试。');
       const bytes = await readFile(fileURLToPath(source));
       receivedBytes = bytes.length;
       hash.update(bytes);
       await output.writeFile(bytes);
     } else {
-      const loopbackTestSource = input.testMode && source.protocol === 'http:' && source.hostname === '127.0.0.1' && Boolean(source.port);
-      if (!loopbackTestSource && !isTrustedGithubDownloadUrl(source)) throw new Error('更新下载地址不是受信任的 GitHub Release。');
       input.onProgress?.({ phase: 'downloading', ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
       const response = await fetch(source, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
       if (!response.ok || !response.body)
@@ -512,6 +532,17 @@ function isUnderTemporaryDirectory(path: string): boolean {
 
 function isTrustedGithubDownloadUrl(url: URL): boolean {
   return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/download/');
+}
+
+/** 下载与打开缓存共用来源校验，回环和本地文件仅供明确启用的隔离验证。 */
+function trustedReleaseDownloadUrl(value: string, testMode: boolean): URL {
+  /** 保留解析后的来源供实际下载使用。 */
+  const source = new URL(value);
+  /** 测试源不得带账号信息，也不能指向临时目录以外的文件。 */
+  const isolatedTestSource =
+    testMode && !source.username && !source.password && ((source.protocol === 'file:' && isUnderTemporaryDirectory(fileURLToPath(source))) || (source.protocol === 'http:' && source.hostname === '127.0.0.1' && Boolean(source.port)));
+  if (!isolatedTestSource && !isTrustedGithubDownloadUrl(source)) throw new Error('更新下载地址不是受信任的 GitHub Release。');
+  return source;
 }
 
 function isTrustedGithubResponseUrl(url: URL): boolean {

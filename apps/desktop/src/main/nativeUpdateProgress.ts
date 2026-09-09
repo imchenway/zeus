@@ -2,10 +2,12 @@ import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
-export type NativeUpdateProgressAction = 'download' | 'check' | 'open_download_page' | 'reconnect' | 'restart' | 'retry' | 'later' | 'closed' | 'close';
+/** 打开安装包与自动重启安装使用独立动作。 */
+export type NativeUpdateProgressAction = 'download' | 'check' | 'open_download_page' | 'open_installer' | 'reconnect' | 'restart' | 'retry' | 'later' | 'closed' | 'close';
 
 export interface NativeUpdateProgressState {
-  state: 'checking' | 'available' | 'manual' | 'upToDate' | 'updating' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed';
+  /** downloaded 仅表示安装包已下载，ready 才能执行重启安装。 */
+  state: 'checking' | 'available' | 'manual' | 'downloaded' | 'upToDate' | 'updating' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed';
   title: string;
   detail: string;
   progressCaption?: string;
@@ -105,7 +107,16 @@ function parseAction(line: string): NativeUpdateProgressAction | null {
     const value = JSON.parse(line) as unknown;
     if (!isRecord(value)) return null;
     const action = value.action;
-    return action === 'download' || action === 'check' || action === 'open_download_page' || action === 'reconnect' || action === 'restart' || action === 'retry' || action === 'later' || action === 'closed' || action === 'close'
+    return action === 'download' ||
+      action === 'check' ||
+      action === 'open_download_page' ||
+      action === 'open_installer' ||
+      action === 'reconnect' ||
+      action === 'restart' ||
+      action === 'retry' ||
+      action === 'later' ||
+      action === 'closed' ||
+      action === 'close'
       ? action
       : null;
   } catch {

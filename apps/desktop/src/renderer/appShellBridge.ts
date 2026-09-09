@@ -33,7 +33,8 @@ export interface RequestingWindowActivationResult {
   error?: string;
 }
 
-export type AutomaticUpdateIndicatorPhase = 'idle' | 'available' | 'manual' | 'preparing' | 'retrying' | 'ready' | 'failed';
+/** 手动安装包下载完成后独立提示，不显示为等待重启。 */
+export type AutomaticUpdateIndicatorPhase = 'idle' | 'available' | 'manual' | 'downloaded' | 'preparing' | 'retrying' | 'ready' | 'failed';
 
 export interface AutomaticUpdateIndicatorState {
   phase: AutomaticUpdateIndicatorPhase;

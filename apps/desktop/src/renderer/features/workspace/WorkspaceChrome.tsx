@@ -984,23 +984,27 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
       ? zh
         ? `Zeus ${version} 等待重启`
         : `Zeus ${version} ready to restart`
-      : props.state.phase === 'manual'
+      : props.state.phase === 'downloaded'
         ? zh
-          ? `Zeus ${version} · 下载新版`
-          : `Zeus ${version} · Download new version`
-        : props.state.phase === 'retrying'
+          ? `Zeus ${version} 等待手动安装`
+          : `Zeus ${version} ready for manual installation`
+        : props.state.phase === 'manual'
           ? zh
-            ? `Zeus ${version} 等待重试`
-            : `Zeus ${version} waiting to retry`
-          : props.state.phase === 'preparing'
+            ? `Zeus ${version} · 下载新版`
+            : `Zeus ${version} · Download new version`
+          : props.state.phase === 'retrying'
             ? zh
-              ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
-              : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
-            : zh
-              ? `Zeus ${version} 可用`
-              : `Zeus ${version} available`;
+              ? `Zeus ${version} 等待重试`
+              : `Zeus ${version} waiting to retry`
+            : props.state.phase === 'preparing'
+              ? zh
+                ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
+                : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
+              : zh
+                ? `Zeus ${version} 可用`
+                : `Zeus ${version} available`;
   const icon =
-    props.state.phase === 'ready' ? (
+    props.state.phase === 'ready' || props.state.phase === 'downloaded' ? (
       <CheckCircle aria-hidden="true" weight="fill" />
     ) : props.state.phase === 'preparing' || props.state.phase === 'retrying' ? (
       <SpinnerGap className="automatic-update-indicator-spinner" aria-hidden="true" />

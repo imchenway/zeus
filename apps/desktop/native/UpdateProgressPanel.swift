@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Foundation
 
 private final class UpdateProgressPanelController: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -277,6 +278,11 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             progressRow.isHidden = true
             progressIndicator.isHidden = true
             setButtons(secondary: localized("later"), primary: localized("restart"))
+        case "downloaded":
+            // 手动安装不提供重启按钮，打开安装包也不会结束当前工作。
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: localized("later"), primary: localized("openInstaller"))
         case "upToDate":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
@@ -351,6 +357,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             emit(action: "open_download_page")
         case localized("download"):
             emit(action: "download")
+        case localized("openInstaller"):
+            emit(action: "open_installer")
         case localized("restart"):
             emit(action: "restart")
         case localized("retry"):
@@ -420,6 +428,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "check": return english ? "Check for Updates" : "重新检查更新"
         case "downloadPage": return english ? "Download New Version" : "下载新版"
         case "download": return english ? "Download Update" : "下载更新"
+        case "openInstaller": return english ? "Open Installer" : "打开安装包"
         case "reconnect": return english ? "Reconnect" : "重新连接"
         case "restart": return english ? "Restart Now" : "立即重启"
         case "ok": return english ? "OK" : "好"
@@ -526,9 +535,38 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 @main
 private enum UpdateProgressPanelApplication {
     static func main() {
+        // 命令模式仅给校验后的下载文件添加系统隔离标记，不创建窗口或安装应用。
+        if CommandLine.arguments.count > 1 {
+            do {
+                guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--quarantine-download" else {
+                    throw CocoaError(.fileReadInvalidFileName)
+                }
+                try quarantineDownload(at: CommandLine.arguments[2])
+            } catch {
+                FileHandle.standardError.write(Data("无法标记安装包的下载来源：\(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+            return
+        }
         let application = NSApplication.shared
         let controller = UpdateProgressPanelController()
         application.delegate = controller
         application.run()
+    }
+
+    /** 使用系统公开接口保留下载文件的安全检查，不移除或绕过隔离标记。 */
+    private static func quarantineDownload(at path: String) throws {
+        /** 安装包路径由 Main 在复验摘要后传入，仍限定为普通 DMG 文件。 */
+        let url = URL(fileURLWithPath: path)
+        /** 拒绝目录和符号链接，避免给无关文件改写来源属性。 */
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard url.pathExtension == "dmg", values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        try (url as NSURL).setResourceValue([
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload,
+            kLSQuarantineAgentNameKey as String: "Zeus",
+            kLSQuarantineTimeStampKey as String: Date(),
+        ], forKey: .quarantinePropertiesKey)
     }
 }
