@@ -56,7 +56,8 @@ import { createHomebrewUpdateController, type HomebrewUpdateController, type Hom
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { applyNetworkProxyAtStartup, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
-import { networkProxyLoopbackBypass, normalizeNetworkProxySettings } from '@zeus/shared';
+import { normalizeNetworkProxySettings } from '@zeus/shared';
+import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
@@ -2010,6 +2011,13 @@ function setupIpc(): void {
     await session.defaultSession.clearCache();
     return { cleared: true, clearedAt: new Date().toISOString() };
   });
+  // 仅主设置窗口可以检查网络，网页子框架不能借此发起任意请求。
+  ipcMain.handle('zeus:network-proxy:check', (event, settings: unknown, address: unknown) => {
+    /** 绑定实际请求窗口和顶层页面，不接受调用方提供的窗口身份。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('当前窗口不能检查网络代理。');
+    return checkNetworkProxyConnection(settings, address);
+  });
   ipcMain.handle('zeus:export-patch', (_event, patch: unknown) =>
     exportPatchToFile({
       patch: patch as { fileName: string; mimeType: string; patchText: string },
@@ -3257,15 +3265,8 @@ async function initializeNetworkProxy(config: { baseUrl: string; apiToken: strin
   const settings = normalizeNetworkProxySettings(await response.json());
   applyNetworkProxyAtStartup(settings);
   if (settings.mode === 'default') return;
-  /** Chromium 使用分号和方括号 IPv6，域名后缀保持与 NO_PROXY 一致。 */
-  const bypass = [networkProxyLoopbackBypass, settings.bypass]
-    .filter(Boolean)
-    .join(',')
-    .split(',')
-    .map((host) => (host === '::1' ? '[::1]' : host.startsWith('.') ? `*${host}` : host))
-    .join(';');
   /** 默认保留系统设置，直连与手动模式均显式覆盖所有 Zeus 会话。 */
-  const proxy: Electron.ProxyConfig = settings.mode === 'direct' ? { mode: 'direct' } : { mode: 'fixed_servers', proxyRules: settings.url, proxyBypassRules: bypass };
+  const proxy = chromiumNetworkProxyConfig(settings);
   await Promise.all([app.setProxy(proxy), session.defaultSession.setProxy(proxy), session.fromPartition(browserPartition).setProxy(proxy)]);
 }
 
