@@ -665,7 +665,30 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
     adapters: {
       listAdapters: () => listAiCliAdapters(),
-      checkAdapter: (adapterId, configuredCommandPath) => checkAiCliAdapter(adapterId, { commandPath: configuredCommandPath }),
+      /** Codex 检测与登录共用程序来源，且只运行版本和能力探针。 */
+      checkAdapter: async (adapterId, configuredCommandPath) => {
+        if (adapterId !== 'codex') return checkAiCliAdapter(adapterId, { commandPath: configuredCommandPath });
+        /** 远程接管要求专属安装；不能以全局 CLI 的存在代替。 */
+        const remote = platformMutableState.codexRemoteControlEnabled;
+        /** 只读取安装位置，不启动或接管后台服务。 */
+        const standalone = remote ? readCodexRemoteControlStandalone() : null;
+        /** 普通模式同时尊重用户设置和应用注入的程序路径。 */
+        const selectedPath = remote ? standalone?.commandPath : configuredCodexRuntimeCommandPath();
+        if (remote && !selectedPath) throw nativeApiError('ZEUS_CODEX_HOME_UNAVAILABLE', '尚未配置远程接管所需的 Codex 专属目录。');
+        /** 默认命令名走实时 PATH 搜索；用户填写的非绝对路径仍应明确失败。 */
+        const commandPath = selectedPath === 'codex' && !configuredCommandPath ? undefined : (selectedPath ?? undefined);
+        /** 缺少远程专属入口属于待安装，而非用户填写的路径错误。 */
+        const status = await checkAiCliAdapter('codex', { commandPath });
+        return {
+          ...status,
+          ...(remote && !standalone?.available ? { installationIssue: 'not_found' as const } : {}),
+          installation: {
+            mode: remote ? ('remote' as const) : ('local' as const),
+            configuredCommandPath: remote ? null : configuredCommandPath?.trim() || null,
+            command: standalone?.installCommand ?? 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+          },
+        };
+      },
     },
     readSettings: () => platformMutableState.runtimeSettings,
     now,
