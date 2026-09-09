@@ -411,7 +411,8 @@ export function registerConversationCommandRoutes(options: {
   }
 
   function assertTaskCanRestore(conversation: ZeusConversationRecord): void {
-    if (!conversation.taskId) return;
+    // 未归档产品会话仅恢复 Provider 内部状态时，不要求重新打开任务。
+    if (!conversation.archived || !conversation.taskId) return;
     const task = options.tasks.getById(conversation.taskId);
     if (task && options.isTaskTerminal(task)) {
       throw routeError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.', 409);

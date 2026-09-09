@@ -1194,6 +1194,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const piNativeCoordinator = readOnlyValidation
     ? createReadOnlyValidationPiCoordinator(() => now().toISOString())
     : createPiNativeConversationCoordinator({
+        // 延后到实际派发时读取已完成装配的共用恢复入口。
+        ensureExecutionContext: (input) => ensureNativeConversationExecutionContext(input),
         db,
         commandDeliveries,
         conversations,

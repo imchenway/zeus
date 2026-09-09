@@ -295,10 +295,15 @@ export function submissionDeliveryConfirmedForTurn(submission: ZeusConversationS
   return exactProviderMessage || (submission.id === turn.clientSubmissionId && submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt));
 }
 
+/** 失败标记可以留在线程上；只有轮次均已结束时，才允许用户发起下一轮。 */
 export function snapshotConfirmsIdleProviderThread(snapshot: CodexThreadSnapshot): boolean {
-  if (snapshot.status?.type !== 'idle' && snapshot.status?.type !== 'notLoaded') return false;
-  const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
+  if (snapshot.status?.type !== 'idle' && snapshot.status?.type !== 'notLoaded' && snapshot.status?.type !== 'systemError') return false;
+  /** 保留异常条目参与核对，不能过滤后误判全部轮次已经结束。 */
+  const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns : [];
+  // systemError 本身不能证明可继续，必须取得原线程的终态轮次证据。
+  if (snapshot.status.type === 'systemError' && snapshotTurns.length === 0) return false;
   return snapshotTurns.every((turn) => {
+    if (!isRecord(turn)) return false;
     const classification = classifySnapshotTurn(turn);
     return classification === 'completed' || classification === 'interrupted' || classification === 'failed';
   });

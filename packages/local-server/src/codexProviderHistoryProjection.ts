@@ -508,13 +508,14 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         completedAt ?? timestamp,
         classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined,
       );
-      if (classification === 'failed') {
+      // 重新读取旧终态只补齐历史，不再次暂停用户在故障处理后新发的消息。
+      if (classification === 'failed' && !wasTerminal) {
         const failureRecord = providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id));
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) {
           options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required', error: failureRecord });
         }
       }
-      const interruptedQueue = classification === 'interrupted' ? interruptedQueueSubmissions(submissions) : [];
+      const interruptedQueue = classification === 'interrupted' && !wasTerminal ? interruptedQueueSubmissions(submissions) : [];
       for (const queued of interruptedQueue.filter((entry: ZeusConversationSubmissionRecord) => entry.status === 'queued')) {
         options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
       }

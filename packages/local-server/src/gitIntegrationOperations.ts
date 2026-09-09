@@ -543,7 +543,12 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return taskWorkspaces.listByEnvironment(workspace.environmentId).filter((candidate) => candidate.id !== workspace.id && Boolean(candidate.worktreePath) && isPathInsideRoot(candidate.worktreePath!, workspace.worktreePath!));
   }
 
-  /** 任务分支本地合入来源分支后回收干净任务目录；清理失败不能反写成合入失败。 */
+  /** 只查未归档会话的主记录；仍可继续开发时，自动回收不能删除其任务目录。 */
+  function taskWorkspaceHasOpenConversation(workspace: ZeusTaskWorkspaceRecord): boolean {
+    return conversations.listRecordsByTask(workspace.taskId).some((conversation) => (workspace.environmentId ? conversation.environmentId === workspace.environmentId : conversation.workspaceId === workspace.id));
+  }
+
+  /** 本地合入只结束本次交付；仍有关联会话时保留目录，交由显式回收或任务终态清理。 */
   async function markTaskWorkspaceDelivered(workspace: ZeusTaskWorkspaceRecord): Promise<boolean> {
     if (workspace.kind === 'conflict') {
       taskWorkspaces.update(workspace.id, { state: 'ready', lastError: null });
@@ -552,6 +557,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     if (!workspace.worktreePath) {
       taskWorkspaces.update(workspace.id, { state: 'merged', lastError: null });
       reconcileTaskEnvironmentState(workspace.environmentId);
+      return false;
+    }
+    if (taskWorkspaceHasOpenConversation(workspace)) {
+      taskWorkspaces.update(workspace.id, { state: 'merged', lastError: null });
       return false;
     }
     const nested = nestedTaskWorkspacesWithWorktree(workspace);
@@ -595,7 +604,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       .filter((workspace) => workspace.state === 'merged' && workspace.worktreePath)
       .sort((left, right) => right.repositoryRelativePath.split('/').length - left.repositoryRelativePath.split('/').length);
     for (const candidate of candidates) {
-      if (!candidate.worktreePath || nestedTaskWorkspacesWithWorktree(candidate).length > 0) continue;
+      if (!candidate.worktreePath || taskWorkspaceHasOpenConversation(candidate) || nestedTaskWorkspacesWithWorktree(candidate).length > 0) continue;
       try {
         const reclaimed = await reclaimDeliveredTaskWorktree({
           repositoryPath: candidate.repositoryPath || projects.getById(candidate.projectId)?.localPath || '',
@@ -1296,7 +1305,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       .filter((workspace) => workspace.id !== closingWorkspace.id && workspace.state === 'merged' && workspace.worktreePath)
       .sort((left, right) => right.repositoryRelativePath.split('/').length - left.repositoryRelativePath.split('/').length);
     for (const candidate of candidates) {
-      if (!candidate.worktreePath) continue;
+      if (!candidate.worktreePath || taskWorkspaceHasOpenConversation(candidate)) continue;
       const nestedStillOpen = members.some((member) => member.id !== candidate.id && !removedWorkspaceIds.has(member.id) && Boolean(member.worktreePath) && isPathInsideRoot(member.worktreePath!, candidate.worktreePath!));
       if (nestedStillOpen) continue;
       try {
