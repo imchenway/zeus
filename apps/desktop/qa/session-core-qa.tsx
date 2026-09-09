@@ -5,6 +5,7 @@ import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/r
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
+import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
@@ -12,7 +13,7 @@ import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.j
 import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
-import type { ConversationCodeComment, TurnChangeSet } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationResource, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -136,8 +137,14 @@ export function SessionQaApp(props: { scene: QaScene }) {
 function MessageLayoutQa() {
   /** 地址参数支持直接打开英文、窄分栏、深色和无最终答复场景。 */
   const parameters = new URLSearchParams(window.location.search);
+  /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
+  const links = parameters.has('links');
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
-  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>('running');
+  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links ? 'completed' : 'running');
+  /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** 保留手动检查和点击的结果，便于在页面核对资源身份。 */
+  const [linkResult, setLinkResult] = useState('等待检查或点击链接');
   /** 预览主题不修改应用设置。 */
   const [dark, setDark] = useState(parameters.has('dark'));
   /** 通过内容列宽复现任务侧栏空间，不依赖浏览器窗口尺寸。 */
@@ -148,13 +155,63 @@ function MessageLayoutQa() {
   const startedAt = '2026-09-09T05:48:00Z';
   /** 固定完成时间同时作为答复时间戳。 */
   const completedAt = '2026-09-09T05:51:01Z';
+  /** 第一项沿用历史资源投影的名称占位，第二项保留实时资源的真实网址。 */
+  const resources: ConversationResource[] = [
+    { id: 'preview-resource', displayName: '交互预览', url: '交互预览' },
+    { id: 'website-resource', displayName: '网站', url: 'https://example.com/' },
+  ].map((resource) => ({
+    ...resource,
+    kind: 'website',
+    presentation: 'inline',
+    projectId: 'qa',
+    conversationId: 'qa-layout',
+    turnId: 'qa-layout-turn',
+    itemId: 'layout-3',
+    domain: resource.displayName,
+    local: false,
+    createdAt: completedAt,
+    updatedAt: completedAt,
+  }));
+  /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
+  function checkLinks(): void {
+    /** 只读取本场景正文，不将来源入口计入结果。 */
+    const buttons = [...(contentRef.current?.querySelectorAll('.session-conversation-markdown .session-inline-resource') ?? [])].map((button) => button.textContent);
+    if (buttons.join('|') !== '交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
+    setLinkResult('运行检查通过：历史链接和实时链接均可点击，未登记及同名不同网址的链接不可打开');
+  }
+  /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
+  function openResource(resource: ConversationResource): void {
+    if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
+    setLinkResult(`打开回调：${resource.id}`);
+  }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
     { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。', payload: {}, status: 'completed' },
     { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
     { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
-    ...(!active && !parameters.has('no-answer') ? [{ type: 'agentMessage', phase: 'final_answer', text: '已检查会话布局，执行状态紧跟处理摘要，消息操作与处理耗时显示在同一行。', payload: {}, status: 'completed' }] : []),
-  ].map((item, index) => ({ ...item, key: `layout-${index}`, itemId: `layout-${index}`, conversationId: 'qa-layout', threadId: 'qa-layout', turnId: 'qa-layout-turn', resources: [], updatedAt: completedAt }));
+    ...(!active && !parameters.has('no-answer')
+      ? [
+          {
+            type: 'agentMessage',
+            phase: 'final_answer',
+            text: links
+              ? '已完成会话消息优化。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
+              : '已检查会话布局，执行状态紧跟处理摘要，消息操作与处理耗时显示在同一行。',
+            payload: {},
+            status: 'completed',
+          },
+        ]
+      : []),
+  ].map((item, index) => ({
+    ...item,
+    key: `layout-${index}`,
+    itemId: `layout-${index}`,
+    conversationId: 'qa-layout',
+    threadId: 'qa-layout',
+    turnId: 'qa-layout-turn',
+    resources: links && item.phase === 'final_answer' ? resources : [],
+    updatedAt: completedAt,
+  }));
   /** 计时与终态均使用生产会话结构，覆盖无答复时的独立收尾。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
@@ -188,11 +245,19 @@ function MessageLayoutQa() {
           <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
             窄分栏
           </Button>
+          {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
         </nav>
       </header>
-      <div style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
-        <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated />
+      <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
+        <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
       </div>
+      {links ? (
+        <div className="qa-error-layout-note">
+          <p role="status">{linkResult}</p>
+          <span>来源：</span>
+          <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+        </div>
+      ) : null}
     </main>
   );
 }

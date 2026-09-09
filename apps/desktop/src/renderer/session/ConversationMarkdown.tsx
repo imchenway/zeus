@@ -456,10 +456,11 @@ function inlineResourceHrefMatches(resource: ConversationResource, href: string)
   );
 }
 
+/** 正文与资源卡共用受信资源；历史元数据未提供网址时按名称回接，打开仍使用资源编号。 */
 function inlineResourceMatches(resource: ConversationResource, label: string, href: string): boolean {
   if (resource.kind === 'website') {
     try {
-      return new URL(href).href === resource.url;
+      return new URL(href).href === new URL(resource.url).href;
     } catch {
       return resource.displayName === label;
     }
