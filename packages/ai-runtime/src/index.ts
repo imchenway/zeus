@@ -53,6 +53,17 @@ export interface AiCliAdapterStatus extends AiCliStatus {
   checkedAt: string;
   compatibility: 'compatible' | 'incompatible' | 'not_checked';
   installationGuideUrl: string | null;
+  /** 程序准备失败的结构化原因，界面不解析诊断文案。 */
+  installationIssue?: 'not_found' | 'invalid_path' | 'cannot_run' | 'unrecognized_program' | 'app_server_unavailable' | null;
+  /** 实际使用方补充安装目标，普通 CLI 与远程专属安装不能混用。 */
+  installation?: {
+    /** 远程模式固定使用 Zeus 专属安装，不允许在登录页改为全局程序。 */
+    mode: 'local' | 'remote';
+    /** 当前保存的用户路径，空值表示自动发现。 */
+    configuredCommandPath: string | null;
+    /** 由当前安装目标生成、仅供用户复制执行的官方安装命令。 */
+    command: string;
+  };
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';
   modelConfiguration: 'user-configured';
 }
@@ -201,6 +212,7 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
       checkedAt,
       compatibility: 'not_checked',
       installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
+      installationIssue: configuredCommandPath ? 'invalid_path' : 'not_found',
       authStatus: 'unknown',
       modelConfiguration: 'user-configured',
     };
@@ -208,15 +220,17 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
   const probe = await runAdapterVersionProbe(commandPath, runCommand);
   const version = extractVersion(probe.stdout || probe.stderr);
   const authStatus = detectAuthStatus(`${probe.stdout}\n${probe.stderr}`);
-  const capabilityProbe = adapter.id === 'codex' && probe.exitCode === 0 ? await runAdapterCapabilityProbe(commandPath, runCommand) : null;
-  const compatible = probe.exitCode === 0 && (adapter.id !== 'codex' || capabilityProbe?.exitCode === 0);
+  /** 手动路径可能指向其他程序，成功退出不能替代 Codex 身份。 */
+  const recognizedProgram = adapter.id !== 'codex' || /\bcodex(?:[- ]cli)?\s+v?\d+\.\d+/i.test(`${probe.stdout}\n${probe.stderr}`);
+  const capabilityProbe = adapter.id === 'codex' && probe.exitCode === 0 && recognizedProgram ? await runAdapterCapabilityProbe(commandPath, runCommand) : null;
+  const compatible = probe.exitCode === 0 && recognizedProgram && (adapter.id !== 'codex' || capabilityProbe?.exitCode === 0);
   return {
     ...status,
     available: compatible,
     reason: compatible
       ? buildAdapterProbeReason(adapter, status.reason, version, authStatus)
       : adapter.id === 'codex'
-        ? codexInstallationGuidance(`检测到 Codex CLI，但版本探针或 app-server 能力不可用：${commandPath}`)
+        ? codexInstallationGuidance(!recognizedProgram && probe.exitCode === 0 ? `所选程序未返回 Codex 版本标识：${commandPath}` : `检测到 Codex CLI，但版本探针或 app-server 能力不可用：${commandPath}`)
         : `${status.reason}；版本探针失败，退出码 ${probe.exitCode}。`,
     id: adapter.id,
     displayName: adapter.displayName,
@@ -226,6 +240,7 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
     checkedAt,
     compatibility: compatible ? 'compatible' : 'incompatible',
     installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
+    installationIssue: compatible ? null : probe.exitCode !== 0 ? 'cannot_run' : !recognizedProgram ? 'unrecognized_program' : 'app_server_unavailable',
     authStatus,
     modelConfiguration: 'user-configured',
   };
@@ -494,7 +509,8 @@ function runCommandOnce(commandPath: string, args: string[], searchPath?: string
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
+      // 探针不承载会话，超时直接结束本次子进程，避免重复检测留下挂起程序。
+      child.kill('SIGKILL');
       resolveProbe({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
         stderr: Buffer.concat(stderrChunks).toString('utf8') || '版本检测超时',
@@ -541,7 +557,7 @@ function buildAdapterProbeReason(adapter: AiCliAdapterDescriptor, baseReason: st
 }
 
 function codexInstallationGuidance(reason: string): string {
-  return `${reason}。请由用户在终端运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后回到 Zeus 重新检测。Zeus 不会自动安装或回退到内置版本。`;
+  return `${reason}。请在终端运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，安装完成后回到 Zeus 重新检测并登录订阅。`;
 }
 
 /** 创建 AI Runtime 会话管理器；默认使用真实子进程，不伪造 AI 输出。 */

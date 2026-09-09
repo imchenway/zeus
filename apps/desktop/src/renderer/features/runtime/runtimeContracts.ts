@@ -31,6 +31,17 @@ export interface AiRuntimeAdapterStatus extends AiRuntimeAdapterDescriptor {
   checkedAt: string;
   compatibility: 'compatible' | 'incompatible' | 'not_checked';
   installationGuideUrl: string | null;
+  /** 程序准备失败的事实分类，避免把所有异常都显示为需要安装。 */
+  installationIssue?: 'not_found' | 'invalid_path' | 'cannot_run' | 'unrecognized_program' | 'app_server_unavailable' | null;
+  /** 服务端按实际登录程序生成的安装引导。 */
+  installation?: {
+    /** 远程模式使用专属安装，不能改为全局程序。 */
+    mode: 'local' | 'remote';
+    /** 用户保存的程序路径，空值表示自动检测。 */
+    configuredCommandPath: string | null;
+    /** 只复制或展示，不自动执行的安装命令。 */
+    command: string;
+  };
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';
   modelConfiguration: 'user-configured';
 }

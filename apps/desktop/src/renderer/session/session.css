@@ -1755,23 +1755,40 @@
   white-space: pre-wrap;
 }
 
-.session-response-annotation-editor textarea {
+/* 批注输入区自行管理边框与留白，避免通用表单圆角、投影覆盖后贴住弹层边缘。 */
+.macos-ai-app.zeus-shell .session-response-annotation-editor > textarea {
   background: transparent;
-  border: 0;
-  border-radius: 0;
+  border: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
+  border-radius: 6px;
+  box-shadow: none;
+  box-sizing: border-box;
   color: inherit;
   font: inherit;
   font-size: 13px;
+  inline-size: auto;
   line-height: 18px;
+  margin: 8px 10px 0;
   max-block-size: 120px;
   min-block-size: 62px;
+  min-inline-size: 0;
   outline: 0;
-  padding: 9px 10px;
+  padding: 8px 9px;
   resize: vertical;
 }
 
-.session-response-annotation-editor textarea:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--session-accent, var(--zeus-brand-primary)) 34%, transparent);
+/* 聚焦沿用主题焦点色，只加深单层边线，不绘制外扩光圈。 */
+.macos-ai-app.zeus-shell .session-response-annotation-editor > textarea:focus-visible {
+  border-color: var(--session-focus-outline, var(--session-text-muted, #60656f));
+  box-shadow: none;
+  outline: 0;
+}
+
+/* 系统强制配色时用内收轮廓保留焦点辨识，不越出输入区。 */
+@media (forced-colors: active) {
+  .macos-ai-app.zeus-shell .session-response-annotation-editor > textarea:focus-visible {
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 .session-response-annotation-editor button {

@@ -201,6 +201,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'git'
     | 'settings'
     | 'remoteControl'
+    | 'checkRuntimeAdapter'
     | 'loadProjectConversationChoices'
     | 'loadProjectConversationChoiceGroups'
     | 'loadArchivedConversations'
