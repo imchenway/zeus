@@ -2,6 +2,8 @@
 :root {
   /* 图标的深紫色端点用于主操作与交互反馈。 */
   --zeus-brand-primary: #6155d8;
+  /* 普通悬停统一为浅紫色，主窗口与独立窗口保持同样的轻量反馈。 */
+  --zeus-brand-hover: color-mix(in srgb, var(--zeus-brand-primary) 5%, transparent);
   /* 图标的亮紫色端点用于辅助强调。 */
   --zeus-brand-highlight: #7a6ff0;
   /* 浅色背景上的强调文字使用品牌主色。 */

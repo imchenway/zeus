@@ -259,11 +259,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition-timing-function: var(--zeus-motion-ease-out), var(--zeus-motion-ease-out), linear, step-end;
 }
 
-/* 普通悬停统一引用当前品牌色；选中、危险和禁用状态继续各自表达业务含义。 */
+/* 悬停保留浅紫色，按下与选中逐级加深，不把颜色深浅混作不同操作。 */
 .macos-ai-app {
-  --zeus-interaction-hover: color-mix(in srgb, var(--zeus-product-accent) 8%, transparent);
+  --zeus-interaction-hover: var(--zeus-brand-hover);
   /* 按下加深一档，主操作保留白字，键盘焦点使用独立描边。 */
-  --zeus-interaction-pressed: color-mix(in srgb, var(--zeus-product-accent) 16%, transparent);
+  --zeus-interaction-pressed: color-mix(in srgb, var(--zeus-product-accent) 10%, transparent);
   --zeus-interaction-primary-hover: color-mix(in srgb, var(--zeus-product-accent) 90%, black);
   --zeus-interaction-primary-pressed: color-mix(in srgb, var(--zeus-product-accent) 80%, black);
   --zeus-interaction-line: color-mix(in srgb, var(--zeus-product-accent) 38%, var(--zeus-product-line));
@@ -288,6 +288,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app :where(button, summary, [role='button'], [role='tab'], [role='option'], a[href]) {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+/* 未声明外形的操作项也有圆角；专用按钮、表格和拖动手柄仍由自身几何规则负责。 */
+.macos-ai-app :where(button, [role='button'], [role='tab'], [role='option']) {
+  border-radius: 6px;
 }
 .macos-ai-app :where(button, [role='button'], [role='tab'], [role='option']):where(:hover:not(:disabled):not([aria-disabled='true']):not([data-zeus-primitive='backdrop'])) {
   background-color: var(--zeus-interaction-hover);
@@ -346,6 +350,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-popover-offset: 6px;
 }
 
+/* 折叠标题的底色与命中区始终同形，留出文字呼吸空间，悬停时不改变尺寸。 */
+.macos-ai-app :where(summary) {
+  box-sizing: border-box;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
 /* 原生折叠标题只高亮自己的命中区，嵌套内容不会给整张卡片铺色。 */
 .macos-ai-app summary:hover:not(:disabled):not([aria-disabled='true']) {
   background-color: var(--zeus-interaction-hover);
@@ -1003,8 +1016,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   padding-inline: 14px 12px;
 }
 
-/* Select 的 body portal 只承载定位，不允许主题画布把整个视口涂成实色。 */
-.zeus-select-portal-root.macos-ai-app[data-zeus-primitive='select-popover'] {
+/* 非模态浮层只承载定位，复用主题变量时不能把整页画布绘制到窗口上方。 */
+.zeus-select-portal-root.macos-ai-app[data-zeus-primitive='select-popover'],
+.macos-ai-app.session-context-usage-tooltip-portal,
+.macos-ai-app.session-open-with-portal {
   background: transparent;
 }
 

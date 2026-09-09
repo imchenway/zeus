@@ -1565,8 +1565,14 @@ a {
   flex: 1 1 auto;
   gap: 11px;
   min-inline-size: 0;
-  padding: 0;
+  /* 标题和图标共同形成圆角命中区，避免底色紧贴文字。 */
+  padding: 6px 8px;
+  border-radius: 6px;
   text-align: start;
+}
+
+.macos-ai-app .extension-plugin-summary:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .extension-plugin-summary > span:last-child,
@@ -2780,17 +2786,18 @@ a {
   inline-size: 16px;
 }
 
-.project-disclosure-button {
+/* 项目折叠箭头只改变图标明暗，整行已有悬停反馈，不再叠加窄矩形按钮底色。 */
+.macos-ai-app .project-first-sidebar .project-disclosure-button {
   align-items: center;
   background: transparent;
   border: 0;
   border-radius: 5px;
   color: var(--zeus-project-menu-muted);
   display: flex;
-  height: 22px;
+  height: 28px;
   justify-content: center;
   padding: 0;
-  width: 18px;
+  width: 28px;
 }
 .project-disclosure-button span {
   align-items: center;
@@ -2809,8 +2816,8 @@ a {
 .project-disclosure-button[aria-expanded='true'] span {
   transform: rotate(90deg);
 }
-.project-disclosure-button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-source-list-hover);
+.macos-ai-app .project-first-sidebar .project-disclosure-button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
   color: var(--zeus-product-text);
 }
 .project-disclosure-button:focus-visible {
@@ -8827,7 +8834,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .startup-failure-button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 8%, transparent);
+  background: var(--zeus-brand-hover);
   border-color: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 38%, transparent);
 }
 
@@ -9426,8 +9433,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-block-size: 28px;
 }
 
-.macos-ai-app .project-first-sidebar button:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .project-first-sidebar button:focus-visible {
+.macos-ai-app .project-first-sidebar button:not(.project-disclosure-button):hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .project-first-sidebar button:not(.project-disclosure-button):focus-visible {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
 }
@@ -9764,7 +9771,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:focus-visible {
-  background: color-mix(in oklch, var(--zeus-product-accent) 15%, transparent);
+  background: var(--zeus-interaction-hover);
   border-color: color-mix(in oklch, var(--zeus-product-accent) 38%, transparent);
 }
 
@@ -17196,6 +17203,23 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: inherit;
 }
 
+/* 文件名和缩略图属于同一个打开目标；移除与恢复按钮保持独立。 */
+.macos-ai-app .pending-resource-activate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+}
+.macos-ai-app .pending-resource-card:has(.pending-resource-activate:hover) {
+  background: var(--zeus-interaction-hover);
+}
+.macos-ai-app .pending-resource-restore {
+  position: relative;
+  z-index: 1;
+}
+.macos-ai-app .pending-resource-remove {
+  z-index: 1;
+}
 .macos-ai-app .pending-resource-visual {
   display: inline-flex;
   align-items: center;
@@ -20521,7 +20545,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   padding: 3px 4px;
 }
 .macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--zeus-product-accent) 7%, transparent);
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-brand-text);
 }
 .macos-ai-app .project-conversation-filter-popover .project-conversation-filter-clear:focus-visible {
@@ -22438,7 +22462,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .model-setup-advanced > summary {
   cursor: pointer;
-  padding: 12px 0;
+  padding: 4px 8px;
+  margin-block: 8px;
   overflow-wrap: anywhere;
 }
 .macos-ai-app .model-setup-default-model {

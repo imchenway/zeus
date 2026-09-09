@@ -355,7 +355,10 @@ function ConversationImagePreview(
   );
 }
 
-function ConversationImagePreviewDialog(props: { previewUrl: string; label: string; language: SessionUiLanguage; loading: boolean; error?: string; onClose: () => void }) {
+/** 消息正文与输入附件共用同一图片弹窗、焦点管理和关闭行为。 */
+export function ConversationImagePreviewDialog(props: { previewUrl: string; label: string; language: SessionUiLanguage; loading: boolean; error?: string; onClose: () => void }) {
+  /** 无法解码的图片也显示可关闭的失败状态。 */
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
   const previewId = useId();
   const titleId = `${previewId}-conversation-image-preview-title`;
   const descriptionId = `${previewId}-conversation-image-preview-description`;
@@ -374,8 +377,8 @@ function ConversationImagePreviewDialog(props: { previewUrl: string; label: stri
           </button>
         </header>
         <div className="task-attachment-zoom-stage">
-          {props.previewUrl ? (
-            <img decoding="async" className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} />
+          {props.previewUrl && failedPreviewUrl !== props.previewUrl ? (
+            <img decoding="async" className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} onError={() => setFailedPreviewUrl(props.previewUrl)} />
           ) : props.loading ? (
             <p className="task-attachment-zoom-state" role="status" aria-live="polite">
               <span className="task-attachment-preview-spinner" aria-hidden="true" />

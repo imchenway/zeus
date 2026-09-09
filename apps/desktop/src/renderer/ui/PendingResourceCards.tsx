@@ -113,7 +113,8 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   return (
     <li className="pending-resource-card" data-resource-kind={props.resource.kind} title={props.resource.title ?? props.resource.name}>
       {props.onActivate ? (
-        <button type="button" className="pending-resource-activate" aria-label={`${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`} disabled={props.disabled} onClick={activate}>
+        /* 预览只读取附件；提交中和只读界面只禁用移除、恢复等修改操作。 */
+        <button type="button" className="pending-resource-activate" aria-label={`${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`} onClick={activate}>
           {visual}
         </button>
       ) : (

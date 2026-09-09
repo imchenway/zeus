@@ -297,7 +297,10 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
+/* 列表悬停底色内缩并圆角，避免贴边整块铺色和粗选中竖条。 */
 .menu-bar-usage-provider-list > button {
+  margin: 2px 4px;
+  border-radius: 6px;
   display: grid;
   grid-template-columns: 31px minmax(0, 1fr) auto 14px;
   align-items: center;
@@ -317,7 +320,7 @@ body:has(.menu-bar-usage-root),
 
 /* 独立用量窗口也使用强调色悬停，避免白块跳变。 */
 .menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--usage-accent) 8%, transparent);
+  background: var(--zeus-brand-hover);
 }
 
 .menu-bar-usage-provider-symbol {
@@ -856,7 +859,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-tabs button:hover:not(:disabled):not([aria-disabled='true']),
 .menu-bar-usage-tabs button:focus-visible {
   border-color: var(--usage-accent-border);
-  background: var(--usage-accent-soft);
+  background: var(--zeus-brand-hover);
   color: var(--usage-text);
 }
 
@@ -906,8 +909,8 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']),
 .menu-bar-usage-provider-list > button:focus-visible {
-  background: var(--usage-accent-soft);
-  box-shadow: inset 3px 0 0 var(--usage-accent);
+  background: var(--zeus-brand-hover);
+  box-shadow: none;
 }
 
 .menu-bar-usage-provider-symbol {
@@ -997,7 +1000,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--usage-accent-border);
-  background: var(--usage-accent-soft);
+  background: var(--zeus-brand-hover);
   color: var(--usage-text);
   filter: none;
 }
@@ -1071,7 +1074,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-actions button:not(.menu-bar-usage-primary-action):hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--usage-accent-soft);
+  background: var(--zeus-brand-hover);
   color: var(--usage-text);
 }
 

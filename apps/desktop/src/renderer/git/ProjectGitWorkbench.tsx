@@ -117,7 +117,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
   const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
-  const [selectedCommitHash, setSelectedCommitHash] = useState('');
+  /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
+  const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
   const [commitLoading, setCommitLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState('');
@@ -194,6 +195,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const historyRequest = useRef(0);
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
+  /** 其他仓库的选择不能借用当前仓库读取详情。 */
+  const selectedCommitHash = selectedCommit?.repositoryId === selectedRepository?.id ? (selectedCommit?.ref ?? '') : '';
   const changedCount = repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0);
   const conflictCount = repositories.reduce((total, repository) => total + repository.snapshot.conflictFiles.length, 0);
   const hasStagedChanges = repositories.some((repository) => repository.snapshot.fileStatuses.some((file) => file.indexStatus !== ' ' && file.indexStatus !== '?'));
@@ -282,18 +285,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [snapshot, tab, selectedRepositoryId, selectedFilePath, selectedFileStage]);
 
   useEffect(() => {
-    if (!selectedRepository) {
-      setSelectedCommitHash('');
-      setCommitDetail(null);
-      return;
-    }
-    const preferred = selectedCommitHash && selectedRepository.snapshot.recentCommits.some((commit) => commit.hash === selectedCommitHash) ? selectedCommitHash : (selectedRepository.snapshot.recentCommits[0]?.hash ?? '');
-    if (preferred !== selectedCommitHash) setSelectedCommitHash(preferred);
-  }, [selectedRepository?.id, selectedRepository?.snapshot.headSha]);
-
-  useEffect(() => {
+    // 新选择立即清除旧详情，避免旧行高亮在异步读取期间冒充当前选择。
+    setCommitDetail(null);
     if (!selectedRepository || !selectedCommitHash || tab !== 'log') {
-      setCommitDetail(null);
+      setCommitLoading(false);
       return;
     }
     let cancelled = false;
@@ -610,9 +605,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setContextMenu({ x: event.clientX, y: event.clientY, title: target.ref || repository.name, items });
   }
 
+  /** 提交、分支和标签入口共用显式选择，后台刷新不再自动选中首条提交。 */
   function selectCommit(repository: ProjectGitRepositoryWorkbenchItem, commitHash: string): void {
     setSelectedRepositoryId(repository.id);
-    setSelectedCommitHash(commitHash);
+    setSelectedCommit({ repositoryId: repository.id, ref: commitHash });
   }
 
   function openCommit(): void {
@@ -866,20 +862,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               ))}
             </details>
           ) : null}
-          <details className="project-git-workspace-links" open>
-            <summary>{zh ? '工作区' : 'Workspace'}</summary>
-            {(
-              [
-                ['changes', zh ? '文件状态' : 'File status'],
-                ['log', zh ? '历史' : 'History'],
-                ['stash', zh ? '贮藏区' : 'Stashes'],
-              ] as const
-            ).map(([id, label]) => (
-              <button key={id} type="button" aria-current={tab === id ? 'true' : undefined} onClick={() => setTab(id)}>
-                {label}
-              </button>
-            ))}
-          </details>
           {[
             { title: zh ? '仓库' : 'Repositories', items: repositories.filter((repository) => !repository.isSubmodule) },
             { title: zh ? '子模块' : 'Submodules', items: repositories.filter((repository) => repository.isSubmodule) },
@@ -897,7 +879,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   setSubtree(null);
                   setSelectedRepositoryId(id);
                   setSelectedFilePath('');
-                  setSelectedCommitHash('');
+                  setSelectedCommit(null);
                 }}
               />
             </details>
@@ -931,7 +913,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                           if (outcome !== 'completed') return;
                           setTab('log');
                           setHistoryRef('');
-                          setSelectedCommitHash('');
+                          setSelectedCommit(null);
                         });
                         return;
                       }
