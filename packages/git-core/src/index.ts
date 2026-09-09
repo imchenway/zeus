@@ -298,6 +298,7 @@ export type ProjectGitAction =
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
+  | { type: 'apply_patch'; patch: string; reverse?: boolean }
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
@@ -306,6 +307,8 @@ export type ProjectGitAction =
   | { type: 'checkout_revision'; revision: string; smart?: boolean }
   | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean }
   | { type: 'delete_branch'; branchName: string }
+  | { type: 'revert'; revision: string }
+  | { type: 'cherry_pick'; revision: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean }
@@ -1612,14 +1615,14 @@ function localBranchRef(branchName: string): string {
   return `refs/heads/${branchName}`;
 }
 
-async function defaultGitCommandRunner(cwd: string, args: string[]): Promise<GitRunnerResult> {
+async function defaultGitCommandRunner(cwd: string, args: string[], input?: string): Promise<GitRunnerResult> {
   const execution = projectGitExecution.getStore();
   execution?.signal?.throwIfAborted();
   return new Promise((resolveResult, reject) => {
     const child = spawn('git', args, {
       cwd,
       detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env },
     });
     let stdout = '';
@@ -1646,6 +1649,12 @@ async function defaultGitCommandRunner(cwd: string, args: string[]): Promise<Git
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
+    if (input !== undefined) {
+      child.stdin.setDefaultEncoding('utf8');
+      child.stdin.end(input);
+    } else {
+      child.stdin.end();
+    }
     const append = (text: string, error: boolean) => {
       bytes += Buffer.byteLength(text);
       if (bytes > 10 * 1024 * 1024) {
@@ -1670,9 +1679,9 @@ async function defaultGitCommandRunner(cwd: string, args: string[]): Promise<Git
   });
 }
 
-async function runGit(cwd: string, args: string[]): Promise<GitRunnerResult> {
+async function runGit(cwd: string, args: string[], input?: string): Promise<GitRunnerResult> {
   try {
-    return await defaultGitCommandRunner(cwd, args);
+    return await defaultGitCommandRunner(cwd, args, input);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Git command failed.';
     throw gitCoreError('ZEUS_GIT_COMMAND_FAILED', message);
@@ -2228,6 +2237,14 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
         ? ['--literal-pathspecs', 'restore', '--staged', '--', ...requireRepositoryPaths(repositoryPath, action.paths)]
         : ['--literal-pathspecs', 'rm', '--cached', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
       break;
+    case 'apply_patch': {
+      const patch = action.patch.trim();
+      if (!patch || patch.length > 2 * 1024 * 1024 || patch.includes('\0') || (!patch.includes('\ndiff --git ') && !patch.startsWith('diff --git '))) {
+        throw gitCoreError('ZEUS_GIT_PATCH_INVALID', 'Git hunk patch is invalid or exceeds the size limit.');
+      }
+      args = ['apply', '--cached', ...(action.reverse ? ['--reverse'] : []), '--whitespace=nowarn', '-'];
+      return finishProjectGitAction(repositoryPath, action.type, await runGit(repositoryPath, args, patch));
+    }
     case 'commit':
       args = ['commit', '-m', requireSafeGitText(action.message, 'commit message')];
       break;
@@ -2278,6 +2295,12 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
     case 'delete_branch':
       args = ['branch', '-d', await assertNamedBranchExists(repositoryPath, action.branchName)];
       break;
+    case 'revert':
+      args = ['revert', '--no-edit', await resolveCommit(repositoryPath, action.revision)];
+      break;
+    case 'cherry_pick':
+      args = ['cherry-pick', await resolveCommit(repositoryPath, action.revision)];
+      break;
     case 'merge':
       args = ['merge', '--no-edit', await assertGitBranchFormat(repositoryPath, action.branchName, 'merge branch')];
       break;
@@ -2295,7 +2318,14 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       break;
   }
   const conflictCapable =
-    (action.type === 'subtree' && action.operation === 'pull') || action.type === 'continue_integration' || action.type === 'pull' || action.type === 'merge' || action.type === 'rebase' || action.type === 'apply_stash';
+    (action.type === 'subtree' && action.operation === 'pull') ||
+    action.type === 'continue_integration' ||
+    action.type === 'pull' ||
+    action.type === 'merge' ||
+    action.type === 'rebase' ||
+    action.type === 'apply_stash' ||
+    action.type === 'revert' ||
+    action.type === 'cherry_pick';
   const operation = () => (conflictCapable ? runGitPreservingConflict(repositoryPath, args) : runGit(repositoryPath, args));
   const smart = (action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && action.smart === true;
   const output = smart ? await runWithSmartStash(repositoryPath, action.type === 'checkout_revision' ? 'Checkout Revision' : 'Checkout', operation) : await operation();
@@ -2444,8 +2474,9 @@ export async function getProjectGitCommitDetail(cwd: string, commitHash: string)
 export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree'): Promise<GitDiffSummary> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
-  const branch = await assertGitBranchFormat(context.topLevel, branchName, 'comparison branch');
-  const args = mode === 'working-tree' ? ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', branch, '--', '.'] : ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', `${branch}..HEAD`, '--', '.'];
+  const revision = await resolveCommit(context.topLevel, branchName);
+  const args =
+    mode === 'working-tree' ? ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', revision, '--', '.'] : ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', `${revision}..HEAD`, '--', '.'];
   return diffSummaryFromText(await readGitStdout(context.topLevel, args));
 }
 

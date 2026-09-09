@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
-import type { DashboardClient, GitDiffSummary } from '../apiClient.js';
+import type { DashboardClient, GitDiffHunk, GitDiffSummary, GitFileDiff } from '../apiClient.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 /** 与会话和交付共用按可视区域渲染的差异视图。 */
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
@@ -111,7 +111,7 @@ export function ProjectGitDiffWindow(props: {
   );
 }
 
-export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean }) {
+export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean; onHunkAction?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void; hunkActionLabel?: string }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
@@ -132,6 +132,15 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
           </button>
         </span>
       </header>
+      {props.onHunkAction && file.hunks.length > 0 ? (
+        <div className="project-git-diff-hunk-actions" aria-label={props.zh ? '代码块操作' : 'Hunk actions'}>
+          {file.hunks.map((hunk, index) => (
+            <button key={`${hunk.header}:${index}`} type="button" onClick={() => props.onHunkAction?.(file, hunk, index)} title={hunk.header}>
+              {props.hunkActionLabel ?? (props.zh ? '应用代码块' : 'Apply hunk')} {index + 1}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="project-git-diff-side-by-side">
         {mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">

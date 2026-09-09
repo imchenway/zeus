@@ -850,13 +850,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .project-section-menu .zeus-source-list-row-icon svg {
   block-size: 13px;
-  fill: none;
+  display: block;
+  flex: 0 0 auto;
   inline-size: 13px;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.35;
-  vector-effect: non-scaling-stroke;
+}
+
+/* 图标是 flex/grid 内容时取消 SVG 的文字基线与默认收缩，避免同一图标在按钮和摘要行中上下漂移。 */
+.macos-ai-app :where(button, summary, label, [role='button'], [role='menuitem']) > :where(svg, span > svg) {
+  display: block;
+  flex: 0 0 auto;
 }
 
 /* Select：尺寸是组件属性，不再由所在页面猜测。 */

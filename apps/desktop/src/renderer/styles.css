@@ -2774,8 +2774,10 @@ a {
   display: inline-flex;
 }
 .project-workspace-mode-toolbar button span svg {
-  height: 13px;
-  width: 13px;
+  block-size: 16px;
+  display: block;
+  flex: 0 0 auto;
+  inline-size: 16px;
 }
 
 .project-disclosure-button {
@@ -2791,11 +2793,18 @@ a {
   width: 18px;
 }
 .project-disclosure-button span {
-  display: block;
-  font-size: 17px;
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
   line-height: 1;
   transform: rotate(0);
   transition: transform 120ms ease;
+}
+.project-disclosure-button span > svg {
+  block-size: 14px;
+  display: block;
+  flex: 0 0 auto;
+  inline-size: 14px;
 }
 .project-disclosure-button[aria-expanded='true'] span {
   transform: rotate(90deg);
@@ -2990,6 +2999,26 @@ a {
 .project-git-branch-trigger > svg:last-child {
   color: var(--zeus-product-muted);
   margin-left: auto;
+}
+.project-git-toolbar > .zeus-select {
+  flex: 0 1 280px;
+  margin-left: 24px;
+  min-width: 126px;
+}
+.project-git-toolbar > .zeus-select > .project-git-project-trigger {
+  width: 100%;
+}
+.project-git-project-trigger .zeus-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-navigator-branch-actions {
+  padding: 4px 0 10px;
+}
+.project-git-navigator-branch-actions .project-git-branch-trigger {
+  margin-left: 0;
+  width: 100%;
 }
 .project-git-branch-popover {
   background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
@@ -9562,6 +9591,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0;
 }
 
+.macos-ai-app .project-settings-button > svg,
+.macos-ai-app .project-more-button > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
 .macos-ai-app .native-folder-icon {
   border: 1.4px solid var(--zeus-project-row-muted);
   border-radius: 4px;
@@ -9808,6 +9843,11 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   display: inline-flex;
   inline-size: 22px;
   justify-content: center;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button > span > svg {
+  block-size: 16px;
+  inline-size: 16px;
 }
 
 /* 2026-06-18 项目二级菜单最终覆盖：展开后的任务、代码、会话使用缩进 source-list 子行，不再出现三个松散大按钮。 */

@@ -190,6 +190,8 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       return { type: 'stage', paths: paths() };
     case 'unstage':
       return { type: 'unstage', paths: paths() };
+    case 'apply_patch':
+      return { type: 'apply_patch', patch: typeof value.patch === 'string' ? value.patch : '', reverse: value.reverse === true };
     case 'commit':
       return { type: 'commit', message: stringValue('message') ?? '' };
     case 'push':
@@ -210,6 +212,10 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true, smart: value.smart === true };
     case 'delete_branch':
       return { type: 'delete_branch', branchName: stringValue('branchName') ?? '' };
+    case 'revert':
+      return { type: 'revert', revision: stringValue('revision') ?? '' };
+    case 'cherry_pick':
+      return { type: 'cherry_pick', revision: stringValue('revision') ?? '' };
     case 'merge':
       return { type: 'merge', branchName: stringValue('branchName') ?? '' };
     case 'rebase':
