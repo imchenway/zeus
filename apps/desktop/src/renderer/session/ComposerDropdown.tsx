@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from 'react';
-import { ZeusSelect } from '../ZeusSelect.js';
+import { ZeusSelect, type ZeusSelectProps } from '../ZeusSelect.js';
 
 export interface ComposerDropdownOption<Value extends string = string> {
   value: Value;
@@ -23,6 +23,8 @@ export interface ComposerDropdownProps<Value extends string = string> {
   searchable?: boolean;
   searchPlaceholder?: string;
   emptyLabel?: string;
+  /** 模型入口透传共享置顶配置，其他会话下拉保持原有行为。 */
+  pinning?: ZeusSelectProps<Value>['pinning'];
   onChange: (value: Value) => void | Promise<void>;
 }
 
@@ -39,6 +41,7 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
         if (value !== props.value) void props.onChange(value);
       }}
       options={props.options}
+      pinning={props.pinning}
       popoverMinWidth={112}
       searchable={props.searchable}
       searchPlaceholder={props.searchPlaceholder}

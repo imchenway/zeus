@@ -886,6 +886,7 @@ export function TaskModelPushModal(props: {
                   ariaLabel={zh ? '模型' : 'Model'}
                   value={props.form.model}
                   options={modelPresentation.options}
+                  pinning={modelPresentation.pinning}
                   triggerLabel={selectedModel ? modelPresentation.triggerLabel : props.form.model || (zh ? '选择或接入模型' : 'Choose or connect a model')}
                   onChange={onModelChange}
                   disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}

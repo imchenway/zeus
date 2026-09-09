@@ -564,6 +564,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 className="session-composer-model-dropdown"
                 value={effectiveModel}
                 options={modelOptions}
+                pinning={modelPresentation.pinning}
                 disabled={!modelSelectionWritable}
                 searchable
                 searchPlaceholder={copy.searchModel}

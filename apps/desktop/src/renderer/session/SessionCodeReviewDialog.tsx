@@ -237,6 +237,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
                 ariaLabel={zh ? '代码审查模型' : 'Code review model'}
                 value={modelPresentation.selectedId || form?.model || ''}
                 options={modelPresentation.options}
+                pinning={modelPresentation.pinning}
                 triggerLabel={modelPresentation.triggerLabel}
                 onChange={changeModel}
                 disabled={!form || modelPresentation.options.length === 0 || busy}

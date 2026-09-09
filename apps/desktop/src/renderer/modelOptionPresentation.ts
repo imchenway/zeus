@@ -1,3 +1,5 @@
+import type { ZeusSelectPinning } from './ZeusSelect.js';
+
 export interface ModelOptionSource {
   id: string;
   model: string;
@@ -18,6 +20,8 @@ export interface PresentedModelOption {
   label: string;
   group?: string;
   searchText: string;
+  /** 置顶区仍需标明供应商，单供应商目录也保留来源。 */
+  description: string;
 }
 
 export interface ModelOptionPresentation<Model extends ModelOptionSource> {
@@ -27,6 +31,8 @@ export interface ModelOptionPresentation<Model extends ModelOptionSource> {
   selectedId: string;
   triggerLabel: string;
   showProviderGroups: boolean;
+  /** 所有运行模型入口共享本机置顶身份。 */
+  pinning: ZeusSelectPinning;
 }
 
 function providerName(model: ModelOptionSource, zh: boolean): string {
@@ -105,6 +111,7 @@ export function presentModelOptions<Model extends ModelOptionSource>(
         label: badges.length > 0 ? `${displayName} · ${badges.join(' · ')}` : displayName,
         ...(showProviderGroups ? { group: group.providerName } : {}),
         searchText: `${group.providerName} ${displayName} ${model.model}${contextBadge ? ' 1M' : ''}`,
+        description: group.providerName,
       } satisfies PresentedModelOption;
     }),
   );
@@ -125,5 +132,12 @@ export function presentModelOptions<Model extends ModelOptionSource>(
           ? '没有可运行模型'
           : 'No runnable models',
     showProviderGroups,
+    pinning: {
+      storageKey: 'zeus.model-pins',
+      groupLabel: zh ? '已置顶' : 'Pinned',
+      pinLabel: zh ? '置顶' : 'Pin',
+      unpinLabel: zh ? '取消置顶' : 'Unpin',
+      saveErrorLabel: zh ? '无法保存置顶设置，请重试。' : 'Could not save pins. Please try again.',
+    },
   };
 }
