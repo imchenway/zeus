@@ -28,7 +28,7 @@ interface ConversationChoiceQueryPorts {
   tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
   conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
-  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation'>;
+  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation' | 'getFirstOperationIdentityByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
   workspaces: Pick<TaskWorkspaceRepository, 'listByProject' | 'getById'>;
   codexNativeEnabled: boolean;
@@ -223,6 +223,8 @@ export class ConversationChoiceQueryApplication {
     const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id) ?? null;
     return {
       id: conversation.id,
+      /** 列表与创建回执共用持久创建身份，使提前到达的真实会话归入同一次推送。 */
+      creationOperationIdentity: this.ports.submissions.getFirstOperationIdentityByConversation(conversation.id),
       projectId: conversation.projectId,
       taskId: conversation.taskId,
       workspaceId: conversation.workspaceId,

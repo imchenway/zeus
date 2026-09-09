@@ -2163,6 +2163,11 @@ export class ConversationSubmissionRepository {
     return row ? mapConversationSubmissionRow(row) : undefined;
   }
 
+  /** 只读取首条提交的创建操作身份，避免会话列表加载提示词和附件正文。 */
+  getFirstOperationIdentityByConversation(conversationId: string): string | null {
+    return this.db.get<{ idempotency_key: string }>(`SELECT idempotency_key FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId])?.idempotency_key ?? null;
+  }
+
   listQueueByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
     return this.db
       .select<DbConversationSubmissionRow>(
