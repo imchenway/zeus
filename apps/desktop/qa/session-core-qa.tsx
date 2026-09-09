@@ -28,6 +28,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的执行状态和答复页脚。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
   { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
@@ -90,6 +91,7 @@ export function sceneFromSearch(search: string): QaScene {
 }
 
 export function SessionQaApp(props: { scene: QaScene }) {
+  if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
   if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
@@ -123,6 +125,71 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 用生产时间线复现消息间距与耗时布局，状态切换仅影响预览数据。 */
+function MessageLayoutQa() {
+  /** 地址参数支持直接打开英文、窄分栏、深色和无最终答复场景。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
+  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>('running');
+  /** 预览主题不修改应用设置。 */
+  const [dark, setDark] = useState(parameters.has('dark'));
+  /** 通过内容列宽复现任务侧栏空间，不依赖浏览器窗口尺寸。 */
+  const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 运行态只显示过程，结束后才加入最终答复。 */
+  const active = status === 'running';
+  /** 固定起止时间用于确认耗时始终为三分一秒。 */
+  const startedAt = '2026-09-09T05:48:00Z';
+  /** 固定完成时间同时作为答复时间戳。 */
+  const completedAt = '2026-09-09T05:51:01Z';
+  /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
+  const items: NativeSessionItemBuffer[] = [
+    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。', payload: {}, status: 'completed' },
+    { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
+    { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+    ...(!active && !parameters.has('no-answer') ? [{ type: 'agentMessage', phase: 'final_answer', text: '已检查会话布局，执行状态紧跟处理摘要，消息操作与处理耗时显示在同一行。', payload: {}, status: 'completed' }] : []),
+  ].map((item, index) => ({ ...item, key: `layout-${index}`, itemId: `layout-${index}`, conversationId: 'qa-layout', threadId: 'qa-layout', turnId: 'qa-layout-turn', resources: [], updatedAt: completedAt }));
+  /** 计时与终态均使用生产会话结构，覆盖无答复时的独立收尾。 */
+  const state: NativeSessionState = {
+    ...createInitialSessionState(),
+    conversationId: 'qa-layout',
+    activeTurnId: active ? 'qa-layout-turn' : null,
+    transportState: 'ready',
+    conversationState: active ? 'active_prework' : 'idle',
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    turnsByProviderId: {
+      'qa-layout-turn': { id: 'qa-layout-turn', providerTurnId: 'qa-layout-turn', submissionId: null, status, startedAt, completedAt: active ? null : completedAt, createdAt: startedAt, updatedAt: completedAt },
+    },
+    terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
+  };
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <div>
+          <h1>会话消息布局</h1>
+          <p>生产时间线组件 · 预览数据</p>
+        </div>
+        <nav aria-label="消息布局场景">
+          {(['running', 'completed', 'failed', 'interrupted'] as const).map((value, index) => (
+            <Button key={value} aria-pressed={status === value} onClick={() => setStatus(value)}>
+              {['进行中', '已完成', '失败', '中断'][index]}
+            </Button>
+          ))}
+          <Button aria-pressed={dark} onClick={() => setDark(!dark)}>
+            深色
+          </Button>
+          <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
+            窄分栏
+          </Button>
+        </nav>
+      </header>
+      <div style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
+        <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated />
+      </div>
     </main>
   );
 }

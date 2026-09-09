@@ -143,6 +143,8 @@ export interface ThreadItemViewProps {
   animateEntrance?: boolean;
   motionActive?: boolean;
   showAssistantActions?: boolean;
+  /** 由会话传入所属轮次的收尾信息，与消息操作共用一行。 */
+  footerContent?: ReactNode;
   isLatestUser?: boolean;
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -772,38 +774,41 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         onUpdateAnnotation={props.onUpdateResponseAnnotation}
         onRemoveAnnotation={props.onRemoveResponseAnnotation}
       />
-      {hasActions ? (
-        <footer className="session-thread-item-actions" data-message-actions={role}>
-          {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
-          {visibleText ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
-          {role === 'assistant' ? (
-            <>
-              <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
-                <MessageThumbIcon direction="up" selected={feedback === 'good'} />
+      <div className={props.footerContent ? 'session-thread-item-footer' : undefined}>
+        {hasActions ? (
+          <footer className="session-thread-item-actions" data-message-actions={role}>
+            {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
+            {visibleText ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
+            {role === 'assistant' ? (
+              <>
+                <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
+                  <MessageThumbIcon direction="up" selected={feedback === 'good'} />
+                </MessageIconButton>
+                <MessageIconButton label={labels.bad} pressed={feedback === 'bad'} onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
+                  <MessageThumbIcon direction="down" selected={feedback === 'bad'} />
+                </MessageIconButton>
+                <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage} expanded={messageExpanded} onClick={() => setMessageExpanded((current) => !current)}>
+                  <MessageExpandIcon collapsed={messageExpanded} />
+                </MessageIconButton>
+                {messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
+              </>
+            ) : null}
+            {canEdit ? (
+              <MessageIconButton
+                label={labels.edit}
+                onClick={() => {
+                  setEditDraft(itemText);
+                  setEditError(null);
+                  setEditing(true);
+                }}
+              >
+                <MessageEditIcon />
               </MessageIconButton>
-              <MessageIconButton label={labels.bad} pressed={feedback === 'bad'} onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
-                <MessageThumbIcon direction="down" selected={feedback === 'bad'} />
-              </MessageIconButton>
-              <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage} expanded={messageExpanded} onClick={() => setMessageExpanded((current) => !current)}>
-                <MessageExpandIcon collapsed={messageExpanded} />
-              </MessageIconButton>
-              {messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
-            </>
-          ) : null}
-          {canEdit ? (
-            <MessageIconButton
-              label={labels.edit}
-              onClick={() => {
-                setEditDraft(itemText);
-                setEditError(null);
-                setEditing(true);
-              }}
-            >
-              <MessageEditIcon />
-            </MessageIconButton>
-          ) : null}
-        </footer>
-      ) : null}
+            ) : null}
+          </footer>
+        ) : null}
+        {props.footerContent}
+      </div>
     </article>
   );
 });
