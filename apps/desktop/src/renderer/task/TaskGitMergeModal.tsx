@@ -1,3 +1,4 @@
+import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
@@ -153,12 +154,14 @@ type TaskGitMergeModalContentProps = Omit<TaskGitMergeModalProps, 'task'> & { ta
 /** 代码交付统一入口；关闭或切换任务时重建本次交付选择。 */
 export function TaskGitMergeModal(props: TaskGitMergeModalProps) {
   if (!props.open || !props.task) return null;
-  // 任务身份同时决定弹窗内全部瞬态状态；关闭或切换任务时必须卸载旧实例，禁止把旧工作区带入新任务请求。
+  // 任务身份隔离弹窗状态；关闭时立即取消旧读取，退出结束后卸载，切换任务不复用旧工作区。
   return <TaskGitMergeModalContent key={props.task.id} {...props} task={props.task} />;
 }
 
 /** 组织多仓库审查、目标分支选择及逐仓交付结果。 */
 function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
+  /** 退出立即取消旧读取，快速重开时重新加载当前任务。 */
+  const interactionOpen = usePresenceOpen() && props.open;
   const zh = props.language === 'zh-CN';
   const standaloneWindow = typeof document !== 'undefined' && document.body.dataset.surface === 'task-git-delivery';
   const initialConversationWorkspaceIdRef = useRef(props.currentConversationWorkspaceId);
@@ -273,8 +276,23 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const dismissDisabled = busyAction !== null && busyAction !== 'loading';
   const unresolvedConflictBlocks = useMemo(() => countUnresolvedConflictBlocks(conflictDocument), [conflictDocument]);
 
+  /** 关闭后快速重开也从当前任务重新读取，刷新过程仍保留已选目标。 */
   useEffect(() => {
-    if (!props.open || !props.task || !props.client) return;
+    if (!interactionOpen) return;
+    initialConversationWorkspaceIdRef.current = props.currentConversationWorkspaceId;
+    setWorkspaceIndex(null);
+    setWorkspaceDetails({});
+    setDetailStates({});
+    setSelectedWorkspaceIds([]);
+    setSelectedPathsByWorkspace({});
+    setSelectedTargetBranch('');
+    setDiffScope('working');
+    setSelectedFile('');
+    setFileDiff(null);
+  }, [interactionOpen]);
+
+  useEffect(() => {
+    if (!interactionOpen || !props.task || !props.client) return;
     const client = props.client;
     const taskId = props.task.id;
     let cancelled = false;
@@ -324,7 +342,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.task?.id, props.client, zh, loadRevision]);
+  }, [interactionOpen, props.task?.id, props.client, zh, loadRevision]);
 
   useEffect(() => {
     const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
@@ -333,7 +351,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }, [workspaceId, diffScope, committedFiles, workingFiles, zh]);
 
   useEffect(() => {
-    if (!props.open || !props.task || !props.client || !selectedWorkspace || !selectedFile) {
+    if (!interactionOpen || !props.task || !props.client || !selectedWorkspace || !selectedFile) {
       setFileDiff(null);
       // 文件在提交后消失时，取消中的旧请求不能让空白审查区永远显示加载。
       setDiffLoading(false);
@@ -356,10 +374,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.task?.id, props.client, selectedWorkspace?.id, selectedFile, diffScope, snapshotRevision, zh]);
+  }, [interactionOpen, props.task?.id, props.client, selectedWorkspace?.id, selectedFile, diffScope, snapshotRevision, zh]);
 
   useEffect(() => {
-    if (!props.task || !props.client || !activeConflict || !conflictPath) {
+    if (!interactionOpen || !props.task || !props.client || !activeConflict || !conflictPath) {
       setConflict(null);
       setConflictDocument(null);
       return;
@@ -397,7 +415,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.task?.id, props.client, activeConflict?.id, conflictPath, zh]);
+  }, [interactionOpen, props.task?.id, props.client, activeConflict?.id, conflictPath, zh]);
 
   async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
     if (!props.task || !props.client) return;
@@ -427,7 +445,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
   /** 仅提交各仓库勾选文件，先呈现结果再刷新审查数据。 */
   async function commitSelected(): Promise<void> {
-    if (!props.task || !props.client || selectedCommitFileCount === 0) return;
+    if (!interactionOpen || !props.task || !props.client || selectedCommitFileCount === 0) return;
     const client = props.client;
     const taskId = props.task.id;
     setBusyAction('commit');
@@ -467,7 +485,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
   /** 逐仓推送与当前目标和任务提交匹配的已合入记录。 */
   async function pushSelected(): Promise<void> {
-    if (!props.task || !props.client || selectedWorkspaceIds.length === 0) return;
+    if (!interactionOpen || !props.task || !props.client || selectedWorkspaceIds.length === 0) return;
     const client = props.client;
     const taskId = props.task.id;
     setBusyAction('push');
@@ -508,7 +526,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
   /** 统一选择一次目标后批量合入；缺少目标的仓库明确跳过，成功结果独立保留。 */
   async function mergeSelected(): Promise<void> {
-    if (!props.task || !props.client || selectedWorkspaceIds.length === 0) return;
+    if (!interactionOpen || !props.task || !props.client || selectedWorkspaceIds.length === 0) return;
     const client = props.client;
     const taskId = props.task.id;
     const activeConversationCount = selectedWorkspaceIds.reduce(
@@ -617,7 +635,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   async function saveResolution(): Promise<void> {
-    if (!props.task || !props.client || !activeConflict || !conflictPath) return;
+    if (!interactionOpen || !props.task || !props.client || !activeConflict || !conflictPath) return;
     setBusyAction('conflict');
     setError(null);
     const nextDrafts =
@@ -653,7 +671,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode, skillId?: string): Promise<void> {
-    if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
+    if (!interactionOpen || !props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
     try {
@@ -694,7 +712,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   async function finalize(): Promise<void> {
-    if (!props.task || !props.client || !integration) return;
+    if (!interactionOpen || !props.task || !props.client || !integration) return;
     if (selectedWorkspace && integration.targetBranch === selectedWorkspace.sourceBranch && selectedWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk(selectedWorkspace.activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);

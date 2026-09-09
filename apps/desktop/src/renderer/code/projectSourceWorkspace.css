@@ -1,8 +1,8 @@
 .project-source-workspace {
   --zeus-code-editor-bg: var(--zeus-product-panel, #fff);
   --zeus-code-editor-gutter: var(--zeus-product-panel-muted, #f5f7fa);
-  --zeus-code-editor-active-line: color-mix(in srgb, var(--zeus-control-accent, #1769d2) 7%, transparent);
-  --zeus-code-editor-selection: color-mix(in srgb, var(--zeus-control-accent, #1769d2) 22%, transparent);
+  --zeus-code-editor-active-line: color-mix(in srgb, var(--zeus-control-accent, var(--zeus-brand-primary)) 7%, transparent);
+  --zeus-code-editor-selection: color-mix(in srgb, var(--zeus-control-accent, var(--zeus-brand-primary)) 22%, transparent);
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -69,12 +69,12 @@
   background: transparent;
 }
 
-.project-source-toolbar-actions > button:hover:not(:disabled),
-.project-source-tree-toggle:hover,
-.project-source-operation-modal header button:hover,
-.project-source-message button:hover {
+.project-source-toolbar-actions > button:hover:not(:disabled):not([aria-disabled='true']),
+.project-source-tree-toggle:hover:not(:disabled):not([aria-disabled='true']),
+.project-source-operation-modal header button:hover:not(:disabled):not([aria-disabled='true']),
+.project-source-message button:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-control-text);
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .project-source-toolbar-actions svg,
@@ -189,7 +189,7 @@
   font-size: 12px;
 }
 
-.project-source-tree-scroll button:hover:not(:disabled) {
+.project-source-tree-scroll button:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent);
 }
 .project-source-tree-scroll button.selected {
@@ -244,11 +244,14 @@
 
 .project-source-tree-resizer {
   cursor: col-resize;
+  touch-action: none;
   background: transparent;
+  transition: background-color var(--zeus-button-motion);
 }
-.project-source-tree-resizer:hover,
-.project-source-tree-resizer:focus-visible {
-  background: var(--zeus-control-accent);
+.project-source-tree-resizer:hover:not(:disabled):not([aria-disabled='true']),
+.project-source-tree-resizer:focus-visible,
+.project-source-tree-resizer[data-dragging='true'] {
+  background: var(--zeus-product-accent);
   outline: none;
 }
 
@@ -309,7 +312,7 @@
   background: var(--zeus-code-editor-bg);
 }
 .project-source-tabs i {
-  color: var(--zeus-control-accent);
+  color: var(--zeus-brand-text);
   font-style: normal;
   font-size: 9px;
 }
@@ -331,8 +334,8 @@
   background: transparent;
   font: inherit;
 }
-.project-source-tab-close:hover {
-  background: var(--zeus-product-panel-muted);
+.project-source-tab-close:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-control-text);
 }
 
@@ -442,8 +445,8 @@
   font: inherit;
   font-size: 12px;
 }
-.project-source-context-menu button:hover {
-  background: var(--zeus-product-panel-muted);
+.project-source-context-menu button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 .project-source-context-menu button.danger {
   color: var(--zeus-control-danger-text);
@@ -514,6 +517,8 @@
 }
 .project-source-tree-backdrop {
   display: none;
+  opacity: 1;
+  transition: opacity var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
 }
 
 @media (max-width: 900px) {
@@ -537,7 +542,7 @@
     width: min(var(--zeus-source-tree-width), calc(100vw - 56px));
     box-shadow: 14px 0 38px rgb(0 0 0 / 22%);
     transform: translateX(-105%);
-    transition: transform 160ms ease;
+    transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
   }
   .project-source-workspace[data-tree-open='true'] .project-source-tree {
     transform: translateX(0);
@@ -555,5 +560,17 @@
   }
   .project-source-toolbar-actions .zeus-button:first-of-type {
     display: none;
+  }
+}
+
+/* 目录遮罩与滑出的目录使用同一退出节奏。 */
+.project-source-tree-backdrop[data-motion-state='closing'] {
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: var(--zeus-motion-duration-layer-exit);
+}
+@starting-style {
+  .project-source-tree-backdrop {
+    opacity: 0;
   }
 }

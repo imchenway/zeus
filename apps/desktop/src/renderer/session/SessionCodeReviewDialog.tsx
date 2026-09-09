@@ -1,4 +1,5 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import { usePresenceOpen } from '../ui/MotionPresence.js';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { CodexConversationCapabilities, CodexTaskPushModelCapability, NativeConversationChoice, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, TaskWorkspaceSnapshot } from './sessionTypes.js';
 import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from './serviceTierSelection.js';
 import { resolveModelCapability } from './modelSelection.js';
@@ -52,6 +53,10 @@ interface SessionCodeReviewDialogProps {
 export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const zh = props.language === 'zh-CN';
   const permissionMode: NativePermissionMode = 'read-only';
+  /** 关闭即停止读取和偏好写入，退出画面保留现有表单。 */
+  const interactionOpen = usePresenceOpen() && props.open;
+  /** 区分正常能力刷新与退出中重新打开，后者重新初始化表单。 */
+  const wasOpen = useRef(false);
   const inheritedModel = props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model ?? props.conversation.providerModel ?? '';
   const inheritedEffort = props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort ?? '';
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
@@ -64,14 +69,13 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const [cancelPreparation, setCancelPreparation] = useState<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!props.open) {
-      setCapabilities(null);
-      setForm(null);
-      setStatus('loading');
-      setError(null);
-      setCancelPreparation(null);
+    if (!interactionOpen) {
+      wasOpen.current = false;
       return;
     }
+    const reopening = !wasOpen.current;
+    wasOpen.current = true;
+    if (reopening) setCancelPreparation(null);
 
     let active = true;
     const acceptCapabilities = (nextCapabilities: CodexConversationCapabilities): void => {
@@ -79,7 +83,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       const remembered = readConversationRuntimePreferences(browserStorage(), props.conversation.projectId, 'code_review');
       setCapabilities(nextCapabilities);
       setForm((current) => {
-        if (!current) {
+        if (!current || reopening) {
           return resolveInitialForm(nextCapabilities, remembered?.model ?? inheritedModel, remembered?.effort ?? inheritedEffort, props.serviceTierPreferences, readSkillWorkflowDefault('code_review'));
         }
         const capability = findModel(nextCapabilities, current.model);
@@ -118,14 +122,14 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     return () => {
       active = false;
     };
-  }, [inheritedEffort, inheritedModel, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, props.open, props.serviceTierPreferences, zh]);
+  }, [inheritedEffort, inheritedModel, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, interactionOpen, props.serviceTierPreferences, zh]);
 
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language), [capabilities?.models, form?.model, props.language]);
   const selectedModel = useMemo(() => resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? undefined, [modelPresentation.models, modelPresentation.selectedId]);
   const skillClient = useMemo(() => (props.onLoadSkills ? { loadSkills: props.onLoadSkills } : null), [props.onLoadSkills]);
 
   useEffect(() => {
-    if (!props.open || !form) return;
+    if (!interactionOpen || !form) return;
     writeConversationRuntimePreferences(browserStorage(), props.conversation.projectId, 'code_review', {
       model: form.model,
       ...(form.effort ? { effort: form.effort } : {}),
@@ -133,7 +137,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       permissionMode,
       collaborationMode: 'default',
     });
-  }, [form, permissionMode, props.conversation.projectId, props.open]);
+  }, [form, permissionMode, props.conversation.projectId, interactionOpen]);
   if (!props.open) return null;
   const busy = status === 'submitting';
 
@@ -187,15 +191,9 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLFormElement>): void {
-    if (event.key !== 'Escape' || busy) return;
-    event.preventDefault();
-    close();
-  }
-
   return (
     <ModalPortal rootClassName="session-code-review-portal-root" dismissDisabled={busy} onDismiss={close}>
-      <form className="session-code-review-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="session-code-review-title" onSubmit={(event) => void submit(event)} onKeyDown={handleKeyDown}>
+      <form className="session-code-review-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="session-code-review-title" onSubmit={(event) => void submit(event)}>
         <header>
           <span>
             <strong id="session-code-review-title">{zh ? '开始代码审查' : 'Start code review'}</strong>

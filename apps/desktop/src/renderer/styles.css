@@ -1,3 +1,5 @@
+@import './ui/brand.css';
+
 :root {
   color: oklch(22% 0.003 255);
   background: oklch(99.7% 0.001 255);
@@ -97,7 +99,7 @@
 }
 
 .macos-ai-app .automations-tabs button[aria-current='page'] {
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   font-weight: 600;
 }
 
@@ -149,7 +151,7 @@
   text-align: start;
 }
 
-.macos-ai-app .automation-row-main:hover:not(:disabled) {
+.macos-ai-app .automation-row-main:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
 }
 
@@ -592,9 +594,9 @@
   cursor: pointer;
 }
 
-.task-workflow-deliverable-list button:hover {
+.task-workflow-deliverable-list button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-product-line);
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .task-workflow-deliverable-list button > span {
@@ -737,8 +739,9 @@ a {
 
 .macos-ai-app .runtime-session-filter-grid input:focus-visible,
 .macos-ai-app .runtime-session-filter-grid select:focus-visible {
-  border-color: oklch(58% 0.14 274);
-  outline: 2px solid oklch(86% 0.05 274);
+  border-color: var(--zeus-interaction-line);
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
 }
 
 .macos-ai-app .runtime-session-filter-grid > span {
@@ -1165,7 +1168,7 @@ a {
 .macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-quick-action.is-active {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
 .macos-ai-app .codex-skill-selector {
@@ -1457,7 +1460,7 @@ a {
   background: color-mix(in oklab, var(--zeus-product-accent) 10%, var(--zeus-product-panel-muted));
   border: 1px solid color-mix(in oklab, var(--zeus-product-accent) 16%, var(--zeus-product-line-soft));
   border-radius: 10px;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   display: inline-flex;
   font-size: 13px;
   font-weight: 760;
@@ -1486,7 +1489,7 @@ a {
 }
 
 .macos-ai-app .skill-list-title code {
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   font-size: 11px;
 }
 
@@ -2197,9 +2200,9 @@ a {
   touch-action: none;
 }
 
-.macos-ai-app :where(.task-board-column-drag-handle, .task-board-column-hide, .task-board-drag-handle):not(:disabled):hover {
+.macos-ai-app :where(.task-board-column-drag-handle, .task-board-column-hide, .task-board-drag-handle):not(:disabled):hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-control-text);
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-board-subgroups,
@@ -2296,7 +2299,7 @@ a {
     transform 140ms ease;
 }
 
-.macos-ai-app .task-board-card:hover {
+.macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: color-mix(in oklab, var(--task-board-card-tone) 42%, var(--zeus-control-border-hover));
   box-shadow: 0 4px 12px rgb(0 0 0 / 8%);
 }
@@ -2752,12 +2755,12 @@ a {
   gap: 6px;
   padding: 0 10px;
 }
-.project-workspace-mode-toolbar button:hover {
+.project-workspace-mode-toolbar button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
 }
 .project-workspace-mode-toolbar button.is-active {
-  border-bottom-color: var(--zeus-control-accent, #1473e6);
+  border-bottom-color: var(--zeus-control-accent, var(--zeus-brand-primary));
   color: var(--zeus-product-text);
   font-weight: 650;
 }
@@ -2797,7 +2800,7 @@ a {
 .project-disclosure-button[aria-expanded='true'] span {
   transform: rotate(90deg);
 }
-.project-disclosure-button:hover {
+.project-disclosure-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
 }
@@ -2887,7 +2890,7 @@ a {
   text-align: start;
   width: 100%;
 }
-.project-sidebar-conversations .session-conversation-show-more:where(:hover, :focus-visible) {
+.project-sidebar-conversations .session-conversation-show-more:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
   outline: 0;
@@ -2916,7 +2919,7 @@ a {
   padding: 0 6px 0 3px;
   text-align: start;
 }
-.project-sidebar-conversations .session-conversation-status-group-toggle:hover,
+.project-sidebar-conversations .session-conversation-status-group-toggle:hover:not(:disabled):not([aria-disabled='true']),
 .project-sidebar-conversations .session-conversation-status-group-toggle:focus-visible {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-muted);
@@ -3026,7 +3029,7 @@ a {
   min-width: 126px;
   padding: 4px 9px;
 }
-.project-git-branch-trigger:hover,
+.project-git-branch-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-branch-trigger.is-open {
   background: var(--zeus-source-list-hover);
   border-color: color-mix(in srgb, var(--zeus-product-accent) 55%, var(--zeus-control-border));
@@ -3121,10 +3124,10 @@ a {
   text-align: left;
   width: 100%;
 }
-.project-git-branch-actions button:hover:not(:disabled),
-.project-git-branch-group > button:hover:not(:disabled),
-.project-git-common-branch > button:hover:not(:disabled),
-.project-git-common-branch-actions button:hover:not(:disabled) {
+.project-git-branch-actions button:hover:not(:disabled):not([aria-disabled='true']),
+.project-git-branch-group > button:hover:not(:disabled):not([aria-disabled='true']),
+.project-git-common-branch > button:hover:not(:disabled):not([aria-disabled='true']),
+.project-git-common-branch-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-branch-actions button:disabled,
@@ -3177,7 +3180,7 @@ a {
   white-space: nowrap;
 }
 .project-git-branch-group > button > small {
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   margin-left: auto;
 }
 .project-git-branch-group > button > svg:last-child,
@@ -3224,11 +3227,11 @@ a {
   font-size: 12px;
   padding: 0 10px;
 }
-.project-git-tabs > button:hover {
+.project-git-tabs > button:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-product-text);
 }
 .project-git-tabs > button.is-active {
-  border-bottom-color: var(--zeus-control-accent, #1473e6);
+  border-bottom-color: var(--zeus-control-accent, var(--zeus-brand-primary));
   color: var(--zeus-product-text);
   font-weight: 650;
 }
@@ -3378,8 +3381,8 @@ a {
   white-space: nowrap;
   width: 100%;
 }
-.project-git-repository-row:hover,
-.project-git-branch-tree > button:hover,
+.project-git-repository-row:hover:not(:disabled):not([aria-disabled='true']),
+.project-git-branch-tree > button:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-branch-tree > button.is-current,
 .project-git-repository-row.is-current {
   background: var(--zeus-source-list-hover);
@@ -3424,7 +3427,7 @@ a {
   text-align: left;
   width: 100%;
 }
-.project-git-commit-row:hover {
+.project-git-commit-row:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-commit-row.is-current {
@@ -3435,7 +3438,7 @@ a {
   position: relative;
 }
 .project-git-topology i {
-  background: var(--zeus-control-accent, #1473e6);
+  background: var(--zeus-control-accent, var(--zeus-brand-primary));
   border: 2px solid var(--zeus-product-panel);
   border-radius: 50%;
   height: 7px;
@@ -3509,7 +3512,7 @@ a {
   text-align: left;
   width: 100%;
 }
-.project-git-changed-files button:hover,
+.project-git-changed-files button:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-changed-files button.is-current {
   background: var(--zeus-source-list-hover);
 }
@@ -3546,7 +3549,7 @@ a {
 .project-git-commit-file-folder > summary::-webkit-details-marker {
   display: none;
 }
-.project-git-commit-file-folder > summary:hover {
+.project-git-commit-file-folder > summary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-commit-file-folder > summary svg {
@@ -3619,7 +3622,7 @@ a {
   background: color-mix(in oklch, var(--zeus-control-danger-text) 8%, transparent);
 }
 .project-git-diff-preview .is-metadata {
-  color: var(--zeus-control-accent, #1473e6);
+  color: var(--zeus-brand-text);
   padding: 3px 8px;
 }
 .project-git-empty-copy {
@@ -3692,7 +3695,7 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
 }
-.project-git-change-row:hover,
+.project-git-change-row:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-change-row.is-current {
   background: var(--zeus-source-list-hover);
 }
@@ -3717,7 +3720,7 @@ a {
   white-space: nowrap;
 }
 .project-git-change-row > button:last-child {
-  color: var(--zeus-control-accent, #1473e6);
+  color: var(--zeus-brand-text);
 }
 .project-git-commit-rail > span {
   display: flex;
@@ -3813,7 +3816,7 @@ a {
   padding: 4px 8px;
   text-align: left;
 }
-.project-git-operations-menu button:hover {
+.project-git-operations-menu button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-operations-menu hr {
@@ -4228,8 +4231,8 @@ a {
 .project-git-branch-folder > summary::-webkit-details-marker {
   display: none;
 }
-.project-git-branch-folder > summary:hover,
-.project-git-branch-directory-tree button:hover {
+.project-git-branch-folder > summary:hover:not(:disabled):not([aria-disabled='true']),
+.project-git-branch-directory-tree button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-branch-directory-tree button.is-current {
@@ -4291,7 +4294,7 @@ a {
   font-size: 10.5px;
 }
 .project-git-commit-row.is-current {
-  box-shadow: inset 2px 0 var(--zeus-control-accent, #1473e6);
+  box-shadow: inset 2px 0 var(--zeus-control-accent, var(--zeus-brand-primary));
 }
 .project-git-inspector {
   display: flex;
@@ -4362,8 +4365,8 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project-git-branch-context-menu button:hover:not(:disabled) {
-  background: var(--zeus-source-list-selected);
+.project-git-branch-context-menu button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 .project-git-branch-context-menu button:disabled {
   color: var(--zeus-product-muted);
@@ -4412,7 +4415,7 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project-git-change-repository:hover {
+.project-git-change-repository:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-change-group-title {
@@ -4437,7 +4440,7 @@ a {
   min-height: 25px;
   padding-right: 5px;
 }
-.project-git-change-folder > summary:hover {
+.project-git-change-folder > summary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-change-folder > summary::-webkit-details-marker {
@@ -4465,7 +4468,7 @@ a {
   min-height: 25px;
   padding-right: 5px;
 }
-.project-git-change-file-row:hover,
+.project-git-change-file-row:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-change-file-row.is-current {
   background: var(--zeus-source-list-hover);
 }
@@ -4629,10 +4632,10 @@ a {
 .git-pane-separator.is-y::after {
   inset: 2px 0;
 }
-.git-pane-separator:hover::after,
+.git-pane-separator:hover:not(:disabled):not([aria-disabled='true'])::after,
 .git-pane-separator:focus-visible::after,
 .git-pane-separator[data-dragging]::after {
-  background: var(--zeus-product-accent, #306cff);
+  background: var(--zeus-product-accent, var(--zeus-brand-primary));
 }
 .project-git-diff-side-head {
   background: var(--zeus-product-panel-muted);
@@ -4727,7 +4730,7 @@ body[data-surface='project-git-diff'] #root {
   text-align: left;
   width: 100%;
 }
-.project-git-diff-window-files button:hover {
+.project-git-diff-window-files button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 .project-git-diff-window-files button.is-current {
@@ -4843,12 +4846,12 @@ body[data-surface='project-git-diff'] #root {
   text-align: left;
 }
 
-.macos-ai-app .model-connection-list > button:hover {
+.macos-ai-app .model-connection-list > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
 }
 
 .macos-ai-app .model-connection-list > button.selected,
-.macos-ai-app .model-connection-list > button.selected:hover {
+.macos-ai-app .model-connection-list > button.selected:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-product-selected);
 }
 
@@ -4929,9 +4932,37 @@ body[data-surface='project-git-diff'] #root {
   gap: 8px;
 }
 
-.macos-ai-app .model-definition-section > header,
-.macos-ai-app .model-definition-header {
+.macos-ai-app .model-definition-section > header {
+  flex-wrap: wrap;
   justify-content: space-between;
+}
+
+/* 批量操作与标题同行，搜索和手工添加共享下一行，窄窗口按内容自然换行。 */
+.macos-ai-app .model-definition-section > header > span:first-child {
+  flex: 1 1 260px;
+}
+
+.macos-ai-app .model-definition-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.macos-ai-app .model-definition-toolbar > .settings-list-search {
+  flex: 1 1 220px;
+  inline-size: 0;
+  margin: 0;
+}
+
+.macos-ai-app .model-definition-toolbar > .model-add-row {
+  flex: 1 1 240px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-add-row > input {
+  flex: 1;
+  min-inline-size: 0;
+  inline-size: 0;
 }
 
 .macos-ai-app .model-definition-list {
@@ -4951,26 +4982,59 @@ body[data-surface='project-git-diff'] #root {
     background-color 120ms var(--zeus-motion-ease-out);
 }
 
-.macos-ai-app .model-definition-card:hover {
-  border-color: var(--zeus-control-border-hover);
-}
-
 .macos-ai-app .model-definition-card[data-enabled='false'] {
   border-color: var(--zeus-product-line-soft);
 }
 
 .macos-ai-app .model-definition-header {
   box-sizing: border-box;
-  min-block-size: 48px;
-  padding: 8px 10px 8px 12px;
+  min-block-size: 52px;
+  padding: 0 10px 0 12px;
+  transition: background-color var(--zeus-button-motion);
+}
+
+/* 高亮完整标题命中区；详细配置和删除按钮不会触发整卡铺色。 */
+.macos-ai-app .model-definition-header:has(.model-definition-identity:enabled:hover:not(:disabled):not([aria-disabled='true']), .model-definition-identity:focus-visible, > input:enabled:hover:not(:disabled):not([aria-disabled='true'])) {
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .model-definition-identity {
+  flex: 1;
+  justify-content: space-between;
   min-inline-size: 0;
+  min-block-size: 52px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--zeus-product-text);
+  text-align: start;
 }
 
-.macos-ai-app .model-definition-identity > input {
+.macos-ai-app .model-definition-identity:focus-visible {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: -2px;
+}
+
+/* 标题只由外层绘制一次反馈，避免按钮与整行叠成两块深浅不同的色块。 */
+.macos-ai-app .model-definition-identity:is(:hover, :active):not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
+}
+.macos-ai-app .model-definition-header:has(.model-definition-identity:active:not(:disabled)) {
+  background: var(--zeus-interaction-pressed);
+}
+
+/* 展开箭头保留同一元素，点击时连续转动。 */
+.macos-ai-app .model-definition-chevron {
   flex: 0 0 auto;
+  inline-size: 16px;
+  block-size: 16px;
+  color: var(--zeus-product-muted);
+  transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
+}
+
+.macos-ai-app .model-definition-identity[aria-expanded='true'] .model-definition-chevron {
+  transform: rotate(180deg);
 }
 
 .macos-ai-app .model-definition-identity > span {
@@ -5017,9 +5081,9 @@ body[data-surface='project-git-diff'] #root {
   color: var(--zeus-product-muted);
 }
 
-.macos-ai-app .model-definition-remove:hover {
-  background: var(--zeus-control-bg-hover);
-  color: var(--zeus-product-text);
+.macos-ai-app .model-definition-remove:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-control-danger-bg);
+  color: var(--zeus-control-danger-text);
 }
 
 .macos-ai-app .model-definition-remove:focus-visible {
@@ -5142,7 +5206,7 @@ body[data-surface='project-git-diff'] #root {
   cursor: pointer;
 }
 
-.macos-ai-app .model-capability-evidence > summary:hover {
+.macos-ai-app .model-capability-evidence > summary:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-product-text);
 }
 
@@ -5344,7 +5408,7 @@ body[data-surface='project-git-diff'] #root {
   border-block-end: 0;
 }
 
-.macos-ai-app .project-model-choice-row:hover,
+.macos-ai-app .project-model-choice-row:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .project-model-choice-row[data-selected='true'] {
   background: var(--zeus-control-bg-hover);
 }
@@ -5659,7 +5723,7 @@ body[data-surface='project-git-diff'] #root {
   padding-block-end: 10px;
 }
 
-.macos-ai-app .settings-section-button:hover:not(:disabled),
+.macos-ai-app .settings-section-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .settings-section-button:focus-visible {
   background: var(--zeus-settings-tab-hover-bg);
 }
@@ -5767,9 +5831,9 @@ body[data-surface='project-git-diff'] #root {
   --zeus-surface-workspace: oklch(98.4% 0.002 255);
   --zeus-line-subtle: oklch(88.5% 0.004 255);
   --zeus-source-list-bg: transparent;
-  --zeus-source-list-hover: oklch(94.8% 0.003 255);
+  --zeus-source-list-hover: var(--zeus-interaction-hover);
   --zeus-source-list-selected: oklch(91.8% 0.004 255);
-  --zeus-source-list-selected-strong: oklch(62% 0.15 252);
+  --zeus-source-list-selected-strong: var(--zeus-brand-primary);
   --zeus-sidebar-separator: oklch(87% 0.004 255);
   --zeus-avatar-green: oklch(72% 0.15 145);
   --zeus-avatar-blue: oklch(66% 0.14 252);
@@ -5784,11 +5848,11 @@ body[data-surface='project-git-diff'] #root {
   --zeus-message-source-bg: oklch(95.2% 0.003 255);
   --zeus-decision-rail-bg: oklch(91.5% 0.004 255);
   --zeus-decision-rail-separator: oklch(82% 0.005 255);
-  --zeus-decision-button-hover: oklch(94.5% 0.003 255);
+  --zeus-decision-button-hover: var(--zeus-interaction-hover);
   --zeus-decision-button-active: oklch(88.5% 0.005 255);
   --zeus-composer-bg: oklch(98.8% 0.002 255);
   --zeus-composer-input-bg: oklch(96% 0.003 255);
-  --zeus-composer-focus-ring: oklch(70% 0.11 252);
+  --zeus-composer-focus-ring: var(--zeus-brand-primary);
   --zeus-mode-rail-bg: oklch(92.5% 0.004 255);
   --zeus-mode-rail-active: oklch(88.8% 0.006 255);
   --zeus-popover-bg: oklch(98.6% 0.002 255);
@@ -5809,10 +5873,10 @@ body[data-surface='project-git-diff'] #root {
   --zeus-control-height: 28px;
   --zeus-control-radius: 7px;
   --zeus-control-bg: var(--zeus-product-panel);
-  --zeus-control-bg-hover: var(--zeus-native-row-hover);
+  --zeus-control-bg-hover: var(--zeus-interaction-hover);
   --zeus-control-bg-active: var(--zeus-product-selected);
   --zeus-control-border: var(--zeus-product-line);
-  --zeus-control-border-hover: oklch(82% 0.002 255);
+  --zeus-control-border-hover: var(--zeus-interaction-line);
   --zeus-control-text: var(--zeus-product-text);
   --zeus-control-muted: var(--zeus-product-muted);
   --zeus-control-disabled-bg: oklch(96% 0.001 255);
@@ -5829,9 +5893,9 @@ body[data-surface='project-git-diff'] #root {
   --zeus-popover-bg: oklch(98.6% 0.002 255);
   --zeus-popover-line: var(--zeus-product-line);
   --zeus-popover-radius: 10px;
-  --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+  --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
   --zeus-settings-rail-bg: var(--zeus-product-list);
-  --zeus-settings-tab-hover-bg: var(--zeus-native-row-hover);
+  --zeus-settings-tab-hover-bg: var(--zeus-interaction-hover);
   --zeus-settings-tab-selected-bg: var(--zeus-product-selected);
   --zeus-settings-tab-text: var(--zeus-product-text);
   --zeus-settings-tab-selected-text: oklch(27% 0.004 255);
@@ -5843,7 +5907,7 @@ body[data-surface='project-git-diff'] #root {
   --zeus-conversation-compose-bg: var(--zeus-product-panel);
   --zeus-conversation-compose-line: var(--zeus-product-line-soft);
   --zeus-conversation-action-bg: var(--zeus-toolbar-action-button-bg);
-  --zeus-conversation-send-bg: oklch(55% 0.155 252);
+  --zeus-conversation-send-bg: var(--zeus-brand-primary);
   --zeus-conversation-send-text: oklch(99% 0.004 252);
   --zeus-session-composer-bg: var(--zeus-conversation-compose-bg);
   --zeus-session-composer-line: var(--zeus-conversation-compose-line);
@@ -5856,13 +5920,13 @@ body[data-surface='project-git-diff'] #root {
   --zeus-task-context-bg: var(--zeus-product-panel);
   --zeus-select-bg: var(--zeus-product-panel);
   --zeus-select-line: oklch(82% 0.002 255);
-  --zeus-select-line-hover: oklch(76% 0.002 255);
+  --zeus-select-line-hover: var(--zeus-interaction-line);
   --zeus-select-surface-highlight: oklch(100% 0 0 / 0.5);
   --zeus-select-trigger-bg: oklch(98.6% 0.001 255);
-  --zeus-select-trigger-hover-bg: oklch(96.4% 0.001 255);
+  --zeus-select-trigger-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-popover-bg: oklch(99.6% 0.001 255);
   --zeus-select-search-placeholder: oklch(52% 0.002 255);
-  --zeus-select-option-hover-bg: oklch(95.4% 0.001 255);
+  --zeus-select-option-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-check: oklch(42% 0.005 255);
   --zeus-select-caret-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3.2 4.6 6 7.4l2.8-2.8' stroke='%236A7078' stroke-width='1.45' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   --zeus-checkbox-check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 6.1 5.1 8.2 9.2 3.8' stroke='white' stroke-width='1.65' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -5933,7 +5997,7 @@ body[data-surface='project-git-diff'] #root {
   transform: none;
 }
 
-.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button']):hover:not(:disabled) {
+.macos-ai-app :where(.workspace-detail-pane, .settings-detail-pane, .settings-section-nav, .workspace-drawer-content) :where(.zeus-button[data-zeus-primitive='button']):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
   border-color: var(--zeus-control-border-hover);
   box-shadow: none;
@@ -5968,7 +6032,7 @@ body[data-surface='project-git-diff'] #root {
   color: oklch(62% 0.012 255);
 }
 
-.macos-ai-app :where(input, select, textarea):hover:not(:disabled) {
+.macos-ai-app :where(input, select, textarea):hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
 }
 
@@ -6511,8 +6575,8 @@ body[data-surface='project-git-diff'] #root {
   border-block-end: 0;
 }
 
-.macos-ai-app .task-list-row:hover:not(:disabled) {
-  background: var(--zeus-product-panel);
+.macos-ai-app .task-list-row:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-list-row.selected {
@@ -6635,8 +6699,8 @@ body[data-surface='project-git-diff'] #root {
   border-block-end: 0;
 }
 
-.macos-ai-app .task-archive-row:hover:not(:disabled) {
-  background: var(--zeus-product-panel);
+.macos-ai-app .task-archive-row:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-archive-copy {
@@ -8451,7 +8515,7 @@ body[data-surface='project-git-diff'] #root {
   border-block-end: 0;
 }
 
-.macos-ai-app .project-archive-row:hover {
+.macos-ai-app .project-archive-row:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-native-row-hover);
 }
 
@@ -8615,10 +8679,10 @@ body[data-surface='project-git-diff'] #root {
   --zeus-crash-status-bg: oklch(96.4% 0.024 78);
   --zeus-crash-status-line: oklch(84% 0.035 78);
   --zeus-crash-status-text: oklch(44% 0.09 78);
-  --zeus-crash-action-bg: oklch(92.5% 0.035 252);
-  --zeus-crash-action-bg-hover: oklch(89.8% 0.046 252);
-  --zeus-crash-action-text: oklch(28% 0.055 252);
-  --zeus-crash-focus: 0 0 0 3px oklch(62% 0.16 252 / 0.18);
+  --zeus-crash-action-bg: color-mix(in srgb, var(--zeus-brand-primary) 10%, white);
+  --zeus-crash-action-bg-hover: var(--zeus-interaction-hover);
+  --zeus-crash-action-text: var(--zeus-brand-primary);
+  --zeus-crash-focus: 0 0 0 3px color-mix(in srgb, var(--zeus-brand-primary) 20%, transparent);
   background: var(--zeus-crash-canvas);
   color: var(--zeus-crash-text);
   display: grid;
@@ -8732,7 +8796,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   display: inline-block;
   inline-size: 5px;
   margin-inline-start: 6px;
-  color: light-dark(#776bc5, #b4a8f5);
+  color: var(--zeus-brand-text);
   transform: rotate(45deg);
   vertical-align: 3px;
 }
@@ -8741,7 +8805,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   transform: rotate(225deg);
 }
 
-.startup-failure-content summary:hover {
+.startup-failure-content summary:hover:not(:disabled):not([aria-disabled='true']) {
   color: light-dark(#25272d, #eceef2);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -8768,7 +8832,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   margin-block-start: 32px;
 }
 
-/* 次要操作用中性底色与细边框保持按钮感，紫色留给重新启动。 */
+/* 错误页沿用全应用品牌交互，重新启动保持主操作权重。 */
 .startup-failure-button {
   background: light-dark(#fff, #25262d);
   border: 1px solid light-dark(#d9dae2, #42444f);
@@ -8786,26 +8850,26 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .startup-failure-button.is-primary {
-  background: light-dark(#6155d8, #b9adff);
-  border-color: light-dark(#574bc8, #c5bbff);
+  background: var(--zeus-product-accent, var(--zeus-brand-primary));
+  border-color: var(--zeus-product-accent, var(--zeus-brand-primary));
   box-shadow: none;
-  color: light-dark(#fff, #29214d);
+  color: #fff;
 }
 
-.startup-failure-button:hover:not(:disabled) {
-  background: light-dark(#f1f0f6, #303138);
-  border-color: light-dark(#c5c5d2, #575966);
+.startup-failure-button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 8%, transparent);
+  border-color: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 38%, transparent);
 }
 
-.startup-failure-button.is-primary:hover:not(:disabled) {
-  background: light-dark(#5146bd, #c8beff);
-  border-color: light-dark(#4a3fae, #d4cbff);
+.startup-failure-button.is-primary:hover:not(:disabled):not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 90%, black);
+  border-color: color-mix(in srgb, var(--zeus-product-accent, var(--zeus-brand-primary)) 90%, black);
 }
 
 /* 按钮和详情入口共用清晰的键盘焦点，禁用态保留原有等待语义。 */
 .startup-failure-button:focus-visible,
 .startup-failure-content summary:focus-visible {
-  outline: 2px solid light-dark(#6155d8, #b9adff);
+  outline: 2px solid var(--zeus-product-accent, var(--zeus-brand-primary));
   outline-offset: 3px;
 }
 
@@ -8918,7 +8982,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0 10px;
 }
 
-.renderer-crash-command-rail button:hover,
+.renderer-crash-command-rail button:hover:not(:disabled):not([aria-disabled='true']),
 .renderer-crash-command-rail button:focus-visible {
   background: var(--zeus-crash-action-bg-hover);
   border-color: var(--zeus-crash-line);
@@ -9077,10 +9141,14 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-product-muted: oklch(48% 0.003 255);
   --zeus-product-subtle: oklch(60% 0.002 255);
   --zeus-product-text-subtle: oklch(43% 0.003 255);
-  --zeus-product-accent: oklch(55% 0.155 252);
-  --zeus-product-accent-soft: oklch(94.5% 0.008 252);
+  /* 主操作与旧控件别名共用图标品牌色，避免缺失变量退回浏览器蓝色。 */
+  --zeus-product-accent: var(--zeus-brand-primary);
+  --zeus-control-accent: var(--zeus-product-accent);
+  /* 按下前的悬停色由主色统一加深。 */
+  --zeus-control-accent-hover: color-mix(in srgb, var(--zeus-brand-primary) 90%, black);
+  --zeus-product-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 8%, var(--zeus-product-panel));
   --zeus-accent: var(--zeus-product-accent);
-  --zeus-accent-line: oklch(78% 0.055 252);
+  --zeus-accent-line: color-mix(in srgb, var(--zeus-brand-primary) 38%, var(--zeus-product-line));
   --zeus-accent-soft: var(--zeus-product-accent-soft);
   --zeus-product-workspace-bg: var(--zeus-product-canvas);
   --zeus-status-pill-bg: oklch(97.4% 0.001 255);
@@ -9097,10 +9165,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-popover-bg: var(--zeus-product-panel);
   --zeus-popover-line: var(--zeus-product-line);
   --zeus-popover-radius: 10px;
-  --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+  --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
   /* 2026-06-18 设置分类侧栏 token 最终覆盖：全局设置左侧分类必须像 macOS 设置侧栏，不再是一列普通按钮。 */
   --zeus-settings-rail-bg: var(--zeus-product-list);
-  --zeus-settings-tab-hover-bg: var(--zeus-native-row-hover);
+  --zeus-settings-tab-hover-bg: var(--zeus-interaction-hover);
   --zeus-settings-tab-selected-bg: var(--zeus-product-selected);
   --zeus-settings-tab-text: var(--zeus-product-text);
   --zeus-settings-tab-selected-text: oklch(27% 0.004 255);
@@ -9163,7 +9231,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-native-surface: oklch(99.7% 0.001 255);
   --zeus-source-sidebar: oklch(99.2% 0.0005 255);
   --zeus-native-row-separator: oklch(90.6% 0.001 255);
-  --zeus-native-row-hover: oklch(96.7% 0.0008 255);
+  --zeus-native-row-hover: var(--zeus-interaction-hover);
   /* 2026-06-18 项目侧栏行 token 最终覆盖：项目行按 macOS source list 固定槽位渲染，避免设置、展开和更多按钮散成松散按钮簇。 */
   --zeus-project-row-bg: transparent;
   --zeus-project-row-selected-bg: var(--zeus-product-selected);
@@ -9194,39 +9262,39 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-product-subtle: oklch(61% 0.004 255);
   --zeus-product-text-subtle: oklch(76% 0.004 255);
   --zeus-product-selected: oklch(31% 0.006 255);
-  --zeus-product-accent-soft: oklch(29% 0.018 252);
+  --zeus-product-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 20%, var(--zeus-product-panel));
   --zeus-accent-soft: var(--zeus-product-accent-soft);
-  --zeus-accent-line: oklch(56% 0.035 252);
+  --zeus-accent-line: color-mix(in srgb, var(--zeus-brand-highlight) 45%, var(--zeus-product-line));
   --zeus-solid-surface-bg: var(--zeus-product-panel);
   --zeus-native-surface: var(--zeus-product-panel);
   --zeus-native-row-separator: var(--zeus-product-line);
-  --zeus-native-row-hover: oklch(28% 0.006 255);
+  --zeus-native-row-hover: var(--zeus-interaction-hover);
   --zeus-source-sidebar: var(--zeus-product-list);
   --zeus-source-list-bg: var(--zeus-product-list);
-  --zeus-source-list-hover: var(--zeus-native-row-hover);
+  --zeus-source-list-hover: var(--zeus-interaction-hover);
   --zeus-source-list-selected: var(--zeus-product-selected);
   --zeus-settings-tab-selected-text: var(--zeus-product-text);
   --zeus-status-pill-bg: var(--zeus-product-panel-muted);
   --zeus-status-pill-line: var(--zeus-product-line);
   --zeus-status-pill-text: var(--zeus-product-muted);
-  --zeus-control-border-hover: oklch(47% 0.006 255);
+  --zeus-control-border-hover: var(--zeus-interaction-line);
   --zeus-control-disabled-bg: oklch(24% 0.004 255);
   --zeus-control-disabled-line: oklch(31% 0.005 255);
   --zeus-control-disabled-text: oklch(56% 0.004 255);
   --zeus-focus-line: oklch(78% 0.004 255 / 0.72);
   --zeus-control-focus: 0 0 0 2px oklch(92% 0.004 255 / 0.2);
   --zeus-select-line: var(--zeus-product-line);
-  --zeus-select-line-hover: oklch(43% 0.006 255);
+  --zeus-select-line-hover: var(--zeus-interaction-line);
   --zeus-select-surface-highlight: oklch(100% 0 0 / 0.055);
   --zeus-select-trigger-bg: oklch(24% 0.006 255);
-  --zeus-select-trigger-hover-bg: oklch(28% 0.006 255);
+  --zeus-select-trigger-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-popover-bg: oklch(22% 0.006 255);
   --zeus-select-search-placeholder: var(--zeus-product-muted);
-  --zeus-select-option-hover-bg: oklch(29% 0.006 255);
+  --zeus-select-option-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-check: var(--zeus-product-text);
   --zeus-popover-bg: var(--zeus-product-panel);
   --zeus-popover-line: var(--zeus-product-line);
-  --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+  --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
   --zeus-row-action-bg: var(--zeus-product-panel-muted);
   --zeus-row-action-line: var(--zeus-product-line);
   --zeus-row-action-button-bg: var(--zeus-product-panel);
@@ -9263,39 +9331,39 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
     --zeus-product-subtle: oklch(61% 0.004 255);
     --zeus-product-text-subtle: oklch(76% 0.004 255);
     --zeus-product-selected: oklch(31% 0.006 255);
-    --zeus-product-accent-soft: oklch(29% 0.018 252);
+    --zeus-product-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 20%, var(--zeus-product-panel));
     --zeus-accent-soft: var(--zeus-product-accent-soft);
-    --zeus-accent-line: oklch(56% 0.035 252);
+    --zeus-accent-line: color-mix(in srgb, var(--zeus-brand-highlight) 45%, var(--zeus-product-line));
     --zeus-solid-surface-bg: var(--zeus-product-panel);
     --zeus-native-surface: var(--zeus-product-panel);
     --zeus-native-row-separator: var(--zeus-product-line);
-    --zeus-native-row-hover: oklch(28% 0.006 255);
+    --zeus-native-row-hover: var(--zeus-interaction-hover);
     --zeus-source-sidebar: var(--zeus-product-list);
     --zeus-source-list-bg: var(--zeus-product-list);
-    --zeus-source-list-hover: var(--zeus-native-row-hover);
+    --zeus-source-list-hover: var(--zeus-interaction-hover);
     --zeus-source-list-selected: var(--zeus-product-selected);
     --zeus-settings-tab-selected-text: var(--zeus-product-text);
     --zeus-status-pill-bg: var(--zeus-product-panel-muted);
     --zeus-status-pill-line: var(--zeus-product-line);
     --zeus-status-pill-text: var(--zeus-product-muted);
-    --zeus-control-border-hover: oklch(47% 0.006 255);
+    --zeus-control-border-hover: var(--zeus-interaction-line);
     --zeus-control-disabled-bg: oklch(24% 0.004 255);
     --zeus-control-disabled-line: oklch(31% 0.005 255);
     --zeus-control-disabled-text: oklch(56% 0.004 255);
     --zeus-focus-line: oklch(78% 0.004 255 / 0.72);
     --zeus-control-focus: 0 0 0 2px oklch(92% 0.004 255 / 0.2);
     --zeus-select-line: var(--zeus-product-line);
-    --zeus-select-line-hover: oklch(43% 0.006 255);
+    --zeus-select-line-hover: var(--zeus-interaction-line);
     --zeus-select-surface-highlight: oklch(100% 0 0 / 0.055);
     --zeus-select-trigger-bg: oklch(24% 0.006 255);
-    --zeus-select-trigger-hover-bg: oklch(28% 0.006 255);
+    --zeus-select-trigger-hover-bg: var(--zeus-interaction-hover);
     --zeus-select-popover-bg: oklch(22% 0.006 255);
     --zeus-select-search-placeholder: var(--zeus-product-muted);
-    --zeus-select-option-hover-bg: oklch(29% 0.006 255);
+    --zeus-select-option-hover-bg: var(--zeus-interaction-hover);
     --zeus-select-check: var(--zeus-product-text);
     --zeus-popover-bg: var(--zeus-product-panel);
     --zeus-popover-line: var(--zeus-product-line);
-    --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+    --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
     --zeus-row-action-bg: var(--zeus-product-panel-muted);
     --zeus-row-action-line: var(--zeus-product-line);
     --zeus-row-action-button-bg: var(--zeus-product-panel);
@@ -9388,7 +9456,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-block-size: 28px;
 }
 
-.macos-ai-app .project-first-sidebar button:hover:not(:disabled),
+.macos-ai-app .project-first-sidebar button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .project-first-sidebar button:focus-visible {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
@@ -9718,7 +9786,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: start;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:hover,
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:focus-visible {
   background: color-mix(in oklch, var(--zeus-product-accent) 15%, transparent);
   border-color: color-mix(in oklch, var(--zeus-product-accent) 38%, transparent);
@@ -9732,7 +9800,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-icon {
   align-items: center;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   display: inline-flex;
   inline-size: 22px;
   justify-content: center;
@@ -9787,7 +9855,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: left;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button:hover:not(:disabled),
+.macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button:focus-visible,
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button.active {
   background: var(--zeus-native-row-hover);
@@ -9881,9 +9949,9 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0;
 }
 
-.macos-ai-app .session-conversation-create-control > button:hover,
+.macos-ai-app .session-conversation-create-control > button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .session-conversation-create-control > button:focus-visible {
-  background: var(--zeus-source-list-selected);
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-product-text);
 }
 
@@ -9930,9 +9998,9 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: start;
 }
 
-.macos-ai-app .session-conversation-task-menu button:hover,
+.macos-ai-app .session-conversation-task-menu button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .session-conversation-task-menu button:focus-visible {
-  background: var(--zeus-source-list-selected);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .session-conversation-task-menu :where(strong, span) {
@@ -10007,17 +10075,17 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
     transform 120ms ease;
 }
 
-.macos-ai-app .session-conversation-tree-item:where(:hover, :focus-within) .session-conversation-archive-button {
+.macos-ai-app .session-conversation-tree-item:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .session-conversation-archive-button {
   opacity: 1;
 }
 
-.macos-ai-app .session-conversation-archive-button:where(:hover, :focus-visible):not([aria-disabled='true']) {
+.macos-ai-app .session-conversation-archive-button:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible):not([aria-disabled='true']) {
   color: var(--zeus-product-text);
-  transform: scale(1.06);
+  background-color: var(--zeus-interaction-hover);
 }
 
-.macos-ai-app .session-conversation-archive-button:active:not([aria-disabled='true']) {
-  transform: scale(0.94);
+.macos-ai-app .session-conversation-archive-button:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--zeus-interaction-pressed);
 }
 
 .macos-ai-app .session-conversation-archive-button:focus-visible {
@@ -10039,20 +10107,32 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   animation: session-conversation-state-spin 900ms linear infinite;
 }
 
-.macos-ai-app .session-conversation-tree-row:where(:hover, :focus-visible),
+.macos-ai-app .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-project-menu-line);
+}
+
 .macos-ai-app .session-conversation-tree-row.is-current {
   background: var(--zeus-source-list-selected, rgb(241 242 242));
   border-color: var(--zeus-project-menu-line);
 }
 
-.macos-ai-app.zeus-shell.theme-dark .session-conversation-tree-row:where(:hover, :focus-visible),
+.macos-ai-app.zeus-shell.theme-dark .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-interaction-line);
+}
+
 .macos-ai-app.zeus-shell.theme-dark .session-conversation-tree-row.is-current {
   background: rgb(47 50 55);
   border-color: rgb(72 76 83);
 }
 
 @media (prefers-color-scheme: dark) {
-  .macos-ai-app.zeus-shell.theme-system .session-conversation-tree-row:where(:hover, :focus-visible),
+  .macos-ai-app.zeus-shell.theme-system .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+    background: var(--zeus-interaction-hover);
+    border-color: var(--zeus-interaction-line);
+  }
+
   .macos-ai-app.zeus-shell.theme-system .session-conversation-tree-row.is-current {
     background: rgb(47 50 55);
     border-color: rgb(72 76 83);
@@ -10237,32 +10317,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   overflow-y: auto;
 }
 
-/* 2026-06-19 项目二级菜单展开动效最终覆盖：项目菜单点击展开时只用透明度和轻微位移表达层级变化，避免动画布局尺寸导致侧栏漂移。 */
-@keyframes zeus-project-menu-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.macos-ai-app .animated-project-menu {
-  animation: zeus-project-menu-enter 160ms var(--zeus-motion-ease-out);
-  transform-origin: top center;
-  will-change: opacity, transform;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .macos-ai-app .animated-project-menu {
-    animation: none;
-    transition: none;
-  }
-}
-
 /* 2026-06-18 危险与菜单按钮最终覆盖：删除、重置、Git/Generic shell 高风险确认和项目更多菜单必须从普通按钮里分离出来。 */
 .macos-ai-app :where(.danger-action, .settings-danger-row button, .git-confirmation-risk-rail button, .git-confirmation-command-rail button, .runtime-generic-shell-command-rail button, .runtime-session-danger-action) {
   background: var(--zeus-control-danger-bg);
@@ -10271,7 +10325,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   font-weight: 680;
 }
 
-.macos-ai-app :where(.danger-action, .settings-danger-row button, .git-confirmation-risk-rail button, .git-confirmation-command-rail button, .runtime-generic-shell-command-rail button, .runtime-session-danger-action):hover:not(:disabled),
+.macos-ai-app
+  :where(.danger-action, .settings-danger-row button, .git-confirmation-risk-rail button, .git-confirmation-command-rail button, .runtime-generic-shell-command-rail button, .runtime-session-danger-action):hover:not(:disabled):not(
+    [aria-disabled='true']
+  ),
 .macos-ai-app :where(.danger-action, .settings-danger-row button, .git-confirmation-risk-rail button, .git-confirmation-command-rail button, .runtime-generic-shell-command-rail button, .runtime-session-danger-action):focus-visible {
   background: var(--zeus-control-danger-bg-hover);
   border-color: var(--zeus-control-danger-line);
@@ -10310,54 +10367,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   }
 }
 
-@keyframes zeus-select-popover-enter-top {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 4px, 0) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes zeus-popover-exit {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translate3d(0, -3px, 0) scale(0.985);
-  }
-}
-
-@keyframes zeus-project-more-popover-enter {
-  from {
-    opacity: 0;
-    transform: translate3d(-4px, 0, 0) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes zeus-project-more-popover-exit {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translate3d(-3px, 0, 0) scale(0.985);
-  }
-}
-
 .macos-ai-app [data-motion-surface='popover']:not([hidden]) {
   transform-origin: top right;
   will-change: opacity, transform;
@@ -10384,7 +10393,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 /* 2026-06-18 项目更多按钮最终覆盖：项目行“···”使用显式按钮 + menu popover，不再依赖 details/summary 系统 chrome。 */
 .macos-ai-app .project-more-popover {
-  animation: zeus-project-more-popover-enter 140ms var(--zeus-motion-ease-out);
   background: var(--zeus-popover-bg);
   border: 1px solid var(--zeus-popover-line);
   border-radius: var(--zeus-popover-radius);
@@ -10393,24 +10401,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-inline-size: 160px;
   padding: 5px;
   position: fixed;
-  transform-origin: top left;
-  will-change: opacity, transform;
-  z-index: 80;
-}
-
-.macos-ai-app .project-more-popover[data-motion-state='open'] {
-  opacity: 1;
   pointer-events: auto;
-  transform: translate3d(0, 0, 0);
-  visibility: visible;
-}
-
-.macos-ai-app .project-more-popover[data-motion-state='closing'] {
-  animation: zeus-project-more-popover-exit 120ms var(--zeus-motion-ease-out) forwards;
-  opacity: 1;
-  pointer-events: none;
-  transform: translate3d(0, 0, 0);
-  visibility: visible;
+  transform-origin: top left;
+  will-change: opacity, translate;
+  z-index: 80;
 }
 
 .macos-ai-app .project-row-actions.open .project-more-button {
@@ -10425,7 +10419,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: left;
 }
 
-.macos-ai-app .project-more-popover button:hover:not(:disabled),
+.macos-ai-app .project-more-popover button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .project-more-popover button:focus-visible {
   background: var(--zeus-popover-item-hover-bg);
   border-color: transparent;
@@ -10457,7 +10451,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   gap: 8px;
 }
 
-.macos-ai-app .settings-section-button:hover:not(:disabled),
+.macos-ai-app .settings-section-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .settings-section-button:focus-visible {
   background: var(--zeus-settings-tab-hover-bg);
 }
@@ -10520,8 +10514,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding-inline-end: 32px;
 }
 
-.macos-ai-app select:hover:not(:disabled) {
-  background-color: oklch(97.8% 0.006 255);
+.macos-ai-app select:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: var(--zeus-interaction-hover);
   border-color: var(--zeus-select-line);
 }
 
@@ -10604,7 +10598,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   inline-size: 17px;
 }
 
-.macos-ai-app .zeus-select-trigger:hover:not(:disabled) {
+.macos-ai-app .zeus-select-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-select-trigger-hover-bg);
   border-color: var(--zeus-select-line-hover);
 }
@@ -10655,7 +10649,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .zeus-select-popover {
-  animation: zeus-popover-enter 140ms var(--zeus-motion-ease-out);
   background: var(--zeus-select-popover-bg);
   border: 1px solid var(--zeus-select-line);
   border-radius: 14px;
@@ -10676,7 +10669,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .zeus-select-popover[data-zeus-select-placement='top'] {
-  animation-name: zeus-select-popover-enter-top;
   transform-origin: bottom center;
 }
 
@@ -10845,7 +10837,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   inline-size: 9px;
 }
 
-.macos-ai-app .zeus-select-option:hover:not(:disabled),
+.macos-ai-app .zeus-select-option:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .zeus-select-option:focus-visible {
   background: var(--zeus-select-option-hover-bg);
   outline: 0;
@@ -10856,7 +10848,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app .zeus-select-option[aria-selected='true']:hover:not(:disabled),
+.macos-ai-app .zeus-select-option[aria-selected='true']:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .zeus-select-option[aria-selected='true']:focus-visible {
   background: var(--zeus-select-option-hover-bg);
 }
@@ -10912,7 +10904,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0 8px;
 }
 
-.macos-ai-app :where(.runtime-session-terminal-command-rail, .runtime-log-command-rail) button:hover:not(:disabled),
+.macos-ai-app :where(.runtime-session-terminal-command-rail, .runtime-log-command-rail) button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app :where(.runtime-session-terminal-command-rail, .runtime-log-command-rail) button:focus-visible {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
@@ -10931,7 +10923,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   font-weight: 680;
 }
 
-.macos-ai-app :where(.runtime-session-stop-action, .runtime-session-orphan-stop-action):hover:not(:disabled),
+.macos-ai-app :where(.runtime-session-stop-action, .runtime-session-orphan-stop-action):hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app :where(.runtime-session-stop-action, .runtime-session-orphan-stop-action):focus-visible {
   background: var(--zeus-control-danger-bg-hover);
   border-color: var(--zeus-control-danger-line);
@@ -10964,7 +10956,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0 8px;
 }
 
-.macos-ai-app :where(.git-hunk-command-rail, .task-template-command-rail, .project-inline-recovery-command-rail) button:hover:not(:disabled),
+.macos-ai-app :where(.git-hunk-command-rail, .task-template-command-rail, .project-inline-recovery-command-rail) button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app :where(.git-hunk-command-rail, .task-template-command-rail, .project-inline-recovery-command-rail) button:focus-visible {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
@@ -11009,14 +11001,15 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   font-weight: 680;
 }
 
-.macos-ai-app :where(.runtime-session-filter-grid) button:hover:not(:disabled),
+.macos-ai-app :where(.runtime-session-filter-grid) button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app :where(.runtime-session-filter-grid) button:focus-visible {
   background: var(--zeus-native-row-hover);
-  border-color: var(--zeus-product-line-soft);
+  border-color: var(--zeus-interaction-line);
   color: var(--zeus-product-text);
 }
 
 .macos-ai-app :where(.runtime-session-filter-grid) button:focus-visible {
+  box-shadow: var(--zeus-control-focus);
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
@@ -11738,7 +11731,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app {
   --zeus-source-sidebar: oklch(99.2% 0.0005 255);
   --zeus-product-list: oklch(99.2% 0.0005 255);
-  --zeus-native-row-hover: oklch(96.7% 0.0008 255);
+  --zeus-native-row-hover: var(--zeus-interaction-hover);
   --zeus-product-selected: oklch(92.8% 0.0012 255);
 }
 
@@ -12381,7 +12374,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 /* 2026-06-24 任务行选中态去蓝框最终覆盖：任务行只用低噪音灰底表达 hover、键盘焦点和选中态，不再用蓝色描边把整行框成卡片。 */
 /* 2026-06-24 任务行 hover 与默认选中解耦最终覆盖：首屏不固定第一行灰底，鼠标所在行使用更明确的浅灰 hover。 */
-.macos-ai-app .task-table-row:not(.selected):hover,
+.macos-ai-app .task-table-row:not(.selected):hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-row:not(.selected):focus-visible {
   background: var(--zeus-source-list-hover);
   box-shadow: inset 0 0 0 1px var(--zeus-task-row-focus-line);
@@ -12392,7 +12385,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   box-shadow: none;
 }
 
-.macos-ai-app .task-table-row.selected:hover,
+.macos-ai-app .task-table-row.selected:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-row.selected:focus-visible {
   background: color-mix(in oklch, var(--zeus-source-list-selected) 88%, var(--zeus-source-list-hover));
   box-shadow: none;
@@ -12596,7 +12589,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   white-space: nowrap;
 }
 
-.macos-ai-app .task-table-new-task-button:hover:not(:disabled),
+.macos-ai-app .task-table-new-task-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-new-task-button:focus-visible {
   box-shadow: var(--zeus-control-focus);
 }
@@ -12635,7 +12628,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   line-height: 1;
 }
 
-.macos-ai-app .task-table-field-settings-trigger:hover,
+.macos-ai-app .task-table-field-settings-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-field-settings-trigger:focus-visible,
 .macos-ai-app .task-table-field-settings-trigger[aria-expanded='true'] {
   background: var(--zeus-source-list-hover);
@@ -12679,7 +12672,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 4px 7px;
 }
 
-.macos-ai-app .task-table-field-option:hover {
+.macos-ai-app .task-table-field-option:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-popover-item-hover-bg, var(--zeus-source-list-hover));
 }
 
@@ -12733,7 +12726,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0;
 }
 
-.macos-ai-app .task-table-field-order-button:hover:not(:disabled),
+.macos-ai-app .task-table-field-order-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-field-order-button:focus-visible {
   background: var(--zeus-popover-item-hover-bg, var(--zeus-source-list-hover));
   color: var(--zeus-product-text);
@@ -12761,7 +12754,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: start;
 }
 
-.macos-ai-app .task-table-field-reset:hover,
+.macos-ai-app .task-table-field-reset:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-field-reset:focus-visible {
   background: var(--zeus-popover-item-hover-bg, var(--zeus-source-list-hover));
   color: var(--zeus-product-text);
@@ -13028,7 +13021,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: start;
 }
 
-.macos-ai-app .task-run-status-action:hover {
+.macos-ai-app .task-run-status-action:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--task-status-tone) 16%, var(--zeus-product-panel));
   border-color: color-mix(in srgb, var(--task-status-tone) 42%, var(--zeus-product-line-soft));
 }
@@ -13170,7 +13163,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app .task-table-bulk-apply-button {
   background: var(--zeus-product-accent-soft);
   border: 1px solid color-mix(in oklch, var(--zeus-product-accent) 28%, var(--zeus-product-line));
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
 .macos-ai-app .task-table-bulk-delete-button {
@@ -13179,11 +13172,11 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   color: var(--zeus-danger-text, oklch(42% 0.095 28));
 }
 
-.macos-ai-app .task-table-bulk-secondary-button:hover:not(:disabled),
+.macos-ai-app .task-table-bulk-secondary-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-bulk-secondary-button:focus-visible,
-.macos-ai-app .task-table-bulk-apply-button:hover:not(:disabled),
+.macos-ai-app .task-table-bulk-apply-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-bulk-apply-button:focus-visible,
-.macos-ai-app .task-table-bulk-delete-button:hover:not(:disabled),
+.macos-ai-app .task-table-bulk-delete-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-bulk-delete-button:focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
@@ -14005,7 +13998,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding: 0 5px;
 }
 
-.macos-ai-app .task-table-field-width-button:hover,
+.macos-ai-app .task-table-field-width-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-field-width-button:focus-visible {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
@@ -14015,7 +14008,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app .task-table-field-width-button[aria-pressed='true'] {
   background: var(--zeus-product-accent-soft);
   border-color: color-mix(in oklch, var(--zeus-product-accent) 26%, transparent);
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
 .macos-ai-app .task-table-field-reset {
@@ -14153,7 +14146,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   background: color-mix(in oklch, var(--zeus-product-accent) 9%, var(--zeus-product-panel));
   border: 1px solid color-mix(in oklch, var(--zeus-product-accent) 22%, var(--zeus-product-line-soft));
   border-radius: 999px;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   display: inline-flex;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -14215,7 +14208,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   white-space: nowrap;
 }
 
-.macos-ai-app .task-empty-state-primary-action:hover:not(:disabled),
+.macos-ai-app .task-empty-state-primary-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-empty-state-primary-action:focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: none;
@@ -14530,17 +14523,17 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   background: color-mix(in oklch, var(--zeus-product-accent) 7%, var(--zeus-control-bg));
 }
 
-.macos-ai-app .task-model-push-mode-choice > label:hover:not(:has(> input:disabled)) {
+.macos-ai-app .task-model-push-mode-choice > label:hover:not(:disabled):not([aria-disabled='true']):not(:has(> input:disabled)) {
   border-color: var(--zeus-control-border-hover);
   background: var(--zeus-control-bg-hover);
 }
 
-.macos-ai-app .task-model-push-mode-choice > label.is-selected:hover:not(:has(> input:disabled)) {
+.macos-ai-app .task-model-push-mode-choice > label.is-selected:hover:not(:disabled):not([aria-disabled='true']):not(:has(> input:disabled)) {
   border-color: var(--zeus-product-accent);
   background: color-mix(in oklch, var(--zeus-product-accent) 10%, var(--zeus-control-bg));
 }
 
-.macos-ai-app .task-model-push-mode-choice > label:active:not(:has(> input:disabled)) {
+.macos-ai-app .task-model-push-mode-choice > label:active:not(:disabled):not(:has(> input:disabled)) {
   background: var(--zeus-control-bg-active);
 }
 
@@ -14620,7 +14613,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app .task-model-push-modal .task-model-push-mode-choice > label.is-selected {
   border-color: var(--zeus-control-border);
   background: var(--zeus-control-bg);
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   font-weight: 600;
 }
 
@@ -14961,8 +14954,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   color: var(--zeus-product-muted);
 }
 
-.task-model-push-attachment-sheet > header button:hover {
-  background: var(--zeus-product-panel-muted);
+.task-model-push-attachment-sheet > header button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-product-text);
 }
 
@@ -15381,9 +15374,9 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   font-size: 10px;
 }
 
-.macos-ai-app .task-git-workspace-branch-actions button:hover,
+.macos-ai-app .task-git-workspace-branch-actions button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-git-workspace-branch-actions button:focus-visible {
-  background: var(--zeus-control-bg);
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-product-text);
 }
 
@@ -15412,7 +15405,11 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: start;
 }
 
-.macos-ai-app .task-git-workspace-branch-group > div > button:hover,
+.macos-ai-app .task-git-workspace-branch-group > div > button:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--zeus-control-border);
+  background: var(--zeus-interaction-hover);
+}
+
 .macos-ai-app .task-git-workspace-branch-group > div > button.is-active {
   border-color: var(--zeus-control-border);
   background: var(--zeus-control-bg);
@@ -15472,8 +15469,11 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border-radius: 6px;
 }
 
-.macos-ai-app .task-git-review-file-tree li.is-active label,
-.macos-ai-app .task-git-review-file-tree li label:hover {
+.macos-ai-app .task-git-review-file-tree li label:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
+
+.macos-ai-app .task-git-review-file-tree li.is-active label {
   background: var(--zeus-product-panel-muted);
 }
 
@@ -15885,9 +15885,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-size: 10px;
 }
 
-.macos-ai-app .task-git-delivery-branch > header button:hover,
+.macos-ai-app .task-git-delivery-branch > header button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-git-delivery-branch > header button:focus-visible {
-  background: var(--zeus-control-bg);
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-product-text);
 }
 
@@ -15950,8 +15950,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border-radius: 6px;
 }
 
-.macos-ai-app .task-git-delivery-repository li.is-active .task-git-delivery-file-row,
-.macos-ai-app .task-git-delivery-file-row:hover {
+.macos-ai-app .task-git-delivery-file-row:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
+
+.macos-ai-app .task-git-delivery-repository li.is-active .task-git-delivery-file-row {
   background: var(--zeus-control-bg);
 }
 
@@ -16495,7 +16498,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-size: 10px;
 }
 
-.macos-ai-app .task-git-conflict-files button:hover {
+.macos-ai-app .task-git-conflict-files button:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in oklab, var(--zeus-control-bg) 66%, transparent);
 }
 
@@ -16596,8 +16599,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border-inline-start: 1px solid var(--zeus-product-line-soft);
 }
 
-.macos-ai-app .task-git-conflict-navigation button:hover:not(:disabled),
-.macos-ai-app .task-git-conflict-view-switch button:hover:not(:disabled),
+.macos-ai-app .task-git-conflict-navigation button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-git-conflict-view-switch button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+}
+
 .macos-ai-app .task-git-conflict-view-switch button.is-active {
   background: var(--zeus-product-panel);
   color: var(--zeus-product-text);
@@ -16951,7 +16958,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 0;
 }
 
-.macos-ai-app .task-create-modal-close:hover {
+.macos-ai-app .task-create-modal-close:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
 }
 
@@ -17030,7 +17037,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   cursor: pointer;
 }
 
-.macos-ai-app .task-create-third-party-open-button:hover {
+.macos-ai-app .task-create-third-party-open-button:hover:not(:disabled):not([aria-disabled='true']) {
   opacity: 0.82;
 }
 
@@ -17297,7 +17304,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   line-height: 16px;
 }
 
-.macos-ai-app .pending-resource-restore:hover:not(:disabled) {
+.macos-ai-app .pending-resource-restore:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-product-text);
 }
 
@@ -17332,7 +17339,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   box-shadow: 0 1px 3px oklch(18% 0.004 255 / 0.16);
 }
 
-.macos-ai-app .pending-resource-remove:hover:not(:disabled) .pending-resource-remove-glyph {
+.macos-ai-app .pending-resource-remove:hover:not(:disabled):not([aria-disabled='true']) .pending-resource-remove-glyph {
   filter: brightness(1.16);
 }
 
@@ -17437,8 +17444,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   cursor: pointer;
 }
 
-.macos-ai-app .task-attachment-thumb-button:hover,
-.macos-ai-app .task-attachment-file-button:hover:not(:disabled) {
+.macos-ai-app .task-attachment-thumb-button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-attachment-file-button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border);
   background: var(--zeus-control-bg-hover);
 }
@@ -17510,8 +17517,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 0;
 }
 
-.macos-ai-app .task-create-attachment-picker:hover:not(:disabled),
-.macos-ai-app .task-attachment-remove-button:hover:not(:disabled) {
+.macos-ai-app .task-create-attachment-picker:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-attachment-remove-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
 }
 
@@ -17647,7 +17654,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-weight: 620;
 }
 
-.macos-ai-app .task-attachment-preview-retry:hover {
+.macos-ai-app .task-attachment-preview-retry:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
   background: var(--zeus-control-bg-hover);
 }
@@ -17871,7 +17878,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   margin-inline-end: 5px;
 }
 
-.macos-ai-app .task-table-status-segment:hover,
+.macos-ai-app .task-table-status-segment:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-status-segment:focus-visible {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
@@ -17915,13 +17922,18 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: nowrap;
 }
 
-.macos-ai-app .task-table-view-pill:hover:not(:disabled),
+.macos-ai-app .task-table-view-pill:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-view-pill:focus-visible,
-.macos-ai-app .task-table-field-settings-trigger:hover,
+.macos-ai-app .task-table-field-settings-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-field-settings-trigger:focus-visible,
+.macos-ai-app .task-table-more-settings-trigger:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-table-more-settings-trigger:focus-visible {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+  outline: 0;
+}
+
 .macos-ai-app .task-table-field-settings-trigger[aria-expanded='true'],
-.macos-ai-app .task-table-more-settings-trigger:hover,
-.macos-ai-app .task-table-more-settings-trigger:focus-visible,
 .macos-ai-app .task-table-more-settings-trigger[aria-expanded='true'] {
   background: var(--zeus-product-panel);
   color: var(--zeus-product-text);
@@ -17986,7 +17998,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   text-align: start;
 }
 
-.macos-ai-app .task-table-view-more-panel .task-table-more-menu-action:hover:not(:disabled),
+.macos-ai-app .task-table-view-more-panel .task-table-more-menu-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-view-more-panel .task-table-more-menu-action:focus-visible {
   background: var(--zeus-popover-item-hover-bg, var(--zeus-product-panel-muted));
   outline: 0;
@@ -18186,9 +18198,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: nowrap;
 }
 
-.macos-ai-app .task-empty-state-secondary-action:hover:not(:disabled),
+.macos-ai-app .task-empty-state-secondary-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-empty-state-secondary-action:focus-visible,
-.macos-ai-app .task-list-state-secondary-action:hover:not(:disabled),
+.macos-ai-app .task-list-state-secondary-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-list-state-secondary-action:focus-visible {
   background: var(--zeus-control-bg-hover);
   box-shadow: var(--zeus-control-focus);
@@ -18378,21 +18390,21 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inset-inline-start: 0;
 }
 
-.macos-ai-app .task-table-column-drag-handle:active {
+.macos-ai-app .task-table-column-drag-handle:active:not(:disabled) {
   cursor: grabbing;
 }
 
 .macos-ai-app .task-table-column-drag-handle[aria-pressed='true'],
 .macos-ai-app .task-table-interactive-header.dragging {
   background: color-mix(in oklch, var(--zeus-product-accent) 10%, transparent);
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
 .macos-ai-app .task-table-interactive-header.dragging {
   opacity: 0.62;
 }
 
-.macos-ai-app .task-table-interactive-header:hover .task-table-column-drag-handle,
+.macos-ai-app .task-table-interactive-header:hover:not(:disabled):not([aria-disabled='true']) .task-table-column-drag-handle,
 .macos-ai-app .task-table-interactive-header:focus-within .task-table-column-drag-handle,
 .macos-ai-app .task-table-column-drag-handle[aria-pressed='true'],
 .macos-ai-app .task-table-interactive-header.dragging .task-table-column-drag-handle {
@@ -18433,7 +18445,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   text-align: start;
 }
 
-.macos-ai-app .task-table-column-sort-button:active {
+.macos-ai-app .task-table-column-sort-button:active:not(:disabled) {
   cursor: grabbing;
 }
 
@@ -18482,11 +18494,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app [aria-sort='ascending'] .task-table-column-sort-indicator,
 .macos-ai-app [aria-sort='descending'] .task-table-column-sort-indicator {
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
-.macos-ai-app .task-table-column-drag-handle:hover,
-.macos-ai-app .task-table-column-sort-button:hover {
+.macos-ai-app .task-table-column-drag-handle:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-table-column-sort-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in oklch, var(--zeus-source-list-hover) 78%, transparent);
   color: var(--zeus-product-text);
 }
@@ -18522,11 +18534,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
     opacity 120ms ease;
 }
 
-.macos-ai-app .task-table-interactive-header:hover .task-table-column-resize-handle::after,
+.macos-ai-app .task-table-interactive-header:hover:not(:disabled):not([aria-disabled='true']) .task-table-column-resize-handle::after,
 .macos-ai-app .task-table-interactive-header:focus-within .task-table-column-resize-handle::after,
-.macos-ai-app .task-table-column-resize-handle:hover::after,
+.macos-ai-app .task-table-column-resize-handle:hover:not(:disabled):not([aria-disabled='true'])::after,
 .macos-ai-app .task-table-column-resize-handle:focus-visible::after,
-.macos-ai-app .task-table-column-resize-handle:active::after {
+.macos-ai-app .task-table-column-resize-handle:active:not(:disabled)::after {
   background: var(--zeus-product-accent);
   inline-size: 2px;
   opacity: 1;
@@ -18730,7 +18742,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 3px 5px;
 }
 
-.macos-ai-app .task-enum-order-editor li:hover {
+.macos-ai-app .task-enum-order-editor li:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 
@@ -18822,7 +18834,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 4px 5px;
 }
 
-.macos-ai-app .task-status-config-list li:hover {
+.macos-ai-app .task-status-config-list li:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
 
@@ -19196,10 +19208,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   transform: translateX(-50%);
 }
 
-.macos-ai-app .project-sidebar-resizer:hover::after,
+.macos-ai-app .project-sidebar-resizer:hover:not(:disabled):not([aria-disabled='true'])::after,
 .macos-ai-app .project-sidebar-resizer:focus-visible::after,
 .macos-ai-app.zeus-shell[data-project-sidebar-resizing='true'] .project-sidebar-resizer::after {
-  background: var(--zeus-product-muted);
+  background: var(--zeus-product-accent);
   inline-size: 2px;
 }
 
@@ -19296,9 +19308,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   text-align: start;
 }
 
-.macos-ai-app .task-inline-edit-trigger:hover,
+.macos-ai-app .task-inline-edit-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-inline-edit-trigger:focus-visible {
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
   border-color: var(--zeus-product-line-soft);
   outline: 0;
 }
@@ -19592,7 +19604,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   transform: rotate(135deg);
 }
 
-.macos-ai-app .task-detail-project-settings > summary:hover {
+.macos-ai-app .task-detail-project-settings > summary:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-product-text);
 }
 
@@ -19644,7 +19656,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   text-align: start;
 }
 
-.macos-ai-app .task-detail-conversation-row:hover,
+.macos-ai-app .task-detail-conversation-row:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-detail-conversation-row:focus-visible {
   background: var(--zeus-source-list-hover);
   outline: 0;
@@ -19775,7 +19787,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 0;
 }
 
-.macos-ai-app .task-detail-more-actions-trigger:hover,
+.macos-ai-app .task-detail-more-actions-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-detail-more-actions-trigger:focus-visible,
 .macos-ai-app .task-detail-more-actions-trigger[aria-expanded='true'] {
   background: var(--zeus-source-list-hover);
@@ -19815,7 +19827,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   text-align: start;
 }
 
-.macos-ai-app .task-detail-more-actions-menu .task-detail-danger-action:hover,
+.macos-ai-app .task-detail-more-actions-menu .task-detail-danger-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-detail-more-actions-menu .task-detail-danger-action:focus-visible {
   background: var(--zeus-danger-bg, oklch(96.5% 0.024 28));
   box-shadow: none;
@@ -19885,7 +19897,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 0 8px;
 }
 
-.macos-ai-app .project-more-popover button:hover:not(:disabled),
+.macos-ai-app .project-more-popover button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .project-more-popover button:focus-visible {
   background: var(--zeus-popover-item-hover-bg, var(--zeus-source-list-hover));
   border-color: transparent;
@@ -20037,7 +20049,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inline-size: 16px;
 }
 
-.macos-ai-app .project-rename-dialog-close:hover:not(:disabled) {
+.macos-ai-app .project-rename-dialog-close:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
 }
 
@@ -20069,15 +20081,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-solid-surface-bg: var(--zeus-product-panel);
   --zeus-native-surface: var(--zeus-product-panel);
   --zeus-native-row-separator: var(--zeus-product-line-soft);
-  --zeus-native-row-hover: rgb(42 45 50);
+  --zeus-native-row-hover: var(--zeus-interaction-hover);
   --zeus-source-sidebar: var(--zeus-product-canvas);
   --zeus-source-list-bg: var(--zeus-product-canvas);
-  --zeus-source-list-hover: var(--zeus-native-row-hover);
+  --zeus-source-list-hover: var(--zeus-interaction-hover);
   --zeus-source-list-selected: var(--zeus-product-selected);
   --zeus-sidebar-separator: var(--zeus-product-line);
   --zeus-project-menu-selected-bg: var(--zeus-product-selected);
   --zeus-settings-rail-bg: var(--zeus-product-canvas);
-  --zeus-settings-tab-hover-bg: var(--zeus-native-row-hover);
+  --zeus-settings-tab-hover-bg: var(--zeus-interaction-hover);
   --zeus-settings-tab-selected-bg: var(--zeus-product-selected);
   --zeus-settings-tab-selected-text: var(--zeus-product-text);
   --zeus-toolbar-bg: var(--zeus-product-canvas);
@@ -20087,7 +20099,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-message-source-bg: var(--zeus-product-panel);
   --zeus-decision-rail-bg: var(--zeus-product-panel);
   --zeus-decision-rail-separator: var(--zeus-product-line-soft);
-  --zeus-decision-button-hover: var(--zeus-native-row-hover);
+  --zeus-decision-button-hover: var(--zeus-interaction-hover);
   --zeus-decision-button-active: var(--zeus-product-selected);
   --zeus-composer-bg: var(--zeus-product-panel);
   --zeus-composer-input-bg: var(--zeus-product-canvas);
@@ -20095,10 +20107,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-mode-rail-bg: var(--zeus-product-panel);
   --zeus-mode-rail-active: var(--zeus-product-selected);
   --zeus-control-bg: var(--zeus-product-panel);
-  --zeus-control-bg-hover: var(--zeus-native-row-hover);
+  --zeus-control-bg-hover: var(--zeus-interaction-hover);
   --zeus-control-bg-active: var(--zeus-product-selected);
   --zeus-control-border: var(--zeus-product-line);
-  --zeus-control-border-hover: rgb(66 70 76);
+  --zeus-control-border-hover: var(--zeus-interaction-line);
   --zeus-control-disabled-bg: rgb(31 33 37);
   --zeus-control-disabled-line: rgb(45 48 53);
   --zeus-control-disabled-text: rgb(116 120 127);
@@ -20106,17 +20118,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-control-focus: 0 0 0 2px rgb(218 221 226 / 0.13);
   --zeus-select-bg: var(--zeus-product-panel);
   --zeus-select-line: var(--zeus-product-line);
-  --zeus-select-line-hover: rgb(66 70 76);
+  --zeus-select-line-hover: var(--zeus-interaction-line);
   --zeus-select-surface-highlight: rgb(255 255 255 / 0.035);
   --zeus-select-trigger-bg: var(--zeus-product-panel);
-  --zeus-select-trigger-hover-bg: var(--zeus-native-row-hover);
+  --zeus-select-trigger-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-popover-bg: rgb(30 32 36);
   --zeus-select-search-placeholder: var(--zeus-product-muted);
-  --zeus-select-option-hover-bg: var(--zeus-native-row-hover);
+  --zeus-select-option-hover-bg: var(--zeus-interaction-hover);
   --zeus-select-check: var(--zeus-product-text);
   --zeus-popover-bg: rgb(30 32 36);
   --zeus-popover-line: var(--zeus-product-line);
-  --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+  --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
   --zeus-popover-shadow: 0 18px 44px rgb(0 0 0 / 0.34);
   --zeus-segment-bg: var(--zeus-product-panel);
   --zeus-segment-line: var(--zeus-product-line-soft);
@@ -20198,15 +20210,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     --zeus-solid-surface-bg: var(--zeus-product-panel);
     --zeus-native-surface: var(--zeus-product-panel);
     --zeus-native-row-separator: var(--zeus-product-line-soft);
-    --zeus-native-row-hover: rgb(42 45 50);
+    --zeus-native-row-hover: var(--zeus-interaction-hover);
     --zeus-source-sidebar: var(--zeus-product-canvas);
     --zeus-source-list-bg: var(--zeus-product-canvas);
-    --zeus-source-list-hover: var(--zeus-native-row-hover);
+    --zeus-source-list-hover: var(--zeus-interaction-hover);
     --zeus-source-list-selected: var(--zeus-product-selected);
     --zeus-sidebar-separator: var(--zeus-product-line);
     --zeus-project-menu-selected-bg: var(--zeus-product-selected);
     --zeus-settings-rail-bg: var(--zeus-product-canvas);
-    --zeus-settings-tab-hover-bg: var(--zeus-native-row-hover);
+    --zeus-settings-tab-hover-bg: var(--zeus-interaction-hover);
     --zeus-settings-tab-selected-bg: var(--zeus-product-selected);
     --zeus-settings-tab-selected-text: var(--zeus-product-text);
     --zeus-toolbar-bg: var(--zeus-product-canvas);
@@ -20216,7 +20228,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     --zeus-message-source-bg: var(--zeus-product-panel);
     --zeus-decision-rail-bg: var(--zeus-product-panel);
     --zeus-decision-rail-separator: var(--zeus-product-line-soft);
-    --zeus-decision-button-hover: var(--zeus-native-row-hover);
+    --zeus-decision-button-hover: var(--zeus-interaction-hover);
     --zeus-decision-button-active: var(--zeus-product-selected);
     --zeus-composer-bg: var(--zeus-product-panel);
     --zeus-composer-input-bg: var(--zeus-product-canvas);
@@ -20224,10 +20236,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     --zeus-mode-rail-bg: var(--zeus-product-panel);
     --zeus-mode-rail-active: var(--zeus-product-selected);
     --zeus-control-bg: var(--zeus-product-panel);
-    --zeus-control-bg-hover: var(--zeus-native-row-hover);
+    --zeus-control-bg-hover: var(--zeus-interaction-hover);
     --zeus-control-bg-active: var(--zeus-product-selected);
     --zeus-control-border: var(--zeus-product-line);
-    --zeus-control-border-hover: rgb(66 70 76);
+    --zeus-control-border-hover: var(--zeus-interaction-line);
     --zeus-control-disabled-bg: rgb(31 33 37);
     --zeus-control-disabled-line: rgb(45 48 53);
     --zeus-control-disabled-text: rgb(116 120 127);
@@ -20235,17 +20247,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     --zeus-control-focus: 0 0 0 2px rgb(218 221 226 / 0.13);
     --zeus-select-bg: var(--zeus-product-panel);
     --zeus-select-line: var(--zeus-product-line);
-    --zeus-select-line-hover: rgb(66 70 76);
+    --zeus-select-line-hover: var(--zeus-interaction-line);
     --zeus-select-surface-highlight: rgb(255 255 255 / 0.035);
     --zeus-select-trigger-bg: var(--zeus-product-panel);
-    --zeus-select-trigger-hover-bg: var(--zeus-native-row-hover);
+    --zeus-select-trigger-hover-bg: var(--zeus-interaction-hover);
     --zeus-select-popover-bg: rgb(30 32 36);
     --zeus-select-search-placeholder: var(--zeus-product-muted);
-    --zeus-select-option-hover-bg: var(--zeus-native-row-hover);
+    --zeus-select-option-hover-bg: var(--zeus-interaction-hover);
     --zeus-select-check: var(--zeus-product-text);
     --zeus-popover-bg: rgb(30 32 36);
     --zeus-popover-line: var(--zeus-product-line);
-    --zeus-popover-item-hover-bg: var(--zeus-native-row-hover);
+    --zeus-popover-item-hover-bg: var(--zeus-interaction-hover);
     --zeus-popover-shadow: 0 18px 44px rgb(0 0 0 / 0.34);
     --zeus-segment-bg: var(--zeus-product-panel);
     --zeus-segment-line: var(--zeus-product-line-soft);
@@ -20440,7 +20452,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   inline-size: 18px;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):hover:not(:disabled) {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-native-row-hover);
   color: var(--zeus-product-text);
 }
@@ -20577,7 +20589,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   inline-size: 18px;
 }
 
-.macos-ai-app .project-create-dialog-close:hover:not(:disabled) {
+.macos-ai-app .project-create-dialog-close:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-bg-hover);
   color: var(--zeus-product-text);
 }
@@ -20676,8 +20688,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   inline-size: 100%;
 }
 
-.macos-ai-app .project-create-folder-picker:hover:not(:disabled) {
-  background: var(--zeus-product-panel-muted);
+.macos-ai-app .project-create-folder-picker:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
   border-color: var(--zeus-control-border-hover);
 }
 
@@ -20984,7 +20996,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   font: inherit;
   font-size: 12px;
 }
-.project-code-mode-toolbar nav button:hover {
+.project-code-mode-toolbar nav button:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-control-text);
 }
 .project-code-mode-toolbar nav button.active {
@@ -21059,7 +21071,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   block-size: 14px;
 }
 
-.macos-ai-app .task-table-board-settings-trigger:hover,
+.macos-ai-app .task-table-board-settings-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-board-settings-trigger[aria-expanded='true'] {
   color: var(--zeus-control-text);
   border-color: var(--zeus-control-border-hover);
@@ -21213,12 +21225,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   transition: opacity 120ms ease;
 }
 
-.macos-ai-app .task-board-column:hover .task-board-column-hide,
+.macos-ai-app .task-board-column:hover:not(:disabled):not([aria-disabled='true']) .task-board-column-hide,
 .macos-ai-app .task-board-column-hide:focus-visible {
   opacity: 1;
 }
 
 .macos-ai-app .task-board-column > .task-board-lane,
+.macos-ai-app .task-board-column > .task-board-lane > [data-zeus-primitive='collapsible'],
 .macos-ai-app .task-board-subgroups {
   display: flex;
   min-block-size: 0;
@@ -21283,7 +21296,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     0 0 0 1px rgb(255 255 255 / 2%) inset;
 }
 
-.macos-ai-app .task-board-card:hover {
+.macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
   border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 86%, var(--zeus-control-border-hover));
   box-shadow: 0 5px 14px rgb(0 0 0 / 8%);
@@ -21314,7 +21327,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 /* 拖动把手默认隐藏，悬停、键盘聚焦或拖动中才显现，减少卡片常驻噪音。 */
-.macos-ai-app .task-board-card:hover .task-board-drag-handle,
+.macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) .task-board-drag-handle,
 .macos-ai-app .task-board-card.is-dragging .task-board-drag-handle,
 .macos-ai-app .task-board-drag-handle:focus-visible {
   opacity: 1;
@@ -21413,7 +21426,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   opacity: 0;
 }
 
-.macos-ai-app .task-board-card:hover .task-board-move-menu,
+.macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) .task-board-move-menu {
+  color: var(--zeus-control-text);
+  background: var(--zeus-interaction-hover);
+  opacity: 1;
+}
+
 .macos-ai-app .task-board-move-menu:focus-within {
   color: var(--zeus-control-text);
   background: var(--zeus-product-panel-muted);
@@ -21521,15 +21539,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   min-block-size: 26px;
   padding-inline: 5px;
   border-color: transparent;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   background: transparent;
   font-size: 11px;
 }
 
-.macos-ai-app .task-table-board-state-trigger:hover,
+.macos-ai-app .task-table-board-state-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-table-board-state-trigger:focus-visible {
   border-color: transparent;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   background: var(--zeus-native-row-hover);
 }
 
@@ -21570,9 +21588,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: transparent;
 }
 
-.macos-ai-app .task-board-feedback-dismiss:hover {
+.macos-ai-app .task-board-feedback-dismiss:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-control-text);
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-board-feedback-dismiss:focus-visible {
@@ -21623,7 +21641,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   box-shadow: none;
 }
 
-.macos-ai-app .task-board-command-row .task-board-command-actions > button:hover {
+.macos-ai-app .task-board-command-row .task-board-command-actions > button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: transparent;
   background: var(--zeus-native-row-hover);
 }
@@ -21728,7 +21746,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     background-color 100ms ease-out;
 }
 
-.macos-ai-app .task-board-card:hover {
+.macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
   border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 86%, var(--zeus-control-border-hover));
   background: color-mix(in oklab, var(--zeus-native-row-hover) 42%, var(--zeus-native-surface, var(--zeus-product-panel)));
@@ -21981,9 +21999,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: transparent;
 }
 
-.macos-ai-app .task-board-property-visibility button:hover,
-.macos-ai-app .task-board-filter-rule > button:hover,
-.macos-ai-app .task-board-sort-rule > button:hover {
+.macos-ai-app .task-board-property-visibility button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-board-filter-rule > button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .task-board-sort-rule > button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: transparent;
   background: var(--zeus-native-row-hover);
 }
@@ -22023,7 +22041,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: transparent;
 }
 
-.macos-ai-app .task-board-color-rule > button:hover {
+.macos-ai-app .task-board-color-rule > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-control-danger-bg, var(--zeus-native-row-hover));
 }
 
@@ -22471,4 +22489,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .model-setup-dialog {
     animation: none;
   }
+}
+
+/* 调宽期间持续显示品牌色分隔线，不随鼠标离开命中区而消失。 */
+.macos-ai-app .task-table-column-resize-handle[data-dragging='true']::after {
+  background: var(--zeus-product-accent);
+}
+.macos-ai-app .task-table-column-resize-handle {
+  touch-action: none;
 }

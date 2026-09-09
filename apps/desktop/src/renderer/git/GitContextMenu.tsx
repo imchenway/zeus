@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { MenuSurface } from '../ui/MenuSurface.js';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
@@ -11,50 +12,9 @@ export interface GitMenuItem {
 }
 export function GitContextMenu(props: { x: number; y: number; title: string; items: GitMenuItem[]; onClose: () => void; onError: (error: unknown) => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const bounds = element.getBoundingClientRect();
-    element.style.left = `${Math.max(8, Math.min(props.x, window.innerWidth - bounds.width - 8))}px`;
-    element.style.top = `${Math.max(8, Math.min(props.y, window.innerHeight - bounds.height - 8))}px`;
-    element.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
-    const close = (event: Event) => {
-      if (!element.contains(event.target as Node)) props.onClose();
-    };
-    const resize = () => props.onClose();
-    document.addEventListener('pointerdown', close, true);
-    document.addEventListener('scroll', close, true);
-    window.addEventListener('resize', resize);
-    return () => {
-      document.removeEventListener('pointerdown', close, true);
-      document.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', resize);
-      previous?.focus();
-    };
-  }, [props.x, props.y, props.items, props.onClose]);
+
   return createPortal(
-    <div
-      ref={ref}
-      className="project-git-context-menu"
-      role="menu"
-      aria-label={props.title}
-      style={{ left: props.x, top: props.y }}
-      onContextMenu={(event) => event.preventDefault()}
-      onKeyDown={(event) => {
-        const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
-        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-          event.preventDefault();
-          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
-          buttons[next]?.focus();
-        }
-        if (event.key === 'Escape' || event.key === 'Tab') {
-          event.preventDefault();
-          props.onClose();
-        }
-      }}
-    >
+    <MenuSurface onClose={props.onClose} ref={ref} className="project-git-context-menu" role="menu" aria-label={props.title} style={{ left: props.x, top: props.y }} onContextMenu={(event) => event.preventDefault()}>
       <strong>{props.title}</strong>
       {props.items.map((item, index) => (
         <button
@@ -75,7 +35,7 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
           {item.label}
         </button>
       ))}
-    </div>,
+    </MenuSurface>,
     document.querySelector('.macos-ai-app') ?? document.body,
   );
 }

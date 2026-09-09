@@ -156,12 +156,12 @@
     inline-size: 18px;
     block-size: 18px;
   }
-  .settings-sidebar-nav .settings-section-button:hover {
+  .settings-sidebar-nav .settings-section-button:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--zeus-source-list-hover);
   }
   .settings-sidebar-nav .settings-section-button[aria-selected='true'] {
     background: var(--zeus-product-selected);
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     font-weight: 600;
   }
 
@@ -294,7 +294,7 @@
       background-color 120ms,
       border-color 120ms;
   }
-  .settings-content-column :where(button):hover:not(:disabled) {
+  .settings-content-column :where(button):hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--zeus-control-bg-hover);
   }
   .settings-content-column :where(button):disabled {
@@ -306,7 +306,7 @@
     border-color: var(--zeus-product-accent);
     color: white;
   }
-  .settings-content-column [data-button-variant='primary']:hover:not(:disabled) {
+  .settings-content-column [data-button-variant='primary']:hover:not(:disabled):not([aria-disabled='true']) {
     background: color-mix(in srgb, var(--zeus-product-accent) 88%, black);
   }
   .settings-content-column [data-button-variant='danger'],
@@ -361,7 +361,7 @@
     align-items: center;
   }
   .settings-content-column button[aria-pressed='true'] {
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     border-color: var(--zeus-product-accent);
     background: var(--zeus-product-selected);
   }
@@ -676,23 +676,26 @@
     padding-block-start: 18px;
     border-block-start: 1px solid var(--zeus-product-line-soft);
   }
+  /* 批量展开保持独立快捷入口，标题和说明共用左侧空间。 */
   .model-definition-section > header {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 12px;
   }
   .model-definition-section > header > span:first-child {
     display: grid;
     gap: 5px;
   }
-  /* 搜索和手工添加同排，输入区随可用宽度等分。 */
-  .model-list-toolbar {
+  /* 搜索和手工添加等分可用宽度，窄窗口沿用公共工具栏换行。 */
+  .model-definition-toolbar {
     display: flex;
     align-items: center;
     gap: 12px;
     min-inline-size: 0;
   }
-  .model-list-toolbar > * {
-    flex: 1 1 0;
+  .model-definition-toolbar > * {
+    flex: 1 1 240px;
     min-inline-size: 0;
     margin: 0;
   }
@@ -731,31 +734,34 @@
     border: 0;
   }
   /* 名称整块可以展开，复选框和移除按钮各自保持独立语义。 */
-  .model-definition-header > .model-definition-toggle {
+  .model-definition-header > .model-definition-identity {
     display: flex;
     flex: 1 1 auto;
     justify-content: space-between;
     min-inline-size: 0;
+    min-block-size: 0;
     padding: 0;
     border: 0;
     background: transparent;
     text-align: start;
     white-space: normal;
   }
-  .model-definition-toggle > span {
+  .model-definition-identity > span {
     display: grid;
     gap: 3px;
     min-inline-size: 0;
   }
-  .model-definition-toggle strong {
+  /* 标题反馈只由整行绘制，避免设置页通用按钮状态重复铺色。 */
+  .model-definition-identity:is(:hover, :active):not(:disabled):not([aria-disabled='true']) {
+    background: transparent;
+  }
+  .model-definition-identity strong {
     overflow-wrap: anywhere;
+    white-space: normal;
     font-size: 13px;
   }
-  .model-definition-toggle small {
+  .model-definition-identity small {
     font-size: 11px;
-  }
-  .model-definition-toggle[aria-expanded='true'] > svg {
-    transform: rotate(180deg);
   }
   .model-definition-header .model-definition-remove {
     min-inline-size: 28px;
@@ -1212,12 +1218,14 @@
     .memory-settings-header {
       flex-wrap: wrap;
     }
-    .model-list-toolbar {
+    .model-definition-toolbar {
       flex-direction: column;
       align-items: stretch;
     }
-    .model-list-toolbar > * {
+    .model-definition-toolbar > * {
       flex-basis: auto;
+      /* 列布局不继承横排搜索框的零宽度，搜索与添加均铺满可用空间。 */
+      inline-size: 100%;
     }
     .model-route-controls,
     .memory-editor,
@@ -1354,7 +1362,7 @@
   }
   .task-field-tab[aria-current='page'] {
     background: var(--zeus-product-accent-soft);
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     font-weight: 600;
   }
   .task-field-detail {

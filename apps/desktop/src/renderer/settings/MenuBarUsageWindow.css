@@ -1,3 +1,5 @@
+@import '../ui/brand.css';
+
 :root:has(.menu-bar-usage-root),
 body:has(.menu-bar-usage-root),
 #root:has(.menu-bar-usage-root) {
@@ -18,8 +20,8 @@ body:has(.menu-bar-usage-root),
   --usage-faint: #9699a2;
   --usage-line: rgb(20 22 28 / 9%);
   --usage-edge: rgb(20 22 28 / 14%);
-  --usage-accent: #4d61d8;
-  --usage-accent-soft: #eef0ff;
+  --usage-accent: var(--zeus-brand-primary);
+  --usage-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 10%, white);
   --usage-danger: #b64949;
   box-sizing: border-box;
   inline-size: 100%;
@@ -43,8 +45,8 @@ body:has(.menu-bar-usage-root),
   --usage-faint: #858690;
   --usage-line: rgb(255 255 255 / 10%);
   --usage-edge: rgb(255 255 255 / 15%);
-  --usage-accent: #8996ff;
-  --usage-accent-soft: rgb(98 112 235 / 18%);
+  --usage-accent: var(--zeus-brand-primary);
+  --usage-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 18%, transparent);
   --usage-danger: #ff9393;
   color-scheme: dark;
 }
@@ -59,8 +61,8 @@ body:has(.menu-bar-usage-root),
     --usage-faint: #858690;
     --usage-line: rgb(255 255 255 / 10%);
     --usage-edge: rgb(255 255 255 / 15%);
-    --usage-accent: #8996ff;
-    --usage-accent-soft: rgb(98 112 235 / 18%);
+    --usage-accent: var(--zeus-brand-primary);
+    --usage-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 18%, transparent);
     --usage-danger: #ff9393;
     color-scheme: dark;
   }
@@ -128,7 +130,7 @@ body:has(.menu-bar-usage-root),
   border: 1px solid color-mix(in srgb, var(--usage-accent) 25%, transparent);
   border-radius: var(--usage-radius-control, 8px);
   background: var(--usage-accent-soft);
-  color: var(--usage-accent);
+  color: var(--zeus-brand-text);
   font-size: 16px;
   font-weight: 800;
   font-style: italic;
@@ -186,7 +188,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-tabs button[aria-selected='true'] {
   background: var(--usage-accent-soft);
-  color: var(--usage-accent);
+  color: var(--zeus-brand-text);
 }
 
 .menu-bar-usage-notice {
@@ -313,8 +315,9 @@ body:has(.menu-bar-usage-root),
   border-block-start: 1px solid var(--usage-line);
 }
 
-.menu-bar-usage-provider-list > button:hover {
-  background: var(--usage-panel-strong);
+/* 独立用量窗口也使用强调色悬停，避免白块跳变。 */
+.menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--usage-accent) 8%, transparent);
 }
 
 .menu-bar-usage-provider-symbol {
@@ -324,7 +327,7 @@ body:has(.menu-bar-usage-root),
   place-items: center;
   border-radius: var(--usage-radius-control, 8px);
   background: var(--usage-accent-soft);
-  color: var(--usage-accent);
+  color: var(--zeus-brand-text);
   font-size: 12px;
   font-weight: 750;
 }
@@ -655,7 +658,7 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel-strong);
 }
 
-.menu-bar-usage-actions button:hover:not(:disabled) {
+.menu-bar-usage-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   filter: brightness(0.96);
 }
 
@@ -713,18 +716,18 @@ body:has(.menu-bar-usage-root),
   --usage-faint: #6b7280;
   --usage-line: rgb(148 163 184 / 28%);
   --usage-edge: rgb(148 163 184 / 42%);
-  --usage-accent: #2866f7;
-  --usage-accent-strong: #1f59ed;
-  --usage-accent-secondary: #8b6dff;
+  --usage-accent: var(--zeus-brand-primary);
+  --usage-accent-strong: var(--zeus-brand-text);
+  --usage-accent-secondary: var(--zeus-brand-highlight);
   --usage-accent-highlight: #daa3fa;
-  --usage-accent-soft: rgb(40 102 247 / 13%);
-  --usage-accent-border: rgb(40 102 247 / 34%);
+  --usage-accent-soft: color-mix(in srgb, var(--usage-accent) 13%, transparent);
+  --usage-accent-border: color-mix(in srgb, var(--usage-accent) 34%, transparent);
   --usage-radius-control: 8px;
   --usage-radius-card: 12px;
   --usage-radius-surface: 18px;
   --usage-radius-pill: 999px;
   --usage-radius-tab: 8px;
-  --usage-progress-track: rgb(40 102 247 / 10%);
+  --usage-progress-track: color-mix(in srgb, var(--usage-accent) 10%, transparent);
   --usage-warning: #a25c00;
   --usage-warning-soft: rgb(217 119 6 / 11%);
   --usage-danger: #b4232d;
@@ -732,7 +735,9 @@ body:has(.menu-bar-usage-root),
   --usage-ok: #16804b;
   --usage-shadow: 0 20px 48px -28px rgb(31 41 55 / 38%);
   --usage-shadow-soft: 0 12px 30px -24px rgb(31 41 55 / 30%);
-  background: radial-gradient(circle at 88% -20%, rgb(139 109 255 / 16%), transparent 36%), radial-gradient(circle at 10% 110%, rgb(40 102 247 / 10%), transparent 40%), var(--usage-bg);
+  background:
+    radial-gradient(circle at 88% -20%, color-mix(in srgb, var(--usage-accent-secondary) 16%, transparent), transparent 36%), radial-gradient(circle at 10% 110%, color-mix(in srgb, var(--usage-accent) 10%, transparent), transparent 40%),
+    var(--usage-bg);
 }
 
 .menu-bar-usage-root[data-appearance='dark'] {
@@ -745,9 +750,9 @@ body:has(.menu-bar-usage-root),
   --usage-faint: #94a3b8;
   --usage-line: rgb(148 163 184 / 25%);
   --usage-edge: rgb(148 163 184 / 38%);
-  --usage-accent-soft: rgb(40 102 247 / 22%);
-  --usage-accent-border: rgb(123 160 255 / 46%);
-  --usage-progress-track: rgb(40 102 247 / 16%);
+  --usage-accent-soft: color-mix(in srgb, var(--usage-accent) 22%, transparent);
+  --usage-accent-border: color-mix(in srgb, var(--usage-accent-secondary) 46%, transparent);
+  --usage-progress-track: color-mix(in srgb, var(--usage-accent) 16%, transparent);
   --usage-warning: #f5b14c;
   --usage-warning-soft: rgb(245 158 11 / 16%);
   --usage-danger: #ff8c88;
@@ -756,7 +761,9 @@ body:has(.menu-bar-usage-root),
   --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
   --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
   color-scheme: dark;
-  background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%), var(--usage-bg);
+  background:
+    radial-gradient(circle at 86% -18%, color-mix(in srgb, var(--usage-accent-secondary) 22%, transparent), transparent 36%), radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--usage-accent) 18%, transparent), transparent 40%),
+    var(--usage-bg);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -770,9 +777,9 @@ body:has(.menu-bar-usage-root),
     --usage-faint: #94a3b8;
     --usage-line: rgb(148 163 184 / 25%);
     --usage-edge: rgb(148 163 184 / 38%);
-    --usage-accent-soft: rgb(40 102 247 / 22%);
-    --usage-accent-border: rgb(123 160 255 / 46%);
-    --usage-progress-track: rgb(40 102 247 / 16%);
+    --usage-accent-soft: color-mix(in srgb, var(--usage-accent) 22%, transparent);
+    --usage-accent-border: color-mix(in srgb, var(--usage-accent-secondary) 46%, transparent);
+    --usage-progress-track: color-mix(in srgb, var(--usage-accent) 16%, transparent);
     --usage-warning: #f5b14c;
     --usage-warning-soft: rgb(245 158 11 / 16%);
     --usage-danger: #ff8c88;
@@ -781,7 +788,9 @@ body:has(.menu-bar-usage-root),
     --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
     --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
     color-scheme: dark;
-    background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 22%), transparent 36%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 18%), transparent 40%), var(--usage-bg);
+    background:
+      radial-gradient(circle at 86% -18%, color-mix(in srgb, var(--usage-accent-secondary) 22%, transparent), transparent 36%), radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--usage-accent) 18%, transparent), transparent 40%),
+      var(--usage-bg);
   }
 }
 
@@ -822,8 +831,8 @@ body:has(.menu-bar-usage-root),
   background: linear-gradient(145deg, rgb(255 255 255 / 94%), var(--usage-accent-soft));
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 68%),
-    0 8px 18px -15px rgb(40 102 247 / 70%);
-  color: var(--usage-accent);
+    0 8px 18px -15px color-mix(in srgb, var(--usage-accent) 70%, transparent);
+  color: var(--zeus-brand-text);
 }
 
 .menu-bar-usage-freshness i {
@@ -844,7 +853,7 @@ body:has(.menu-bar-usage-root),
     color 140ms ease;
 }
 
-.menu-bar-usage-tabs button:hover,
+.menu-bar-usage-tabs button:hover:not(:disabled):not([aria-disabled='true']),
 .menu-bar-usage-tabs button:focus-visible {
   border-color: var(--usage-accent-border);
   background: var(--usage-accent-soft);
@@ -895,7 +904,7 @@ body:has(.menu-bar-usage-root),
     box-shadow 140ms ease;
 }
 
-.menu-bar-usage-provider-list > button:hover,
+.menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']),
 .menu-bar-usage-provider-list > button:focus-visible {
   background: var(--usage-accent-soft);
   box-shadow: inset 3px 0 0 var(--usage-accent);
@@ -913,7 +922,7 @@ body:has(.menu-bar-usage-root),
   background: linear-gradient(135deg, color-mix(in srgb, var(--usage-accent-soft) 92%, white), var(--usage-panel-strong) 68%, color-mix(in srgb, var(--usage-accent-secondary) 10%, var(--usage-panel-strong)));
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 45%),
-    0 14px 28px -24px rgb(40 102 247 / 68%);
+    0 14px 28px -24px color-mix(in srgb, var(--usage-accent) 68%, transparent);
 }
 
 .menu-bar-usage-quota-summary {
@@ -927,8 +936,8 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-progress i {
-  background: linear-gradient(90deg, #7ba0ff, var(--usage-accent), var(--usage-accent-secondary));
-  box-shadow: 0 0 8px -2px rgb(40 102 247 / 70%);
+  background: linear-gradient(90deg, var(--zeus-brand-highlight), var(--usage-accent), var(--usage-accent-secondary));
+  box-shadow: 0 0 8px -2px color-mix(in srgb, var(--usage-accent) 70%, transparent);
 }
 
 .menu-bar-usage-metrics {
@@ -945,7 +954,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-bar-slot i {
   background: linear-gradient(180deg, var(--usage-accent-secondary), var(--usage-accent));
-  box-shadow: 0 4px 8px -6px rgb(40 102 247 / 90%);
+  box-shadow: 0 4px 8px -6px color-mix(in srgb, var(--usage-accent) 90%, transparent);
 }
 
 .menu-bar-usage-bars-plot > span[data-state='zero'] .menu-bar-usage-bar-slot i {
@@ -986,14 +995,14 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel-strong);
 }
 
-.menu-bar-usage-actions button:hover:not(:disabled) {
+.menu-bar-usage-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--usage-accent-border);
   background: var(--usage-accent-soft);
   color: var(--usage-text);
   filter: none;
 }
 
-.menu-bar-usage-actions .menu-bar-usage-primary-action:hover:not(:disabled) {
+.menu-bar-usage-actions .menu-bar-usage-primary-action:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--usage-accent-strong);
   background: var(--usage-accent-strong);
   color: #fff;
@@ -1001,7 +1010,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-root button:focus-visible {
   border-color: color-mix(in srgb, var(--usage-accent) 52%, transparent);
-  box-shadow: 0 0 0 3px rgb(40 102 247 / 18%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--usage-accent) 18%, transparent);
   outline: 0;
 }
 
@@ -1061,7 +1070,7 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-muted);
 }
 
-.menu-bar-usage-actions button:not(.menu-bar-usage-primary-action):hover:not(:disabled) {
+.menu-bar-usage-actions button:not(.menu-bar-usage-primary-action):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--usage-accent-soft);
   color: var(--usage-text);
 }
@@ -1091,5 +1100,27 @@ body:has(.menu-bar-usage-root),
     --usage-panel-inset: rgb(0 0 0 / 10%);
     --usage-line: rgb(255 255 255 / 12%);
     --usage-edge: rgb(255 255 255 / 18%);
+  }
+}
+
+/* 独立菜单栏窗口的按下、禁用与减少动态效果也遵循同一反馈层级。 */
+.menu-bar-usage-root button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--usage-accent) 16%, transparent);
+}
+.menu-bar-usage-actions .menu-bar-usage-primary-action:active:not(:disabled) {
+  background: color-mix(in srgb, var(--usage-accent) 80%, black);
+  color: white;
+}
+.menu-bar-usage-root button:disabled {
+  cursor: not-allowed;
+}
+.menu-bar-usage-root button[aria-busy='true'] {
+  cursor: progress;
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-bar-usage-root *,
+  .menu-bar-usage-root *::before,
+  .menu-bar-usage-root *::after {
+    transition: none !important;
   }
 }

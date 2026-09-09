@@ -1,3 +1,7 @@
+import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { MenuSurface } from '../ui/MenuSurface.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { Collapsible } from '../ui/Collapsible.js';
 import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FloppyDiskIcon as FloppyDisk } from '@phosphor-icons/react/dist/csr/FloppyDisk';
@@ -66,6 +70,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
+  /** 窄布局遮罩退出完成后再移除，关闭立即停止命中。 */
+  const treeBackdrop = useMotionPresence<HTMLButtonElement>(treeDrawerOpen);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ProjectSourceEntry[]>([]);
   const [searchTruncated, setSearchTruncated] = useState(false);
@@ -364,12 +370,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     return () => window.clearTimeout(timer);
   }, [activePath, expandedDirectories, loadingTree, props.onPreferenceChange, tabs, treeWidth]);
 
-  useEffect(() => {
-    const close = () => setContextMenu(null);
-    window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
-  }, []);
-
   async function toggleDirectory(path: string): Promise<void> {
     if (expandedDirectories.has(path)) {
       setExpandedDirectories((current) => {
@@ -506,16 +506,22 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     }
   }
 
+  /** 记录本次拖拽起点；指针捕获保证离开分隔条后仍能平顺拖动。 */
+  const treeResize = useRef<{ x: number; width: number } | null>(null);
+  /** 只有主鼠标键开始调宽，右键保持菜单行为。 */
   function startTreeResize(event: ReactPointerEvent<HTMLDivElement>): void {
-    const startX = event.clientX;
-    const startWidth = treeWidth;
-    const onMove = (moveEvent: PointerEvent) => setTreeWidth(clampTreeWidth(startWidth + moveEvent.clientX - startX));
-    const onEnd = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onEnd);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onEnd);
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.focus();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.dataset.dragging = 'true';
+    treeResize.current = { x: event.clientX, width: treeWidth };
+  }
+  /** 松开、取消或失去捕获均结束同一次拖拽，不留下全局监听。 */
+  function finishTreeResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    treeResize.current = null;
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   const breadcrumbs = activePath?.split('/') ?? [];
@@ -606,7 +612,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           aria-valuemin={200}
           aria-valuemax={420}
           aria-valuenow={treeWidth}
+          tabIndex={0}
+          onDoubleClick={() => setTreeWidth(260)}
           onPointerDown={startTreeResize}
+          onPointerMove={(event) => {
+            if (treeResize.current && event.currentTarget.hasPointerCapture(event.pointerId)) setTreeWidth(clampTreeWidth(treeResize.current.width + event.clientX - treeResize.current.x));
+          }}
+          onPointerUp={finishTreeResize}
+          onPointerCancel={finishTreeResize}
+          onLostPointerCapture={finishTreeResize}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            setTreeWidth(event.key === 'Home' ? 260 : clampTreeWidth(treeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8)));
+          }}
         />
 
         <main className="project-source-editor-pane">
@@ -686,129 +705,154 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         </main>
       </div>
 
-      {treeDrawerOpen ? <button type="button" className="project-source-tree-backdrop" aria-label={zh ? '关闭代码目录' : 'Close source tree'} onClick={() => setTreeDrawerOpen(false)} /> : null}
-
-      {contextMenu ? (
-        <div className="project-source-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          {contextMenu.entry.kind === 'directory' ? (
-            <>
-              <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
-                {zh ? '新建文件' : 'New file'}
-              </button>
-              <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
-                {zh ? '新建目录' : 'New folder'}
-              </button>
-            </>
-          ) : null}
-          <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
-            {zh ? '重命名' : 'Rename'}
-          </button>
-          <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
-            {zh ? '移动…' : 'Move…'}
-          </button>
-          <button role="menuitem" type="button" onClick={() => void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath })}>
-            {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
-          </button>
-          <button role="menuitem" type="button" className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
-            {zh ? '移入废纸篓…' : 'Move to Trash…'}
-          </button>
-        </div>
+      {treeBackdrop.present ? (
+        <button
+          ref={treeBackdrop.ref}
+          data-motion-state={treeDrawerOpen ? 'open' : 'closing'}
+          inert={!treeDrawerOpen}
+          aria-hidden={!treeDrawerOpen}
+          type="button"
+          className="project-source-tree-backdrop"
+          data-zeus-primitive="backdrop"
+          aria-label={zh ? '关闭代码目录' : 'Close source tree'}
+          onClick={() => setTreeDrawerOpen(false)}
+        />
       ) : null}
 
-      {operation ? (
-        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)}>
-          <form
-            className="project-source-operation-modal zeus-solid-form-surface"
-            role="dialog"
-            aria-modal="true"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitOperation();
-            }}
-          >
-            <header>
-              <strong>{operationTitle(operation, zh)}</strong>
-              <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
-                ×
-              </button>
-            </header>
-            <div>
-              {operation.kind === 'delete' ? (
-                <p>{zh ? `“${operation.entry.relativePath}”将移入 macOS 废纸篓，可在 Finder 中恢复。` : `“${operation.entry.relativePath}” will be moved to macOS Trash and can be restored in Finder.`}</p>
-              ) : (
-                <>
-                  {(operation.kind === 'move' || operation.kind === 'create-file' || operation.kind === 'create-directory' || operation.kind === 'save-as') && (
+      <MotionPresence>
+        {contextMenu ? (
+          <MenuSurface onClose={() => setContextMenu(null)} className="project-source-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+            {contextMenu.entry.kind === 'directory' ? (
+              <>
+                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
+                  {zh ? '新建文件' : 'New file'}
+                </button>
+                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
+                  {zh ? '新建目录' : 'New folder'}
+                </button>
+              </>
+            ) : null}
+            <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
+              {zh ? '重命名' : 'Rename'}
+            </button>
+            <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
+              {zh ? '移动…' : 'Move…'}
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
+                setContextMenu(null);
+              }}
+            >
+              {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+            </button>
+            <button role="menuitem" type="button" className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+              {zh ? '移入废纸篓…' : 'Move to Trash…'}
+            </button>
+          </MenuSurface>
+        ) : null}
+      </MotionPresence>
+
+      <MotionPresence>
+        {operation ? (
+          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)}>
+            <form
+              className="project-source-operation-modal zeus-solid-form-surface"
+              role="dialog"
+              aria-modal="true"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitOperation();
+              }}
+            >
+              <header>
+                <strong>{operationTitle(operation, zh)}</strong>
+                <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
+                  ×
+                </button>
+              </header>
+              <div>
+                {operation.kind === 'delete' ? (
+                  <p>{zh ? `“${operation.entry.relativePath}”将移入 macOS 废纸篓，可在 Finder 中恢复。` : `“${operation.entry.relativePath}” will be moved to macOS Trash and can be restored in Finder.`}</p>
+                ) : (
+                  <>
+                    {(operation.kind === 'move' || operation.kind === 'create-file' || operation.kind === 'create-directory' || operation.kind === 'save-as') && (
+                      <label>
+                        <span>{zh ? '目标目录（项目相对路径）' : 'Target directory (project-relative)'}</span>
+                        <input value={operationParent} onChange={(event) => setOperationParent(event.currentTarget.value)} placeholder="src/renderer" />
+                      </label>
+                    )}
                     <label>
-                      <span>{zh ? '目标目录（项目相对路径）' : 'Target directory (project-relative)'}</span>
-                      <input value={operationParent} onChange={(event) => setOperationParent(event.currentTarget.value)} placeholder="src/renderer" />
+                      <span>{zh ? '名称' : 'Name'}</span>
+                      <input value={operationName} onChange={(event) => setOperationName(event.currentTarget.value)} autoFocus />
                     </label>
-                  )}
-                  <label>
-                    <span>{zh ? '名称' : 'Name'}</span>
-                    <input value={operationName} onChange={(event) => setOperationName(event.currentTarget.value)} autoFocus />
-                  </label>
-                </>
-              )}
-            </div>
-            <footer>
-              <Button type="button" variant="secondary" onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button type="submit" variant={operation.kind === 'delete' ? 'danger' : 'primary'} busy={Boolean(busyPath)} disabled={operation.kind !== 'delete' && !operationName.trim()}>
-                {operation.kind === 'delete' ? (zh ? '移入废纸篓' : 'Move to Trash') : zh ? '确认' : 'Confirm'}
-              </Button>
-            </footer>
-          </form>
-        </ModalPortal>
-      ) : null}
+                  </>
+                )}
+              </div>
+              <footer>
+                <Button type="button" variant="secondary" onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button type="submit" variant={operation.kind === 'delete' ? 'danger' : 'primary'} busy={Boolean(busyPath)} disabled={operation.kind !== 'delete' && !operationName.trim()}>
+                  {operation.kind === 'delete' ? (zh ? '移入废纸篓' : 'Move to Trash') : zh ? '确认' : 'Confirm'}
+                </Button>
+              </footer>
+            </form>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
 
-      {pendingClosePath ? (
-        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setPendingClosePath(null)} dismissDisabled={Boolean(busyPath)}>
-          <section className="project-source-operation-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-source-close-title">
-            <header>
-              <strong id="project-source-close-title">{zh ? '文件尚未保存' : 'File is not saved'}</strong>
-            </header>
-            <div>
-              <p>{zh ? '关闭标签前，可以保存全部文件、放弃此文件草稿，或取消关闭。' : 'Before closing, save all files, discard this draft, or cancel.'}</p>
-            </div>
-            <footer>
-              <Button type="button" variant="secondary" onClick={() => setPendingClosePath(null)}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={() => {
-                  const path = pendingClosePath;
-                  setPendingClosePath(null);
-                  removeTab(path);
-                }}
-              >
-                {zh ? '放弃' : 'Discard'}
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                busy={busyPath === 'close-tab'}
-                onClick={() => {
-                  const path = pendingClosePath;
-                  setBusyPath('close-tab');
-                  void saveAll()
-                    .then((saved) => {
-                      if (saved && path) {
-                        setPendingClosePath(null);
-                        removeTab(path);
-                      }
-                    })
-                    .finally(() => setBusyPath(null));
-                }}
-              >
-                {zh ? '保存全部' : 'Save all'}
-              </Button>
-            </footer>
-          </section>
-        </ModalPortal>
-      ) : null}
+      <MotionPresence>
+        {pendingClosePath ? (
+          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setPendingClosePath(null)} dismissDisabled={Boolean(busyPath)}>
+            <section className="project-source-operation-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-source-close-title">
+              <header>
+                <strong id="project-source-close-title">{zh ? '文件尚未保存' : 'File is not saved'}</strong>
+              </header>
+              <div>
+                <p>{zh ? '关闭标签前，可以保存全部文件、放弃此文件草稿，或取消关闭。' : 'Before closing, save all files, discard this draft, or cancel.'}</p>
+              </div>
+              <footer>
+                <Button type="button" variant="secondary" onClick={() => setPendingClosePath(null)}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={() => {
+                    const path = pendingClosePath;
+                    setPendingClosePath(null);
+                    removeTab(path);
+                  }}
+                >
+                  {zh ? '放弃' : 'Discard'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  busy={busyPath === 'close-tab'}
+                  onClick={() => {
+                    const path = pendingClosePath;
+                    setBusyPath('close-tab');
+                    void saveAll()
+                      .then((saved) => {
+                        if (saved && path) {
+                          setPendingClosePath(null);
+                          removeTab(path);
+                        }
+                      })
+                      .finally(() => setBusyPath(null));
+                  }}
+                >
+                  {zh ? '保存全部' : 'Save all'}
+                </Button>
+              </footer>
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </section>
   );
 
@@ -861,7 +905,11 @@ function TreeRows(props: {
           <span>{entry.name}</span>
           {entry.kind === 'symlink' ? <small>↗</small> : null}
         </button>
-        {expanded ? <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} /> : null}
+        {directoryEntry ? (
+          <Collapsible open={expanded}>
+            <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} />
+          </Collapsible>
+        ) : null}
       </div>
     );
   });

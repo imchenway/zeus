@@ -1,7 +1,10 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNativeCloseLayer } from './nativeCloseLayer.js';
+import { usePresenceSurface } from './MotionPresence.js';
+import { useModalFocus } from './useModalFocus.js';
 
+/** 弹窗共用遮罩、焦点和关闭规则。 */
 export interface ModalPortalProps {
   rootClassName?: string;
   backdropClassName?: string;
@@ -10,49 +13,22 @@ export interface ModalPortalProps {
   children: ReactNode;
 }
 
+/** 业务关闭立即生效，退出边界负责保留视觉表面。 */
 export function ModalPortal(props: ModalPortalProps) {
+  /** 门户根节点同时用于焦点隔离和退出等待。 */
   const rootRef = useRef<HTMLDivElement>(null);
+  /** 关闭中的弹窗不再接受任何新的操作。 */
+  const open = usePresenceSurface(rootRef);
+  /** 只有在同一遮罩上按下并松开才关闭，避免内容拖选误触。 */
+  const backdropPointer = useRef<number | null>(null);
 
-  useNativeCloseLayer(true, () => {
+  useNativeCloseLayer(open, () => {
     if (!props.dismissDisabled) props.onDismiss?.();
   });
 
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || typeof document === 'undefined') return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const backgroundElements = [...document.body.children].filter((element): element is HTMLElement => element instanceof HTMLElement && element !== root);
-    const backgroundState = backgroundElements.map((element) => ({ element, ariaHidden: element.getAttribute('aria-hidden'), inert: element.inert }));
-    for (const element of backgroundElements) {
-      element.setAttribute('aria-hidden', 'true');
-      element.inert = true;
-    }
+  useModalFocus(rootRef, open);
 
-    // 原生折叠入口参与焦点循环，收起区域中的控件由可见性过滤排除。
-    const focusableElements = () =>
-      [...root.querySelectorAll<HTMLElement>('button:not([disabled]), summary, a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
-        (element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true',
-      );
-    const focusFirst = () => (root.querySelector<HTMLElement>('[autofocus]') ?? focusableElements()[0] ?? root).focus();
-    const animationFrame = window.requestAnimationFrame(focusFirst);
-    const containProgrammaticFocus = (event: FocusEvent) => {
-      if (event.target instanceof Node && root.contains(event.target)) return;
-      focusFirst();
-    };
-    document.addEventListener('focusin', containProgrammaticFocus);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      document.removeEventListener('focusin', containProgrammaticFocus);
-      for (const { element, ariaHidden, inert } of backgroundState) {
-        if (ariaHidden === null) element.removeAttribute('aria-hidden');
-        else element.setAttribute('aria-hidden', ariaHidden);
-        element.inert = inert;
-      }
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    };
-  }, []);
-
+  /** Esc 关闭最上层，Tab 只在可见且可操作的控件间移动。 */
   function containKeyboardFocus(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === 'Escape' && !event.defaultPrevented) {
       event.preventDefault();
@@ -60,36 +36,33 @@ export function ModalPortal(props: ModalPortalProps) {
       if (!props.dismissDisabled) props.onDismiss?.();
       return;
     }
-    if (event.key !== 'Tab') return;
-    const root = rootRef.current;
-    if (!root) return;
-    const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), summary, a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
-      (element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true',
-    );
-    if (focusable.length === 0) {
-      event.preventDefault();
-      root.focus();
-      return;
-    }
-    const first = focusable[0]!;
-    const last = focusable.at(-1)!;
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
   }
 
+  /** 遮罩与内容共同退出，隐藏期间不拦截背景操作。 */
   const modalSurface = (
-    <div ref={rootRef} className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')} data-zeus-primitive="modal" tabIndex={-1} onKeyDown={containKeyboardFocus}>
+    <div
+      ref={rootRef}
+      className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')}
+      data-zeus-primitive="modal"
+      data-motion-state={open ? 'open' : 'closing'}
+      inert={!open}
+      aria-hidden={!open || undefined}
+      tabIndex={-1}
+      onKeyDown={containKeyboardFocus}
+    >
       <div
         className={['zeus-modal-backdrop', props.backdropClassName].filter(Boolean).join(' ')}
         data-motion-surface="backdrop"
         onPointerDown={(event) => {
-          if (event.currentTarget !== event.target || props.dismissDisabled) return;
-          props.onDismiss?.();
+          backdropPointer.current = event.button === 0 && event.currentTarget === event.target ? event.pointerId : null;
+        }}
+        onPointerCancel={() => {
+          backdropPointer.current = null;
+        }}
+        onPointerUp={(event) => {
+          const shouldDismiss = backdropPointer.current === event.pointerId && event.currentTarget === event.target;
+          backdropPointer.current = null;
+          if (shouldDismiss && open && !props.dismissDisabled) props.onDismiss?.();
         }}
       >
         {props.children}

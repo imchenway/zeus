@@ -1,3 +1,4 @@
+import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEventHandler, type KeyboardEvent, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
@@ -376,37 +377,43 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           props.onBlur?.(value);
         }}
       />
-      {trigger && !props.disabled ? (
-        <div className="structured-composer-menu" id={listboxId} role="listbox" aria-label={trigger.kind === '@' ? (zh ? '选择数字员工' : 'Select digital employees') : zh ? '选择命令' : 'Select command'}>
-          {options.map((option, index) => (
-            <div
-              id={`${listboxId}-${safeDomId(option.id)}`}
-              key={option.id}
-              role="option"
-              aria-selected={index === activeOption}
-              aria-disabled={option.disabled || undefined}
-              className="structured-composer-option"
-              data-active={index === activeOption ? 'true' : 'false'}
-              data-disabled={option.disabled ? 'true' : 'false'}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                choose(option);
-              }}
-            >
-              <span className="structured-composer-option-group">{option.group}</span>
-              <strong>{option.label}</strong>
-              <small>{option.disabledReason || option.detail}</small>
-            </div>
-          ))}
-          {options.length === 0 ? (
-            <p className="structured-composer-empty" role="status">
-              {trigger.kind === '@'
-                ? employeeError || (loadingEmployees ? (zh ? '正在加载数字员工…' : 'Loading digital employees…') : zh ? '没有匹配的数字员工' : 'No matching digital employees')
-                : catalogError || (zh ? '没有匹配的命令或扩展' : 'No matching commands or extensions')}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      <MotionPresence>
+        {trigger && !props.disabled ? (
+          <PopoverSurface className="structured-composer-menu" id={listboxId} role="listbox" aria-label={trigger.kind === '@' ? (zh ? '选择数字员工' : 'Select digital employees') : zh ? '选择命令' : 'Select command'}>
+            {options.map((option, index) => (
+              <div
+                id={`${listboxId}-${safeDomId(option.id)}`}
+                key={option.id}
+                role="option"
+                aria-selected={index === activeOption}
+                aria-disabled={option.disabled || undefined}
+                className="structured-composer-option"
+                data-active={index === activeOption ? 'true' : 'false'}
+                data-disabled={option.disabled ? 'true' : 'false'}
+                onPointerMove={() => {
+                  if (!option.disabled) setActiveOption(index);
+                }}
+                onMouseDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  choose(option);
+                }}
+              >
+                <span className="structured-composer-option-group">{option.group}</span>
+                <strong>{option.label}</strong>
+                <small>{option.disabledReason || option.detail}</small>
+              </div>
+            ))}
+            {options.length === 0 ? (
+              <p className="structured-composer-empty" role="status">
+                {trigger.kind === '@'
+                  ? employeeError || (loadingEmployees ? (zh ? '正在加载数字员工…' : 'Loading digital employees…') : zh ? '没有匹配的数字员工' : 'No matching digital employees')
+                  : catalogError || (zh ? '没有匹配的命令或扩展' : 'No matching commands or extensions')}
+              </p>
+            ) : null}
+          </PopoverSurface>
+        ) : null}
+      </MotionPresence>
     </div>
   );
 }

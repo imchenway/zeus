@@ -10,7 +10,7 @@
   /* 品牌蓝只用于 Telegram 标识。 */
   --im-brand: #229ed9;
   /* 可交互控件沿用应用强调色，兼容深浅主题。 */
-  --im-accent: var(--zeus-control-accent, #2866f7);
+  --im-accent: var(--zeus-control-accent, var(--zeus-brand-primary));
   /* 正常连接使用带文字的绿色状态。 */
   --im-online: #169963;
   display: grid;
@@ -366,16 +366,16 @@
     border-color: transparent;
     color: var(--zeus-danger-text);
   }
-  :is(.im-secondary-action, .im-danger-action):hover:not(:disabled) {
+  :is(.im-secondary-action, .im-danger-action):hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--zeus-control-bg-hover);
     color: var(--zeus-product-text);
   }
-  .im-primary-action:hover:not(:disabled) {
-    background: var(--zeus-control-accent-hover, #1f59ed);
-    border-color: var(--zeus-control-accent-hover, #1f59ed);
+  .im-primary-action:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--zeus-control-accent-hover, var(--zeus-brand-primary));
+    border-color: var(--zeus-control-accent-hover, var(--zeus-brand-primary));
     color: #fff;
   }
-  .im-danger-action:hover:not(:disabled) {
+  .im-danger-action:hover:not(:disabled):not([aria-disabled='true']) {
     color: var(--zeus-danger-text);
   }
   :is(button, input, select):disabled {

@@ -1,5 +1,7 @@
 import { createPortal } from 'react-dom';
 import { PushPinIcon } from '@phosphor-icons/react/dist/csr/PushPin';
+import { useMotionPresence } from './ui/useMotionPresence.js';
+
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
@@ -61,9 +63,10 @@ interface ZeusSelectPopoverLayout {
 
 const tabbableSelector = ['a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])', 'select:not([disabled])', 'textarea:not([disabled])', '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'].join(',');
 
+/** 焦点立即转交，关闭后不留下可回到旧菜单的延迟任务。 */
 function focusElement(element: HTMLElement | undefined): void {
   if (!element || typeof window === 'undefined') return;
-  window.requestAnimationFrame(() => element.focus());
+  element.focus({ preventScroll: true });
 }
 
 /** 本机偏好按字符串数组读取；损坏或不可访问的存储不影响模型选择。 */
@@ -160,7 +163,6 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const fallbackTriggerRef = useRef<HTMLButtonElement | null>(null);
   const triggerRef = props.triggerRef ?? fallbackTriggerRef;
-  const popoverRef = useRef<HTMLSpanElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
   const popoverContentWidthRef = useRef(0);
@@ -170,6 +172,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const searchable = props.searchable ?? props.options.length > 8;
   const selectedOption = props.options.find((option) => option.value === props.value);
   const [open, setOpen] = useState(false);
+  /** 下拉关闭立即结束交互，视觉内容在退出过渡结束后卸载。 */
+  const { ref: popoverRef, present: popoverPresent } = useMotionPresence<HTMLSpanElement>(open);
   const [activeValue, setActiveValue] = useState<T>(props.value);
   const [query, setQuery] = useState('');
   /** 每次打开重新读取，其他模型入口的最新置顶立即可见。 */
@@ -201,9 +205,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const trigger = triggerRef.current;
     if (!trigger || typeof window === 'undefined') return false;
     const tabbableElements = Array.from(trigger.ownerDocument.querySelectorAll<HTMLElement>(tabbableSelector)).filter((element) => {
-      if (popoverRef.current?.contains(element) || element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+      if (popoverRef.current?.contains(element) || element.hidden || element.closest('[inert], [aria-hidden="true"]')) return false;
       const style = window.getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden';
+      return element.checkVisibility() && style.display !== 'none' && style.visibility !== 'hidden' && element.getAttribute('aria-disabled') !== 'true';
     });
     const triggerIndex = tabbableElements.indexOf(trigger);
     const nextElement = triggerIndex >= 0 ? tabbableElements[triggerIndex + direction] : undefined;
@@ -431,12 +435,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   // 只在打开时自动聚焦；方向键移动后不能把焦点抢回搜索框。
   useEffect(() => {
     if (!open || typeof window === 'undefined') return undefined;
-    const animationFrame = window.requestAnimationFrame(() => {
-      focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(activeValue) ?? undefined));
-    });
-    return () => window.cancelAnimationFrame(animationFrame);
+    // 选项已挂载即可聚焦，避免旧帧在关闭后把焦点带回退出中的菜单。
+    focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(activeValue) ?? undefined));
   }, [open, searchable]);
-
   useEffect(() => {
     setActiveValue(props.value);
   }, [props.value]);
@@ -448,8 +449,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   }, [activeValue, enabledVisibleOptions, open, props.value]);
 
   const portalHost = typeof document === 'undefined' ? null : (rootRef.current?.closest('.macos-ai-app') ?? document.body);
-  const popover = open ? (
-    <span className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'} data-zeus-primitive="select-popover" data-control-size={props.size}>
+  const popover = popoverPresent ? (
+    <span className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'} data-zeus-primitive="select-popover" data-control-size={props.size} inert={!open} aria-hidden={!open}>
       <span
         ref={popoverRef}
         id={props.pinning ? `${rootId}-dialog` : undefined}
@@ -459,6 +460,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         data-pinnable={props.pinning ? 'true' : undefined}
         onKeyDown={handlePopoverKeyDown}
         data-motion-surface="popover"
+        data-motion-state={open ? 'open' : 'closing'}
         data-zeus-select-placement={popoverLayout?.placement ?? 'bottom'}
         style={
           popoverLayout

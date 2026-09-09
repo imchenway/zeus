@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
@@ -276,66 +277,68 @@ export function TaskGitConflictWorkspace(props: {
           </p>
         ) : null}
 
-        {aiPermissionOpen ? (
-          <ModalPortal rootClassName="task-git-conflict-ai-permission-portal-root" backdropClassName="task-git-conflict-ai-permission-backdrop" onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}>
-            <section
-              className="task-git-conflict-ai-permission"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="task-git-conflict-ai-permission-title"
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape' || props.aiBusy) return;
-                event.preventDefault();
-                setAiPermissionOpen(false);
-              }}
-            >
-              <span>
-                <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
-                <small id="task-git-conflict-ai-permission-description">
-                  {props.zh ? 'AI 将在新建的命名冲突分支中修改并暂存文件；分支和会话会继续保留。' : 'AI will edit and stage files on a new named conflict branch that remains available to this conversation.'}
-                </small>
-              </span>
-              <fieldset aria-describedby="task-git-conflict-ai-permission-description">
-                <legend>{props.zh ? '权限模式' : 'Permission mode'}</legend>
-                <label className={aiPermissionMode === 'auto' ? 'is-selected' : ''}>
-                  <input type="radio" name="task-conflict-ai-permission" value="auto" checked={aiPermissionMode === 'auto'} onChange={() => setAiPermissionMode('auto')} disabled={props.aiBusy} />
-                  <span>
-                    <strong>{props.zh ? '自动（推荐）' : 'Auto (recommended)'}</strong>
-                    <small>{props.zh ? '只写入本次新建的冲突分支，超出范围的操作仍需确认。' : 'Writes only to the new conflict branch; out-of-scope actions still require approval.'}</small>
-                  </span>
+        <MotionPresence>
+          {aiPermissionOpen ? (
+            <ModalPortal rootClassName="task-git-conflict-ai-permission-portal-root" backdropClassName="task-git-conflict-ai-permission-backdrop" onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}>
+              <section
+                className="task-git-conflict-ai-permission"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="task-git-conflict-ai-permission-title"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || props.aiBusy) return;
+                  event.preventDefault();
+                  setAiPermissionOpen(false);
+                }}
+              >
+                <span>
+                  <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
+                  <small id="task-git-conflict-ai-permission-description">
+                    {props.zh ? 'AI 将在新建的命名冲突分支中修改并暂存文件；分支和会话会继续保留。' : 'AI will edit and stage files on a new named conflict branch that remains available to this conversation.'}
+                  </small>
+                </span>
+                <fieldset aria-describedby="task-git-conflict-ai-permission-description">
+                  <legend>{props.zh ? '权限模式' : 'Permission mode'}</legend>
+                  <label className={aiPermissionMode === 'auto' ? 'is-selected' : ''}>
+                    <input type="radio" name="task-conflict-ai-permission" value="auto" checked={aiPermissionMode === 'auto'} onChange={() => setAiPermissionMode('auto')} disabled={props.aiBusy} />
+                    <span>
+                      <strong>{props.zh ? '自动（推荐）' : 'Auto (recommended)'}</strong>
+                      <small>{props.zh ? '只写入本次新建的冲突分支，超出范围的操作仍需确认。' : 'Writes only to the new conflict branch; out-of-scope actions still require approval.'}</small>
+                    </span>
+                  </label>
+                  <label className={aiPermissionMode === 'full-access' ? 'is-selected' : ''}>
+                    <input type="radio" name="task-conflict-ai-permission" value="full-access" checked={aiPermissionMode === 'full-access'} onChange={() => setAiPermissionMode('full-access')} disabled={props.aiBusy} />
+                    <span>
+                      <strong>{props.zh ? '完全访问' : 'Full access'}</strong>
+                      <small>{props.zh ? '命令不再逐次请求确认，只应在你信任当前仓库时使用。' : 'Commands no longer request approval individually. Use only when you trust this repository.'}</small>
+                    </span>
+                  </label>
+                </fieldset>
+                <label className="task-git-conflict-ai-skill">
+                  <span>{props.zh ? '本次使用的 Skill' : 'Skill for this run'}</span>
+                  <SkillSelector
+                    client={props.skillClient}
+                    projectId={props.projectId}
+                    value={aiSkillId}
+                    onChange={setAiSkillId}
+                    language={props.zh ? 'zh-CN' : 'en-US'}
+                    disabled={props.aiBusy}
+                    ariaLabel={props.zh ? '选择冲突处理 Skill' : 'Choose conflict resolution skill'}
+                  />
+                  <small>{props.zh ? '默认值可在侧边栏的 Skill 管理中配置；这里只影响本次处理。' : 'Configure the default in Skill management. This choice applies only to this run.'}</small>
                 </label>
-                <label className={aiPermissionMode === 'full-access' ? 'is-selected' : ''}>
-                  <input type="radio" name="task-conflict-ai-permission" value="full-access" checked={aiPermissionMode === 'full-access'} onChange={() => setAiPermissionMode('full-access')} disabled={props.aiBusy} />
-                  <span>
-                    <strong>{props.zh ? '完全访问' : 'Full access'}</strong>
-                    <small>{props.zh ? '命令不再逐次请求确认，只应在你信任当前仓库时使用。' : 'Commands no longer request approval individually. Use only when you trust this repository.'}</small>
-                  </span>
-                </label>
-              </fieldset>
-              <label className="task-git-conflict-ai-skill">
-                <span>{props.zh ? '本次使用的 Skill' : 'Skill for this run'}</span>
-                <SkillSelector
-                  client={props.skillClient}
-                  projectId={props.projectId}
-                  value={aiSkillId}
-                  onChange={setAiSkillId}
-                  language={props.zh ? 'zh-CN' : 'en-US'}
-                  disabled={props.aiBusy}
-                  ariaLabel={props.zh ? '选择冲突处理 Skill' : 'Choose conflict resolution skill'}
-                />
-                <small>{props.zh ? '默认值可在侧边栏的 Skill 管理中配置；这里只影响本次处理。' : 'Configure the default in Skill management. This choice applies only to this run.'}</small>
-              </label>
-              <footer>
-                <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
-                  {props.zh ? '取消' : 'Cancel'}
-                </Button>
-                <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
-                  {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
-                </Button>
-              </footer>
-            </section>
-          </ModalPortal>
-        ) : null}
+                <footer>
+                  <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
+                    {props.zh ? '取消' : 'Cancel'}
+                  </Button>
+                  <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
+                    {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
+                  </Button>
+                </footer>
+              </section>
+            </ModalPortal>
+          ) : null}
+        </MotionPresence>
 
         {currentFileResolved ? (
           <p className="task-git-conflict-resolved" role="status">

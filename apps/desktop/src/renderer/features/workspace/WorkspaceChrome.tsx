@@ -1,3 +1,5 @@
+import { MotionPresence } from '../../ui/MotionPresence.js';
+import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -115,39 +117,9 @@ export function ProjectCreateDialog(props: {
   const interactionBusy = props.busy || props.directoryBusy;
   const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
 
-  function handleProjectCreateKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
-    if (event.key === 'Escape' && !interactionBusy) {
-      event.stopPropagation();
-      props.onClose();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')).filter(
-      (element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true',
-    );
-    if (controls.length === 0) return;
-    const firstControl = controls[0];
-    const lastControl = controls.at(-1);
-    if (event.shiftKey && document.activeElement === firstControl) {
-      event.preventDefault();
-      lastControl?.focus();
-    } else if (!event.shiftKey && document.activeElement === lastControl) {
-      event.preventDefault();
-      firstControl?.focus();
-    }
-  }
-
   return (
     <ModalPortal rootClassName="project-create-dialog-portal-root" backdropClassName="project-create-dialog-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
-      <form
-        className="project-create-dialog zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-create-dialog-title"
-        aria-describedby={describedBy}
-        onSubmit={props.onSubmit}
-        onKeyDown={handleProjectCreateKeyDown}
-      >
+      <form className="project-create-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-create-dialog-title" aria-describedby={describedBy} onSubmit={props.onSubmit}>
         <header className="project-create-dialog-header">
           <strong id="project-create-dialog-title">{props.copy.createDialogTitle}</strong>
           <button type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
@@ -376,7 +348,8 @@ export function SidebarNav(props: {
   onConfirmProjectDelete: (projectId: string) => void;
   pendingProjectDeleteId?: string;
 }) {
-  const projectPopoverCloseAnimationMs = 120;
+  /** 只兜底丢失的过渡事件，正常关闭跟随共享退出动效。 */
+  const projectPopoverCloseAnimationMs = 320;
   const projectPopoverAnchorGapPx = 6;
   const [openProjectMenuIds, setOpenProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
@@ -702,6 +675,11 @@ export function SidebarNav(props: {
                   aria-label={`${project.name} ${copy.moreProjectActionsPrefix}`}
                   data-motion-surface="popover"
                   data-motion-state={menuClosing ? 'closing' : 'open'}
+                  inert={menuClosing}
+                  aria-hidden={menuClosing}
+                  onTransitionEnd={(event) => {
+                    if (menuClosing && event.target === event.currentTarget && event.propertyName === 'opacity') closeProjectMoreMenu(project.id);
+                  }}
                   style={{ left: menuPosition.left, top: menuPosition.top }}
                   onKeyDown={(event) => handleProjectMoreMenuKeyDown(event, project.id)}
                 >
@@ -830,8 +808,8 @@ export function SidebarNav(props: {
                     </>
                   }
                 />
-                {expanded ? (
-                  <div className="project-sidebar-conversations animated-project-menu">
+                <Collapsible open={expanded}>
+                  <div className="project-sidebar-conversations">
                     {conversationGroup ? (
                       <ProjectConversationTree
                         groups={[conversationGroup]}
@@ -856,7 +834,7 @@ export function SidebarNav(props: {
                       />
                     ) : null}
                   </div>
-                ) : null}
+                </Collapsible>
               </section>
             );
           })
@@ -870,19 +848,23 @@ export function SidebarNav(props: {
           {copy.settings}
         </button>
       </section>
-      <ProjectRenameDialog
-        project={projectRenameTarget}
-        draft={projectRenameDraft}
-        busy={projectRenameBusy}
-        error={projectRenameError}
-        copy={copy}
-        onDraftChange={(draft) => {
-          setProjectRenameDraft(draft);
-          if (projectRenameError) setProjectRenameError(undefined);
-        }}
-        onClose={closeProjectRenameDialog}
-        onSubmit={(event) => void submitProjectRename(event)}
-      />
+      <MotionPresence>
+        {projectRenameTarget ? (
+          <ProjectRenameDialog
+            project={projectRenameTarget}
+            draft={projectRenameDraft}
+            busy={projectRenameBusy}
+            error={projectRenameError}
+            copy={copy}
+            onDraftChange={(draft) => {
+              setProjectRenameDraft(draft);
+              if (projectRenameError) setProjectRenameError(undefined);
+            }}
+            onClose={closeProjectRenameDialog}
+            onSubmit={(event) => void submitProjectRename(event)}
+          />
+        ) : null}
+      </MotionPresence>
     </aside>
   );
 }

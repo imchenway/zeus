@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { MotionPresence } from './ui/MotionPresence.js';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { CheckIcon as CheckGlyph } from '@phosphor-icons/react/dist/csr/Check';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -745,55 +746,63 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         )}
       </section>
 
-      {editing ? (
-        <CommandDefinitionModal
-          draft={draft}
-          busy={busy}
-          language={props.language}
-          title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
-          onChange={setDraft}
-          onClose={() => setEditing(null)}
-          onSubmit={(event) => void saveDefinition(event)}
-        />
-      ) : null}
+      <MotionPresence>
+        {editing ? (
+          <CommandDefinitionModal
+            draft={draft}
+            busy={busy}
+            language={props.language}
+            title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
+            onChange={setDraft}
+            onClose={() => setEditing(null)}
+            onSubmit={(event) => void saveDefinition(event)}
+          />
+        ) : null}
+      </MotionPresence>
 
-      {permissionRequest && props.project ? (
-        <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
-      ) : null}
+      <MotionPresence>
+        {permissionRequest && props.project ? (
+          <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
+        ) : null}
+      </MotionPresence>
 
-      {runningCommand && props.project ? (
-        <CommandRunModal
-          command={runningCommand}
-          project={props.project}
-          values={runParameters}
-          busy={busy}
-          language={props.language}
-          onValuesChange={setRunParameters}
-          onClose={() => setRunningCommand(null)}
-          onSubmit={(event) => void submitRun(event)}
-        />
-      ) : null}
+      <MotionPresence>
+        {runningCommand && props.project ? (
+          <CommandRunModal
+            command={runningCommand}
+            project={props.project}
+            values={runParameters}
+            busy={busy}
+            language={props.language}
+            onValuesChange={setRunParameters}
+            onClose={() => setRunningCommand(null)}
+            onSubmit={(event) => void submitRun(event)}
+          />
+        ) : null}
+      </MotionPresence>
 
-      {historyCommand && props.project ? (
-        <CommandRunHistoryModal
-          command={historyCommand}
-          project={props.project}
-          runs={historyRuns}
-          activeRunCount={activeHistoryRuns.length}
-          selectedRunId={selectedRunId}
-          runDetail={runDetail}
-          syncState={runSyncState}
-          projectedRunLogContent={projectedRunLogContent}
-          artifactPreviewUrls={artifactPreviewUrls}
-          client={props.client}
-          busy={busy}
-          language={props.language}
-          onClose={closeRunHistory}
-          onSelectRun={selectHistoryRun}
-          onStopRun={(run) => void stopRun(run)}
-          onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
-        />
-      ) : null}
+      <MotionPresence>
+        {historyCommand && props.project ? (
+          <CommandRunHistoryModal
+            command={historyCommand}
+            project={props.project}
+            runs={historyRuns}
+            activeRunCount={activeHistoryRuns.length}
+            selectedRunId={selectedRunId}
+            runDetail={runDetail}
+            syncState={runSyncState}
+            projectedRunLogContent={projectedRunLogContent}
+            artifactPreviewUrls={artifactPreviewUrls}
+            client={props.client}
+            busy={busy}
+            language={props.language}
+            onClose={closeRunHistory}
+            onSelectRun={selectHistoryRun}
+            onStopRun={(run) => void stopRun(run)}
+            onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
@@ -819,12 +828,9 @@ function CommandRunHistoryModal(props: {
   const zh = props.language === 'zh-CN';
   const activeRunSyncState = props.runDetail?.run.status === 'running' ? props.syncState : 'live';
   const stopUnavailable = activeRunSyncState !== 'live';
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape' && !props.busy) props.onClose();
-  };
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <div className="command-modal command-history-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-history-modal-title" onKeyDown={handleKeyDown}>
+      <div className="command-modal command-history-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-history-modal-title">
         <header className="command-modal-header">
           <span>
             <h3 id="command-history-modal-title">{zh ? `${props.command.title} · 执行历史` : `${props.command.title} · Run history`}</h3>
@@ -960,12 +966,9 @@ function CommandDefinitionModal(props: {
       'parameters',
       props.draft.parameters.map((parameter, parameterIndex) => (parameterIndex === index ? { ...parameter, ...patch } : parameter)),
     );
-  const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (event.key === 'Escape' && !props.busy) props.onClose();
-  };
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-definition-modal-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
+      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-definition-modal-title" onSubmit={props.onSubmit}>
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
@@ -1102,19 +1105,9 @@ function CommandDefinitionModal(props: {
 
 function CommandPermissionModal(props: { request: CommandPermissionRequest; project: ProjectRecord; busy: boolean; language: 'zh-CN' | 'en-US'; onClose: () => void; onContinue: () => void }) {
   const zh = props.language === 'zh-CN';
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape' && !props.busy) props.onClose();
-  };
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <div
-        className="command-modal command-permission-modal zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="command-permission-modal-title"
-        aria-describedby="command-permission-modal-description"
-        onKeyDown={handleKeyDown}
-      >
+      <div className="command-modal command-permission-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-permission-modal-title" aria-describedby="command-permission-modal-description">
         <header className="command-modal-header">
           <span>
             <h3 id="command-permission-modal-title">{zh ? '开启项目命令权限' : 'Enable project command permissions'}</h3>
@@ -1172,12 +1165,9 @@ function CommandRunModal(props: {
   const zh = props.language === 'zh-CN';
   const highRisk = commandNeedsHighRiskConfirmation(props.command.riskFlags);
   const riskLabels = commandRiskLabels(props.command.riskFlags, zh);
-  const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (event.key === 'Escape' && !props.busy) props.onClose();
-  };
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-run-modal-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
+      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-run-modal-title" onSubmit={props.onSubmit}>
         <header className="command-modal-header">
           <span>
             <h3 id="command-run-modal-title">{props.command.title}</h3>

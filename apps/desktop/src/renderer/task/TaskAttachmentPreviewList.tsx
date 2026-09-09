@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject, type SyntheticEvent } from 'react';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export type TaskAttachmentPreviewItem = TaskAttachmentView;
 
@@ -48,7 +49,7 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   const previewRequestsRef = useRef<Map<string, symbol>>(new Map());
   const previewLoaderRef = useRef(props.onLoadPreview);
   const mountedRef = useRef(true);
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
+
   const lastPreviewTriggerRef = useRef<HTMLButtonElement | null>(null);
   const previewId = useId();
   const previewTitleId = `${previewId}-task-attachment-zoom-title`;
@@ -67,8 +68,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   previewLoaderRef.current = props.onLoadPreview;
   loadedPreviewUrlsRef.current = loadedPreviewUrls;
   previewFailuresRef.current = previewFailures;
-
-  useNativeCloseLayer(Boolean(previewAttachment), closeAttachmentPreview);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -125,12 +124,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
     for (const path of previewCandidateSignature.split('\0')) requestAttachmentPreview(path);
   }, [previewCandidateSignature, previewLoaderAvailable, requestAttachmentPreview]);
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!previewAttachment || !dialog || dialog.open || typeof dialog.showModal !== 'function') return;
-    dialog.showModal();
-  }, [previewAttachment]);
-
   function markPreviewFailed(path: string, failure: TaskAttachmentPreviewFailure = 'unavailable'): void {
     setPreviewFailures((currentFailures) => {
       const nextFailures = new Map(currentFailures);
@@ -155,27 +148,7 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   }
 
   function closeAttachmentPreview(): void {
-    const dialog = dialogRef.current;
-    if (dialog?.open) {
-      dialog.close();
-      return;
-    }
     setPreviewAttachment(null);
-    lastPreviewTriggerRef.current?.focus();
-  }
-
-  function handleDialogClose(): void {
-    setPreviewAttachment(null);
-    lastPreviewTriggerRef.current?.focus();
-  }
-
-  function handleDialogCancel(event: SyntheticEvent<HTMLDialogElement, Event>): void {
-    event.preventDefault();
-    closeAttachmentPreview();
-  }
-
-  function handleDialogPointerDown(event: ReactMouseEvent<HTMLDialogElement>): void {
-    if (event.currentTarget === event.target) closeAttachmentPreview();
   }
 
   const attachmentsByPath = new Map(props.attachments.map((attachment) => [attachment.path, attachment]));
@@ -222,7 +195,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         }}
       />
       {renderTaskAttachmentPreviewDialog({
-        dialogRef,
         previewTitleId,
         previewDescriptionId,
         previewAttachment,
@@ -231,9 +203,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         previewSrc,
         copy: props.copy,
         closeAttachmentPreview,
-        handleDialogClose,
-        handleDialogCancel,
-        handleDialogPointerDown,
         markPreviewFailed,
         retryAttachmentPreview,
       })}
@@ -244,7 +213,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
 type TaskAttachmentPreviewFailure = 'unavailable' | 'read_failed';
 
 function renderTaskAttachmentPreviewDialog(input: {
-  dialogRef: RefObject<HTMLDialogElement | null>;
   previewTitleId: string;
   previewDescriptionId: string;
   previewAttachment: TaskAttachmentPreviewItem | null;
@@ -253,60 +221,53 @@ function renderTaskAttachmentPreviewDialog(input: {
   previewSrc: string;
   copy: TaskAttachmentPreviewListCopy;
   closeAttachmentPreview: () => void;
-  handleDialogClose: () => void;
-  handleDialogCancel: (event: SyntheticEvent<HTMLDialogElement, Event>) => void;
-  handleDialogPointerDown: (event: ReactMouseEvent<HTMLDialogElement>) => void;
   markPreviewFailed: (path: string, failure?: TaskAttachmentPreviewFailure) => void;
   retryAttachmentPreview: (path: string) => void;
 }) {
   return (
-    <dialog
-      ref={input.dialogRef}
-      className="task-attachment-zoom-dialog"
-      aria-labelledby={input.previewTitleId}
-      aria-describedby={input.previewDescriptionId}
-      onClose={input.handleDialogClose}
-      onCancel={input.handleDialogCancel}
-      onPointerDown={input.handleDialogPointerDown}
-    >
-      <div className="task-attachment-zoom-sheet">
-        <header className="task-attachment-zoom-header">
-          <span>
-            <strong id={input.previewTitleId}>{input.previewAttachment?.name ?? input.copy.openPreviewLabel}</strong>
-            <small id={input.previewDescriptionId}>{input.previewAttachment?.path ?? input.copy.localPathLabel}</small>
-          </span>
-          <button type="button" className="task-attachment-zoom-close" onClick={input.closeAttachmentPreview} aria-label={input.copy.closePreviewLabel}>
-            ×
-          </button>
-        </header>
-        <div className="task-attachment-zoom-stage">
-          {input.previewAttachment && !input.previewFailure && input.previewSrc ? (
-            <img className="task-attachment-zoom-image" src={input.previewSrc} alt={input.previewAttachment.name} onError={() => input.markPreviewFailed(input.previewAttachment!.path)} />
-          ) : input.previewAttachment && input.previewLoading ? (
-            <p className="task-attachment-zoom-state" role="status" aria-live="polite">
-              <span className="task-attachment-preview-spinner" aria-hidden="true" />
-              {input.copy.previewLoading}
-            </p>
-          ) : (
-            <div className="task-attachment-zoom-state">
-              <p className="task-attachment-zoom-fallback" role="alert">
-                {input.previewFailure === 'read_failed' ? input.copy.previewLoadFailed : input.copy.previewUnavailable}
-              </p>
-              {input.previewAttachment ? (
-                <button type="button" className="task-attachment-preview-retry" onClick={() => input.retryAttachmentPreview(input.previewAttachment!.path)}>
-                  {input.copy.retryPreviewLabel}
-                </button>
-              ) : null}
+    <MotionPresence>
+      {input.previewAttachment ? (
+        <ModalPortal rootClassName="image-preview-portal" onDismiss={input.closeAttachmentPreview}>
+          <div className="task-attachment-zoom-sheet" role="dialog" aria-modal="true" aria-labelledby={input.previewTitleId} aria-describedby={input.previewDescriptionId}>
+            <header className="task-attachment-zoom-header">
+              <span>
+                <strong id={input.previewTitleId}>{input.previewAttachment?.name ?? input.copy.openPreviewLabel}</strong>
+                <small id={input.previewDescriptionId}>{input.previewAttachment?.path ?? input.copy.localPathLabel}</small>
+              </span>
+              <button type="button" className="task-attachment-zoom-close" onClick={input.closeAttachmentPreview} aria-label={input.copy.closePreviewLabel}>
+                ×
+              </button>
+            </header>
+            <div className="task-attachment-zoom-stage">
+              {input.previewAttachment && !input.previewFailure && input.previewSrc ? (
+                <img className="task-attachment-zoom-image" src={input.previewSrc} alt={input.previewAttachment.name} onError={() => input.markPreviewFailed(input.previewAttachment!.path)} />
+              ) : input.previewAttachment && input.previewLoading ? (
+                <p className="task-attachment-zoom-state" role="status" aria-live="polite">
+                  <span className="task-attachment-preview-spinner" aria-hidden="true" />
+                  {input.copy.previewLoading}
+                </p>
+              ) : (
+                <div className="task-attachment-zoom-state">
+                  <p className="task-attachment-zoom-fallback" role="alert">
+                    {input.previewFailure === 'read_failed' ? input.copy.previewLoadFailed : input.copy.previewUnavailable}
+                  </p>
+                  {input.previewAttachment ? (
+                    <button type="button" className="task-attachment-preview-retry" onClick={() => input.retryAttachmentPreview(input.previewAttachment!.path)}>
+                      {input.copy.retryPreviewLabel}
+                    </button>
+                  ) : null}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {input.previewAttachment ? (
-          <p className="task-attachment-zoom-path">
-            <strong>{input.copy.localPathLabel}</strong>
-            <span>{input.previewAttachment.path}</span>
-          </p>
-        ) : null}
-      </div>
-    </dialog>
+            {input.previewAttachment ? (
+              <p className="task-attachment-zoom-path">
+                <strong>{input.copy.localPathLabel}</strong>
+                <span>{input.previewAttachment.path}</span>
+              </p>
+            ) : null}
+          </div>
+        </ModalPortal>
+      ) : null}
+    </MotionPresence>
   );
 }

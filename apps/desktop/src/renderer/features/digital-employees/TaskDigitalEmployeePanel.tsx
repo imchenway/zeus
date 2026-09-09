@@ -1,3 +1,4 @@
+import { MotionPresence } from '../../ui/MotionPresence.js';
 import { TextFilePreview } from '../../code/TextFilePreview.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -154,30 +155,32 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
       {tab === 'deliverables' ? <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} /> : null}
       {tab === 'evidence' ? <EvidenceView refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={props.onOpenConversation} onOpenCommand={setCommandEvidenceRunId} /> : null}
 
-      {decisionOpen ? (
-        <DecisionDialog
-          decision={decisionOpen}
-          projection={projection}
-          client={props.client}
-          taskId={props.taskId}
-          language={props.language}
-          busy={busy === `decision:${decisionOpen.id}`}
-          onDismiss={() => setDecisionOpen(null)}
-          onAccept={async (deliverable) => {
-            const success = await act(`decision:${decisionOpen.id}`, () => props.client!.acceptTaskWorkDeliverable(props.taskId, deliverable));
-            if (success) setDecisionOpen(null);
-          }}
-          onRequestChanges={async (deliverable, reason) => {
-            const success = await act(`decision:${decisionOpen.id}`, () => props.client!.requestTaskWorkDeliverableChanges(props.taskId, deliverable, reason));
-            if (success) setDecisionOpen(null);
-          }}
-          onRespond={async (response) => {
-            const success = await act(`decision:${decisionOpen.id}`, () => props.client!.resolveTaskWorkDecision(props.taskId, decisionOpen, response));
-            if (success) setDecisionOpen(null);
-          }}
-        />
-      ) : null}
-      {commandEvidenceRunId ? <CommandEvidenceDialog runId={commandEvidenceRunId} client={props.client} language={props.language} onDismiss={() => setCommandEvidenceRunId(null)} /> : null}
+      <MotionPresence>
+        {decisionOpen ? (
+          <DecisionDialog
+            decision={decisionOpen}
+            projection={projection}
+            client={props.client}
+            taskId={props.taskId}
+            language={props.language}
+            busy={busy === `decision:${decisionOpen.id}`}
+            onDismiss={() => setDecisionOpen(null)}
+            onAccept={async (deliverable) => {
+              const success = await act(`decision:${decisionOpen.id}`, () => props.client!.acceptTaskWorkDeliverable(props.taskId, deliverable));
+              if (success) setDecisionOpen(null);
+            }}
+            onRequestChanges={async (deliverable, reason) => {
+              const success = await act(`decision:${decisionOpen.id}`, () => props.client!.requestTaskWorkDeliverableChanges(props.taskId, deliverable, reason));
+              if (success) setDecisionOpen(null);
+            }}
+            onRespond={async (response) => {
+              const success = await act(`decision:${decisionOpen.id}`, () => props.client!.resolveTaskWorkDecision(props.taskId, decisionOpen, response));
+              if (success) setDecisionOpen(null);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>{commandEvidenceRunId ? <CommandEvidenceDialog runId={commandEvidenceRunId} client={props.client} language={props.language} onDismiss={() => setCommandEvidenceRunId(null)} /> : null}</MotionPresence>
     </section>
   );
 }
@@ -425,27 +428,29 @@ export function TaskDigitalEmployeeExecutor(props: {
         triggerLabel={zh ? '选择数字员工' : 'Choose an employee'}
       />
       {activeItems.length > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeItems.length} 个执行者运行中` : `${activeItems.length} active ${activeItems.length === 1 ? 'executor' : 'executors'}`}</small> : null}
-      {selectedEmployee ? (
-        <TaskEmployeeRunDialog
-          key={selectedEmployee.id}
-          taskId={props.taskId}
-          projectId={props.projectId}
-          employee={selectedEmployee}
-          acceptedDeliverables={props.management.projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
-          client={props.client}
-          skillClient={props.skillClient}
-          language={props.language}
-          busy={props.management.busy === 'start-executor'}
-          operationError={props.management.error}
-          onLoadCapabilities={props.onLoadCapabilities}
-          onDismiss={() => setSelectedEmployee(null)}
-          onSubmit={async (preview) => {
-            const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview));
-            if (success) setSelectedEmployee(null);
-            return success;
-          }}
-        />
-      ) : null}
+      <MotionPresence>
+        {selectedEmployee ? (
+          <TaskEmployeeRunDialog
+            key={selectedEmployee.id}
+            taskId={props.taskId}
+            projectId={props.projectId}
+            employee={selectedEmployee}
+            acceptedDeliverables={props.management.projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
+            client={props.client}
+            skillClient={props.skillClient}
+            language={props.language}
+            busy={props.management.busy === 'start-executor'}
+            operationError={props.management.error}
+            onLoadCapabilities={props.onLoadCapabilities}
+            onDismiss={() => setSelectedEmployee(null)}
+            onSubmit={async (preview) => {
+              const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview));
+              if (success) setSelectedEmployee(null);
+              return success;
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </span>
   );
 }

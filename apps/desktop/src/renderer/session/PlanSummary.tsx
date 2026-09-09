@@ -1,3 +1,4 @@
+import { Collapsible } from '../ui/Collapsible.js';
 import { type ReactNode, useState } from 'react';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -60,7 +61,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
           </nav>
         ) : null}
       </header>
-      {!collapsed ? (
+      <Collapsible open={!collapsed}>
         <div className="session-plan-summary-content">
           {streaming && !props.item.text.trim() ? (
             <span className="session-thinking-pulse" aria-hidden="true" />
@@ -68,7 +69,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
             <ConversationMarkdown text={props.item.text} streamId={`plan-summary:${props.item.itemId}`} phase={phase} language={props.language} />
           )}
         </div>
-      ) : null}
+      </Collapsible>
     </article>
   );
 }

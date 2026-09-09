@@ -1,3 +1,5 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { Collapsible } from '../ui/Collapsible.js';
 import {
   DndContext,
   DragOverlay,
@@ -326,39 +328,37 @@ function TaskBoardLane(props: {
           </span>
         </header>
       ) : null}
-      {!props.collapsed ? (
-        <>
-          <SortableContext items={props.cards.map((card) => card.occurrenceId)} strategy={verticalListSortingStrategy}>
-            <div className="task-board-card-stack">
-              {props.cards.map((card, cardIndex) => (
-                <TaskBoardCard
-                  key={card.occurrenceId}
-                  card={card}
-                  context={props.context}
-                  settings={props.settings}
-                  laneOptions={props.laneOptions}
-                  busy={props.busy}
-                  dropPosition={
-                    props.activeCardOccurrenceId === card.occurrenceId
-                      ? null
-                      : props.cards.findIndex((entry) => entry.occurrenceId === props.activeCardOccurrenceId) >= 0 && props.cards.findIndex((entry) => entry.occurrenceId === props.activeCardOccurrenceId) < cardIndex
-                        ? 'after'
-                        : 'before'
-                  }
-                  onMoveToLane={props.onMoveToLane}
-                  onOpenTask={props.onOpenTask}
-                  loadPreview={props.loadPreview}
-                />
-              ))}
-              {props.cards.length === 0 ? <span className="task-board-empty-lane">{props.context.language === 'zh-CN' ? '暂无任务，可将任务拖到此处。' : 'No tasks. Drag a task here.'}</span> : null}
-            </div>
-          </SortableContext>
-          <footer className="task-board-lane-calculation">
-            <span>{props.context.language === 'zh-CN' ? '统计' : 'Summary'}</span>
-            <strong>{props.calculation}</strong>
-          </footer>
-        </>
-      ) : null}
+      <Collapsible open={!props.collapsed}>
+        <SortableContext items={props.cards.map((card) => card.occurrenceId)} strategy={verticalListSortingStrategy}>
+          <div className="task-board-card-stack">
+            {props.cards.map((card, cardIndex) => (
+              <TaskBoardCard
+                key={card.occurrenceId}
+                card={card}
+                context={props.context}
+                settings={props.settings}
+                laneOptions={props.laneOptions}
+                busy={props.busy}
+                dropPosition={
+                  props.activeCardOccurrenceId === card.occurrenceId
+                    ? null
+                    : props.cards.findIndex((entry) => entry.occurrenceId === props.activeCardOccurrenceId) >= 0 && props.cards.findIndex((entry) => entry.occurrenceId === props.activeCardOccurrenceId) < cardIndex
+                      ? 'after'
+                      : 'before'
+                }
+                onMoveToLane={props.onMoveToLane}
+                onOpenTask={props.onOpenTask}
+                loadPreview={props.loadPreview}
+              />
+            ))}
+            {props.cards.length === 0 ? <span className="task-board-empty-lane">{props.context.language === 'zh-CN' ? '暂无任务，可将任务拖到此处。' : 'No tasks. Drag a task here.'}</span> : null}
+          </div>
+        </SortableContext>
+        <footer className="task-board-lane-calculation">
+          <span>{props.context.language === 'zh-CN' ? '统计' : 'Summary'}</span>
+          <strong>{props.calculation}</strong>
+        </footer>
+      </Collapsible>
     </section>
   );
 }
@@ -1510,24 +1510,26 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       <span id={liveRegionId} className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </span>
-      {settingsOpen ? (
-        <TaskBoardSettingsDialog
-          language={props.language}
-          settings={settings}
-          groupOptions={groupOptions}
-          subgroupOptions={subgroupOptions}
-          section={settingsSection}
-          saving={savingSettings}
-          errorMessage={settingsError}
-          onDismiss={() => changeSettingsOpen(false)}
-          onSectionChange={changeSettingsSection}
-          onSave={(draft) => {
-            void saveSettings(draft)
-              .then(() => changeSettingsOpen(false))
-              .catch(() => undefined);
-          }}
-        />
-      ) : null}
+      <MotionPresence>
+        {settingsOpen ? (
+          <TaskBoardSettingsDialog
+            language={props.language}
+            settings={settings}
+            groupOptions={groupOptions}
+            subgroupOptions={subgroupOptions}
+            section={settingsSection}
+            saving={savingSettings}
+            errorMessage={settingsError}
+            onDismiss={() => changeSettingsOpen(false)}
+            onSectionChange={changeSettingsSection}
+            onSave={(draft) => {
+              void saveSettings(draft)
+                .then(() => changeSettingsOpen(false))
+                .catch(() => undefined);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }

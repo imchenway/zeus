@@ -1,3 +1,4 @@
+import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -1527,6 +1528,8 @@ export function TaskCreateModal(props: {
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  /** 视觉退出期间立即注销旧附件和外部资料回执。 */
+  const interactionOpen = usePresenceOpen() && props.open;
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
   /** 当前草稿的第三方来源链接。 */
@@ -1539,15 +1542,16 @@ export function TaskCreateModal(props: {
   const thirdPartyRequestRef = useRef<symbol | null>(null);
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   useEffect(() => {
-    if (props.open) {
+    if (interactionOpen) {
       setThirdPartyLinkInput('');
       setThirdPartyParsing(false);
       setThirdPartyHint(null);
     }
     return () => {
       thirdPartyRequestRef.current = null;
+      pasteShortcutFallbackTokenRef.current += 1;
     };
-  }, [props.open]);
+  }, [interactionOpen]);
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
@@ -1556,11 +1560,6 @@ export function TaskCreateModal(props: {
   const interactionBusy = textInputDisabled || resourcesBusy;
 
   function handleTaskCreateModalKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
-    if (event.key === 'Escape' && !interactionBusy) {
-      event.stopPropagation();
-      props.onClose();
-      return;
-    }
     handleTaskCreatePasteShortcutFallback(event);
   }
 
@@ -2087,33 +2086,7 @@ export function TaskTableLayoutDecisionDialog(props: { open: boolean; title: str
   if (!props.open) return null;
   const surface = (
     <ModalPortal rootClassName="task-table-layout-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel}>
-      <section
-        className="task-table-layout-dialog zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-table-layout-dialog-title"
-        aria-describedby="task-table-layout-dialog-description"
-        tabIndex={-1}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && !props.busy) {
-            event.preventDefault();
-            props.onCancel();
-            return;
-          }
-          if (event.key !== 'Tab') return;
-          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
-          if (controls.length === 0) return;
-          const first = controls[0];
-          const last = controls[controls.length - 1];
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last?.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first?.focus();
-          }
-        }}
-      >
+      <section className="task-table-layout-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-table-layout-dialog-title" aria-describedby="task-table-layout-dialog-description" tabIndex={-1}>
         <header>
           <strong id="task-table-layout-dialog-title">{props.title}</strong>
           <p id="task-table-layout-dialog-description">{props.description}</p>
@@ -2143,12 +2116,6 @@ export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: 
         aria-modal="true"
         aria-labelledby="task-terminal-cleanup-dialog-title"
         aria-describedby="task-terminal-cleanup-dialog-description task-terminal-cleanup-dialog-effects task-terminal-cleanup-dialog-preserved"
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            props.onCancel();
-          }
-        }}
       >
         <header>
           <span className="task-terminal-cleanup-dialog-icon" aria-hidden="true">

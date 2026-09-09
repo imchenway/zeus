@@ -1,7 +1,8 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
 import { useEffect, useId, useRef, useState } from 'react';
-import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import type {
   DashboardClient,
   ModelAuthenticationScheme,
@@ -16,6 +17,7 @@ import type {
 } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { Collapsible } from '../ui/Collapsible.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
@@ -76,6 +78,8 @@ export function ModelConnectionsSettingsPane(props: {
   const [modelQuery, setModelQuery] = useState('');
   /** 切换供应商或筛选时回到第一页。 */
   const [requestedModelPage, setRequestedModelPage] = useState(1);
+  /** 展开只属于当前编辑器，跨搜索和分页保留，不写入模型配置。 */
+  const [expandedModelIds, setExpandedModelIds] = useState<ReadonlySet<string>>(() => new Set());
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'deleting'>('loading');
   const [message, setMessage] = useState<string | null>(null);
   /** 保存反馈与模型诊断消息分开。 */
@@ -133,11 +137,27 @@ export function ModelConnectionsSettingsPane(props: {
   const filteredModels = draft.models.filter((model) => model.id.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()));
   /** 实际页随模型删除夹紧。 */
   const modelPage = settingsPage(filteredModels.length, requestedModelPage);
+  /** 全部操作以当前搜索结果为范围，包含尚未翻到的页面。 */
+  const allModelsExpanded = filteredModels.length > 0 && filteredModels.every((model) => expandedModelIds.has(model.id));
+
+  /** 批量和单项展开共用同一状态，保留搜索范围之外的展开选择。 */
+  function setModelsExpanded(ids: string[], expanded: boolean): void {
+    setExpandedModelIds((currentIds) => {
+      /** 新集合只更新本次操作涉及的模型。 */
+      const nextIds = new Set(currentIds);
+      for (const id of ids) {
+        if (expanded) nextIds.add(id);
+        else nextIds.delete(id);
+      }
+      return nextIds;
+    });
+  }
 
   function selectConnection(connection: ModelConnectionRecord): void {
     setSaveState('idle');
     setModelQuery('');
     setRequestedModelPage(1);
+    if (connection.id !== draft.id) setExpandedModelIds(new Set());
     setDraft({
       id: connection.id,
       name: connection.name,
@@ -183,6 +203,7 @@ export function ModelConnectionsSettingsPane(props: {
     const id = newModelId.trim();
     if (!id || draft.models.some((model) => model.id === id)) return;
     changeDraft({ ...draft, models: [...draft.models, createModel(id, templateDefaults[draft.templateId].thinkingFormat)] });
+    setModelsExpanded([id], true);
     setNewModelId('');
     setModelQuery('');
     setRequestedModelPage(Math.ceil((draft.models.length + 1) / settingsPageSize));
@@ -320,6 +341,7 @@ export function ModelConnectionsSettingsPane(props: {
       const items = await props.client.loadModelConnections();
       setConnections(items);
       setDraft(emptyDraft());
+      setExpandedModelIds(new Set());
       setDiagnostic(null);
       setMessage(zh ? '供应商已删除。' : 'Provider deleted.');
     } catch (error) {
@@ -384,6 +406,7 @@ export function ModelConnectionsSettingsPane(props: {
               setDraft(emptyDraft());
               setModelQuery('');
               setRequestedModelPage(1);
+              setExpandedModelIds(new Set());
               setDiagnostic(null);
               setMessage(null);
             }}
@@ -407,6 +430,7 @@ export function ModelConnectionsSettingsPane(props: {
             else {
               modelRequestRef.current += 1;
               setDraft(emptyDraft());
+              setExpandedModelIds(new Set());
               setSelectableModels([]);
               setDefaultModelRef('');
             }
@@ -531,8 +555,23 @@ export function ModelConnectionsSettingsPane(props: {
                     : 'Choose the request format and authentication supported by the service for each model. Feature availability is based on checks of that connection.'}
                 </small>
               </span>
+              <Button
+                className="model-expand-all"
+                variant="secondary"
+                size="compact"
+                disabled={filteredModels.length === 0}
+                title={zh ? '作用于当前搜索结果的所有页面' : 'Applies to every page of the current search results'}
+                onClick={() =>
+                  setModelsExpanded(
+                    filteredModels.map((model) => model.id),
+                    !allModelsExpanded,
+                  )
+                }
+              >
+                {allModelsExpanded ? (zh ? '全部收起' : 'Collapse all') : zh ? '全部展开' : 'Expand all'}
+              </Button>
             </header>
-            <div className="model-list-toolbar">
+            <div className="model-definition-toolbar">
               {draft.models.length > 0 ? (
                 <input
                   className="settings-list-search"
@@ -574,6 +613,8 @@ export function ModelConnectionsSettingsPane(props: {
                   key={`${draft.id ?? 'new'}:${model.id}`}
                   language={props.language}
                   model={model}
+                  expanded={expandedModelIds.has(model.id)}
+                  onToggle={() => setModelsExpanded([model.id], !expandedModelIds.has(model.id))}
                   readOnly={draft.templateId !== 'custom'}
                   onChange={(next) => updateModel(model.id, () => next)}
                   onRemove={() => changeDraft({ ...draft, models: draft.models.filter((candidate) => candidate.id !== model.id) })}
@@ -663,15 +704,17 @@ export function ModelConnectionsSettingsPane(props: {
           </footer>
         </fieldset>
       </div>
-      {pendingInsecureHttpSave ? (
-        props.onComplete ? (
-          httpConfirmation
-        ) : (
-          <ModalPortal rootClassName="model-connection-http-risk-portal" dismissDisabled={busy} onDismiss={() => setPendingInsecureHttpSave(null)}>
-            {httpConfirmation}
-          </ModalPortal>
-        )
-      ) : null}
+      <MotionPresence>
+        {pendingInsecureHttpSave ? (
+          props.onComplete ? (
+            httpConfirmation
+          ) : (
+            <ModalPortal rootClassName="model-connection-http-risk-portal" dismissDisabled={busy} onDismiss={() => setPendingInsecureHttpSave(null)}>
+              {httpConfirmation}
+            </ModalPortal>
+          )
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
@@ -685,14 +728,12 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
   }
 }
 
-/** 模型默认只显示名称与连接摘要，展开后编辑；启用与移除独立操作。 */
-function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
+/** 模型标题独立控制展开；启用、移除和配置修改沿用各自的业务入口。 */
+function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; expanded: boolean; onToggle: () => void; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
   /** 将展开按钮与详细配置关联。 */
   const detailsId = useId();
   const zh = props.language === 'zh-CN';
   const model = props.model;
-  /** 展开仅影响当前模型的展示，不写入供应商配置。 */
-  const [expanded, setExpanded] = useState(false);
   const contextDeclaration = (
     <>
       <input
@@ -716,12 +757,12 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
     <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
       <header className="model-definition-header">
         <input type="checkbox" aria-label={zh ? `启用模型 ${model.id}` : `Enable model ${model.id}`} checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
-        <button type="button" className="model-definition-toggle" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((value) => !value)}>
+        <button type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
           <span>
             <strong title={model.id}>{model.id}</strong>
             <small>{modelRouteLabel(model, zh)}</small>
           </span>
-          <CaretDownIcon aria-hidden="true" />
+          <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
         </button>
         {props.readOnly ? null : (
           <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
@@ -729,8 +770,8 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           </button>
         )}
       </header>
-      {expanded ? (
-        <div id={detailsId} className="model-definition-details">
+      <Collapsible id={detailsId} open={props.expanded}>
+        <div className="model-definition-details">
           {props.readOnly ? (
             <dl className="model-route-facts">
               <div>
@@ -796,7 +837,7 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             </div>
           )}
         </div>
-      ) : null}
+      </Collapsible>
     </article>
   );
 }

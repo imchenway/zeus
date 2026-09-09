@@ -1,3 +1,5 @@
+import { MotionPresence } from '../../ui/MotionPresence.js';
+import { Collapsible } from '../../ui/Collapsible.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -188,27 +190,29 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
       {tab === 'plugins' ? <PluginCatalog plugins={plugins} zh={zh} busyKey={busyKey} expanded={expanded} onExpanded={setExpanded} onInstall={() => setInstallOpen(true)} onMutate={mutate} client={props.client} /> : null}
       {tab === 'marketplaces' ? <MarketplaceCatalog marketplaces={marketplaces} plugins={plugins} zh={zh} busyKey={busyKey} onAdd={() => setMarketplaceOpen(true)} onMutate={mutate} client={props.client} /> : null}
 
-      {installOpen || marketplaceOpen ? (
-        <SourceDialog
-          title={marketplaceOpen ? (zh ? '添加插件市场' : 'Add marketplace') : zh ? '安装插件' : 'Install plugin'}
-          submitLabel={marketplaceOpen ? (zh ? '添加' : 'Add') : zh ? '安装' : 'Install'}
-          zh={zh}
-          source={source}
-          scope={scope}
-          projectAvailable={Boolean(props.projectId)}
-          busy={busyKey === 'install' || busyKey === 'marketplace-add'}
-          onSource={setSource}
-          onScope={setScope}
-          onChoosePath={props.onChooseDirectory ? chooseLocalPath : undefined}
-          onClose={() => {
-            if (busyKey) return;
-            setInstallOpen(false);
-            setMarketplaceOpen(false);
-            setSource(emptyExtensionSource());
-          }}
-          onSubmit={marketplaceOpen ? addMarketplace : install}
-        />
-      ) : null}
+      <MotionPresence>
+        {installOpen || marketplaceOpen ? (
+          <SourceDialog
+            title={marketplaceOpen ? (zh ? '添加插件市场' : 'Add marketplace') : zh ? '安装插件' : 'Install plugin'}
+            submitLabel={marketplaceOpen ? (zh ? '添加' : 'Add') : zh ? '安装' : 'Install'}
+            zh={zh}
+            source={source}
+            scope={scope}
+            projectAvailable={Boolean(props.projectId)}
+            busy={busyKey === 'install' || busyKey === 'marketplace-add'}
+            onSource={setSource}
+            onScope={setScope}
+            onChoosePath={props.onChooseDirectory ? chooseLocalPath : undefined}
+            onClose={() => {
+              if (busyKey) return;
+              setInstallOpen(false);
+              setMarketplaceOpen(false);
+              setSource(emptyExtensionSource());
+            }}
+            onSubmit={marketplaceOpen ? addMarketplace : install}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
@@ -278,7 +282,7 @@ function PluginCatalog(props: {
                   {plugin.enabled ? (props.zh ? '停用' : 'Disable') : props.zh ? '启用' : 'Enable'}
                 </Button>
               </header>
-              {open ? (
+              <Collapsible open={open}>
                 <div className="extension-plugin-detail">
                   <p>{plugin.description || (props.zh ? '无描述' : 'No description')}</p>
                   <details className="extension-source-details">
@@ -322,34 +326,36 @@ function PluginCatalog(props: {
                     </Button>
                   </footer>
                 </div>
-              ) : null}
+              </Collapsible>
             </article>
           );
         })}
       </div>
-      {pendingRemoval ? (
-        <FormDialog
-          title={props.zh ? `卸载“${pendingRemoval.plugin.displayName}”？` : `Uninstall “${pendingRemoval.plugin.displayName}”?`}
-          description={
-            props.zh
-              ? '进行中的对话仍可使用当前版本。已连接应用的授权会保留，需要另外撤销；插件以后可以重新安装。'
-              : 'Active conversations keep their current version. Connected app authorizations remain and must be revoked separately. You can reinstall later.'
-          }
-          zh={props.zh}
-          busy={Boolean(props.busyKey)}
-          danger
-          submitLabel={props.zh ? '卸载' : 'Uninstall'}
-          onClose={() => setPendingRemoval(null)}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void props
-              .onMutate(`remove:${pendingRemoval.plugin.id}`, () => props.client!.removePlugin(pendingRemoval.plugin.id, pendingRemoval.plugin.revision))
-              .then((removed) => {
-                if (removed) setPendingRemoval(null);
-              });
-          }}
-        />
-      ) : null}
+      <MotionPresence>
+        {pendingRemoval ? (
+          <FormDialog
+            title={props.zh ? `卸载“${pendingRemoval.plugin.displayName}”？` : `Uninstall “${pendingRemoval.plugin.displayName}”?`}
+            description={
+              props.zh
+                ? '进行中的对话仍可使用当前版本。已连接应用的授权会保留，需要另外撤销；插件以后可以重新安装。'
+                : 'Active conversations keep their current version. Connected app authorizations remain and must be revoked separately. You can reinstall later.'
+            }
+            zh={props.zh}
+            busy={Boolean(props.busyKey)}
+            danger
+            submitLabel={props.zh ? '卸载' : 'Uninstall'}
+            onClose={() => setPendingRemoval(null)}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void props
+                .onMutate(`remove:${pendingRemoval.plugin.id}`, () => props.client!.removePlugin(pendingRemoval.plugin.id, pendingRemoval.plugin.revision))
+                .then((removed) => {
+                  if (removed) setPendingRemoval(null);
+                });
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
@@ -476,7 +482,7 @@ function ConnectorPanel(props: { descriptor: PluginDescriptor; client: Extension
           </div>
         );
       })}
-      {editing ? <ConnectorDialog {...props} app={editing} onClose={() => setEditing(null)} /> : null}
+      <MotionPresence>{editing ? <ConnectorDialog {...props} app={editing} onClose={() => setEditing(null)} /> : null}</MotionPresence>
     </section>
   );
 }
@@ -650,25 +656,27 @@ function MarketplaceCatalog(props: {
           </div>
         </article>
       ))}
-      {pendingRemoval ? (
-        <FormDialog
-          title={props.zh ? `移除来源“${pendingRemoval.displayName}”？` : `Remove source “${pendingRemoval.displayName}”?`}
-          description={props.zh ? '已安装的插件会保留。之后可以重新添加此来源。' : 'Installed plugins are kept. You can add this source again later.'}
-          zh={props.zh}
-          busy={Boolean(props.busyKey)}
-          danger
-          submitLabel={props.zh ? '移除来源' : 'Remove source'}
-          onClose={() => setPendingRemoval(null)}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void props
-              .onMutate(`market-remove:${pendingRemoval.marketplace.id}`, () => props.client!.removePluginMarketplace(pendingRemoval.marketplace.id))
-              .then((removed) => {
-                if (removed) setPendingRemoval(null);
-              });
-          }}
-        />
-      ) : null}
+      <MotionPresence>
+        {pendingRemoval ? (
+          <FormDialog
+            title={props.zh ? `移除来源“${pendingRemoval.displayName}”？` : `Remove source “${pendingRemoval.displayName}”?`}
+            description={props.zh ? '已安装的插件会保留。之后可以重新添加此来源。' : 'Installed plugins are kept. You can add this source again later.'}
+            zh={props.zh}
+            busy={Boolean(props.busyKey)}
+            danger
+            submitLabel={props.zh ? '移除来源' : 'Remove source'}
+            onClose={() => setPendingRemoval(null)}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void props
+                .onMutate(`market-remove:${pendingRemoval.marketplace.id}`, () => props.client!.removePluginMarketplace(pendingRemoval.marketplace.id))
+                .then((removed) => {
+                  if (removed) setPendingRemoval(null);
+                });
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }

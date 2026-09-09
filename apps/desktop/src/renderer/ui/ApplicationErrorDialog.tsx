@@ -1,3 +1,5 @@
+import { MotionPresence } from './MotionPresence.js';
+import { Collapsible } from './Collapsible.js';
 import { describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -176,64 +178,67 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
   const current = queue[0];
   useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
   useEffect(() => setDetailsOpen(current?.showDetails ?? false), [current?.id, current?.showDetails]);
-  if (!current) return null;
-  const copy = copyByLanguage[current.language ?? props.language];
+  const copy = copyByLanguage[current?.language ?? props.language];
   return (
-    <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
-      <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-title" aria-describedby="application-error-dialog-summary">
-        <div className="application-error-dialog-icon" aria-hidden="true">
-          <WarningCircle weight="fill" />
-        </div>
-        <div className="application-error-dialog-content">
-          <header>
-            <strong id="application-error-dialog-title">{current.title}</strong>
-            <p id="application-error-dialog-summary">{current.summary}</p>
-          </header>
-          {detailsOpen ? (
-            <section className="application-error-dialog-details" aria-labelledby="application-error-dialog-details-title">
-              <strong id="application-error-dialog-details-title">{copy.detailTitle}</strong>
-              <pre data-zeus-selectable="text">{current.details}</pre>
-            </section>
-          ) : null}
-        </div>
-        <footer>
-          <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
-            {detailsOpen ? copy.hideDetails : copy.details}
-          </Button>
-          {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (
-            <Button
-              variant="primary"
-              size="regular"
-              onClick={() => {
-                const step = current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' ? 'codex' : 'choose';
-                dismissCurrentError();
-                window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: step }));
-              }}
-            >
-              {current.language === 'zh-CN' ? '连接模型' : 'Connect a model'}
-            </Button>
-          ) : null}
-          {current.action ? (
-            <Button
-              variant="primary"
-              size="regular"
-              onClick={() => {
-                /** 先关闭当前反馈，避免重复点击；失败继续使用统一错误出口。 */
-                const action = current.action;
-                dismissCurrentError();
-                void Promise.resolve()
-                  .then(() => action?.onClick())
-                  .catch((error: unknown) => reportApplicationError(error, { language: current.language, title: current.title }));
-              }}
-            >
-              {current.action.label}
-            </Button>
-          ) : null}
-          <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
-            {copy.close}
-          </Button>
-        </footer>
-      </section>
-    </ModalPortal>
+    <MotionPresence>
+      {current ? (
+        <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
+          <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-title" aria-describedby="application-error-dialog-summary">
+            <div className="application-error-dialog-icon" aria-hidden="true">
+              <WarningCircle weight="fill" />
+            </div>
+            <div className="application-error-dialog-content">
+              <header>
+                <strong id="application-error-dialog-title">{current.title}</strong>
+                <p id="application-error-dialog-summary">{current.summary}</p>
+              </header>
+              <Collapsible open={detailsOpen}>
+                <section className="application-error-dialog-details" aria-labelledby="application-error-dialog-details-title">
+                  <strong id="application-error-dialog-details-title">{copy.detailTitle}</strong>
+                  <pre data-zeus-selectable="text">{current.details}</pre>
+                </section>
+              </Collapsible>
+            </div>
+            <footer>
+              <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
+                {detailsOpen ? copy.hideDetails : copy.details}
+              </Button>
+              {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (
+                <Button
+                  variant="primary"
+                  size="regular"
+                  onClick={() => {
+                    const step = current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' ? 'codex' : 'choose';
+                    dismissCurrentError();
+                    window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: step }));
+                  }}
+                >
+                  {current.language === 'zh-CN' ? '连接模型' : 'Connect a model'}
+                </Button>
+              ) : null}
+              {current.action ? (
+                <Button
+                  variant="primary"
+                  size="regular"
+                  onClick={() => {
+                    /** 先关闭当前反馈，避免重复点击；失败继续使用统一错误出口。 */
+                    const action = current.action;
+                    dismissCurrentError();
+                    void Promise.resolve()
+                      .then(() => action?.onClick())
+                      .catch((error: unknown) => reportApplicationError(error, { language: current.language, title: current.title }));
+                  }}
+                >
+                  {current.action.label}
+                </Button>
+              ) : null}
+              <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
+                {copy.close}
+              </Button>
+            </footer>
+          </section>
+        </ModalPortal>
+      ) : null}
+    </MotionPresence>
   );
 }

@@ -1,4 +1,5 @@
-import { type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { usePresenceOpen } from '../ui/MotionPresence.js';
+import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildTaskPushLayout,
   type TaskPushContextConversationOption,
@@ -685,6 +686,8 @@ export function TaskModelPushModal(props: {
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  /** 退出时立即停用附件输入与焦点恢复。 */
+  const interactionOpen = usePresenceOpen() && props.open;
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   /** 窄窗口由正文统一滚动，接入模型返回后恢复原位置。 */
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -696,7 +699,7 @@ export function TaskModelPushModal(props: {
   const readingPositionRef = useRef({ taskId: props.task?.id, scrollTop: 0, mainScrollTop: 0, workspaceScrollTop: 0, focusSelector: '[data-task-push-primary]' });
   if (readingPositionRef.current.taskId !== props.task?.id) readingPositionRef.current = { taskId: props.task?.id, scrollTop: 0, mainScrollTop: 0, workspaceScrollTop: 0, focusSelector: '[data-task-push-primary]' };
   useEffect(() => {
-    if (!props.open) return;
+    if (!interactionOpen) return;
     /** 接入返回后恢复触发位置；原控件不存在时回到确认操作。 */
     const frame = window.requestAnimationFrame(() => {
       /** 表单重新挂载后按稳定标识找到控件，不保留已卸载的节点。 */
@@ -708,11 +711,11 @@ export function TaskModelPushModal(props: {
       if (workspaceRef.current) workspaceRef.current.scrollTop = readingPositionRef.current.workspaceScrollTop;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [props.open, props.task?.id]);
+  }, [interactionOpen, props.task?.id]);
   const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
   const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
-  const resourceInputDisabled = !props.open || props.status === 'submitting';
+  const resourceInputDisabled = !interactionOpen || props.status === 'submitting';
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
@@ -731,7 +734,7 @@ export function TaskModelPushModal(props: {
   });
   useEffect(() => {
     setSupplementalResourceError(null);
-  }, [props.open, props.task?.id]);
+  }, [interactionOpen, props.task?.id]);
   const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
   const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
@@ -784,10 +787,6 @@ export function TaskModelPushModal(props: {
     });
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLFormElement>): void {
-    if (event.key === 'Escape' && !busy) props.onClose();
-  }
-
   function changeContextSelection(kind: 'parent' | 'related', taskId: string, next: { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }): void {
     const field = kind === 'parent' ? 'parentContextSelections' : 'relatedContextSelections';
     props.onChange({ ...props.form, [field]: { ...props.form[field], [taskId]: next } });
@@ -818,7 +817,6 @@ export function TaskModelPushModal(props: {
         aria-modal="true"
         aria-labelledby="task-model-push-title"
         onSubmit={props.onSubmit}
-        onKeyDown={handleKeyDown}
         onFocusCapture={(event) => {
           /** 保存接入按钮或具备稳定标识的输入框，返回时保持键盘位置。 */
           const target = event.target;

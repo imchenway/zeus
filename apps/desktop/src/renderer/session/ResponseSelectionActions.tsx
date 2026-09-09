@@ -1,3 +1,4 @@
+import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { type RefObject, useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
@@ -128,27 +129,29 @@ export function ResponseSelectionActions(props: {
 
   return createPortal(
     <>
-      {candidate ? (
-        <div
-          className="session-selection-toolbar"
-          data-placement={candidate.point.placement}
-          style={{ left: candidate.point.left, top: candidate.point.top }}
-          role="toolbar"
-          aria-label={props.language === 'zh-CN' ? '选中文字操作' : 'Selected text actions'}
-        >
-          <button
-            type="button"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const id = props.onAddAnnotation?.(candidate.anchor);
-              setCandidate(null);
-              if (id) setEditingId(id);
-            }}
+      <MotionPresence>
+        {candidate ? (
+          <PopoverSurface
+            className="session-selection-toolbar"
+            data-placement={candidate.point.placement}
+            style={{ left: candidate.point.left, top: candidate.point.top }}
+            role="toolbar"
+            aria-label={props.language === 'zh-CN' ? '选中文字操作' : 'Selected text actions'}
           >
-            {props.language === 'zh-CN' ? '添加到对话' : 'Add to chat'}
-          </button>
-        </div>
-      ) : null}
+            <button
+              type="button"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const id = props.onAddAnnotation?.(candidate.anchor);
+                setCandidate(null);
+                if (id) setEditingId(id);
+              }}
+            >
+              {props.language === 'zh-CN' ? '添加到对话' : 'Add to chat'}
+            </button>
+          </PopoverSurface>
+        ) : null}
+      </MotionPresence>
       {markers.map(({ annotation, index, left, top }) => (
         <button
           type="button"
@@ -162,9 +165,11 @@ export function ResponseSelectionActions(props: {
           {index + 1}
         </button>
       ))}
-      {editingAnnotation && editorPoint ? (
-        <ResponseAnnotationEditor annotation={editingAnnotation} point={editorPoint} language={props.language} onClose={() => setEditingId(null)} onUpdate={props.onUpdateAnnotation} onRemove={props.onRemoveAnnotation} />
-      ) : null}
+      <MotionPresence>
+        {editingAnnotation && editorPoint ? (
+          <ResponseAnnotationEditor annotation={editingAnnotation} point={editorPoint} language={props.language} onClose={() => setEditingId(null)} onUpdate={props.onUpdateAnnotation} onRemove={props.onRemoveAnnotation} />
+        ) : null}
+      </MotionPresence>
     </>,
     portalRoot,
   );
@@ -182,7 +187,7 @@ function ResponseAnnotationEditor(props: {
   useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
   const zh = props.language === 'zh-CN';
   return (
-    <section className="session-response-annotation-editor" data-placement={props.point.placement} style={{ left: props.point.left, top: props.point.top }} aria-label={zh ? '回答批注' : 'Response annotation'}>
+    <PopoverSurface className="session-response-annotation-editor" data-placement={props.point.placement} style={{ left: props.point.left, top: props.point.top }} aria-label={zh ? '回答批注' : 'Response annotation'}>
       <header>
         <strong>{zh ? '添加评论' : 'Add comment'}</strong>
         <button type="button" onClick={props.onClose} aria-label={zh ? '关闭' : 'Close'}>
@@ -211,7 +216,7 @@ function ResponseAnnotationEditor(props: {
           {zh ? '完成' : 'Done'}
         </button>
       </footer>
-    </section>
+    </PopoverSurface>
   );
 }
 

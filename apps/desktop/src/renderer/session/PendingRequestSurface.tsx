@@ -392,7 +392,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                 </button>
               ) : null}
               {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
-                <div className="session-approval-grant-menu" role="menu" hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
+                <div className="session-approval-grant-menu" role="menu" inert={!menuOpen} aria-hidden={!menuOpen} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
                   {menuDecisions.map((decision, index) => (
                     <button
                       key={decision}

@@ -1,3 +1,4 @@
+import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -661,16 +662,18 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         />
       ) : role === 'user' && visibleText ? (
         <div className="session-user-message-content">
-          <ConversationMarkdown
-            text={visibleText}
-            streamId={`thread-item:${props.item.itemId}`}
-            phase="final"
-            language={props.language}
-            resources={props.item.resources}
-            onOpenResource={props.onOpenResource}
-            onLoadResourcePreview={props.onLoadResourcePreview}
-            onVisibleContentChange={props.onVisibleContentChange}
-          />
+          <AnimatedSize changeKey={expanded}>
+            <ConversationMarkdown
+              text={visibleText}
+              streamId={`thread-item:${props.item.itemId}`}
+              phase="final"
+              language={props.language}
+              resources={props.item.resources}
+              onOpenResource={props.onOpenResource}
+              onLoadResourcePreview={props.onLoadResourcePreview}
+              onVisibleContentChange={props.onVisibleContentChange}
+            />
+          </AnimatedSize>
           {longUserMessage ? (
             <button type="button" className="session-user-message-disclosure" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
               {expanded ? labels.collapse : labels.expand}

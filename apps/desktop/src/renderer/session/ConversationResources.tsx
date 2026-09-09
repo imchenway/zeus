@@ -1,4 +1,7 @@
-import { type ComponentType, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type SyntheticEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -22,7 +25,6 @@ import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js'
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
-import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -124,7 +126,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
           </span>
         )}
       </button>
-      {previewOpen ? <ConversationImagePreviewDialog previewUrl={previewUrl ?? ''} label={props.attachment.name} language={props.language} loading={loading} onClose={() => setPreviewOpen(false)} /> : null}
+      <MotionPresence>{previewOpen ? <ConversationImagePreviewDialog previewUrl={previewUrl ?? ''} label={props.attachment.name} language={props.language} loading={loading} onClose={() => setPreviewOpen(false)} /> : null}</MotionPresence>
     </>
   );
 }
@@ -337,79 +339,37 @@ function ConversationImagePreview(
         )}
         {preview ? <span className="session-sr-only">{status}</span> : null}
       </button>
-      {previewOpen ? (
-        <ConversationImagePreviewDialog
-          previewUrl={preview?.dataUrl ?? ''}
-          label={props.label}
-          language={props.language}
-          loading={!preview && !error && !unavailable}
-          error={error || unavailable ? status : undefined}
-          onClose={() => setPreviewOpen(false)}
-        />
-      ) : null}
+      <MotionPresence>
+        {previewOpen ? (
+          <ConversationImagePreviewDialog
+            previewUrl={preview?.dataUrl ?? ''}
+            label={props.label}
+            language={props.language}
+            loading={!preview && !error && !unavailable}
+            error={error || unavailable ? status : undefined}
+            onClose={() => setPreviewOpen(false)}
+          />
+        ) : null}
+      </MotionPresence>
     </>
   );
 }
 
 function ConversationImagePreviewDialog(props: { previewUrl: string; label: string; language: SessionUiLanguage; loading: boolean; error?: string; onClose: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const previewId = useId();
   const titleId = `${previewId}-conversation-image-preview-title`;
   const descriptionId = `${previewId}-conversation-image-preview-description`;
   const zh = props.language === 'zh-CN';
 
-  useNativeCloseLayer(true, closePreview);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (dialog && !dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
-    return () => {
-      const trigger = restoreFocusRef.current;
-      if (trigger?.isConnected) window.requestAnimationFrame(() => trigger.focus());
-    };
-  }, []);
-
-  function closePreview(): void {
-    const dialog = dialogRef.current;
-    if (dialog?.open) {
-      dialog.close();
-      return;
-    }
-    props.onClose();
-  }
-
-  function handleDialogCancel(event: SyntheticEvent<HTMLDialogElement, Event>): void {
-    event.preventDefault();
-    closePreview();
-  }
-
-  function handleDialogPointerDown(event: ReactMouseEvent<HTMLDialogElement>): void {
-    if (event.currentTarget === event.target) closePreview();
-  }
-
   return (
-    <dialog
-      ref={dialogRef}
-      className="task-attachment-zoom-dialog"
-      aria-labelledby={titleId}
-      aria-describedby={descriptionId}
-      onClose={props.onClose}
-      onCancel={handleDialogCancel}
-      onPointerDown={handleDialogPointerDown}
-      onKeyDown={(event) => {
-        // 原生弹窗自己处理 Escape 和 Tab，不能穿透到外层推送弹窗的关闭或焦点循环。
-        if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();
-      }}
-    >
-      <div className="task-attachment-zoom-sheet">
+    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose}>
+      <div className="task-attachment-zoom-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <header className="task-attachment-zoom-header">
           <span>
             <strong id={titleId}>{props.label}</strong>
             <small id={descriptionId}>{zh ? '会话图片附件预览' : 'Conversation image attachment preview'}</small>
           </span>
-          <button type="button" className="task-attachment-zoom-close" onClick={closePreview} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
+          <button type="button" className="task-attachment-zoom-close" onClick={props.onClose} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
             ×
           </button>
         </header>
@@ -428,7 +388,7 @@ function ConversationImagePreviewDialog(props: { previewUrl: string; label: stri
           )}
         </div>
       </div>
-    </dialog>
+    </ModalPortal>
   );
 }
 
@@ -519,8 +479,9 @@ function ConversationResourceCard(
 function OpenWithMenu(props: { resource: ConversationResource; language: SessionUiLanguage; disabled: boolean; onOpen: (target: ConversationOpenTarget) => void | Promise<void> }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  /** 打开方式关闭后仅保留视觉退场，不再接受操作。 */
+  const { ref: menuRef, present: menuPresent } = useMotionPresence<HTMLDivElement>(open);
   const [loading, setLoading] = useState(false);
   const [targets, setTargets] = useState<ConversationResourceOpenTarget[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -642,10 +603,20 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
         <span>{props.language === 'zh-CN' ? '打开方式' : 'Open with'}</span>
         <CaretDown aria-hidden="true" weight="bold" />
       </button>
-      {open
+      {menuPresent
         ? createPortal(
             <div className={openWithPortalClassName()}>
-              <div className="session-open-with-menu" role="menu" ref={menuRef} onKeyDown={handleMenuKeyDown} style={menuPositionStyle(menuPosition)}>
+              <div
+                className="session-open-with-menu"
+                data-motion-surface="popover"
+                data-motion-state={open ? 'open' : 'closing'}
+                inert={!open}
+                aria-hidden={!open}
+                role="menu"
+                ref={menuRef}
+                onKeyDown={handleMenuKeyDown}
+                style={menuPositionStyle(menuPosition)}
+              >
                 {loading ? <span className="session-open-with-status">{props.language === 'zh-CN' ? '正在检测应用…' : 'Detecting apps…'}</span> : null}
                 {!loading && !error
                   ? targets.map((target) => (
@@ -681,7 +652,7 @@ function menuPositionStyle(position: { left: number; top: number } | null): CSSP
 function openWithPortalClassName(): string {
   const app = document.querySelector('.macos-ai-app.zeus-shell');
   const theme = app?.classList.contains('theme-dark') ? 'theme-dark' : app?.classList.contains('theme-light') ? 'theme-light' : 'theme-system';
-  return `session-open-with-portal session-codex-parity-v1 ${theme}`;
+  return `macos-ai-app session-open-with-portal session-codex-parity-v1 ${theme}`;
 }
 
 function menuButtons(menu: HTMLDivElement | null): HTMLButtonElement[] {

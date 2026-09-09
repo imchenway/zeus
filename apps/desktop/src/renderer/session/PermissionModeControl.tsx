@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useId, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -108,71 +109,73 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
           void props.onChange(next);
         }}
       />
-      {confirmingFullAccess ? (
-        <ModalPortal rootClassName="session-permission-dialog-portal-root" backdropClassName="session-permission-dialog-backdrop" onDismiss={() => closeConfirmation()}>
-          <section
-            className="session-permission-dialog zeus-solid-form-surface"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            aria-describedby={`${introductionId} ${riskId}`}
-            onKeyDown={(event) => {
-              if (event.key !== 'Escape') return;
-              event.stopPropagation();
-              closeConfirmation();
-            }}
-          >
-            <header className="session-permission-dialog-header">
-              <WarningCircle aria-hidden="true" weight="regular" />
-              <strong id={titleId}>{copy.title}</strong>
-            </header>
-            <p id={introductionId} className="session-permission-dialog-introduction">
-              {copy.introduction}
-            </p>
-            <div className="session-permission-dialog-capabilities">
-              <div className="session-permission-dialog-capability">
-                <span className="session-permission-dialog-capability-icon" data-kind="files" aria-hidden="true">
-                  <Folder weight="fill" />
-                </span>
-                <span>
-                  <strong>{copy.filesTitle}</strong>
-                  <small>{copy.filesDescription}</small>
-                </span>
-              </div>
-              <div className="session-permission-dialog-capability">
-                <span className="session-permission-dialog-capability-icon" data-kind="terminal" aria-hidden="true">
-                  <TerminalWindow weight="fill" />
-                </span>
-                <span>
-                  <strong>{copy.terminalTitle}</strong>
-                  <small>{copy.terminalDescription}</small>
-                </span>
-              </div>
-              <div className="session-permission-dialog-capability">
-                <span className="session-permission-dialog-capability-icon" data-kind="internet" aria-hidden="true">
-                  <GlobeSimple weight="regular" />
-                </span>
-                <span>
-                  <strong>{copy.internetTitle}</strong>
-                  <small>{copy.internetDescription}</small>
-                </span>
-              </div>
-            </div>
-            <p id={riskId} className="session-permission-dialog-risk">
-              {copy.risk}
-            </p>
-            <footer className="session-permission-dialog-actions">
-              <Button autoFocus variant="secondary" size="regular" onClick={() => closeConfirmation()}>
-                {copy.cancel}
-              </Button>
-              <Button variant="danger" size="regular" onClick={() => closeConfirmation('full-access')}>
+      <MotionPresence>
+        {confirmingFullAccess ? (
+          <ModalPortal rootClassName="session-permission-dialog-portal-root" backdropClassName="session-permission-dialog-backdrop" onDismiss={() => closeConfirmation()}>
+            <section
+              className="session-permission-dialog zeus-solid-form-surface"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              aria-describedby={`${introductionId} ${riskId}`}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.stopPropagation();
+                closeConfirmation();
+              }}
+            >
+              <header className="session-permission-dialog-header">
                 <WarningCircle aria-hidden="true" weight="regular" />
-                {copy.confirm}
-              </Button>
-            </footer>
-          </section>
-        </ModalPortal>
-      ) : null}
+                <strong id={titleId}>{copy.title}</strong>
+              </header>
+              <p id={introductionId} className="session-permission-dialog-introduction">
+                {copy.introduction}
+              </p>
+              <div className="session-permission-dialog-capabilities">
+                <div className="session-permission-dialog-capability">
+                  <span className="session-permission-dialog-capability-icon" data-kind="files" aria-hidden="true">
+                    <Folder weight="fill" />
+                  </span>
+                  <span>
+                    <strong>{copy.filesTitle}</strong>
+                    <small>{copy.filesDescription}</small>
+                  </span>
+                </div>
+                <div className="session-permission-dialog-capability">
+                  <span className="session-permission-dialog-capability-icon" data-kind="terminal" aria-hidden="true">
+                    <TerminalWindow weight="fill" />
+                  </span>
+                  <span>
+                    <strong>{copy.terminalTitle}</strong>
+                    <small>{copy.terminalDescription}</small>
+                  </span>
+                </div>
+                <div className="session-permission-dialog-capability">
+                  <span className="session-permission-dialog-capability-icon" data-kind="internet" aria-hidden="true">
+                    <GlobeSimple weight="regular" />
+                  </span>
+                  <span>
+                    <strong>{copy.internetTitle}</strong>
+                    <small>{copy.internetDescription}</small>
+                  </span>
+                </div>
+              </div>
+              <p id={riskId} className="session-permission-dialog-risk">
+                {copy.risk}
+              </p>
+              <footer className="session-permission-dialog-actions">
+                <Button autoFocus variant="secondary" size="regular" onClick={() => closeConfirmation()}>
+                  {copy.cancel}
+                </Button>
+                <Button variant="danger" size="regular" onClick={() => closeConfirmation('full-access')}>
+                  <WarningCircle aria-hidden="true" weight="regular" />
+                  {copy.confirm}
+                </Button>
+              </footer>
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </span>
   );
 }

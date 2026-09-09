@@ -172,7 +172,10 @@
   width: 100%;
 }
 
-.command-run-list > li > button:hover,
+.command-run-list > li > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
+
 .command-run-list > li > button.selected {
   background: var(--zeus-product-panel-muted);
 }
@@ -209,7 +212,7 @@
 
 .status-running,
 .status-syncing {
-  color: var(--zeus-control-accent, #1769d2);
+  color: var(--zeus-brand-text);
 }
 
 .command-run-detail {
@@ -313,18 +316,18 @@
   padding: 0;
 }
 
-.command-run-copy-action:hover:not(:disabled) {
-  background: rgb(255 255 255 / 0.08);
-  border-color: rgb(255 255 255 / 0.1);
+.command-run-copy-action:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-interaction-line);
   color: #f8fafc;
 }
 
 .command-run-copy-action:active:not(:disabled) {
-  background: rgb(255 255 255 / 0.12);
+  background: var(--zeus-interaction-pressed);
 }
 
 .command-run-copy-action:focus-visible {
-  box-shadow: 0 0 0 2px rgb(147 197 253 / 0.65);
+  box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
 
@@ -503,8 +506,8 @@
   width: 32px;
 }
 
-.command-modal-header > button:hover {
-  background: var(--zeus-product-panel-muted);
+.command-modal-header > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 
 .command-modal-header > button:focus-visible {
@@ -669,7 +672,7 @@
 }
 
 .command-permission-next-step {
-  border-left: 3px solid var(--zeus-control-accent, #1769d2);
+  border-left: 3px solid var(--zeus-control-accent, var(--zeus-brand-primary));
   padding-left: 10px;
 }
 

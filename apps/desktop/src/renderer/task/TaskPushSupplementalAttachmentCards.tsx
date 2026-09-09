@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from 'react';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { TaskPushSupplementalAttachmentDraft } from '../session/sessionTypes.js';
 import { conversationAttachmentIdentity } from '../session/ConversationComposerAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export function TaskPushSupplementalAttachmentCards(props: {
   attachments: TaskPushSupplementalAttachmentDraft[];
@@ -16,7 +17,7 @@ export function TaskPushSupplementalAttachmentCards(props: {
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
+
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   const previewId = useId();
   const zh = props.language === 'zh-CN';
@@ -35,8 +36,6 @@ export function TaskPushSupplementalAttachmentCards(props: {
       })),
     [props.attachments],
   );
-
-  useNativeCloseLayer(Boolean(previewAttachment), closePreview);
 
   const loadPreview = useCallback(async (attachment: TaskPushSupplementalAttachmentDraft) => {
     const bridge = window.zeus?.getConversationResourcePreview;
@@ -75,34 +74,8 @@ export function TaskPushSupplementalAttachmentCards(props: {
     };
   }, [loadPreview, previewAttachment]);
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!previewAttachment || !dialog || dialog.open || typeof dialog.showModal !== 'function') return;
-    dialog.showModal();
-  }, [previewAttachment]);
-
   function closePreview(): void {
-    const dialog = dialogRef.current;
-    if (dialog?.open) {
-      dialog.close();
-      return;
-    }
     setPreviewAttachment(null);
-    previewTriggerRef.current?.focus();
-  }
-
-  function handleDialogClose(): void {
-    setPreviewAttachment(null);
-    previewTriggerRef.current?.focus();
-  }
-
-  function handleDialogCancel(event: SyntheticEvent<HTMLDialogElement, Event>): void {
-    event.preventDefault();
-    closePreview();
-  }
-
-  function handleDialogPointerDown(event: ReactMouseEvent<HTMLDialogElement>): void {
-    if (event.currentTarget === event.target) closePreview();
   }
 
   async function activateResource(resource: PendingResourceCardItem, trigger: HTMLButtonElement): Promise<void> {
@@ -143,36 +116,32 @@ export function TaskPushSupplementalAttachmentCards(props: {
           if (attachment) props.onRestoreText(attachment);
         }}
       />
-      <dialog
-        ref={dialogRef}
-        className="task-model-push-attachment-dialog"
-        aria-labelledby={`${previewId}-title`}
-        aria-describedby={`${previewId}-description`}
-        onClose={handleDialogClose}
-        onCancel={handleDialogCancel}
-        onPointerDown={handleDialogPointerDown}
-      >
-        <div className="task-model-push-attachment-sheet">
-          <header>
-            <span>
-              <strong id={`${previewId}-title`}>{previewAttachment?.name ?? (zh ? '图片预览' : 'Image preview')}</strong>
-              <small id={`${previewId}-description`}>{zh ? '本次推送附件图片预览' : 'Image preview for this push attachment'}</small>
-            </span>
-            <button type="button" onClick={closePreview} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
-              ×
-            </button>
-          </header>
-          <div className="task-model-push-attachment-stage">
-            {previewLoading ? (
-              <p role="status">{zh ? '正在加载图片…' : 'Loading image…'}</p>
-            ) : previewAttachment && previewUrl && !previewFailed ? (
-              <img src={previewUrl} alt={previewAttachment.name} onError={() => setPreviewFailed(true)} />
-            ) : (
-              <p>{zh ? '图片预览不可用。' : 'Image preview is unavailable.'}</p>
-            )}
-          </div>
-        </div>
-      </dialog>
+      <MotionPresence>
+        {previewAttachment ? (
+          <ModalPortal rootClassName="image-preview-portal" onDismiss={closePreview}>
+            <div className="task-model-push-attachment-sheet" role="dialog" aria-modal="true" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
+              <header>
+                <span>
+                  <strong id={`${previewId}-title`}>{previewAttachment?.name ?? (zh ? '图片预览' : 'Image preview')}</strong>
+                  <small id={`${previewId}-description`}>{zh ? '本次推送附件图片预览' : 'Image preview for this push attachment'}</small>
+                </span>
+                <button type="button" onClick={closePreview} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
+                  ×
+                </button>
+              </header>
+              <div className="task-model-push-attachment-stage">
+                {previewLoading ? (
+                  <p role="status">{zh ? '正在加载图片…' : 'Loading image…'}</p>
+                ) : previewAttachment && previewUrl && !previewFailed ? (
+                  <img src={previewUrl} alt={previewAttachment.name} onError={() => setPreviewFailed(true)} />
+                ) : (
+                  <p>{zh ? '图片预览不可用。' : 'Image preview is unavailable.'}</p>
+                )}
+              </div>
+            </div>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </div>
   );
 }

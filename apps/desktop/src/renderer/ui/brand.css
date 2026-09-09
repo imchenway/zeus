@@ -1,0 +1,22 @@
+/* 品牌色取自 assets/icon.svg 的 zeus-accent 渐变，所有窗口共用同一来源。 */
+:root {
+  /* 图标的深紫色端点用于主操作与交互反馈。 */
+  --zeus-brand-primary: #6155d8;
+  /* 图标的亮紫色端点用于辅助强调。 */
+  --zeus-brand-highlight: #7a6ff0;
+  /* 浅色背景上的强调文字使用品牌主色。 */
+  --zeus-brand-text: var(--zeus-brand-primary);
+}
+
+/* 深色背景提高文字亮度，主按钮仍保持原品牌色与白字的对比。 */
+.macos-ai-app.theme-dark,
+.menu-bar-usage-root[data-appearance='dark'] {
+  --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
+}
+
+@media (prefers-color-scheme: dark) {
+  .macos-ai-app.theme-system,
+  .menu-bar-usage-root[data-appearance='system'] {
+    --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
+  }
+}

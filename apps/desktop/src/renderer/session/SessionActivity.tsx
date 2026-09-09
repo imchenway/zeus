@@ -1,3 +1,4 @@
+import { Collapsible } from '../ui/Collapsible.js';
 import { type FocusEvent, type KeyboardEvent, memo, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -348,6 +349,8 @@ function activityOutputPreview(output: string): { text: string; truncated: boole
 
 export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; language: SessionUiLanguage }) {
   const [open, setOpen] = useState(false);
+  /** 鼠标离开后仍在面板内输入时保留展开。 */
+  const dockRef = useRef<HTMLElement>(null);
   const popoverId = useId();
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -371,7 +374,7 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   function scheduleClose(): void {
     cancelClose();
     closeTimerRef.current = setTimeout(() => {
-      setOpen(false);
+      if (!dockRef.current?.contains(document.activeElement)) setOpen(false);
       closeTimerRef.current = null;
     }, 120);
   }
@@ -400,7 +403,17 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   if (steps.length === 0) return null;
 
   return (
-    <section className="session-plan-dock" onPointerEnter={show} onPointerLeave={scheduleClose} onFocusCapture={show} onBlurCapture={handleBlur} onKeyDown={handleKeyDown}>
+    <section
+      ref={dockRef}
+      className="session-plan-dock"
+      onPointerEnter={show}
+      onPointerLeave={scheduleClose}
+      onFocusCapture={(event) => {
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) show();
+      }}
+      onBlurCapture={handleBlur}
+      onKeyDown={handleKeyDown}
+    >
       <div className="session-plan-progress" data-open={open || undefined}>
         <button ref={triggerRef} type="button" className="session-plan-trigger" aria-expanded={open} aria-controls={popoverId} onClick={show}>
           <ListChecks aria-hidden="true" weight="regular" />
@@ -410,7 +423,7 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
           </span>
           <CaretDown className="session-plan-caret" aria-hidden="true" weight="bold" />
         </button>
-        <div id={popoverId} className="session-plan-popover" hidden={!open}>
+        <div id={popoverId} className="session-plan-popover" data-motion-surface="popover" hidden={!open} inert={!open} aria-hidden={!open}>
           <div className="session-plan-body">
             {props.plan.explanation ? <p className="zeus-fidelity-text">{props.plan.explanation}</p> : null}
             <ol>
@@ -532,23 +545,21 @@ export function SessionTurnProcessDisclosure(props: {
           </button>
         </div>
       ) : null}
-      <div id={inline ? undefined : bodyId} className="session-turn-process-body" hidden={inline ? undefined : !open}>
-        {open ? (
-          <>
-            {props.children}
-            {props.loading ? (
-              <p className="session-v2-page-status" role="status">
-                {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
-              </p>
-            ) : null}
-            {props.error ? (
-              <p className="session-v2-page-error" role="alert">
-                <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-              </p>
-            ) : null}
-          </>
-        ) : null}
-      </div>
+      <Collapsible id={inline ? undefined : bodyId} open={open}>
+        <div className="session-turn-process-body">
+          {props.children}
+          {props.loading ? (
+            <p className="session-v2-page-status" role="status">
+              {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
+            </p>
+          ) : null}
+          {props.error ? (
+            <p className="session-v2-page-error" role="alert">
+              <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+            </p>
+          ) : null}
+        </div>
+      </Collapsible>
     </section>
   );
 }
