@@ -1,3 +1,4 @@
+import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
@@ -103,21 +104,23 @@ export function TurnChangeCard(props: {
         </p>
       ) : null}
       {visibleFiles.length ? (
-        <ul className="session-turn-change-files">
-          {visibleFiles.map((file) => (
-            <li key={file.id}>
-              <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
-                <span className="session-turn-change-path" title={displayPath(file)}>
-                  {displayPath(file)}
-                </span>
-                <span className="session-turn-change-file-counts">
-                  {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
-                  {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <AnimatedSize changeKey={expanded}>
+          <ul className="session-turn-change-files">
+            {visibleFiles.map((file) => (
+              <li key={file.id}>
+                <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
+                  <span className="session-turn-change-path" title={displayPath(file)}>
+                    {displayPath(file)}
+                  </span>
+                  <span className="session-turn-change-file-counts">
+                    {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
+                    {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </AnimatedSize>
       ) : null}
       {hiddenCount > 0 || (expanded && changeSet.files.length > 3) ? (
         <button type="button" className="session-turn-change-more" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>

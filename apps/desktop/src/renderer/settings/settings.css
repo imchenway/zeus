@@ -148,12 +148,12 @@
     text-align: start;
     cursor: pointer;
   }
-  .settings-sidebar-nav .settings-section-button:hover {
+  .settings-sidebar-nav .settings-section-button:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--zeus-source-list-hover);
   }
   .settings-sidebar-nav .settings-section-button[aria-selected='true'] {
     background: var(--zeus-product-selected);
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     font-weight: 600;
   }
 
@@ -286,7 +286,7 @@
       background-color 120ms,
       border-color 120ms;
   }
-  .settings-content-column :where(button):hover:not(:disabled) {
+  .settings-content-column :where(button):hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--zeus-control-bg-hover);
   }
   .settings-content-column :where(button):disabled {
@@ -298,7 +298,7 @@
     border-color: var(--zeus-product-accent);
     color: white;
   }
-  .settings-content-column [data-button-variant='primary']:hover:not(:disabled) {
+  .settings-content-column [data-button-variant='primary']:hover:not(:disabled):not([aria-disabled='true']) {
     background: color-mix(in srgb, var(--zeus-product-accent) 88%, black);
   }
   .settings-content-column [data-button-variant='danger'],
@@ -353,7 +353,7 @@
     align-items: center;
   }
   .settings-content-column button[aria-pressed='true'] {
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     border-color: var(--zeus-product-accent);
     background: var(--zeus-product-selected);
   }
@@ -663,8 +663,11 @@
     padding-block-start: 18px;
     border-block-start: 1px solid var(--zeus-product-line-soft);
   }
+  /* 批量展开保持独立快捷入口，标题和说明共用左侧空间。 */
   .model-definition-section > header {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 12px;
   }
   .model-definition-section > header > span:first-child {
@@ -709,6 +712,10 @@
     flex: 1 1 auto;
     min-inline-size: 0;
     gap: 10px;
+  }
+  /* 标题反馈只由整行绘制，避免设置页通用按钮状态重复铺色。 */
+  .model-definition-identity:is(:hover, :active):not(:disabled):not([aria-disabled='true']) {
+    background: transparent;
   }
   .model-definition-identity strong {
     font-size: 13px;
@@ -1319,7 +1326,7 @@
   }
   .task-field-tab[aria-current='page'] {
     background: var(--zeus-product-accent-soft);
-    color: var(--zeus-product-accent);
+    color: var(--zeus-brand-text);
     font-weight: 600;
   }
   .task-field-detail {

@@ -1,3 +1,4 @@
+import { Collapsible } from '../../ui/Collapsible.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { useCallback, useEffect, useState } from 'react';
@@ -695,20 +696,22 @@ function ConnectionCard(props: {
           </Button>
         </div>
       </footer>
-      <div id="im-connection-logs" className="im-log-list" hidden={!props.logs} role="region" aria-label={props.zh ? 'Telegram 脱敏连接日志' : 'Redacted Telegram connection logs'}>
-        <p>{props.zh ? '连接日志中的敏感信息已隐藏。' : 'Sensitive details are hidden in these connection logs.'}</p>
-        {props.logs?.length ? (
-          props.logs.slice(0, 20).map((entry) => (
-            <div key={entry.id} className={entry.level}>
-              <time dateTime={entry.occurredAt}>{formatDateTime(entry.occurredAt)}</time>
-              <code>{entry.event}</code>
-              <span>{entry.message}</span>
-            </div>
-          ))
-        ) : (
-          <span>{props.zh ? '暂无连接日志。' : 'No connection logs.'}</span>
-        )}
-      </div>
+      <Collapsible open={Boolean(props.logs)}>
+        <div id="im-connection-logs" className="im-log-list" role="region" aria-label={props.zh ? 'Telegram 脱敏连接日志' : 'Redacted Telegram connection logs'}>
+          <p>{props.zh ? '连接日志中的敏感信息已隐藏。' : 'Sensitive details are hidden in these connection logs.'}</p>
+          {props.logs?.length ? (
+            props.logs.slice(0, 20).map((entry) => (
+              <div key={entry.id} className={entry.level}>
+                <time dateTime={entry.occurredAt}>{formatDateTime(entry.occurredAt)}</time>
+                <code>{entry.event}</code>
+                <span>{entry.message}</span>
+              </div>
+            ))
+          ) : (
+            <span>{props.zh ? '暂无连接日志。' : 'No connection logs.'}</span>
+          )}
+        </div>
+      </Collapsible>
     </section>
   );
 }

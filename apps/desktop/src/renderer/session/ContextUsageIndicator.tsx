@@ -1,3 +1,4 @@
+import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { NativeUnifiedUsageSnapshot } from './sessionTypes.js';
@@ -9,8 +10,9 @@ type ContextUsageSeverity = 'unavailable' | 'normal' | 'warning' | 'danger';
 export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageSnapshot | null; language: SessionUiLanguage }) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
-  const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  /** 鼠标移开后平滑退出，并且不把最后位置重置到页面左上角。 */
+  const { ref: tooltipRef, present: tooltipPresent } = useMotionPresence<HTMLSpanElement>(tooltipOpen);
   const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
   // 上下文规模只认最后一次真实模型请求：totalTokens（提示词 + 本次输出）就是下一次请求要携带的上下文，
   // 与 Pi 运行内核的压缩阈值口径一致。轮次累计用量不是上下文规模，任何情况下都不能当分子。
@@ -27,7 +29,6 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
 
   useLayoutEffect(() => {
     if (!tooltipOpen) {
-      setTooltipPosition(null);
       return;
     }
     const position = (): void => {
@@ -54,7 +55,16 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
   }, [capacity, compaction?.status, estimate?.estimatedHeadroomTokens, props.language, tooltipOpen, used]);
 
   const tooltip = (
-    <span ref={tooltipRef} id={tooltipId} className="session-context-usage-tooltip" role="tooltip" style={contextUsageTooltipPositionStyle(tooltipPosition)}>
+    <span
+      ref={tooltipRef}
+      id={tooltipId}
+      className="session-context-usage-tooltip"
+      role="tooltip"
+      data-motion-surface="popover"
+      data-motion-state={tooltipOpen ? 'open' : 'closing'}
+      aria-hidden={!tooltipOpen}
+      style={contextUsageTooltipPositionStyle(tooltipPosition)}
+    >
       <strong aria-hidden="true">{copy.title}</strong>
       {available || copy.estimatedHeadroom || copy.compaction ? (
         <dl>
@@ -110,13 +120,20 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
       }}
       onFocus={() => setTooltipOpen(true)}
       onBlur={() => setTooltipOpen(false)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          setTooltipOpen(false);
+        }
+      }}
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle className="session-context-usage-track" cx="12" cy="12" r="8.5" />
         <circle className="session-context-usage-value" cx="12" cy="12" r="8.5" pathLength="100" strokeDasharray={`${progress} 100`} />
         <circle className="session-context-usage-core" cx="12" cy="12" r="1.7" />
       </svg>
-      {tooltipOpen && typeof document !== 'undefined' && document.body ? createPortal(<span className={contextUsagePortalClassName(indicatorRef.current)}>{tooltip}</span>, document.body) : null}
+      {tooltipPresent && typeof document !== 'undefined' && document.body ? createPortal(<span className={contextUsagePortalClassName(indicatorRef.current)}>{tooltip}</span>, document.body) : null}
     </span>
   );
 }
@@ -128,7 +145,7 @@ function contextUsageTooltipPositionStyle(position: { left: number; top: number 
 function contextUsagePortalClassName(indicator: HTMLElement | null): string {
   const app = indicator?.closest('.session-codex-parity-v1') ?? document.querySelector('.macos-ai-app.zeus-shell');
   const theme = app?.classList.contains('theme-dark') ? 'theme-dark' : app?.classList.contains('theme-light') ? 'theme-light' : 'theme-system';
-  return `session-context-usage-tooltip-portal session-codex-parity-v1 ${theme}`;
+  return `macos-ai-app session-context-usage-tooltip-portal session-codex-parity-v1 ${theme}`;
 }
 
 function contextUsageSeverity(ratio: number | null): ContextUsageSeverity {

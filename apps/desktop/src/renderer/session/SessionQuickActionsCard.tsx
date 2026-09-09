@@ -1,3 +1,6 @@
+import { AnimatedSize } from '../ui/AnimatedSize.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
@@ -81,7 +84,6 @@ const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const zh = props.language === 'zh-CN';
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const cardRef = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [hasPersistentSpace, setHasPersistentSpace] = useState(false);
@@ -118,6 +120,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
+  /** 浮动快捷面板退场不延长数据订阅；常驻模式继续保持原组件身份。 */
+  const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLElement>(cardMounted);
   const popoverOpen = cardVisible && !persistent;
   /** 手动展开的环境侧栏仍由顶部按钮控制。 */
   const docked = !persistent && Boolean(props.dockHost);
@@ -318,11 +322,15 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         </button>
       )}
 
-      {cardMounted ? (
+      {cardPresent ? (
         <SessionQuickActionsCardMount persistent={persistent || docked} host={docked ? props.dockHost : props.persistentHost}>
           <section
             ref={cardRef}
             className="session-quick-actions-card"
+            data-motion-surface={persistent ? undefined : 'popover'}
+            data-motion-state={cardMounted ? 'open' : 'closing'}
+            inert={!cardVisible}
+            aria-hidden={!cardVisible}
             data-presentation={persistent ? 'persistent' : docked ? 'docked' : 'popover'}
             data-sources-expanded={showAllSources || undefined}
             role={persistent || docked ? 'region' : 'dialog'}
@@ -451,23 +459,25 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 ) : null}
               </header>
               {visibleSources.length > 0 ? (
-                <ol>
-                  {visibleSources.map((source) => (
-                    <li key={source.id}>
-                      {source.resource && props.onOpenSource ? (
-                        <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
-                          <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
-                          <span className="session-quick-actions-source-label">{source.label}</span>
-                        </button>
-                      ) : (
-                        <span title={source.label}>
-                          <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
-                          <span className="session-quick-actions-source-label">{source.label}</span>
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ol>
+                <AnimatedSize changeKey={showAllSources}>
+                  <ol>
+                    {visibleSources.map((source) => (
+                      <li key={source.id}>
+                        {source.resource && props.onOpenSource ? (
+                          <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
+                            <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                            <span className="session-quick-actions-source-label">{source.label}</span>
+                          </button>
+                        ) : (
+                          <span title={source.label}>
+                            <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                            <span className="session-quick-actions-source-label">{source.label}</span>
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </AnimatedSize>
               ) : (
                 <p>{zh ? '当前会话还没有来源。' : 'No sources in this conversation yet.'}</p>
               )}
@@ -483,20 +493,24 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           </section>
         </SessionQuickActionsCardMount>
       ) : null}
-      <SessionCodeReviewDialog
-        open={reviewDialogOpen}
-        language={props.language}
-        conversation={props.conversation}
-        state={props.state}
-        workspace={exactReviewWorkspace}
-        capabilities={props.capabilities ?? null}
-        serviceTierPreferences={props.serviceTierPreferences}
-        onServiceTierPreferenceChange={props.onServiceTierPreferenceChange}
-        onLoadCapabilities={props.onLoadCapabilities}
-        onLoadSkills={props.onLoadSkills}
-        onClose={() => setReviewDialogOpen(false)}
-        onStart={props.onStartCodeReview}
-      />
+      <MotionPresence>
+        {reviewDialogOpen ? (
+          <SessionCodeReviewDialog
+            open={reviewDialogOpen}
+            language={props.language}
+            conversation={props.conversation}
+            state={props.state}
+            workspace={exactReviewWorkspace}
+            capabilities={props.capabilities ?? null}
+            serviceTierPreferences={props.serviceTierPreferences}
+            onServiceTierPreferenceChange={props.onServiceTierPreferenceChange}
+            onLoadCapabilities={props.onLoadCapabilities}
+            onLoadSkills={props.onLoadSkills}
+            onClose={() => setReviewDialogOpen(false)}
+            onStart={props.onStartCodeReview}
+          />
+        ) : null}
+      </MotionPresence>
     </div>
   );
 }

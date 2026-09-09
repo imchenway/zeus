@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -2776,20 +2777,24 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               </div>
             </div>
           </div>
-          <GoalPanel
-            open={goalPanelOpen}
-            language={props.language}
-            goal={goal}
-            timeline={props.state?.snapshot?.goalTimeline ?? []}
-            capability={goalCapability}
-            busy={goalBusy}
-            error={goalError}
-            onDismiss={() => setGoalPanelOpen(false)}
-            onSave={(objective) => runGoalAction(() => actions.onSetGoal?.(objective))}
-            onPause={() => runGoalAction(actions.onPauseGoal)}
-            onResume={() => runGoalAction(actions.onResumeGoal)}
-            onClear={(confirmUnfinished) => runGoalAction(() => actions.onClearGoal?.(confirmUnfinished), true)}
-          />
+          <MotionPresence>
+            {goalPanelOpen ? (
+              <GoalPanel
+                open={goalPanelOpen}
+                language={props.language}
+                goal={goal}
+                timeline={props.state?.snapshot?.goalTimeline ?? []}
+                capability={goalCapability}
+                busy={goalBusy}
+                error={goalError}
+                onDismiss={() => setGoalPanelOpen(false)}
+                onSave={(objective) => runGoalAction(() => actions.onSetGoal?.(objective))}
+                onPause={() => runGoalAction(actions.onPauseGoal)}
+                onResume={() => runGoalAction(actions.onResumeGoal)}
+                onClear={(confirmUnfinished) => runGoalAction(() => actions.onClearGoal?.(confirmUnfinished), true)}
+              />
+            ) : null}
+          </MotionPresence>
         </>
       ) : (
         <NewConversationComposer

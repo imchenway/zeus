@@ -1,3 +1,4 @@
+import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { useEffect, useMemo, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord } from '../apiClient.js';
@@ -44,6 +45,8 @@ export function TaskGitReviewModal(props: TaskGitReviewModalProps) {
 }
 
 function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
+  /** 退出立即取消旧读取，快速重开时重新加载当前任务。 */
+  const interactionOpen = usePresenceOpen() && props.open;
   const zh = props.language === 'zh-CN';
   const [workspaceIndex, setWorkspaceIndex] = useState<TaskWorkspaceIndexCollection | null>(null);
   const [workspaceDetails, setWorkspaceDetails] = useState<Record<string, TaskWorkspaceSnapshot>>({});
@@ -68,9 +71,17 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   });
 
   useEffect(() => {
-    if (!props.open || !props.task || !props.client) return;
+    if (!interactionOpen || !props.task || !props.client) return;
     let cancelled = false;
     setStatus('loading');
+    setWorkspaceIndex(null);
+    setWorkspaceDetails({});
+    setDetailStates({});
+    setActiveWorkspaceId('');
+    setSelectedPaths([]);
+    setSelectedFile('');
+    setFileDiff(null);
+    setBatchResult(null);
     setError(null);
     setMessage(
       buildTaskCommitMessageSuggestion({
@@ -106,10 +117,10 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.task?.id, props.client, props.mode, props.preferredWorkspaceId]);
+  }, [interactionOpen, props.task?.id, props.client, props.mode, props.preferredWorkspaceId]);
 
   useEffect(() => {
-    if (!props.task || !props.client || !activeWorkspaceId || activeWorkspace) return;
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspaceId || activeWorkspace) return;
     let cancelled = false;
     setDetailStates((current) => ({ ...current, [activeWorkspaceId]: 'loading' }));
     void props.client
@@ -131,7 +142,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.task?.id, props.client, activeWorkspaceId, activeWorkspace]);
+  }, [interactionOpen, props.task?.id, props.client, activeWorkspaceId, activeWorkspace]);
 
   useEffect(() => {
     const nextFiles = collectReviewFiles(activeWorkspace);
@@ -143,7 +154,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }, [activeWorkspaceId, activeWorkspace]);
 
   useEffect(() => {
-    if (!props.task || !props.client || !activeWorkspace || !selectedFile || !activeWorkspace.review) {
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspace || !selectedFile || !activeWorkspace.review) {
       setFileDiff(null);
       return;
     }
@@ -159,7 +170,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.task?.id, props.client, activeWorkspace?.id, selectedFile]);
+  }, [interactionOpen, props.task?.id, props.client, activeWorkspace?.id, selectedFile]);
 
   async function reload(preferredWorkspaceId?: string, invalidatedWorkspaceId = preferredWorkspaceId): Promise<void> {
     if (!props.task || !props.client) throw new Error('Task Git client is unavailable.');
@@ -178,7 +189,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }
 
   async function commit(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace) return;
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspace) return;
     setStatus('submitting');
     setError(null);
     try {
@@ -196,7 +207,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }
 
   async function push(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace || props.mode !== 'push-only') return;
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspace || props.mode !== 'push-only') return;
     setStatus('submitting');
     setError(null);
     try {
@@ -211,7 +222,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }
 
   async function reclaimWithoutCommit(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
     if (activeWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk('reclaim', activeWorkspace.activeConversationCount, zh)) return;
     setStatus('submitting');
     setError(null);
@@ -230,7 +241,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }
 
   async function discard(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
+    if (!interactionOpen || !props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
     if (activeWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk('discard', activeWorkspace.activeConversationCount, zh)) return;
     setStatus('submitting');
     setError(null);

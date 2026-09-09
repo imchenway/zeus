@@ -1,7 +1,10 @@
+import { MenuSurface } from '../ui/MenuSurface.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
-import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -742,21 +745,23 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             <Button variant="secondary" size="compact" onClick={() => setOperationsOpen((current) => !current)}>
               {zh ? '操作' : 'Actions'} <CaretDown aria-hidden="true" />
             </Button>
-            {operationsOpen ? (
-              <OperationsMenu
-                zh={zh}
-                onClose={() => setOperationsOpen(false)}
-                onOpenCommit={openCommit}
-                onOpenPush={() => setPushOpen(true)}
-                onOpenUpdate={() => setUpdateOpen(true)}
-                onOpenNewBranch={() => {
-                  setNewBranchBase('');
-                  setNewBranchOpen(true);
-                }}
-                onOpenRevision={() => setRevisionOpen(true)}
-                onSelectTab={setTab}
-              />
-            ) : null}
+            <MotionPresence>
+              {operationsOpen ? (
+                <OperationsMenu
+                  zh={zh}
+                  onClose={() => setOperationsOpen(false)}
+                  onOpenCommit={openCommit}
+                  onOpenPush={() => setPushOpen(true)}
+                  onOpenUpdate={() => setUpdateOpen(true)}
+                  onOpenNewBranch={() => {
+                    setNewBranchBase('');
+                    setNewBranchOpen(true);
+                  }}
+                  onOpenRevision={() => setRevisionOpen(true)}
+                  onSelectTab={setTab}
+                />
+              ) : null}
+            </MotionPresence>
           </span>
         </span>
       </header>
@@ -973,51 +978,67 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </div>
       </div>
 
-      {subtreeDialogOpen && selectedRepository ? <SubtreeManagementDialog key={selectedRepository.id} repository={selectedRepository} zh={zh} busy={busy} onClose={() => setSubtreeDialogOpen(false)} onExecute={execute} /> : null}
-      {contextMenu ? <GitContextMenu {...contextMenu} onClose={() => setContextMenu(null)} onError={(reason) => setError(errorMessage(reason, zh))} /> : null}
-      {menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}
-      <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} />
-      <UpdateProjectDialog
-        open={updateOpen}
-        projectId={props.project.id}
-        zh={zh}
-        repositories={repositories}
-        busy={busy}
-        errorsByRepository={operationErrorsByRepositoryRef.current}
-        onClose={() => setUpdateOpen(false)}
-        onExecute={execute}
-      />
-      <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
-      <CheckoutRevisionDialog open={revisionOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} busy={busy} onClose={() => setRevisionOpen(false)} onExecute={execute} />
-      <PushDialog
-        open={pushOpen}
-        zh={zh}
-        repositories={repositories}
-        busy={busy}
-        results={pushResults}
-        onClose={() => {
-          setPushOpen(false);
-          setPushResults([]);
-        }}
-        onPush={async (selections, forceWithLease, pushTags) => {
-          const results: Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }> = [];
-          for (const repository of repositories.filter((candidate) => selections.some((selection) => selection.repositoryId === candidate.id))) {
-            const selection = selections.find((candidate) => candidate.repositoryId === repository.id)!;
-            const ok = await execute(repository, { type: 'push', remote: selection.remote, targetBranch: selection.targetBranch, forceWithLease, pushTags }, zh ? '推送提交' : 'Push commits');
-            results.push({
-              repositoryId: repository.id,
-              repositoryName: repository.name,
-              tone: ok ? 'success' : 'error',
-              message: ok
-                ? zh
-                  ? `已推送 ${repository.snapshot.outgoingCommits.length} 个提交`
-                  : `Pushed ${repository.snapshot.outgoingCommits.length} commits`
-                : (operationErrorsByRepositoryRef.current[repository.id] ?? (zh ? '推送失败。' : 'Push failed.')),
-            });
-          }
-          setPushResults(results);
-        }}
-      />
+      <MotionPresence>
+        {subtreeDialogOpen && selectedRepository ? <SubtreeManagementDialog key={selectedRepository.id} repository={selectedRepository} zh={zh} busy={busy} onClose={() => setSubtreeDialogOpen(false)} onExecute={execute} /> : null}
+      </MotionPresence>
+      <MotionPresence>{contextMenu ? <GitContextMenu {...contextMenu} onClose={() => setContextMenu(null)} onError={(reason) => setError(errorMessage(reason, zh))} /> : null}</MotionPresence>
+      <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
+      <MotionPresence>{commitOpen ? <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} /> : null}</MotionPresence>
+      <MotionPresence>
+        {updateOpen ? (
+          <UpdateProjectDialog
+            open={updateOpen}
+            projectId={props.project.id}
+            zh={zh}
+            repositories={repositories}
+            busy={busy}
+            errorsByRepository={operationErrorsByRepositoryRef.current}
+            onClose={() => setUpdateOpen(false)}
+            onExecute={execute}
+          />
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
+        {newBranchOpen ? (
+          <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
+        {revisionOpen ? <CheckoutRevisionDialog open={revisionOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} busy={busy} onClose={() => setRevisionOpen(false)} onExecute={execute} /> : null}
+      </MotionPresence>
+      <MotionPresence>
+        {pushOpen ? (
+          <PushDialog
+            open={pushOpen}
+            zh={zh}
+            repositories={repositories}
+            busy={busy}
+            results={pushResults}
+            onClose={() => {
+              setPushOpen(false);
+              setPushResults([]);
+            }}
+            onPush={async (selections, forceWithLease, pushTags) => {
+              const results: Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }> = [];
+              for (const repository of repositories.filter((candidate) => selections.some((selection) => selection.repositoryId === candidate.id))) {
+                const selection = selections.find((candidate) => candidate.repositoryId === repository.id)!;
+                const ok = await execute(repository, { type: 'push', remote: selection.remote, targetBranch: selection.targetBranch, forceWithLease, pushTags }, zh ? '推送提交' : 'Push commits');
+                results.push({
+                  repositoryId: repository.id,
+                  repositoryName: repository.name,
+                  tone: ok ? 'success' : 'error',
+                  message: ok
+                    ? zh
+                      ? `已推送 ${repository.snapshot.outgoingCommits.length} 个提交`
+                      : `Pushed ${repository.snapshot.outgoingCommits.length} commits`
+                    : (operationErrorsByRepositoryRef.current[repository.id] ?? (zh ? '推送失败。' : 'Push failed.')),
+                });
+              }
+              setPushResults(results);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
@@ -1045,7 +1066,8 @@ function BranchSwitcher(props: {
   const [revisionMenu, setRevisionMenu] = useState<{ x: number; y: number; repository: ProjectGitRepositoryWorkbenchItem; revision: string } | null>(null);
   const [commonBranch, setCommonBranch] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  /** 下拉视觉退出后释放内容，业务开关仍立即生效。 */
+  const { ref: popoverRef, present: popoverPresent } = useMotionPresence<HTMLDivElement>(open);
   const searchRef = useRef<HTMLInputElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const currentLabels = props.repositories.map((repository) => currentRepositoryRefLabel(repository, props.zh));
@@ -1058,7 +1080,8 @@ function BranchSwitcher(props: {
         : `${props.repositories.length} repositories · ${sameCurrent ? currentLabels[0] : 'branches differ'}`;
   const commonLocalBranches = useMemo(() => intersectRepositoryValues(props.repositories, (repository) => repository.snapshot.localBranches), [props.repositories]);
 
-  useEffect(() => {
+  // 定位与首帧一起完成，展开过程中只改变视觉状态。
+  useLayoutEffect(() => {
     if (!open) return;
     const updatePosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
@@ -1069,7 +1092,9 @@ function BranchSwitcher(props: {
       if (!popoverRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault();
+        event.stopPropagation();
         setOpen(false);
         triggerRef.current?.focus();
       }
@@ -1079,7 +1104,7 @@ function BranchSwitcher(props: {
     window.addEventListener('scroll', updatePosition, true);
     document.addEventListener('pointerdown', close, true);
     document.addEventListener('keydown', escape, true);
-    requestAnimationFrame(() => searchRef.current?.focus());
+    searchRef.current?.focus({ preventScroll: true });
     return () => {
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
@@ -1108,8 +1133,18 @@ function BranchSwitcher(props: {
     { id: 'revision', label: props.zh ? '切换到标签或提交…' : 'Switch to a tag or commit…', run: props.onOpenRevision },
   ].filter((action) => matches(action.label));
 
-  const popover = open ? (
-    <div ref={popoverRef} className="project-git-branch-popover" role="dialog" aria-label={props.zh ? '分支与 Git 操作' : 'Branches and Git actions'} style={position}>
+  const popover = popoverPresent ? (
+    <div
+      ref={popoverRef}
+      className="project-git-branch-popover"
+      data-motion-surface="popover"
+      data-motion-state={open ? 'open' : 'closing'}
+      inert={!open}
+      aria-hidden={!open}
+      role="dialog"
+      aria-label={props.zh ? '分支与 Git 操作' : 'Branches and Git actions'}
+      style={position}
+    >
       <label className="project-git-branch-search">
         <MagnifyingGlass aria-hidden="true" />
         <input ref={searchRef} value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={props.zh ? '搜索分支和操作' : 'Search for branches and actions'} />
@@ -1182,20 +1217,22 @@ function BranchSwitcher(props: {
         <CaretDown aria-hidden="true" />
       </button>
       {typeof document !== 'undefined' && document.body && popover ? createPortal(popover, triggerRef.current?.closest('.macos-ai-app') ?? document.body) : popover}
-      {branchMenu ? <BranchContextMenu {...branchMenu} zh={props.zh} busy={props.busy} onClose={() => setBranchMenu(null)} onExecute={props.onExecute} onOpenDiff={props.onOpenDiff} /> : null}
-      {revisionMenu ? (
-        <RevisionContextMenu
-          {...revisionMenu}
-          zh={props.zh}
-          busy={props.busy}
-          onClose={() => setRevisionMenu(null)}
-          onExecute={props.onExecute}
-          onNewBranch={(baseRef) => {
-            setRevisionMenu(null);
-            props.onOpenNewBranch(baseRef);
-          }}
-        />
-      ) : null}
+      <MotionPresence>{branchMenu ? <BranchContextMenu {...branchMenu} zh={props.zh} busy={props.busy} onClose={() => setBranchMenu(null)} onExecute={props.onExecute} onOpenDiff={props.onOpenDiff} /> : null}</MotionPresence>
+      <MotionPresence>
+        {revisionMenu ? (
+          <RevisionContextMenu
+            {...revisionMenu}
+            zh={props.zh}
+            busy={props.busy}
+            onClose={() => setRevisionMenu(null)}
+            onExecute={props.onExecute}
+            onNewBranch={(baseRef) => {
+              setRevisionMenu(null);
+              props.onOpenNewBranch(baseRef);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </>
   );
 }
@@ -1254,22 +1291,15 @@ function RevisionContextMenu(props: {
   onNewBranch: (baseRef: string) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) props.onClose();
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose();
-    };
-    document.addEventListener('pointerdown', close, true);
-    document.addEventListener('keydown', escape, true);
-    return () => {
-      document.removeEventListener('pointerdown', close, true);
-      document.removeEventListener('keydown', escape, true);
-    };
-  }, []);
+
   return (
-    <div ref={menuRef} className="project-git-branch-context-menu" role="menu" style={{ left: Math.max(8, Math.min(props.x, window.innerWidth - 430)), top: Math.max(8, Math.min(props.y, window.innerHeight - 180)) }}>
+    <MenuSurface
+      onClose={props.onClose}
+      ref={menuRef}
+      className="project-git-branch-context-menu"
+      role="menu"
+      style={{ left: Math.max(8, Math.min(props.x, window.innerWidth - 430)), top: Math.max(8, Math.min(props.y, window.innerHeight - 180)) }}
+    >
       <button
         type="button"
         role="menuitem"
@@ -1284,7 +1314,7 @@ function RevisionContextMenu(props: {
       <button type="button" role="menuitem" disabled={props.busy !== null} onClick={() => props.onNewBranch(props.revision)}>
         {props.zh ? `从“${props.revision}”新建分支…` : `New Branch from '${props.revision}'…`}
       </button>
-    </div>
+    </MenuSurface>
   );
 }
 
@@ -1685,7 +1715,7 @@ function GitLogSurface(props: {
           <p className="project-git-empty-copy">{props.zh ? '选择一个提交查看文件与差异。' : 'Select a commit to inspect files and diff.'}</p>
         )}
       </aside>
-      {branchMenu ? <BranchContextMenu {...branchMenu} zh={props.zh} busy={props.busy} onClose={() => setBranchMenu(null)} onExecute={props.onExecute} onOpenDiff={props.onOpenDiff} /> : null}
+      <MotionPresence>{branchMenu ? <BranchContextMenu {...branchMenu} zh={props.zh} busy={props.busy} onClose={() => setBranchMenu(null)} onExecute={props.onExecute} onOpenDiff={props.onOpenDiff} /> : null}</MotionPresence>
     </div>
   );
 }
@@ -2427,20 +2457,7 @@ function BranchContextMenu(props: {
       ? `游离 · ${props.repository.snapshot.headTags[0] ?? props.repository.snapshot.headSha.slice(0, 8)}`
       : `Detached · ${props.repository.snapshot.headTags[0] ?? props.repository.snapshot.headSha.slice(0, 8)}`
     : current;
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!confirmDelete && !menuRef.current?.contains(event.target as Node)) props.onClose();
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose();
-    };
-    document.addEventListener('pointerdown', close, true);
-    document.addEventListener('keydown', escape, true);
-    return () => {
-      document.removeEventListener('pointerdown', close, true);
-      document.removeEventListener('keydown', escape, true);
-    };
-  }, [confirmDelete]);
+
   const run = (action: ProjectGitAction, label: string) => () => {
     props.onClose();
     void props.onExecute(props.repository, action, label);
@@ -2485,7 +2502,13 @@ function BranchContextMenu(props: {
     );
   }
   return (
-    <div ref={menuRef} className="project-git-branch-context-menu" role="menu" style={{ left: Math.max(8, Math.min(props.x, window.innerWidth - 560)), top: Math.max(8, Math.min(props.y, window.innerHeight - 430)) }}>
+    <MenuSurface
+      onClose={props.onClose}
+      ref={menuRef}
+      className="project-git-branch-context-menu"
+      role="menu"
+      style={{ left: Math.max(8, Math.min(props.x, window.innerWidth - 560)), top: Math.max(8, Math.min(props.y, window.innerHeight - 430)) }}
+    >
       {props.branch !== current ? (
         <button
           type="button"
@@ -2561,32 +2584,19 @@ function BranchContextMenu(props: {
           </button>
         </>
       ) : null}
-    </div>
+    </MenuSurface>
   );
 }
 
 function OperationsMenu(props: { zh: boolean; onClose: () => void; onOpenCommit: () => void; onOpenPush: () => void; onOpenUpdate: () => void; onOpenNewBranch: () => void; onOpenRevision: () => void; onSelectTab: (tab: GitTab) => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) props.onClose();
-    };
-    document.addEventListener('pointerdown', close, true);
-    return () => document.removeEventListener('pointerdown', close, true);
-  }, []);
+
   const action = (callback: () => void) => () => {
     props.onClose();
     callback();
   };
   return (
-    <div
-      ref={menuRef}
-      className="project-git-operations-menu"
-      role="menu"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') props.onClose();
-      }}
-    >
+    <MenuSurface onClose={props.onClose} ref={menuRef} className="project-git-operations-menu" role="menu">
       <button type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
         {props.zh ? '提交…' : 'Commit…'}
       </button>
@@ -2613,7 +2623,7 @@ function OperationsMenu(props: { zh: boolean; onClose: () => void; onOpenCommit:
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('stash'))}>
         Stash
       </button>
-    </div>
+    </MenuSurface>
   );
 }
 

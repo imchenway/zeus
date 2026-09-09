@@ -1,3 +1,4 @@
+import { Collapsible } from '../ui/Collapsible.js';
 import { useEffect, useId, useState } from 'react';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
@@ -97,7 +98,7 @@ export function GoalPanel(props: GoalPanelProps) {
             </div>
           </dl>
         ) : null}
-        {confirmClear ? (
+        <Collapsible open={confirmClear}>
           <section className="session-goal-clear-confirm" role="alertdialog" aria-label={zh ? '确认清除目标' : 'Confirm goal clear'}>
             <strong>{zh ? '清除后将不再自动继续执行此目标' : 'Clearing the goal stops further automatic work toward it'}</strong>
             <p>{zh ? '当前轮次不会被中断；会话和目标时间线仍会保留，但目标不能直接恢复。' : 'The current turn will continue. Conversation and goal history remain, but the goal cannot be restored directly.'}</p>
@@ -108,7 +109,7 @@ export function GoalPanel(props: GoalPanelProps) {
               {zh ? '取消' : 'Cancel'}
             </button>
           </section>
-        ) : null}
+        </Collapsible>
         {!props.draftOnly && props.timeline.length > 0 ? (
           <section className="session-goal-timeline" aria-label={zh ? '目标时间线' : 'Goal timeline'}>
             <h3>{zh ? '时间线' : 'Timeline'}</h3>

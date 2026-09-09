@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useState } from 'react';
 import type { TaskManagementStatusConfig, TaskManagementStatusDefinition } from '@zeus/shared';
 import { normalizeTaskManagementStatusConfig } from '@zeus/shared';
@@ -205,48 +206,50 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
       <Button variant="secondary" size="compact" onClick={addStatus}>
         {zh ? '新增状态' : 'Add status'}
       </Button>
-      {pendingDeletion && deletingStatus ? (
-        <ModalPortal rootClassName="task-status-delete-portal" backdropClassName="task-create-modal-backdrop" onDismiss={() => setPendingDeletion(null)}>
-          <section className="task-status-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-status-delete-title">
-            <header>
-              <strong id="task-status-delete-title">{zh ? `删除“${props.labelForStatus(deletingStatus)}”` : `Delete “${props.labelForStatus(deletingStatus)}”`}</strong>
-              <p>
-                {pendingDeletion.taskCount > 0
-                  ? zh
-                    ? `有 ${pendingDeletion.taskCount} 个任务正在使用这个状态。请选择替代状态，保存时会先迁移任务。`
-                    : `${pendingDeletion.taskCount} tasks use this status. Choose a replacement; tasks will migrate before deletion.`
-                  : zh
-                    ? '这个状态会触发特定的任务操作。请选择删除后承担这些操作的替代状态。'
-                    : 'This status triggers specific task actions. Choose a replacement status to handle those actions after deletion.'}
-              </p>
-            </header>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择替代状态' : 'Choose replacement status'}
-              value={pendingDeletion.replacementStatusId}
-              onChange={(replacementStatusId) => setPendingDeletion((current) => (current ? { ...current, replacementStatusId } : current))}
-              searchable={false}
-              options={deletionAlternatives.map((status) => ({ value: status.id, label: props.labelForStatus(status), color: status.color }))}
-            />
-            <footer>
-              <Button variant="secondary" onClick={() => setPendingDeletion(null)}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button
-                variant="danger"
-                disabled={!pendingDeletion.replacementStatusId}
-                onClick={() => {
-                  const replacementStatusId = pendingDeletion.replacementStatusId;
-                  props.onChange(removeStatus(props.config, pendingDeletion.statusId, replacementStatusId), { removedStatusId: pendingDeletion.statusId, replacementStatusId });
-                  setPendingDeletion(null);
-                }}
-              >
-                {zh ? '迁移并删除' : 'Migrate and delete'}
-              </Button>
-            </footer>
-          </section>
-        </ModalPortal>
-      ) : null}
+      <MotionPresence>
+        {pendingDeletion && deletingStatus ? (
+          <ModalPortal rootClassName="task-status-delete-portal" backdropClassName="task-create-modal-backdrop" onDismiss={() => setPendingDeletion(null)}>
+            <section className="task-status-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-status-delete-title">
+              <header>
+                <strong id="task-status-delete-title">{zh ? `删除“${props.labelForStatus(deletingStatus)}”` : `Delete “${props.labelForStatus(deletingStatus)}”`}</strong>
+                <p>
+                  {pendingDeletion.taskCount > 0
+                    ? zh
+                      ? `有 ${pendingDeletion.taskCount} 个任务正在使用这个状态。请选择替代状态，保存时会先迁移任务。`
+                      : `${pendingDeletion.taskCount} tasks use this status. Choose a replacement; tasks will migrate before deletion.`
+                    : zh
+                      ? '这个状态会触发特定的任务操作。请选择删除后承担这些操作的替代状态。'
+                      : 'This status triggers specific task actions. Choose a replacement status to handle those actions after deletion.'}
+                </p>
+              </header>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择替代状态' : 'Choose replacement status'}
+                value={pendingDeletion.replacementStatusId}
+                onChange={(replacementStatusId) => setPendingDeletion((current) => (current ? { ...current, replacementStatusId } : current))}
+                searchable={false}
+                options={deletionAlternatives.map((status) => ({ value: status.id, label: props.labelForStatus(status), color: status.color }))}
+              />
+              <footer>
+                <Button variant="secondary" onClick={() => setPendingDeletion(null)}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={!pendingDeletion.replacementStatusId}
+                  onClick={() => {
+                    const replacementStatusId = pendingDeletion.replacementStatusId;
+                    props.onChange(removeStatus(props.config, pendingDeletion.statusId, replacementStatusId), { removedStatusId: pendingDeletion.statusId, replacementStatusId });
+                    setPendingDeletion(null);
+                  }}
+                >
+                  {zh ? '迁移并删除' : 'Migrate and delete'}
+                </Button>
+              </footer>
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }

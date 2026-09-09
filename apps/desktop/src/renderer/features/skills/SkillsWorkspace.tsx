@@ -1,3 +1,4 @@
+import { MotionPresence } from '../../ui/MotionPresence.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
@@ -254,57 +255,63 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
         </div>
       </section>
 
-      {installOpen ? (
-        <FormDialog
-          title={zh ? '安装技能' : 'Install skill'}
-          zh={zh}
-          busy={installing}
-          submitLabel={zh ? '安装' : 'Install'}
-          submitDisabled={source.kind === 'local' ? !source.path.trim() : !source.repositoryUrl.trim()}
-          onClose={closeInstall}
-          onSubmit={(event) => void submitInstall(event)}
-        >
-          <ExtensionSourceFields
-            source={source}
-            onSource={setSource}
+      <MotionPresence>
+        {installOpen ? (
+          <FormDialog
+            title={zh ? '安装技能' : 'Install skill'}
             zh={zh}
             busy={installing}
-            localLabel={zh ? '技能目录或 SKILL.md' : 'Skill directory or SKILL.md'}
-            onChoosePath={
-              props.onChooseDirectory
-                ? async () => {
-                    /** 使用系统目录选择器返回的真实路径。 */
-                    const path = await props.onChooseDirectory!();
-                    if (path) setSource((current) => ({ ...current, path }));
-                  }
-                : undefined
-            }
-          />
-          <p className="zeus-form-description">
-            {zh ? '安装只复制和校验文件。使用时，指令与脚本会按工作流权限运行，请选择可信来源。' : 'Installation only copies and validates files. When used, instructions and scripts run with workflow permissions. Choose a trusted source.'}
-          </p>
-          {installError ? (
-            <p className="skills-inline-error" role="alert">
-              {installError}
+            submitLabel={zh ? '安装' : 'Install'}
+            submitDisabled={source.kind === 'local' ? !source.path.trim() : !source.repositoryUrl.trim()}
+            onClose={closeInstall}
+            onSubmit={(event) => void submitInstall(event)}
+          >
+            <ExtensionSourceFields
+              source={source}
+              onSource={setSource}
+              zh={zh}
+              busy={installing}
+              localLabel={zh ? '技能目录或 SKILL.md' : 'Skill directory or SKILL.md'}
+              onChoosePath={
+                props.onChooseDirectory
+                  ? async () => {
+                      /** 使用系统目录选择器返回的真实路径。 */
+                      const path = await props.onChooseDirectory!();
+                      if (path) setSource((current) => ({ ...current, path }));
+                    }
+                  : undefined
+              }
+            />
+            <p className="zeus-form-description">
+              {zh
+                ? '安装只复制和校验文件。使用时，指令与脚本会按工作流权限运行，请选择可信来源。'
+                : 'Installation only copies and validates files. When used, instructions and scripts run with workflow permissions. Choose a trusted source.'}
             </p>
-          ) : null}
-        </FormDialog>
-      ) : null}
-      {pendingRemoval ? (
-        <FormDialog
-          title={zh ? `移除“${pendingRemoval.name}”？` : `Remove “${pendingRemoval.name}”?`}
-          description={zh ? '将删除 Zeus 用户技能目录中的对应文件，并清除引用此技能的工作流默认设置。' : 'This deletes its files from the Zeus user skills directory and clears workflow defaults that reference it.'}
-          zh={zh}
-          busy={Boolean(removingId)}
-          danger
-          submitLabel={zh ? '移除技能' : 'Remove skill'}
-          onClose={() => setPendingRemoval(null)}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void removeSkill(pendingRemoval);
-          }}
-        />
-      ) : null}
+            {installError ? (
+              <p className="skills-inline-error" role="alert">
+                {installError}
+              </p>
+            ) : null}
+          </FormDialog>
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
+        {pendingRemoval ? (
+          <FormDialog
+            title={zh ? `移除“${pendingRemoval.name}”？` : `Remove “${pendingRemoval.name}”?`}
+            description={zh ? '将删除 Zeus 用户技能目录中的对应文件，并清除引用此技能的工作流默认设置。' : 'This deletes its files from the Zeus user skills directory and clears workflow defaults that reference it.'}
+            zh={zh}
+            busy={Boolean(removingId)}
+            danger
+            submitLabel={zh ? '移除技能' : 'Remove skill'}
+            onClose={() => setPendingRemoval(null)}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void removeSkill(pendingRemoval);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }

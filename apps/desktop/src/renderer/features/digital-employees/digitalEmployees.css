@@ -95,7 +95,7 @@
   text-align: start;
 }
 
-.macos-ai-app .digital-employee-list-row:hover,
+.macos-ai-app .digital-employee-list-row:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .digital-employee-list-row.is-selected {
   background: color-mix(in oklab, var(--zeus-product-accent) 8%, var(--zeus-product-panel));
 }
@@ -139,7 +139,7 @@
   place-items: center;
   border: 1px solid color-mix(in oklab, var(--zeus-product-accent) 24%, var(--zeus-control-border));
   border-radius: 9px;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   background: color-mix(in oklab, var(--zeus-product-accent) 9%, var(--zeus-product-panel));
   font-size: 13px;
   font-weight: 700;
@@ -733,7 +733,7 @@
 
 .macos-ai-app .digital-collaboration-timeline > li:is(.is-running, .is-awaiting_acceptance, .is-ready) .digital-collaboration-stage-index {
   border-color: var(--zeus-product-accent);
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
 }
 
 .macos-ai-app .digital-collaboration-timeline > li:is(.is-accepted, .is-skipped) .digital-collaboration-stage-index {
@@ -785,7 +785,7 @@
 .macos-ai-app .digital-collaboration-attempt button,
 .macos-ai-app .digital-collaboration-deliverable {
   border: 0;
-  color: var(--zeus-product-accent);
+  color: var(--zeus-brand-text);
   background: transparent;
   cursor: pointer;
   font: inherit;
@@ -800,7 +800,7 @@
   text-align: start;
 }
 
-.macos-ai-app .digital-collaboration-deliverable:hover {
+.macos-ai-app .digital-collaboration-deliverable:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: color-mix(in oklab, var(--zeus-product-accent) 42%, var(--zeus-control-border));
   background: color-mix(in oklab, var(--zeus-product-accent) 5%, transparent);
 }

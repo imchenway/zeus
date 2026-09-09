@@ -70,7 +70,7 @@
   height: 100%;
   overflow: hidden !important;
 }
-.session-codex-parity-v1 .code-diff-line-number:hover .session-code-comment-add {
-  background: #171717;
+.session-codex-parity-v1 .code-diff-line-number:hover:not(:disabled):not([aria-disabled='true']) .session-code-comment-add {
+  background: var(--zeus-product-accent);
   color: #fff;
 }

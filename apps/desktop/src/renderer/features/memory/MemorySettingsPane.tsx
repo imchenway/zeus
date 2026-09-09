@@ -1,3 +1,4 @@
+import { MotionPresence } from '../../ui/MotionPresence.js';
 import { useMemo, useState } from 'react';
 import type { MemoryApiClient } from './memoryApiClient.js';
 import { memoryDisplayStatus, type MemoryCandidateInput, type MemoryEffect, type MemoryKind, type MemoryRecord, type MemoryScope } from './memoryContracts.js';
@@ -129,35 +130,37 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
         </button>
       </div>
 
-      {editor ? (
-        <ModalPortal rootClassName="zeus-shell settings-editor-portal" dismissDisabled={busy} onDismiss={() => setEditor(null)}>
-          <div className="settings-reference-shell">
-            <section className="settings-editor-dialog settings-content-column" role="dialog" aria-modal="true" aria-labelledby="memory-editor-title">
-              <header className="settings-page-heading">
-                <span>
-                  <h2 id="memory-editor-title">{editor.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '修正记忆' : 'Correct memory'}</h2>
-                  <p>{scope.kind === 'global' ? (zh ? '全局记忆' : 'Global memory') : props.projects.find((project) => project.id === scope.id)?.name}</p>
-                </span>
-              </header>
-              <MemoryEditor
-                draft={draft}
-                mode={editor.mode}
-                lockedKey={editor.mode === 'supersede' ? editor.record.memoryKey : null}
-                language={props.language}
-                busy={busy}
-                onChange={setDraft}
-                onCancel={() => setEditor(null)}
-                onSubmit={() => void submit()}
-              />
-              {formError ? (
-                <p role="alert" className="settings-field-error">
-                  {formError}
-                </p>
-              ) : null}
-            </section>
-          </div>
-        </ModalPortal>
-      ) : null}
+      <MotionPresence>
+        {editor ? (
+          <ModalPortal rootClassName="zeus-shell settings-editor-portal" dismissDisabled={busy} onDismiss={() => setEditor(null)}>
+            <div className="settings-reference-shell">
+              <section className="settings-editor-dialog settings-content-column" role="dialog" aria-modal="true" aria-labelledby="memory-editor-title">
+                <header className="settings-page-heading">
+                  <span>
+                    <h2 id="memory-editor-title">{editor.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '修正记忆' : 'Correct memory'}</h2>
+                    <p>{scope.kind === 'global' ? (zh ? '全局记忆' : 'Global memory') : props.projects.find((project) => project.id === scope.id)?.name}</p>
+                  </span>
+                </header>
+                <MemoryEditor
+                  draft={draft}
+                  mode={editor.mode}
+                  lockedKey={editor.mode === 'supersede' ? editor.record.memoryKey : null}
+                  language={props.language}
+                  busy={busy}
+                  onChange={setDraft}
+                  onCancel={() => setEditor(null)}
+                  onSubmit={() => void submit()}
+                />
+                {formError ? (
+                  <p role="alert" className="settings-field-error">
+                    {formError}
+                  </p>
+                ) : null}
+              </section>
+            </div>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
 
       {tombstoneTarget ? (
         <section className="memory-tombstone-confirmation" aria-label={zh ? '停用记忆确认' : 'Confirm memory deactivation'}>

@@ -649,24 +649,29 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     announceColumnPosition(columnKey, nextPreferences);
   };
 
+  /** 列宽拖动只响应主按钮，并由当前分隔条捕获指针。 */
   const handleColumnResizePointerDown = (event: ReactPointerEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.focus();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.dataset.dragging = 'true';
     const startWidth = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
     resizeStateRef.current = { columnKey, startX: event.clientX, startWidth };
-    const handlePointerMove = (pointerEvent: PointerEvent) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState) return;
-      const width = clampTaskTableColumnWidth(resizeState.columnKey, resizeState.startWidth + pointerEvent.clientX - resizeState.startX);
-      props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, resizeState.columnKey, width));
-    };
-    const handlePointerUp = () => {
-      resizeStateRef.current = null;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  };
+  /** 捕获中的指针持续更新当前列，其他指针不会干扰。 */
+  const handleColumnResizePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const width = clampTaskTableColumnWidth(resizeState.columnKey, resizeState.startWidth + event.clientX - resizeState.startX);
+    props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, resizeState.columnKey, width));
+  };
+  /** 松开、取消和失去捕获都清理拖动状态，卸载不遗留全局监听。 */
+  const finishColumnResize = (event: ReactPointerEvent<HTMLElement>) => {
+    resizeStateRef.current = null;
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   const handleColumnResizeKeyDown = (event: ReactKeyboardEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
@@ -1008,6 +1013,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                           aria-valuenow={width}
                           aria-label={isEnglishCopy ? `Resize ${columnLabels[columnKey]} column` : `调整${columnLabels[columnKey]}列宽`}
                           onPointerDown={(event) => handleColumnResizePointerDown(event, columnKey)}
+                          onPointerMove={handleColumnResizePointerMove}
+                          onPointerUp={finishColumnResize}
+                          onPointerCancel={finishColumnResize}
+                          onLostPointerCapture={finishColumnResize}
+                          onDoubleClick={() => props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, columnKey, defaultTaskTableColumnWidths[columnKey]))}
                           onKeyDown={(event) => handleColumnResizeKeyDown(event, columnKey)}
                         />
                       </span>

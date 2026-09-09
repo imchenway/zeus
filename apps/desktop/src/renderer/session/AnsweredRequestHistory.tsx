@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from 'react';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 import { normalizeRequestQuestions, type RequestQuestion } from './PendingRequestSurface.js';
 import type { NativePendingRequest } from './sessionTypes.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
@@ -183,28 +184,20 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           );
         })}
       </div>
-      {previewAttachment ? <AnsweredAttachmentPreviewDialog attachment={previewAttachment} language={props.language} onClose={closeAttachmentPreview} /> : null}
+      <MotionPresence>{previewAttachment ? <AnsweredAttachmentPreviewDialog attachment={previewAttachment} language={props.language} onClose={closeAttachmentPreview} /> : null}</MotionPresence>
     </article>
   );
 }
 
 function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onClose: () => void }) {
   const copy = labels[props.language];
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
+
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewFailed, setPreviewFailed] = useState(false);
   const previewId = useId();
   const localPath = props.attachment.localPath;
   const uploadRef = props.attachment.uploadRef;
-
-  useNativeCloseLayer(true, closePreview);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || dialog.open || typeof dialog.showModal !== 'function') return;
-    dialog.showModal();
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -236,41 +229,15 @@ function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversation
     };
   }, [localPath, uploadRef]);
 
-  function closePreview(): void {
-    const dialog = dialogRef.current;
-    if (dialog?.open) {
-      dialog.close();
-      return;
-    }
-    props.onClose();
-  }
-
-  function handleDialogCancel(event: SyntheticEvent<HTMLDialogElement, Event>): void {
-    event.preventDefault();
-    closePreview();
-  }
-
-  function handleDialogPointerDown(event: ReactMouseEvent<HTMLDialogElement>): void {
-    if (event.currentTarget === event.target) closePreview();
-  }
-
   return (
-    <dialog
-      ref={dialogRef}
-      className="session-answered-request-preview-dialog"
-      aria-labelledby={`${previewId}-title`}
-      aria-describedby={`${previewId}-description`}
-      onClose={props.onClose}
-      onCancel={handleDialogCancel}
-      onPointerDown={handleDialogPointerDown}
-    >
-      <div className="session-answered-request-preview-sheet">
+    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose}>
+      <div className="session-answered-request-preview-sheet" role="dialog" aria-modal="true" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
         <header>
           <span>
             <strong id={`${previewId}-title`}>{props.attachment.name || copy.imagePreview}</strong>
             <small id={`${previewId}-description`}>{copy.imagePreviewDescription}</small>
           </span>
-          <button type="button" onClick={closePreview} aria-label={copy.closePreview}>
+          <button type="button" onClick={props.onClose} aria-label={copy.closePreview}>
             <X aria-hidden="true" />
           </button>
         </header>
@@ -278,7 +245,7 @@ function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversation
           {previewLoading ? <p role="status">{copy.loadingPreview}</p> : previewUrl && !previewFailed ? <img src={previewUrl} alt={props.attachment.name} onError={() => setPreviewFailed(true)} /> : <p>{copy.previewUnavailable}</p>}
         </div>
       </div>
-    </dialog>
+    </ModalPortal>
   );
 }
 

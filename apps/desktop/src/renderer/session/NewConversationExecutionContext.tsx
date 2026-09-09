@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
@@ -179,43 +180,45 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
         </span>
       </div>
 
-      {createBranchOpen && rootRepository ? (
-        <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog}>
-          <form
-            className="project-git-reference-dialog zeus-solid-form-surface"
-            role="dialog"
-            aria-modal="true"
-            aria-label={zh ? '新建分支' : 'New branch'}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const branchName = createBranchName.trim();
-              if (!branchName) return;
-              void executeBranchAction({ type: 'create_branch', branchName, baseRef: rootRepository.snapshot.branch === 'detached' ? undefined : rootRepository.snapshot.branch }).then((created) => {
-                if (created) closeCreateBranchDialog();
-              });
-            }}
-          >
-            <header>
-              <strong>{zh ? '新建并检出分支' : 'Create and Checkout Branch'}</strong>
-              <small>{zh ? `起点：${rootRepository.snapshot.branch}` : `Starting point: ${rootRepository.snapshot.branch}`}</small>
-            </header>
-            <main>
-              <label>
-                <span>{zh ? '分支名称' : 'Branch name'}</span>
-                <input autoFocus value={createBranchName} disabled={branchBusy} placeholder="feature/example" onChange={(event) => setCreateBranchName(event.currentTarget.value)} />
-              </label>
-            </main>
-            <footer>
-              <Button variant="secondary" onClick={closeCreateBranchDialog} disabled={branchBusy}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button type="submit" variant="primary" busy={branchBusy} disabled={!createBranchName.trim()}>
-                {zh ? '创建并检出' : 'Create and Checkout'}
-              </Button>
-            </footer>
-          </form>
-        </ModalPortal>
-      ) : null}
+      <MotionPresence>
+        {createBranchOpen && rootRepository ? (
+          <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog}>
+            <form
+              className="project-git-reference-dialog zeus-solid-form-surface"
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? '新建分支' : 'New branch'}
+              onSubmit={(event) => {
+                event.preventDefault();
+                const branchName = createBranchName.trim();
+                if (!branchName) return;
+                void executeBranchAction({ type: 'create_branch', branchName, baseRef: rootRepository.snapshot.branch === 'detached' ? undefined : rootRepository.snapshot.branch }).then((created) => {
+                  if (created) closeCreateBranchDialog();
+                });
+              }}
+            >
+              <header>
+                <strong>{zh ? '新建并检出分支' : 'Create and Checkout Branch'}</strong>
+                <small>{zh ? `起点：${rootRepository.snapshot.branch}` : `Starting point: ${rootRepository.snapshot.branch}`}</small>
+              </header>
+              <main>
+                <label>
+                  <span>{zh ? '分支名称' : 'Branch name'}</span>
+                  <input autoFocus value={createBranchName} disabled={branchBusy} placeholder="feature/example" onChange={(event) => setCreateBranchName(event.currentTarget.value)} />
+                </label>
+              </main>
+              <footer>
+                <Button variant="secondary" onClick={closeCreateBranchDialog} disabled={branchBusy}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button type="submit" variant="primary" busy={branchBusy} disabled={!createBranchName.trim()}>
+                  {zh ? '创建并检出' : 'Create and Checkout'}
+                </Button>
+              </footer>
+            </form>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useState } from 'react';
 import type { DashboardClient, TaskRecord } from '../apiClient.js';
 import '../styles.css';
@@ -27,19 +28,23 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; task: Ta
   const currentConversationWorkspaceId = currentContext.taskId === props.task.id ? currentContext.workspaceId : null;
   return (
     <main className={`task-git-delivery-window-root macos-ai-app zeus-shell theme-${surfaceSettings.appearance}`}>
-      <TaskGitMergeModal
-        open
-        language={surfaceSettings.language}
-        task={props.task}
-        projectName={props.projectName}
-        currentConversationWorkspaceId={currentConversationWorkspaceId}
-        client={props.client}
-        onChanged={() => window.zeus?.notifyTaskGitDeliveryChanged?.(props.task.id)}
-        onOpenConversation={async (taskId, conversationId) => {
-          await window.zeus?.openTaskGitDeliveryConversation?.({ taskId, conversationId });
-        }}
-        onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
-      />
+      <MotionPresence>
+        {props.task ? (
+          <TaskGitMergeModal
+            open
+            language={surfaceSettings.language}
+            task={props.task}
+            projectName={props.projectName}
+            currentConversationWorkspaceId={currentConversationWorkspaceId}
+            client={props.client}
+            onChanged={() => window.zeus?.notifyTaskGitDeliveryChanged?.(props.task.id)}
+            onOpenConversation={async (taskId, conversationId) => {
+              await window.zeus?.openTaskGitDeliveryConversation?.({ taskId, conversationId });
+            }}
+            onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
+          />
+        ) : null}
+      </MotionPresence>
     </main>
   );
 }

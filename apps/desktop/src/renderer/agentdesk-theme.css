@@ -14,14 +14,14 @@
   --agentdesk-text: #111827;
   --agentdesk-text-secondary: #4b5563;
   --agentdesk-text-tertiary: #6b7280;
-  --agentdesk-accent: #2866f7;
-  --agentdesk-accent-strong: #1f59ed;
-  --agentdesk-accent-secondary: #8b6dff;
+  --agentdesk-accent: var(--zeus-brand-primary);
+  --agentdesk-accent-strong: var(--zeus-brand-text);
+  --agentdesk-accent-secondary: var(--zeus-brand-highlight);
   --agentdesk-accent-highlight: #daa3fa;
-  --agentdesk-accent-soft: rgb(40 102 247 / 0.1);
-  --agentdesk-accent-secondary-soft: rgb(139 109 255 / 0.1);
-  --agentdesk-selection: rgb(40 102 247 / 0.13);
-  --agentdesk-selection-strong: rgb(40 102 247 / 0.2);
+  --agentdesk-accent-soft: color-mix(in srgb, var(--agentdesk-accent) 10%, transparent);
+  --agentdesk-accent-secondary-soft: color-mix(in srgb, var(--agentdesk-accent-secondary) 10%, transparent);
+  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 13%, transparent);
+  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 20%, transparent);
   /* AgentDesk 几何阶梯：控件 8 / 分段轨 10 / 卡片 12 / 工作面 16 / 玻璃层 18。 */
   --agentdesk-radius-control: 8px;
   --agentdesk-radius-tab: 8px;
@@ -40,7 +40,7 @@
   --zeus-surface-workspace: var(--agentdesk-surface);
   --zeus-line-subtle: var(--agentdesk-border);
   --zeus-source-list-bg: transparent;
-  --zeus-source-list-hover: rgb(40 102 247 / 0.07);
+  --zeus-source-list-hover: var(--zeus-interaction-hover);
   --zeus-source-list-selected: var(--agentdesk-selection);
   --zeus-source-list-selected-strong: var(--agentdesk-accent);
   --zeus-sidebar-separator: var(--agentdesk-border);
@@ -51,11 +51,11 @@
   --zeus-message-source-bg: var(--agentdesk-surface-inset);
   --zeus-decision-rail-bg: var(--agentdesk-surface-inset);
   --zeus-decision-rail-separator: var(--agentdesk-border);
-  --zeus-decision-button-hover: rgb(40 102 247 / 0.08);
+  --zeus-decision-button-hover: var(--zeus-interaction-hover);
   --zeus-decision-button-active: var(--agentdesk-selection);
   --zeus-composer-bg: var(--agentdesk-surface-strong);
   --zeus-composer-input-bg: rgb(244 247 255 / 0.82);
-  --zeus-composer-focus-ring: rgb(40 102 247 / 0.42);
+  --zeus-composer-focus-ring: color-mix(in srgb, var(--agentdesk-accent) 42%, transparent);
   --zeus-mode-rail-bg: var(--agentdesk-surface-inset);
   --zeus-mode-rail-active: var(--agentdesk-selection);
   --zeus-popover-bg: var(--agentdesk-surface-strong);
@@ -72,35 +72,37 @@
   --zeus-product-text-subtle: var(--agentdesk-text-tertiary);
   --zeus-product-selected: var(--agentdesk-selection);
   --zeus-product-accent: var(--agentdesk-accent);
-  --zeus-product-accent-soft: rgb(40 102 247 / 0.14);
+  --zeus-product-accent-soft: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
   --zeus-product-border: var(--agentdesk-border);
   --zeus-product-border-soft: rgb(148 163 184 / 0.2);
-  --zeus-native-row-hover: var(--agentdesk-selection);
+  --zeus-native-row-hover: var(--zeus-interaction-hover);
   --zeus-control-bg: var(--agentdesk-control);
-  --zeus-control-bg-hover: rgb(40 102 247 / 0.08);
+  --zeus-control-bg-hover: var(--zeus-interaction-hover);
   --zeus-control-bg-active: var(--agentdesk-selection-strong);
   --zeus-control-radius: var(--agentdesk-radius-control);
   --zeus-popover-radius: var(--agentdesk-radius-card);
   --zeus-control-border: var(--agentdesk-border);
-  --zeus-control-border-hover: rgb(40 102 247 / 0.42);
+  --zeus-control-border-hover: var(--zeus-interaction-line);
   --zeus-control-text: var(--agentdesk-text);
   --zeus-control-muted: var(--agentdesk-text-secondary);
   --zeus-control-disabled-bg: rgb(226 232 240 / 0.5);
   --zeus-control-disabled-line: rgb(148 163 184 / 0.18);
   --zeus-control-disabled-text: var(--agentdesk-text-tertiary);
-  --zeus-control-focus: 0 0 0 3px rgb(40 102 247 / 0.2);
+  --zeus-control-focus: 0 0 0 3px color-mix(in srgb, var(--agentdesk-accent) 20%, transparent);
   --zeus-solid-surface-bg: var(--agentdesk-surface-strong);
   --zeus-solid-surface-edge: var(--agentdesk-border-strong);
   --zeus-code-editor-bg: rgb(250 251 255 / 0.9);
   --zeus-code-editor-gutter: rgb(238 243 255 / 0.84);
-  --zeus-code-editor-active-line: rgb(40 102 247 / 0.07);
-  --zeus-code-editor-selection: rgb(40 102 247 / 0.18);
+  --zeus-code-editor-active-line: color-mix(in srgb, var(--agentdesk-accent) 7%, transparent);
+  --zeus-code-editor-selection: color-mix(in srgb, var(--agentdesk-accent) 18%, transparent);
   --zeus-scrollbar-thumb: rgb(100 116 139 / 0.24);
-  --zeus-scrollbar-thumb-hover: rgb(40 102 247 / 0.38);
-  --zeus-scrollbar-thumb-active: rgb(40 102 247 / 0.52);
+  --zeus-scrollbar-thumb-hover: color-mix(in srgb, var(--agentdesk-accent) 38%, transparent);
+  --zeus-scrollbar-thumb-active: color-mix(in srgb, var(--agentdesk-accent) 52%, transparent);
   color: var(--agentdesk-text);
   color-scheme: light;
-  background: radial-gradient(circle at 82% -18%, rgb(139 109 255 / 0.16), transparent 34%), radial-gradient(circle at 12% 108%, rgb(40 102 247 / 0.1), transparent 36%), var(--agentdesk-page-bg);
+  background:
+    radial-gradient(circle at 82% -18%, color-mix(in srgb, var(--agentdesk-accent-secondary) 16%, transparent), transparent 34%),
+    radial-gradient(circle at 12% 108%, color-mix(in srgb, var(--agentdesk-accent) 10%, transparent), transparent 36%), var(--agentdesk-page-bg);
 }
 
 .macos-ai-app.zeus-shell.theme-dark {
@@ -115,19 +117,21 @@
   --agentdesk-text-secondary: #cbd5e1;
   --agentdesk-text-tertiary: #94a3b8;
   --agentdesk-control: rgb(42 46 68 / 0.82);
-  --agentdesk-selection: rgb(40 102 247 / 0.22);
-  --agentdesk-selection-strong: rgb(40 102 247 / 0.32);
+  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
+  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
   --agentdesk-shadow: 0 20px 48px -26px rgb(0 0 0 / 0.64);
   --agentdesk-shadow-soft: 0 12px 32px -22px rgb(0 0 0 / 0.56);
   --zeus-code-editor-bg: rgb(24 28 47 / 0.94);
   --zeus-code-editor-gutter: rgb(18 22 39 / 0.9);
-  --zeus-code-editor-active-line: rgb(40 102 247 / 0.14);
-  --zeus-code-editor-selection: rgb(40 102 247 / 0.32);
+  --zeus-code-editor-active-line: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+  --zeus-code-editor-selection: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
   --zeus-scrollbar-thumb: rgb(148 163 184 / 0.28);
   --zeus-scrollbar-thumb-hover: rgb(123 160 255 / 0.46);
   --zeus-scrollbar-thumb-active: rgb(123 160 255 / 0.62);
   color-scheme: dark;
-  background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 0.22), transparent 34%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 0.18), transparent 38%), var(--agentdesk-page-bg);
+  background:
+    radial-gradient(circle at 86% -18%, color-mix(in srgb, var(--agentdesk-accent-secondary) 22%, transparent), transparent 34%),
+    radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--agentdesk-accent) 18%, transparent), transparent 38%), var(--agentdesk-page-bg);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -143,19 +147,21 @@
     --agentdesk-text-secondary: #cbd5e1;
     --agentdesk-text-tertiary: #94a3b8;
     --agentdesk-control: rgb(42 46 68 / 0.82);
-    --agentdesk-selection: rgb(40 102 247 / 0.22);
-    --agentdesk-selection-strong: rgb(40 102 247 / 0.32);
+    --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
+    --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
     --agentdesk-shadow: 0 20px 48px -26px rgb(0 0 0 / 0.64);
     --agentdesk-shadow-soft: 0 12px 32px -22px rgb(0 0 0 / 0.56);
     --zeus-code-editor-bg: rgb(24 28 47 / 0.94);
     --zeus-code-editor-gutter: rgb(18 22 39 / 0.9);
-    --zeus-code-editor-active-line: rgb(40 102 247 / 0.14);
-    --zeus-code-editor-selection: rgb(40 102 247 / 0.32);
+    --zeus-code-editor-active-line: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+    --zeus-code-editor-selection: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
     --zeus-scrollbar-thumb: rgb(148 163 184 / 0.28);
     --zeus-scrollbar-thumb-hover: rgb(123 160 255 / 0.46);
     --zeus-scrollbar-thumb-active: rgb(123 160 255 / 0.62);
     color-scheme: dark;
-    background: radial-gradient(circle at 86% -18%, rgb(139 109 255 / 0.22), transparent 34%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 0.18), transparent 38%), var(--agentdesk-page-bg);
+    background:
+      radial-gradient(circle at 86% -18%, color-mix(in srgb, var(--agentdesk-accent-secondary) 22%, transparent), transparent 34%),
+      radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--agentdesk-accent) 18%, transparent), transparent 38%), var(--agentdesk-page-bg);
   }
 }
 
@@ -219,20 +225,19 @@
   backdrop-filter: blur(7px) saturate(125%);
 }
 
-/* Source list、项目列表和会话列表统一使用 AgentDesk 的蓝色选择语义。 */
+/* Source list、项目列表和会话列表统一使用 Zeus 图标的紫色选择语义。 */
 .macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
   border-color: transparent;
   border-radius: 10px;
   color: var(--agentdesk-text-secondary);
 }
 
-.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
-  background: rgb(40 102 247 / 0.07);
+.macos-ai-app.zeus-shell :where(.project-quick-action, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+  background: var(--zeus-interaction-hover);
   color: var(--agentdesk-text);
 }
 
-.macos-ai-app.zeus-shell
-  :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(.active, .is-active, [aria-current='page'], [aria-selected='true']) {
+.macos-ai-app.zeus-shell :where(.project-quick-action, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(.active, .is-active, [aria-current='page'], [aria-selected='true']) {
   background: var(--agentdesk-selection);
   color: var(--agentdesk-accent-strong);
 }
@@ -254,10 +259,10 @@
 
 /* 输入框使用主题焦点环；按钮及内容控件的焦点反馈由各自组件负责。 */
 .macos-ai-app.zeus-shell :where(input, select, textarea):focus-visible {
-  border-color: rgb(40 102 247 / 0.52);
+  border-color: var(--zeus-interaction-line);
   box-shadow:
     var(--agentdesk-shadow-soft),
-    0 0 0 3px rgb(40 102 247 / 0.18);
+    0 0 0 3px color-mix(in srgb, var(--agentdesk-accent) 18%, transparent);
   outline: 0;
 }
 
@@ -286,9 +291,9 @@
   background: var(--zeus-code-editor-bg);
 }
 
-.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .model-definition-card):is(:hover, :focus-within) {
-  border-color: rgb(40 102 247 / 0.32);
-  box-shadow: 0 16px 32px -24px rgb(40 102 247 / 0.48);
+.macos-ai-app.zeus-shell :where(.task-board-card):is(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) {
+  border-color: var(--zeus-interaction-line);
+  box-shadow: 0 16px 32px -24px color-mix(in srgb, var(--agentdesk-accent) 48%, transparent);
 }
 
 .macos-ai-app.zeus-shell :where(.zeus-select-popover, .zeus-select-menu, .project-more-popover, .zeus-quiet-more-menu, [role='listbox']) {
@@ -483,7 +488,9 @@
   --agentdesk-control: rgb(255 255 255 / 62%);
   --agentdesk-shadow: 0 18px 44px -28px rgb(28 73 116 / 42%);
   --agentdesk-shadow-soft: 0 10px 26px -22px rgb(28 73 116 / 36%);
-  background: radial-gradient(circle at 8% 0%, rgb(255 255 255 / 34%), transparent 32%), radial-gradient(circle at 92% 4%, rgb(139 109 255 / 18%), transparent 28%), linear-gradient(135deg, #a9d0f2 0%, #b9dcf4 48%, #b5e1ec 100%);
+  background:
+    radial-gradient(circle at 8% 0%, rgb(255 255 255 / 34%), transparent 32%), radial-gradient(circle at 92% 4%, color-mix(in srgb, var(--agentdesk-accent-secondary) 18%, transparent), transparent 28%),
+    linear-gradient(135deg, #a9d0f2 0%, #b9dcf4 48%, #b5e1ec 100%);
   border: 1px solid rgb(255 255 255 / 52%);
   border-radius: 28px;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 58%);
@@ -501,7 +508,9 @@
   --agentdesk-control: rgb(46 63 99 / 78%);
   --agentdesk-shadow: 0 22px 52px -28px rgb(0 10 30 / 72%);
   --agentdesk-shadow-soft: 0 14px 32px -22px rgb(0 10 30 / 66%);
-  background: radial-gradient(circle at 84% -12%, rgb(139 109 255 / 24%), transparent 34%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 22%), transparent 38%), linear-gradient(135deg, #172440 0%, #1a2b4c 54%, #183e55 100%);
+  background:
+    radial-gradient(circle at 84% -12%, color-mix(in srgb, var(--agentdesk-accent-secondary) 24%, transparent), transparent 34%),
+    radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--agentdesk-accent) 22%, transparent), transparent 38%), linear-gradient(135deg, #172440 0%, #1a2b4c 54%, #183e55 100%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -516,7 +525,9 @@
     --agentdesk-control: rgb(46 63 99 / 78%);
     --agentdesk-shadow: 0 22px 52px -28px rgb(0 10 30 / 72%);
     --agentdesk-shadow-soft: 0 14px 32px -22px rgb(0 10 30 / 66%);
-    background: radial-gradient(circle at 84% -12%, rgb(139 109 255 / 24%), transparent 34%), radial-gradient(circle at 8% 110%, rgb(40 102 247 / 22%), transparent 38%), linear-gradient(135deg, #172440 0%, #1a2b4c 54%, #183e55 100%);
+    background:
+      radial-gradient(circle at 84% -12%, color-mix(in srgb, var(--agentdesk-accent-secondary) 24%, transparent), transparent 34%),
+      radial-gradient(circle at 8% 110%, color-mix(in srgb, var(--agentdesk-accent) 22%, transparent), transparent 38%), linear-gradient(135deg, #172440 0%, #1a2b4c 54%, #183e55 100%);
   }
 }
 
@@ -579,15 +590,14 @@ body:has(.macos-ai-app.zeus-shell) {
   border-radius: 10px;
 }
 
-.macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover, :focus-visible) {
-  background: rgb(255 255 255 / 42%);
-  border-color: rgb(255 255 255 / 58%);
+.macos-ai-app.zeus-shell :where(.project-quick-action, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-interaction-line);
 }
 
-.macos-ai-app.zeus-shell
-  :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(.active, .is-active, [aria-current='page'], [aria-selected='true']) {
-  background: rgb(40 102 247 / 14%);
-  border-color: rgb(40 102 247 / 22%);
+.macos-ai-app.zeus-shell :where(.project-quick-action, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button):is(.active, .is-active, [aria-current='page'], [aria-selected='true']) {
+  background: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
   color: var(--agentdesk-accent-strong);
   box-shadow: none;
 }
@@ -651,16 +661,16 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(255 255 255 / 46%);
 }
 
-.macos-ai-app.zeus-shell .task-table-row:not(.selected):hover,
+.macos-ai-app.zeus-shell .task-table-row:not(.selected):hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .task-table-row:not(.selected):focus-visible {
-  background: rgb(255 255 255 / 58%);
-  border-color: rgb(40 102 247 / 20%);
-  box-shadow: 0 7px 16px -14px rgb(40 102 247 / 58%);
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-interaction-line);
+  box-shadow: 0 7px 16px -14px color-mix(in srgb, var(--agentdesk-accent) 58%, transparent);
 }
 
 .macos-ai-app.zeus-shell .task-table-row.selected {
-  background: rgb(40 102 247 / 14%);
-  border-color: rgb(40 102 247 / 24%);
+  background: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--agentdesk-accent) 24%, transparent);
 }
 
 .macos-ai-app.zeus-shell :where(.task-filter-control-row, .task-filter-option-row, .task-table-status-segments, .task-table-page-view-segments) {
@@ -870,8 +880,8 @@ body:has(.macos-ai-app.zeus-shell) {
   min-block-size: 48px;
 }
 
-.macos-ai-app.zeus-shell .task-table-row:hover {
-  background: rgb(40 102 247 / 6%);
+.macos-ai-app.zeus-shell .task-table-row:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app.zeus-shell :is(.task-filter-control-row, .task-table-view-actions) {
@@ -921,9 +931,9 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--agentdesk-text-secondary);
 }
 
-.macos-ai-app.zeus-shell .task-table-header .task-table-column-sort-button:hover,
+.macos-ai-app.zeus-shell .task-table-header .task-table-column-sort-button:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .task-table-header .task-table-column-sort-button:focus-visible {
-  background: rgb(40 102 247 / 7%);
+  background: var(--zeus-interaction-hover);
   border-radius: 6px;
   color: var(--agentdesk-text);
 }
@@ -972,16 +982,16 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: 0 4px 12px -12px rgb(37 86 132 / 52%);
 }
 
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):hover,
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):focus-visible {
-  background: rgb(255 255 255 / 82%);
-  border-color: rgb(40 102 247 / 24%);
-  box-shadow: 0 8px 18px -14px rgb(40 102 247 / 58%);
+  background: var(--zeus-interaction-hover);
+  border-color: var(--zeus-interaction-line);
+  box-shadow: 0 8px 18px -14px color-mix(in srgb, var(--agentdesk-accent) 58%, transparent);
 }
 
 .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row.selected {
-  background: rgb(40 102 247 / 14%);
-  border-color: rgb(40 102 247 / 28%);
+  background: color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--agentdesk-accent) 28%, transparent);
 }
 
 /* 工作区和工具栏限制在窗口内，任务列超出的宽度交给列表横向滚动。 */
@@ -1021,7 +1031,7 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /*
  * 2026-09-07 玻璃底色校正：页面底色交给 macOS 原生 vibrancy，工作区不再铺设蓝色渐变。
- * 大面积区域保持透明；需要分层的内容只使用低透明度中性色表面，蓝色仅保留给品牌操作和选中态。
+ * 大面积区域保持透明；需要分层的内容只使用低透明度中性色表面，品牌紫色用于操作和选中态。
  */
 html:has(.macos-ai-app.zeus-shell),
 body:has(.macos-ai-app.zeus-shell) {
@@ -1456,8 +1466,8 @@ body:has(.macos-ai-app.zeus-shell) {
   text-align: center;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover,
-.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill):hover:not(:disabled) {
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
   color: var(--agentdesk-text);
 }
@@ -1475,8 +1485,8 @@ body:has(.macos-ai-app.zeus-shell) {
   color: #fff;
 }
 
-.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button:hover:not(:disabled) {
-  background: var(--agentdesk-accent-strong);
+.macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-brand-primary);
 }
 
 .macos-ai-app.zeus-shell .task-table-primary-toolbar .task-table-new-task-button:disabled {
@@ -1594,7 +1604,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border-color: color-mix(in srgb, var(--agentdesk-accent) 38%, var(--zeus-card-border)) !important;
 }
 
-.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):hover {
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--agentdesk-accent) 4%, var(--zeus-card-background)) !important;
 }
 
@@ -1655,8 +1665,8 @@ body:has(.macos-ai-app.zeus-shell) {
     background-color 140ms ease,
     color 140ms ease;
 }
-.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-quick-action:is(:hover, :focus-visible):not(:disabled) {
-  background: color-mix(in srgb, var(--zeus-product-text) 8%, transparent);
+.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-quick-action:is(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible):not(:disabled) {
+  background: var(--zeus-interaction-hover);
   border-color: transparent;
   color: var(--zeus-product-text);
   box-shadow: none;
@@ -1699,8 +1709,8 @@ body:has(.macos-ai-app.zeus-shell) {
   background: color-mix(in srgb, var(--agentdesk-accent) 12%, var(--zeus-card-background));
   color: var(--agentdesk-accent-strong);
 }
-.macos-ai-app.zeus-shell .extension-tabs > button:hover:not(:disabled):not(.is-active) {
-  background: var(--zeus-page-background);
+.macos-ai-app.zeus-shell .extension-tabs > button:hover:not(:disabled):not([aria-disabled='true']):not(.is-active) {
+  background: var(--zeus-interaction-hover);
 }
 @media (max-width: 640px) {
   .macos-ai-app.zeus-shell .skills-catalog {
@@ -1842,7 +1852,10 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none !important;
   text-align: start;
 }
-.macos-ai-app.zeus-shell .project-git-navigator button:hover,
+.macos-ai-app.zeus-shell .project-git-navigator button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover) !important;
+}
+
 .macos-ai-app.zeus-shell .project-git-navigator button[aria-current='true'] {
   background: var(--zeus-card-background) !important;
 }
@@ -2132,7 +2145,7 @@ body:has(.macos-ai-app.zeus-shell) {
   font: inherit;
 }
 .project-git-commit-message textarea:focus-visible {
-  outline: 2px solid var(--zeus-product-accent, #306cff);
+  outline: 2px solid var(--zeus-product-accent, var(--zeus-brand-primary));
   outline-offset: 1px;
 }
 .project-git-commit-actions {
@@ -2317,7 +2330,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none;
 }
 .project-git-commit-collapsed > button:focus-visible {
-  outline: 2px solid var(--zeus-product-accent, #306cff);
+  outline: 2px solid var(--zeus-product-accent, var(--zeus-brand-primary));
   outline-offset: 1px;
 }
 .macos-ai-app.zeus-shell .project-git-stage-panel {
@@ -2338,7 +2351,7 @@ body:has(.macos-ai-app.zeus-shell) {
   min-height: 34px;
   border-radius: 6px;
 }
-.macos-ai-app.zeus-shell .project-git-workspace-links > button:hover:not([aria-current='true']) {
+.macos-ai-app.zeus-shell .project-git-workspace-links > button:hover:not(:disabled):not([aria-disabled='true']):not([aria-current='true']) {
   background: var(--zeus-source-list-hover) !important;
 }
 .macos-ai-app.zeus-shell .project-git-workspace-links > button[aria-current='true'] {
@@ -2382,7 +2395,7 @@ body:has(.macos-ai-app.zeus-shell) {
   display: none;
 }
 .macos-ai-app.zeus-shell .project-git-change-file-row:focus-within {
-  outline: 1px solid var(--zeus-product-accent, #306cff);
+  outline: 1px solid var(--zeus-product-accent, var(--zeus-brand-primary));
   outline-offset: -1px;
 }
 
@@ -2423,16 +2436,16 @@ body:has(.macos-ai-app.zeus-shell) {
   font-size: 12px;
   box-shadow: none;
 }
-.project-git-context-menu > button:hover:not(:disabled),
+.project-git-context-menu > button:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-context-menu > button:focus-visible {
-  background: var(--zeus-source-list-selected);
+  background: var(--zeus-interaction-hover);
   outline: none;
 }
 .project-git-context-menu > button:disabled {
   opacity: 0.4;
 }
 .project-git-context-menu > button[data-danger] {
-  color: #c23838;
+  color: var(--zeus-control-danger-text);
 }
 .project-git-menu-action-dialog {
   width: min(480px, calc(100vw - 40px));
@@ -2523,7 +2536,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 .macos-ai-app.zeus-shell .project-git-tabs > button.is-active {
   background: var(--zeus-source-list-selected) !important;
-  color: var(--zeus-product-accent, #306cff) !important;
+  color: var(--zeus-product-accent, var(--zeus-brand-primary)) !important;
   font-weight: 600;
 }
 .macos-ai-app.zeus-shell .project-git-tabs > button > span {
@@ -2550,7 +2563,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none;
 }
 .macos-ai-app.zeus-shell .project-git-tab-facts > label:focus-within {
-  border-color: var(--zeus-product-accent, #306cff);
+  border-color: var(--zeus-product-accent, var(--zeus-brand-primary));
   box-shadow: 0 0 0 2px #306cff20;
 }
 .macos-ai-app.zeus-shell .project-git-tab-facts > label > svg {
@@ -2617,17 +2630,17 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-directory-tree button.is-current {
   background: var(--zeus-source-list-selected) !important;
   font-weight: 600;
-  color: var(--zeus-product-accent, #306cff);
+  color: var(--zeus-brand-text);
 }
 .macos-ai-app.zeus-shell .project-git-branch-directory-tree button:focus-visible,
 .macos-ai-app.zeus-shell .project-git-branch-folder > summary:focus-visible {
-  outline: 2px solid var(--zeus-product-accent, #306cff);
+  outline: 2px solid var(--zeus-product-accent, var(--zeus-brand-primary));
   outline-offset: -2px;
 }
-.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button:hover:not(:disabled),
-.macos-ai-app.zeus-shell .project-git-tabs > button:hover:not(.is-active),
-.macos-ai-app.zeus-shell .project-git-branch-directory-tree button:hover:not(.is-current),
-.macos-ai-app.zeus-shell .project-git-branch-folder > summary:hover {
+.macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button[data-button-variant='secondary']:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app.zeus-shell .project-git-tabs > button:hover:not(:disabled):not([aria-disabled='true']):not(.is-active),
+.macos-ai-app.zeus-shell .project-git-branch-directory-tree button:hover:not(:disabled):not([aria-disabled='true']):not(.is-current),
+.macos-ai-app.zeus-shell .project-git-branch-folder > summary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover) !important;
 }
 .macos-ai-app.zeus-shell .project-git-toolbar-actions .zeus-button::before,
@@ -2719,12 +2732,12 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--session-canvas) !important;
   color: var(--session-text) !important;
 }
-.macos-ai-app.zeus-shell .session-rui-request .session-question-option:hover:not(:disabled) {
+.macos-ai-app.zeus-shell .session-rui-request .session-question-option:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover) !important;
 }
 .macos-ai-app.zeus-shell .session-rui-request .session-question-option[aria-pressed='true'] {
-  border-color: var(--session-focus-outline, #306cff) !important;
-  background: color-mix(in srgb, var(--session-focus-outline, #306cff) 8%, var(--session-canvas)) !important;
+  border-color: var(--session-focus-outline, var(--zeus-brand-text)) !important;
+  background: color-mix(in srgb, var(--session-focus-outline, var(--zeus-brand-text)) 8%, var(--session-canvas)) !important;
 }
 .macos-ai-app.zeus-shell .session-rui-request .session-question-option:focus-visible {
   outline: 2px solid var(--session-focus-outline);
@@ -2953,7 +2966,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border-radius: 0 !important;
   box-shadow: none !important;
 }
-.macos-ai-app.zeus-shell .project-source-tree-scroll button:hover:not(:disabled) {
+.macos-ai-app.zeus-shell .project-source-tree-scroll button:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent) !important;
 }
 .macos-ai-app.zeus-shell .project-source-tree-scroll button.selected {
@@ -2997,7 +3010,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border-top-color: var(--zeus-control-accent);
   color: var(--zeus-control-text);
 }
-.macos-ai-app.zeus-shell .project-source-tab:not(.active):hover {
+.macos-ai-app.zeus-shell .project-source-tab:not(.active):hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--zeus-control-accent) 5%, transparent) !important;
 }
 .macos-ai-app.zeus-shell .project-source-tab > [role='tab'] {
@@ -3022,10 +3035,10 @@ body:has(.macos-ai-app.zeus-shell) {
   border-radius: 4px;
   opacity: 0;
 }
-.macos-ai-app.zeus-shell .project-source-tab:is(.active, :hover, :focus-within) > .project-source-tab-close {
+.macos-ai-app.zeus-shell .project-source-tab:is(.active, :hover:not(:disabled):not([aria-disabled='true']), :focus-within) > .project-source-tab-close {
   opacity: 1;
 }
-.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close:hover {
+.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--zeus-control-accent) 12%, transparent) !important;
 }
 

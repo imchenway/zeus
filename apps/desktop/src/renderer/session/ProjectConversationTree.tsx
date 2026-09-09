@@ -1,3 +1,4 @@
+import { Collapsible } from '../ui/Collapsible.js';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -235,11 +236,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       </span>
                       <strong>{statusGroup.statusLabel}</strong>
                     </button>
-                    {!collapsed ? (
-                      <div className="session-conversation-status-group-content" data-motion-surface="list-item" data-motion-state="entering">
+                    <Collapsible open={!collapsed}>
+                      <div className="session-conversation-status-group-content">
                         <ul className="session-conversation-project-items">{renderConversationItems(statusGroup.conversations)}</ul>
                       </div>
-                    ) : null}
+                    </Collapsible>
                   </section>
                 );
               })}
@@ -320,7 +321,7 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
         >
           <Plus aria-hidden="true" />
         </button>
-        <div className="session-conversation-task-menu" role="menu" aria-label={copy.selectTask} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
+        <div className="session-conversation-task-menu" role="menu" inert={!menuOpen} aria-hidden={!menuOpen} aria-label={copy.selectTask} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
           {props.project.tasks.map((task, index) => (
             <button
               key={task.taskId}
