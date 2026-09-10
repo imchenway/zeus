@@ -5,7 +5,7 @@ import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -94,6 +94,8 @@ function requestProjectGitWorkbench(client: ProjectGitWorkbenchProps['client'], 
   return request;
 }
 
+const projectGitViewPreferences = new Map<string, { repositoryId: string; searchQuery: string }>();
+
 export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const zh = props.language === 'zh-CN';
   const projectOptions = useMemo(() => props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath })), [props.projects]);
@@ -105,16 +107,21 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   });
   const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
   const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
-  const [selectedRepositoryId, setSelectedRepositoryId] = useState('');
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
   const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
   const [commitLoading, setCommitLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState('');
   const [selectedFileStage, setSelectedFileStage] = useState<ChangeStage>('unstaged');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => projectGitViewPreferences.get(props.project.id)?.searchQuery ?? '');
+  useEffect(() => {
+    projectGitViewPreferences.set(props.project.id, { repositoryId: selectedRepositoryId, searchQuery });
+  }, [props.project.id, selectedRepositoryId, searchQuery]);
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
+  const [pullOpen, setPullOpen] = useState(false);
+  const operationsTriggerRef = useRef<HTMLButtonElement>(null);
   const [commitOpen, setCommitOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
   const [menuConfirmation, setMenuConfirmation] = useState<GitMenuConfirmation | null>(null);
@@ -182,6 +189,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [historyRef, setHistoryRef] = useState('');
   const [historyPage, setHistoryPage] = useState<{ key: string; commits: ProjectGitRepositoryWorkbenchItem['snapshot']['recentCommits']; hasMore: boolean } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const historyInFlight = useRef<number | null>(null);
   const historyRequest = useRef(0);
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
@@ -212,19 +221,25 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   async function loadHistory(append: boolean): Promise<void> {
     if (!selectedRepository || !window.zeus?.loadProjectGitHistory) return;
+    if (append && historyInFlight.current === historyRequest.current) return;
     const key = `${selectedRepository.id}:${historyRef}`;
     const previous = append && historyPage?.key === key ? historyPage.commits : [];
     const request = ++historyRequest.current;
+    historyInFlight.current = request;
     setHistoryLoading(true);
+    setHistoryError('');
     try {
       const page = await window.zeus.loadProjectGitHistory({ projectId: props.project.id, repositoryId: selectedRepository.id, offset: previous.length, ...(historyRef ? { ref: historyRef } : {}) });
       if (request !== historyRequest.current) return;
       const commits = [...previous, ...page.commits].filter((commit, index, items) => items.findIndex((item) => item.hash === commit.hash) === index);
       setHistoryPage({ key, commits, hasMore: page.hasMore });
     } catch (reason) {
-      if (request === historyRequest.current) setError(errorMessage(reason, zh));
+      if (request === historyRequest.current) setHistoryError(errorMessage(reason, zh));
     } finally {
-      if (request === historyRequest.current) setHistoryLoading(false);
+      if (request === historyRequest.current) {
+        historyInFlight.current = null;
+        setHistoryLoading(false);
+      }
     }
   }
 
@@ -413,7 +428,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         disabled: busy !== null,
         run: () => setMenuConfirmation({ title, description: `${repository.name} · ${target.ref}`, field, initialValue, run: async (text) => (await execute(repository, build(text), title)) === 'completed' }),
       });
-    const newBranch = (baseRef: string) => form(label('新建分支…', 'New branch…'), label('分支名称', 'Branch name'), (branchName) => ({ type: 'create_branch', branchName, baseRef, smart: true }));
+    const newBranch = (baseRef: string) => form(label('新建分支…', 'New branch…'), label('分支名称', 'Branch name'), (branchName) => ({ type: 'create_branch', branchName, baseRef }));
     if (target.kind === 'file' || target.kind === 'directory' || target.kind === 'stage') {
       const files = repository.snapshot.fileStatuses
         .filter((file) => !subtree || subtree.repositoryId !== repository.id || file.path === subtree.path || file.path.startsWith(`${subtree.path}/`))
@@ -438,14 +453,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       if (target.kind !== 'stage') items.push({ label: label('复制相对路径', 'Copy relative path'), run: () => copy(target.ref) });
     } else if (target.kind === 'local' || target.kind === 'remote') {
       const current = target.kind === 'local' && !repository.snapshot.detached && repository.snapshot.branch === target.ref;
-      if (target.kind === 'local') action(label('切换到此分支', 'Checkout branch'), { type: 'checkout', branchName: target.ref, smart: true }, undefined, false, current);
+      if (target.kind === 'local') action(label('切换到此分支', 'Checkout branch'), { type: 'checkout', branchName: target.ref }, undefined, false, current);
       else {
         const remote = target.ref.split('/')[0]!;
         action(label('获取此远程', 'Fetch remote'), { type: 'fetch', remote });
         form(
           label('检出为本地跟踪分支…', 'Checkout tracking branch…'),
           label('本地分支名称', 'Local branch name'),
-          (branchName) => ({ type: 'create_branch', branchName, baseRef: target.ref, trackRemote: true, smart: true }),
+          (branchName) => ({ type: 'create_branch', branchName, baseRef: target.ref, trackRemote: true }),
           target.ref.slice(remote.length + 1),
         );
       }
@@ -453,9 +468,12 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       items.push({ label: label('与工作区比较', 'Compare with working tree'), run: () => openDiffWindow(repository, '', { comparisonRef: target.ref, comparisonMode: 'working-tree' }) });
       newBranch(target.ref);
       action(
-        label('合并到当前分支…', 'Merge into current branch…'),
+        label(`将“${target.ref}”合并到“${repository.snapshot.branch}”…`, `Merge '${target.ref}' into '${repository.snapshot.branch}'…`),
         { type: 'merge', branchName: target.ref },
-        label('将所选分支合并到当前分支，可能产生合并提交或冲突。', 'Merge into the current branch. This may create a merge commit or conflicts.'),
+        label(
+          `将来源分支“${target.ref}”合并到目标分支“${repository.snapshot.branch}”，可能产生合并提交或冲突。`,
+          `Merge source branch '${target.ref}' into target branch '${repository.snapshot.branch}'. This may create a merge commit or conflicts.`,
+        ),
         false,
         current || repository.snapshot.detached,
       );
@@ -500,7 +518,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         false,
         repository.snapshot.detached,
       );
-      action(label('检出此版本…', 'Checkout revision…'), { type: 'checkout_revision', revision, smart: true }, label('进入游离 HEAD 状态，现有修改由 Smart Stash 保护。', 'Enter detached HEAD. Smart Stash protects local changes.'));
+      action(
+        label('检出此版本…', 'Checkout revision…'),
+        { type: 'checkout_revision', revision },
+        label('进入游离 HEAD 状态；若本地修改阻碍切换，将停止并提示，不自动贮藏。', 'Enter detached HEAD. Stop if local changes block checkout; do not auto-stash.'),
+      );
       newBranch(revision);
       items.push({
         label: label('创建附注标签…', 'Create annotated tag…'),
@@ -729,7 +751,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             variant="secondary"
             size="compact"
             onClick={() => {
-              if (selectedRepository) void execute(selectedRepository, { type: 'pull', strategy: 'rebase' }, zh ? '拉取并变基' : 'Pull with rebase');
+              setPullOpen(true);
             }}
             disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || selectedRepository.snapshot.remotes.length === 0}
           >
@@ -739,12 +761,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             {zh ? '推送' : 'Push'}
           </Button>
           <span className="project-git-menu-anchor">
-            <Button variant="secondary" size="compact" onClick={() => setOperationsOpen((current) => !current)}>
+            <Button ref={operationsTriggerRef} aria-haspopup="menu" aria-expanded={operationsOpen} variant="secondary" size="compact" onClick={() => setOperationsOpen((current) => !current)}>
               {zh ? '操作' : 'Actions'} <CaretDown aria-hidden="true" />
             </Button>
             <MotionPresence>
               {operationsOpen ? (
                 <OperationsMenu
+                  anchor={operationsTriggerRef.current}
                   zh={zh}
                   onClose={() => setOperationsOpen(false)}
                   onOpenCommit={openCommit}
@@ -783,11 +806,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               {historyRef ? (
                 <Button variant="secondary" size="compact" onClick={() => setHistoryRef('')}>
                   {zh ? `全部分支（当前：${historyRef}）` : `All branches (${historyRef})`}
-                </Button>
-              ) : null}
-              {historyPage?.hasMore ? (
-                <Button variant="secondary" size="compact" disabled={historyLoading} onClick={() => void loadHistory(true)}>
-                  {zh ? '加载更多提交' : 'Load more commits'}
                 </Button>
               ) : null}
             </>
@@ -856,6 +874,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           ))}
           {selectedRepository ? (
             <>
+              <p className="project-git-repository-scope" role="status">
+                {zh ? '当前仓库：' : 'Current repository: '}
+                <strong>{selectedRepository.relativePath === '.' ? selectedRepository.name : selectedRepository.relativePath}</strong>
+              </p>
               {(
                 [
                   [zh ? '分支' : 'Branches', selectedRepository.snapshot.localBranches, 'local'],
@@ -879,7 +901,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                           setHistoryRef('');
                           return;
                         }
-                        void execute(selectedRepository, { type: 'checkout', branchName: ref, smart: true }, zh ? `切换到分支“${ref}”` : `Checkout '${ref}'`).then((outcome) => {
+                        void execute(selectedRepository, { type: 'checkout', branchName: ref }, zh ? `切换到分支“${ref}”` : `Checkout '${ref}'`).then((outcome) => {
                           if (outcome !== 'completed') return;
                           setTab('log');
                           setHistoryRef('');
@@ -956,6 +978,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               zh={zh}
               repositories={repositories}
               commits={allCommits.filter(({ repository }) => repository.id === selectedRepository?.id)}
+              historyLoading={historyLoading}
+              historyError={historyError}
+              historyHasMore={historyPage?.key === `${selectedRepository?.id}:${historyRef}` && historyPage.hasMore}
+              onLoadMore={() => void loadHistory(true)}
               selectedRepository={selectedRepository}
               selectedCommitHash={commitDetail?.commit.hash ?? selectedCommitHash}
               commitDetail={commitDetail}
@@ -1043,12 +1069,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>
         {revisionOpen ? <CheckoutRevisionDialog open={revisionOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} busy={busy} onClose={() => setRevisionOpen(false)} onExecute={execute} /> : null}
       </MotionPresence>
+      <MotionPresence>{pullOpen && selectedRepository ? <PullDialog key={selectedRepository.id} repository={selectedRepository} zh={zh} busy={busy} onClose={() => setPullOpen(false)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>
         {pushOpen ? (
           <PushDialog
             open={pushOpen}
             zh={zh}
             repositories={repositories}
+            selectedRepository={selectedRepository}
             busy={busy}
             results={pushResults}
             onClose={() => {
@@ -1057,17 +1085,21 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             }}
             onPush={async (selections, forceWithLease, pushTags) => {
               const results: Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }> = [];
-              for (const repository of repositories.filter((candidate) => selections.some((selection) => selection.repositoryId === candidate.id))) {
-                const selection = selections.find((candidate) => candidate.repositoryId === repository.id)!;
-                const ok = await execute(repository, { type: 'push', remote: selection.remote, targetBranch: selection.targetBranch, forceWithLease, pushTags }, zh ? '推送提交' : 'Push commits');
+              for (const selection of selections) {
+                const repository = repositories.find((candidate) => candidate.id === selection.repositoryId)!;
+                const ok = await execute(
+                  repository,
+                  { type: 'push', remote: selection.remote, sourceBranch: selection.sourceBranch, targetBranch: selection.targetBranch, setUpstream: selection.setUpstream, forceWithLease, pushAllTags: pushTags },
+                  zh ? '推送提交' : 'Push commits',
+                );
                 results.push({
                   repositoryId: repository.id,
-                  repositoryName: repository.name,
+                  repositoryName: `${repository.name} · ${selection.sourceBranch}`,
                   tone: ok ? 'success' : 'error',
                   message: ok
                     ? zh
-                      ? `已推送 ${repository.snapshot.outgoingCommits.length} 个提交`
-                      : `Pushed ${repository.snapshot.outgoingCommits.length} commits`
+                      ? `已推送到 ${selection.remote}/${selection.targetBranch}`
+                      : `Pushed to ${selection.remote}/${selection.targetBranch}`
                     : (operationErrorsByRepositoryRef.current[repository.id] ?? (zh ? '推送失败。' : 'Push failed.')),
                 });
               }
@@ -1212,8 +1244,7 @@ function BranchSwitcher(props: {
                       type="button"
                       disabled={props.busy !== null || props.repositories.some((repository) => repository.snapshot.detached)}
                       onClick={async () => {
-                        for (const repository of props.repositories)
-                          await props.onExecute(repository, { type: 'checkout', branchName: branch, smart: true }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`);
+                        for (const repository of props.repositories) await props.onExecute(repository, { type: 'checkout', branchName: branch }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`);
                         setOpen(false);
                       }}
                     >
@@ -1343,7 +1374,7 @@ function RevisionContextMenu(props: {
         disabled={props.busy !== null}
         onClick={() => {
           props.onClose();
-          void props.onExecute(props.repository, { type: 'checkout_revision', revision: props.revision, smart: true }, props.zh ? `签出“${props.revision}”` : `Checkout '${props.revision}'`);
+          void props.onExecute(props.repository, { type: 'checkout_revision', revision: props.revision }, props.zh ? `签出“${props.revision}”` : `Checkout '${props.revision}'`);
         }}
       >
         {props.zh ? '签出（进入游离提交状态）' : 'Checkout (detached HEAD)'}
@@ -1517,7 +1548,7 @@ function NewBranchDialog(props: {
             disabled={!repository || !branchName.trim() || props.busy !== null}
             onClick={async () => {
               if (!repository) return;
-              const outcome = await props.onExecute(repository, { type: 'create_branch', branchName: branchName.trim(), baseRef, smart: true }, props.zh ? '新建并签出分支' : 'Create and checkout branch');
+              const outcome = await props.onExecute(repository, { type: 'create_branch', branchName: branchName.trim(), baseRef }, props.zh ? '新建并签出分支' : 'Create and checkout branch');
               if (outcome) props.onClose();
             }}
           >
@@ -1584,7 +1615,7 @@ function CheckoutRevisionDialog(props: {
             disabled={!repository || !revision.trim() || props.busy !== null}
             onClick={async () => {
               if (!repository) return;
-              const outcome = await props.onExecute(repository, { type: 'checkout_revision', revision: revision.trim(), smart: true }, props.zh ? '切换到所选提交' : 'Switch to the selected commit');
+              const outcome = await props.onExecute(repository, { type: 'checkout_revision', revision: revision.trim() }, props.zh ? '切换到所选提交' : 'Switch to the selected commit');
               if (outcome) props.onClose();
             }}
           >
@@ -1623,6 +1654,10 @@ function readUpdateStrategy(projectId: string): ProjectGitUpdateStrategy {
 
 function GitLogSurface(props: {
   zh: boolean;
+  historyLoading: boolean;
+  historyError: string;
+  historyHasMore: boolean;
+  onLoadMore: () => void;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   commits: Array<{ repository: ProjectGitRepositoryWorkbenchItem; commit: ProjectGitRepositoryWorkbenchItem['snapshot']['recentCommits'][number] }>;
   selectedRepository: ProjectGitRepositoryWorkbenchItem | null;
@@ -1640,6 +1675,19 @@ function GitLogSurface(props: {
 }) {
   const selectedDiff = props.commitDetail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? props.commitDetail?.diff.fileDiffs[0] ?? null;
   const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; repository: ProjectGitRepositoryWorkbenchItem; branch: string; kind: BranchKind } | null>(null);
+  const historyScroll = useRef<HTMLDivElement>(null);
+  const historySentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!historyScroll.current || !historySentinel.current || props.historyLoading || props.historyError || !props.historyHasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) props.onLoadMore();
+      },
+      { root: historyScroll.current, rootMargin: '0px 0px 160px 0px' },
+    );
+    observer.observe(historySentinel.current);
+    return () => observer.disconnect();
+  }, [props.historyLoading, props.historyError, props.historyHasMore, props.onLoadMore]);
   return (
     <div className="project-git-log-layout">
       <aside className="project-git-repository-rail">
@@ -1687,7 +1735,7 @@ function GitLogSurface(props: {
           <span>{props.zh ? '作者' : 'Author'}</span>
           <span>{props.zh ? '日期' : 'Date'}</span>
         </header>
-        <div className="project-git-commit-scroll">
+        <div className="project-git-commit-scroll" ref={historyScroll}>
           <CommitGraph commits={props.commits.map(({ commit }) => commit)} />
           <div className="project-git-commit-rows">
             {props.commits.length === 0 ? <p role="status">{props.zh ? '当前列表没有匹配的提交，请调整搜索条件或选择其他分支。' : 'No matching commits in this list. Adjust the search or choose another branch.'}</p> : null}
@@ -1712,6 +1760,32 @@ function GitLogSurface(props: {
                 </button>
               );
             })}
+            <div ref={historySentinel} role="status" className="project-git-history-status">
+              {props.historyError ? (
+                <>
+                  <span>{props.historyError}</span>
+                  <Button variant="secondary" size="compact" onClick={props.onLoadMore}>
+                    {props.zh ? '重试' : 'Retry'}
+                  </Button>
+                </>
+              ) : props.historyLoading ? (
+                props.zh ? (
+                  '正在加载提交…'
+                ) : (
+                  'Loading commits…'
+                )
+              ) : props.historyHasMore ? (
+                props.zh ? (
+                  '向下滚动加载更多提交'
+                ) : (
+                  'Scroll for more commits'
+                )
+              ) : props.zh ? (
+                '已加载全部提交'
+              ) : (
+                'All commits loaded'
+              )}
+            </div>
           </div>
         </div>
       </main>
@@ -1886,7 +1960,6 @@ function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { no
       <details className="project-git-branch-folder" open={props.node.branch ? props.node.branch === props.current || props.current.startsWith(`${props.node.branch}/`) : true}>
         <summary style={{ paddingLeft: `${props.depth * 20 + 5}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder aria-hidden="true" />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (
@@ -2034,6 +2107,7 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
         <button
           data-git-context={JSON.stringify({ kind: 'repository', repositoryId: repository.id, ref: repository.name })}
           type="button"
+          className="project-git-navigation-repository"
           aria-current={props.selectedId === repository.id ? 'true' : undefined}
           onClick={() => props.onSelect(repository.id)}
           title={`${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
@@ -2052,7 +2126,9 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
     return (
       <details key={node.path} className="git-repository-directory" open>
         <summary>
-          <Folder aria-hidden="true" /> {node.name}
+          <CaretRight aria-hidden="true" />
+          <Folder aria-hidden="true" />
+          <span>{node.name}</span>
         </summary>
         <div className="git-repository-directory-children">
           {row}
@@ -2709,8 +2785,8 @@ function BranchContextMenu(props: {
   const checkoutAndRebase = async () => {
     const checkedOut =
       props.kind === 'remote'
-        ? await props.onExecute(props.repository, { type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true, smart: true }, props.zh ? '签出远程分支' : 'Checkout remote branch')
-        : await props.onExecute(props.repository, { type: 'checkout', branchName: props.branch, smart: true }, props.zh ? '签出分支' : 'Checkout branch');
+        ? await props.onExecute(props.repository, { type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true }, props.zh ? '签出远程分支' : 'Checkout remote branch')
+        : await props.onExecute(props.repository, { type: 'checkout', branchName: props.branch }, props.zh ? '签出分支' : 'Checkout branch');
     if (checkedOut && !props.repository.snapshot.detached) await props.onExecute(props.repository, { type: 'rebase', branchName: current }, props.zh ? `将“${remoteLeaf}”变基到“${current}”` : `Rebase '${remoteLeaf}' onto '${current}'`);
   };
   if (confirmDelete) {
@@ -2756,8 +2832,8 @@ function BranchContextMenu(props: {
           onClick={() => {
             props.onClose();
             void (props.kind === 'remote'
-              ? props.onExecute(props.repository, { type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true, smart: true }, props.zh ? '签出远程分支' : 'Checkout remote branch')
-              : props.onExecute(props.repository, { type: 'checkout', branchName: props.branch, smart: true }, props.zh ? '签出分支' : 'Checkout branch'));
+              ? props.onExecute(props.repository, { type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true }, props.zh ? '签出远程分支' : 'Checkout remote branch')
+              : props.onExecute(props.repository, { type: 'checkout', branchName: props.branch }, props.zh ? '签出分支' : 'Checkout branch'));
           }}
         >
           {props.zh ? '签出' : 'Checkout'}
@@ -2768,7 +2844,7 @@ function BranchContextMenu(props: {
           type="button"
           role="menuitem"
           disabled={props.busy !== null}
-          onClick={run({ type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true, smart: true }, props.zh ? '从远程分支新建本地分支' : 'Create local branch from remote')}
+          onClick={run({ type: 'create_branch', branchName: remoteLeaf, baseRef: props.branch, trackRemote: true }, props.zh ? '从远程分支新建本地分支' : 'Create local branch from remote')}
         >
           {props.zh ? `从“${props.branch}”新建分支…` : `New Branch from '${props.branch}'…`}
         </button>
@@ -2799,7 +2875,7 @@ function BranchContextMenu(props: {
           <button type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'rebase', branchName: props.branch }, props.zh ? '变基当前分支' : 'Rebase current branch')}>
             {props.zh ? `将“${current}”变基到“${props.branch}”` : `Rebase '${current}' onto '${props.branch}'`}
           </button>
-          <button type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'merge', branchName: props.branch }, props.zh ? '合并分支' : 'Merge branch')}>
+          <button type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'merge', branchName: props.branch }, props.zh ? `将“${props.branch}”合并到“${current}”` : `Merge '${props.branch}' into '${current}'`)}>
             {props.zh ? `将“${props.branch}”合入“${current}”` : `Merge '${props.branch}' into '${current}'`}
           </button>
         </>
@@ -2827,15 +2903,26 @@ function BranchContextMenu(props: {
   );
 }
 
-function OperationsMenu(props: { zh: boolean; onClose: () => void; onOpenCommit: () => void; onOpenPush: () => void; onOpenUpdate: () => void; onOpenNewBranch: () => void; onOpenRevision: () => void; onSelectTab: (tab: GitTab) => void }) {
+function OperationsMenu(props: {
+  anchor: HTMLButtonElement | null;
+  zh: boolean;
+  onClose: () => void;
+  onOpenCommit: () => void;
+  onOpenPush: () => void;
+  onOpenUpdate: () => void;
+  onOpenNewBranch: () => void;
+  onOpenRevision: () => void;
+  onSelectTab: (tab: GitTab) => void;
+}) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const bounds = props.anchor?.getBoundingClientRect();
 
   const action = (callback: () => void) => () => {
     props.onClose();
     callback();
   };
-  return (
-    <MenuSurface onClose={props.onClose} ref={menuRef} className="project-git-operations-menu" role="menu">
+  return createPortal(
+    <MenuSurface onClose={props.onClose} ref={menuRef} className="macos-ai-app project-git-operations-menu" role="menu" style={{ left: Math.max(8, (bounds?.right ?? 228) - 220), top: (bounds?.bottom ?? 0) + 5 }}>
       <button type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
         {props.zh ? '提交…' : 'Commit…'}
       </button>
@@ -2862,7 +2949,8 @@ function OperationsMenu(props: { zh: boolean; onClose: () => void; onOpenCommit:
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('stash'))}>
         Stash
       </button>
-    </MenuSurface>
+    </MenuSurface>,
+    document.body,
   );
 }
 
@@ -2924,134 +3012,349 @@ function CommitDialog(props: {
   );
 }
 
+type PushSelection = { repositoryId: string; remote: string; sourceBranch: string; targetBranch: string; setUpstream: boolean };
+
+function PullDialog(props: {
+  repository: ProjectGitRepositoryWorkbenchItem;
+  zh: boolean;
+  busy: BusyState;
+  onClose: () => void;
+  onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
+}) {
+  const initial = defaultPushTarget(props.repository);
+  const [remote, setRemote] = useState(initial.remote);
+  const [branch, setBranch] = useState(initial.targetBranch);
+  const [rebase, setRebase] = useState(false);
+  const [commitMerge, setCommitMerge] = useState(true);
+  const [includeMergeLog, setIncludeMergeLog] = useState(false);
+  const [noFastForward, setNoFastForward] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const locked = submitting || props.busy !== null;
+  const branches = props.repository.snapshot.remoteBranches.filter((ref) => ref.startsWith(remote + '/') && !ref.endsWith('/HEAD')).map((ref) => ref.slice(remote.length + 1));
+  const optionsId = useId();
+  return (
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
+      <section className="project-git-reference-dialog project-git-sync-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '拉取' : 'Pull'}>
+        <header>
+          <strong>
+            {props.zh ? '拉取' : 'Pull'} · {props.repository.name}
+          </strong>
+        </header>
+        <main>
+          <fieldset disabled={locked} className="project-git-sync-fields">
+            <label>
+              <span>{props.zh ? '从仓库拉取' : 'Pull from remote'}</span>
+              <select
+                value={remote}
+                onChange={(event) => {
+                  setRemote(event.currentTarget.value);
+                  setBranch(props.repository.snapshot.branch);
+                }}
+              >
+                {props.repository.snapshot.remotes.map((name) => (
+                  <option key={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+            <p className="project-git-remote-url">{props.repository.snapshot.remoteDetails?.find((item) => item.name === remote)?.fetchUrl}</p>
+            <label>
+              <span>{props.zh ? '要拉取的远程分支' : 'Remote branch'}</span>
+              <span className="project-git-sync-branch-input">
+                <input list={optionsId} value={branch} onChange={(event) => setBranch(event.currentTarget.value)} />
+                <datalist id={optionsId}>
+                  {branches.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={locked || !remote}
+                  onClick={async () => {
+                    setSubmitting(true);
+                    try {
+                      await props.onExecute(props.repository, { type: 'fetch', remote }, props.zh ? '刷新远程分支' : 'Refresh remote branches');
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  }}
+                >
+                  {props.zh ? '刷新' : 'Refresh'}
+                </Button>
+              </span>
+            </label>
+            <label>
+              <span>{props.zh ? '拉取到本地分支' : 'Local branch'}</span>
+              <strong>{props.repository.snapshot.branch}</strong>
+            </label>
+          </fieldset>
+          <fieldset className="project-git-sync-options" disabled={locked}>
+            <legend>{props.zh ? '选项' : 'Options'}</legend>
+            <label>
+              <input type="checkbox" checked={commitMerge} disabled={rebase} onChange={(event) => setCommitMerge(event.currentTarget.checked)} />
+              {props.zh ? '立即提交合并的改动' : 'Commit merged changes immediately'}
+            </label>
+            <label>
+              <input type="checkbox" checked={includeMergeLog} disabled={rebase} onChange={(event) => setIncludeMergeLog(event.currentTarget.checked)} />
+              {props.zh ? '包括被合并提交的信息内容' : 'Include merged commit messages'}
+            </label>
+            <label>
+              <input type="checkbox" checked={noFastForward} disabled={rebase} onChange={(event) => setNoFastForward(event.currentTarget.checked)} />
+              {props.zh ? '无论是否可以快进更新都创建新的提交' : 'Create a merge commit even when fast-forward is possible'}
+            </label>
+            <label>
+              <input type="checkbox" checked={rebase} onChange={(event) => setRebase(event.currentTarget.checked)} />
+              {props.zh ? '用变基代替合并（请确保本地提交尚未推送）' : 'Rebase instead of merge (local commits should not have been pushed)'}
+            </label>
+            {!rebase && !commitMerge ? (
+              <small>{props.zh ? '快进更新不会创建合并提交；如需在更新前停下，请同时勾选“创建新的提交”。' : 'Fast-forward updates do not create a merge commit. Also select “Create a merge commit” to stop before committing.'}</small>
+            ) : null}
+          </fieldset>
+        </main>
+        <footer>
+          <Button variant="secondary" disabled={locked} onClick={props.onClose}>
+            {props.zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={locked || !remote || !branch.trim() || props.repository.snapshot.detached}
+            busy={submitting}
+            onClick={async () => {
+              if (locked) return;
+              setSubmitting(true);
+              try {
+                const outcome = await props.onExecute(props.repository, { type: 'pull', remote, targetBranch: branch.trim(), strategy: rebase ? 'rebase' : 'merge', commitMerge, includeMergeLog, noFastForward }, props.zh ? '拉取' : 'Pull');
+                if (outcome) props.onClose();
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            {props.zh ? '拉取' : 'Pull'}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
 function PushDialog(props: {
   open: boolean;
   zh: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
+  selectedRepository: ProjectGitRepositoryWorkbenchItem | null;
   busy: BusyState;
   results: Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>;
   onClose: () => void;
-  onPush: (selections: Array<{ repositoryId: string; remote: string; targetBranch: string }>, forceWithLease: boolean, pushTags: boolean) => Promise<void>;
+  onPush: (selections: PushSelection[], forceWithLease: boolean, pushTags: boolean) => Promise<void>;
 }) {
-  const pushable = props.repositories.filter((repository) => !repository.snapshot.detached && repository.snapshot.outgoingCommits.length > 0 && repository.snapshot.remotes.length > 0);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [targets, setTargets] = useState<Record<string, { remote: string; targetBranch: string }>>({});
+  const [repositoryId, setRepositoryId] = useState(props.selectedRepository?.id ?? props.repositories[0]?.id ?? '');
+  const repository = props.repositories.find((item) => item.id === repositoryId);
+  const [selections, setSelections] = useState<PushSelection[]>(() => {
+    const current = props.selectedRepository ?? props.repositories[0];
+    if (!current || current.snapshot.detached || !current.snapshot.localBranches.includes(current.snapshot.branch) || !current.snapshot.remotes.length) return [];
+    return [{ repositoryId: current.id, ...defaultPushTarget(current), sourceBranch: current.snapshot.branch, setUpstream: true }];
+  });
+  const [remotes, setRemotes] = useState<Record<string, string>>({});
+  const [targets, setTargets] = useState<Record<string, { targetBranch: string; setUpstream: boolean }>>({});
   const [forceWithLease, setForceWithLease] = useState(false);
   const [pushTags, setPushTags] = useState(false);
-  useEffect(() => {
-    if (!props.open) return;
-    setSelectedIds(pushable.map((repository) => repository.id));
-    setTargets(Object.fromEntries(props.repositories.map((repository) => [repository.id, defaultPushTarget(repository)])));
-  }, [props.open, props.repositories.map((repository) => `${repository.id}:${repository.snapshot.headSha}`).join('|')]);
-  if (!props.open) return null;
+  const [submitting, setSubmitting] = useState(false);
+  const optionsId = useId();
+  const locked = submitting || props.busy !== null;
+  if (!props.open || !repository) return null;
+  const remote = remotes[repositoryId] ?? defaultPushTarget(repository).remote;
+  const branches = repository.snapshot.localBranches;
+  const remoteBranches = repository.snapshot.remoteBranches.filter((ref) => ref.startsWith(remote + '/') && !ref.endsWith('/HEAD')).map((ref) => ref.slice(remote.length + 1));
+  const branchTarget = (sourceBranch: string) => {
+    const configured = targets[JSON.stringify([repositoryId, remote, sourceBranch])];
+    const upstream = repository.snapshot.branchUpstreams?.[sourceBranch];
+    return configured ?? { targetBranch: upstream?.startsWith(remote + '/') ? upstream.slice(remote.length + 1) : sourceBranch, setUpstream: true };
+  };
+  const selectionFor = (sourceBranch: string): PushSelection => ({ repositoryId, remote, sourceBranch, ...branchTarget(sourceBranch) });
+  const selected = (sourceBranch: string) => selections.some((item) => item.repositoryId === repositoryId && item.sourceBranch === sourceBranch);
+  const changeTarget = (sourceBranch: string, update: { targetBranch: string; setUpstream: boolean }) => {
+    setTargets((current) => ({ ...current, [JSON.stringify([repositoryId, remote, sourceBranch])]: update }));
+    setSelections((current) => current.map((item) => (item.repositoryId === repositoryId && item.sourceBranch === sourceBranch ? { ...item, ...update } : item)));
+  };
   const resultMode = props.results.length > 0;
+  const allSelected = branches.length > 0 && branches.every(selected);
+  const duplicateTarget = selections.some((item, index) =>
+    selections.some((other, otherIndex) => index !== otherIndex && item.repositoryId === other.repositoryId && item.remote === other.remote && item.targetBranch.trim() === other.targetBranch.trim()),
+  );
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-push-dialog" role="dialog" aria-modal="true" aria-label={resultMode ? (props.zh ? '推送结果' : 'Push results') : props.zh ? '推送提交' : 'Push commits'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
+      <section className="project-git-reference-dialog project-git-sync-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '推送' : 'Push'}>
         <header>
-          <strong>{resultMode ? (props.zh ? '推送结果' : 'Push results') : props.zh ? '推送提交' : 'Push commits'}</strong>
-          <small>
-            {resultMode
-              ? props.zh
-                ? '每个仓库分别显示推送结果；某个仓库失败不会撤销其他仓库已完成的推送。'
-                : 'Push results are shown for each repository. A failed push does not undo successful pushes to other repositories.'
-              : props.zh
-                ? `${pushable.length} 个仓库有待推送提交`
-                : `${pushable.length} repositories have outgoing commits`}
-          </small>
+          <strong>{resultMode ? (props.zh ? '推送结果' : 'Push results') : props.zh ? '推送' : 'Push'}</strong>
+          <small>{props.zh ? '按仓库选择本地分支及远程目标；切换仓库会保留已勾选项。' : 'Select local branches and remote targets. Selections are retained when switching repositories.'}</small>
         </header>
         <main>
-          {!resultMode && pushable.length === 0 ? (
-            <p className="project-git-empty-copy">{props.zh ? '没有可推送的提交。请先提交更改，或检查当前分支是否已配置远端。' : 'There are no commits to push. Commit changes first or check the current branch remote.'}</p>
-          ) : null}
-          {(resultMode ? props.repositories.filter((repository) => props.results.some((result) => result.repositoryId === repository.id)) : props.repositories).map((repository) => {
-            const result = props.results.find((candidate) => candidate.repositoryId === repository.id);
-            const target = targets[repository.id] ?? defaultPushTarget(repository);
-            return (
-              <section key={repository.id} className={result ? `is-${result.tone}` : ''}>
-                {resultMode ? (
-                  result?.tone === 'success' ? (
-                    <CheckCircle aria-hidden="true" />
-                  ) : result?.tone === 'warning' ? (
-                    <WarningCircle aria-hidden="true" />
-                  ) : null
-                ) : (
+          {resultMode ? (
+            <div className="project-git-sync-results">
+              {props.results.map((result, index) => (
+                <section key={index}>
+                  <strong>{result.repositoryName}</strong>
+                  <p>{result.tone === 'error' ? <VisibleApplicationError error={result.message} language={props.zh ? 'zh-CN' : 'en'} /> : result.message}</p>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <>
+              <fieldset disabled={locked} className="project-git-sync-fields">
+                {props.repositories.length > 1 ? (
+                  <label>
+                    <span>{props.zh ? '本地仓库' : 'Repository'}</span>
+                    <select value={repositoryId} onChange={(event) => setRepositoryId(event.currentTarget.value)}>
+                      {props.repositories.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.relativePath === '.' ? item.name : item.relativePath}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <label>
+                  <span>{props.zh ? '推送到仓库' : 'Push to remote'}</span>
+                  <select
+                    value={remote}
+                    onChange={(event) => {
+                      const next = event.currentTarget.value;
+                      setRemotes((current) => ({ ...current, [repositoryId]: next }));
+                      setSelections((current) =>
+                        current.map((item) =>
+                          item.repositoryId === repositoryId
+                            ? {
+                                ...item,
+                                remote: next,
+                                targetBranch: repository.snapshot.branchUpstreams?.[item.sourceBranch]?.startsWith(next + '/') ? repository.snapshot.branchUpstreams[item.sourceBranch]!.slice(next.length + 1) : item.sourceBranch,
+                                setUpstream: true,
+                                ...targets[JSON.stringify([repositoryId, next, item.sourceBranch])],
+                              }
+                            : item,
+                        ),
+                      );
+                    }}
+                  >
+                    {repository.snapshot.remotes.map((name) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+                <p className="project-git-remote-url">{repository.snapshot.remoteDetails?.find((item) => item.name === remote)?.pushUrl}</p>
+              </fieldset>
+              <fieldset disabled={locked || !remote} className="project-git-sync-options">
+                <legend>{props.zh ? '要推送的分支' : 'Branches to push'}</legend>
+                <div className="project-git-sync-table-scroll">
+                  <table className="project-git-sync-table">
+                    <thead>
+                      <tr>
+                        <th>{props.zh ? '推送' : 'Push'}</th>
+                        <th>{props.zh ? '本地分支' : 'Local branch'}</th>
+                        <th>{props.zh ? '远程分支' : 'Remote branch'}</th>
+                        <th>{props.zh ? '跟踪' : 'Track'}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {branches.map((branch) => {
+                        const target = branchTarget(branch);
+                        return (
+                          <tr key={branch}>
+                            <td>
+                              <input
+                                aria-label={(props.zh ? '推送分支 ' : 'Push branch ') + branch}
+                                type="checkbox"
+                                checked={selected(branch)}
+                                onChange={(event) =>
+                                  setSelections((current) => (event.currentTarget.checked ? [...current, selectionFor(branch)] : current.filter((item) => item.repositoryId !== repositoryId || item.sourceBranch !== branch)))
+                                }
+                              />
+                            </td>
+                            <th scope="row">
+                              {branch}
+                              {branch === repository.snapshot.branch ? <small>{props.zh ? '当前' : 'Current'}</small> : null}
+                            </th>
+                            <td>
+                              <input
+                                aria-label={(props.zh ? '远程目标 ' : 'Remote target ') + branch}
+                                list={optionsId}
+                                value={target.targetBranch}
+                                onChange={(event) => changeTarget(branch, { ...target, targetBranch: event.currentTarget.value })}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                aria-label={(props.zh ? '设置跟踪 ' : 'Set upstream ') + branch}
+                                type="checkbox"
+                                checked={target.setUpstream}
+                                onChange={(event) => changeTarget(branch, { ...target, setUpstream: event.currentTarget.checked })}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <datalist id={optionsId}>
+                  {remoteBranches.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                {!branches.length ? <p>{props.zh ? '当前仓库没有本地分支。' : 'No local branches in this repository.'}</p> : null}
+                <label>
                   <input
                     type="checkbox"
-                    checked={selectedIds.includes(repository.id)}
-                    disabled={!pushable.includes(repository)}
-                    onChange={(event) => setSelectedIds((current) => (event.currentTarget.checked ? [...current, repository.id] : current.filter((id) => id !== repository.id)))}
+                    checked={allSelected}
+                    onChange={(event) => {
+                      const rest = selections.filter((item) => item.repositoryId !== repositoryId);
+                      setSelections(event.currentTarget.checked ? [...rest, ...branches.map(selectionFor)] : rest);
+                    }}
                   />
-                )}
-                <span>
-                  <strong>{repository.name}</strong>
-                  {resultMode ? (
-                    <small>
-                      {repository.snapshot.branch} → {target.remote}/{target.targetBranch}
-                    </small>
-                  ) : (
-                    <span className="project-git-push-target">
-                      <small>{repository.snapshot.branch} →</small>
-                      <select
-                        aria-label={props.zh ? `${repository.name} 远端` : `${repository.name} remote`}
-                        value={target.remote}
-                        onChange={(event) => setTargets((current) => ({ ...current, [repository.id]: { ...target, remote: event.currentTarget.value } }))}
-                      >
-                        {repository.snapshot.remotes.map((remote) => (
-                          <option key={remote} value={remote}>
-                            {remote}
-                          </option>
-                        ))}
-                      </select>
-                      <span>/</span>
-                      <input
-                        aria-label={props.zh ? `${repository.name} 目标分支` : `${repository.name} target branch`}
-                        value={target.targetBranch}
-                        onChange={(event) => setTargets((current) => ({ ...current, [repository.id]: { ...target, targetBranch: event.currentTarget.value } }))}
-                      />
-                    </span>
-                  )}
-                </span>
-                <em>
-                  {result?.tone === 'error' ? (
-                    <VisibleApplicationError error={result.message} language={props.zh ? 'zh-CN' : 'en'} />
-                  ) : (
-                    (result?.message ??
-                    (repository.snapshot.outgoingCommits.length > 0 ? (props.zh ? `${repository.snapshot.outgoingCommits.length} 个提交` : `${repository.snapshot.outgoingCommits.length} commits`) : props.zh ? '无需推送' : 'Up to date'))
-                  )}
-                </em>
-              </section>
-            );
-          })}
-          {!resultMode ? (
-            <div className="project-git-push-options">
-              <label>
-                <input type="checkbox" checked={pushTags} onChange={(event) => setPushTags(event.currentTarget.checked)} />
-                {props.zh ? '推送可达的附注标签' : 'Push reachable annotated tags'}
-              </label>
-              <label>
-                <input type="checkbox" checked={forceWithLease} onChange={(event) => setForceWithLease(event.currentTarget.checked)} />
-                {props.zh ? '强制推送（仅当远端未被他人更新）' : 'Force push only if the remote has not changed'}
-              </label>
-            </div>
-          ) : null}
+                  {props.zh ? '全选当前仓库分支' : 'Select all branches in this repository'}
+                </label>
+              </fieldset>
+              <fieldset disabled={locked} className="project-git-sync-options">
+                <label>
+                  <input type="checkbox" checked={pushTags} onChange={(event) => setPushTags(event.currentTarget.checked)} />
+                  {props.zh ? '推送所有标签' : 'Push all tags'}
+                </label>
+                <label>
+                  <input type="checkbox" checked={forceWithLease} onChange={(event) => setForceWithLease(event.currentTarget.checked)} />
+                  {props.zh ? '强制推送（仅当远端未被他人更新）' : 'Force push only if the remote has not changed'}
+                </label>
+              </fieldset>
+              <small>
+                {props.zh
+                  ? `已选 ${selections.length} 个分支，涉及 ${new Set(selections.map((item) => item.repositoryId)).size} 个仓库`
+                  : `${selections.length} branches selected across ${new Set(selections.map((item) => item.repositoryId)).size} repositories`}
+              </small>
+              {duplicateTarget ? <p role="alert">{props.zh ? '同一仓库的多个本地分支不能推送到同一远程目标，请调整目标分支。' : 'Multiple local branches cannot target the same remote branch. Choose distinct targets.'}</p> : null}
+            </>
+          )}
         </main>
         <footer>
-          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
+          <Button variant="secondary" disabled={locked} onClick={props.onClose}>
             {resultMode ? (props.zh ? '关闭' : 'Close') : props.zh ? '取消' : 'Cancel'}
           </Button>
           {!resultMode ? (
             <Button
               variant="primary"
-              busy={props.busy?.action === 'push'}
-              disabled={selectedIds.length === 0 || selectedIds.some((id) => !targets[id]?.remote || !targets[id]?.targetBranch.trim()) || props.busy !== null}
-              onClick={() =>
-                void props.onPush(
-                  selectedIds.map((repositoryId) => ({ repositoryId, ...targets[repositoryId]! })),
-                  forceWithLease,
-                  pushTags,
-                )
-              }
+              busy={submitting}
+              disabled={locked || !selections.length || duplicateTarget || selections.some((item) => !item.remote || !item.targetBranch.trim())}
+              onClick={async () => {
+                if (locked) return;
+                setSubmitting(true);
+                try {
+                  await props.onPush(
+                    selections.map((item) => ({ ...item, targetBranch: item.targetBranch.trim() })),
+                    forceWithLease,
+                    pushTags,
+                  );
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
             >
               {props.zh ? '推送' : 'Push'}
             </Button>

@@ -1925,6 +1925,24 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator button[aria-current='true'] {
   background: var(--zeus-card-background) !important;
 }
+.macos-ai-app.zeus-shell .project-git-navigator button.project-git-navigation-repository[aria-current='true'],
+.macos-ai-app.zeus-shell .project-git-navigator button.project-git-navigation-repository[aria-current='true']:hover {
+  background: var(--zeus-source-list-selected) !important;
+  color: var(--zeus-brand-text);
+  box-shadow: inset 3px 0 var(--zeus-brand-text) !important;
+  font-weight: 600;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-repository-scope {
+  margin: 8px 0 4px;
+  padding: 8px;
+  border-top: 1px solid var(--zeus-product-line);
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-repository-scope strong {
+  color: var(--zeus-brand-text);
+}
 .macos-ai-app.zeus-shell .project-git-navigator button > span {
   flex: 1;
   min-inline-size: 0;
@@ -1953,10 +1971,35 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator .git-repository-directory + .git-repository-directory {
   margin-block-start: 2px;
 }
-.macos-ai-app.zeus-shell .project-git-navigator .git-repository-directory summary {
+.macos-ai-app.zeus-shell .project-git-navigator .git-repository-directory > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 30px;
+  list-style: none;
   font-weight: 500;
 }
+.macos-ai-app.zeus-shell .git-repository-directory > summary::-webkit-details-marker {
+  display: none;
+}
+.macos-ai-app.zeus-shell .git-repository-directory > summary::marker {
+  content: '';
+}
+.macos-ai-app.zeus-shell .git-repository-directory > summary > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.macos-ai-app.zeus-shell .git-repository-directory > summary:hover {
+  background: var(--zeus-interaction-hover);
+  border-radius: 6px;
+}
+.macos-ai-app.zeus-shell .git-repository-directory[open] > summary > svg:first-child {
+  transform: rotate(90deg);
+}
 .macos-ai-app.zeus-shell .git-repository-directory summary svg {
+  flex: 0 0 14px;
   width: 14px;
   height: 14px;
   vertical-align: middle;
@@ -2884,6 +2927,41 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .ai-workspace > .project-workspace-mode-toolbar > nav {
   margin: 0 !important;
   align-self: center;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.macos-ai-app.zeus-shell .ai-workspace > .project-workspace-mode-toolbar > nav > button {
+  flex: 0 0 auto;
+}
+.macos-ai-app.zeus-shell .ai-workspace > .project-workspace-mode-toolbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.macos-ai-app.zeus-shell .project-workspace-identity {
+  box-sizing: border-box;
+  flex: 0 0 213px;
+  width: 213px;
+  min-width: 213px;
+  max-width: 213px;
+  padding-right: 12px;
+  border-right: 1px solid var(--zeus-product-line);
+}
+.macos-ai-app.zeus-shell .project-workspace-identity-trigger {
+  width: 100%;
+  min-width: 0;
+  font-weight: 600;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root {
+  background: var(--zeus-source-list-selected) !important;
+  box-shadow: inset 3px 0 var(--zeus-brand-text);
+  border-radius: 6px;
+}
+.macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root .zeus-source-list-row-label {
+  color: var(--zeus-brand-text);
 }
 .macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) > .workspace-view {
   box-sizing: border-box;

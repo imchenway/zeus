@@ -3464,6 +3464,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         return {
           type: 'push',
           remote: stringValue('remote'),
+          sourceBranch: stringValue('sourceBranch'),
+          setUpstream: typeof value.setUpstream === 'boolean' ? value.setUpstream : undefined,
+          pushAllTags: value.pushAllTags === true,
           targetBranch: stringValue('targetBranch'),
           forceWithLease: value.forceWithLease === true,
           pushTags: value.pushTags === true,
@@ -3471,7 +3474,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'pull': {
         const strategy = value.strategy;
         if (strategy !== 'rebase' && strategy !== 'merge') throw nativeApiError('ZEUS_GIT_PULL_STRATEGY_INVALID', 'Pull strategy must be rebase or merge.');
-        return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy };
+        return {
+          type: 'pull',
+          remote: stringValue('remote'),
+          targetBranch: stringValue('targetBranch'),
+          strategy,
+          commitMerge: value.commitMerge !== false,
+          includeMergeLog: value.includeMergeLog === true,
+          noFastForward: value.noFastForward === true,
+        };
       }
       case 'update': {
         const strategy = value.strategy;

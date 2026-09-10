@@ -286,10 +286,27 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'commit':
       return { type: 'commit', message: stringValue('message') ?? '' };
     case 'push':
-      return { type: 'push', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), forceWithLease: value.forceWithLease === true, pushTags: value.pushTags === true };
+      return {
+        type: 'push',
+        remote: stringValue('remote'),
+        sourceBranch: stringValue('sourceBranch'),
+        targetBranch: stringValue('targetBranch'),
+        setUpstream: typeof value.setUpstream === 'boolean' ? value.setUpstream : undefined,
+        forceWithLease: value.forceWithLease === true,
+        pushTags: value.pushTags === true,
+        pushAllTags: value.pushAllTags === true,
+      };
     case 'pull': {
       if (value.strategy !== 'rebase' && value.strategy !== 'merge') throw projectGitError('ZEUS_GIT_PULL_STRATEGY_INVALID', '拉取策略必须是 merge 或 rebase。');
-      return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy: value.strategy };
+      return {
+        type: 'pull',
+        remote: stringValue('remote'),
+        targetBranch: stringValue('targetBranch'),
+        strategy: value.strategy,
+        commitMerge: value.commitMerge !== false,
+        includeMergeLog: value.includeMergeLog === true,
+        noFastForward: value.noFastForward === true,
+      };
     }
     case 'update': {
       if (value.strategy !== 'merge' && value.strategy !== 'rebase' && value.strategy !== 'reset') throw projectGitError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', '更新策略必须是 merge、rebase 或 reset。');

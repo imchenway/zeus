@@ -430,6 +430,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskBoardSettings,
     workspaceDrawerPortalStyle,
   } = operations;
+  const openProjectView: typeof openProjectSection = (project, section, codeMode = projectCodeWorkspaceMode) => {
+    if (section === 'sessions') {
+      const group = nativeConversationGroups.find((item) => item.projectId === project.id);
+      const conversations = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])];
+      const latest = conversations
+        .filter((conversation) => conversation.projectId === project.id && !conversation.archived)
+        .sort((a, b) => Date.parse(b.activityAt ?? b.updatedAt) - Date.parse(a.activityAt ?? a.updatedAt))[0];
+      if (latest) {
+        void selectNativeConversation(latest);
+        return;
+      }
+    }
+    openProjectSection(project, section, codeMode);
+  };
   /** 任务详情也可从会话页打开；接入上下文仍由原工作面身份约束，关闭或切换后旧回执失效。 */
   const modelSetupTask = snapshot.tasks.find((task) => task.id === taskModelPushTaskId);
   const taskModelSetupContext: TaskModelSetupContext | undefined =
@@ -764,7 +778,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onArchiveConversation={archiveConversation}
           onNavigate={handleMainNavigate}
           onOpenAutomaticUpdate={() => void openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}
-          onOpenProjectSection={openProjectSection}
+          onOpenProjectSection={openProjectView}
           onTogglePinnedProject={togglePinnedProject}
           onToggleProjectCollapsed={(projectId) => void toggleCollapsedProject(projectId)}
           onRevealProjectInFinder={(projectPath) => revealProjectInFinder(projectPath)}
@@ -810,10 +824,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
+            projects={orderedProjects}
+            onSelectProject={(project) => openProjectView(project, activeProjectSection === 'project-settings' ? 'tasks' : activeProjectSection, projectCodeWorkspaceMode)}
             section={activeProjectSection}
             codeMode={projectCodeWorkspaceMode}
             language={appShellSettings.appLanguage}
-            onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
+            onOpen={(section, codeMode) => openProjectView(selectedProject, section, codeMode)}
           />
         ) : null}
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (

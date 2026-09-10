@@ -4076,7 +4076,7 @@ a {
 }
 
 .project-git-operations-menu {
-  background: var(--zeus-popover-bg, var(--zeus-product-panel));
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
   border: 1px solid var(--zeus-popover-line, var(--zeus-product-line));
   border-radius: 10px;
   box-shadow: 0 14px 34px oklch(20% 0.01 255 / 0.18);
@@ -4084,9 +4084,9 @@ a {
   flex-direction: column;
   min-width: 220px;
   padding: 5px;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 5px);
+  position: fixed;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   z-index: 80;
 }
 .project-git-operations-menu button {
@@ -4278,6 +4278,98 @@ a {
 }
 .project-git-push-dialog main > section.is-error > svg {
   color: var(--zeus-control-danger-text);
+}
+.project-git-reference-dialog.project-git-sync-dialog {
+  width: min(840px, calc(100vw - 40px));
+}
+.project-git-sync-dialog .project-git-sync-fields,
+.project-git-sync-dialog .project-git-sync-options {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+}
+.project-git-sync-dialog .project-git-sync-fields {
+  padding: 0;
+  border: 0;
+}
+.project-git-sync-fields > label {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.project-git-sync-fields .project-git-sync-branch-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-git-sync-branch-input > input {
+  flex: 1;
+  min-inline-size: 0;
+}
+.project-git-sync-dialog .project-git-remote-url {
+  margin: 0 0 0 157px;
+  overflow-wrap: anywhere;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+.project-git-sync-options > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-git-sync-dialog main input[type='checkbox'] {
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  min-block-size: 0;
+  padding: 0;
+  margin: 0;
+}
+.project-git-sync-table-scroll {
+  overflow: auto;
+  max-block-size: 280px;
+}
+.project-git-sync-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: 12px;
+}
+.project-git-sync-table :is(th, td) {
+  padding: 8px;
+  border-block-end: 1px solid var(--zeus-product-line);
+  text-align: start;
+}
+.project-git-sync-table th[scope='row'] {
+  max-inline-size: 260px;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+.project-git-sync-table th small {
+  margin-inline-start: 6px;
+  color: var(--zeus-product-muted);
+}
+.project-git-sync-table td > input:not([type='checkbox']) {
+  min-inline-size: 160px;
+  inline-size: 100%;
+}
+.project-git-sync-results {
+  display: grid;
+  gap: 12px;
+}
+@media (max-width: 620px) {
+  .project-git-sync-fields > label {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+  .project-git-sync-dialog .project-git-remote-url {
+    margin-inline-start: 0;
+  }
 }
 .project-git-push-options {
   border-top: 1px solid var(--zeus-product-line);
@@ -4562,6 +4654,16 @@ a {
 }
 .project-git-commit-rows {
   min-width: 520px;
+}
+.project-git-history-status {
+  min-height: 40px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
 }
 .project-git-commit-row {
   border: 0;

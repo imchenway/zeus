@@ -278,6 +278,9 @@ export interface ProjectGitRepositorySnapshot {
   conflictFiles: string[];
   localBranches: string[];
   checkedOutBranches: string[];
+  /** 仅用于展示的脱敏远端地址与各本地分支的跟踪关系。 */
+  remoteDetails?: Array<{ name: string; fetchUrl: string; pushUrl: string }>;
+  branchUpstreams?: Record<string, string>;
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
@@ -303,8 +306,8 @@ export type ProjectGitAction =
   | { type: 'unstage'; paths: string[] }
   | { type: 'apply_patch'; patch: string; reverse?: boolean }
   | { type: 'commit'; message: string }
-  | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
-  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
+  | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
+  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }
   | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }
   | { type: 'checkout'; branchName: string; smart?: boolean }
   | { type: 'checkout_revision'; revision: string; smart?: boolean }
@@ -2130,6 +2133,15 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     ? await readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', `${upstream}..HEAD`])
     : '';
   const tags = splitLines(tagsText);
+  const [remoteDetails, branchTracking] = await Promise.all([
+    Promise.all(
+      context.remotes.map(async (name) => {
+        const [fetchUrl, pushUrl] = await Promise.all([readGitStdout(context.topLevel, ['remote', 'get-url', name]), readGitStdout(context.topLevel, ['remote', 'get-url', '--push', name])]);
+        return { name, fetchUrl: redactGitOutput(fetchUrl), pushUrl: redactGitOutput(pushUrl) };
+      }),
+    ),
+    readGitStdout(context.topLevel, ['for-each-ref', '--format=%(refname:short)%09%(upstream:short)', 'refs/heads/']),
+  ]);
   const recentRefs = await readProjectGitRecentRefs(context.topLevel, reflogText, context, tags);
   return {
     branch: context.branch,
@@ -2146,6 +2158,13 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     conflictFiles: status.conflictFiles,
     localBranches: context.localBranches,
     checkedOutBranches: context.worktrees.flatMap((worktree) => (worktree.branch ? [worktree.branch] : [])),
+    remoteDetails,
+    branchUpstreams: Object.fromEntries(
+      splitLines(branchTracking).map((line) => {
+        const [branch, upstream = ''] = line.split('\t');
+        return [branch, upstream];
+      }),
+    ),
     remoteBranches: context.remoteBranches,
     remotes: context.remotes,
     tags,
@@ -2303,20 +2322,20 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       args = ['commit', '-m', requireSafeGitText(action.message, 'commit message')];
       break;
     case 'push': {
-      requireNamedCurrentBranch(context);
-      const trackingRemote = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.remote`]);
-      const trackingRef = await readGitStdout(repositoryPath, ['config', '--get', `branch.${context.branch}.merge`]);
+      if (!action.sourceBranch) requireNamedCurrentBranch(context);
+      const sourceBranch = await assertNamedBranchExists(repositoryPath, action.sourceBranch || context.branch);
+      const trackingRemote = await readGitStdout(repositoryPath, ['config', '--get', `branch.${sourceBranch}.remote`]);
+      const trackingRef = await readGitStdout(repositoryPath, ['config', '--get', `branch.${sourceBranch}.merge`]);
       const remote = requireKnownRemote(context, action.remote || (trackingRemote === '.' ? undefined : trackingRemote));
       const trackingBranch = (!action.remote || action.remote === trackingRemote) && trackingRef.startsWith('refs/heads/') ? trackingRef.slice(11) : '';
-      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || trackingBranch || context.branch, 'push target branch');
-      const sourceBranch = await assertGitBranchFormat(repositoryPath, context.branch, 'current branch');
+      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || trackingBranch || sourceBranch, 'push target branch');
       args = [
         'push',
-        ...(!trackingRef ? ['--set-upstream'] : []),
+        ...((action.setUpstream ?? !trackingRef) ? ['--set-upstream'] : []),
         ...(action.forceWithLease ? [`--force-with-lease=refs/heads/${targetBranch}:${await readGitStdout(repositoryPath, ['rev-parse', '--verify', `refs/remotes/${remote}/${targetBranch}`])}`] : []),
-        ...(action.pushTags ? ['--follow-tags'] : []),
+        ...(action.pushAllTags ? ['--tags'] : action.pushTags ? ['--follow-tags'] : []),
         remote,
-        `${sourceBranch}:refs/heads/${targetBranch}`,
+        `refs/heads/${sourceBranch}:refs/heads/${targetBranch}`,
       ];
       break;
     }
@@ -2327,7 +2346,13 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       const remote = requireKnownRemote(context, action.remote || (trackingRemote === '.' ? undefined : trackingRemote));
       const trackingBranch = (!action.remote || action.remote === trackingRemote) && trackingRef.startsWith('refs/heads/') ? trackingRef.slice(11) : '';
       const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || trackingBranch || context.branch, 'pull branch');
-      args = ['pull', action.strategy === 'rebase' ? '--rebase' : '--no-rebase', remote, targetBranch];
+      args = [
+        'pull',
+        action.strategy === 'rebase' ? '--rebase' : '--no-rebase',
+        ...(action.strategy === 'merge' ? [action.commitMerge === false ? '--no-commit' : '--commit', '--no-edit', action.includeMergeLog ? '--log' : '--no-log', action.noFastForward ? '--no-ff' : '--ff'] : []),
+        remote,
+        targetBranch,
+      ];
       break;
     }
     case 'update':
@@ -2381,8 +2406,12 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
     action.type === 'revert' ||
     action.type === 'cherry_pick';
   const operation = () => (conflictCapable ? runGitPreservingConflict(repositoryPath, args) : runGit(repositoryPath, args));
-  const smart = (action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && action.smart === true;
-  const output = smart ? await runWithSmartStash(repositoryPath, action.type === 'checkout_revision' ? 'Checkout Revision' : 'Checkout', operation) : await operation();
+  const switching = action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch';
+  if (switching && (await getGitStatus(repositoryPath)).conflictFiles.length > 0) {
+    throw gitCoreError('ZEUS_GIT_CONFLICT_IN_PROGRESS', '当前仓库存在未解决的冲突，无法切换分支。请先处理冲突；未执行切换或自动贮藏。');
+  }
+  // 切换始终使用 Git 的保护性检查，不自动贮藏、恢复或强制覆盖用户修改。
+  const output = await operation();
   return finishProjectGitAction(repositoryPath, action.type, output);
 }
 

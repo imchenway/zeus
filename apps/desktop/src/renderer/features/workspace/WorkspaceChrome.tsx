@@ -280,6 +280,8 @@ export function ProjectRenameDialog(props: {
 /** 项目主导航统一图标尺寸与字重，并让图标和文案作为整体居中。 */
 export function ProjectWorkspaceModeToolbar(props: {
   project: ProjectRecord;
+  projects: ProjectRecord[];
+  onSelectProject: (project: ProjectRecord) => void;
   section: ProjectWorkspaceSection;
   codeMode: ProjectCodeWorkspaceMode;
   language: AppLanguage;
@@ -303,7 +305,31 @@ export function ProjectWorkspaceModeToolbar(props: {
   };
   return (
     <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
+      <div className="project-workspace-identity" title={props.project.localPath}>
+        <ZeusSelect
+          ariaLabel={zh ? '当前项目，切换项目' : 'Current project, switch project'}
+          value={props.project.id}
+          options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+          onChange={(id) => {
+            const project = props.projects.find((item) => item.id === id);
+            if (project && project.id !== props.project.id) props.onSelectProject(project);
+          }}
+          triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
+          triggerClassName="project-workspace-identity-trigger"
+          searchable
+          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+          emptyLabel={zh ? '没有匹配项目' : 'No matching projects'}
+          popoverMinWidth={260}
+          size="compact"
+        />
+      </div>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
+        <button type="button" className={props.section === 'sessions' ? 'is-active' : ''} aria-current={props.section === 'sessions' ? 'page' : undefined} onClick={() => props.onOpen('sessions')}>
+          <span aria-hidden="true">
+            <PencilSimple size={18} weight="regular" />
+          </span>
+          <span className="project-workspace-mode-label">{zh ? '会话' : 'Conversations'}</span>
+        </button>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           /** 当前工作区与源码子模式共同决定选中态。 */
           const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
@@ -898,7 +924,6 @@ export function SidebarNav(props: {
                   level="root"
                   surface="fill"
                   expanded={expanded}
-                  className={isActiveProject && props.activeProjectSection !== 'sessions' ? 'is-active-project-root' : undefined}
                   disclosure={
                     <button
                       type="button"
@@ -924,8 +949,9 @@ export function SidebarNav(props: {
                     type: 'button',
                     tabIndex: isActiveProject ? 0 : -1,
                     'data-source-list-item': 'true',
-                    'aria-label': `${copy.sections.tasks}${copy.labelSeparator}${project.name}`,
-                    onClick: () => props.onOpenProjectSection(project, 'tasks'),
+                    'aria-label': `${props.appLanguage === 'zh-CN' ? '项目' : 'Project'}${copy.labelSeparator}${project.name}`,
+                    'aria-current': isActiveProject ? 'true' : undefined,
+                    onClick: () => props.onOpenProjectSection(project, props.activeProjectSection === 'project-settings' ? 'tasks' : props.activeProjectSection),
                   }}
                   actions={
                     <>
