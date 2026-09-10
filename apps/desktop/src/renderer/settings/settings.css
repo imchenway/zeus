@@ -26,6 +26,8 @@
   padding: 0;
   border: 0 !important;
   border-radius: 0;
+  /* 顶部拖拽留白与正文共用底色，避免安全间距露出异色横条。 */
+  background: var(--zeus-card-background) !important;
 }
 
 /* 所有设置控件和分组在一个作用域内定义，避免各页面继续叠加卡片主题覆盖。 */
@@ -189,7 +191,8 @@
     min-inline-size: 0;
     box-sizing: border-box;
     margin: 0;
-    padding: 18px 32px 48px;
+    /* 宽窗口增加正文两侧留白，窄窗口沿用下方断点的紧凑间距。 */
+    padding: 18px 64px 48px;
     align-self: start;
   }
   .settings-content-column > * {
