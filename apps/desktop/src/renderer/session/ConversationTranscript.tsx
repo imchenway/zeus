@@ -375,7 +375,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     220,
     historyHydrated,
   );
-  const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
+  /** 输入样式也承载智能体来信，不能把后台来信当作当前用户发送。 */
+  const lastUserItem = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'));
+  /** 可见输入身份仍用于消息样式和动画。 */
+  const lastUserKey = lastUserItem?.key;
+  /** 远程指令沿用当前滚动模式，保留静态阅读位置。 */
+  const lastInputFromAgent = Boolean(lastUserItem?.payload.subagentInput);
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   // 当前状态始终读取完整会话事件，不受活动列表的展示筛选影响。
   const activeStatusKind = transcriptRunStatus(props.state);
@@ -780,7 +785,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     const previousKey = tracked.key;
     tracked.key = lastUserKey ?? null;
-    if (!lastUserKey || lastUserKey === previousKey) return;
+    if (!lastUserKey || lastUserKey === previousKey || lastInputFromAgent) return;
 
     // 以可见用户消息身份作为发送锚点，覆盖“发送后很快被 accepted/完成，来不及进入 awaitingReply 列表”的快速路径。
     clearUserScrollIntent();
@@ -791,7 +796,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       setReturnToLatestVisible(false);
       maintainLatestPosition();
     }
-  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, lastUserKey, maintainLatestPosition, positionLatest, props.state.conversationId, scrollController]);
+  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, lastInputFromAgent, lastUserKey, maintainLatestPosition, positionLatest, props.state.conversationId, scrollController]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);

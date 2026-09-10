@@ -845,6 +845,8 @@ function planStatusLabel(status: 'pending' | 'inProgress' | 'completed', languag
 
 function turnDurationMs(turn: NativeTurnSnapshot, requests: NativePendingRequest[], now: number): number | null {
   if (!turn.startedAt) return null;
+  // 已结束但缺少结束时间时不以当前时间代替，避免历史耗时持续增长。
+  if (!isActiveSessionTurn(turn) && !turn.completedAt) return null;
   const startedAt = Date.parse(turn.startedAt);
   const endedAt = turn.completedAt ? Date.parse(turn.completedAt) : now;
   if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) return null;

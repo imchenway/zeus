@@ -469,7 +469,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       })
     : props.item.resources;
   const unplacedResources = isAssistantDeliverableItem(props.item) ? itemResources.filter((resource) => resource.delivery === 'assistant') : itemResources;
-  const itemText = transcriptItemText(props.item);
+  /** 子智能体输入保留发送方，原文不可读时展示本地化说明。 */
+  const subagentInput = role === 'user' && isRecord(props.item.payload.subagentInput) ? props.item.payload.subagentInput : null;
+  const itemText = transcriptItemText(props.item, props.language);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
   // 重进会话时，Snapshot V2 给出的活动项预览在当前水位已经完整，必须首屏直出；
@@ -482,11 +484,19 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const expertActor = role === 'assistant' ? digitalEmployeeActor(props.item.payload.actor) : null;
   const expertExecutionId = typeof props.item.payload.expertExecutionId === 'string' ? props.item.payload.expertExecutionId : null;
   const expertFailed = Boolean(expertActor && expertExecutionId && props.item.payload.expertStatus === 'failed');
-  const label = expertActor ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ') : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
+  const label = subagentInput
+    ? subagentInput.fromParent === true
+      ? props.language === 'zh-CN'
+        ? '来自主智能体'
+        : 'From parent agent'
+      : `${props.language === 'zh-CN' ? '来自智能体' : 'From agent'} ${typeof subagentInput.sender === 'string' ? subagentInput.sender : ''}`
+    : expertActor
+      ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ')
+      : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
-  const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
+  const showVisibleRoleLabel = Boolean(subagentInput || expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring, props.waitingInQueue) : null;
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
@@ -778,7 +788,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
           {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
-          {visibleText ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
+          {visibleText && subagentInput?.contentState !== 'unavailable' ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
           {role === 'assistant' ? (
             <>
               <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
@@ -837,7 +847,18 @@ function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
   return code ? { code, message } : message;
 }
 
-export function transcriptItemText(item: NativeSessionItemBuffer): string {
+export function transcriptItemText(item: NativeSessionItemBuffer, language: SessionUiLanguage = 'zh-CN'): string {
+  /** 不可读输入仍是一条真实消息，不能因缺少正文被时间线过滤。 */
+  const input = isRecord(item.payload.subagentInput) ? item.payload.subagentInput : null;
+  if (input?.contentState === 'unavailable') {
+    return language === 'zh-CN'
+      ? input.fromParent === true
+        ? '主智能体已发送指令，原文暂不可读取'
+        : '智能体已发送消息，原文暂不可读取'
+      : input.fromParent === true
+        ? 'The parent agent sent instructions; the original text is currently unavailable.'
+        : 'The agent sent a message; the original text is currently unavailable.';
+  }
   if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
   const historicalContent = isRecord(item.payload.content) ? item.payload.content : null;
   if (typeof historicalContent?.displayText === 'string' && historicalContent.displayText.trim()) return historicalContent.displayText;
