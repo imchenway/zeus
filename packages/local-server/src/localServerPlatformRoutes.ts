@@ -143,7 +143,9 @@ import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
 import { registerProjectGitQueryRoutes } from './projectGitQueryRoutes.js';
 import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
-import { generateCodexCommitMessage } from './gitCommitCodexGeneration.js';
+import { createCommitCodexPool } from './gitCommitCodexGeneration.js';
+import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository } from './gitCommitContext.js';
+import { PassThrough } from 'node:stream';
 import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
 import { registerReleaseUpdateApi } from './releaseUpdateApi.js';
@@ -593,44 +595,94 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return { items, warning };
   });
 
+  const commitCodexPool = createCommitCodexPool();
+  server.addHook('onClose', () => commitCodexPool.close());
   server.post(
     '/api/projects/:projectId/git/commit-message',
     { bodyLimit: 512_000 },
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryName?: unknown; stagedDiff?: unknown; files?: unknown; language?: unknown; modelRef?: unknown } }>, reply) => {
-      if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
+    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean } }>, reply) => {
+      const project = projects.getById(request.params.projectId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
       const body = request.body;
-      if (
-        typeof body?.repositoryName !== 'string' ||
-        body.repositoryName.length > 1000 ||
-        (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000)) ||
-        typeof body.stagedDiff !== 'string' ||
-        body.stagedDiff.length > 100_000 ||
-        !Array.isArray(body.files) ||
-        body.files.length > 2000 ||
-        body.files.some((file) => typeof file !== 'string' || file.length > 4096)
-      ) {
+      if (readOnlyValidation) return reply.code(403).send({ error: 'ZEUS_READ_ONLY_VALIDATION', message: '只读验收模式不运行 AI 提交说明生成。' });
+      if (typeof body?.repositoryId !== 'string' || body.repositoryId.length > 200 || (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000))) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
       }
-      try {
+      const controller = new AbortController();
+      const stream = body.stream === true ? new PassThrough() : null;
+      const disconnected = () => {
+        if (!reply.raw.writableFinished) controller.abort();
+      };
+      reply.raw.on('close', disconnected);
+      const emit = (event: unknown) => {
+        if (stream && !stream.destroyed && !controller.signal.aborted) stream.write(`${JSON.stringify(event)}\n`);
+      };
+      const generate = async () => {
+        const started = performance.now();
+        const repository = await resolveCommitRepository(project, body.repositoryId as string);
+        const context = await readGitCommitContext(repository.localPath);
+        controller.signal.throwIfAborted();
+        const prepared = performance.now();
         const input = {
-          repositoryName: body.repositoryName,
-          stagedDiff: redactSensitiveText(body.stagedDiff).text,
-          files: body.files as string[],
+          repositoryName: repository.name,
+          stagedDiff: redactSensitiveText(context.stagedDiff).text,
+          files: context.files,
+          diffStat: redactSensitiveText(context.diffStat).text,
+          recentCommits: context.recentCommits.map((message) => redactSensitiveText(message).text),
+          truncated: context.truncated,
           language: body.language === 'en' ? ('en' as const) : ('zh-CN' as const),
           ...(typeof body.modelRef === 'string' ? { modelRef: body.modelRef } : {}),
         };
-        if (input.modelRef?.startsWith('codex:')) {
-          if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
-          return await generateCodexCommitMessage(input, {
-            commandPath: currentCodexRuntimeCommandPath(),
-            codexHome: options.codexHome ?? dataLayout.codexHome,
-            ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+        const run = async () => {
+          if (input.modelRef?.startsWith('codex:')) {
+            if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
+            return await commitCodexPool.generate(input, {
+              commandPath: currentCodexRuntimeCommandPath(),
+              codexHome: options.codexHome ?? dataLayout.codexHome,
+              ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+              signal: controller.signal,
+              onText: (text) => emit({ type: 'text', text }),
+            });
+          }
+          return await generateGitCommitMessage(modelConnections, request.params.projectId, input, controller.signal);
+        };
+        const result = await run();
+        const generated = performance.now();
+        if (context.fingerprint !== (await readCommitFingerprint(repository.localPath))) throw new Error('生成期间暂存内容已变化，请重新生成。');
+        controller.signal.throwIfAborted();
+        request.log.info(
+          {
+            prepareMs: Math.round(prepared - started),
+            generateMs: Math.round(generated - prepared),
+            verifyMs: Math.round(performance.now() - generated),
+            fileCount: context.files.length,
+            diffChars: input.stagedDiff.length,
+            truncated: context.truncated,
+          },
+          '提交说明生成耗时',
+        );
+        return { ...result, truncated: context.truncated };
+      };
+      if (stream) {
+        reply.type('application/x-ndjson').header('Cache-Control', 'no-store');
+        void generate()
+          .then(
+            (result) => emit({ type: 'result', ...result }),
+            (error: unknown) => emit({ type: 'error', message: error instanceof Error ? error.message : 'AI 生成失败。' }),
+          )
+          .finally(() => {
+            stream.end();
+            reply.raw.off('close', disconnected);
           });
-        }
-        return await generateGitCommitMessage(modelConnections, request.params.projectId, input);
+        return reply.send(stream);
+      }
+      try {
+        return await generate();
       } catch (error) {
         const status = typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
         return reply.code(status).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_FAILED', message: error instanceof Error ? error.message : 'AI 生成失败。' });
+      } finally {
+        reply.raw.off('close', disconnected);
       }
     },
   );
