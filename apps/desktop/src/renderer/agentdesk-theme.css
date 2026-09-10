@@ -3034,7 +3034,9 @@ body:has(.macos-ai-app.zeus-shell) {
   margin: 1px 0 3px;
   padding: 0;
 }
-.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row {
+/* 会话标题与展开更多共用项目文字起点，避免主题间距调整后错位。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row,
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-show-more {
   padding-inline-start: var(--zeus-sidebar-label-start);
   border: 0;
 }
