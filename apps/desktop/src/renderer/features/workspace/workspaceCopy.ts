@@ -128,11 +128,17 @@ export const languageCopy = {
       noConversationMatches: '没有符合筛选条件的会话',
       createDialogTitle: '创建项目',
       createNameLabel: '项目名称',
-      createNamePlaceholder: '项目名称',
+      /** 目录优先，名称支持自动填入后修改。 */
+      createNamePlaceholder: '选择文件夹后自动填入，可修改',
       createFolderLabel: '项目目录',
-      createFolderHelp: '选择项目所在的文件夹，Zeus 将在其中读取文件和处理任务。',
-      createChooseFolder: '选择 Zeus 可读取和编辑的文件夹',
-      createChangeFolder: '更换目录',
+      /** 目录说明只保留工作范围，操作文案保持简短。 */
+      createFolderHelp: 'Zeus 将在此文件夹中读取和编辑文件、处理任务。',
+      /** 未选择目录时的控件标题。 */
+      createChooseFolder: '选择项目文件夹',
+      /** 未选择目录时的行尾操作提示。 */
+      createSelectFolder: '选择…',
+      /** 已选择目录时的行尾操作提示。 */
+      createChangeFolder: '更换',
       createCancel: '取消',
       createSubmit: '创建项目',
       createSubmitting: '创建中',
@@ -1319,11 +1325,17 @@ export const languageCopy = {
       noConversationMatches: 'No conversations match the filters',
       createDialogTitle: 'Create project',
       createNameLabel: 'Project name',
-      createNamePlaceholder: 'Project name',
+      /** 英文同样说明名称自动填入且可修改。 */
+      createNamePlaceholder: 'Filled from the folder; editable',
       createFolderLabel: 'Project folder',
-      createFolderHelp: 'Choose the project folder where Zeus will read files and work on tasks.',
-      createChooseFolder: 'Choose a folder Zeus can read and edit',
-      createChangeFolder: 'Change folder',
+      /** 保留与中文相同的文件操作范围。 */
+      createFolderHelp: 'Zeus will read and edit files and work on tasks in this folder.',
+      /** 未选择目录时的控件标题。 */
+      createChooseFolder: 'Choose project folder',
+      /** 未选择目录时的行尾操作提示。 */
+      createSelectFolder: 'Choose…',
+      /** 已选择目录时的行尾操作提示。 */
+      createChangeFolder: 'Change',
       createCancel: 'Cancel',
       createSubmit: 'Create project',
       createSubmitting: 'Creating',
