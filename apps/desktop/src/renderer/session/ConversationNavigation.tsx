@@ -238,7 +238,7 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
   /** 鼠标切换摘录不重复构造全部刻度节点。 */
   const ticks = useMemo(
     () =>
-      props.entries.map((entry, index) => (
+      props.entries.map((entry) => (
         <button
           key={entry.rowKey}
           ref={(element) => {
@@ -250,7 +250,7 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
           data-navigation-row-key={entry.rowKey}
           data-preview={heldKey === entry.rowKey || undefined}
           aria-current={props.activeRowKey === entry.rowKey ? 'true' : undefined}
-          aria-label={`${zh ? '跳到第' : 'Jump to message '}${index + 1}${zh ? '次发言：' : ': '}${entry.prompt}`}
+          aria-label={`${zh ? '跳到发言：' : 'Jump to message: '}${entry.prompt}`}
           tabIndex={entry.rowKey === (props.activeRowKey ?? props.entries[0]?.rowKey) ? 0 : -1}
           onPointerEnter={() => show(entry.rowKey)}
           onFocus={(event) => {

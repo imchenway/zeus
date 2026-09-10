@@ -8,7 +8,7 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/Caret
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   historicalTurnChangeUnavailableReason,
@@ -95,12 +95,6 @@ export function TurnChangeCard(props: {
       {changeSet.conflict ? (
         <p className="session-turn-change-error" role="alert">
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
-        </p>
-      ) : null}
-      {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
-        <p className="session-turn-change-error" role="status">
-          <WarningCircle aria-hidden="true" />
-          <span>{unavailableReason(changeSet.unavailableReason, props.language)}</span>
         </p>
       ) : null}
       {visibleFiles.length ? (
@@ -369,8 +363,8 @@ export function TurnDiffWorkspace(props: {
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
-        <p className="session-turn-change-error session-turn-diff-error" role="status">
-          <WarningCircle aria-hidden="true" />
+        <p className="session-turn-change-notice session-turn-diff-error" role="status">
+          <Info aria-hidden="true" />
           <span>{unavailableReason(changeSet.unavailableReason, props.language)}</span>
         </p>
       ) : null}

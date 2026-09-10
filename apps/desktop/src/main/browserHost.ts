@@ -369,8 +369,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const tabId = requireNonEmptyString(value.tabId, 'tabId');
       const visible = value.visible === true;
       const bounds = normalizeBounds(value.bounds);
-      await this.setLayout(window, conversationId, tabId, bounds, visible);
-      return { applied: true };
+      return { applied: await this.setLayout(window, conversationId, tabId, bounds, visible) };
     });
     ipcMain.handle('zeus:browser:prepare-comments', async (event, input: unknown) => {
       this.requireRendererWindow(event);
@@ -830,15 +829,20 @@ export class BrowserHost implements BrowserAutomationPort {
     this.emitSnapshot(conversationId);
   }
 
-  private async setLayout(window: BrowserWindow, conversationId: string, tabId: string, bounds: Rectangle, visible: boolean): Promise<void> {
+  /** 关闭后的迟到布局请求直接失效，存活标签仍须通过会话归属校验。 */
+  private async setLayout(window: BrowserWindow, conversationId: string, tabId: string, bounds: Rectangle, visible: boolean): Promise<boolean> {
+    // 工具关闭标签先于界面收到快照，已排队的尺寸和浮层回调不再有可布局的目标。
+    if (!this.tabs.has(tabId)) return false;
+    // 存活标签继续复用共享校验，不能将真正的跨会话访问当成关闭处理。
     const tab = this.requireConversationTab(conversationId, tabId);
+    // 清理旧标签只影响它自己，避免迟到的隐藏请求移除刚切换的新标签。
     const previous = this.visibleTabByWindow.get(window.id);
-    if (previous && previous !== tabId) this.detachTab(previous);
     if (!visible) {
       if (previous === tabId) this.detachTab(tabId);
-      return;
+      return true;
     }
     if (!this.settings.enabled) throw new Error('The built-in browser is disabled in Settings.');
+    if (previous && previous !== tabId) this.detachTab(previous);
     if (tab.ownerWindowId !== undefined && tab.ownerWindowId !== window.id) this.detachTab(tabId);
     const view = this.ensureView(tab);
     tab.ownerWindowId = window.id;
@@ -848,6 +852,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     view.setBounds(bounds);
     view.setVisible(true);
+    return true;
   }
 
   private detachTab(tabId: string): void {

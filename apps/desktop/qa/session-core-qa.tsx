@@ -17,7 +17,7 @@ import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../src/renderer/session/sessionTypes.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
-import type { ConversationCodeComment, ConversationResource, TurnChangeSet } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -456,6 +456,8 @@ function MessageLayoutQa() {
   const contentRef = useRef<HTMLDivElement>(null);
   /** 保留手动检查和点击的结果，便于在页面核对资源身份。 */
   const [linkResult, setLinkResult] = useState('等待检查或点击链接');
+  /** 批注沿用真实选区与编辑组件，草稿只保留在当前预览中。 */
+  const [responseAnnotations, setResponseAnnotations] = useState<ConversationResponseAnnotation[]>([]);
   /** 预览主题不修改应用设置。 */
   const [dark, setDark] = useState(parameters.has('dark'));
   /** 通过内容列宽复现任务侧栏空间，不依赖浏览器窗口尺寸。 */
@@ -487,11 +489,26 @@ function MessageLayoutQa() {
     createdAt: completedAt,
     updatedAt: completedAt,
   }));
+  // 文件链接与两侧正文同排，检查前置文件图标是否影响文字基线。
+  resources.unshift({
+    id: 'document-resource',
+    projectId: 'qa',
+    conversationId: 'qa-layout',
+    turnId: 'qa-layout-turn',
+    itemId: 'layout-3',
+    kind: 'file',
+    presentation: 'inline',
+    displayName: '分析文档',
+    projectRelativePath: 'docs/分析文档.md',
+    iconKind: 'markdown',
+    createdAt: completedAt,
+    updatedAt: completedAt,
+  });
   /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
   function checkLinks(): void {
     /** 只读取本场景正文，不将来源入口计入结果。 */
     const buttons = [...(contentRef.current?.querySelectorAll('.session-conversation-markdown .session-inline-resource') ?? [])].map((button) => button.textContent);
-    if (buttons.join('|') !== '交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
+    if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
     setLinkResult('运行检查通过：历史链接和实时链接均可点击，未登记及同名不同网址的链接不可打开');
   }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
@@ -528,7 +545,7 @@ function MessageLayoutQa() {
             type: 'agentMessage',
             phase: 'final_answer',
             text: links
-              ? '已完成会话消息优化。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
+              ? '边界已补充到[分析文档](docs/分析文档.md)。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
               : '已检查会话布局，耗时与处理过程合并在正文上方；鼠标放到消息上时显示复制、反馈与时间戳。',
             payload: {},
             status: 'completed',
@@ -557,6 +574,7 @@ function MessageLayoutQa() {
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: 'qa-layout',
+    contextDraft: { responseAnnotations, codeComments: [] },
     activeTurnId: active ? 'qa-layout-turn' : null,
     transportState: 'ready',
     conversationState: active ? 'active_prework' : 'idle',
@@ -605,7 +623,20 @@ function MessageLayoutQa() {
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
         {links ? (
-          <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
+          <ConversationTranscript
+            state={state}
+            language={parameters.has('en') ? 'en-US' : 'zh-CN'}
+            transcriptHydrated
+            onOpenResource={openResource}
+            onAddResponseAnnotation={(anchor) => {
+              /** 同一编号贯穿标记、编辑、保存和删除。 */
+              const id = crypto.randomUUID();
+              setResponseAnnotations((current) => [...current, { id, anchor }]);
+              return id;
+            }}
+            onUpdateResponseAnnotation={(id, note) => setResponseAnnotations((current) => current.map((annotation) => (annotation.id === id ? { ...annotation, note } : annotation)))}
+            onRemoveResponseAnnotation={(id) => setResponseAnnotations((current) => current.filter((annotation) => annotation.id !== id))}
+          />
         ) : (
           <ThreadLayoutQa state={state} subagent={subagent} language={parameters.has('en') ? 'en-US' : 'zh-CN'} narrow={narrow} onNarrowChange={setNarrow} onClose={() => setSubagent(false)} />
         )}
@@ -615,7 +646,7 @@ function MessageLayoutQa() {
         {links ? (
           <>
             <span>来源：</span>
-            <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+            <ConversationInlineResource resource={resources[1]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
           </>
         ) : null}
       </div>
@@ -776,8 +807,8 @@ function ErrorLayoutQa() {
     providerTurnId: 'preview-turn',
     state: 'unavailable',
     fileCount: 7,
-    addedLines: 258,
-    deletedLines: 25,
+    addedLines: 225,
+    deletedLines: 57,
     unifiedDiff: '',
     preImageDigest: null,
     postImageDigest: null,
@@ -787,12 +818,12 @@ function ErrorLayoutQa() {
     updatedAt: '2026-09-08T12:16:00Z',
     files: [
       ['apps/desktop/qa/session-core-qa.tsx', 63, 7],
-      ['apps/desktop/src/renderer/session/ConversationComposer.tsx', 2, 1],
-      ['apps/desktop/src/renderer/session/session.css', 54, 0],
+      ['apps/desktop/src/renderer/session/ConversationComposer.tsx', 4, 4],
+      ['apps/desktop/src/renderer/session/session.css', 21, 27],
       ['apps/desktop/src/renderer/session/StructuredComposerInput.tsx', 110, 15],
       ['apps/desktop/src/renderer/session/useConversationInputResources.ts', 20, 1],
       ['apps/desktop/src/renderer/session/SessionWorkspace.tsx', 7, 1],
-      ['docs/ZEUS-0375_输入框粘贴Markdown展示.md', 2, 0],
+      ['docs/ZEUS-0375_输入框粘贴Markdown展示.md', 0, 2],
     ].map(([path, addedLines, deletedLines], index) => ({
       id: String(index),
       oldPath: String(path),
@@ -1116,9 +1147,13 @@ function ComposerMarkdownQa() {
             setSubmitted(`原文逐字符一致：是\n${JSON.stringify(settings, null, 2)}`);
             setState((current) => ({ ...current, draft: '' }));
           }}
-          onInterrupt={() => {
+          onInterrupt={async () => {
+            /** 保留停止请求的等待阶段，核对真实按钮的加载动画与重复点击禁用。 */
+            setState((current) => ({ ...current, busyOperation: 'interrupt' }));
+            setSubmitted('正在停止预览响应…');
+            await new Promise((resolve) => window.setTimeout(resolve, 1200));
             setSubmitted('已停止预览响应');
-            setState((current) => ({ ...current, conversationState: 'native_loading', activeTurnId: null, startedTurnId: null }));
+            setState((current) => ({ ...current, busyOperation: null, conversationState: 'native_loading', activeTurnId: null, startedTurnId: null }));
           }}
         />
       </div>
@@ -1789,8 +1824,9 @@ function NavigationQa() {
         providerItemId: `user-${index}`,
         sequence: index * 2 + 1,
         occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
-        prompt: `第 ${index + 1} 次发言：检查完整历史定位和鼠标移动时的预览。`,
-        response: `这是第 ${index + 1} 轮的最终答复。目录在打开时已经包含完整发言；正文靠近视口后才读取。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。`,
+        /** 示例使用普通发言，避免把验收序号误当成产品标题。 */
+        prompt: ['任务说明直接收起来了吗？', '请保留完整的任务说明。', '鼠标移出后应该回到原来的阅读位置。', '预览里只显示发言和答复。'][index % 4]!,
+        response: '任务说明已保留，可以继续阅读完整内容。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。',
         status: 'completed',
       })),
     [count],

@@ -816,7 +816,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
                     void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
                   }}
                 >
-                  <ArrowBendUpRight aria-hidden="true" weight="regular" />
+                  <ArrowBendUpRight aria-hidden="true" weight="bold" />
                   {queuedAction === 'steer' ? labels.steeringQueued : labels.steerQueued}
                 </button>
               ) : null}
