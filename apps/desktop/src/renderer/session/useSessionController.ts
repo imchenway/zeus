@@ -2872,7 +2872,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
           }
         },
       );
-      return promise.catch((error) => {
+      return promise.catch(async (error) => {
+        /** 服务端明确拒绝且不要求恢复时，撤销本地占位并读取真实队列。网络未知仍保留原保护。 */
+        const failure = toSessionError(error, true);
+        /** HTTP 拒绝是可核对的服务端响应，不能仅凭缺少 recoveryRequired 判断网络失败。 */
+        const status = error && typeof error === 'object' && 'status' in error ? error.status : null;
+        if (typeof status === 'number' && status >= 400 && status < 500 && !failure.recoveryRequired) {
+          pendingSteeringSubmissions.delete(submissionId);
+          if (!disposed && queuedSubmission && state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, queuedSubmission) });
+          try {
+            const queue = await options.client.loadNativeConversationQueueV2(options.projectId, options.conversationId);
+            if (!disposed) await applyAuthoritativeQueue(queue);
+          } catch {
+            // 状态刷新失败仍报告原拒绝；保留消息，后续正常同步继续收敛，不重发。
+          }
+          throw error;
+        }
         const stillPending = pendingSteeringSubmissions.get(submissionId);
         if (!disposed && stillPending) {
           pendingSteeringSubmissions.delete(submissionId);

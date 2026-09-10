@@ -32,6 +32,7 @@ import type {
   NativeConversationRunState,
   NativeConversationSkillInput,
   NativeQuestionAnswerAttachmentInput,
+  NativeProviderWriteLifecycle,
   NativeQueueSnapshot,
   NativeQueueWaitReason,
   NativeSessionCommandInput,
@@ -73,6 +74,7 @@ import {
   isSupportedLocalImageAttachment,
   isSupportedPermissionGrant,
   isSupportedPermissionRequest,
+  isSteeringSubmission,
   isValidMcpElicitationResponse,
   parseJsonRecord,
   providerEventReceipt,
@@ -551,7 +553,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function toQueueSnapshot(conversationId: string): NativeQueueSnapshot {
-    const entries = options.submissions.listByConversation(conversationId).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
+    // 暂停的引导同样阻塞下一条，必须和队首校验使用同一队列。
+    const entries = options.submissions.listQueueByConversation(conversationId);
     const state = runStates.get(conversationId) ?? { type: 'idle' as const };
     return {
       conversationId,
@@ -572,18 +575,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
               .join('、'),
           ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
           status: submission.status as 'queued' | 'paused',
-          delivery: input.delivery === 'steer_now' ? ('steer_now' as const) : ('queue' as const),
+          delivery: isSteeringSubmission(submission) || input.delivery === 'steer_now' ? ('steer_now' as const) : ('queue' as const),
           attachments: submissionAttachments(submission),
           ...(submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
           ...(typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(submissionConversationContext(submission) ? { conversationContext: submissionConversationContext(submission)! } : {}),
           ...(isRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer as unknown as AsyncQuestionAnswer } : {}),
-          expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
+          expectedTurnId: submission.targetProviderTurnId ?? (typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null),
           clientUserMessageId: submission.clientMessageId,
           ...(input.origin === 'implement_plan' || input.origin === 'refine_plan' ? { controlAction: input.origin } : {}),
           ...(recoveryKind ? { recoveryKind } : {}),
           position: submission.queuePosition ?? index + 1,
-          providerTurnId: null,
+          providerTurnId: submission.providerTurnId,
           pausedReason: submission.pausedReason,
           error,
           createdAt: submission.createdAt,
@@ -1157,6 +1160,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return dispatchSubmission(conversation, submission, undefined, false, input.segmentLifecycle);
   }
 
+  /** 直接引导从首次持久化起就绑定目标轮次，与队列引导共用后续处理。 */
   async function steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     const conversation = requireConversation(input.conversationId);
@@ -1192,9 +1196,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       createdAt: now(),
       dispatchedAt: now(),
     });
-    await persist();
-    await input.providerWriteLifecycle?.markPrepared(submission.id);
-
     if (existingSubmission) {
       if (existingSubmission.status === 'dispatching' || existingSubmission.status === 'active') {
         return accepted(existingSubmission, 'steering', conversation.providerThreadId, input.expectedTurnId);
@@ -1206,9 +1207,33 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       throw coordinatorError('ZEUS_REQUEST_ANSWER_ATTACHMENT_DELIVERY_UNCERTAIN', 'The request answer attachment delivery result is uncertain and will not be repeated automatically.');
     }
 
+    return dispatchSteeringSubmission(conversation, submission, input.expectedTurnId, input.providerWriteLifecycle);
+  }
+
+  /** 引导已被接纳后等待精确回显；目标结束时共用明确回队和未知结果保护。 */
+  async function dispatchSteeringSubmission(
+    conversation: ZeusConversationWithMessagesRecord,
+    submission: ZeusConversationSubmissionRecord,
+    expectedTurnId: string,
+    providerWriteLifecycle?: NativeProviderWriteLifecycle,
+  ): Promise<NativeAcceptedOperation> {
+    /** 正文与附件继续来自同一原始提交，禁止把队列引导重建成第二条消息。 */
+    const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
+    /** 资源组装先于外部写入标记，失败不能误报已发送。 */
+    const providerInput = submissionProviderInput(submission, context);
+    /** 中途问题回答不能在原轮次结束后自动转入下一轮。 */
+    const questionAnswer = parseJsonRecord(submission.inputJson).questionAnswer;
+    // 同步占住原队首后才允许异步等待；资源校验失败时原消息仍留在队列。
+    if (submission.status === 'queued') {
+      submission = options.submissions.updateStatus(submission.id, 'dispatching', { targetProviderTurnId: expectedTurnId, providerTurnId: expectedTurnId, dispatchedAt: now() });
+      providerThreadAuthority.queueChanged(conversation.id);
+    }
+    await persist();
+    await providerWriteLifecycle?.markPrepared(submission.id);
+
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId || turnHasCompletedOutput(conversation.id, input.expectedTurnId)) {
-      if (input.questionAnswer) {
+    if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== expectedTurnId || turnHasCompletedOutput(conversation.id, expectedTurnId)) {
+      if (questionAnswer) {
         options.submissions.updateStatus(submission.id, 'cancelled', { error: { code: 'ZEUS_ASYNC_QUESTION_TURN_ENDED', message: '原轮次已结束，回答未发送。' }, updatedAt: now() });
         await persist();
         throw coordinatorError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
@@ -1224,29 +1249,31 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
 
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    input.providerWriteLifecycle?.markRpcStarted(submission.id);
     try {
       await executeTurnCommand({
         operation: 'turn_steer',
         conversationId: conversation.id,
         threadId: providerThreadId,
-        turnId: input.expectedTurnId,
+        turnId: expectedTurnId,
         commandKey: submission.id,
         requestIdentity: { submissionId: submission.id, clientUserMessageId: submission.clientMessageId, requestHash: submission.requestHash },
         issuedAt: submission.createdAt,
-        invoke: (traceIdentity) =>
-          options.manager.steerTurn({
+        invoke: (traceIdentity) => {
+          // 本地校验与命令去重完成后，只有真实调用 Provider 才开始记录外部写入。
+          providerWriteLifecycle?.markRpcStarted(submission.id);
+          return options.manager.steerTurn({
             threadId: providerThreadId,
-            turnId: input.expectedTurnId,
+            turnId: expectedTurnId,
             clientUserMessageId: submission.clientMessageId,
-            input: submissionProviderInput(submission, context),
+            input: providerInput,
             traceIdentity,
-          }),
+          });
+        },
         isExplicitRejection: isProviderTurnAlreadyEndedSteerError,
       });
     } catch (error) {
       if (isProviderTurnAlreadyEndedSteerError(error)) {
-        if (input.questionAnswer) {
+        if (questionAnswer) {
           options.submissions.updateStatus(submission.id, 'cancelled', { error: { code: 'ZEUS_ASYNC_QUESTION_TURN_ENDED', message: 'Provider 已结束原轮次，回答未发送。' }, updatedAt: now() });
           await persist();
           throw coordinatorError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
@@ -1259,12 +1286,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
           const snapshot = projectedProviderThreadSnapshot(conversation.id, metadata);
           const generationId = options.manager.generationForThread(providerThreadId) ?? readyGenerationId();
-          if (generationId) reconcileConversationSnapshot(requireConversation(conversation.id), snapshot, generationId);
+          // 明确拒绝后的替代提交属于本次用户动作，核对旧轮次不能将其当作历史遗留而失败收口。
+          if (generationId) reconcileConversationSnapshot(requireConversation(conversation.id), snapshot, generationId, { preserveUnsentQueue: true });
         } catch (reconcileError) {
           options.broadcast('conversation.native.steer_requeued', {
             conversationId: conversation.id,
             providerThreadId,
-            providerTurnId: input.expectedTurnId,
+            providerTurnId: expectedTurnId,
             submissionId: submission.id,
             reconciliationError: serializeError(reconcileError),
           });
@@ -1279,7 +1307,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         return accepted(confirmedQueued, 'queued', providerThreadId, null);
       }
       options.submissions.updateStatus(submission.id, 'paused', {
-        providerTurnId: input.expectedTurnId,
+        providerTurnId: expectedTurnId,
         pausedReason: 'recovery_required',
         error: toRecoverySubmissionError(error),
         updatedAt: now(),
@@ -1289,7 +1317,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         conversationId: conversation.id,
         submissionId: submission.id,
         providerThreadId,
-        providerTurnId: input.expectedTurnId,
+        providerTurnId: expectedTurnId,
       });
       throw error;
     }
@@ -1300,9 +1328,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       conversationId: conversation.id,
       submissionId: submission.id,
       providerThreadId,
-      providerTurnId: input.expectedTurnId,
+      providerTurnId: expectedTurnId,
     });
-    return accepted(steering, 'steering', providerThreadId, input.expectedTurnId);
+    return accepted(steering, 'steering', providerThreadId, expectedTurnId);
   }
 
   const contextFromConversation = (conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext =>
@@ -1568,8 +1596,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       .listByConversation(conversationId)
       .find(
         (candidate) =>
-          candidate.kind === 'steer' &&
-          candidate.requestedDelivery === 'send_now' &&
+          isSteeringSubmission(candidate) &&
           candidate.clientMessageId === providerClientId &&
           candidate.providerTurnId === providerTurnId &&
           (candidate.status === 'dispatching' || (candidate.status === 'paused' && candidate.pausedReason === 'recovery_required')),
@@ -1589,10 +1616,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (message.clientMessageId?.trim()) return message.clientMessageId;
     const metadata = parseJsonRecord(message.metadataJson);
     return typeof metadata.clientUserMessageId === 'string' && metadata.clientUserMessageId.trim() ? metadata.clientUserMessageId : null;
-  }
-
-  function isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean {
-    return submission.kind === 'steer' && submission.requestedDelivery === 'send_now';
   }
 
   function hasExactProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, submission: ZeusConversationSubmissionRecord, providerTurnId: string): boolean {
@@ -1713,6 +1736,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await persist();
     return snapshot;
   }
+  /** 原队首在第一次异步等待前进入引导态，后续消息无需等待模型处理完前一条。 */
   async function sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     const conversation = requireConversation(input.conversationId);
@@ -1723,85 +1747,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if (state.type !== 'active' && state.type !== 'waiting') throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'send-now requires a current active Codex native turn.');
     if (submission.status !== 'queued') throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', 'Submission is not queued.');
-    const queueHead = options.submissions.listByConversation(input.conversationId).find((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+    const queueHead = options.submissions.listQueueByConversation(input.conversationId)[0];
     if (!queueHead || queueHead.id !== submission.id) {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。');
     }
     const turnId = state.turnId;
-    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
-    await input.providerWriteLifecycle?.markPrepared(submission.id);
     if (turnHasCompletedOutput(conversation.id, turnId)) {
-      // 陈旧界面或竞态请求不得污染已交付正文；保留原队首，等待旧 turn 正式终止后作为下一轮派发。
       providerThreadAuthority.queueChanged(conversation.id);
-      options.broadcast('conversation.queue.changed', {
-        conversationId: conversation.id,
-        queue: toQueueSnapshot(conversation.id),
-      });
+      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, queue: toQueueSnapshot(conversation.id) });
       requestQueueDrain();
-      return accepted(submission, 'queued', providerThreadId, null);
+      return accepted(submission, 'queued', conversation.providerThreadId, null);
     }
-    input.providerWriteLifecycle?.markRpcStarted(submission.id);
-    options.submissions.updateStatus(submission.id, 'dispatching', { providerTurnId: turnId, dispatchedAt: now() });
-    providerThreadAuthority.queueChanged(conversation.id);
-    await persist();
-    try {
-      await executeTurnCommand({
-        operation: 'turn_steer',
-        conversationId: conversation.id,
-        threadId: providerThreadId,
-        turnId,
-        commandKey: submission.id,
-        requestIdentity: { submissionId: submission.id, clientUserMessageId: submission.clientMessageId, requestHash: submission.requestHash },
-        issuedAt: submission.createdAt,
-        invoke: (traceIdentity) => options.manager.steerTurn({ threadId: providerThreadId, turnId, clientUserMessageId: submission.clientMessageId, input: submissionProviderInput(submission, context), traceIdentity }),
-        isExplicitRejection: isProviderTurnAlreadyEndedSteerError,
-      });
-    } catch (error) {
-      if (isProviderTurnAlreadyEndedSteerError(error)) {
-        let requeued = options.submissions.requeueRejectedSteer(submission.id, now());
-        await persist();
-        // 先让已经到达的 turn/completed 事件收敛旧轮次，再尝试读取一次权威快照；两者失败都不能把明确未发送的输入升级成未知副作用。
-        await providerEvents.waitForIdle();
-        const currentConversation = requireConversation(conversation.id);
-        try {
-          const metadata = await options.manager.readThread({ threadId: providerThreadId });
-          await enqueueProviderTurnReconciliation(currentConversation);
-          const snapshot = projectedProviderThreadSnapshot(conversation.id, metadata);
-          const generationId = options.manager.generationForThread(providerThreadId) ?? readyGenerationId();
-          if (generationId) reconcileConversationSnapshot(currentConversation, snapshot, generationId);
-        } catch (reconcileError) {
-          options.broadcast('conversation.native.steer_requeued', {
-            conversationId: conversation.id,
-            providerThreadId,
-            providerTurnId: turnId,
-            submissionId: submission.id,
-            reconciliationError: serializeError(reconcileError),
-          });
-        }
-        // 恢复对账可能按“重启后的未发送内容”暂停队列；本次输入来自当前用户动作，应继续作为普通下一轮排队。
-        requeued = options.submissions.requeueRejectedSteer(submission.id, now());
-        await persist();
-        options.broadcast('conversation.queue.changed', {
-          conversationId: conversation.id,
-          queue: toQueueSnapshot(conversation.id),
-        });
-        requestQueueDrain();
-        return accepted(requeued, 'queued', providerThreadId, null);
-      }
-      options.submissions.updateStatus(submission.id, 'paused', {
-        providerTurnId: turnId,
-        pausedReason: 'recovery_required',
-        error: toRecoverySubmissionError(error),
-        updatedAt: now(),
-      });
-      await persist();
-      options.broadcast('conversation.submission.steering', { conversationId: conversation.id, submissionId: submission.id, providerThreadId, providerTurnId: turnId });
-      throw error;
-    }
-    const steering = options.submissions.getById(submission.id) ?? submission;
-    options.broadcast('conversation.submission.steering', { conversationId: conversation.id, submissionId: submission.id, providerThreadId, providerTurnId: turnId });
-    return accepted(steering, 'steering', providerThreadId, turnId);
+    return dispatchSteeringSubmission(conversation, submission, turnId, input.providerWriteLifecycle);
   }
 
   async function interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation> {
@@ -2984,6 +2941,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     manager: options.manager,
     submissions: options.submissions,
     runStates,
+    isPreparingDispatch: (conversationId) => isPreparingDispatch(conversationId),
     getConversation: (conversationId) => options.conversations.getById(conversationId),
     requireConversation,
     prepareContext: async (conversationId) => {
@@ -3006,7 +2964,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
-  const dispatchSubmission = createCodexNativeDispatchPipeline({
+  const { dispatchSubmission, isPreparingDispatch } = createCodexNativeDispatchPipeline({
     assertSubmissionDispatchable,
     isClosed: () => closing || closed,
     options,

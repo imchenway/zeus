@@ -33,7 +33,7 @@ export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemB
 /** 沿用提交的稳定队列顺序，保留模型接手前的消息气泡。 */
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
   return [...(queue?.submissions ?? [])]
-    .filter((submission) => (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'paused') && !submission.providerTurnId)
+    .filter((submission) => submission.status === 'paused' || ((submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering') && !submission.providerTurnId))
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 

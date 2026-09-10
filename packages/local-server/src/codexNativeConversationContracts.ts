@@ -162,7 +162,8 @@ export interface NativeQueuedSubmission {
   controlAction?: 'implement_plan' | 'refine_plan';
   recoveryKind?: NativeSubmissionRecoveryKind;
   position: number;
-  providerTurnId: null;
+  /** 暂停的引导保留原目标轮次，队列展示不能因此隐藏恢复入口。 */
+  providerTurnId: string | null;
   pausedReason: string | null;
   error: NativeSubmissionError | null;
   createdAt: string;

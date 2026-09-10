@@ -1631,6 +1631,11 @@ function shouldDiscardSubmissionProjection(submission: NativeQueuedSubmission): 
 }
 
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
+  // 引导失败仍保留原消息及阻塞事实，不能被正常“引导中”投影从队列抹掉。
+  if (submission.status === 'paused') {
+    const queue = authoritativeQueue ?? state.queue;
+    if (queue) return projectQueueSubmissionMessages(state, { ...queue, submissions: [...queue.submissions.filter((entry) => entry.id !== submission.id), submission] });
+  }
   const queue = authoritativeQueue
     ? { ...authoritativeQueue, submissions: authoritativeQueue.submissions.filter((entry) => entry.id !== submission.id) }
     : state.queue

@@ -2068,7 +2068,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** Pi 的队首纯文本引导沿用原提交身份，不误发到 Codex。 */
-  async function sendQueuedNow(input: { conversationId: string; submissionId: string }) {
+  async function sendQueuedNow(input: { conversationId: string; submissionId: string; providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void } }) {
     /** 同一队首、同一活动轮次和同一模型配置才允许引导。 */
     const conversation = requirePiConversation(input.conversationId);
     /** 统一队列保存的原提交。 */
@@ -2105,6 +2105,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       expectedTurnId: run.providerTurnId,
       idempotencyKey: submission.idempotencyKey,
       clientUserMessageId: submission.clientMessageId,
+      providerWriteLifecycle: input.providerWriteLifecycle,
     });
   }
 

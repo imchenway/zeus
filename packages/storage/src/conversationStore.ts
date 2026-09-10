@@ -2269,11 +2269,14 @@ export class ConversationSubmissionRepository {
     return this.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
   }
 
+  /** 同步记录提交状态与引导目标，避免异步派发期间再次被当作普通队首。 */
   updateStatus(
     id: string,
     statusValue: ConversationSubmissionStatus,
     input: {
       providerTurnId?: string | null;
+      /** 原提交转引导时保留正文与请求摘要，只绑定本次实际目标轮次。 */
+      targetProviderTurnId?: string;
       pausedReason?: string | null;
       error?: unknown;
       dispatchedAt?: string | null;
@@ -2287,7 +2290,7 @@ export class ConversationSubmissionRepository {
     const updatedAt = input.updatedAt ?? nowIso();
     this.db.execute(
       `UPDATE conversation_submissions
-          SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?,
+          SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), target_provider_turn_id = COALESCE(?, target_provider_turn_id), paused_reason = ?,
               error_json = CASE WHEN ? THEN error_json ELSE ? END,
               dispatched_at = COALESCE(?, dispatched_at), resolved_at = COALESCE(?, resolved_at), updated_at = ?,
               submission_outcome = CASE WHEN ? THEN submission_outcome ELSE CASE
@@ -2301,6 +2304,7 @@ export class ConversationSubmissionRepository {
       [
         status,
         input.providerTurnId ?? null,
+        input.targetProviderTurnId ?? null,
         input.pausedReason ?? null,
         input.preserveError === true ? 1 : 0,
         input.error === undefined ? null : JSON.stringify(input.error),

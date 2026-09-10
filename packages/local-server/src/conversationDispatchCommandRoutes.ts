@@ -56,7 +56,8 @@ export interface ConversationDispatchCommandRouteOperations {
   prepareQueueReroute(input: { params: SubmissionParams; settings: QueueRerouteInput }): Promise<unknown>;
   queueReroute(input: { params: SubmissionParams; prepared: unknown }): unknown;
   queueDelete(input: { params: SubmissionParams }): unknown;
-  queueSendNow(input: { params: SubmissionParams; operationIdentity: string }): Promise<unknown>;
+  /** 队首校验不代表外部写入，实际引导调用通过生命周期标记写出。 */
+  queueSendNow(input: { params: SubmissionParams; operationIdentity: string; providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void } }): Promise<unknown>;
   turnInterrupt(input: { params: TurnParams; operationIdentity: string }): Promise<unknown>;
   serverRequestRespond(input: { params: RequestParams; response: Record<string, unknown>; operationIdentity: string }): Promise<unknown>;
   /** 附件错误在占用外部操作身份前拒绝，允许用户修正附件后重新提交。 */
@@ -217,8 +218,18 @@ export function registerConversationDispatchCommandRoutes(options: {
         parsed,
         destinationId: 'conversation-provider-turn-steer',
         resourceId: request.params.submissionId,
-        externalOperationId: `provider-turn-steer:${request.params.submissionId}`,
-        invoke: () => operations.queueSendNow({ params: request.params, operationIdentity: parsed.operationIdentity }),
+        // 外层绑定本次用户动作；本地拒绝不能锁死未来操作，实际引导仍按提交编号去重。
+        externalOperationId: `provider-turn-steer:${request.params.submissionId}:${parsed.operationIdentity}`,
+        manualExternalWriteStart: true,
+        invoke: (markExternalWriteStarted) =>
+          operations.queueSendNow({
+            params: request.params,
+            operationIdentity: parsed.operationIdentity,
+            providerWriteLifecycle: {
+              markPrepared: async () => undefined,
+              markRpcStarted: () => markExternalWriteStarted(),
+            },
+          }),
         isExplicitRejection: isExplicitRouteRejection,
       });
       return reply.code(202).send(executed.result);
