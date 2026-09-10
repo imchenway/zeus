@@ -1310,6 +1310,14 @@ body:has(.macos-ai-app.zeus-shell) {
   background-image: none !important;
 }
 
+/* 欢迎入口单独采用纯净表面；浅色为白色，深色跟随主题，退出引导即恢复工作区底色。 */
+.macos-ai-app.zeus-shell .ai-workspace:has(> .project-start-guide) {
+  box-sizing: border-box;
+  padding: 48px 24px clamp(48px, 12vh, 120px);
+  overflow-y: auto;
+  background: var(--zeus-product-panel) !important;
+}
+
 .macos-ai-app.zeus-shell :where(.ai-sidebar, .zeus-sidebar, .settings-sidebar-shell) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
