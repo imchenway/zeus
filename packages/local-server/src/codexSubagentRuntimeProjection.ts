@@ -49,8 +49,27 @@ export interface SubagentRuntimeDetails {
   };
 }
 
+/** 原生输入只保留可展示的正文与身份，不向界面传递加密内容。 */
+export interface SubagentInputMessage {
+  /** 原生消息身份用于跨来源去重。 */
+  id: string;
+  /** 输入所属的子线程轮次。 */
+  turnId: string;
+  /** 原生发送方路径，不能从正文猜测。 */
+  sender: string;
+  /** 是否来自当前智能体的直接上级。 */
+  fromParent: boolean;
+  /** 原生消息时间；缺失时不生成展示时间。 */
+  timestamp: string | null;
+  /** 加密或缺失正文时使用不可读状态。 */
+  contentState: 'available' | 'unavailable';
+  /** 完整可读正文；不可读时为空。 */
+  text: string;
+}
+
+/** 同一次有界扫描提供运行详情与输入消息。 */
 export interface CodexSubagentRuntimeReadPort {
-  read(input: { thread: CodexThreadSnapshot; ownedTurns: Record<string, unknown>[] }): Promise<SubagentRuntimeDetails>;
+  read(input: { thread: CodexThreadSnapshot; ownedTurns: Record<string, unknown>[] }): Promise<{ runtime: SubagentRuntimeDetails; inputMessages: SubagentInputMessage[] }>;
 }
 
 interface CreateCodexSubagentRuntimeReaderOptions {
@@ -68,6 +87,10 @@ interface RuntimeContext {
 }
 
 interface RuntimeScanState {
+  /** 首行身份校验后确认的子智能体路径。 */
+  agentPath: string | null;
+  /** 仅保存当前子线程已确认轮次内的输入。 */
+  inputMessages: Map<string, SubagentInputMessage>;
   threadId: string;
   requestedPath: string;
   realPath: string;
@@ -102,6 +125,8 @@ export function createCodexSubagentRuntimeReader(options: CreateCodexSubagentRun
   const maximumBytes = options.maximumBytes ?? codexSubagentRuntimeMaximumJsonlBytes;
   const maximumLineBytes = options.maximumLineBytes ?? codexSubagentRuntimeMaximumJsonlLineBytes;
   const cache = new Map<string, RuntimeScanState>();
+  /** 同一线程的增量游标只能由一个读取推进，其他线程仍可并行。 */
+  const pendingReads = new Map<string, Promise<{ runtime: SubagentRuntimeDetails; inputMessages: SubagentInputMessage[] }>>();
   let historyRootPromise: Promise<string> | null = null;
 
   async function historyRoot(): Promise<string> {
@@ -109,12 +134,25 @@ export function createCodexSubagentRuntimeReader(options: CreateCodexSubagentRun
     return historyRootPromise;
   }
 
-  async function read(input: { thread: CodexThreadSnapshot; ownedTurns: Record<string, unknown>[] }): Promise<SubagentRuntimeDetails> {
-    const scan = await scanRuntime(input.thread, input.ownedTurns).catch((error: unknown) => {
-      cache.delete(input.thread.id);
-      return { state: null, reason: error instanceof Error ? error.message : 'Provider JSONL 运行事实读取失败。' } satisfies RuntimeScanResult;
-    });
-    return toRuntimeDetails(input.thread, input.ownedTurns, scan);
+  /** 运行统计和消息共用扫描结果，避免并行读取同一历史文件。 */
+  async function read(input: { thread: CodexThreadSnapshot; ownedTurns: Record<string, unknown>[] }) {
+    /** 刷新与最终读取可能同时到达，依次读取可避免重复消费同一段文件。 */
+    const pending = (pendingReads.get(input.thread.id) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        /** 读取失败只返回明确不可用状态，不泄漏此前缓存的消息。 */
+        const scan = await scanRuntime(input.thread, input.ownedTurns).catch((error: unknown) => {
+          cache.delete(input.thread.id);
+          return { state: null, reason: error instanceof Error ? error.message : 'Provider JSONL 运行事实读取失败。' } satisfies RuntimeScanResult;
+        });
+        return { runtime: toRuntimeDetails(input.thread, input.ownedTurns, scan), inputMessages: [...(scan.state?.inputMessages.values() ?? [])] };
+      });
+    pendingReads.set(input.thread.id, pending);
+    try {
+      return await pending;
+    } finally {
+      if (pendingReads.get(input.thread.id) === pending) pendingReads.delete(input.thread.id);
+    }
   }
 
   async function scanRuntime(thread: CodexThreadSnapshot, ownedTurns: Record<string, unknown>[]): Promise<RuntimeScanResult> {
@@ -133,13 +171,7 @@ export function createCodexSubagentRuntimeReader(options: CreateCodexSubagentRun
     const signature = [...ownedTurnIds].sort().join('\n');
     const state = cache.get(thread.id) ?? null;
     const identityChanged =
-      !state ||
-      state.requestedPath !== requestedPath ||
-      state.realPath !== resolvedPath ||
-      state.device !== metadata.dev ||
-      state.inode !== metadata.ino ||
-      metadata.size < state.offset ||
-      (!state.ownedBoundaryStarted && state.ownedTurnIdsSignature !== signature);
+      !state || state.requestedPath !== requestedPath || state.realPath !== resolvedPath || state.device !== metadata.dev || state.inode !== metadata.ino || metadata.size < state.offset || state.ownedTurnIdsSignature !== signature;
     const activeState = identityChanged ? initialScanState(thread.id, requestedPath, resolvedPath, metadata.dev, metadata.ino, signature) : state;
     if (!activeState) return { state: null, reason: 'Codex 线程 JSONL 增量扫描状态不可用。' };
     if (metadata.size > activeState.offset) await appendFileRange(activeState, metadata.size, ownedTurnIds);
@@ -186,9 +218,16 @@ export function createCodexSubagentRuntimeReader(options: CreateCodexSubagentRun
       const payload = isRecord(value.payload) ? value.payload : {};
       if (value.type !== 'session_meta' || payload.id !== state.threadId) throw runtimeError('Provider JSONL 首行线程身份与请求的 Subagent 不匹配。');
       state.firstLineValidated = true;
+      state.agentPath = stringValue(payload.agent_path);
       return;
     }
     const payload = isRecord(value.payload) ? value.payload : {};
+    if (value.type === 'response_item' && payload.type === 'agent_message') {
+      /** 每条输入独立核对轮次与收件方，不依赖继承文件中的最近上下文。 */
+      const message = readSubagentInputMessage(payload, { agentPath: state.agentPath, timestamp: value.timestamp });
+      if (message && ownedTurnIds.has(message.turnId)) state.inputMessages.set(message.id, message);
+      return;
+    }
     if (value.type === 'turn_context') {
       const turnId = stringValue(payload.turn_id, payload.turnId);
       if (!state.ownedBoundaryStarted && turnId && ownedTurnIds.has(turnId)) {
@@ -395,6 +434,8 @@ function subtractBreakdown(total: TokenUsageBreakdown, baseline: TokenUsageBreak
 
 function initialScanState(threadId: string, requestedPath: string, realPath: string, device: number, inode: number, ownedTurnIdsSignature: string): RuntimeScanState {
   return {
+    agentPath: null,
+    inputMessages: new Map(),
     threadId,
     requestedPath,
     realPath,
@@ -416,6 +457,45 @@ function initialScanState(threadId: string, requestedPath: string, realPath: str
     modelRequestKeys: new Set(),
     retryCount: 0,
     retryComplete: true,
+  };
+}
+
+/** 原生线程与历史读取共用输入转换；显式加密块永不成为可复制正文。 */
+export function readSubagentInputMessage(item: Record<string, unknown>, context: { agentPath: string | null; turnId?: string; timestamp?: unknown }): SubagentInputMessage | null {
+  /** 收件方必须与已核验的子线程路径完全一致。 */
+  const sender = stringValue(item.author);
+  /** 原生消息编号跨读取协议保持稳定。 */
+  const id = stringValue(item.id);
+  /** 元数据提供真实归属，线程读取可补充外层轮次编号。 */
+  const metadata = isRecord(item.internal_chat_message_metadata_passthrough) ? item.internal_chat_message_metadata_passthrough : {};
+  /** 显式轮次元数据优先，避免归入错误的外层轮次。 */
+  const turnId = stringValue(metadata.turn_id) ?? context.turnId;
+  if (item.type !== 'agent_message' || !id || !turnId || !sender || !context.agentPath || item.recipient !== context.agentPath || sender === context.agentPath) return null;
+  /** 只读取原生文本块，不序列化未知块或加密块。 */
+  const parts = Array.isArray(item.content) ? item.content.filter(isRecord) : [];
+  /** 保留原文换行与缩进，移除的只有原生协作信封。 */
+  const rawText = parts
+    .filter((part) => part.type === 'input_text' || part.type === 'output_text')
+    .map((part) => (typeof part.text === 'string' ? part.text : ''))
+    .join('');
+  /** 信封字段须与结构化身份一致，正文里的类似文本不作身份依据。 */
+  const envelope = rawText.match(/^Message Type: (?:NEW_TASK|FOLLOWUP_TASK|MESSAGE)\r?\nTask name: ([^\r\n]+)\r?\nSender: ([^\r\n]+)\r?\nPayload:\r?\n/);
+  /** 原文不可读时整条输入使用说明，避免展示残缺片段冒充完整指令。 */
+  const text = envelope?.[1] === context.agentPath && envelope[2] === sender ? rawText.slice(envelope[0].length) : rawText;
+  /** 加密正文不能通过简单移除标记恢复。 */
+  const available = !parts.some((part) => part.type === 'encrypted_content') && Boolean(text.trim());
+  /** 原生消息时间优先于外层轮次时间。 */
+  const rawTime = metadata.create_time ?? context.timestamp;
+  /** 数字时间为原生协议的秒值，字符串必须是有效日期。 */
+  const milliseconds = typeof rawTime === 'number' ? rawTime * 1_000 : typeof rawTime === 'string' ? Date.parse(rawTime) : NaN;
+  return {
+    id,
+    turnId,
+    sender,
+    fromParent: sender === context.agentPath.slice(0, context.agentPath.lastIndexOf('/')),
+    timestamp: Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 8.64e15 ? new Date(milliseconds).toISOString() : null,
+    contentState: available ? 'available' : 'unavailable',
+    text: available ? text : '',
   };
 }
 

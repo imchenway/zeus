@@ -266,6 +266,8 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'updateTaskBoard'
     | 'moveTaskBoardTask'
     | 'loadProjectGitWorkbench'
+    // 控制台与 Git 工作台通过同一个原生客户端读取耐久历史。
+    | 'loadProjectGitOperations'
     | 'loadProjectGitCommit'
     | 'executeProjectGitAction'
     | 'generateGitCommitMessage'

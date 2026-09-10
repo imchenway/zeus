@@ -1,4 +1,4 @@
-import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitCommitDetail, ProjectGitWorkbenchSnapshot, GitDiffSummary } from '../features/git/gitContracts.js';
+import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitCommitDetail, ProjectGitWorkbenchSnapshot, ProjectGitOperationPage, GitDiffSummary } from '../features/git/gitContracts.js';
 import type { ZeusClientPerformanceSpan } from './localApiTransport.js';
 
 export interface DashboardClientOptions {
@@ -19,6 +19,8 @@ export interface ReadOnlyValidationIdentity {
 }
 
 export interface ProjectGitWorkbenchBridge {
+  /** 只通过当前桌面主进程读取操作账本。 */
+  loadOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   loadCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
   loadComparison: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;

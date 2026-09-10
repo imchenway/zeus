@@ -564,7 +564,7 @@
 }
 
 .macos-ai-app .is-delivered > .digital-employee-status-dot {
-  background: #2d9b67;
+  background: var(--zeus-brand-primary);
 }
 
 .macos-ai-app :where(.is-failed, .is-blocked) > .digital-employee-status-dot {
@@ -740,8 +740,8 @@
 }
 
 .macos-ai-app .digital-collaboration-timeline > li:is(.is-accepted, .is-skipped) .digital-collaboration-stage-index {
-  border-color: #2d9b67;
-  background: #2d9b67;
+  border-color: var(--zeus-brand-primary);
+  background: var(--zeus-brand-primary);
   color: white;
 }
 
@@ -1091,7 +1091,7 @@
 }
 
 .macos-ai-app .task-work-item.is-completed {
-  border-color: color-mix(in oklab, #2e9b67 38%, var(--zeus-control-border));
+  border-color: color-mix(in oklab, var(--zeus-brand-primary) 38%, var(--zeus-control-border));
 }
 
 .macos-ai-app .task-work-entry-icon {

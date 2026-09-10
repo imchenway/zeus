@@ -200,7 +200,7 @@
 }
 
 .status-succeeded {
-  color: var(--zeus-control-success-text, #207a43);
+  color: var(--zeus-status-success-text);
 }
 
 .status-failed,
@@ -337,7 +337,8 @@
 }
 
 .command-run-copy-action[data-copy-state='copied'] {
-  color: #a7f3d0 !important;
+  /* 日志工具栏始终为深色，复制成功采用品牌亮色。 */
+  color: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white) !important;
 }
 
 .command-run-copy-action:is([data-copy-state='too_large'], [data-copy-state='failed']) {

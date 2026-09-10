@@ -10,10 +10,10 @@ import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSna
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationTranscript, isSubagentCoordinationItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
-import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
 
+/** 子智能体工作面只提供原生线程的查看与刷新。 */
 interface SubagentWorkspaceProps {
   language: SessionUiLanguage;
   conversationId: string;
@@ -27,8 +27,10 @@ interface SubagentWorkspaceProps {
   loadThread: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
 }
 
+/** 原生运行状态决定刷新周期，不由正文内容推断完成。 */
 const activeStatuses = new Set<NativeSubagentStatus>(['pending', 'running', 'waiting']);
 
+/** 复用主会话消息与详情，面板只保留子线程导航。 */
 export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const zh = props.language === 'zh-CN';
   const [snapshot, setSnapshot] = useState<NativeSubagentListSnapshot | null>(props.initialSnapshot ?? null);
@@ -41,6 +43,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const threadRequestRef = useRef(0);
   const loadListRef = useRef(props.loadList);
   const loadThreadRef = useRef(props.loadThread);
+  /** 记录已观察的状态边沿，结束时只追加一次最终详情读取。 */
+  const previousAgentRef = useRef<{ id: string; status: NativeSubagentStatus } | null>(null);
   loadListRef.current = props.loadList;
   loadThreadRef.current = props.loadThread;
   useEffect(() => {
@@ -87,14 +91,20 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
 
   useEffect(() => {
     void refreshList(!props.initialSnapshot);
+  }, [props.activityRevision, props.conversationId, props.initialSnapshot, refreshList]);
+
+  // 活动通知仅刷新列表；只有切换会话或卸载才丢弃当前线程的在途读取。
+  useEffect(() => {
     return () => {
       listRequestRef.current += 1;
       threadRequestRef.current += 1;
     };
-  }, [props.activityRevision, props.conversationId, props.initialSnapshot, refreshList]);
+  }, [props.conversationId]);
 
   const selectedAgent = selectedThreadId ? snapshot?.items.find((item) => item.id === selectedThreadId) : null;
   const hasRunningAgents = snapshot?.items.some((item) => activeStatuses.has(item.status)) ?? false;
+  /** 使用稳定的状态值，列表轮询不重置线程轮询的计时器。 */
+  const selectedStatus = selectedAgent?.status;
 
   useEffect(() => {
     if (!hasRunningAgents) return;
@@ -103,10 +113,19 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   }, [hasRunningAgents, refreshList, snapshot?.items]);
 
   useEffect(() => {
-    if (!selectedThreadId || !selectedAgent || !activeStatuses.has(selectedAgent.status)) return;
+    if (!selectedThreadId || !selectedStatus || !activeStatuses.has(selectedStatus)) return;
     const timer = setTimeout(() => void openThread(selectedThreadId, false), 2_000);
     return () => clearTimeout(timer);
-  }, [openThread, selectedAgent, selectedThreadId, thread]);
+  }, [openThread, selectedStatus, selectedThreadId, thread]);
+
+  useEffect(() => {
+    /** 切换线程建立新的观察基线，不能触发旧线程刷新。 */
+    const previous = previousAgentRef.current;
+    previousAgentRef.current = selectedThreadId && selectedStatus ? { id: selectedThreadId, status: selectedStatus } : null;
+    if (selectedThreadId && selectedStatus && previous?.id === selectedThreadId && activeStatuses.has(previous.status) && !activeStatuses.has(selectedStatus)) {
+      void openThread(selectedThreadId, false);
+    }
+  }, [openThread, selectedStatus, selectedThreadId]);
 
   const grouped = useMemo(() => {
     const items = snapshot?.items ?? [];
@@ -144,7 +163,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const toggleLabel = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width';
   return (
     <aside className="session-subagent-workspace" data-full-width={props.fullWidth || undefined} aria-label={zh ? '智能体' : 'Agents'}>
-      <header className="session-subagent-header">
+      <header className="session-thread-header session-subagent-header">
         <span className="session-subagent-title">
           {selectedThreadId ? (
             <button
@@ -162,13 +181,15 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           ) : (
             <UsersThree aria-hidden="true" weight="regular" />
           )}
-          <span>
-            <strong>{selectedAgent?.title ?? (zh ? '智能体' : 'Agents')}</strong>
+          <span className="session-thread-title-copy">
+            <span className="session-thread-title-row">
+              <strong>{selectedAgent?.title ?? (zh ? '智能体' : 'Agents')}</strong>
+            </span>
             <small>{selectedAgent ? statusLabel(selectedAgent.status, props.language) : zh ? `${snapshot?.items.length ?? props.hintCount} 个线程` : `${snapshot?.items.length ?? props.hintCount} threads`}</small>
           </span>
         </span>
         <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
-          <button type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} title={zh ? '刷新' : 'Refresh'} onClick={() => void (selectedThreadId ? openThread(selectedThreadId, true) : refreshList(true))}>
+          <button type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} title={zh ? '刷新' : 'Refresh'} onClick={() => void (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
             <ArrowsClockwise aria-hidden="true" />
           </button>
           <button type="button" aria-label={toggleLabel} title={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
@@ -178,6 +199,11 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
             <X aria-hidden="true" />
           </button>
         </nav>
+        {thread ? (
+          <div className="session-thread-subtitle-row">
+            <RuntimeDetails key={thread.agent.id} runtime={thread.runtime} language={props.language} scope="subagent" />
+          </div>
+        ) : null}
       </header>
 
       {error ? (
@@ -187,11 +213,10 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
             {zh ? '重试' : 'Retry'}
           </button>
         </section>
-      ) : selectedThreadId ? (
+      ) : null}
+      {selectedThreadId ? (
         <div className="session-subagent-detail">
           {loadingThread && !thread ? <SubagentLoading label={zh ? '正在读取智能体会话…' : 'Loading agent conversation…'} /> : null}
-          {thread ? <SubagentTaskInstruction thread={thread} language={props.language} /> : null}
-          {thread ? <RuntimeDetails runtime={thread.runtime} language={props.language} scope="subagent" /> : null}
           {thread?.historyBoundary.state === 'unavailable' ? (
             <aside className="session-subagent-boundary-notice" role="status">
               <strong>{zh ? '部分历史归属不可确认' : 'Some history could not be attributed'}</strong>
@@ -229,39 +254,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   );
 }
 
-function SubagentTaskInstruction(props: { thread: NativeSubagentThreadSnapshot; language: SessionUiLanguage }) {
-  const zh = props.language === 'zh-CN';
-  const instruction = props.thread.taskInstruction;
-  const inherited = props.thread.inheritedContext;
-  const inheritedDiffers = inherited.state === 'available' && inherited.text && inherited.text !== instruction.text;
-  return (
-    <section className="session-subagent-instruction" aria-label={zh ? '任务指令' : 'Task instruction'}>
-      <header>
-        <strong>{zh ? '任务指令' : 'Task instruction'}</strong>
-        <span>{props.thread.agent.path ?? props.thread.agent.role ?? (zh ? '子智能体' : 'Subagent')}</span>
-      </header>
-      {instruction.state === 'available' && instruction.text ? (
-        <div className="session-subagent-instruction-content">
-          <ConversationMarkdown text={instruction.text} streamId={`subagent:${props.thread.agent.id}:instruction`} phase="final" language={props.language} />
-        </div>
-      ) : (
-        <div className="session-subagent-instruction-unavailable" role="status">
-          <strong>{zh ? '原始子任务指令不可读取' : 'Original subtask instruction unavailable'}</strong>
-          <span>{zh ? (instruction.reason ?? 'AI 服务没有提供这个智能体收到的原始指令。') : 'The AI service did not provide the original instructions received by this agent.'}</span>
-        </div>
-      )}
-      {inheritedDiffers ? (
-        <details className="session-subagent-inherited-context">
-          <summary>{zh ? '查看上层任务上下文' : 'View inherited task context'}</summary>
-          <div>
-            <ConversationMarkdown text={inherited.text!} streamId={`subagent:${props.thread.agent.id}:inherited-context`} phase="final" language={props.language} />
-          </div>
-        </details>
-      ) : null}
-    </section>
-  );
-}
-
+/** 子线程仅适配原生状态与身份，展示规则交给共享时间线。 */
 function projectSubagentTranscriptState(conversationId: string, thread: NativeSubagentThreadSnapshot, items: readonly NativeSessionItemBuffer[]): NativeSessionState {
   const base = createInitialSessionState();
   const terminalTurnIds: NativeSessionState['terminalTurnIds'] = {};
@@ -286,8 +279,8 @@ function projectSubagentTranscriptState(conversationId: string, thread: NativeSu
       providerTurnId: turn.id,
       submissionId: null,
       status,
-      startedAt: timeline[0] ?? null,
-      completedAt: terminal ? updatedAt : null,
+      startedAt: turn.startedAt,
+      completedAt: turn.completedAt,
       createdAt,
       updatedAt,
     };
@@ -316,9 +309,10 @@ function projectSubagentTranscriptState(conversationId: string, thread: NativeSu
   };
 }
 
+/** 归一化原生线程状态，不将已结束轮次重新变为运行。 */
 function normalizeSubagentTurnStatus(status: string): string {
   const normalized = status.trim().toLowerCase();
-  if (normalized === 'in_progress' || normalized === 'active') return 'running';
+  if (normalized === 'in_progress' || normalized === 'inprogress' || normalized === 'active') return 'running';
   if (normalized === 'cancelled' || normalized === 'canceled') return 'interrupted';
   return normalized || 'running';
 }
