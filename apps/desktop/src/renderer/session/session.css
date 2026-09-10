@@ -7722,8 +7722,9 @@
   padding-inline: 15px;
 }
 
+/* 源码正文沿用会话底色，避免整块灰底割裂阅读区域。 */
 .session-codex-parity-v1 .session-source-scroll {
-  background: var(--session-code);
+  background: var(--session-canvas);
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
@@ -7777,8 +7778,9 @@
   box-shadow: inset 2px 0 0 var(--session-accent);
 }
 
+/* 行号与源码正文同底色，保留文字和选中行的区分。 */
 .session-codex-parity-v1 .session-source-code-preview .cm-gutters {
-  background: var(--session-code);
+  background: var(--session-canvas);
   border: 0;
   color: var(--session-text-muted);
 }
@@ -11588,9 +11590,10 @@
   display: none;
 }
 
+/* 文件与浏览器共用顶栏沿用正文底色，由标签轮廓和细线区分层次。 */
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] {
   align-items: stretch;
-  background: color-mix(in srgb, var(--session-text) 6%, var(--session-canvas));
+  background: var(--session-canvas);
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--session-context-width);
