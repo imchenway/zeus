@@ -2914,26 +2914,7 @@ body:has(.macos-ai-app.zeus-shell) {
   grid-column: 1 / -1;
   min-inline-size: 0;
 }
-.macos-ai-app.zeus-shell .session-thread-subtitle-row > .session-runtime-details {
-  border: 0;
-  background: transparent;
-  pointer-events: auto;
-  min-inline-size: 0;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-summary-primary {
-  gap: 3px 12px;
-  font-size: 11px;
-  line-height: 20px;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-summary-metric b {
-  color: var(--session-text-muted);
-  font-weight: 400;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-runtime-detail-groups {
-  padding: 14px 0 4px;
-  margin-top: 6px;
-}
-.macos-ai-app.zeus-shell .session-thread-subtitle-row .session-thread-project-name {
+.macos-ai-app.zeus-shell .session-runtime-details .session-thread-project-name {
   color: var(--session-text-muted);
   max-inline-size: 200px;
   overflow: hidden;

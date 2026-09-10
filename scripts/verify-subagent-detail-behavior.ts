@@ -17,7 +17,8 @@ try {
   await verifyMissingTimeBoundaries();
   await verifyJsonlIdentityAndBounds();
   await verifyMissingRuntimeFields();
-  process.stdout.write('Subagent 详情行为探针通过：继承历史、无继承历史、增量刷新、时间边界、JSONL 身份与上限、缺失运行字段均符合安全投影契约。\n');
+  await verifySubagentInputs();
+  process.stdout.write('Subagent 详情行为探针通过：历史隔离、输入原文与加密状态、消息去重与排序、并发增量读取、时间边界、JSONL 身份与上限、缺失运行字段。\n');
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
 }
@@ -66,10 +67,10 @@ async function verifyIncrementalActiveThread(): Promise<void> {
   await writeJsonl(path, [sessionMeta(threadId), turnContext('turn-active', { model: 'gpt-5.6-sol', effort: 'max', cwd: '/tmp/active' })]);
   const reader = createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot });
   const first = await reader.read({ thread, ownedTurns: [ownedTurn] });
-  assertBehavior(first.usage.totalTokens.state === 'unavailable', '进行中线程尚无 token_count 时不得填零。');
+  assertBehavior(first.runtime.usage.totalTokens.state === 'unavailable', '进行中线程尚无 token_count 时不得填零。');
   await appendFile(path, `${JSON.stringify(tokenCount(80, 65, 15, 3))}\n`, 'utf8');
   const second = await reader.read({ thread, ownedTurns: [ownedTurn] });
-  assertAvailable(second.usage.totalTokens, 80, '后续轮询必须扫描新增尾部并更新运行快照。');
+  assertAvailable(second.runtime.usage.totalTokens, 80, '后续轮询必须扫描新增尾部并更新运行快照。');
 }
 
 async function verifyMissingTimeBoundaries(): Promise<void> {
@@ -99,7 +100,7 @@ async function verifyJsonlIdentityAndBounds(): Promise<void> {
   await writeJsonl(mismatchPath, [sessionMeta('another-thread'), turnContext('turn-mismatch', { model: 'should-not-leak', effort: 'low', cwd: '/tmp/mismatch' })]);
   const mismatchReader = createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot });
   const mismatch = await mismatchReader.read({ thread: threadSnapshot(mismatchId, mismatchPath, 600, [mismatchTurn]), ownedTurns: [mismatchTurn] });
-  assertUnavailableContains(mismatch.model, '身份', '首行线程身份不匹配时不得返回运行配置。');
+  assertUnavailableContains(mismatch.runtime.model, '身份', '首行线程身份不匹配时不得返回运行配置。');
 
   const lineId = 'thread-large-line';
   const linePath = join(historyRoot, `${lineId}.jsonl`);
@@ -107,7 +108,7 @@ async function verifyJsonlIdentityAndBounds(): Promise<void> {
   await writeJsonl(linePath, [sessionMeta(lineId), { type: 'event_msg', payload: { type: 'probe', content: 'x'.repeat(512) } }]);
   const lineReader = createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot, maximumLineBytes: 128 });
   const lineResult = await lineReader.read({ thread: threadSnapshot(lineId, linePath, 700, [lineTurn]), ownedTurns: [lineTurn] });
-  assertUnavailableContains(lineResult.model, '行超过', 'JSONL 单行超限时必须安全关闭运行事实。');
+  assertUnavailableContains(lineResult.runtime.model, '行超过', 'JSONL 单行超限时必须安全关闭运行事实。');
 
   const fileId = 'thread-large-file';
   const filePath = join(historyRoot, `${fileId}.jsonl`);
@@ -115,7 +116,7 @@ async function verifyJsonlIdentityAndBounds(): Promise<void> {
   await writeJsonl(filePath, [sessionMeta(fileId), turnContext('turn-large-file', { model: 'gpt-5.6-sol', effort: 'high', cwd: '/tmp/large' })]);
   const fileReader = createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot, maximumBytes: 64 });
   const fileResult = await fileReader.read({ thread: threadSnapshot(fileId, filePath, 800, [fileTurn]), ownedTurns: [fileTurn] });
-  assertUnavailableContains(fileResult.model, '扫描上限', 'JSONL 文件超限时必须安全关闭运行事实。');
+  assertUnavailableContains(fileResult.runtime.model, '扫描上限', 'JSONL 文件超限时必须安全关闭运行事实。');
 }
 
 async function verifyMissingRuntimeFields(): Promise<void> {
@@ -124,10 +125,90 @@ async function verifyMissingRuntimeFields(): Promise<void> {
   const ownedTurn = turn('turn-missing-runtime', 901, '缺失运行字段');
   const thread = threadSnapshot(threadId, path, 900, [ownedTurn]);
   await writeJsonl(path, [sessionMeta(threadId), turnContext('turn-missing-runtime', { cwd: '/tmp/missing-runtime' })]);
-  const runtime = await createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot }).read({ thread, ownedTurns: [ownedTurn] });
+  const { runtime } = await createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot }).read({ thread, ownedTurns: [ownedTurn] });
   assertBehavior(runtime.model.state === 'unavailable' && runtime.effort.state === 'unavailable', '缺少模型与推理强度时必须显示 unavailable。');
   assertAvailable(runtime.activity.turnCount, 1, '不依赖 JSONL 的轮次事实仍应可用。');
   assertBehavior(runtime.performance.latestOutputTokensPerSecond.state === 'unavailable', '缺少真实 timing 时输出速率不得填零或估猜。');
+}
+
+/** 使用原生协作信封检查输入归属、不可读正文、补齐与去重。 */
+async function verifySubagentInputs(): Promise<void> {
+  /** 每次探针使用独立文件，不读取或修改真实会话。 */
+  const threadId = 'thread-inputs';
+  /** 已确认的子线程路径。 */
+  const agentPath = '/root/worker';
+  /** 输入对应的真实轮次。 */
+  const turnId = 'turn-inputs';
+  /** 原生线程给出的首条明文优先于磁盘加密版本。 */
+  const firstInput = { type: 'agent_message', id: 'input-first', author: '/root', recipient: agentPath, content: [{ type: 'input_text', text: '第一条指令\n\n保留完整换行。' }] };
+  /** 原生过程与最终答复提供可核对的时间顺序。 */
+  const ownedTurn = {
+    ...turn(turnId, 1_001, '最终答复'),
+    completedAt: 1_010,
+    items: [firstInput, { id: 'command', type: 'commandExecution', startedAt: 1_003, command: ['pwd'] }, { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '最终答复' }],
+  };
+  /** 文件来自本次临时历史根。 */
+  const path = join(historyRoot, `${threadId}.jsonl`);
+  /** 主线程继承内容只能成为明确隐藏的历史。 */
+  const thread = { ...threadSnapshot(threadId, path, 1_000, [turn('parent-turn', 900, '父线程内容'), ownedTurn]), agentPath, preview: '继承上下文不得冒充任务输入' };
+  /** 生成与实际记录一致的信封，只在测试数据中使用无敏感意义的加密标记。 */
+  const message = (id: string, targetTurn: string, recipient: string, text: string | null, timestamp = 1_004) => ({
+    timestamp: new Date(timestamp * 1_000).toISOString(),
+    type: 'response_item',
+    payload: {
+      type: 'agent_message',
+      id,
+      author: '/root',
+      recipient,
+      content: [{ type: 'input_text', text: `Message Type: MESSAGE\nTask name: ${recipient}\nSender: /root\nPayload:\n${text ?? ''}` }, ...(text === null ? [{ type: 'encrypted_content', encrypted_content: '不可展示的加密测试块' }] : [])],
+      internal_chat_message_metadata_passthrough: { turn_id: targetTurn, create_time: timestamp },
+    },
+  });
+  await writeJsonl(path, [
+    { ...sessionMeta(threadId), payload: { id: threadId, agent_path: agentPath } },
+    message('parent-input', 'parent-turn', agentPath, '父线程输入'),
+    turnContext(turnId, { model: 'gpt-5.6-sol', effort: 'high' }),
+    message('input-first', turnId, agentPath, null, 1_002),
+    message('input-secret', turnId, agentPath, null),
+    message('input-readable', turnId, agentPath, '补充指令\n第二行。', 1_005),
+    message('input-readable', turnId, agentPath, '补充指令\n第二行。', 1_005),
+    message('other-agent', turnId, '/root/other', '另一个智能体的输入'),
+    message('unknown-turn', 'unknown-turn', agentPath, '归属未知'),
+  ]);
+  /** 查询结果必须只包含自身轮次的输入，首条原生明文不能被磁盘覆盖。 */
+  const result = await queryThread(thread);
+  /** 单个输入只保留一次，不通过正文相似度判断身份。 */
+  const items = result.turns[0]!.items;
+  assertBehavior(items.map((item) => item.id).join(',') === 'input-first,command,input-secret,input-readable,answer', '输入应按身份去重并按消息时间排在过程和答复之间。');
+  assertBehavior(items[0]?.text === '第一条指令\n\n保留完整换行。', '原生线程明文应优先且保留换行。');
+  assertBehavior(items[0]?.startedAt === new Date(1_002_000).toISOString(), '原生输入缺少时间时必须保留同身份历史的真实消息时间。');
+  assertBehavior(items[2]?.text === '' && (items[2]?.payload.subagentInput as { contentState?: string }).contentState === 'unavailable', '加密正文必须成为明确不可读输入。');
+  assertBehavior(!JSON.stringify(result.turns).includes('不可展示的加密测试块') && !JSON.stringify(result.turns).includes('继承上下文'), '输入集合不得暴露密文或替代为继承上下文。');
+  assertBehavior(result.turns[0]?.startedAt === new Date(1_001_000).toISOString() && result.turns[0]?.completedAt === new Date(1_010_000).toISOString(), '消息补齐不能改变真实轮次耗时。');
+  /** 已归一化的原生输入仍须补上发送方，不能重复添加磁盘版本。 */
+  const normalized = await queryThread({ ...thread, turns: [{ ...ownedTurn, items: [{ id: 'input-first', type: 'userMessage', text: '原生输入全文' }] }] });
+  assertBehavior(
+    normalized.turns[0]?.items.filter((item) => item.id === 'input-first').length === 1 &&
+      normalized.turns[0]?.items[0]?.text === '原生输入全文' &&
+      (normalized.turns[0]?.items[0]?.payload.subagentInput as { fromParent?: boolean }).fromParent === true,
+    '原生普通输入必须保留明文和来源且只显示一次。',
+  );
+  /** 旧协议已有明确首发指令时，在可靠首轮补入消息，不制造时间或原生编号。 */
+  const explicit = await queryThread({ ...thread, taskInstruction: '明确首发指令', turns: [turn('turn-explicit', 1_001, '答复')] });
+  assertBehavior(explicit.turns[0]?.items[0]?.text === '明确首发指令' && explicit.turns[0]?.items[0]?.providerItemId === null && explicit.turns[0]?.items[0]?.startedAt === null, '明确首发指令应进入消息流且保留未知时间。');
+  /** 并发刷新与新消息到达共享增量游标，不能重复或漏读。 */
+  const reader = createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot });
+  await reader.read({ thread, ownedTurns: [ownedTurn] });
+  await appendFile(path, `${JSON.stringify(message('input-later', turnId, agentPath, '后续指令', 1_006))}\n`);
+  /** 同时请求两个快照，验证原生输入集合稳定。 */
+  const refreshed = await Promise.all([reader.read({ thread, ownedTurns: [ownedTurn] }), reader.read({ thread, ownedTurns: [ownedTurn] })]);
+  assertBehavior(
+    refreshed.every((entry) => entry.inputMessages.length === 4 && entry.inputMessages.at(-1)?.text === '后续指令'),
+    '并发增量读取必须保留一份后续输入。',
+  );
+  /** 边界收缩后不得继续暴露旧缓存消息。 */
+  const hidden = await reader.read({ thread, ownedTurns: [] });
+  assertBehavior(hidden.inputMessages.length === 0, '失去归属的轮次必须清除输入缓存。');
 }
 
 async function queryThread(thread: CodexThreadSnapshot) {

@@ -8,7 +8,9 @@ import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdo
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
-import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
+import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
+import type { NativeConversationAttachment, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState, NativeSubagentSummary, NativeSubagentThreadSnapshot } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
 import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
@@ -229,6 +231,10 @@ function MessageLayoutQa() {
   const [dark, setDark] = useState(parameters.has('dark'));
   /** 通过内容列宽复现任务侧栏空间，不依赖浏览器窗口尺寸。 */
   const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 同一份消息切换主会话和子智能体，直接对照共享展示。 */
+  const [subagent, setSubagent] = useState(parameters.has('subagent'));
+  /** 后台补入指令用于核验静态阅读位置，保持已有消息身份不变。 */
+  const [followupCount, setFollowupCount] = useState(0);
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
   /** 固定起止时间用于确认耗时始终为三分一秒。 */
@@ -270,7 +276,7 @@ function MessageLayoutQa() {
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
     const controls = contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [];
-    if (durations.length !== (active || parameters.has('no-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
+    if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
     if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
     const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
@@ -279,13 +285,14 @@ function MessageLayoutQa() {
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
-    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。', payload: {}, status: 'completed' },
+    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。', payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {}, status: 'completed' },
     ...(parameters.has('no-process')
       ? []
       : [
           { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
           { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
         ]),
+    ...(subagent ? [{ type: 'userMessage', phase: 'user', text: '', payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'unavailable' } }, status: 'completed' }] : []),
     ...(!active && !parameters.has('no-answer')
       ? [
           {
@@ -300,6 +307,13 @@ function MessageLayoutQa() {
         ]
       : []),
     ...(!active && parameters.has('deliverable') ? [{ type: 'fileChange', phase: 'prework', text: '', payload: {}, status: 'completed' }] : []),
+    ...Array.from({ length: followupCount }, (_, index) => ({
+      type: 'userMessage',
+      phase: 'user',
+      text: `后续指令 ${index + 1}：继续检查消息展示。`,
+      payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } },
+      status: 'completed',
+    })),
   ].map((item, index) => ({
     ...item,
     key: `layout-${index}`,
@@ -326,7 +340,7 @@ function MessageLayoutQa() {
         submissionId: null,
         status,
         startedAt: parameters.has('no-time') ? null : startedAt,
-        completedAt: active ? null : completedAt,
+        completedAt: active || parameters.has('no-end-time') ? null : completedAt,
         createdAt: startedAt,
         updatedAt: completedAt,
       },
@@ -352,12 +366,20 @@ function MessageLayoutQa() {
           <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
             窄分栏
           </Button>
+          <Button aria-pressed={subagent} onClick={() => setSubagent(!subagent)}>
+            子智能体
+          </Button>
           <Button onClick={checkLayout}>检查耗时入口</Button>
+          {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
-        <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
+        {links ? (
+          <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
+        ) : (
+          <ThreadLayoutQa state={state} subagent={subagent} language={parameters.has('en') ? 'en-US' : 'zh-CN'} narrow={narrow} onNarrowChange={setNarrow} onClose={() => setSubagent(false)} />
+        )}
       </div>
       <div className="qa-error-layout-note">
         <p role="status">{linkResult}</p>
@@ -369,6 +391,114 @@ function MessageLayoutQa() {
         ) : null}
       </div>
     </main>
+  );
+}
+
+/** 主、子线程使用同一组场景数据；只模拟读取回调，不连接真实模型。 */
+function ThreadLayoutQa(props: { state: NativeSessionState; subagent: boolean; language: 'zh-CN' | 'en-US'; narrow: boolean; onNarrowChange: (narrow: boolean) => void; onClose: () => void }) {
+  /** 预览中的缺失指标沿用真实不可用值。 */
+  const missing = { state: 'unavailable' as const, reason: '预览未提供该项数据' };
+  /** 完整详情覆盖缺失指标、长目录与可复制的线程身份。 */
+  const runtime: NativeRuntimeDetailsSnapshot = {
+    model: { state: 'available', value: 'gpt-5.6-sol' },
+    effort: { state: 'available', value: 'high' },
+    serviceTier: { state: 'available', value: 'priority' },
+    usage: {
+      serviceTier: missing,
+      totalTokens: { state: 'available', value: 124000 },
+      inputTokens: missing,
+      outputTokens: missing,
+      reasoningOutputTokens: missing,
+      contextTokens: { state: 'available', value: 47500 },
+      contextWindow: { state: 'available', value: 258000 },
+      cacheHitRate: { state: 'available', value: 0.613 },
+      apiEquivalentUsd: missing,
+      priceCoverage: missing,
+      pricingCatalogDate: missing,
+      pricingSourceUrls: missing,
+      historyComplete: missing,
+    },
+    performance: { latestOutputTokensPerSecond: missing, latestFirstVisibleResponseMs: missing, cumulativeProcessedDurationMs: missing },
+    activity: { turnCount: { state: 'available', value: 1 }, modelRequestCount: missing, toolOrCommandCount: missing, retryCount: missing, failedTurnCount: missing },
+    changeSummary: missing,
+    environment: {
+      cwd: { state: 'available', value: '/workspace/zeus/tasks/ZEUS-0541/long-directory-for-layout-verification' },
+      branch: { state: 'available', value: 'zeus/ZEUS-0541-task-02' },
+      nativeSessionId: { state: 'available', value: 'qa-agent-thread' },
+      nativeSessionPath: { state: 'available', value: '/workspace/provider/sessions/2026/09/10/qa-agent-thread.jsonl' },
+    },
+  };
+  /** 标题与原生轮次使用相同终态，改变场景时详情需重新读取才更新。 */
+  const turn = props.state.turnsByProviderId['qa-layout-turn']!;
+  /** 面板列表由生产组件打开，确保导航和最终刷新都经过真实路径。 */
+  const agent: NativeSubagentSummary = {
+    id: 'qa-agent-thread',
+    parentThreadId: 'qa-parent',
+    title: 'Kierkegaard',
+    nickname: 'Kierkegaard',
+    role: null,
+    path: '/root/worker',
+    preview: '',
+    status: turn.status as NativeSubagentSummary['status'],
+    createdAt: turn.createdAt,
+    updatedAt: turn.updatedAt,
+  };
+  /** 旧指令字段故意提供内容，确认已移除独立栏且不拿它替代加密输入。 */
+  const prompt = { state: 'available' as const, text: '独立任务指令栏不应再出现', source: 'provider_thread_source' as const, reason: null };
+  /** 消息仍经子线程适配器进入共享时间线。 */
+  const thread: NativeSubagentThreadSnapshot = {
+    conversationId: 'qa-layout',
+    parentThreadId: 'qa-parent',
+    agent,
+    taskInstruction: prompt,
+    inheritedContext: prompt,
+    runtime,
+    historyBoundary: { state: 'confirmed', createdAt: turn.createdAt, ownedTurnCount: 1, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
+    turns: [
+      {
+        id: turn.id,
+        status: turn.status,
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        items: props.state.itemOrder.map((key) => {
+          /** 每条输入保留自身身份，完成场景仅追加最终答复。 */
+          const item = props.state.items[key]!;
+          return { ...item, id: item.itemId, providerItemId: item.itemId, startedAt: turn.startedAt, completedAt: turn.completedAt, updatedAt: item.updatedAt ?? turn.updatedAt };
+        }),
+      },
+    ],
+  };
+  return (
+    <div className="session-workspace-root" style={{ display: 'flex', flexDirection: 'column', height: 560, minWidth: 0 }}>
+      {props.subagent ? (
+        <SubagentWorkspace
+          language={props.language}
+          conversationId="qa-layout"
+          activityRevision={turn.status}
+          hintCount={1}
+          initialSnapshot={{ conversationId: 'qa-layout', parentThreadId: 'qa-parent', items: [agent] }}
+          fullWidth={!props.narrow}
+          onFullWidthChange={(wide) => props.onNarrowChange(!wide)}
+          onClose={props.onClose}
+          loadList={async () => ({ conversationId: 'qa-layout', parentThreadId: 'qa-parent', items: [agent] })}
+          loadThread={async () => thread}
+        />
+      ) : (
+        <>
+          <header className="session-thread-header">
+            <div className="session-thread-title-copy">
+              <span className="session-thread-title-row">
+                <strong>会话消息布局</strong>
+              </span>
+            </div>
+            <div className="session-thread-subtitle-row">
+              <RuntimeDetails runtime={runtime} scope="session" language={props.language} />
+            </div>
+          </header>
+          <ConversationTranscript state={props.state} language={props.language} transcriptHydrated />
+        </>
+      )}
+    </div>
   );
 }
 

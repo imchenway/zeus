@@ -1,7 +1,7 @@
 import { classifyAssistantMessage } from '@zeus/shared';
 import type { CodexThreadListInput, CodexThreadSnapshot, CodexThreadsPage, CodexTransportState } from '@zeus/ai-runtime';
 import type { ConversationProviderItemRepository, ConversationRepository, ZeusConversationRecord } from '@zeus/storage';
-import type { CodexSubagentRuntimeReadPort, SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
+import { readSubagentInputMessage, type CodexSubagentRuntimeReadPort, type SubagentInputMessage, type SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 
 export interface CodexSubagentProviderReadPort {
@@ -46,17 +46,39 @@ export class CodexSubagentQueryApplication {
     if (!agent) throw queryError('ZEUS_CODEX_SUBAGENT_NOT_FOUND', 'Subagent thread not found.', 404);
     this.assertProviderReady();
     const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: true });
+    if (thread.id !== agent.id) throw queryError('ZEUS_CODEX_SUBAGENT_IDENTITY_MISMATCH', '返回的子线程身份与请求不一致。', 409);
     const history = ownedThreadHistory(thread);
-    const runtime = await this.ports.runtime.read({ thread, ownedTurns: history.turns });
+    const { runtime, inputMessages } = await this.ports.runtime.read({ thread, ownedTurns: history.turns });
+    /** 原生输入已存在时不再单独插入任务摘要；仅保留确实可读的首发指令缺口。 */
+    const instruction = taskInstruction(thread, agent.id, activity);
+    /** 消息集合是唯一展示来源，独立指令栏移除后不能丢失已有明文。 */
+    const turns = this.toTurns(thread, history.turns, inputMessages, agent.path);
+    /** 没有可靠首轮时不为任务指令制造轮次。 */
+    const firstTurn = turns[0];
+    if (history.boundary.state === 'confirmed' && firstTurn && instruction.state === 'available' && instruction.text && !firstTurn.items.some((item) => item.type === 'userMessage')) {
+      firstTurn.items.unshift({
+        ...subagentInputItem({
+          id: `subagent-instruction:${agent.id}`,
+          turnId: firstTurn.id,
+          sender: agent.path?.slice(0, agent.path.lastIndexOf('/')) ?? '',
+          fromParent: true,
+          timestamp: null,
+          contentState: 'available',
+          text: instruction.text,
+        }),
+        // 字段来源没有原生消息编号，不能把本地展示编号冒充 Provider 身份。
+        providerItemId: null,
+      });
+    }
     return {
       conversationId: conversation.id,
       parentThreadId: snapshot.parentThreadId,
       agent,
-      taskInstruction: taskInstruction(thread, agent.id, activity),
+      taskInstruction: instruction,
       inheritedContext: inheritedContext(thread),
       historyBoundary: history.boundary,
       runtime,
-      turns: this.toTurns(thread, history.turns),
+      turns,
     };
   }
 
@@ -162,15 +184,31 @@ export class CodexSubagentQueryApplication {
     return { threadIds, paths, interrupted, states, instructions };
   }
 
-  private toTurns(thread: Record<string, unknown>, ownedTurns: Record<string, unknown>[]): SubagentTurn[] {
+  /** 原生线程优先，历史只补缺少的输入；轮次时间与消息时间分别保留。 */
+  private toTurns(thread: Record<string, unknown>, ownedTurns: Record<string, unknown>[], inputMessages: SubagentInputMessage[], agentPath: string | null): SubagentTurn[] {
     const threadUpdatedAt = epochIso(thread.updatedAt) ?? this.ports.now().toISOString();
     return ownedTurns.flatMap((rawTurn) => {
       const turnId = rawTurn.id as string;
       const turnStatus = typeof rawTurn.status === 'string' ? rawTurn.status : 'completed';
       const startedAt = epochIso(rawTurn.startedAt);
       const completedAt = epochIso(rawTurn.completedAt);
-      const items = (Array.isArray(rawTurn.items) ? rawTurn.items : []).flatMap((rawItem) => {
+      /** 每个原生身份只展示一次，原生线程记录优先于磁盘补充。 */
+      const items: SubagentTurn['items'] = (Array.isArray(rawTurn.items) ? rawTurn.items : []).flatMap<SubagentTurn['items'][number]>((rawItem) => {
         if (!isRecord(rawItem) || typeof rawItem.id !== 'string' || typeof rawItem.type !== 'string') return [];
+        if (rawItem.type === 'agent_message') {
+          /** 输入信封只能按结构化收件方进入自身轮次。 */
+          const message = readSubagentInputMessage(rawItem, { agentPath, turnId, timestamp: rawItem.startedAt });
+          /** 协议未提供消息时间时，仍保留同身份历史记录中的真实时间。 */
+          const historical = inputMessages.find((input) => input.id === rawItem.id && input.turnId === turnId);
+          return message?.turnId === turnId ? [subagentInputItem({ ...message, timestamp: message.timestamp ?? historical?.timestamp ?? null })] : [];
+        }
+        /** 协议已转成普通输入时，按同一原生编号补来源，仍优先使用线程中的明文。 */
+        const input = rawItem.type === 'userMessage' ? inputMessages.find((message) => message.id === rawItem.id && message.turnId === turnId) : null;
+        if (input) {
+          /** 不用轮次开始时间覆盖历史中更精确的消息时间。 */
+          const text = itemText(rawItem);
+          return [subagentInputItem({ ...input, timestamp: epochIso(rawItem.startedAt) ?? input.timestamp, ...(text.trim() ? { text, contentState: 'available' as const } : {}) })];
+        }
         const phase = classifyAssistantMessage(rawItem, rawItem.type === 'agentMessage' ? 'final_answer' : 'prework') === 'final' ? ('final_answer' as const) : ('prework' as const);
         return [
           {
@@ -183,13 +221,26 @@ export class CodexSubagentQueryApplication {
             text: itemText(rawItem),
             payload: sanitizeConversationItemPayload(rawItem),
             resources: [],
-            startedAt,
+            startedAt: epochIso(rawItem.startedAt) ?? (phase === 'final_answer' ? (completedAt ?? startedAt) : startedAt),
             completedAt,
             updatedAt: completedAt ?? startedAt ?? threadUpdatedAt,
           },
         ];
       });
-      return [{ id: turnId, status: turnStatus, items }];
+      /** 仅补当前轮次的缺口，不按正文相似度合并真实的重复指令。 */
+      const byId = new Map(items.map((item) => [item.id, item]));
+      for (const message of inputMessages) {
+        if (message.turnId === turnId && !byId.has(message.id)) byId.set(message.id, subagentInputItem(message));
+      }
+      /** 首条输入在本轮工作之前；后续输入按真实时间插入，原生同时间项保持原顺序。 */
+      const firstInput = [...byId.values()].filter((item) => item.type === 'userMessage').sort((left, right) => (left.startedAt ?? '').localeCompare(right.startedAt ?? ''))[0];
+      /** 这里只决定展示次序，不修改消息自身的真实时间。 */
+      const ordered = [...byId.values()].sort((left, right) => {
+        if (left === firstInput) return -1;
+        if (right === firstInput) return 1;
+        return (left.startedAt ?? startedAt ?? '').localeCompare(right.startedAt ?? startedAt ?? '');
+      });
+      return [{ id: turnId, status: turnStatus, startedAt, completedAt, items: ordered }];
     });
   }
 }
@@ -216,10 +267,14 @@ export interface ConversationSubagentsSnapshot {
 interface SubagentTurn {
   id: string;
   status: string;
+  /** 真实轮次时间，不能以消息到达时间重建耗时。 */
+  startedAt: string | null;
+  /** 只有原生轮次结束时间才停止耗时计算。 */
+  completedAt: string | null;
   items: Array<{
     id: string;
     turnId: string;
-    providerItemId: string;
+    providerItemId: string | null;
     type: string;
     status: 'in_progress' | 'completed' | 'failed';
     phase: 'prework' | 'final_answer';
@@ -230,6 +285,24 @@ interface SubagentTurn {
     completedAt: string | null;
     updatedAt: string;
   }>;
+}
+
+/** 输入沿用普通消息结构，来源与不可读状态由共享消息组件呈现。 */
+function subagentInputItem(message: SubagentInputMessage): SubagentTurn['items'][number] {
+  return {
+    id: message.id,
+    turnId: message.turnId,
+    providerItemId: message.id,
+    type: 'userMessage',
+    status: 'completed',
+    phase: 'prework',
+    text: message.text,
+    payload: { type: 'userMessage', subagentInput: { sender: message.sender, fromParent: message.fromParent, contentState: message.contentState } },
+    resources: [],
+    startedAt: message.timestamp,
+    completedAt: message.timestamp,
+    updatedAt: message.timestamp ?? '',
+  };
 }
 
 export interface ConversationSubagentHistoryBoundary {

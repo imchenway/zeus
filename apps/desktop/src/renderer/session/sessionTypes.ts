@@ -184,6 +184,10 @@ export interface NativeSubagentListSnapshot {
 export interface NativeSubagentThreadTurn {
   id: string;
   status: string;
+  /** 原生轮次时间与输入消息时间分别保留，缺失时不猜测。 */
+  startedAt: string | null;
+  /** 终态没有原生结束时间时不展示耗时。 */
+  completedAt: string | null;
   items: NativeItemSnapshot[];
 }
 
