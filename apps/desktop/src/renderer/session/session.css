@@ -655,7 +655,7 @@
     .session-plan-progress,
     .session-turn-change-card,
     .session-turn-process,
-    .session-turn-duration,
+    .session-turn-process-control,
     .session-transcript-empty,
     .session-queued-messages,
     .session-latest-turn-spacer
@@ -2362,14 +2362,14 @@
 /* 已完成且离开视口的长历史交给浏览器跳过绘制，活动内容和键盘焦点始终完整渲染。 */
 .session-codex-parity-v1
   .session-transcript
-  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request) {
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-process-control, .session-answered-request) {
   contain-intrinsic-block-size: auto 96px;
   content-visibility: auto;
 }
 
 .session-codex-parity-v1
   .session-transcript
-  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-duration, .session-answered-request):where(
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-turn-change-card, .session-turn-process, .session-turn-process-control, .session-answered-request):where(
     [data-motion-active='true'],
     [data-active='true'],
     [data-open='true'],
@@ -2448,7 +2448,7 @@
     .session-plan-progress,
     .session-turn-change-card,
     .session-turn-process,
-    .session-turn-duration,
+    .session-turn-process-control,
     .session-answered-request,
     .session-async-question
   ) {
@@ -3934,7 +3934,7 @@
     .session-plan-progress,
     .session-turn-change-card,
     .session-turn-process,
-    .session-turn-duration,
+    .session-turn-process-control,
     .session-transcript-empty,
     .session-latest-turn-spacer
   ) {
@@ -4215,6 +4215,13 @@
 .session-codex-parity-v1 .session-thread-item-actions[data-message-actions='assistant'] {
   inset-inline-end: auto;
   inset-inline-start: 0;
+}
+
+/* 触屏没有悬停能力，操作保持可见；桌面仍在悬停或键盘聚焦时显示。 */
+@media (hover: none) {
+  .session-codex-parity-v1 .session-thread-item-actions {
+    opacity: 1;
+  }
 }
 
 .session-codex-parity-v1 .session-message-action-button,
@@ -4723,26 +4730,6 @@
   max-block-size: 220px;
   overflow: auto;
   padding: 7px;
-}
-
-.session-codex-parity-v1 .session-turn-duration {
-  align-items: center;
-  color: var(--session-text-muted);
-  display: flex;
-  font-size: 11px;
-  gap: 10px;
-  inline-size: min(220px, 100%);
-  justify-content: center;
-  margin-block: 2px;
-}
-
-.session-codex-parity-v1 .session-turn-duration::before,
-.session-codex-parity-v1 .session-turn-duration::after {
-  background: var(--session-line-soft);
-  block-size: 1px;
-  content: '';
-  flex: 1 1 0;
-  max-inline-size: 72px;
 }
 
 .session-codex-parity-v1 .session-plan-dock {
@@ -9011,93 +8998,29 @@
   }
 }
 
+/* 耗时是过程入口的一部分，不再单独占据答复底栏。 */
 .session-codex-parity-v1 .session-turn-duration {
-  align-items: stretch;
-  display: grid;
-  gap: 0;
-  inline-size: min(var(--session-thread-max), 100%);
-  justify-content: stretch;
-  margin-block: 2px;
-}
-
-.session-codex-parity-v1 .session-turn-duration > p {
-  margin: 0;
-}
-
-.session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] > p {
-  color: var(--session-warning);
-}
-
-.session-codex-parity-v1 .session-turn-duration[data-status='failed'] > p {
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-turn-duration::before,
-.session-codex-parity-v1 .session-turn-duration::after {
-  content: none;
-  display: none;
-}
-
-.session-codex-parity-v1 .session-turn-duration > p {
-  align-items: center;
   color: var(--session-text-muted);
-  display: flex;
-  font-size: 11px;
-  gap: 10px;
-  justify-content: center;
-  min-block-size: 22px;
-  padding: 0 2px;
-}
-
-.session-codex-parity-v1 .session-turn-duration > p::before,
-.session-codex-parity-v1 .session-turn-duration > p::after {
-  background: var(--session-line-soft);
-  block-size: 1px;
-  content: '';
-  flex: 1 1 0;
-  max-inline-size: 72px;
-}
-
-.session-codex-parity-v1 .session-turn-duration time {
-  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
 
-/* 最终答复的操作和耗时进入正常布局，窄分栏允许自然换行。 */
-.session-codex-parity-v1 .session-thread-item-footer {
-  align-items: center;
-  display: flex;
+.session-codex-parity-v1 .session-turn-duration[data-status='interrupted'] {
+  color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-status='failed'] {
+  color: var(--session-danger);
+}
+
+/* 答复底栏保留布局占位，悬停显隐沿用用户消息规则，窄分栏可自然换行。 */
+.session-codex-parity-v1 .session-thread-item-assistant > .session-thread-item-actions {
   flex-wrap: wrap;
-  gap: 4px 16px;
   margin-block-start: 5px;
-}
-
-/* 同行页脚自身占位，不再为原来的悬浮操作栏预留第二份空间。 */
-.session-codex-parity-v1 .session-thread-item:has(> .session-thread-item-footer) {
-  margin-block-end: 0;
-}
-
-.session-codex-parity-v1 .session-thread-item-footer > .session-thread-item-actions {
-  opacity: 1;
   position: static;
 }
 
-/* 耗时靠右显示，独立收尾的轮次继续保留原有分隔线。 */
-.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration {
-  inline-size: auto;
-  margin: 0 0 0 auto;
-}
-
-.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration > p::before,
-.session-codex-parity-v1 .session-thread-item-footer > .session-turn-duration > p::after {
-  content: none;
-}
-
-.session-codex-parity-v1 .session-turn-duration-body {
-  display: grid;
-  gap: 6px;
-  min-inline-size: 0;
-  padding-block-end: 6px;
+.session-codex-parity-v1 .session-thread-item-assistant.has-message-actions {
+  margin-block-end: 0;
 }
 
 /* 活动轮次的行保留稳定布局层，由合成器承接同一状态行在时间线中的位置变化。 */
@@ -9121,7 +9044,7 @@
 }
 
 .session-codex-parity-v1
-  :where(.session-turn-duration-body, .session-turn-process-body)
+  :where(.session-turn-process-body)
   > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
   inline-size: 100%;
   margin-inline: 0;
@@ -9135,7 +9058,6 @@
 }
 
 /* 用户中途引导仍是用户消息；进入当前轮次的网格过程区后继续保持右对齐。 */
-.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user:not([data-question-answer]),
 .session-codex-parity-v1 .session-live-turn-row > .session-thread-item-user:not([data-question-answer]) {
   justify-self: end;
   margin-inline: 0 !important;
@@ -9169,6 +9091,12 @@
   font-size: var(--session-readable-font-size);
 }
 
+/* 过程与无过程的耗时行共用答复的内缩，宽屏居中和窄分栏都与正文对齐。 */
+.session-codex-parity-v1 .session-turn-process,
+.session-codex-parity-v1 .session-transcript-window-row > .session-turn-process-control {
+  padding-inline: 2px;
+}
+
 .session-codex-parity-v1 .session-turn-process {
   display: grid;
   inline-size: min(var(--session-thread-max), 100%);
@@ -9176,21 +9104,19 @@
   min-inline-size: 0;
 }
 
+/* 入口沿用正文内容列起点，底部分隔线覆盖同一列。 */
 .session-codex-parity-v1 .session-turn-process-control {
   align-items: center;
+  border-block-end: 1px solid var(--session-line-soft);
   display: flex;
-  gap: 10px;
-  justify-content: center;
+  font-size: 13px;
+  justify-content: flex-start;
   min-block-size: 24px;
+  padding-block-end: 6px;
 }
 
-.session-codex-parity-v1 .session-turn-process-control::before,
-.session-codex-parity-v1 .session-turn-process-control::after {
-  background: var(--session-line-soft);
-  block-size: 1px;
-  content: '';
-  flex: 1 1 0;
-  max-inline-size: 72px;
+.session-codex-parity-v1 .session-turn-process-control:empty {
+  display: none;
 }
 
 .session-codex-parity-v1 .session-turn-process-control > button {
@@ -9203,10 +9129,9 @@
   display: inline-flex;
   flex: 0 0 auto;
   font: inherit;
-  font-size: 11px;
   gap: 6px;
   min-block-size: 24px;
-  padding: 0 4px;
+  padding: 0;
 }
 
 .session-codex-parity-v1 .session-turn-process-control > button:hover:not(:disabled):not([aria-disabled='true']) {
@@ -9222,11 +9147,12 @@
   block-size: 13px;
   flex: 0 0 auto;
   inline-size: 13px;
+  transform: rotate(-90deg);
   transition: transform 140ms var(--session-ease-out);
 }
 
 .session-codex-parity-v1 .session-turn-process[data-open='true'] .session-turn-process-caret {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .session-codex-parity-v1 .session-turn-process-body {
@@ -9960,7 +9886,7 @@
 }
 
 /* Provider 的过程说明可能仍以 agentMessage 投影；过程容器是最终的展示语义，不能按 assistant 角色套用答复样式。 */
-.session-codex-parity-v1 :where(.session-turn-duration-body, .session-turn-process-body) .session-thread-item-assistant .session-markdown {
+.session-codex-parity-v1 :where(.session-turn-process-body) .session-thread-item-assistant .session-markdown {
   color: var(--session-process-text);
   font-size: var(--session-readable-font-size);
 }
