@@ -207,6 +207,8 @@ export interface SessionWorkspaceActions {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ) => void | Promise<void>;
   onSnoozeRequest?: (requestId: string) => void | Promise<void>;
@@ -1476,7 +1478,7 @@ function useOptionalSessionStateSlice(controller: SessionController | undefined,
 function SessionTranscriptProjection(props: Omit<ConversationTranscriptProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
   const { controller, state: fallbackState, ...transcriptProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationTranscriptStateSelector);
-  return <ConversationTranscript {...transcriptProps} state={state} />;
+  return <ConversationTranscript {...transcriptProps} state={state} onLoadNavigation={controller?.loadNavigation} onLoadNavigationTurn={controller?.loadNavigationTurn} />;
 }
 
 function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
@@ -2088,6 +2090,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ): Promise<void> {
     if (!actions.onRespondToPlanImplementationRequest || !responseGuard.begin(request.id)) return;
@@ -2334,6 +2338,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
             error={requestErrors[blockingPlanImplementationRequest.id]}
             onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+            onChooseAttachments={actions.onChooseStartAttachments}
           />
         </section>
       );
@@ -2705,7 +2710,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
-                          suspended={browserResizing}
                           expanded={contextFullWidth}
                           canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}

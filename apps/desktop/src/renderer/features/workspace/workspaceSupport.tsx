@@ -266,6 +266,8 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'updateTaskBoard'
     | 'moveTaskBoardTask'
     | 'loadProjectGitWorkbench'
+    // 控制台与 Git 工作台通过同一个原生客户端读取耐久历史。
+    | 'loadProjectGitOperations'
     | 'loadProjectGitCommit'
     | 'executeProjectGitAction'
     | 'generateGitCommitMessage'
@@ -942,6 +944,7 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
 }
 
 export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskManagementStatusReplacements?: Record<string, Record<string, string>>): AppShellSettingsSavePayload {
+  // 漏斗由独立局部请求保存，不放入通用整份快照，避免较早收集的设置回写旧筛选。
   const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
   const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
   const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
@@ -1026,6 +1029,8 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
   // 普通 AppShell 保存可能比字段偏好保存更晚返回；合并时固定保留当前最新字段列，避免旧 payload 把任务表配置回滚。
   return {
     ...savedSettings,
+    // 漏斗单独排队保存；其他设置的较早响应不能回滚用户刚改的筛选。
+    sidebarConversationFilters: currentSettings.sidebarConversationFilters,
     modelSetupStatus: currentSettings.modelSetupStatus,
     newProjectDefaultModelRef: currentSettings.newProjectDefaultModelRef,
     taskTableColumns: currentSettings.taskTableColumns,

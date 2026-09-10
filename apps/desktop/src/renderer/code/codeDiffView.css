@@ -45,7 +45,7 @@
 }
 .code-diff-line.is-addition,
 .code-diff-view > :last-of-type .code-diff-line.is-replacement {
-  background: color-mix(in srgb, #2d9d5c 14%, transparent);
+  background: color-mix(in srgb, var(--zeus-code-addition-text) 14%, transparent);
 }
 .code-diff-line.is-deletion,
 .code-diff-view > :first-of-type .code-diff-line.is-replacement {

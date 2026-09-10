@@ -54,6 +54,7 @@ export interface ProjectConversationTreeProps {
   compactProjectLabel?: boolean;
   query?: string;
   showEmptyState?: boolean;
+  /** 普通会话的展示数量，进行中的会话不占用此额度。 */
   visibleConversationCount?: number;
   onShowMore?: () => void;
 }
@@ -113,11 +114,25 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   /** 在绘制禁用态之前也阻止重复点击。 */
   const archiveRequestRef = useRef<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
-  /** 搜索命中全部展示，普通列表按项目限制首屏数量。 */
+  /** 搜索命中全部展示；数量限制只折叠普通会话，进行中的会话始终保留。 */
   const flattenedGroups = props.groups.map((project) => {
     /** 过滤后的完整列表同时作为“展开更多”的计数依据。 */
     const conversations = flattenProjectConversations(project, normalizedQuery, props.language);
-    return { project, conversations, visibleConversations: normalizedQuery || props.visibleConversationCount === undefined ? conversations : conversations.slice(0, Math.max(0, props.visibleConversationCount)) };
+    /** 每个项目单独计算普通会话额度，展开更多仍追加相同数量的普通会话。 */
+    let ordinaryConversationCount = 0;
+    return {
+      project,
+      conversations,
+      visibleConversations:
+        normalizedQuery || props.visibleConversationCount === undefined
+          ? conversations
+          : conversations.filter(({ conversation }) => {
+              /** 与侧栏运行图标一致，执行、排队及连接阶段都不能被数量限制隐藏。 */
+              const runStatus = taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates));
+              if (runStatus === 'running' || runStatus === 'connecting' || runStatus === 'reconnecting') return true;
+              return ordinaryConversationCount++ < Math.max(0, props.visibleConversationCount!);
+            }),
+    };
   });
   /** 焦点和上下键导航沿用实际展示的顺序。 */
   const visibleConversations = flattenedGroups.flatMap((group) => group.visibleConversations);
@@ -144,7 +159,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
-      const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+      /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
+      const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       const archiving = archivingConversationId === conversation.id;
       // 可否归档由服务端按当前状态判断；仅旧会话在入口禁用。
       const archiveLabel = archiving ? copy.archiving : runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archive;
@@ -338,7 +354,8 @@ function ConversationStatusIcon(props: { status: ConversationStatusIconKind; lab
   );
 }
 
-function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRuntimeState): TaskAgentRunStatus {
+/** 会话图标与筛选共用运行状态映射，排队沿用运行中。 */
+export function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRuntimeState): TaskAgentRunStatus {
   if (runtimeState === 'connecting') return 'connecting';
   if (runtimeState === 'reconnecting') return 'reconnecting';
   if (runtimeState === 'streaming' || runtimeState === 'queued') return 'running';
@@ -348,6 +365,11 @@ function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRu
   if (runtimeState === 'error') return 'failed';
   if (runtimeState === 'legacy_readonly') return 'legacy_readonly';
   return 'idle';
+}
+
+/** 图标与筛选按同一顺序读取实时状态，缺失时回退到会话列表投影。 */
+export function resolveConversationTreeRuntimeState(conversation: NativeConversationChoice, conversationStates?: Record<string, ConversationTreeRuntimeState>): ConversationTreeRuntimeState {
+  return conversationStates?.[conversationNavigationId(conversation)] ?? conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
 }
 
 /** 合并项目直属与任务会话，按显示标题搜索，再按会话阶段更新时间排序。 */

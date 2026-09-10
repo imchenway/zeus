@@ -514,8 +514,11 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
     throw new Error(`会话结构代次不匹配：${existingMetadata.schema_generation}`);
   }
 
-  db.execute(`
-    CREATE TRIGGER IF NOT EXISTS reject_conversation_submission_payload_rewrite
+  // 目标轮次是派发状态，只允许原队首从排队转引导时绑定一次；原始请求继续不可变。
+  db.transaction(() => {
+    db.execute(`DROP TRIGGER IF EXISTS reject_conversation_submission_payload_rewrite`);
+    db.execute(`
+    CREATE TRIGGER reject_conversation_submission_payload_rewrite
     BEFORE UPDATE OF conversation_id, idempotency_key, request_hash, client_message_id, kind,
                      requested_delivery, input_json, target_provider_turn_id, created_at,
                      replacement_of_submission_id, replacement_reason
@@ -527,14 +530,20 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
       OR OLD.kind IS NOT NEW.kind
       OR OLD.requested_delivery IS NOT NEW.requested_delivery
       OR OLD.input_json IS NOT NEW.input_json
-      OR OLD.target_provider_turn_id IS NOT NEW.target_provider_turn_id
+      OR (OLD.target_provider_turn_id IS NOT NEW.target_provider_turn_id AND NOT (
+        OLD.target_provider_turn_id IS NULL AND OLD.provider_turn_id IS NULL
+        AND OLD.status = 'queued' AND NEW.status = 'dispatching'
+        AND NEW.target_provider_turn_id IS NOT NULL
+        AND NEW.target_provider_turn_id IS NEW.provider_turn_id
+      ))
       OR OLD.created_at IS NOT NEW.created_at
       OR OLD.replacement_of_submission_id IS NOT NEW.replacement_of_submission_id
       OR OLD.replacement_reason IS NOT NEW.replacement_reason
     BEGIN
       SELECT RAISE(ABORT, 'ZEUS_IMMUTABLE_SUBMISSION_PAYLOAD');
     END
-  `);
+    `);
+  });
 
   const checksum = `sha256:${createHash('sha256').update('unified-conversation-segments-submissions-history-context-tools-usage-evidence-process-recovery').digest('hex')}`;
   db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [

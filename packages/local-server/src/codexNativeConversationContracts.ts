@@ -162,7 +162,8 @@ export interface NativeQueuedSubmission {
   controlAction?: 'implement_plan' | 'refine_plan';
   recoveryKind?: NativeSubmissionRecoveryKind;
   position: number;
-  providerTurnId: null;
+  /** 暂停的引导保留原目标轮次，队列展示不能因此隐藏恢复入口。 */
+  providerTurnId: string | null;
   pausedReason: string | null;
   error: NativeSubmissionError | null;
   createdAt: string;
@@ -417,6 +418,8 @@ export interface RespondPlanImplementationRequestInput {
   requestId: string;
   action: 'implement' | 'refine' | 'dismiss';
   feedback?: string;
+  /** 修改意见沿用普通提交的受信附件格式。 */
+  attachments?: NativeConversationAttachmentInput[];
   /** 公开 Command 的稳定 operationIdentity；用于避免崩溃重入时生成不同 submission。 */
   operationIdentity?: string;
 }

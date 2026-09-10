@@ -97,6 +97,7 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
         triggerIcon={triggerIcon}
         hideSelectedLabel
         className="session-permission-dropdown"
+        popoverClassName="session-permission-popover"
         value={props.value}
         options={options}
         disabled={props.disabled}

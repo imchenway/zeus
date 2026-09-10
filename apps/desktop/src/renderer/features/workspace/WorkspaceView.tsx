@@ -2,6 +2,8 @@ import { MotionPresence } from '../../ui/MotionPresence.js';
 import { RuntimeSettingsPane } from '../../settings/RuntimeSettingsPane.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
+import type { SidebarConversationFilters } from '@zeus/shared';
+import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
@@ -461,6 +463,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   /** 两个复合页共享各自页面标题处的保存反馈。 */
   const [runtimeSaveState, setRuntimeSaveState] = useState<SettingsSaveState>('idle');
   const [modelSaveState, setModelSaveState] = useState<SettingsSaveState>('idle');
+  /** 漏斗立即响应；复用客户端串行队列只保存该字段，不回填旧的整份设置响应。 */
+  function saveSidebarConversationFilters(filters: SidebarConversationFilters): void {
+    setAppShellSettings((current) => ({ ...current, sidebarConversationFilters: filters }));
+    /** 本机设置与项目、任务使用同一持久数据根，重启不依赖界面缓存。 */
+    const client = props.nativeConversationClient?.settings;
+    if (!client) return;
+    void client.saveAppShellSettings({ sidebarConversationFilters: filters }).catch((error: unknown) => {
+      reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
+    });
+  }
   /** 删除状态的替换关系随失败草稿保留，成功后才清除。 */
   function saveTaskFields(patch: Pick<UpdateAppShellSettingsRequest, 'taskTableEnumSortOrders' | 'taskManagementStatusTemplate' | 'taskManagementStatusByProject' | 'taskManagementStatusReplacements'>): void {
     setAppShellSettings((current) => ({ ...current, ...patch }));
@@ -737,6 +749,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
+          conversationFilters={appShellSettings.sidebarConversationFilters}
+          onConversationFiltersChange={saveSidebarConversationFilters}
           conversationGroups={nativeConversationGroups}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
@@ -778,15 +792,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
         {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
-          <ProjectStartGuide
-            language={appShellSettings.appLanguage}
-            busy={projectDirectoryChoosing || creatingProjectBusy}
-            available={projectCreationReady}
-            onChooseFolder={() => {
-              openProjectCreateDialog();
-              void chooseProjectDirectoryForCreate();
-            }}
-          />
+          <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={projectCreationReady} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
         ) : null}
         {activeNavTarget === 'skills' ? <ExtensionsWorkspace client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
         {activeNavTarget === 'automations' ? (

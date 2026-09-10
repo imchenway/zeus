@@ -3180,7 +3180,7 @@ a {
   color: var(--zeus-danger-text);
 }
 .project-sidebar-conversations .session-conversation-status-icon.is-completed {
-  color: var(--zeus-task-status-green);
+  color: var(--zeus-status-success-text);
 }
 .project-sidebar-conversations .session-conversation-status-icon.is-unread::before {
   background: var(--session-accent);
@@ -3795,7 +3795,7 @@ a {
   white-space: nowrap;
 }
 .project-git-changed-files em {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
   font-style: normal;
 }
 .project-git-changed-files i {
@@ -3862,7 +3862,7 @@ a {
   white-space: nowrap;
 }
 .project-git-diff-preview > header span {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
 }
 .project-git-diff-preview > header em {
   color: var(--zeus-control-danger-text);
@@ -3889,7 +3889,7 @@ a {
   white-space: pre;
 }
 .project-git-diff-preview .is-addition {
-  background: color-mix(in oklch, var(--zeus-control-success-text) 8%, transparent);
+  background: color-mix(in oklch, var(--zeus-code-addition-text) 8%, transparent);
 }
 .project-git-diff-preview .is-deletion {
   background: color-mix(in oklch, var(--zeus-control-danger-text) 8%, transparent);
@@ -4041,6 +4041,19 @@ a {
   display: flex;
   gap: 8px;
   padding: 10px;
+}
+/* 刷新时由可见记录锚点补偿滚动位置，避免与浏览器自动补偿叠加。 */
+.project-git-console-surface {
+  overflow-anchor: none;
+}
+/* 加载状态和键盘按钮复用既有文字与按钮样式。 */
+.project-git-console-pagination {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  color: var(--zeus-product-muted);
 }
 .project-git-console-surface article > span {
   display: flex;
@@ -4261,7 +4274,7 @@ a {
   font-style: normal;
 }
 .project-git-push-dialog main > section.is-success > svg {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 .project-git-push-dialog main > section.is-error > svg {
   color: var(--zeus-control-danger-text);
@@ -4344,7 +4357,7 @@ a {
   color: var(--zeus-product-muted);
 }
 .project-git-update-repositories i.is-completed {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 .project-git-update-repositories i.is-conflict,
 .project-git-update-repositories i.is-error {
@@ -5025,7 +5038,7 @@ body[data-surface='project-git-diff'] #root {
   font-style: normal;
 }
 .project-git-diff-window-files button em {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
 }
 .project-git-diff-window-files button i {
   color: var(--zeus-control-danger-text);
@@ -5165,7 +5178,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-connection-list em[data-configured='true'] {
-  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .model-connection-editor {
@@ -5522,7 +5535,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-connection-diagnostic.success {
-  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .model-connection-actions {
@@ -9427,7 +9440,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-status-pill-bg: oklch(97.4% 0.001 255);
   --zeus-status-pill-line: oklch(90% 0.001 255);
   --zeus-status-pill-text: oklch(42% 0.003 255);
-  --zeus-status-success-text: oklch(52% 0.08 145);
+  /* 成功反馈跟随品牌文字色，浅色与深色主题共用同一来源。 */
+  --zeus-status-success-text: var(--zeus-brand-text);
+  /* 代码新增保持绿色，与成功反馈的品牌色分离。 */
+  --zeus-code-addition-text: var(--zeus-task-status-green);
   --zeus-status-text: oklch(52% 0.003 255);
   --task-table-grid-template: minmax(260px, 1.55fr) minmax(104px, 0.5fr) minmax(140px, 0.72fr) minmax(160px, 0.78fr) minmax(120px, 0.55fr);
   /* 2026-06-18 全页面产品状态 token 最终覆盖：选中、危险和高风险状态必须有统一低饱和 token，避免按钮、输入框、下拉框和列表状态退回默认样式。 */
@@ -10091,12 +10107,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] button {
-  background: color-mix(in oklch, var(--zeus-control-success-text) 9%, transparent);
-  border-color: color-mix(in oklch, var(--zeus-control-success-text) 24%, transparent);
+  background: color-mix(in oklch, var(--zeus-status-success-text) 9%, transparent);
+  border-color: color-mix(in oklch, var(--zeus-status-success-text) 24%, transparent);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] .automatic-update-indicator-icon {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-spinner {
@@ -10530,7 +10546,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .computer-permission-details > .granted {
-  color: var(--zeus-success-text, oklch(43% 0.085 152));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .computer-permission-details > .missing {
@@ -13220,7 +13236,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-task-status-orange: oklch(48% 0.11 48);
 }
 
-.macos-ai-app.zeus-shell.theme-dark {
+.macos-ai-app.zeus-shell.theme-dark,
+html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-task-status-blue: oklch(78% 0.1 252);
   --zeus-task-status-violet: oklch(78% 0.1 302);
   --zeus-task-status-green: oklch(76% 0.1 153);
@@ -13229,7 +13246,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 @media (prefers-color-scheme: dark) {
-  .macos-ai-app.zeus-shell.theme-system {
+  .macos-ai-app.zeus-shell.theme-system,
+  html[data-zeus-theme='system'] body > .macos-ai-app {
     --zeus-task-status-blue: oklch(78% 0.1 252);
     --zeus-task-status-violet: oklch(78% 0.1 302);
     --zeus-task-status-green: oklch(76% 0.1 153);
@@ -13263,6 +13281,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-violet,
 .macos-ai-app .task-status-select.task-status-tone-violet .zeus-select-trigger {
   --task-status-tone: var(--zeus-task-status-violet);
+}
+
+/* 执行完成和分支合并采用品牌成功色，不改写可选的绿色分类。 */
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-success,
+.macos-ai-app .task-status-select.task-status-tone-success .zeus-select-trigger {
+  --task-status-tone: var(--zeus-status-success-text);
 }
 
 .macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-green,
@@ -16104,7 +16128,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-stepbar span.is-done {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-stepbar span.is-locked {
@@ -16440,7 +16464,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-feedback.is-success {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-feedback.is-warning {
@@ -16486,7 +16510,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-batch-result li[data-status='succeeded'] b {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-batch-result li[data-status='attention'] {
@@ -16506,7 +16530,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-success {
-  background: color-mix(in srgb, var(--zeus-success-text, #267a4c) 8%, var(--zeus-product-panel));
+  background: color-mix(in srgb, var(--zeus-status-success-text) 8%, var(--zeus-product-panel));
 }
 
 .macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-warning {
@@ -16656,7 +16680,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-merge-status.is-success {
-  background: color-mix(in srgb, var(--zeus-success-text, #267a4c) 8%, var(--zeus-product-panel));
+  background: color-mix(in srgb, var(--zeus-status-success-text) 8%, var(--zeus-product-panel));
 }
 
 .macos-ai-app .task-git-merge-status.is-warning {
@@ -16692,9 +16716,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inline-size: 36px;
   block-size: 36px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--zeus-success-text, #267a4c) 34%, var(--zeus-product-line-soft));
+  border: 1px solid color-mix(in srgb, var(--zeus-status-success-text) 34%, var(--zeus-product-line-soft));
   border-radius: 50%;
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
   font-size: 18px;
   font-weight: 700;
 }
@@ -17067,8 +17091,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   margin: 0;
   padding: 8px 12px;
   border-block-end: 1px solid var(--zeus-product-line-soft);
-  background: color-mix(in oklab, var(--zeus-success-bg, #eaf6ee) 62%, var(--zeus-product-panel));
-  color: var(--zeus-success-text, #347a4d);
+  background: color-mix(in oklab, color-mix(in srgb, var(--zeus-brand-primary) 8%, var(--zeus-product-panel)) 62%, var(--zeus-product-panel));
+  color: var(--zeus-status-success-text);
   font-size: 12px;
 }
 
@@ -17136,7 +17160,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-side-pane.is-accepted .task-git-conflict-side-state {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-conflict-side-pane.is-ignored .task-git-conflict-side-state {
@@ -17316,7 +17340,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-create-third-party-hint-ok {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-create-third-party-hint-error {
@@ -18457,6 +18481,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-list-empty-row.task-empty-state {
+  /* 提示与恢复操作按内容高度整体居中，避免撑满画布后两行被拉开。 */
+  align-content: center;
   align-items: center;
   background: transparent;
   border: 0;
@@ -18495,9 +18521,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
+  /* 操作区跟随提示居中，覆盖旧版横向卡片的右对齐。 */
+  justify-self: center;
 }
 
-.macos-ai-app .task-empty-state-secondary-action,
 .macos-ai-app .task-list-state-secondary-action {
   align-items: center;
   background: var(--zeus-control-bg);
@@ -18514,8 +18541,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: nowrap;
 }
 
-.macos-ai-app .task-empty-state-secondary-action:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .task-empty-state-secondary-action:focus-visible,
 .macos-ai-app .task-list-state-secondary-action:hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app .task-list-state-secondary-action:focus-visible {
   background: var(--zeus-control-bg-hover);
@@ -21001,12 +21026,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 单目录创建弹窗复用 Zeus 表面、按钮与主题 token，并保持与 Codex 参考一致的名称优先层级。 */
+/* 单目录创建弹窗复用 Zeus 表面、按钮与主题变量，先选目录再确认名称。 */
 .project-create-dialog-portal-root.macos-ai-app {
   background: transparent;
 }
 
+/* 创建项目采用紧凑单列表单，窄窗口保留两侧安全边距。 */
 .macos-ai-app .project-create-dialog {
+  box-sizing: border-box;
   background: var(--zeus-solid-surface-bg);
   border: 1px solid var(--zeus-product-line);
   border-radius: 16px;
@@ -21014,8 +21041,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-product-text);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  inline-size: min(540px, calc(100vw - 32px));
-  max-block-size: min(660px, calc(100vh - 40px));
+  inline-size: min(480px, calc(100vw - 32px));
+  max-inline-size: calc(100vw - 32px);
+  max-block-size: calc(100dvh - 32px);
+  min-inline-size: 0;
   overflow: hidden;
   pointer-events: auto;
 }
@@ -21026,16 +21055,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  padding-inline: 22px;
+  padding-inline: 24px;
 }
 
 .macos-ai-app .project-create-dialog-header {
-  padding-block: 20px 10px;
+  padding-block: 20px 0;
 }
 
 .macos-ai-app .project-create-dialog-header strong {
   font-size: 18px;
-  font-weight: 680;
+  font-weight: 600;
   letter-spacing: -0.015em;
   line-height: 24px;
 }
@@ -21072,86 +21101,76 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .project-create-dialog-body {
   display: grid;
-  gap: 16px;
+  gap: 20px;
   min-block-size: 0;
+  min-inline-size: 0;
   overflow-y: auto;
-  padding: 12px 22px;
+  padding: 24px;
 }
 
-.macos-ai-app .project-create-name-control {
-  align-items: stretch;
+/* 名称直接使用单层输入边框，焦点只描绘一次。 */
+.macos-ai-app .project-create-name-field input {
+  appearance: none;
   background: var(--zeus-control-bg);
   border: 1px solid var(--zeus-control-border);
-  border-radius: 11px;
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  min-block-size: 44px;
-  overflow: hidden;
+  border-radius: 8px;
+  color: var(--zeus-product-text);
+  font-size: 14px;
+  font-weight: 400;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 36px;
+  padding: 0 11px;
   transition:
     border-color 120ms var(--zeus-motion-ease-out),
     box-shadow 120ms var(--zeus-motion-ease-out);
 }
 
-.macos-ai-app .project-create-name-control:focus-within {
+.macos-ai-app .project-create-name-field input:focus {
   border-color: var(--zeus-focus-line);
   box-shadow: var(--zeus-control-focus);
-}
-
-.macos-ai-app .project-create-name-icon {
-  align-items: center;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
-  color: var(--zeus-product-muted);
-  display: inline-flex;
-  justify-content: center;
-}
-
-.macos-ai-app .project-create-name-icon svg {
-  block-size: 20px;
-  inline-size: 20px;
-}
-
-.macos-ai-app .project-create-name-control input {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: var(--zeus-product-text);
-  font-size: 14px;
-  min-block-size: 42px;
-  padding: 0 14px;
-}
-
-.macos-ai-app .project-create-name-control input:focus-visible {
-  border: 0;
-  box-shadow: none;
   outline: 0;
 }
 
+.macos-ai-app .project-create-name-field,
 .macos-ai-app .project-create-folder-field {
   display: grid;
   gap: 8px;
+  min-inline-size: 0;
+  margin: 0;
 }
 
+.macos-ai-app .project-create-name-field > span,
 .macos-ai-app .project-create-folder-field > strong {
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 18px;
 }
 
+/* 说明只占辅助层级，不继承正文段落的字号与外边距。 */
+.macos-ai-app .project-create-folder-field > p {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+/* 目录未选和已选共用横向布局与高度，避免选择后弹窗跳动。 */
 .macos-ai-app .project-create-folder-picker {
   align-items: center;
   appearance: none;
   background: var(--zeus-product-panel);
   border: 1px solid var(--zeus-product-line);
-  border-radius: 11px;
+  border-radius: 8px;
   color: var(--zeus-product-text);
   cursor: pointer;
   display: grid;
   gap: 10px;
-  justify-items: center;
-  min-block-size: 112px;
-  padding: 18px;
-  text-align: center;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  justify-items: start;
+  min-block-size: 64px;
+  padding: 12px;
+  text-align: start;
   transition:
     background-color 120ms var(--zeus-motion-ease-out),
     border-color 120ms var(--zeus-motion-ease-out),
@@ -21170,22 +21189,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   outline: 0;
 }
 
-.macos-ai-app .project-create-folder-picker[data-selected='true'] {
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  justify-items: start;
-  min-block-size: 82px;
-  padding: 14px 16px;
-  text-align: start;
-}
-
 .macos-ai-app .project-create-folder-picker-icon {
   color: var(--zeus-product-muted);
   display: inline-flex;
 }
 
 .macos-ai-app .project-create-folder-picker-icon svg {
-  block-size: 26px;
-  inline-size: 26px;
+  block-size: 22px;
+  inline-size: 22px;
 }
 
 .macos-ai-app .project-create-folder-picker-copy {
@@ -21196,24 +21207,28 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .project-create-folder-picker-copy strong {
   font-size: 14px;
-  font-weight: 620;
+  font-weight: 500;
   line-height: 19px;
 }
 
+.macos-ai-app .project-create-folder-picker-copy strong,
 .macos-ai-app .project-create-folder-picker-copy small {
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-  line-height: 16px;
   max-inline-size: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.macos-ai-app .project-create-folder-picker-copy small {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .macos-ai-app .project-create-folder-change {
   color: var(--zeus-product-muted);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -21222,35 +21237,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   font-size: 12px;
   line-height: 17px;
   margin: -4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .macos-ai-app .project-create-dialog-footer {
   justify-content: flex-end;
-  padding-block: 12px 20px;
-}
-
-@media (max-width: 560px) {
-  .macos-ai-app .project-create-dialog {
-    inline-size: 100%;
-    max-block-size: calc(100vh - 24px);
-  }
-
-  .macos-ai-app .project-create-dialog-header,
-  .macos-ai-app .project-create-dialog-footer {
-    padding-inline: 18px;
-  }
-
-  .macos-ai-app .project-create-dialog-body {
-    padding-inline: 18px;
-  }
-
-  .macos-ai-app .project-create-folder-picker[data-selected='true'] {
-    grid-template-columns: 26px minmax(0, 1fr);
-  }
-
-  .macos-ai-app .project-create-folder-change {
-    display: none;
-  }
+  padding-block: 0 20px;
 }
 
 /* 原生菜单触发的更新结果使用统一 ModalPortal；状态、版本和用户决策保持在一个紧凑焦点面中。 */
@@ -21809,6 +21801,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .task-board-card-property {
+  /* 默认色留在基础属性层，避免覆盖后面的成功和分类色调。 */
+  --task-board-property-color: var(--zeus-product-muted);
   min-block-size: 19px;
   padding: 2px 7px;
   border: 1px solid color-mix(in oklab, var(--zeus-product-line-soft, var(--zeus-control-border)) 74%, transparent);
@@ -21820,7 +21814,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 /* 语义色胶囊：文字、边框、浅底均由单一主色派生，配色体系与任务列表的状态胶囊同源。 */
 .macos-ai-app .task-board-card-property.is-toned {
-  --task-board-property-color: var(--zeus-product-muted);
   border-color: color-mix(in srgb, var(--task-board-property-color) 32%, transparent);
   color: color-mix(in oklab, var(--task-board-property-color) 82%, var(--zeus-product-text));
   background: color-mix(in srgb, var(--task-board-property-color) 11%, var(--zeus-product-panel));
@@ -21832,6 +21825,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .task-board-card-property-tone-violet {
   --task-board-property-color: var(--zeus-task-status-violet);
+}
+/* 看板完成状态与任务列表使用相同的品牌成功色。 */
+.macos-ai-app .task-board-card-property-tone-success {
+  --task-board-property-color: var(--zeus-status-success-text);
 }
 .macos-ai-app .task-board-card-property-tone-green {
   --task-board-property-color: var(--zeus-task-status-green);
@@ -22789,92 +22786,72 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 首次任务流程：系统字体、灰阶分组与单一主操作，沿用现有主题和动效。 */
+/* 首次工作入口以紧凑的居中构图聚焦选目录，短窗口由工作区滚动承接。 */
 .macos-ai-app .project-start-guide {
   box-sizing: border-box;
-  inline-size: min(720px, 100%);
-  margin: clamp(32px, 8vh, 96px) auto 32px;
-  padding: 32px clamp(24px, 4vw, 48px);
+  flex: none;
+  inline-size: min(560px, 100%);
+  margin: auto;
   color: var(--zeus-product-text);
-  text-align: start;
+  text-align: center;
   animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
 }
+/* 复用文件夹图标，以少量品牌色和细边框建立欢迎入口的视觉标记。 */
 .macos-ai-app .project-start-symbol {
-  color: var(--zeus-product-muted);
-  margin-block-end: 24px;
-}
-.macos-ai-app .project-start-eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--zeus-product-muted);
+  display: grid;
+  place-items: center;
+  inline-size: 64px;
+  block-size: 64px;
+  margin: 0 auto 24px;
+  border: 1px solid color-mix(in srgb, var(--zeus-product-accent) 18%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--zeus-product-accent) 8%, transparent);
+  color: var(--zeus-product-accent);
 }
 .macos-ai-app .project-start-guide h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 32px;
   line-height: 1.35;
   font-weight: 600;
   letter-spacing: -0.025em;
+  text-wrap: balance;
 }
 .macos-ai-app .project-start-description {
-  max-inline-size: 48ch;
-  margin: 16px 0 32px;
+  max-inline-size: 44ch;
+  margin: 14px auto 24px;
   font-size: 14px;
   line-height: 1.75;
   color: var(--zeus-product-muted);
+  text-wrap: pretty;
 }
-.macos-ai-app .project-start-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-  list-style: none;
-  margin: 0 0 32px;
-  padding: 24px 0;
-  border-block: 1px solid var(--zeus-product-line-soft);
-}
-.macos-ai-app .project-start-steps li {
+.macos-ai-app .project-start-action {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-inline-size: 0;
+  justify-content: center;
 }
-.macos-ai-app .project-start-steps li > span {
-  display: grid;
-  place-items: center;
-  flex: 0 0 24px;
-  block-size: 24px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 50%;
-  font-size: 12px;
-  color: var(--zeus-product-muted);
-}
-.macos-ai-app .project-start-steps li[aria-current] > span {
-  background: var(--zeus-product-accent);
-  color: var(--zeus-accent-text, white);
-  border-color: transparent;
-}
-.macos-ai-app .project-start-steps strong {
-  display: block;
-  font-size: 14px;
-  line-height: 24px;
-  font-weight: 500;
-}
-.macos-ai-app .project-start-steps small {
-  display: block;
-  margin-block-start: 4px;
+/* 步骤仅作流程提示；每段与前导箭头一起换行，避免窄窗口出现孤立箭头。 */
+.macos-ai-app .project-start-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 12px;
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
   font-size: 12px;
   line-height: 1.6;
   color: var(--zeus-product-muted);
 }
-.macos-ai-app .project-start-action {
-  display: grid;
-  justify-items: start;
+.macos-ai-app .project-start-steps li {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
-.macos-ai-app .project-start-action > small {
-  max-inline-size: 50ch;
+.macos-ai-app .project-start-note {
+  margin: 16px 0 0;
   font-size: 12px;
   line-height: 1.65;
   color: var(--zeus-product-muted);
+  text-wrap: balance;
 }
 .macos-ai-app .task-flow-context {
   margin: 0;
@@ -22916,7 +22893,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .task-create-modal-header strong,
 .macos-ai-app .task-model-push-header strong,
-.macos-ai-app .project-create-dialog-header strong,
 .macos-ai-app .model-setup-heading strong {
   font-size: 22px;
   font-weight: 600;
@@ -22961,15 +22937,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .model-setup-actions small {
   font-size: 12px;
 }
-@media (max-width: 850px) {
-  .macos-ai-app .project-start-steps {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-  .macos-ai-app .project-start-guide {
-    margin-block-start: 24px;
-  }
-}
 /* 窄窗口按左栏、工作区顺序统一滚动，保留同一份表单和控件。 */
 @media (width < 1100px) {
   .macos-ai-app .task-model-push-body {
@@ -23010,9 +22977,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
   .macos-ai-app .task-model-push-footer > span {
     margin-inline-start: auto;
-  }
-  .macos-ai-app .project-start-guide h1 {
-    font-size: 24px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

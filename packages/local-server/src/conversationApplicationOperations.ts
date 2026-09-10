@@ -795,13 +795,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
       content: typeof input.displayText === 'string' && input.displayText.trim() ? input.displayText : typeof input.text === 'string' ? input.text : '',
       ...(options.includeRecoveryPayload && typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       status: submission.status,
-      delivery: input.delivery === 'steer_now' ? 'steer_now' : 'queue',
+      delivery: submission.targetProviderTurnId || input.delivery === 'steer_now' ? 'steer_now' : 'queue',
       attachments: Array.isArray(input.attachments) ? input.attachments : [],
       ...(options.includeRecoveryPayload && Array.isArray(input.browserComments) && input.browserComments.length ? { browserComments: input.browserComments } : {}),
       ...(options.includeRecoveryPayload && typeof input.browserCommentContent === 'string' ? { browserCommentContent: input.browserCommentContent } : {}),
       ...(isNativeApiRecord(input.conversationContext) ? { conversationContext: input.conversationContext } : {}),
       ...(isNativeApiRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer } : {}),
-      expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
+      expectedTurnId: submission.targetProviderTurnId ?? (typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null),
       clientUserMessageId: submission.clientMessageId,
       position: submission.queuePosition,
       providerTurnId: submission.providerTurnId,
@@ -855,7 +855,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
 
   function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueByConversation(conversation.id)) {
     const state = inferNativeConversationSnapshotState(conversation);
-    const queuedSubmissions = submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
+    // 目标轮次不能隐藏暂停项；它仍会阻塞队首，必须向界面暴露原始恢复原因。
+    const queuedSubmissions = submissions.filter((submission) => submission.status === 'queued' || submission.status === 'paused');
     return {
       state,
       waitReason: inferNativeQueueWaitReason(conversation, state, queuedSubmissions),

@@ -451,18 +451,26 @@ export function isActiveSessionTurn(turn: NativeTurnSnapshot): boolean {
   return !turn.completedAt && (turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
 }
 
-export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; children?: ReactNode }) {
+/** 耗时沿用轮次计时与等待扣除规则，可直接嵌入处理过程按钮。 */
+export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; fallback?: string }) {
+  /** 只有活动轮次需要刷新当前时间。 */
   const [now, setNow] = useState(() => Date.now());
+  /** 终态停止计时，回看历史时不继续增长。 */
   const active = isActiveSessionTurn(props.turn);
   useEffect(() => {
     if (!active) return;
+    /** 沿用每秒刷新频率。 */
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [active]);
+  /** 无有效起止时间时保留原有过程入口文案，不虚构耗时。 */
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
-  if (duration === null) return null;
-  const value = formatDuration(duration, props.language);
+  if (duration === null) return props.fallback ?? null;
+  /** 紧凑时长与参考布局一致。 */
+  const value = formatDuration(duration);
+  /** 失败和中断仍明确区分于正常完成。 */
   const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
+  /** 状态文案随界面语言变化。 */
   const label =
     props.language === 'zh-CN'
       ? active
@@ -471,24 +479,22 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
           ? `处理已中断（${value}）`
           : terminalStatus === 'failed'
             ? `处理失败（${value}）`
-            : `已处理 ${value}`
+            : `用时 ${value}`
       : active
         ? `Processing for ${value}`
         : terminalStatus === 'interrupted'
           ? `Interrupted after ${value}`
           : terminalStatus === 'failed'
             ? `Failed after ${value}`
-            : `Processed in ${value}`;
-  const hasDetails = props.children !== undefined && props.children !== null;
-  const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
+            : `Took ${value}`;
   return (
-    <section className="session-turn-duration" data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
-      {hasDetails ? <div className="session-turn-duration-body">{props.children}</div> : null}
-      <p>{time}</p>
-    </section>
+    <time className="session-turn-duration" dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`} data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
+      {label}
+    </time>
   );
 }
 
+/** 完成轮次将耗时作为展开入口；活动过程继续直接显示。 */
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
@@ -497,6 +503,10 @@ export function SessionTurnProcessDisclosure(props: {
   loading?: boolean;
   error?: string | null;
   labelKind?: 'process' | 'details';
+  /** 已知轮次用真实耗时替代入口文字，缺失时间时显示原文案。 */
+  turn?: NativeTurnSnapshot;
+  /** 计时扣除本轮等待用户回应的时间。 */
+  requests?: NativePendingRequest[];
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -532,6 +542,8 @@ export function SessionTurnProcessDisclosure(props: {
         <div className="session-turn-process-control">
           <button
             type="button"
+            aria-label={label}
+            title={label}
             aria-expanded={open}
             aria-controls={bodyId}
             onClick={() => {
@@ -540,7 +552,7 @@ export function SessionTurnProcessDisclosure(props: {
               props.onOpenChange?.(nextOpen);
             }}
           >
-            <span>{label}</span>
+            <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label}</span>
             <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
           </button>
         </div>
@@ -833,6 +845,8 @@ function planStatusLabel(status: 'pending' | 'inProgress' | 'completed', languag
 
 function turnDurationMs(turn: NativeTurnSnapshot, requests: NativePendingRequest[], now: number): number | null {
   if (!turn.startedAt) return null;
+  // 已结束但缺少结束时间时不以当前时间代替，避免历史耗时持续增长。
+  if (!isActiveSessionTurn(turn) && !turn.completedAt) return null;
   const startedAt = Date.parse(turn.startedAt);
   const endedAt = turn.completedAt ? Date.parse(turn.completedAt) : now;
   if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) return null;
@@ -868,14 +882,16 @@ function turnDurationMs(turn: NativeTurnSnapshot, requests: NativePendingRequest
   return Math.max(0, endedAt - startedAt - waitingMs);
 }
 
-function formatDuration(durationMs: number, language: SessionUiLanguage): string {
+/** 所有语言共用紧凑时长单位，状态词仍由界面语言决定。 */
+function formatDuration(durationMs: number): string {
+  /** 四舍五入到秒，避免显示负数。 */
   const totalSeconds = Math.max(0, Math.round(durationMs / 1_000));
+  /** 超过一小时仍保留小时部分。 */
   const hours = Math.floor(totalSeconds / 3_600);
+  /** 分钟只显示当前小时内的余量。 */
   const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  /** 秒始终显示，便于短轮次识别。 */
   const seconds = totalSeconds % 60;
-  if (language === 'zh-CN') {
-    return [hours > 0 ? `${hours}时` : null, minutes > 0 || hours > 0 ? `${minutes}分` : null, `${seconds}秒`].filter(Boolean).join('');
-  }
   return [hours > 0 ? `${hours}h` : null, minutes > 0 || hours > 0 ? `${minutes}m` : null, `${seconds}s`].filter(Boolean).join(' ');
 }
 

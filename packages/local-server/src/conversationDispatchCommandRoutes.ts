@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 import { ConversationDispatchCommandApplication, conversationDispatchCommandHttpError, conversationDispatchCommandTypes, type ConversationDispatchMutationRequest } from './conversationDispatchCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
@@ -33,6 +34,8 @@ interface QueueReorderInput {
 interface PlanImplementationInput {
   action?: unknown;
   feedback?: unknown;
+  /** 在业务入口复验附件授权，不信任客户端文件路径。 */
+  attachments?: unknown;
 }
 
 interface RouteResponse<T = unknown> {
@@ -53,10 +56,13 @@ export interface ConversationDispatchCommandRouteOperations {
   prepareQueueReroute(input: { params: SubmissionParams; settings: QueueRerouteInput }): Promise<unknown>;
   queueReroute(input: { params: SubmissionParams; prepared: unknown }): unknown;
   queueDelete(input: { params: SubmissionParams }): unknown;
-  queueSendNow(input: { params: SubmissionParams; operationIdentity: string }): Promise<unknown>;
+  /** 队首校验不代表外部写入，实际引导调用通过生命周期标记写出。 */
+  queueSendNow(input: { params: SubmissionParams; operationIdentity: string; providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void } }): Promise<unknown>;
   turnInterrupt(input: { params: TurnParams; operationIdentity: string }): Promise<unknown>;
   serverRequestRespond(input: { params: RequestParams; response: Record<string, unknown>; operationIdentity: string }): Promise<unknown>;
-  planImplementationRespond(input: { params: RequestParams; action: 'implement' | 'refine' | 'dismiss'; feedback?: string; operationIdentity: string }): Promise<unknown>;
+  /** 附件错误在占用外部操作身份前拒绝，允许用户修正附件后重新提交。 */
+  preparePlanImplementationAttachments(input: { params: RequestParams; attachments: unknown }): NativeConversationAttachmentInput[];
+  planImplementationRespond(input: { params: RequestParams; action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachmentInput[]; operationIdentity: string }): Promise<unknown>;
   requestSnooze(input: { params: RequestParams }): unknown;
   queueResume(input: { params: ConversationParams; operationIdentity: string }): Promise<unknown>;
   queueRecover(input: { params: ConversationParams; operationIdentity: string; intent: 'check' | 'continue' }): Promise<unknown>;
@@ -212,8 +218,18 @@ export function registerConversationDispatchCommandRoutes(options: {
         parsed,
         destinationId: 'conversation-provider-turn-steer',
         resourceId: request.params.submissionId,
-        externalOperationId: `provider-turn-steer:${request.params.submissionId}`,
-        invoke: () => operations.queueSendNow({ params: request.params, operationIdentity: parsed.operationIdentity }),
+        // 外层绑定本次用户动作；本地拒绝不能锁死未来操作，实际引导仍按提交编号去重。
+        externalOperationId: `provider-turn-steer:${request.params.submissionId}:${parsed.operationIdentity}`,
+        manualExternalWriteStart: true,
+        invoke: (markExternalWriteStarted) =>
+          operations.queueSendNow({
+            params: request.params,
+            operationIdentity: parsed.operationIdentity,
+            providerWriteLifecycle: {
+              markPrepared: async () => undefined,
+              markRpcStarted: () => markExternalWriteStarted(),
+            },
+          }),
         isExplicitRejection: isExplicitRouteRejection,
       });
       return reply.code(202).send(executed.result);
@@ -262,10 +278,17 @@ export function registerConversationDispatchCommandRoutes(options: {
     async (request: FastifyRequest<{ Params: RequestParams; Body: ConversationDispatchMutationRequest<PlanImplementationInput> }>, reply) => {
       try {
         const parsed = parseRequestCommand(request, conversationDispatchCommandTypes.planImplementationRespond);
-        assertOnlyInputKeys(parsed.input, ['action', 'feedback'], parsed.command.commandType);
+        assertOnlyInputKeys(parsed.input, ['action', 'feedback', 'attachments'], parsed.command.commandType);
         const action = parsed.input.action;
         if (action !== 'implement' && action !== 'refine' && action !== 'dismiss') throw routeError('ZEUS_INVALID_PLAN_IMPLEMENTATION_RESPONSE', 'action must be implement, refine, or dismiss.', 400);
         if (parsed.input.feedback !== undefined && typeof parsed.input.feedback !== 'string') throw routeError('ZEUS_INVALID_PLAN_IMPLEMENTATION_RESPONSE', 'feedback must be a string.', 400);
+        // 附件仅归属修改意见，确认和跳过不能静默丢弃已提供的资源。
+        if (parsed.input.attachments !== undefined && (action !== 'refine' || !Array.isArray(parsed.input.attachments) || parsed.input.attachments.length > 100))
+          throw routeError('ZEUS_INVALID_PLAN_IMPLEMENTATION_RESPONSE', 'Only refinement accepts attachments, as an array with no more than 100 entries.', 400);
+        if (action === 'refine' && !parsed.input.feedback?.trim() && !(Array.isArray(parsed.input.attachments) && parsed.input.attachments.length))
+          throw routeError('ZEUS_PLAN_REFINEMENT_REQUIRED', 'Plan refinement feedback or attachments are required.', 400);
+        /** 先完成资源授权校验，再创建可能交付给模型的操作。 */
+        const attachments = parsed.input.attachments === undefined ? [] : operations.preparePlanImplementationAttachments({ params: request.params, attachments: parsed.input.attachments });
         const executed = await application.executeExternal({
           parsed,
           destinationId: 'conversation-plan-implementation',
@@ -276,6 +299,7 @@ export function registerConversationDispatchCommandRoutes(options: {
               params: request.params,
               action,
               ...(typeof parsed.input.feedback === 'string' ? { feedback: parsed.input.feedback } : {}),
+              ...(attachments.length ? { attachments } : {}),
               operationIdentity: parsed.operationIdentity,
             }),
           isExplicitRejection: isExplicitRouteRejection,

@@ -3200,6 +3200,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   const platformRoutes = await registerLocalServerPlatformRoutes({
     server,
+    // 计划修改与普通消息共用附件授权校验。
+    normalizeNativeConversationAttachments: conversationOperations.normalizeNativeConversationAttachments,
     zeusLocalServerHost,
     archiveNativeConversation,
     buildRuntimeProcessEnv,

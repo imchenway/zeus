@@ -81,6 +81,26 @@ export function buildTaskCommitMessageSuggestion(input: { taskType: TaskType; ta
   return `${taskCommitPrefixByType[input.taskType]}: ${input.taskCode.trim()} ${input.taskTitle.trim()}`;
 }
 
+/** 命名冲突工作区的实时续办信息，不以历史合入候选代替当前 Git 状态。 */
+export interface TaskWorkspaceConflictRecovery {
+  /** 本次合并现场的稳定身份，用于防止重复发送继续处理指令。 */
+  recoveryKey: string;
+  /** 继续处理和提交必须使用的原工作区。 */
+  workspaceId: string;
+  /** 已经保存在当前分支上的提交。 */
+  headSha: string;
+  /** 能确认时给出本次同步的分支；未知时不猜测。 */
+  updatedBranch: string | null;
+  /** 从当前 Git 索引读取的未解决文件。 */
+  conflictFiles: string[];
+  /** 与原冲突处理尝试绑定的会话，缺失时不另建会话。 */
+  conversationId: string | null;
+  /** 沿用原会话下一轮设置，不隐式切换执行方式。 */
+  collaborationMode: 'default' | 'plan';
+  /** 会话不可用于继续处理时的明确原因。 */
+  unavailableReason: string | null;
+}
+
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；状态标识由项目配置持有，不再限制为固定联合类型。 */
 export type TaskManagementStatus = string;
 
@@ -134,6 +154,39 @@ const taskManagementStatusColorPattern = /^#[0-9a-f]{6}$/iu;
 /** 对 API、导入文件和数据库回填值做统一标识校验；合法项目状态不再依赖固定名称。 */
 export function isTaskManagementStatus(value: unknown): value is TaskManagementStatus {
   return typeof value === 'string' && taskManagementStatusIdPattern.test(value);
+}
+
+/** 会话运行筛选的固定顺序，同时供界面选项和持久偏好校验使用。 */
+export const sidebarConversationRunStatuses = ['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'] as const;
+
+/** 侧边栏漏斗偏好独立于项目任务页筛选，随本机设置保存。 */
+export interface SidebarConversationFilters {
+  /** status: 表示任务状态，run: 表示会话运行状态，project 表示无关联任务；未选择的维度不限。 */
+  conversationStatusFilters: string[];
+  /** 筛选生效时是否隐藏没有匹配会话的项目。 */
+  hideEmptyFilteredProjects: boolean;
+  /** 每个任务是否只展示当前排序中的最新会话。 */
+  latestConversationOnly: boolean;
+}
+
+/** 启动、保存和导入共用校验；不因项目目录尚未加载而丢掉合法状态身份。 */
+export function normalizeSidebarConversationFilters(value: unknown): SidebarConversationFilters {
+  /** 只接纳已知字段，损坏值逐字段恢复默认显示。 */
+  const saved = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return {
+    conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
+      ? [
+          ...new Set(
+            saved.conversationStatusFilters.filter(
+              (filter): filter is string =>
+                typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))) || sidebarConversationRunStatuses.some((status) => filter === `run:${status}`)),
+            ),
+          ),
+        ]
+      : [],
+    hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
+    latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,
+  };
 }
 
 /** 设置导入和服务端保存共用同一归一化规则，避免项目状态集合在不同入口发生漂移。 */

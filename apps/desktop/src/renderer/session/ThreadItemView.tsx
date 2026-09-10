@@ -2,6 +2,9 @@ import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
+import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
@@ -144,8 +147,6 @@ export interface ThreadItemViewProps {
   animateEntrance?: boolean;
   motionActive?: boolean;
   showAssistantActions?: boolean;
-  /** 由会话传入所属轮次的收尾信息，与消息操作共用一行。 */
-  footerContent?: ReactNode;
   isLatestUser?: boolean;
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -471,7 +472,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       })
     : props.item.resources;
   const unplacedResources = isAssistantDeliverableItem(props.item) ? itemResources.filter((resource) => resource.delivery === 'assistant') : itemResources;
-  const itemText = transcriptItemText(props.item);
+  /** 子智能体输入保留发送方，原文不可读时展示本地化说明。 */
+  const subagentInput = role === 'user' && isRecord(props.item.payload.subagentInput) ? props.item.payload.subagentInput : null;
+  const itemText = transcriptItemText(props.item, props.language);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
   // 重进会话时，Snapshot V2 给出的活动项预览在当前水位已经完整，必须首屏直出；
@@ -484,14 +487,26 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const expertActor = role === 'assistant' ? digitalEmployeeActor(props.item.payload.actor) : null;
   const expertExecutionId = typeof props.item.payload.expertExecutionId === 'string' ? props.item.payload.expertExecutionId : null;
   const expertFailed = Boolean(expertActor && expertExecutionId && props.item.payload.expertStatus === 'failed');
-  const label = expertActor ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ') : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
+  const label = subagentInput
+    ? subagentInput.fromParent === true
+      ? props.language === 'zh-CN'
+        ? '来自主智能体'
+        : 'From parent agent'
+      : `${props.language === 'zh-CN' ? '来自智能体' : 'From agent'} ${typeof subagentInput.sender === 'string' ? subagentInput.sender : ''}`
+    : expertActor
+      ? [expertActor.name, expertActor.role].filter(Boolean).join(' · ')
+      : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
-  const showVisibleRoleLabel = Boolean(expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
+  const showVisibleRoleLabel = Boolean(subagentInput || expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring, props.waitingInQueue) : null;
-  const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || Boolean(optimisticStatus));
+  /** 排队操作沿用父级传入的权限，不从外观或本地状态推断可发送性。 */
+  const showQueuedActions = Boolean(props.waitingInQueue && props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission));
+  /** 状态与操作共同决定底栏；已确认未发送可只有操作，未知送达可只有状态。 */
+  const showQueuedFooter = role === 'user' && Boolean(props.waitingInQueue && (optimisticStatus || showQueuedActions));
+  const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || (!showQueuedFooter && Boolean(optimisticStatus)));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
@@ -568,19 +583,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     }
   }
 
-  return (
-    <article
-      ref={articleRef}
-      className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${props.animateEntrance ? ' is-entering' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${editing ? ' is-editing' : ''}`}
-      data-item-status={props.item.status}
-      data-item-phase={props.item.phase}
-      data-item-type={props.item.type}
-      data-question-answer={Boolean(props.questionAnswer) || undefined}
-      data-queued-submission={props.queuedSubmissionId || undefined}
-      data-motion-active={props.motionActive || undefined}
-      data-motion-block="markdown"
-      aria-label={accessibleLabel}
-    >
+  /** 消息正文只组装一次，排队时由独立气泡承载附件、正文和上下文。 */
+  const messageBody = (
+    <>
       {showMeta ? (
         <header className="session-thread-item-meta">
           {showVisibleRoleLabel ? <strong className={expertActor ? 'session-expert-actor-label' : undefined}>{label}</strong> : null}
@@ -737,33 +742,97 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {retryingExpert ? labels.retryingExpert : labels.retryExpert}
         </button>
       ) : null}
-      {props.waitingInQueue && props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission) ? (
-        <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions}>
-          {props.onSteerQueuedSubmission ? (
-            <button
-              type="button"
-              className="session-queued-thread-steer"
-              aria-disabled={Boolean(queuedAction || props.queuedSteerDisabledReason)}
-              aria-label={`${labels.steerQueued}: ${props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}`}
-              title={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
-              onClick={() => {
-                if (queuedAction || props.queuedSteerDisabledReason) return;
-                void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
-              }}
-            >
-              {queuedAction === 'steer' ? labels.steeringQueued : labels.steerQueued}
-            </button>
+    </>
+  );
+
+  /** 原有操作在排队时复用到同一底栏，保留显隐规则；原文不可读时不提供复制。 */
+  const messageActions = hasActions ? (
+    <footer className="session-thread-item-actions" data-message-actions={role}>
+      {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
+      {visibleText && subagentInput?.contentState !== 'unavailable' ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
+      {role === 'assistant' ? (
+        <>
+          <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
+            <MessageThumbIcon direction="up" selected={feedback === 'good'} />
+          </MessageIconButton>
+          <MessageIconButton label={labels.bad} pressed={feedback === 'bad'} onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
+            <MessageThumbIcon direction="down" selected={feedback === 'bad'} />
+          </MessageIconButton>
+          <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage} expanded={messageExpanded} onClick={() => setMessageExpanded((current) => !current)}>
+            <MessageExpandIcon collapsed={messageExpanded} />
+          </MessageIconButton>
+          {messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
+        </>
+      ) : null}
+      {canEdit ? (
+        <MessageIconButton
+          label={labels.edit}
+          onClick={() => {
+            setEditDraft(itemText);
+            setEditError(null);
+            setEditing(true);
+          }}
+        >
+          <MessageEditIcon />
+        </MessageIconButton>
+      ) : null}
+    </footer>
+  ) : null;
+
+  return (
+    <article
+      ref={articleRef}
+      className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${props.animateEntrance ? ' is-entering' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${showQueuedFooter ? ' has-queued-footer' : ''}${editing ? ' is-editing' : ''}`}
+      data-item-status={props.item.status}
+      data-item-phase={props.item.phase}
+      data-item-type={props.item.type}
+      data-question-answer={Boolean(props.questionAnswer) || undefined}
+      data-queued-submission={props.queuedSubmissionId || undefined}
+      data-motion-active={props.motionActive || undefined}
+      data-motion-block="markdown"
+      aria-label={accessibleLabel}
+    >
+      {showQueuedFooter ? <div className="session-queued-message-bubble">{messageBody}</div> : messageBody}
+      {showQueuedFooter ? (
+        <div className="session-queued-thread-footer">
+          {optimisticStatus ? (
+            <span className="session-item-state" role="status" aria-live="polite" aria-atomic="true">
+              <Clock aria-hidden="true" weight="regular" />
+              <span>{optimisticStatus}</span>
+            </span>
           ) : null}
-          {props.onDeleteQueuedSubmission ? (
-            <button
-              type="button"
-              className="session-queued-thread-delete"
-              disabled={queuedAction !== null}
-              aria-label={props.language === 'zh-CN' ? '删除排队消息' : 'Delete queued message'}
-              onClick={() => void runQueuedAction('delete', () => props.onDeleteQueuedSubmission?.(props.queuedSubmissionId!))}
-            >
-              {queuedAction === 'delete' ? labels.deletingQueued : labels.deleteQueued}
-            </button>
+          {messageActions}
+          {showQueuedActions ? (
+            <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions} aria-busy={queuedAction !== null}>
+              {props.onSteerQueuedSubmission ? (
+                <button
+                  type="button"
+                  className="session-queued-thread-steer"
+                  aria-disabled={Boolean(queuedAction || props.queuedSteerDisabledReason)}
+                  aria-label={`${labels.steerQueued}: ${props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}`}
+                  title={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
+                  onClick={() => {
+                    if (queuedAction || props.queuedSteerDisabledReason) return;
+                    void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
+                  }}
+                >
+                  <ArrowBendUpRight aria-hidden="true" weight="regular" />
+                  {queuedAction === 'steer' ? labels.steeringQueued : labels.steerQueued}
+                </button>
+              ) : null}
+              {props.onDeleteQueuedSubmission ? (
+                <button
+                  type="button"
+                  className="session-queued-thread-delete"
+                  disabled={queuedAction !== null}
+                  aria-label={props.language === 'zh-CN' ? '删除排队消息' : 'Delete queued message'}
+                  onClick={() => void runQueuedAction('delete', () => props.onDeleteQueuedSubmission?.(props.queuedSubmissionId!))}
+                >
+                  <Trash aria-hidden="true" weight="regular" />
+                  {queuedAction === 'delete' ? labels.deletingQueued : labels.deleteQueued}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -777,41 +846,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         onUpdateAnnotation={props.onUpdateResponseAnnotation}
         onRemoveAnnotation={props.onRemoveResponseAnnotation}
       />
-      <div className={props.footerContent ? 'session-thread-item-footer' : undefined}>
-        {hasActions ? (
-          <footer className="session-thread-item-actions" data-message-actions={role}>
-            {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
-            {visibleText ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
-            {role === 'assistant' ? (
-              <>
-                <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
-                  <MessageThumbIcon direction="up" selected={feedback === 'good'} />
-                </MessageIconButton>
-                <MessageIconButton label={labels.bad} pressed={feedback === 'bad'} onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
-                  <MessageThumbIcon direction="down" selected={feedback === 'bad'} />
-                </MessageIconButton>
-                <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage} expanded={messageExpanded} onClick={() => setMessageExpanded((current) => !current)}>
-                  <MessageExpandIcon collapsed={messageExpanded} />
-                </MessageIconButton>
-                {messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
-              </>
-            ) : null}
-            {canEdit ? (
-              <MessageIconButton
-                label={labels.edit}
-                onClick={() => {
-                  setEditDraft(itemText);
-                  setEditError(null);
-                  setEditing(true);
-                }}
-              >
-                <MessageEditIcon />
-              </MessageIconButton>
-            ) : null}
-          </footer>
-        ) : null}
-        {props.footerContent}
-      </div>
+      {!showQueuedFooter ? messageActions : null}
     </article>
   );
 });
@@ -842,7 +877,18 @@ function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
   return code ? { code, message } : message;
 }
 
-export function transcriptItemText(item: NativeSessionItemBuffer): string {
+export function transcriptItemText(item: NativeSessionItemBuffer, language: SessionUiLanguage = 'zh-CN'): string {
+  /** 不可读输入仍是一条真实消息，不能因缺少正文被时间线过滤。 */
+  const input = isRecord(item.payload.subagentInput) ? item.payload.subagentInput : null;
+  if (input?.contentState === 'unavailable') {
+    return language === 'zh-CN'
+      ? input.fromParent === true
+        ? '主智能体已发送指令，原文暂不可读取'
+        : '智能体已发送消息，原文暂不可读取'
+      : input.fromParent === true
+        ? 'The parent agent sent instructions; the original text is currently unavailable.'
+        : 'The agent sent a message; the original text is currently unavailable.';
+  }
   if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
   const historicalContent = isRecord(item.payload.content) ? item.payload.content : null;
   if (typeof historicalContent?.displayText === 'string' && historicalContent.displayText.trim()) return historicalContent.displayText;

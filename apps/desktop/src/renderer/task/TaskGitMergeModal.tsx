@@ -1,6 +1,6 @@
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
+import { buildTaskCommitMessageSuggestion, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
   TaskBranchFileChange,
@@ -37,6 +37,7 @@ type DeliveryClient = Pick<
   | 'resolveTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
   | 'loadSkills'
+  | 'sendNativeMessage'
 >;
 
 type DiffScope = 'committed' | 'working';
@@ -189,6 +190,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [loadRevision, setLoadRevision] = useState(0);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
+  /** React 状态刷新前也阻止重复点击；跨窗口重复请求仍由既有消息身份保护。 */
+  const continuingConflictRef = useRef(false);
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectionInitializedRef = useRef(false);
@@ -259,6 +262,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const totalCommittedFiles = useMemo(() => Object.values(workspaceDetails).reduce((total, workspace) => total + (workspace.branchComparison?.files.length ?? 0), 0), [workspaceDetails]);
   const selectedWorkspaceIdSet = useMemo(() => new Set(selectedWorkspaceIds), [selectedWorkspaceIds]);
   const selectedCommitFileCount = useMemo(() => selectedWorkspaceIds.reduce((total, selectedId) => total + (selectedPathsByWorkspace[selectedId]?.length ?? 0), 0), [selectedWorkspaceIds, selectedPathsByWorkspace]);
+  /** 多仓提交仅排除仍有冲突的仓库，其余仓库照常交付。 */
+  const committableFileCount = selectedWorkspaceIds.reduce((total, selectedId) => total + (workspaceDetails[selectedId]?.review?.conflictFiles.length ? 0 : (selectedPathsByWorkspace[selectedId]?.length ?? 0)), 0);
+  /** 聚焦仓库和勾选仓库均呈现续办入口，避免多仓反馈遗漏需要处理的现场。 */
+  const conflictingWorkspaces = Object.values(workspaceDetails).filter((workspace) => (workspace.id === workspaceId || selectedWorkspaceIds.includes(workspace.id)) && Boolean(workspace.review?.conflictFiles.length));
   const selectedMergeCandidateCount = useMemo(
     () => selectedWorkspaceIds.filter((selectedId) => mergeWorkspaceAction(workspaceDetails[selectedId], integrations, targetBranchesByWorkspace[selectedId]) !== null).length,
     [selectedWorkspaceIds, workspaceDetails, integrations, targetBranchesByWorkspace],
@@ -457,6 +464,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         .filter((target): target is { workspace: TaskWorkspaceSnapshot; selectedPaths: string[] } => Boolean(target.workspace && target.selectedPaths.length > 0));
       const results = await Promise.all(
         targets.map(async ({ workspace, selectedPaths }): Promise<BatchDeliveryResult> => {
+          if (workspace.review?.conflictFiles.length) {
+            return {
+              workspaceId: workspace.id,
+              repositoryName: repositoryLabel(workspace, zh),
+              status: 'attention',
+              message: zh ? '仍有冲突，已跳过提交；请先继续处理。' : 'Conflicts remain. Commit skipped; continue resolving them first.',
+            };
+          }
           try {
             const response = await client.commitTaskWorkspace(taskId, workspace.id, { message, selectedPaths });
             const formattedCount = response.result.formattedPaths.length;
@@ -469,7 +484,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 : `Committed ${selectedPaths.length} file(s) · ${shortSha(response.result.headSha)}`,
             };
           } catch (reason) {
-            return { workspaceId: workspace.id, repositoryName: repositoryLabel(workspace, zh), status: 'failed', message: errorMessage(reason, zh) };
+            return {
+              workspaceId: workspace.id,
+              repositoryName: repositoryLabel(workspace, zh),
+              status: reason instanceof ZeusApiError && reason.error === 'ZEUS_TASK_WORKSPACE_CONFLICTED' ? 'attention' : 'failed',
+              message: errorMessage(reason, zh),
+            };
           }
         }),
       );
@@ -540,7 +560,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     try {
       let mergeBlockingError: string | null = null;
       const outcomes = await Promise.all(
-        selectedWorkspaceIds.map(async (selectedId): Promise<{ result: BatchDeliveryResult; integration?: TaskIntegrationRecord }> => {
+        selectedWorkspaceIds.map(async (selectedId): Promise<{ result: BatchDeliveryResult; integration?: TaskIntegrationRecord; conflictRecovery?: TaskWorkspaceConflictRecovery | null }> => {
           const workspace = workspaceDetails[selectedId];
           if (!workspace) return { result: { workspaceId: selectedId, repositoryName: selectedId, status: 'skipped', message: zh ? '仓库详情尚未读取。' : 'Repository details are not loaded.' } };
           const label = repositoryLabel(workspace, zh);
@@ -588,6 +608,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           }
           try {
             const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch, mode });
+            if ('conflictRecovery' in response) {
+              return {
+                conflictRecovery: response.conflictRecovery,
+                result: { workspaceId: workspace.id, repositoryName: label, status: 'attention', message: workspaceConflictMessage(response.conflictRecovery, zh) },
+              };
+            }
             if (response.integration.state === 'conflicted') {
               return {
                 integration: response.integration,
@@ -618,7 +644,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       const results = outcomes.map((outcome) => outcome.result);
       setFeedback(batchDeliveryFeedback('merge', results, zh));
       if (mergeBlockingError) setError(mergeBlockingError);
-      const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && outcome.integration);
+      const firstAttention = outcomes.find((outcome) => outcome.result.status === 'attention' && (outcome.integration || outcome.conflictRecovery));
       await reload(firstAttention?.result.workspaceId ?? workspaceId);
       if (firstAttention?.integration) {
         setWorkspaceId(firstAttention.result.workspaceId);
@@ -631,6 +657,76 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       setError(errorMessage(reason, zh));
     } finally {
       setBusyAction(null);
+    }
+  }
+
+  /** 用户明确点击后在原会话继续；发送回执与导航分别确认，未知结果不重发。 */
+  async function continueWorkspaceConflict(workspace: TaskWorkspaceSnapshot): Promise<void> {
+    if (!interactionOpen || !props.client || continuingConflictRef.current) return;
+    continuingConflictRef.current = true;
+    setBusyAction('ai');
+    setError(null);
+    try {
+      /** 点击时重新读取，不能对已解决或已换代的页面快照继续派发。 */
+      const latest = (await props.client.loadTaskGitWorkspaceSnapshot(props.task.id, workspace.id)).workspace;
+      setWorkspaceDetails((current) => ({ ...current, [workspace.id]: latest }));
+      /** 使用服务端核对过归属与可用性的原会话信息。 */
+      const recovery = latest.conflictRecovery;
+      if (!recovery) {
+        setFeedback({ tone: 'info', text: zh ? '冲突状态已变化，已刷新当前仓库。' : 'The conflict state changed. The repository has been refreshed.' });
+        return;
+      }
+      if (recovery.unavailableReason || !recovery.conversationId) throw new Error(recovery.unavailableReason ?? (zh ? '原冲突处理会话不可用。' : 'The original conflict conversation is unavailable.'));
+      /** 跨窗口和重开仍识别已发送或结果待核对的同一次处理指令。 */
+      const key = `zeus.conflict-ai-continue:${recovery.recoveryKey}`;
+      /** 已发送和待核对状态都只允许导航，不再次写入消息。 */
+      const previous = window.localStorage.getItem(key);
+      if (!previous) {
+        /** 写入前先留下待核对标记，断线或关窗不能导致盲目重发。 */
+        window.localStorage.setItem(key, 'sending');
+        try {
+          await props.client.sendNativeMessage(props.task.projectId, recovery.conversationId, {
+            content:
+              '代码交付同步最新分支后产生了新的冲突。请在本会话当前命名分支和原工作目录中，读取真实 Git 状态，处理当前仓库全部冲突并用 git add 暂存所有已解决文件，保留两边互不冲突的有效修改。结束前确认 git diff --name-only --diff-filter=U 和 git ls-files -u 均无输出；无法安全处理时保留现场并说明原因。保留当前合并状态和 MERGE_HEAD，不要自行提交、切换分支、reset、rebase、更新目标分支或推送。处理完成后仍由用户通过代码交付提交并合入。',
+            attachments: [],
+            delivery: 'queue',
+            collaborationMode: recovery.collaborationMode,
+            idempotencyKey: `conflict-continue-${recovery.recoveryKey}`,
+            clientUserMessageId: `conflict_continue_${recovery.recoveryKey}`,
+          });
+          window.localStorage.setItem(key, 'accepted');
+        } catch (reason) {
+          setFeedback({
+            tone: 'warning',
+            text: zh ? '继续处理指令的结果尚未确认，请进入原会话核对；再次点击只打开会话，不重复发送。' : 'The continuation is unconfirmed. Open the original conversation to check; another click only opens it without resending.',
+            actionLabel: zh ? '打开原会话核对' : 'Open conversation to check',
+            onAction: () => void openOriginalConflictConversation(recovery.conversationId!),
+          });
+          throw reason;
+        }
+      }
+      await openOriginalConflictConversation(recovery.conversationId);
+    } catch (reason) {
+      setError(errorMessage(reason, zh));
+    } finally {
+      continuingConflictRef.current = false;
+      setBusyAction(null);
+    }
+  }
+
+  /** 导航单独续办，即使 AI 已解决冲突也不需要重新发送处理指令。 */
+  async function openOriginalConflictConversation(conversationId: string): Promise<void> {
+    try {
+      await props.onOpenConversation(props.task.id, conversationId);
+      props.onClose();
+    } catch (reason) {
+      setFeedback({
+        tone: 'warning',
+        text: zh ? '未能打开原会话。再次点击只重试打开，不重复发送处理指令。' : 'The original conversation could not be opened. Another click retries navigation without resending.',
+        actionLabel: zh ? '重新打开原会话' : 'Retry opening conversation',
+        onAction: () => void openOriginalConflictConversation(conversationId),
+      });
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -747,6 +843,13 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       mode: integration?.mode ?? mode,
       prepareOnly: Object.keys(drafts).length > 0,
     });
+    if ('conflictRecovery' in response) {
+      setConflictWorkspaceOpen(false);
+      await reload(workspace.id);
+      setFeedback({ tone: 'warning', text: workspaceConflictMessage(response.conflictRecovery, zh) });
+      await props.onChanged?.();
+      return;
+    }
     setIntegration(response.integration);
     setConflictPath(response.integration.conflictFiles[0] ?? '');
     setConflictWorkspaceOpen(response.integration.state === 'conflicted');
@@ -981,18 +1084,53 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
                   <section className="task-git-delivery-action-step">
                     <strong>{zh ? '1. 提交文件' : '1. Commit files'}</strong>
+                    {conflictingWorkspaces.map((workspace) => (
+                      <section key={workspace.id} className="task-git-delivery-target-issues" role="status" aria-label={zh ? `${repositoryLabel(workspace, zh)} 的冲突` : `Conflicts in ${repositoryLabel(workspace, zh)}`}>
+                        <strong>
+                          {repositoryLabel(workspace, zh)} · {zh ? '需要继续处理冲突' : 'Conflicts need attention'}
+                        </strong>
+                        <small>
+                          {workspace.conflictRecovery ? workspaceConflictMessage(workspace.conflictRecovery, zh) : zh ? '当前仓库仍有未解决冲突，暂时不能提交。' : 'The repository still has unresolved conflicts and cannot be committed.'}
+                        </small>
+                        <ul>
+                          {workspace.review!.conflictFiles.map((path) => (
+                            <li key={path}>
+                              <span>{path}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {workspace.conflictRecovery ? (
+                          <>
+                            {workspace.conflictRecovery.unavailableReason ? <small>{workspace.conflictRecovery.unavailableReason}</small> : null}
+                            <Button
+                              variant="primary"
+                              size="compact"
+                              busy={busyAction === 'ai'}
+                              onClick={() => void continueWorkspaceConflict(workspace)}
+                              disabled={busy || Boolean(workspace.conflictRecovery.unavailableReason) || !workspace.conflictRecovery.conversationId}
+                            >
+                              {zh ? '继续 AI 处理' : 'Continue with AI'}
+                            </Button>
+                          </>
+                        ) : null}
+                      </section>
+                    ))}
                     <small>
                       {selectedCommitFileCount === 0
                         ? zh
                           ? '当前没有勾选待提交文件。'
                           : 'No uncommitted files are selected.'
-                        : zh
-                          ? `将按仓库提交 ${selectedCommitFileCount} 个勾选文件。`
-                          : `Commit ${selectedCommitFileCount} selected file(s), grouped by repository.`}
+                        : committableFileCount === 0
+                          ? zh
+                            ? '请先处理上述冲突，再提交已解决的文件。'
+                            : 'Resolve the conflicts above before committing the resolved files.'
+                          : zh
+                            ? `将按仓库提交 ${committableFileCount} 个勾选文件。`
+                            : `Commit ${committableFileCount} selected file(s), grouped by repository.`}
                     </small>
-                    {selectedCommitFileCount > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
-                    <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commitSelected()} disabled={busy || selectedCommitFileCount === 0}>
-                      {zh ? `提交所选文件（${selectedCommitFileCount}）` : `Commit selected files (${selectedCommitFileCount})`}
+                    {committableFileCount > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
+                    <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commitSelected()} disabled={busy || committableFileCount === 0}>
+                      {zh ? `提交所选文件（${committableFileCount}）` : `Commit selected files (${committableFileCount})`}
                     </Button>
                     {feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                   </section>
@@ -1415,6 +1553,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   /** 已合入状态必须匹配所选目标与当前提交。 */
   const delivered = findDeliveredIntegration(detail, integrations, targetBranch);
   const activeSuffix = workspace.activeConversationCount > 0 ? (zh ? ` · ${workspace.activeConversationCount} 个会话活动` : ` · ${workspace.activeConversationCount} active session(s)`) : '';
+  if (detail?.review?.conflictFiles.length) return `${zh ? `${detail.review.conflictFiles.length} 个冲突待处理` : `${detail.review.conflictFiles.length} conflict(s) pending`}${activeSuffix}`;
   if (recovery?.state === 'conflicted') {
     const status = recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
     return `${status}${activeSuffix}`;
@@ -1433,6 +1572,14 @@ function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: Task
   if (workingCount > 0) return `${zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`}${activeSuffix}`;
   if (!detail.targetBranches.includes(targetBranch)) return zh ? '目标分支不可用' : 'Target branch unavailable';
   return `${zh ? '已提交 · 可合入' : 'Committed · merge ready'}${activeSuffix}`;
+}
+
+/** 区分已保存的提交和仍未完成的合入，不把同步冲突描述成提交失败。 */
+function workspaceConflictMessage(recovery: TaskWorkspaceConflictRecovery | null, zh: boolean): string {
+  if (!recovery) return zh ? '工作区状态已变化，请查看刷新后的代码交付。' : 'The workspace state changed. Review the refreshed code delivery.';
+  return zh
+    ? `当前提交 ${shortSha(recovery.headSha)} 已保存，同步${recovery.updatedBranch ? ` ${recovery.updatedBranch} ` : '分支'}后仍有 ${recovery.conflictFiles.length} 个冲突文件，尚未完成合入。`
+    : `Commit ${shortSha(recovery.headSha)} is saved. ${recovery.conflictFiles.length} conflict file(s) remain after syncing ${recovery.updatedBranch ?? 'branches'}; the merge is unfinished.`;
 }
 
 function findRecoverableIntegration(integrations: TaskIntegrationRecord[], workspaceId?: string): TaskIntegrationRecord | undefined {

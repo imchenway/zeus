@@ -164,6 +164,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     projectConfigForm,
     projectConversationStartEnvelopeManager,
     projectCreateForm,
+    projectCreateDialogOpen,
     projectCreateReturnFocusRef,
     projectCreationReady,
     projectDetail,
@@ -311,6 +312,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           .then((savedSettings) => {
             setAppShellSettings((latest) => ({
               ...normalizeRendererAppShellSettings(savedSettings),
+              // 源码偏好的较早回执不能覆盖之后选择的侧边栏筛选。
+              sidebarConversationFilters: latest.sidebarConversationFilters,
               codeWorkspaceByProject: latest.codeWorkspaceByProject,
               taskTableColumns: latest.taskTableColumns,
               taskTableColumnsByProject: latest.taskTableColumnsByProject,
@@ -1066,6 +1069,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     window.requestAnimationFrame(() => projectCreateReturnFocusRef.current?.focus());
   }
 
+  /** 常规创建入口先展示表单；引导页选好目录后再进入同一表单。 */
   function openProjectCreateDialog(): void {
     if (!projectCreationReady) return;
     projectCreateReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1080,20 +1084,34 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     resetProjectCreateDialog();
   }
 
+  /** 共用目录选择流程：引导页延后显示确认表单，表单内更换目录保留已填写的名称。 */
   async function chooseProjectDirectoryForCreate(): Promise<void> {
-    if (!props.onChooseProjectDirectory || creatingProjectBusy || projectDirectoryChoosing) return;
+    if (!projectCreationReady || !props.onChooseProjectDirectory || creatingProjectBusy || projectDirectoryChoosing) return;
+    if (!projectCreateDialogOpen) {
+      projectCreateReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setProjectCreateForm({ name: '', localPath: '' });
+      if (actionState === 'failed') setActionState('idle');
+    }
     setProjectDirectoryChoosing(true);
     setProjectCreateError(undefined);
     try {
+      /** 原生面板关闭后才展示确认表单，取消时留在原入口并恢复键盘焦点。 */
       const selectedPath = await props.onChooseProjectDirectory();
-      if (!selectedPath) return;
+      if (!selectedPath) {
+        if (!projectCreateDialogOpen) window.requestAnimationFrame(() => projectCreateReturnFocusRef.current?.focus());
+        return;
+      }
+      /** 目录统一规范化后用于默认名称及项目保存。 */
       const localPath = normalizeProjectLocalPath(selectedPath);
       setProjectCreateForm((current) => ({
         name: current.name.trim() || defaultProjectNameFromLocalPath(localPath),
         localPath,
       }));
+      setProjectCreateDialogOpen(true);
     } catch (error) {
       setProjectCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
+      // 失败时在既有表单显示原因和重选入口，避免引导页隐藏错误。
+      setProjectCreateDialogOpen(true);
     } finally {
       setProjectDirectoryChoosing(false);
     }

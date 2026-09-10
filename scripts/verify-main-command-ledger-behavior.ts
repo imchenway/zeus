@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -6,6 +7,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { createBeforeQuitCleanupHandler } from '../apps/desktop/src/main/beforeQuitCleanup.js';
 import { createConversationInputResourceBroker } from '../apps/desktop/src/main/conversationInputResources.js';
 import { hashMainCommandBody, MainCommandLedger, MainCommandLedgerError, type MainCommandRequest } from '../apps/desktop/src/main/mainCommandLedger.js';
+import { ProjectGitWorkbenchService } from '../apps/desktop/src/main/projectGitWorkbench.js';
+import { executeProjectGitAction } from '../packages/git-core/src/index.js';
 
 const rawProbeRoot = await mkdtemp(join(tmpdir(), 'zeus-main-command-ledger-'));
 const probeRoot = await realpath(rawProbeRoot);
@@ -377,9 +380,197 @@ try {
     successfulRetryExitCode: retryCleanupExitCodes[0],
   };
 
+  observed.gitHistory = await verifyGitOperationHistory(probeRoot);
   process.stdout.write(`${JSON.stringify({ ok: true, observed }, null, 2)}\n`);
 } finally {
   await rm(rawProbeRoot, { recursive: true, force: true });
+}
+
+/** 隔离仓库执行真实暂存和冲突，再通过现有账本验证分页、恢复及故障展示。 */
+async function verifyGitOperationHistory(root: string): Promise<Record<string, unknown>> {
+  /** 所有 Git 写入仅发生在探针新建的临时目录。 */
+  const projects = [
+    { id: 'history-project-a', name: '历史项目 A', localPath: join(root, 'history-a') },
+    { id: 'history-project-b', name: '历史项目 B', localPath: join(root, 'history-b') },
+  ];
+  for (const project of projects) {
+    await mkdir(project.localPath);
+    execFileSync('git', ['init', '--initial-branch=main', project.localPath], { stdio: 'ignore' });
+    await writeFile(join(project.localPath, 'sample.txt'), 'base\n');
+  }
+  /** 同一项目的第二个仓库用于验证项目内汇总。 */
+  const nestedPath = join(projects[0]!.localPath, 'nested');
+  execFileSync('git', ['init', '--initial-branch=main', nestedPath], { stdio: 'ignore' });
+  await writeFile(join(nestedPath, 'sample.txt'), 'nested\n');
+  /** 项目查询使用实际服务及仓库发现规则。 */
+  const service = new ProjectGitWorkbenchService(async (id) => {
+    const project = projects.find((candidate) => candidate.id === id);
+    if (!project) throw new Error('隔离项目不存在。');
+    return project;
+  });
+  /** 工作台发现给出与真实主进程一致的仓库身份。 */
+  const workbench = await service.loadWorkbench(projects[0]!.id);
+  /** 项目根仓库与嵌套仓库必须都可查询。 */
+  const repository = workbench.repositories.find((item) => item.relativePath === '.') ?? workbench.repositories.find((item) => item.name === 'history-a');
+  const nested = workbench.repositories.find((item) => item.id !== repository?.id);
+  const other = (await service.loadWorkbench(projects[1]!.id)).repositories[0];
+  assertProbe(repository && nested && other, '探针必须发现两个项目及项目内的两个仓库。');
+  /** 固定时间覆盖同一毫秒内按身份稳定翻页的情况。 */
+  const options = { root: join(root, 'git-history-ledger'), now: () => '2026-09-10T01:00:00.000Z' };
+  const ledger = new MainCommandLedger(options);
+  /** 只覆盖桌面工作台命令类型，不把其他账本条目算入历史。 */
+  const commandType = 'desktop.project_git.execute_action';
+  /** 生成与桌面执行通道相同的仓库作用域。 */
+  const requestFor = (id: string, repositoryId = repository.id): MainCommandRequest => {
+    const request = commandRequest(id, commandType, { action: 'stage' });
+    return { ...request, envelope: { ...(request.envelope as object), scope: { kind: 'git_repository', id: repositoryId } } };
+  };
+  /** 记录真实 Git 结果，避免用静态页数据代替账本读取。 */
+  const append = (id: string, project = projects[0]!, repositoryId = repository.id, path = project.localPath) =>
+    ledger.execute(requestFor(id, repositoryId), commandType, async (_body, command) => {
+      await command.markWriteStarted();
+      return { projectId: project.id, repositoryId, result: await executeProjectGitAction(path, { type: 'stage', paths: ['sample.txt'] }, undefined, undefined, command.recordExecutionCommand) };
+    });
+  for (let index = 0; index < 105; index += 1) await append(`history-${String(index).padStart(3, '0')}`);
+  await append('history-nested', projects[0], nested.id, nestedPath);
+  await append('history-other', projects[1], other.id);
+  /** 首次只读 50 条，但计数包含整个项目的所有仓库。 */
+  const first = await service.loadOperations(projects[0]!.id, undefined, ledger);
+  assertProbe(first.items.length === 50 && first.total === 106 && first.nextCursor && first.items.some((item) => item.repositoryId === nested.id), '首页必须固定 50 条并汇总项目内仓库，总数不等于已加载条数。');
+  assertProbe(
+    first.items.every((item) => !('snapshot' in item) && item.status === 'completed' && item.action === 'stage'),
+    '历史页仅含展示字段，成功来自真实结构化结果。',
+  );
+  assertProbe(
+    first.items.every((item) => item.commands?.includes('git --literal-pathspecs add -A -- sample.txt')),
+    '命令必须来自实际执行参数，并随历史结果保存。',
+  );
+  await append('zz-new-during-pagination');
+  /** 相同游标并发读取不推进服务端状态，重复触发得到同一页。 */
+  const [second, duplicate] = await Promise.all([service.loadOperations(projects[0]!.id, first.nextCursor, ledger), service.loadOperations(projects[0]!.id, first.nextCursor, ledger)]);
+  assertProbe(isDeepStrictEqual(second, duplicate) && second.items.length === 50 && second.nextCursor, '同一游标重复读取必须稳定，无重复推进或空洞。');
+  const third = await service.loadOperations(projects[0]!.id, second.nextCursor, ledger);
+  const originalIds = [...first.items, ...second.items, ...third.items].map((item) => item.id);
+  assertProbe(third.items.length === 6 && third.nextCursor === null && new Set(originalIds).size === 106 && !originalIds.includes('zz-new-during-pagination'), '翻页期间新增记录不能挤动原有区间；三页必须完整且没有重复。');
+  const restarted = new MainCommandLedger(options);
+  const recovered = await service.loadOperations(projects[0]!.id, undefined, restarted);
+  assertProbe(recovered.total === 107 && recovered.items[0]?.id === 'zz-new-during-pagination', '重启扫描必须重建索引并恢复新记录。');
+  const isolated = await service.loadOperations(projects[1]!.id, undefined, ledger);
+  assertProbe(isolated.total === 1 && isolated.items[0]?.id === 'history-other', '项目之间不得混入操作记录。');
+  assertProbe(await captureError(() => service.loadOperations(projects[1]!.id, first.nextCursor!, ledger)), '跨项目游标必须被拒绝。');
+  assertProbe(await captureError(() => service.loadOperations(projects[0]!.id, 'invalid-cursor', ledger)), '无效游标必须明确失败。');
+
+  /** 索引已建好后破坏末页正文：首页仍能读取，证明没有每次扫描全部记录。 */
+  const damagedPath = ledgerFilePath(options.root, 'outcomes', 'history-000');
+  const saved = await readFile(damagedPath);
+  await writeFile(damagedPath, '{', { mode: 0o600 });
+  assertProbe((await service.loadOperations(projects[0]!.id, undefined, ledger)).items.length === 50, '分页只读取当前页，不应被未读取的末页正文阻塞。');
+  assertProbe(await captureError(() => service.loadOperations(projects[0]!.id, second.nextCursor!, ledger)), '正文损坏必须报告读取失败，不能返回空页。');
+  await writeFile(damagedPath, saved, { mode: 0o600 });
+
+  /** 故障注入只验证账本状态映射，不声称发生了真实远端未知写入。 */
+  await captureError(() =>
+    ledger.execute(requestFor('zz-before-write'), commandType, async () => {
+      throw new Error('受控写前失败');
+    }),
+  );
+  await captureError(() =>
+    ledger.execute(requestFor('zz-unknown'), commandType, async (_body, command) => {
+      await command.markWriteStarted();
+      throw new Error('受控写后未知');
+    }),
+  );
+  await ledger.execute(requestFor('zz-missing-details'), commandType, async (_body, command) => {
+    await command.markWriteStarted();
+    return null;
+  });
+  /** 执行中状态必须可读，查询不应等待该操作结束。 */
+  let releaseRunning: (() => void) | undefined;
+  const running = ledger.execute(requestFor('zz-running'), commandType, async (_body, command) => {
+    await command.markWriteStarted();
+    await new Promise<void>((resolve) => {
+      releaseRunning = resolve;
+    });
+    return { projectId: projects[0]!.id, repositoryId: repository.id, result: { action: 'stage', outcome: 'completed', stdout: '', stderr: '' } };
+  });
+  await waitUntil(() => Boolean(releaseRunning));
+  const during = await service.loadOperations(projects[0]!.id, undefined, ledger);
+  assertProbe(during.items.find((item) => item.id === 'zz-running')?.status === 'running', '活动操作必须显示执行中。');
+  releaseRunning!();
+  await running;
+
+  /** 冲突由隔离仓库真实合并产生，所有提交仅用于此临时探针。 */
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Zeus history probe', '-c', 'user.email=history-probe@localhost', '-c', 'commit.gpgSign=false', ...args], { cwd: projects[0]!.localPath, stdio: 'ignore' });
+  git('commit', '-m', 'base');
+  git('checkout', '-b', 'history-left');
+  await writeFile(join(projects[0]!.localPath, 'sample.txt'), 'left\n');
+  git('commit', '-am', 'left');
+  git('checkout', '-b', 'history-right', 'main');
+  await writeFile(join(projects[0]!.localPath, 'sample.txt'), 'right\n');
+  git('commit', '-am', 'right');
+  await ledger.execute(requestFor('zz-conflict'), commandType, async (_body, command) =>
+    service.execute(projects[0]!.id, repository.id, { type: 'merge', branchName: 'history-left' }, async () => command.markWriteStarted(), undefined, command.recordExecutionCommand),
+  );
+  const states = await service.loadOperations(projects[0]!.id, undefined, new MainCommandLedger(options));
+  assertProbe(states.items.find((item) => item.id === 'zz-before-write')?.status === 'failed_before_write', '写前失败不得显示为结果未知。');
+  assertProbe(states.items.find((item) => item.id === 'zz-unknown')?.status === 'unknown_after_write', '写后未知不能显示为确定失败。');
+  assertProbe(states.items.find((item) => item.id === 'zz-conflict')?.status === 'conflict', '真实 Git 冲突必须保留冲突状态。');
+  assertProbe(states.items.find((item) => item.id === 'zz-conflict')?.commands?.includes('git merge --no-edit history-left'), '重启后仍能读取产生冲突的具体命令。');
+  assertProbe(states.items.find((item) => item.id === 'zz-running')?.status === 'completed', '操作结束后的读取必须反映最新耐久状态。');
+  const incomplete = states.items.find((item) => item.id === 'zz-missing-details');
+  assertProbe(incomplete?.status === 'recorded' && incomplete.action === null && incomplete.limitations.includes('output_not_saved'), '历史缺字段必须明确保留缺失，不能伪造动作或输出。');
+  assertProbe(incomplete?.commands === null && incomplete.limitations.includes('commands_not_saved'), '旧记录没有命令时必须明示，不能猜测补齐。');
+  git('merge', '--abort');
+  /** 失败的实际 Git 调用也必须留下命令，不能依赖成功结果携带。 */
+  await captureError(() =>
+    ledger.execute(requestFor('zz-command-failed'), commandType, async (_body, command) =>
+      service.execute(projects[0]!.id, repository.id, { type: 'checkout', branchName: 'missing-history-branch' }, async () => command.markWriteStarted(), undefined, command.recordExecutionCommand),
+    ),
+  );
+  /** 智能切换使用真实临时贮藏，验证一次动作包含多条命令且顺序保留。 */
+  await writeFile(join(projects[0]!.localPath, 'smart extra.txt'), 'preserved\n');
+  await ledger.execute(requestFor('zz-command-smart'), commandType, async (_body, command) =>
+    service.execute(projects[0]!.id, repository.id, { type: 'checkout', branchName: 'history-left', smart: true }, async () => command.markWriteStarted(), undefined, command.recordExecutionCommand),
+  );
+  /** 文件名包含引号、空格与 shell 字符时，Git 参数仍应按字面值执行。 */
+  const literalPath = "quoted ' file $(literal).txt";
+  await writeFile(join(projects[0]!.localPath, literalPath), 'literal\n');
+  await ledger.execute(requestFor('zz-command-quoted'), commandType, async (_body, command) =>
+    service.execute(projects[0]!.id, repository.id, { type: 'stage', paths: [literalPath] }, async () => command.markWriteStarted(), undefined, command.recordExecutionCommand),
+  );
+  /** 再次重建账本，命令记录不能只存在于进程缓存中。 */
+  const commandsPage = await service.loadOperations(projects[0]!.id, undefined, new MainCommandLedger(options));
+  /** 未知状态仍展示失败前已经启动调用的命令。 */
+  const failedCommand = commandsPage.items.find((item) => item.id === 'zz-command-failed');
+  assertProbe(failedCommand?.status === 'unknown_after_write' && failedCommand.commands?.includes('git switch missing-history-branch'), '失败后的命令必须保留，同时不能把未知结果改为确定失败。');
+  /** 复合动作的贮藏、切换、恢复顺序来自真实执行过程。 */
+  const smartCommands = commandsPage.items.find((item) => item.id === 'zz-command-smart')?.commands ?? [];
+  /** 允许真实前置查询穿插，但修改动作的先后顺序必须准确。 */
+  const smartOrder = [
+    smartCommands.findIndex((command) => command.startsWith('git stash push ')),
+    smartCommands.indexOf('git switch history-left'),
+    smartCommands.findIndex((command) => command.startsWith('git stash apply --index ')),
+    smartCommands.indexOf("git stash drop 'stash@{0}'"),
+  ];
+  assertProbe(
+    smartOrder.every((position, index) => position >= 0 && (index === 0 || position > smartOrder[index - 1]!)),
+    '智能切换必须记录按执行顺序排列的多条命令。',
+  );
+  assertProbe(commandsPage.items.find((item) => item.id === 'zz-command-quoted')?.commands?.includes("git --literal-pathspecs add -A -- 'quoted '\\'' file $(literal).txt'"), '带引号和 shell 字符的参数必须安全展示，不能丢失参数边界。');
+  const empty = await service.loadOperations(projects[0]!.id, undefined, new MainCommandLedger({ root: join(root, 'empty-git-history') }));
+  assertProbe(empty.total === 0 && empty.items.length === 0 && empty.nextCursor === null, '真正的空账本才返回空历史。');
+  return {
+    pageSizes: [first.items.length, second.items.length, third.items.length],
+    originalRecords: originalIds.length,
+    restartTotal: recovered.total,
+    projectIsolation: true,
+    duplicateReadsStable: true,
+    readsOnlyRequestedPage: true,
+    corruptPageRejected: true,
+    realGitConflict: true,
+    statesVerified: true,
+    executionCommandsVerified: true,
+  };
 }
 
 function commandRequest(commandId: string, commandType: string, body: unknown): MainCommandRequest {

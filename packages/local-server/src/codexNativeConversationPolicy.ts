@@ -290,6 +290,11 @@ export function findSnapshotTurn(snapshot: CodexThreadSnapshot, submission: Zeus
   return turns.find((turn) => turn.clientUserMessageId === submission.clientMessageId || turn.clientMessageId === submission.clientMessageId) ?? null;
 }
 
+/** 实际引导目标覆盖直接引导与原队列转引导，不修改用户最初的提交内容和方式。 */
+export function isSteeringSubmission(submission: Pick<ZeusConversationSubmissionRecord, 'targetProviderTurnId'>): boolean {
+  return Boolean(submission.targetProviderTurnId);
+}
+
 /** 目标轮次身份不是 steer 消息的送达回执；仅接受 Provider 精确用户消息或 turn/start 的耐久接纳事实。 */
 export function submissionDeliveryConfirmedForTurn(submission: ZeusConversationSubmissionRecord, turn: ZeusConversationTurnRecord, exactProviderMessage: boolean): boolean {
   return exactProviderMessage || (submission.id === turn.clientSubmissionId && submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt));

@@ -1,10 +1,12 @@
 import type { SendConversationMessageResult } from './conversationContracts.js';
+import type { ConversationNavigationSnapshot } from '@zeus/shared';
 import type { ConversationHistoryItem } from '../conversations/conversationContracts.js';
 import type {
   ArchivedConversationChoicesSnapshot,
   CodexConversationCapabilities,
   ConversationResourcePreview,
   NativeCollaborationMode,
+  NativeConversationAttachment,
   NativeConversationChangeFileV2Item,
   NativeConversationChangeSetV2Summary,
   NativeConversationChoice,
@@ -44,6 +46,8 @@ import { buildConversationDispatchCommandRequest, conversationDispatchClientComm
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from './conversationStartCommandClient.js';
 
 export interface ConversationApiClient {
+  /** 读取全部用户发言目录，不拉取正文。 */
+  loadConversationNavigation: (projectId: string, conversationId: string) => Promise<ConversationNavigationSnapshot>;
   /** 读取旧会话正文，保留已有历史查看行为。 */
   loadLegacyConversation: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
   /** 向既有普通会话发送消息。 */
@@ -130,7 +134,12 @@ export interface ConversationApiClient {
   ) => Promise<{
     request: NativePendingRequest;
   }>;
-  respondToPlanImplementationRequest: (projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }) => Promise<NativePlanImplementationResponseAcceptance>;
+  respondToPlanImplementationRequest: (
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] },
+  ) => Promise<NativePlanImplementationResponseAcceptance>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   recoverNativeQueue: (projectId: string, conversationId: string, intent: 'check' | 'continue') => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
@@ -182,6 +191,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       transport.request<NativeConversationReadableSnapshot>(`${conversationPath(projectId, conversationId)}/readable-snapshot`, {
         headers: { 'x-zeus-snapshot-caller': 'renderer-session-v2' },
       }),
+    loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
     loadNativeConversationModelHistoryV2: (projectId, conversationId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/model-history${pageQuery(options)}`),

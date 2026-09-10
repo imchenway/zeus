@@ -129,6 +129,9 @@ export interface ProjectGitRepositoryWorkbenchItem {
   snapshot: ProjectGitRepositorySnapshot;
 }
 
+/** 桌面操作历史共用 Git 公共契约，避免桥接两端各自定义状态。 */
+export type { ProjectGitOperationPage, ProjectGitOperationRecord } from '@zeus/git-core';
+
 export interface ProjectGitWorkbenchSnapshot {
   projectId: string;
   projectName: string;

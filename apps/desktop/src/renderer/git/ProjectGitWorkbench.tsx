@@ -2,6 +2,7 @@ import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
+import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
@@ -17,7 +18,7 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import type { DashboardClient, GitDiffHunk, GitFileDiff, ProjectGitAction, ProjectGitCommitDetail, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import type { DashboardClient, GitDiffHunk, GitFileDiff, ProjectGitAction, ProjectGitCommitDetail, ProjectGitOperationRecord, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -37,22 +38,10 @@ interface GitContextTarget {
 type BranchKind = 'local' | 'remote';
 type ExecutionOutcome = 'completed' | 'conflict' | null;
 
-interface OperationRecord {
-  id: string;
-  repositoryId: string;
-  repositoryName: string;
-  action: ProjectGitAction['type'];
-  label: string;
-  startedAt: string;
-  durationMs: number;
-  tone: OperationTone;
-  output: string;
-}
-
 export interface ProjectGitWorkbenchProps {
   project: ProjectRecord;
   projects: ProjectRecord[];
-  client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectModelSelection'>;
+  client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitOperations' | 'loadProjectGitCommit' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectModelSelection'>;
   language: 'zh-CN' | 'en-US';
   onSelectProject: (project: ProjectRecord) => void;
 }
@@ -183,7 +172,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [busy, setBusy] = useState<BusyState>(null);
   const actionBusyRef = useRef(false);
-  const [operationRecords, setOperationRecords] = useState<OperationRecord[]>([]);
+  /** 控制台缓存可以销毁，历史由桌面耐久账本恢复。 */
+  const operationHistory = useGitOperationHistory(props.client, props.project.id);
   const [pushResults, setPushResults] = useState<Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>>([]);
   const requestVersionRef = useRef(0);
   const operationErrorsByRepositoryRef = useRef<Record<string, string>>({});
@@ -262,6 +252,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.project.id, tab]);
 
   useEffect(() => {
+    if (tab === 'console') void operationHistory.refresh();
+  }, [tab, operationHistory.refresh]);
+
+  useEffect(() => {
     if (tab !== 'changes' || !snapshot) return;
     const repository = snapshot.repositories.find((candidate) => candidate.id === selectedRepositoryId) ?? snapshot.repositories[0];
     if (!repository) {
@@ -312,6 +306,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.project.id, selectedRepository?.id, selectedCommitHash, tab]);
 
   async function loadWorkbench(): Promise<void> {
+    // 历史与仓库快照独立读取，仓库刷新失败不能伪装成没有操作记录。
+    void operationHistory.refresh();
     const version = ++requestVersionRef.current;
     setLoadState('loading');
     setError(null);
@@ -333,7 +329,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     actionBusyRef.current = true;
     requestVersionRef.current += 1;
     projectGitWorkbenchCacheEntry(props.client, props.project.id).request = null;
-    const started = performance.now();
     setBusy({ repositoryId: repository.id, action: action.type });
     setError(null);
     const previousOperationErrors = { ...operationErrorsByRepositoryRef.current };
@@ -351,14 +346,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             }
           : current,
       );
-      addOperationRecord(
-        repository,
-        action.type,
-        response.result.outcome === 'conflict' ? (zh ? '存在冲突，需要先处理' : 'Conflicts need to be resolved') : label,
-        response.result.outcome === 'conflict' ? 'warning' : 'success',
-        [response.result.stdout, response.result.stderr, ...response.result.conflictFiles].filter(Boolean).join('\n'),
-        performance.now() - started,
-      );
       if (action.type === 'submodule_update' || action.type === 'subtree') await loadWorkbench();
       if (response.result.outcome === 'conflict') setTab('changes');
       return response.result.outcome;
@@ -366,30 +353,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       const message = errorMessage(reason, zh);
       operationErrorsByRepositoryRef.current = { ...operationErrorsByRepositoryRef.current, [repository.id]: message };
       await loadWorkbench();
-      setError(message);
-      addOperationRecord(repository, action.type, label, 'error', message, performance.now() - started);
+      setError(`${label}: ${message}`);
       return null;
     } finally {
       actionBusyRef.current = false;
       setBusy(null);
+      void operationHistory.refresh(true);
     }
-  }
-
-  function addOperationRecord(repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction['type'], label: string, tone: OperationTone, output: string, durationMs: number): void {
-    setOperationRecords((current) => [
-      {
-        id: `${Date.now()}-${repository.id}-${action}`,
-        repositoryId: repository.id,
-        repositoryName: repository.name,
-        action,
-        label,
-        startedAt: new Date().toISOString(),
-        durationMs: Math.round(durationMs),
-        tone,
-        output,
-      },
-      ...current,
-    ]);
   }
 
   async function generateCommitMessage(repository: ProjectGitRepositoryWorkbenchItem): Promise<void> {
@@ -799,7 +769,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             ['changes', zh ? '本地变更' : 'Local Changes', changedCount],
             ['stash', 'Stash', repositories.reduce((total, repository) => total + repository.snapshot.stashes.length, 0)],
             ['log', zh ? '日志' : 'Log', null],
-            ['console', zh ? '控制台' : 'Console', operationRecords.length],
+            ['console', zh ? '控制台' : 'Console', operationHistory.total],
           ] as const
         ).map(([id, label, count]) => (
           <button key={id} type="button" className={tab === id ? 'is-active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
@@ -1040,7 +1010,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           ) : tab === 'stash' ? (
             <StashSurface zh={zh} repositories={selectedRepository ? [selectedRepository] : []} busy={busy} onExecute={execute} />
           ) : (
-            <ConsoleSurface zh={zh} operations={operationRecords} />
+            <ConsoleSurface zh={zh} history={operationHistory} />
           )}
         </div>
       </div>
@@ -2549,32 +2519,162 @@ function StashSurface(props: {
   );
 }
 
-function ConsoleSurface(props: { zh: boolean; operations: OperationRecord[] }) {
+/** 控制台复用既有记录布局，滚动和键盘入口共用历史加载门禁。 */
+function ConsoleSurface(props: { zh: boolean; history: ReturnType<typeof useGitOperationHistory> }) {
+  /** 当前控制台是独立滚动区域。 */
+  const root = useRef<HTMLDivElement>(null);
+  /** 底部标记只负责触发读取，不执行任何 Git 动作。 */
+  const sentinel = useRef<HTMLElement>(null);
+  /** 以可见记录作为锚点，刷新插入新记录时保留阅读位置。 */
+  const anchor = useRef<{ id: string; offset: number } | null>(null);
+  /** 只记录首个可见记录；位于顶部时保持最新记录可见。 */
+  function rememberPosition(): void {
+    /** 容器卸载时无需继续计算滚动位置。 */
+    const container = root.current;
+    if (!container || container.scrollTop === 0) {
+      anchor.current = null;
+      return;
+    }
+    /** 相对容器的偏移不会受整个窗口移动影响。 */
+    const top = container.getBoundingClientRect().top;
+    /** 操作卡片都是滚动区直接子项，跳过底部加载状态。 */
+    const visible = [...container.children].find((element) => element instanceof HTMLElement && element.dataset.operationId && element.getBoundingClientRect().bottom > top) as HTMLElement | undefined;
+    anchor.current = visible ? { id: visible.dataset.operationId!, offset: visible.getBoundingClientRect().top - top } : null;
+  }
+
+  useLayoutEffect(() => {
+    /** DOM 更新后按原记录偏移补偿新增内容的高度。 */
+    const container = root.current;
+    if (container && anchor.current) {
+      /** 使用已知元素身份查找，不把输出文本拼成选择器。 */
+      const element = [...container.children].find((child) => child instanceof HTMLElement && child.dataset.operationId === anchor.current!.id);
+      if (element) container.scrollTop += element.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.current.offset;
+    }
+    rememberPosition();
+  }, [props.history.items]);
+
+  useEffect(() => {
+    if (!root.current || !sentinel.current || props.history.loading || props.history.error || !props.history.nextCursor || typeof IntersectionObserver === 'undefined') return;
+    /** 使用浏览器原生可见性观察，靠近底部 240 像素时加载下一页。 */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void props.history.loadMore();
+      },
+      { root: root.current, rootMargin: '240px 0px' },
+    );
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [props.history.loading, props.history.error, props.history.nextCursor, props.history.loadMore, props.history.items.length]);
+
   return (
-    <div className="project-git-console-surface">
-      {props.operations.length === 0 ? (
+    <div ref={root} className="project-git-console-surface" role="region" aria-label={props.zh ? 'Git 操作历史' : 'Git operation history'} tabIndex={0} onScroll={rememberPosition} aria-busy={props.history.loading}>
+      {props.history.total === 0 && !props.history.loading && !props.history.error ? (
         <section className="project-git-empty-surface">
           <ArrowsClockwise aria-hidden="true" />
-          <strong>{props.zh ? '还没有 Git 操作记录' : 'No Git operations yet'}</strong>
-          <span>{props.zh ? '这里显示通过 Zeus 执行的 Git 操作记录。' : 'Git actions performed through Zeus appear here.'}</span>
+          <strong>{props.zh ? '这个项目还没有 Git 工作台操作记录' : 'No Git workbench operations for this project yet'}</strong>
+          <span>{props.zh ? '通过桌面 Git 工作台执行的操作会保存在这里。' : 'Operations performed through the desktop Git workbench are saved here.'}</span>
         </section>
-      ) : (
-        props.operations.map((operation) => (
-          <article key={operation.id} data-tone={operation.tone}>
-            {operation.tone === 'success' ? <CheckCircle aria-hidden="true" /> : <WarningCircle aria-hidden="true" />}
-            <span>
-              <strong>{operation.label}</strong>
-              <small>
-                {operation.repositoryName} · {new Date(operation.startedAt).toLocaleTimeString()} · {operation.durationMs} ms
-              </small>
-              {operation.output ? <pre>{operation.output}</pre> : null}
+      ) : null}
+      {props.history.items.map((operation) => (
+        <article key={operation.id} data-operation-id={operation.id} data-tone={operation.status === 'completed' ? 'success' : operation.status === 'failed_before_write' ? 'error' : 'warning'}>
+          {operation.status === 'completed' ? <CheckCircle aria-hidden="true" /> : operation.status === 'running' ? <CircleNotch aria-hidden="true" /> : <WarningCircle aria-hidden="true" />}
+          <span>
+            <strong>
+              {operation.action && Object.hasOwn(operationActionLabels, operation.action)
+                ? operationActionLabels[operation.action as ProjectGitAction['type']][props.zh ? 0 : 1]
+                : (operation.action ?? (props.zh ? 'Git 操作' : 'Git operation'))}
+            </strong>
+            <small>
+              {operation.repositoryName} · <time dateTime={operation.startedAt}>{new Date(operation.startedAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US')}</time>
+              {operation.durationMs !== null ? ` · ${operation.durationMs} ms` : ''}
+            </small>
+            <span>{operationStatusLabels[operation.status][props.zh ? 0 : 1]}</span>
+            {operation.commands?.length ? <pre aria-label={props.zh ? '执行的 Git 命令' : 'Git commands invoked'}>{operation.commands.map((command) => `$ ${command}`).join('\n')}</pre> : null}
+            {operation.status === 'unknown_after_write' ? (
+              <small>{props.zh ? '请刷新并核对仓库状态；推送还需要核对远端。不会自动重试此操作。' : 'Refresh and check the repository; also check the remote for a push. This operation will not be retried automatically.'}</small>
+            ) : null}
+            {operation.output ? <pre>{operation.output}</pre> : null}
+            {operation.limitations.map((limitation) => (
+              <small key={limitation}>{operationLimitationLabels[limitation][props.zh ? 0 : 1]}</small>
+            ))}
+          </span>
+        </article>
+      ))}
+      <footer ref={sentinel} className="project-git-console-pagination">
+        {props.history.error ? (
+          <>
+            <span role="alert">
+              {props.zh ? '操作历史读取失败：' : 'Could not read operation history: '}
+              {props.history.error}
             </span>
-          </article>
-        ))
-      )}
+            <Button variant="secondary" size="compact" onClick={() => void props.history.retry()}>
+              {props.zh ? '重试读取' : 'Retry loading'}
+            </Button>
+          </>
+        ) : props.history.loading || props.history.total === null ? (
+          <span role="status">{props.zh ? '正在加载操作记录…' : 'Loading operation records…'}</span>
+        ) : props.history.nextCursor ? (
+          <Button variant="secondary" size="compact" onClick={() => void props.history.loadMore()}>
+            {props.zh ? '加载更多' : 'Load more'}
+          </Button>
+        ) : props.history.items.length > 0 ? (
+          <span role="status">{props.zh ? '已加载全部' : 'All records loaded'}</span>
+        ) : null}
+      </footer>
     </div>
   );
 }
+
+/** 动作名称只按已保存的类型翻译，不从 Git 输出猜测操作。 */
+const operationActionLabels: Record<ProjectGitAction['type'], [string, string]> = {
+  discard: ['放弃修改', 'Discard changes'],
+  rename_branch: ['重命名分支', 'Rename branch'],
+  create_tag: ['创建标签', 'Create tag'],
+  push_tag: ['推送标签', 'Push tag'],
+  delete_tag: ['删除标签', 'Delete tag'],
+  subtree: ['子树操作', 'Subtree operation'],
+  submodule_update: ['更新子模块', 'Update submodule'],
+  fetch: ['获取', 'Fetch'],
+  stage: ['暂存', 'Stage'],
+  unstage: ['取消暂存', 'Unstage'],
+  apply_patch: ['应用补丁', 'Apply patch'],
+  commit: ['提交', 'Commit'],
+  push: ['推送', 'Push'],
+  pull: ['拉取', 'Pull'],
+  update: ['更新', 'Update'],
+  checkout: ['切换分支', 'Switch branch'],
+  checkout_revision: ['检出提交', 'Checkout revision'],
+  create_branch: ['创建分支', 'Create branch'],
+  delete_branch: ['删除分支', 'Delete branch'],
+  revert: ['撤销提交', 'Revert commit'],
+  cherry_pick: ['拣选提交', 'Cherry-pick commit'],
+  merge: ['合并', 'Merge'],
+  rebase: ['变基', 'Rebase'],
+  stash: ['创建 Stash', 'Create stash'],
+  apply_stash: ['应用 Stash', 'Apply stash'],
+  drop_stash: ['删除 Stash', 'Drop stash'],
+  continue_integration: ['继续合并或变基', 'Continue integration'],
+  abort_integration: ['终止合并或变基', 'Abort integration'],
+};
+
+/** 文本明确表达账本事实，颜色与图标不承担唯一的状态提示。 */
+const operationStatusLabels: Record<ProjectGitOperationRecord['status'], [string, string]> = {
+  running: ['正在执行', 'Running'],
+  completed: ['已完成', 'Completed'],
+  conflict: ['存在冲突，需要处理', 'Conflicts need attention'],
+  failed_before_write: ['执行前失败，未开始写入', 'Failed before writing'],
+  unknown_after_write: ['结果未知，需要核对', 'Outcome unknown; verification needed'],
+  recorded: ['已保存执行结果，详细状态未保存', 'Result recorded; detailed status unavailable'],
+};
+
+/** 缺失信息与展示上限均直接说明，避免将空白误认为完整历史。 */
+const operationLimitationLabels: Record<ProjectGitOperationRecord['limitations'][number], [string, string]> = {
+  action_unavailable: ['记录未保存动作名称。', 'The action name was not saved.'],
+  output_not_saved: ['记录未保存输出内容。', 'Output was not saved.'],
+  output_truncated: ['输出过长，此处仅展示前 64 Ki 字符。', 'Output is long; only the first 64 Ki characters are shown.'],
+  commands_not_saved: ['记录未保存具体 Git 命令。', 'The Git commands were not saved.'],
+  commands_truncated: ['命令记录过长，仅保存前 64 Ki 字符。', 'Command history exceeded 64 Ki characters and was truncated.'],
+};
 
 function BranchContextMenu(props: {
   x: number;

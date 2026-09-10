@@ -15,6 +15,7 @@ import type {
   TaskIntegrationPushResult,
   TaskIntegrationRecord,
   TaskIntegrationResult,
+  TaskIntegrationStartResponse,
   TaskWorkspaceCommitResult,
   TaskWorkspaceIndexCollection,
   TaskWorkspacePushResult,
@@ -82,7 +83,7 @@ export interface CodexApiClient {
       mode: 'merge' | 'squash';
       prepareOnly?: boolean;
     },
-  ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
+  ) => Promise<TaskIntegrationStartResponse>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
   startTaskIntegrationConflictAi: (
     taskId: string,
@@ -285,10 +286,7 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     loadTaskIntegrations: (taskId) => transport.request<{ taskId: string; items: TaskIntegrationRecord[]; integrations: TaskIntegrationRecord[] }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations`),
     startTaskIntegration: async (taskId, workspaceId, input) => {
       const body = await buildWorkspaceGitCommandRequest({ commandType: workspaceGitClientCommandTypes.taskWorkspaceIntegrate, scopeKind: 'task_workspace', scopeId: workspaceId, value: input });
-      return transport.request<{
-        integration: TaskIntegrationRecord;
-        result?: TaskIntegrationResult;
-      }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/integrate`, {
+      return transport.request<TaskIntegrationStartResponse>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/integrate`, {
         method: 'POST',
         body: JSON.stringify(body),
       });

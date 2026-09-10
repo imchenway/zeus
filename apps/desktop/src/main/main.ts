@@ -1296,6 +1296,16 @@ function setupIpc(): void {
       throw new TypeError('历史请求参数无效。');
     return workbench.loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined);
   });
+  /** 操作历史属于只读入口，仍要求可信主框架和项目身份。 */
+  ipcMain.handle('zeus:project-git:load-operations', (event, input: unknown) => {
+    /** 与现有工作台读取共用发送者验证。 */
+    const workbench = requireProjectGitWorkbench(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('操作历史请求无效。');
+    /** Renderer 只允许指定项目和服务端签发的分页位置。 */
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || (candidate.cursor !== undefined && typeof candidate.cursor !== 'string')) throw new TypeError('操作历史请求参数无效。');
+    return workbench.loadOperations(candidate.projectId, candidate.cursor as string | undefined, activeMainCommandLedger());
+  });
   ipcMain.handle('zeus:project-git:load-commit', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 提交请求无效。');
     const candidate = input as Record<string, unknown>;
@@ -1377,6 +1387,7 @@ function setupIpc(): void {
             await command.markWriteStarted();
           },
           controller.signal,
+          command.recordExecutionCommand,
         );
       } finally {
         event.sender.removeListener('destroyed', abortOnClose);
@@ -1790,14 +1801,19 @@ function setupIpc(): void {
     manualWindowDragStates.delete(event.sender.id);
     return { dragging: false };
   });
-  ipcMain.handle('zeus:choose-project-directory', () =>
-    chooseProjectDirectory(() =>
-      dialog.showOpenDialog({
+  ipcMain.handle('zeus:choose-project-directory', (event) => {
+    /** 目录选择器归属发起操作的受信工作窗口，避免独立面板漂离应用。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Project directory picker is unavailable for this window.');
+    }
+    return chooseProjectDirectory(() =>
+      dialog.showOpenDialog(requestingWindow, {
         properties: ['openDirectory'],
         title: nativeText('选择项目目录', 'Choose a project folder'),
       }),
-    ),
-  );
+    );
+  });
   ipcMain.handle('zeus:reveal-project-in-finder', (event, projectPath: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {

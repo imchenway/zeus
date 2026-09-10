@@ -1,10 +1,9 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { isTaskManagementStatus } from '@zeus/shared';
+import { normalizeSidebarConversationFilters, sidebarConversationRunStatuses, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
@@ -24,7 +23,8 @@ import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/cs
 import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
 import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
-import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../../session/ProjectConversationTree.js';
+import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree, resolveConversationTreeRuntimeState, taskRunStatusFromConversationTreeState } from '../../session/ProjectConversationTree.js';
+import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
@@ -51,44 +51,23 @@ import {
   type WorkspaceViewId,
 } from './workspaceSupport.js';
 
-/** 项目会话首屏数量。 */
+/** 项目普通会话首屏数量，进行中的会话始终展示且不占额度。 */
 const defaultVisibleConversationCount = 6;
-/** 每次展开更多追加的会话数量。 */
+/** 每次展开更多追加的普通会话数量。 */
 const additionalVisibleConversationCount = 10;
 
-/** 侧栏筛选属于本机显示偏好，与项目任务页的独立筛选分开保存。 */
+/** 仅用于接收旧界面缓存；之后以本机设置数据库为准。 */
 const sidebarConversationFilterStorageKey = 'zeus.sidebar.conversation-filters';
 
-/** 漏斗内的状态选择与两个显示开关作为一份偏好恢复。 */
-interface SidebarConversationFilters {
-  /** 空数组表示所有任务状态及项目直属会话。 */
-  conversationStatusFilters: string[];
-  /** 筛选生效时是否隐藏没有匹配会话的项目。 */
-  hideEmptyFilteredProjects: boolean;
-  /** 每个任务是否只展示当前排序中的最新会话。 */
-  latestConversationOnly: boolean;
-}
-
-/** 首次使用或存储损坏时沿用原有默认显示。 */
-const defaultSidebarConversationFilters: SidebarConversationFilters = { conversationStatusFilters: [], hideEmptyFilteredProjects: true, latestConversationOnly: false };
-
-/** 首次挂载读取一次；按状态身份校验，不因项目目录尚未加载而丢掉已保存选择。 */
-function readSidebarConversationFilters(): SidebarConversationFilters {
+/** 旧偏好只读取一次，数据库已有记录时不会被它覆盖。 */
+function readLegacySidebarConversationFilters(): SidebarConversationFilters | undefined {
   try {
     /** 本机存储也可能被清理或损坏，读取后逐字段校验。 */
     const value: unknown = JSON.parse(window.localStorage.getItem(sidebarConversationFilterStorageKey) ?? 'null');
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultSidebarConversationFilters;
-    /** 只接纳已知字段，避免损坏的偏好影响侧栏渲染。 */
-    const saved = value as Record<string, unknown>;
-    return {
-      conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
-        ? [...new Set(saved.conversationStatusFilters.filter((filter): filter is string => typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))))))]
-        : [],
-      hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
-      latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,
-    };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    return normalizeSidebarConversationFilters(value);
   } catch {
-    return defaultSidebarConversationFilters;
+    return undefined;
   }
 }
 
@@ -98,44 +77,34 @@ export function ProjectStartGuide(props: { language: AppLanguage; busy: boolean;
   const zh = props.language === 'zh-CN';
   return (
     <section className="project-start-guide" aria-labelledby="project-start-title">
-      <FolderOpen className="project-start-symbol" size={36} weight="regular" aria-hidden="true" />
-      <p className="project-start-eyebrow">{zh ? '你的第一个项目' : 'Your first project'}</p>
-      <h1 id="project-start-title">{zh ? '从一个工作文件夹开始' : 'Start with a working folder'}</h1>
-      <p className="project-start-description">{zh ? '把想完成的工作交给 Zeus。先选择文件夹，再创建一个清晰的任务。' : 'Bring your work to Zeus. Choose a folder, then describe the task you want to complete.'}</p>
-      <ol className="project-start-steps" aria-label={zh ? '开始工作的三个步骤' : 'Three steps to start'}>
-        <li aria-current="step">
-          <span>1</span>
-          <div>
-            <strong>{zh ? '选择文件夹' : 'Choose a folder'}</strong>
-            <small>{zh ? '确定项目与工作位置' : 'Set the project and location'}</small>
-          </div>
-        </li>
-        <li>
-          <span>2</span>
-          <div>
-            <strong>{zh ? '创建任务' : 'Create a task'}</strong>
-            <small>{zh ? '描述目标与预期结果' : 'Describe the outcome'}</small>
-          </div>
-        </li>
-        <li>
-          <span>3</span>
-          <div>
-            <strong>{zh ? '确认并推送' : 'Review and push'}</strong>
-            <small>{zh ? '按需接入模型后开始' : 'Connect a model when needed'}</small>
-          </div>
-        </li>
-      </ol>
+      <div className="project-start-symbol" aria-hidden="true">
+        <FolderOpen size={32} weight="regular" />
+      </div>
+      <h1 id="project-start-title">{zh ? '让想法，从这里开始' : 'Your ideas start here'}</h1>
+      <p className="project-start-description">{zh ? '选择一个工作文件夹，创建项目，开始你的第一个任务。' : 'Choose a working folder, create a project, and start your first task.'}</p>
       <div className="project-start-action">
-        <Button size="regular" onClick={props.onChooseFolder} disabled={props.busy || !props.available} busy={props.busy}>
+        <Button variant="primary" size="regular" onClick={props.onChooseFolder} disabled={props.busy || !props.available} busy={props.busy}>
           <FolderPlus size={18} aria-hidden="true" />
           {zh ? '选择工作文件夹' : 'Choose working folder'}
         </Button>
-        <small>{zh ? '模型可以稍后接入，项目与任务保存在本机。' : 'Connect a model later. Projects and tasks are saved on your Mac.'}</small>
       </div>
+      <ol className="project-start-steps" aria-label={zh ? '开始工作的三个步骤' : 'Three steps to start'}>
+        <li aria-current="step">{zh ? '选择文件夹' : 'Choose a folder'}</li>
+        <li>
+          <span aria-hidden="true">→</span>
+          {zh ? '创建任务' : 'Create a task'}
+        </li>
+        <li>
+          <span aria-hidden="true">→</span>
+          {zh ? '确认并推送' : 'Review and push'}
+        </li>
+      </ol>
+      <p className="project-start-note">{zh ? '模型可稍后接入 · 项目与任务保存在本机' : 'Connect a model later · Projects and tasks stay on your Mac'}</p>
     </section>
   );
 }
 
+/** 先选择工作目录，再确认名称；复用已有创建与弹窗交互。 */
 export function ProjectCreateDialog(props: {
   open: boolean;
   form: ProjectCreateFormState;
@@ -148,15 +117,23 @@ export function ProjectCreateDialog(props: {
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  /** 目录未选时作为首个操作，原生选择器关闭后再恢复表单焦点。 */
+  const directoryButtonRef = useRef<HTMLButtonElement>(null);
+  /** 目录已有值时允许直接确认或修改自动填入的名称。 */
   const nameInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!props.open) return;
-    const focusFrame = window.requestAnimationFrame(() => nameInputRef.current?.focus());
+    if (!props.open || props.directoryBusy) return;
+    /** 等待原生选择器结束且控件恢复可用，兼容首次引导直接选目录的入口。 */
+    const focusFrame = window.requestAnimationFrame(() => {
+      (props.form.localPath ? nameInputRef.current : directoryButtonRef.current)?.focus({ preventScroll: true });
+    });
     return () => window.cancelAnimationFrame(focusFrame);
-  }, [props.open]);
+  }, [props.open, props.directoryBusy, props.form.localPath]);
   if (!props.open) return null;
 
+  /** 选择目录或创建期间，统一阻止重复操作和关闭。 */
   const interactionBusy = props.busy || props.directoryBusy;
+  /** 错误与目录说明一并提供给辅助阅读工具。 */
   const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
 
   return (
@@ -169,28 +146,12 @@ export function ProjectCreateDialog(props: {
           </button>
         </header>
         <div className="project-create-dialog-body">
-          <label htmlFor="project-create-name-input">{props.copy.createNameLabel}</label>
-          <div className="project-create-name-control">
-            <span className="project-create-name-icon" aria-hidden="true">
-              <Folder weight="regular" />
-            </span>
-            <input
-              ref={nameInputRef}
-              id="project-create-name-input"
-              value={props.form.name}
-              placeholder={props.copy.createNamePlaceholder}
-              aria-invalid={props.error === props.copy.createNameRequired ? true : undefined}
-              onChange={(event) => props.onNameChange(event.currentTarget.value)}
-              disabled={interactionBusy}
-            />
-          </div>
           <section className="project-create-folder-field" aria-labelledby="project-create-folder-label">
             <strong id="project-create-folder-label">{props.copy.createFolderLabel}</strong>
-            <p id="project-create-folder-help">{props.copy.createFolderHelp}</p>
             <button
+              ref={directoryButtonRef}
               type="button"
               className="project-create-folder-picker"
-              data-selected={props.form.localPath ? 'true' : 'false'}
               aria-describedby="project-create-folder-help"
               onClick={props.onChooseDirectory}
               disabled={interactionBusy}
@@ -203,9 +164,23 @@ export function ProjectCreateDialog(props: {
                 <strong>{props.form.localPath ? defaultProjectNameFromLocalPath(props.form.localPath) : props.copy.createChooseFolder}</strong>
                 {props.form.localPath ? <small title={props.form.localPath}>{props.form.localPath}</small> : null}
               </span>
-              {props.form.localPath ? <span className="project-create-folder-change">{props.copy.createChangeFolder}</span> : null}
+              <span className="project-create-folder-change">{props.form.localPath ? props.copy.createChangeFolder : props.copy.createSelectFolder}</span>
             </button>
+            <p id="project-create-folder-help">{props.copy.createFolderHelp}</p>
           </section>
+          <label className="project-create-name-field" htmlFor="project-create-name-input">
+            <span>{props.copy.createNameLabel}</span>
+            <input
+              ref={nameInputRef}
+              id="project-create-name-input"
+              value={props.form.name}
+              placeholder={props.copy.createNamePlaceholder}
+              aria-invalid={props.error === props.copy.createNameRequired ? true : undefined}
+              aria-describedby={props.error === props.copy.createNameRequired ? 'project-create-error' : undefined}
+              onChange={(event) => props.onNameChange(event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
+          </label>
           {props.error ? (
             <p className="project-create-error" id="project-create-error" role="alert">
               {props.error}
@@ -365,6 +340,10 @@ export function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  /** 启动时已加载的持久漏斗偏好，不依赖项目列表就绪。 */
+  conversationFilters?: SidebarConversationFilters;
+  /** 用户操作与旧偏好接收共用本机设置保存入口。 */
+  onConversationFiltersChange: (filters: SidebarConversationFilters) => void;
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
@@ -394,20 +373,21 @@ export function SidebarNav(props: {
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
-  /** 重开窗口恢复漏斗偏好；搜索文字仍保持临时输入。 */
-  const [conversationFilters, setConversationFilters] = useState(readSidebarConversationFilters);
+  /** 已保存的数据库设置优先；旧缓存只作为首次接收来源。 */
+  const [legacyConversationFilters] = useState(readLegacySidebarConversationFilters);
+  /** 搜索文字仍保持临时输入，漏斗由工作台持久设置直接控制。 */
+  const conversationFilters = props.conversationFilters ?? legacyConversationFilters ?? normalizeSidebarConversationFilters(undefined);
+  useEffect(() => {
+    if (props.conversationFilters !== undefined || !legacyConversationFilters) return;
+    props.onConversationFiltersChange(legacyConversationFilters);
+  }, [props.conversationFilters, props.onConversationFiltersChange, legacyConversationFilters]);
   /** 筛选和显示共用同一份持久偏好，避免分别恢复时出现中间态。 */
   const { conversationStatusFilters, hideEmptyFilteredProjects, latestConversationOnly } = conversationFilters;
-  /** 只在用户操作时立即写入，避免挂载或异步目录刷新覆盖其他窗口保存的选择。 */
+  /** 只提交本次漏斗修改，异步目录刷新不会写回默认值。 */
   function updateConversationFilters(patch: Partial<SidebarConversationFilters>): void {
     /** 合并本次修改，保留同一漏斗内未修改的选项。 */
     const next = { ...conversationFilters, ...patch };
-    setConversationFilters(next);
-    try {
-      window.localStorage.setItem(sidebarConversationFilterStorageKey, JSON.stringify(next));
-    } catch (error) {
-      reportApplicationError(error, { language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
-    }
+    props.onConversationFiltersChange(next);
   }
   const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();
@@ -628,15 +608,24 @@ export function SidebarNav(props: {
       statusLabelsById.get(status.id)!.add(status.label);
     }
   }
-  /** 真正的任务状态与其他会话分区展示；清除选择不属于可选值。 */
+  /** 任务状态、会话运行状态与其他会话分区展示；清除选择不属于可选值。 */
   const statusFilterOptions = [
     ...Array.from(statusLabelsById, ([id, labels]) => ({ value: `status:${id}`, label: [...labels].join(' / '), group: copy.taskStatusFilterGroup })),
+    ...sidebarConversationRunStatuses.map((status) => ({ value: `run:${status}`, label: taskAgentRunStatusLabels[props.appLanguage][status], group: copy.conversationStatusFilterGroup })),
     { value: 'project', label: copy.projectConversationsOnly, group: copy.otherConversationFilterGroup },
   ];
   /** 忽略已删除的状态；未选择状态时显示全部会话。 */
   const activeStatusFilters = conversationStatusFilters.filter((value) => statusFilterOptions.some((option) => option.value === value));
-  /** 多个状态按并集筛选，项目直属会话也可一起选中。 */
+  /** 任意维度已选择时，漏斗与清除操作同步显示已筛选。 */
   const hasStatusFilter = activeStatusFilters.length > 0;
+  /** 任务状态与直属会话沿用并集，未选择该维度时不限。 */
+  const hasTaskStatusFilter = activeStatusFilters.some((value) => value === 'project' || value.startsWith('status:'));
+  /** 运行状态独立多选，再与任务维度取交集。 */
+  const activeRunStatusFilters = activeStatusFilters.filter((value) => value.startsWith('run:'));
+  /** 直接从当前权威投影派生筛选结果，状态更新无需额外同步。 */
+  function matchesConversationRunStatus(conversation: NativeConversationChoice): boolean {
+    return activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates))}`);
+  }
   /** 状态筛选或同任务去重生效时，漏斗和空项目选项都反映当前筛选。 */
   const hasConversationFilter = hasStatusFilter || latestConversationOnly;
   /** 已选状态只出现在漏斗悬停提示中，不额外占用侧栏空间。 */
@@ -646,13 +635,14 @@ export function SidebarNav(props: {
         .map((option) => option.label)
         .join(props.appLanguage === 'zh-CN' ? '、' : ', ')
     : copy.allConversations;
-  /** 上游已按阶段时间倒序；先取每个任务首条，再搜索和分页，避免旧会话因搜索重新出现。 */
+  /** 上游已按阶段时间倒序；先取每个任务首条，再筛选运行状态、搜索和分页，避免旧会话重新出现。 */
   const filteredConversationGroups = props.conversationGroups.map((group) => ({
     ...group,
-    conversations: !hasStatusFilter || activeStatusFilters.includes('project') ? group.conversations : [],
-    tasks: (!hasStatusFilter ? group.tasks : group.tasks.filter((task) => activeStatusFilters.includes(`status:${task.managementStatus}`))).map((task) =>
-      latestConversationOnly ? { ...task, conversations: task.conversations.slice(0, 1) } : task,
-    ),
+    conversations: !hasTaskStatusFilter || activeStatusFilters.includes('project') ? group.conversations?.filter(matchesConversationRunStatus) : [],
+    tasks: (!hasTaskStatusFilter ? group.tasks : group.tasks.filter((task) => activeStatusFilters.includes(`status:${task.managementStatus}`))).map((task) => ({
+      ...task,
+      conversations: (latestConversationOnly ? task.conversations.slice(0, 1) : task.conversations).filter(matchesConversationRunStatus),
+    })),
   }));
   /** 空项目是否隐藏由独立显示选项决定；全部模式仍保留空项目。 */
   const visibleProjects = props.projects.filter((project) => {

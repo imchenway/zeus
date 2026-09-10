@@ -3,14 +3,15 @@ import type { MouseEventHandler } from 'react';
 import type { TaskAgentRunStatus, TaskType } from '../apiClient.js';
 import type { TaskBranchStatus } from './taskWorkspaceModel.js';
 
-export type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
+/** 内部状态反馈使用成功色调，分类色保留用户可辨识的独立颜色。 */
+export type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red' | 'success';
 
 /** 分支状态的语义色调：与任务列表、看板卡片共用同一套映射。 */
 export function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
   if (status === 'action_required') return 'red';
   if (status === 'active') return 'blue';
   if (status === 'pushed') return 'amber';
-  if (status === 'merged') return 'green';
+  if (status === 'merged') return 'success';
   return 'neutral';
 }
 
@@ -59,11 +60,12 @@ export const taskAgentRunStatusLabels: Record<'zh-CN' | 'en-US', Record<TaskAgen
 
 export const animatedTaskRunStatuses = new Set<TaskAgentRunStatus>(['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval']);
 
+/** 运行状态在列表和看板共用映射，等待新指令表示本次执行已完成。 */
 export function taskRunStatusTone(status: TaskAgentRunStatus): TaskSemanticTone {
   if (status === 'connecting' || status === 'reconnecting' || status === 'running') return 'blue';
   if (status === 'waiting_user' || status === 'waiting_approval' || status === 'paused') return 'amber';
   if (status === 'failed') return 'red';
-  if (status === 'idle') return 'green';
+  if (status === 'idle') return 'success';
   return 'neutral';
 }
 

@@ -1,22 +1,27 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
-import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
+import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
-import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
+import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
-import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
+import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
+import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
+import type { NativeConversationAttachment, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState, NativeSubagentSummary, NativeSubagentThreadSnapshot } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
 import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
+import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
+import type { NativeConversationChoice } from '../src/renderer/session/sessionTypes.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
 import type { ConversationCodeComment, ConversationResource, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
+import { PlanImplementationRequestSurface } from '../src/renderer/session/PlanImplementationRequestSurface.js';
 import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
 import type { ComposerInputHandle } from '../src/renderer/session/MarkdownComposerEditor.js';
 import { buildTaskCreateInitialForm, getLanguageCopy, TaskCreateModal } from '../src/renderer/features/workspace/workspaceSupport.js';
@@ -30,14 +35,17 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'navigation', title: '完整历史刻度', summary: '生产时间线的长历史定位与动效记录。', answer: '', activities: [] },
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
-  { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的执行状态和答复页脚。', answer: '', activities: [] },
+  { query: 'conversation-visibility', title: '进行中会话展示', summary: '进行中的会话不受普通会话数量限制。', answer: '', activities: [] },
+  { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的耗时入口与悬停操作栏。', answer: '', activities: [] },
   { query: 'model-select', title: '模型选择与置顶', summary: '共享选择框的分组、焦点、搜索和持久置顶。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
   { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
+  { query: 'plan-implementation', title: '计划确认与修改', summary: '真实计划确认卡片的单行尺寸、自适应输入和行尾操作。', answer: '', activities: [] },
   { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
   { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
   {
@@ -94,7 +102,15 @@ export function sceneFromSearch(search: string): QaScene {
   return scenes.find((scene) => parameters.has(scene.query)) ?? scenes[0]!;
 }
 
+/** 统一挂载验收场景，界面就绪回报覆盖每个入口。 */
 export function SessionQaApp(props: { scene: QaScene }) {
+  // 完整测试包通过开发入口承载 QA 时，只有组件实际挂载后才报告界面就绪。
+  useEffect(() => {
+    window.zeus?.reportRendererBootstrapReady?.();
+  }, []);
+  if (props.scene.query === 'navigation') return <NavigationQa />;
+  if (props.scene.query === 'conversation-visibility') return <ConversationVisibilityQa />;
+
   if (props.scene.query === 'queue-actions') return <QueueActionsQa />;
   if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'model-select') return <ModelSelectQa />;
@@ -103,6 +119,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
   if (props.scene.query === 'review') return <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
+  if (props.scene.query === 'plan-implementation') return <PlanImplementationQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
   if (props.scene.query === 'copy') return <CopyErrorQa />;
   const items = props.scene.activities.map((_, index) => activity(props.scene, index));
@@ -135,25 +152,180 @@ export function SessionQaApp(props: { scene: QaScene }) {
   );
 }
 
-/** 复现真实队列状态并检查生产时间线的操作入口，不连接模型或正式数据。 */
-function QueueActionsQa() {
-  /** 单条消息在正常排队、未知送达和已接纳之间切换。 */
-  const [scenario, setScenario] = useState('outcome_unknown');
-  /** 检查只读取当前场景的实际按钮。 */
+/** 使用生产会话树检查数量截断、实时状态、搜索和展开更多。 */
+function ConversationVisibilityQa() {
+  /** 沿用侧栏默认普通会话额度与每次追加数量。 */
+  const [limit, setLimit] = useState(6);
+  /** 运行结束后恢复普通会话额度，避免永久保留旧运行标记。 */
+  const [running, setRunning] = useState(true);
+  /** 搜索结果应全部展示，不受额度影响。 */
+  const [query, setQuery] = useState('');
+  /** 选择记录用于验证额外显示的会话可以正常进入。 */
+  const [selected, setSelected] = useState<string | null>(null);
+  /** 人工检查直接读取生产树的可见条目。 */
   const surface = useRef<HTMLDivElement>(null);
-  /** 回调结果用于确认检查入口沿用原有恢复操作。 */
+  /** 将检查结果显示在页面，便于保存运行证据。 */
   const [result, setResult] = useState('等待检查');
-  /** 复用现场错误码，正文使用固定的非业务示例。 */
-  const submission = {
-    id: 'qa-submission',
-    content: '请调整执行人头像的显示。',
-    position: 1,
-    status: scenario === 'queued' ? 'queued' : scenario === 'accepted' ? 'resolved' : 'paused',
-    pausedReason: scenario === 'queued' || scenario === 'accepted' ? null : scenario,
-    providerTurnId: scenario === 'accepted' ? 'qa-turn' : null,
-    error: scenario === 'outcome_unknown' || scenario === 'recovery_required' ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: scenario === 'recovery_required' } : null,
+  /** 运行会话故意排在 14 条普通会话之后，复现旧截断隐藏活动现场。 */
+  const conversations: NativeConversationChoice[] = Array.from({ length: 24 }, (_, index) => ({
+    id: `qa-sidebar-${index + 1}`,
+    navigationId: `qa-navigation-${index + 1}`,
+    projectId: 'qa-project',
+    taskId: null,
+    title: `${index < 14 ? '普通会话' : '运行会话'} ${index + 1}`,
+    summary: null,
+    status: 'ready',
+    stage: 'completed',
+    stageUpdatedAt: new Date(Date.UTC(2026, 8, 10, 2, 0, 24 - index)).toISOString(),
+    transportKind: 'codex_native',
+    providerId: 'qa-provider',
+    providerThreadId: null,
+    providerModel: null,
+    providerState: null,
+    createdAt: '2026-09-10T02:00:00Z',
+    updatedAt: '2026-09-10T02:00:00Z',
+    archived: false,
+    hasUnreadAttention: false,
+    attentionKind: null,
+    attentionRevision: 0,
+    attentionTurnId: null,
+    attentionUpdatedAt: null,
+    pendingRequestKind: null,
+    listRuntimeState: running && index >= 14 && index < 23 ? (['streaming', 'queued', 'connecting', 'reconnecting'] as const)[index % 4] : 'ready',
+    resumable: true,
+    readOnly: false,
+  }));
+  /** 同一个项目混合直属会话和任务会话，验证合并后的统一截断。 */
+  const group = {
+    projectId: 'qa-project',
+    projectName: '会话可见性预览',
+    conversations: conversations.slice(0, 12),
+    taskStatuses: [],
+    tasks: conversations.slice(12).map((conversation) => ({ taskId: conversation.id, taskCode: '预览任务', taskTitle: conversation.title, managementStatus: 'running', conversations: [conversation] })),
   };
-  /** 活动轮次确保普通队列确实处于等待，而非空闲队首交接。 */
+  /** 精确检查结果身份与顺序，最后一条的实时导航状态覆盖目录中的 ready。 */
+  function checkVisible(): void {
+    /** 预览期望保留前若干普通会话和全部运行会话，搜索时不截断。 */
+    const expected = conversations
+      .filter((conversation, index) => (query.trim() ? conversation.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) : (running && index >= 14) || index < limit))
+      .map((conversation) => conversation.title);
+    /** 读取完整标题，避免可见数量正确但条目身份或顺序错误。 */
+    const actual = [...(surface.current?.querySelectorAll('.session-conversation-title') ?? [])].map((element) => element.textContent);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`会话展示检查失败：${JSON.stringify(actual)}`);
+    setResult(`运行检查通过：展示 ${actual.length} 条会话，普通额度 ${limit}，${running ? '10 条进行中' : '运行已结束'}`);
+  }
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-light" data-theme="light">
+      <header className="qa-error-layout-heading">
+        <div>
+          <h1>进行中会话展示</h1>
+          <p>14 条普通会话之后排列 10 条进行中的会话，默认额度为 6。</p>
+        </div>
+        <nav aria-label="预览设置">
+          <input type="search" aria-label="搜索会话" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <Button aria-pressed={!running} onClick={() => setRunning((current) => !current)}>
+            切换运行结束
+          </Button>
+          <Button
+            onClick={() => {
+              setLimit(6);
+              setQuery('');
+              setRunning(true);
+            }}
+          >
+            恢复默认
+          </Button>
+          <Button onClick={checkVisible}>检查会话展示</Button>
+        </nav>
+      </header>
+      <p role="status" className="qa-error-layout-note">
+        {result}
+        {selected ? `；已选择 ${selected}` : ''}
+      </p>
+      <div ref={surface} style={{ maxWidth: 340, marginInline: 'auto' }}>
+        <ProjectConversationTree
+          groups={[group]}
+          language="zh-CN"
+          compactProjectLabel
+          query={query}
+          visibleConversationCount={limit}
+          conversationStates={{ 'qa-navigation-24': running ? 'streaming' : 'ready' }}
+          selectedConversationId={selected}
+          onSelectConversation={(conversation) => setSelected(conversation.navigationId!)}
+          onShowMore={() => setLimit((current) => current + 10)}
+        />
+      </div>
+    </main>
+  );
+}
+
+/** 复现真实队列投影与消息布局，只操作预览数据，不连接模型或正式数据。 */
+function QueueActionsQa() {
+  /** 地址参数可直接定位待验收状态。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 正常排队作为默认视觉对照，其他状态用于验证权限和恢复提示。 */
+  const [scenario, setScenario] = useState(parameters.get('state') ?? 'queued');
+  /** 内容样本覆盖短消息、长文本、附件和连续排队。 */
+  const [sample, setSample] = useState(parameters.get('sample') ?? 'reference');
+  /** 主题与窄栏只改变本页，不写入应用设置。 */
+  const [dark, setDark] = useState(parameters.has('dark'));
+  /** 通过真实内容容器复现任务窄分栏。 */
+  const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 中英文沿用生产组件的文案。 */
+  const [language, setLanguage] = useState<'zh-CN' | 'en-US'>(parameters.has('en') ? 'en-US' : 'zh-CN');
+  /** 可复现异步操作中的禁用与失败反馈。 */
+  const [failAction, setFailAction] = useState(false);
+  /** 保留每条原提交的操作结果，便于检查连续队列。 */
+  const [outcomes, setOutcomes] = useState<Record<string, 'accepted' | 'deleted'>>({});
+  /** 检查只读取当前场景中的生产组件。 */
+  const surface = useRef<HTMLDivElement>(null);
+  /** 显示操作回调与人工运行检查结果。 */
+  const [result, setResult] = useState('等待检查');
+  /** 定稿对照文本与英文文本具有同一含义。 */
+  const reference = language === 'zh-CN' ? '而且主智能体发送给子智能体的提示词为什么没显示?' : 'Why are the prompts sent from the main agent to subagents not displayed?';
+  /** 长文本保留 Markdown 结构，并触发原有展开全文入口。 */
+  const content =
+    sample === 'short'
+      ? language === 'zh-CN'
+        ? '好'
+        : 'OK'
+      : sample === 'long'
+        ? `${reference}\n\n${(language === 'zh-CN' ? '请保留每条消息的原始顺序，并确认附件与执行状态清晰可见。\n\n' : 'Keep the original message order, with attachments and execution state clearly visible.\n\n').repeat(26)}`
+        : reference;
+  /** 多条消息共享权威队列，队首之外的引导由生产逻辑禁用。 */
+  const submissions = (sample === 'multiple' ? [content, language === 'zh-CN' ? '好' : 'OK', language === 'zh-CN' ? '也请检查深色主题。' : 'Also check the dark theme.'] : [content])
+    .map((text, index) => ({
+      id: `qa-submission-${index + 1}`,
+      content: text,
+      position: index + 1,
+      status: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'resolved' : scenario === 'queued' || scenario === 'restoring' ? 'queued' : 'paused',
+      pausedReason: ['queued', 'accepted', 'restoring'].includes(scenario) ? null : scenario,
+      providerTurnId: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'qa-turn' : null,
+      createdAt: '2026-09-10T02:00:00Z',
+      attachments: sample === 'attachment' ? [{ name: '排队消息说明.md', mime: 'text/markdown', size: 128, kind: 'file' as const, localPath: '/qa/排队消息说明.md' }] : [],
+      error:
+        scenario === 'outcome_unknown' || scenario === 'recovery_required' ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: scenario === 'recovery_required' } : null,
+    }))
+    .filter((submission) => outcomes[submission.id] !== 'deleted');
+  /** 已接纳消息恢复为普通历史，检查底栏消失后不会重复正文或遗留占位。 */
+  const acceptedItems: NativeSessionItemBuffer[] = submissions
+    .filter((submission) => submission.status === 'resolved')
+    .map((submission) => ({
+      key: submission.id,
+      itemId: submission.id,
+      localItemId: submission.id,
+      conversationId: 'qa-queue',
+      threadId: 'qa-thread',
+      turnId: 'qa-turn',
+      type: 'userMessage',
+      status: 'completed',
+      phase: 'user',
+      text: submission.content,
+      payload: { submissionId: submission.id, attachments: submission.attachments },
+      resources: [],
+      updatedAt: submission.createdAt,
+    }));
+  /** 活动轮次确保普通队列正在等待，恢复原因直接传给生产投影。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: 'qa-queue',
@@ -161,54 +333,113 @@ function QueueActionsQa() {
     activeTurnId: 'qa-turn',
     startedTurnId: 'qa-turn',
     conversationState: 'active_prework',
-    queue: { state: { type: 'active', turnId: 'qa-turn', phase: 'prework' }, submissions: [submission] },
+    items: Object.fromEntries(acceptedItems.map((item) => [item.key, item])),
+    itemOrder: acceptedItems.map((item) => item.key),
+    queue: { state: { type: 'active', turnId: 'qa-turn', phase: 'prework' }, submissions, waitReason: scenario === 'restoring' ? 'conversation_restoring' : null },
   };
-  /** 只比较用户可见的按钮，防止恢复状态重新暴露删除或引导。 */
-  function checkActions(): void {
-    /** 待发送消息可删除；未知送达只能核对；接纳后不再有队列操作。 */
-    const expectedDelete = scenario === 'queued' || scenario === 'recovered_unsent';
-    /** 引导只对正常排队消息开放。 */
-    const expectedSteer = scenario === 'queued';
-    /** 两类未知送达均保留检查入口。 */
-    const expectedCheck = scenario === 'outcome_unknown' || scenario === 'recovery_required';
-    if (
-      Boolean(surface.current?.querySelector('.session-queued-thread-delete')) !== expectedDelete ||
-      Boolean(surface.current?.querySelector('.session-queued-thread-steer')) !== expectedSteer ||
-      [...(surface.current?.querySelectorAll('button') ?? [])].some((button) => button.textContent === '检查处理状态') !== expectedCheck
-    ) {
-      throw new Error(`队列操作检查失败：${scenario}`);
+  /** 切换场景时清除本页模拟结果，避免上一场景影响新的操作检查。 */
+  function resetPreview(): void {
+    setOutcomes({});
+    setResult('等待检查');
+  }
+  /** 延迟只用于观察真实按钮的处理中状态；失败不改变原提交。 */
+  async function runAction(id: string, outcome: 'accepted' | 'deleted'): Promise<void> {
+    setResult(`操作处理中：${id}`);
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    if (failAction) {
+      setResult(`操作失败，原消息保留：${id}`);
+      throw new Error('预览操作失败，原消息保留。');
     }
-    setResult(`运行检查通过：${scenario}`);
+    setOutcomes((current) => ({ ...current, [id]: outcome }));
+    setResult(`${outcome === 'accepted' ? '引导' : '删除'}回调已触发：${id}`);
+  }
+  /** 沿用既有运行检查，确认状态变化没有重新开放未知送达消息的操作。 */
+  function checkActions(): void {
+    /** 已接纳消息退出队列操作，其余按真实状态计算可见入口。 */
+    const pendingCount = submissions.filter((submission) => submission.status !== 'resolved').length;
+    /** 正常排队与已确认未发送可取消，恢复期间仍由生产权限控制。 */
+    const expectedDelete = ['queued', 'restoring', 'recovered_unsent'].includes(scenario) ? pendingCount : 0;
+    /** 引导入口只在 queued 状态显示，不可用原因由生产组件说明。 */
+    const expectedSteer = ['queued', 'restoring'].includes(scenario) ? pendingCount : 0;
+    /** 两种结果未知状态都仅提供检查处理状态。 */
+    const expectedCheck = ['outcome_unknown', 'recovery_required'].includes(scenario) ? pendingCount : 0;
+    if (
+      surface.current?.querySelectorAll('.session-queued-thread-delete').length !== expectedDelete ||
+      surface.current?.querySelectorAll('.session-queued-thread-steer').length !== expectedSteer ||
+      [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '检查处理状态' : 'Check processing status')).length !== expectedCheck
+    )
+      throw new Error(`队列操作检查失败：${scenario}`);
+    setResult(`运行检查通过：${scenario} / ${sample} / ${language}`);
   }
   return (
-    <main className="macos-ai-app zeus-shell qa-error-layout theme-light" data-theme="light">
-      <h1>排队消息操作</h1>
-      <nav aria-label="消息状态">
-        {['outcome_unknown', 'queued', 'recovery_required', 'recovered_unsent', 'accepted'].map((value, index) => (
-          <Button
-            key={value}
-            aria-pressed={scenario === value}
-            onClick={() => {
-              setScenario(value);
-              setResult('等待检查');
-            }}
-          >
-            {['送达未知', '正常排队', '引导待核对', '已确认未发送', '已接纳'][index]}
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout ${dark ? 'theme-dark' : 'theme-light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <div>
+          <h1>排队消息操作</h1>
+          <p>使用生产消息组件，检查定稿布局、状态与操作。</p>
+        </div>
+        <nav aria-label="预览设置">
+          <label>
+            消息状态{' '}
+            <select
+              value={scenario}
+              onChange={(event) => {
+                setScenario(event.target.value);
+                resetPreview();
+              }}
+            >
+              {['queued', 'restoring', 'outcome_unknown', 'recovery_required', 'recovered_unsent', 'accepted'].map((value, index) => (
+                <option key={value} value={value}>
+                  {['正常排队', '正在恢复', '送达未知', '引导待核对', '已确认未发送', '已接纳'][index]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            消息内容{' '}
+            <select
+              value={sample}
+              onChange={(event) => {
+                setSample(event.target.value);
+                resetPreview();
+              }}
+            >
+              {['reference', 'short', 'long', 'attachment', 'multiple'].map((value, index) => (
+                <option key={value} value={value}>
+                  {['定稿正文', '短消息', '长文本', '附件', '多条排队'][index]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button aria-pressed={dark} onClick={() => setDark((current) => !current)}>
+            深色
           </Button>
-        ))}
-      </nav>
-      <Button onClick={checkActions}>检查操作入口</Button>
-      <p role="status">{result}</p>
-      <div ref={surface}>
+          <Button aria-pressed={narrow} onClick={() => setNarrow((current) => !current)}>
+            窄分栏
+          </Button>
+          <Button aria-pressed={language === 'en-US'} onClick={() => setLanguage((current) => (current === 'zh-CN' ? 'en-US' : 'zh-CN'))}>
+            English
+          </Button>
+          <Button aria-pressed={failAction} onClick={() => setFailAction((current) => !current)}>
+            操作失败
+          </Button>
+          <Button onClick={checkActions}>检查操作入口</Button>
+        </nav>
+      </header>
+      <p role="status" className="qa-error-layout-note">
+        {result}
+      </p>
+      <div ref={surface} style={{ maxWidth: narrow ? 360 : undefined, marginInline: 'auto' }}>
         <ConversationTranscript
           state={state}
-          language="zh-CN"
+          language={language}
           transcriptHydrated
-          onSendQueuedNow={() => setScenario('accepted')}
-          onCancelQueuedSubmission={() => setResult('取消回调已触发')}
+          onSendQueuedNow={(id) => runAction(id, 'accepted')}
+          onCancelQueuedSubmission={(id) => runAction(id, 'deleted')}
           onRecoverQueue={() => setResult('检查处理状态回调已触发')}
         />
       </div>
+      <ApplicationErrorDialogHost />
     </main>
   );
 }
@@ -220,7 +451,7 @@ function MessageLayoutQa() {
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
-  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links ? 'completed' : 'running');
+  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
   const contentRef = useRef<HTMLDivElement>(null);
   /** 保留手动检查和点击的结果，便于在页面核对资源身份。 */
@@ -229,6 +460,10 @@ function MessageLayoutQa() {
   const [dark, setDark] = useState(parameters.has('dark'));
   /** 通过内容列宽复现任务侧栏空间，不依赖浏览器窗口尺寸。 */
   const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 同一份消息切换主会话和子智能体，直接对照共享展示。 */
+  const [subagent, setSubagent] = useState(parameters.has('subagent'));
+  /** 后台补入指令用于核验静态阅读位置，保持已有消息身份不变。 */
+  const [followupCount, setFollowupCount] = useState(0);
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
   /** 固定起止时间用于确认耗时始终为三分一秒。 */
@@ -264,11 +499,29 @@ function MessageLayoutQa() {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
     setLinkResult(`打开回调：${resource.id}`);
   }
+  /** 手动运行生产布局检查，覆盖计时合并、缺失过程与缺失时间的展示边界。 */
+  function checkLayout(): void {
+    /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
+    const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
+    /** 无过程的答复不能出现展开按钮。 */
+    const controls = contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [];
+    if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
+    if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
+    /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
+    const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
+    if (durations[0] && answer && !(durations[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error('耗时入口没有放在最终正文之前');
+    setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
+  }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
-    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。', payload: {}, status: 'completed' },
-    { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
-    { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。', payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {}, status: 'completed' },
+    ...(parameters.has('no-process')
+      ? []
+      : [
+          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
+          { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+        ]),
+    ...(subagent ? [{ type: 'userMessage', phase: 'user', text: '', payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'unavailable' } }, status: 'completed' }] : []),
     ...(!active && !parameters.has('no-answer')
       ? [
           {
@@ -276,12 +529,20 @@ function MessageLayoutQa() {
             phase: 'final_answer',
             text: links
               ? '已完成会话消息优化。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
-              : '已检查会话布局，执行状态紧跟处理摘要，消息操作与处理耗时显示在同一行。',
+              : '已检查会话布局，耗时与处理过程合并在正文上方；鼠标放到消息上时显示复制、反馈与时间戳。',
             payload: {},
             status: 'completed',
           },
         ]
       : []),
+    ...(!active && parameters.has('deliverable') ? [{ type: 'fileChange', phase: 'prework', text: '', payload: {}, status: 'completed' }] : []),
+    ...Array.from({ length: followupCount }, (_, index) => ({
+      type: 'userMessage',
+      phase: 'user',
+      text: `后续指令 ${index + 1}：继续检查消息展示。`,
+      payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } },
+      status: 'completed',
+    })),
   ].map((item, index) => ({
     ...item,
     key: `layout-${index}`,
@@ -289,10 +550,10 @@ function MessageLayoutQa() {
     conversationId: 'qa-layout',
     threadId: 'qa-layout',
     turnId: 'qa-layout-turn',
-    resources: links && item.phase === 'final_answer' ? resources : [],
+    resources: item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' }] : links && item.phase === 'final_answer' ? resources : [],
     updatedAt: completedAt,
   }));
-  /** 计时与终态均使用生产会话结构，覆盖无答复时的独立收尾。 */
+  /** 计时与终态均使用生产会话结构，覆盖无答复和缺少计时信息的轮次。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: 'qa-layout',
@@ -302,7 +563,16 @@ function MessageLayoutQa() {
     items: Object.fromEntries(items.map((item) => [item.key, item])),
     itemOrder: items.map((item) => item.key),
     turnsByProviderId: {
-      'qa-layout-turn': { id: 'qa-layout-turn', providerTurnId: 'qa-layout-turn', submissionId: null, status, startedAt, completedAt: active ? null : completedAt, createdAt: startedAt, updatedAt: completedAt },
+      'qa-layout-turn': {
+        id: 'qa-layout-turn',
+        providerTurnId: 'qa-layout-turn',
+        submissionId: null,
+        status,
+        startedAt: parameters.has('no-time') ? null : startedAt,
+        completedAt: active || parameters.has('no-end-time') ? null : completedAt,
+        createdAt: startedAt,
+        updatedAt: completedAt,
+      },
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
@@ -325,20 +595,139 @@ function MessageLayoutQa() {
           <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
             窄分栏
           </Button>
+          <Button aria-pressed={subagent} onClick={() => setSubagent(!subagent)}>
+            子智能体
+          </Button>
+          <Button onClick={checkLayout}>检查耗时入口</Button>
+          {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
-        <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
+        {links ? (
+          <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
+        ) : (
+          <ThreadLayoutQa state={state} subagent={subagent} language={parameters.has('en') ? 'en-US' : 'zh-CN'} narrow={narrow} onNarrowChange={setNarrow} onClose={() => setSubagent(false)} />
+        )}
       </div>
-      {links ? (
-        <div className="qa-error-layout-note">
-          <p role="status">{linkResult}</p>
-          <span>来源：</span>
-          <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
-        </div>
-      ) : null}
+      <div className="qa-error-layout-note">
+        <p role="status">{linkResult}</p>
+        {links ? (
+          <>
+            <span>来源：</span>
+            <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+          </>
+        ) : null}
+      </div>
     </main>
+  );
+}
+
+/** 主、子线程使用同一组场景数据；只模拟读取回调，不连接真实模型。 */
+function ThreadLayoutQa(props: { state: NativeSessionState; subagent: boolean; language: 'zh-CN' | 'en-US'; narrow: boolean; onNarrowChange: (narrow: boolean) => void; onClose: () => void }) {
+  /** 预览中的缺失指标沿用真实不可用值。 */
+  const missing = { state: 'unavailable' as const, reason: '预览未提供该项数据' };
+  /** 完整详情覆盖缺失指标、长目录与可复制的线程身份。 */
+  const runtime: NativeRuntimeDetailsSnapshot = {
+    model: { state: 'available', value: 'gpt-5.6-sol' },
+    effort: { state: 'available', value: 'high' },
+    serviceTier: { state: 'available', value: 'priority' },
+    usage: {
+      serviceTier: missing,
+      totalTokens: { state: 'available', value: 124000 },
+      inputTokens: missing,
+      outputTokens: missing,
+      reasoningOutputTokens: missing,
+      contextTokens: { state: 'available', value: 47500 },
+      contextWindow: { state: 'available', value: 258000 },
+      cacheHitRate: { state: 'available', value: 0.613 },
+      apiEquivalentUsd: missing,
+      priceCoverage: missing,
+      pricingCatalogDate: missing,
+      pricingSourceUrls: missing,
+      historyComplete: missing,
+    },
+    performance: { latestOutputTokensPerSecond: missing, latestFirstVisibleResponseMs: missing, cumulativeProcessedDurationMs: missing },
+    activity: { turnCount: { state: 'available', value: 1 }, modelRequestCount: missing, toolOrCommandCount: missing, retryCount: missing, failedTurnCount: missing },
+    changeSummary: missing,
+    environment: {
+      cwd: { state: 'available', value: '/workspace/zeus/tasks/ZEUS-0541/long-directory-for-layout-verification' },
+      branch: { state: 'available', value: 'zeus/ZEUS-0541-task-02' },
+      nativeSessionId: { state: 'available', value: 'qa-agent-thread' },
+      nativeSessionPath: { state: 'available', value: '/workspace/provider/sessions/2026/09/10/qa-agent-thread.jsonl' },
+    },
+  };
+  /** 标题与原生轮次使用相同终态，改变场景时详情需重新读取才更新。 */
+  const turn = props.state.turnsByProviderId['qa-layout-turn']!;
+  /** 面板列表由生产组件打开，确保导航和最终刷新都经过真实路径。 */
+  const agent: NativeSubagentSummary = {
+    id: 'qa-agent-thread',
+    parentThreadId: 'qa-parent',
+    title: 'Kierkegaard',
+    nickname: 'Kierkegaard',
+    role: null,
+    path: '/root/worker',
+    preview: '',
+    status: turn.status as NativeSubagentSummary['status'],
+    createdAt: turn.createdAt,
+    updatedAt: turn.updatedAt,
+  };
+  /** 旧指令字段故意提供内容，确认已移除独立栏且不拿它替代加密输入。 */
+  const prompt = { state: 'available' as const, text: '独立任务指令栏不应再出现', source: 'provider_thread_source' as const, reason: null };
+  /** 消息仍经子线程适配器进入共享时间线。 */
+  const thread: NativeSubagentThreadSnapshot = {
+    conversationId: 'qa-layout',
+    parentThreadId: 'qa-parent',
+    agent,
+    taskInstruction: prompt,
+    inheritedContext: prompt,
+    runtime,
+    historyBoundary: { state: 'confirmed', createdAt: turn.createdAt, ownedTurnCount: 1, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
+    turns: [
+      {
+        id: turn.id,
+        status: turn.status,
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        items: props.state.itemOrder.map((key) => {
+          /** 每条输入保留自身身份，完成场景仅追加最终答复。 */
+          const item = props.state.items[key]!;
+          return { ...item, id: item.itemId, providerItemId: item.itemId, startedAt: turn.startedAt, completedAt: turn.completedAt, updatedAt: item.updatedAt ?? turn.updatedAt };
+        }),
+      },
+    ],
+  };
+  return (
+    <div className="session-workspace-root" style={{ display: 'flex', flexDirection: 'column', height: 560, minWidth: 0 }}>
+      {props.subagent ? (
+        <SubagentWorkspace
+          language={props.language}
+          conversationId="qa-layout"
+          activityRevision={turn.status}
+          hintCount={1}
+          initialSnapshot={{ conversationId: 'qa-layout', parentThreadId: 'qa-parent', items: [agent] }}
+          fullWidth={!props.narrow}
+          onFullWidthChange={(wide) => props.onNarrowChange(!wide)}
+          onClose={props.onClose}
+          loadList={async () => ({ conversationId: 'qa-layout', parentThreadId: 'qa-parent', items: [agent] })}
+          loadThread={async () => thread}
+        />
+      ) : (
+        <>
+          <header className="session-thread-header">
+            <div className="session-thread-title-copy">
+              <span className="session-thread-title-row">
+                <strong>会话消息布局</strong>
+              </span>
+            </div>
+            <div className="session-thread-subtitle-row">
+              <RuntimeDetails runtime={runtime} scope="session" language={props.language} />
+            </div>
+          </header>
+          <ConversationTranscript state={props.state} language={props.language} transcriptHydrated />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -446,16 +835,127 @@ function ErrorLayoutQa() {
   );
 }
 
-/** 使用真实会话输入组件验收粘贴，只在本页记录发送结果，不调用模型。 */
+/** 计划确认使用真实卡片，响应只显示在页面内，便于检查布局、快捷键及重复操作。 */
+function PlanImplementationQa() {
+  /** 地址参数沿用其他预览的主题、语言和窄宽度入口。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 手动保持处理态，检查禁用按钮的尺寸及颜色。 */
+  const [busy, setBusy] = useState(false);
+  /** 记录每次真实回调，输入法确认和换行不应增加提交次数。 */
+  const [responses, setResponses] = useState<Array<{ action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] }>>([]);
+  /** 复用既有粘贴焦点检查，在页面内显示结果。 */
+  const [pasteResult, setPasteResult] = useState('');
+  /** 浏览器预览模拟资源桥，真实应用仍使用原生授权和文件读取。 */
+  useEffect(() => {
+    if (window.zeus) return;
+    window.zeus = {
+      authorizeConversationFiles: async (files, source) => {
+        await nextQaTask();
+        await nextQaTask();
+        if (parameters.has('resource-error')) throw new Error('附件读取失败（预览）');
+        return {
+          resources: files.map((file) => ({ name: file.name, kind: file.type.startsWith('image/') ? 'image' : 'file', mime: file.type || 'application/octet-stream', size: file.size, source, uploadRef: `qa:${file.name}` })),
+          failedCount: 0,
+        };
+      },
+      materializeConversationResources: async (resources) =>
+        resources.map((resource) => ({
+          name: resource.name ?? 'Pasted text.txt',
+          kind: 'pasted_text',
+          mime: 'text/plain',
+          size: new Blob([resource.text ?? '']).size,
+          source: 'paste',
+          characterCount: resource.text?.length,
+          restorableText: resource.text,
+          uploadRef: 'qa:pasted-text',
+        })),
+      readConversationClipboardResources: async () => ({ resources: [{ name: '剪贴板附件.txt', kind: 'file', mime: 'text/plain', size: 12, source: 'paste', uploadRef: 'qa:clipboard-file' }], text: '' }),
+      discardConversationResources: async (resources) => ({ discardedCount: resources.length }),
+    } as NonNullable<Window['zeus']>;
+    return () => {
+      delete window.zeus;
+    };
+  }, []);
+  return (
+    <main
+      className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${parameters.has('dark') ? 'dark' : 'light'}`}
+      data-theme={parameters.has('dark') ? 'dark' : 'light'}
+      style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
+    >
+      <h1>计划确认与修改</h1>
+      <label>
+        <input type="checkbox" checked={busy} onChange={(event) => setBusy(event.currentTarget.checked)} />
+        处理中
+      </label>
+      <button
+        type="button"
+        onClick={async () => {
+          /** 检查真实计划输入节点，不读取系统剪贴板或用户文件。 */
+          const textarea = document.querySelector('.session-plan-refinement textarea');
+          if (!(textarea instanceof HTMLTextAreaElement)) return setPasteResult('先展开修改意见');
+          try {
+            setPasteResult(await checkAttachmentFocus(textarea, textarea));
+          } catch (error) {
+            setPasteResult(error instanceof Error ? error.message : String(error));
+          }
+        }}
+      >
+        检查附件粘贴与焦点
+      </button>
+      <output>{pasteResult}</output>
+      <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', padding: 0, width: parameters.has('narrow') ? 360 : 900, maxWidth: '100%', margin: '24px auto' }}>
+        <div className="session-interaction-dock" style={{ inlineSize: '100%' }}>
+          <PlanImplementationRequestSurface
+            request={{ id: 'qa-plan-implementation', conversationId: 'qa-plan', turnId: 'qa-turn', planItemId: 'qa-plan-item', status: 'pending', submissionId: null, createdAt: '', resolvedAt: null, updatedAt: '' }}
+            language={parameters.has('en') ? 'en-US' : 'zh-CN'}
+            busy={busy}
+            onRespond={(_id, response) => setResponses((current) => [...current, response])}
+            onChooseAttachments={chooseComposerQaAttachments}
+          />
+        </div>
+      </div>
+      <pre aria-label="计划响应记录" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {JSON.stringify(responses, null, 2)}
+      </pre>
+      <ApplicationErrorDialogHost language={parameters.has('en') ? 'en' : 'zh-CN'} />
+    </main>
+  );
+}
+
+/** 固定附件只进入预览草稿，不读取用户文件或打开原生文件选择器。 */
+async function chooseComposerQaAttachments(): Promise<NativeConversationAttachment[]> {
+  return [{ name: '对齐检查.txt', kind: 'file', mime: 'text/plain', size: 12, uploadRef: `qa:${crypto.randomUUID()}` }];
+}
+
+/** 使用真实会话输入组件验收工具栏及粘贴，只在本页记录发送结果，不调用模型。 */
 function ComposerMarkdownQa() {
   /** 地址参数覆盖窄分栏、深色和英文。 */
   const parameters = new URLSearchParams(window.location.search);
   /** 草稿沿用真实输入框回写路径。 */
-  const [state, setState] = useState(createInitialSessionState);
+  const [state, setState] = useState(() => {
+    /** 长记录与输入框放在同一真实容器内，核对返回最新按钮的悬停与滚动。 */
+    const initial = createInitialSessionState();
+    if (!parameters.has('history')) return initial;
+    /** 单条长回复足以产生滚动距离，不连接模型或读取用户历史。 */
+    const item = activity(
+      {
+        query: 'composer-history',
+        title: '',
+        summary: '',
+        answer: '',
+        activities: [{ type: 'agentMessage', status: 'completed', text: Array.from({ length: 24 }, (_, index) => `第 ${index + 1} 段会话记录：检查返回最新消息按钮，鼠标悬停和键盘聚焦时保持位置，点击后回到末尾。`).join('\n\n') }],
+      },
+      0,
+    );
+    item.phase = 'final_answer';
+    return { ...initial, conversationId: item.conversationId, items: { [item.key]: item }, itemOrder: [item.key], terminalTurnIds: { [item.turnId]: 'completed' as const } };
+  });
   /** 展示提交内容，便于比较缩进、转义和技能调用是否保留。 */
   const [submitted, setSubmitted] = useState('');
   /** 只读状态可在编辑期间切换，核对发送和编辑禁用条件。 */
   const [readOnly, setReadOnly] = useState(false);
+  /** 真实设置回写控制选中状态，模型切换后不会被旧属性还原。 */
+  const [settings, setSettings] = useState<ComposerRuntimeSettings>({ model: 'qa-model', effort: 'max', permissionMode: 'auto', collaborationMode: 'default' });
   /** 保留统一输入接口，样例通过真实编辑器的粘贴处理插入，不访问系统剪贴板。 */
   const textareaRef = useRef<ComposerInputHandle | null>(null);
   /** 用户提供的十二列表格，保留转义、长编号及前导零。 */
@@ -486,12 +986,27 @@ function ComposerMarkdownQa() {
       data-theme={parameters.has('dark') ? 'dark' : 'light'}
       style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
     >
-      <h1>粘贴 Markdown</h1>
+      <h1>会话输入框与工具栏</h1>
       <p>Markdown 默认排版，点击内容直接修改；Shift+Enter 换行，Enter 记录发送原文。</p>
       <textarea aria-label="粘贴样例" value={pasteSample} onChange={(event) => setPasteSample(event.currentTarget.value)} style={{ display: 'block', width: '100%', height: 72, marginBlock: 12 }} />
       <label>
         <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.currentTarget.checked)} />
         只读
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={state.activeTurnId !== null}
+          onChange={(event) =>
+            setState((current) => ({
+              ...current,
+              conversationState: event.target.checked ? 'active_prework' : 'native_loading',
+              activeTurnId: event.target.checked ? 'qa-turn' : null,
+              startedTurnId: event.target.checked ? 'qa-turn' : null,
+            }))
+          }
+        />
+        响应进行中（清空草稿显示停止）
       </label>
       <button
         type="button"
@@ -542,20 +1057,55 @@ function ComposerMarkdownQa() {
       </button>
       <output aria-label="附件焦点检查">{focusResult}</output>
       <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', boxSizing: 'border-box', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%', marginBlock: 24 }}>
+        {parameters.has('history') ? (
+          <div style={{ display: 'flex', height: 300 }}>
+            <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated />
+          </div>
+        ) : null}
         <ConversationComposer
           textareaRef={textareaRef}
           state={state}
           language={parameters.has('en') ? 'en-US' : 'zh-CN'}
           readOnly={readOnly}
-          permissionMode="auto"
-          collaborationMode="default"
+          permissionMode={settings.permissionMode}
+          collaborationMode={settings.collaborationMode}
+          runtimeSettings={settings}
+          onRuntimeSettingsChange={setSettings}
+          goalAvailable
+          onSetGoal={(objective) => {
+            setSubmitted(`目标：${objective}`);
+            return true;
+          }}
           capabilities={{
             generationId: 'qa',
             initializedAt: '',
             projectId: 'qa',
             preferredModel: 'qa-model',
-            models: [{ id: 'qa-model', model: 'qa-model', displayName: '验收模型', supportedReasoningEfforts: [], serviceTiers: [] }],
+            models: [
+              {
+                id: 'qa-model',
+                model: 'GPT-6-Astra',
+                sourceName: 'Codex',
+                displayName: 'GPT-6-Astra',
+                supportedReasoningEfforts: ['xhigh', 'max'],
+                defaultReasoningEffort: 'max',
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '预览速度状态' }],
+              },
+              {
+                id: 'qa-long-model',
+                model: 'Model with a deliberately long name for narrow window inspection',
+                sourceName: 'Long provider name',
+                supportedReasoningEfforts: ['xhigh', 'max'],
+                defaultReasoningEffort: 'xhigh',
+                serviceTiers: [],
+              },
+            ],
             codexAccount: { generationId: 'qa', requiresOpenaiAuth: false, signedIn: false, accountType: null, planType: null },
+          }}
+          onChooseAttachments={async () => {
+            /** 通过真实附件草稿路径加入固定样例。 */
+            const attachments = await chooseComposerQaAttachments();
+            setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }));
           }}
           onAddAttachments={(attachments) => setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
           onRemoveAttachment={(attachment) => setState((current) => ({ ...current, attachments: current.attachments.filter((candidate) => candidate !== attachment) }))}
@@ -566,7 +1116,10 @@ function ComposerMarkdownQa() {
             setSubmitted(`原文逐字符一致：是\n${JSON.stringify(settings, null, 2)}`);
             setState((current) => ({ ...current, draft: '' }));
           }}
-          onInterrupt={() => undefined}
+          onInterrupt={() => {
+            setSubmitted('已停止预览响应');
+            setState((current) => ({ ...current, conversationState: 'native_loading', activeTurnId: null, startedTurnId: null }));
+          }}
         />
       </div>
       <output aria-label="当前草稿" style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -683,7 +1236,7 @@ function QuestionQa() {
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
   const scenario = parameters.get('case') ?? 'single';
   /** PLAN 真实已答题记录用于对照，跨轮次场景复现用户反馈。 */
-  const synchronous = scenario === 'plan' || scenario === 'multiple';
+  const synchronous = scenario === 'plan' || scenario === 'multiple' || scenario === 'plan-freeform';
   /** 另发消息属于新的执行轮次，不能依赖原题仍在首屏。 */
   const asNewMessage = scenario === 'newturn' || scenario === 'closed';
   /** 独立问题身份避免各场景草稿串用。 */
@@ -706,7 +1259,7 @@ function QuestionQa() {
         scenario === 'newturn'
           ? '能看到最新模型的那位用户，Zeus「关于」里显示的具体版本号是多少？需要确认是否也是 0.3.111，才能排除安装包版本差异。'
           : '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
-      ...(scenario === 'freeform' || scenario === 'newturn' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
+      ...(scenario === 'freeform' || scenario === 'newturn' || scenario === 'plan-freeform' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
     },
     ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
   ];
@@ -786,11 +1339,11 @@ function QuestionQa() {
   }
 
   return (
-    <main className="macos-ai-app zeus-shell qa-page">
+    <main className={`macos-ai-app zeus-shell qa-page theme-${parameters.has('dark') ? 'dark' : 'light'}`} data-theme={parameters.has('dark') ? 'dark' : 'light'}>
       <style>{'.qa-page { display: block !important; box-sizing: border-box; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
       <h1>PLAN 与异步询问共用表单验收</h1>
       <nav aria-label="询问场景">
-        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
+        {['single', 'plan', 'plan-freeform', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
           <a key={name} href={`?questions&case=${name}`} style={{ marginRight: 16 }}>
             {name}
           </a>
@@ -813,12 +1366,13 @@ function QuestionQa() {
         <ConversationTranscript state={state} language={language} transcriptHydrated onOpenAsyncQuestion={() => setOpen(true)} />
         {open && !delivery ? (
           <div className="session-interaction-dock">
-            {scenario === 'plan' || scenario === 'multiple' ? (
+            {synchronous ? (
               <RequestUserInputPanel
                 request={{ id: identity, expiresAt: null }}
                 questions={normalizeRequestQuestions({ payload: { questions: asyncMessageQuestions(item.payload).map((question) => ({ ...question, multiple: scenario === 'multiple' })) } })}
                 language={language}
                 autoFocus
+                onChooseAttachments={chooseComposerQaAttachments}
                 onRespond={async (_id, response) => {
                   await accept(item, response.answers as typeof answers);
                   setOpen(false);
@@ -1193,6 +1747,242 @@ function MarkdownReviewQa() {
             }}
           />
         )}
+      </div>
+    </main>
+  );
+}
+
+/** 完整目录与延迟正文使用模拟数据，交互、虚拟化和动画均使用生产组件。 */
+function NavigationQa() {
+  /** 地址允许独立核对超过七条、长历史和窄窗口。 */
+  const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  /** 目录总量可自然增减，不改变生产导航规则。 */
+  const [count, setCount] = useState(Math.max(1, Math.min(10000, Number(parameters.get('count')) || 1000)));
+  /** 启动时只读取最后四轮正文。 */
+  const [loaded, setLoaded] = useState(() => new Set(Array.from({ length: 4 }, (_, index) => count - 4 + index).filter((index) => index >= 0)));
+  /** 持续生成只向最后一轮追加文字。 */
+  const [revision, setRevision] = useState(0);
+  /** 手动控制持续生成，便于比较静止和生成中的帧耗时。 */
+  const [streaming, setStreaming] = useState(false);
+  /** 两种主题使用正式主题变量。 */
+  const [dark, setDark] = useState(parameters.has('dark'));
+  /** 窄容器模拟应用侧栏占用空间。 */
+  const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 失败由下一次真实读取回调抛出，重试仍经过生产入口。 */
+  const directoryFailure = useRef(parameters.has('directory-failure'));
+  /** 正文失败只作用于最早轮次。 */
+  const bodyFailure = useRef(parameters.has('body-failure'));
+  /** 挂载节点用于只读采样实际滚动、帧和长任务。 */
+  const surface = useRef<HTMLDivElement>(null);
+  /** 运行记录不写入应用数据。 */
+  const [report, setReport] = useState('等待运行检查');
+  /** 计时器在离开验收页时停止。 */
+  const frameRef = useRef(0);
+  /** 目录本身与正文加载集合互不依赖。 */
+  const entries = useMemo<ConversationNavigationEntry[]>(
+    () =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `history-${index}`,
+        turnId: `turn-${index}`,
+        providerTurnId: `turn-${index}`,
+        clientUserMessageId: `client-${index}`,
+        providerItemId: `user-${index}`,
+        sequence: index * 2 + 1,
+        occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+        prompt: `第 ${index + 1} 次发言：检查完整历史定位和鼠标移动时的预览。`,
+        response: `这是第 ${index + 1} 轮的最终答复。目录在打开时已经包含完整发言；正文靠近视口后才读取。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。`,
+        status: 'completed',
+      })),
+    [count],
+  );
+  /** 目录首次读取与正文独立。 */
+  const loadNavigation = useCallback(async () => {
+    if (directoryFailure.current) throw new Error('验收注入：目录读取失败');
+    return { conversationId: 'qa-navigation', throughEventSeq: 1, entries };
+  }, [entries]);
+  /** 延迟补齐目标轮次，让锚点补偿经历真实组件尺寸变化。 */
+  const loadTurn = useCallback(async (turnId: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    if (bodyFailure.current && turnId === 'turn-0') throw new Error('验收注入：最早正文读取失败');
+    /** 目录身份直接映射示例轮次。 */
+    const index = Number(turnId.slice(5));
+    setLoaded((previous) => (previous.has(index) ? previous : new Set([...previous, index])));
+  }, []);
+  useEffect(() => {
+    if (!streaming) return;
+    /** 每秒十次增量复现持续生成，计数不影响稳定消息身份。 */
+    const timer = setInterval(() => setRevision((value) => value + 1), 100);
+    return () => clearInterval(timer);
+  }, [streaming]);
+  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
+  /** 实际正文只投影已经读取的轮次。 */
+  const state = useMemo<NativeSessionState>(() => {
+    /** 时间线保持用户与答复的真实相对顺序。 */
+    const items: NativeSessionItemBuffer[] = [...loaded]
+      .sort((a, b) => a - b)
+      .flatMap((index) => {
+        /** 超出当前目录的旧验收项不会进入新场景。 */
+        const entry = entries[index];
+        if (!entry) return [];
+        return ['user', 'assistant'].map((role) => ({
+          key: `${role}-${index}`,
+          conversationId: 'qa-navigation',
+          threadId: 'qa-navigation',
+          turnId: entry.turnId,
+          itemId: role === 'user' ? entry.id : `answer-${index}`,
+          providerItemId: role === 'user' ? entry.providerItemId! : `answer-${index}`,
+          ...(role === 'user' ? { clientUserMessageId: entry.clientUserMessageId! } : {}),
+          type: role === 'user' ? 'userMessage' : 'agentMessage',
+          phase: role === 'user' ? 'user' : 'final_answer',
+          status: 'completed',
+          text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
+          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1) },
+          resources: [],
+          updatedAt: entry.occurredAt,
+        }));
+      });
+    return {
+      ...createInitialSessionState(),
+      conversationId: 'qa-navigation',
+      transportState: 'ready',
+      conversationState: 'idle',
+      transcriptRevision: revision,
+      items: Object.fromEntries(items.map((item) => [item.key, item])),
+      itemOrder: items.map((item) => item.key),
+      turnsByProviderId: Object.fromEntries(
+        entries.map((entry) => [
+          entry.turnId,
+          { id: entry.turnId, providerTurnId: entry.turnId, submissionId: null, status: 'completed', startedAt: entry.occurredAt, completedAt: entry.occurredAt, createdAt: entry.occurredAt, updatedAt: entry.occurredAt },
+        ]),
+      ),
+      terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
+    };
+  }, [loaded, entries, revision, count]);
+
+  /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
+  function recordFrames() {
+    cancelAnimationFrame(frameRef.current);
+    /** 宿主元素只在开始时读取，采样不逐帧测量布局。 */
+    const transcript = surface.current?.querySelector<HTMLElement>('.session-transcript');
+    /** 起始滚动用于核对悬停是否误触发正文定位。 */
+    const initialScroll = transcript?.scrollTop ?? 0;
+    /** 帧间隔来自浏览器实际时钟。 */
+    const frames: number[] = [];
+    /** 长任务记录主线程阻塞。 */
+    const tasks: number[] = [];
+    /** 卡片重建数用于检查相邻预览是否闪回入场。 */
+    const cards = new Set<Element>();
+    /** 只在有长任务时回调，不逐帧扫描正文。 */
+    const observer = new PerformanceObserver((list) => tasks.push(...list.getEntries().map((entry) => entry.duration)));
+    observer.observe({ type: 'longtask', buffered: false });
+    /** 有限采样便于比较不同操作。 */
+    const started = performance.now();
+    /** 上一帧时刻用于计算间隔。 */
+    let previous = started;
+    setReport('采样 10 秒：可扫过、反向、移出重入和进入卡片。');
+    /** 只读取帧时钟、滚动值与容器身份，不写入被验收界面。 */
+    const sample = (now: number) => {
+      frames.push(now - previous);
+      previous = now;
+      /** 单个已知浮层选择器与正文列表无关。 */
+      const card = document.querySelector('.session-navigation-preview');
+      if (card) cards.add(card);
+      if (now - started < 10000) {
+        frameRef.current = requestAnimationFrame(sample);
+        return;
+      }
+      observer.disconnect();
+      frames.sort((a, b) => a - b);
+      /** 中位数估算当前浏览器实际帧节奏，不冒充显示器规格。 */
+      const median = frames[Math.floor(frames.length / 2)] ?? 0;
+      setReport(
+        JSON.stringify(
+          {
+            frames: frames.length,
+            medianMs: median,
+            p95Ms: frames[Math.floor(frames.length * 0.95)],
+            maxMs: frames[frames.length - 1],
+            overOneAndHalfFrames: frames.filter((value) => value > median * 1.5).length,
+            longTasks: tasks,
+            previewContainers: cards.size,
+            scrollDelta: (transcript?.scrollTop ?? 0) - initialScroll,
+            ticks: surface.current?.querySelectorAll('.session-navigation-tick').length,
+            renderedRows: surface.current?.querySelectorAll('[data-transcript-row-key]').length,
+            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+          },
+          null,
+          2,
+        ),
+      );
+    };
+    frameRef.current = requestAnimationFrame(sample);
+  }
+  return (
+    <main
+      className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'}`}
+      data-theme={dark ? 'dark' : 'light'}
+      style={{ padding: '48px 16px 16px', height: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}
+    >
+      <nav aria-label="刻度验收控制" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button onClick={() => setDark(!dark)}>深色</Button>
+        <Button onClick={() => setNarrow(!narrow)}>窄窗口</Button>
+        <Button
+          onClick={() => {
+            setLoaded((previous) => new Set([...previous, count]));
+            setCount(count + 1);
+          }}
+        >
+          新增发言
+        </Button>
+        <Button onClick={() => setStreaming(!streaming)}>{streaming ? '停止生成' : '持续生成'}</Button>
+        <Button
+          onClick={() => {
+            directoryFailure.current = false;
+            bodyFailure.current = false;
+            setReport('故障已解除，可在目录或目标占位点击重试。');
+          }}
+        >
+          解除故障
+        </Button>
+        <Button onClick={recordFrames}>记录帧耗时</Button>
+        <a href="?navigation&count=7">短历史</a>
+        <a href="?navigation&count=1000">长历史</a>
+        <a href="?navigation&count=8&directory-failure">目录故障</a>
+        <a href="?navigation&count=8&body-failure">正文故障</a>
+        <Button
+          onClick={() => {
+            /** 几何检查读取真实样式，不修改被验收的生产元素。 */
+            const ticks = surface.current?.querySelectorAll<HTMLElement>('.session-navigation-tick');
+            /** 采样第一条刻度的真实样式与相邻位置差。 */
+            const first = ticks?.[0];
+            /** 正文虚拟窗口的节点数独立于目录总量。 */
+            const rows = surface.current?.querySelectorAll('[data-transcript-row-key]');
+            setReport(
+              JSON.stringify(
+                {
+                  ticks: ticks?.length,
+                  tickHeight: first?.getBoundingClientRect().height,
+                  pitch: first && ticks?.[1] ? ticks[1].getBoundingClientRect().top - first.getBoundingClientRect().top : null,
+                  lineWidth: first?.firstElementChild?.getBoundingClientRect().width,
+                  lineHeight: first?.firstElementChild?.getBoundingClientRect().height,
+                  renderedRows: rows?.length,
+                  loadedTurns: loaded.size,
+                  railHeight: surface.current?.querySelector('.session-navigation-rail')?.getBoundingClientRect().height,
+                },
+                null,
+                2,
+              ),
+            );
+          }}
+        >
+          检查布局
+        </Button>
+      </nav>
+      <pre role="status" style={{ margin: 0, maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 11 }}>
+        {report}
+      </pre>
+      <div ref={surface} className="ai-workspace" style={{ width: narrow ? 360 : '100%', maxWidth: '100%', flex: 1, minHeight: 0, display: 'flex' }}>
+        <ConversationTranscript state={state} language="zh-CN" transcriptHydrated onLoadNavigation={loadNavigation} onLoadNavigationTurn={loadTurn} />
       </div>
     </main>
   );

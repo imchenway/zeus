@@ -34,7 +34,7 @@ import {
   writeTaskIntegrationDraft,
   writeTaskIntegrationResolution,
 } from '@zeus/git-core';
-import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
+import { buildTaskCommitMessageSuggestion, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import {
   ConversationRepository,
   ConversationSubmissionRepository,
@@ -677,6 +677,55 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     );
   }
 
+  /** 只关联原冲突尝试和当前 Git 现场，不另建会话或套用历史候选。 */
+  async function readTaskWorkspaceConflictRecovery(workspace: ZeusTaskWorkspaceRecord, review: Awaited<ReturnType<typeof getTaskWorkspaceReview>> | null, updatedBranch?: string | null): Promise<TaskWorkspaceConflictRecovery | null> {
+    if (workspace.kind !== 'conflict' || !workspace.worktreePath || !review?.conflictFiles.length) return null;
+    /** 会话主记录已足够判断归属，禁止为恢复入口读取完整消息。 */
+    const candidates = [...conversations.listRecordsByTask(workspace.taskId), ...conversations.listRecordsByTask(workspace.taskId, { archived: true })].filter((conversation) => {
+      if (conversation.workspaceId !== workspace.id || conversation.projectId !== workspace.projectId) return false;
+      /** 原尝试必须仍指向此物理目录和原任务工作区。 */
+      const attempt = taskIntegrationAttempts.getByConversationId(conversation.id);
+      /** 合入关系必须属于当前冲突分支的原任务工作区。 */
+      const integration = attempt ? taskIntegrations.getById(attempt.integrationId) : undefined;
+      return Boolean(attempt && integration?.workspaceId === workspace.baseWorkspaceId && resolve(attempt.worktreePath) === resolve(workspace.worktreePath!));
+    });
+    /** 多条原尝试同指一个现场时不任意挑选会话。 */
+    const conversation = candidates.length === 1 ? candidates[0] : undefined;
+    /** 下一轮设置优先于会话旧设置，避免继续时重置用户选择。 */
+    const settings = conversation ? conversations.getNextTurnSettings(conversation.id) : undefined;
+    /** 当前合并两端组成稳定身份，逐个暂存文件或重复打开不会多发继续指令。 */
+    const recoveryKey = createHash('sha256')
+      .update(JSON.stringify([workspace.id, review.headSha, review.mergeHeadSha]))
+      .digest('hex');
+    if (updatedBranch === undefined && review.mergeHeadSha) {
+      /** 重开窗口时仅在当前分支提交能证明来源时显示分支名。 */
+      const base = workspace.baseWorkspaceId ? taskWorkspaces.getById(workspace.baseWorkspaceId) : undefined;
+      /** 仅检查该冲突工作区对应的两条开发分支。 */
+      const branches = [workspace.sourceBranch, ...(base ? [base.branchName] : [])];
+      /** 分支已移动时不猜测先前冲突的来源名称。 */
+      const heads = await Promise.all(branches.map((branch) => getGitBranchHead(workspace.worktreePath!, branch).catch(() => null)));
+      updatedBranch = branches.find((_branch, index) => heads[index] === review.mergeHeadSha) ?? null;
+    }
+    return {
+      recoveryKey,
+      workspaceId: workspace.id,
+      headSha: review.headSha,
+      updatedBranch: updatedBranch ?? null,
+      conflictFiles: review.conflictFiles,
+      conversationId: conversation?.id ?? null,
+      collaborationMode: settings?.collaborationMode ?? conversation?.collaborationMode ?? 'default',
+      unavailableReason: !conversation
+        ? '找不到唯一的原冲突处理会话，请检查任务会话；当前代码现场已保留。'
+        : conversation.archived
+          ? '原冲突处理会话已归档，请先恢复该会话；当前代码现场已保留。'
+          : conversation.transportKind !== 'codex_native'
+            ? '原冲突处理会话无法继续运行，请检查该会话；当前代码现场已保留。'
+            : (settings?.permissionMode ?? conversation.permissionMode) === 'read-only'
+              ? '原会话当前为只读，请先在该会话调整权限后继续处理。'
+              : null,
+    };
+  }
+
   async function readTaskWorkspaceSnapshot(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord): Promise<Record<string, unknown>> {
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const repository = await getGitRepositoryContext(repositoryPath);
@@ -701,6 +750,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       ...workspace,
       activeConversationCount: countTaskWorkspaceActiveConversations(workspace),
       review: review.value,
+      conflictRecovery: await readTaskWorkspaceConflictRecovery(workspace, review.value),
       branchComparison: comparison.value,
       remoteHeadSha,
       remoteVerified: Boolean(expectedHeadSha && remoteHeadSha === expectedHeadSha),
@@ -1115,7 +1165,12 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       const review = await readTaskWorkspaceReview(workspace);
       if (review.clean) return { publicResult: { ...base, status: 'skipped' as const, message: '工作区没有可提交的变化。' } };
       const selectedPaths = [...new Set([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => file.path))];
-      const result = await commitTaskWorkspace({ cwd: workspace.worktreePath, ignoredPaths: taskWorkspaceIgnoredPaths(workspace), message: commitMessage, selectedPaths });
+      /** 逐仓保留明确拒绝，不能让一个冲突仓库掩盖其他仓库已成功的提交。 */
+      const result = await commitTaskWorkspace({ cwd: workspace.worktreePath, ignoredPaths: taskWorkspaceIgnoredPaths(workspace), message: commitMessage, selectedPaths }).catch((error: unknown) => {
+        if (isTaskCommitPreflightRejection(error)) return { rejection: error instanceof Error ? error.message : '提交前检查未通过。' };
+        throw error;
+      });
+      if ('rejection' in result) return { publicResult: { ...base, status: 'failed' as const, message: result.rejection } };
       return { publicResult: { ...base, status: 'succeeded' as const, message: '已提交。', headSha: result.headSha }, result, selectedPaths };
     });
     const items: BatchTaskWorkspaceResult[] = operationResults.map((operation) => operation.publicResult);
@@ -1169,6 +1224,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     });
   }
 
+  /** 仅识别共享提交实现中保证发生在格式化和 Git 写入之前的拒绝。 */
+  function isTaskCommitPreflightRejection(error: unknown): boolean {
+    return ['ZEUS_TASK_COMMIT_SELECTION_CHANGED', 'ZEUS_TASK_WORKSPACE_CONFLICTED'].includes(taskGitErrorCode(error));
+  }
+
   async function executeSingleTaskWorkspaceCommit(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>): Promise<WorkspaceGitRouteExecution> {
     const { task, workspace } = requirePreparedWorkspace(opaque);
     try {
@@ -1188,8 +1248,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       message: (typeof value.message === 'string' ? value.message.trim() : '') || buildTaskCommitMessageSuggestion({ taskType: task.taskType, taskCode: task.taskCode, taskTitle: task.title }),
       selectedPaths,
     }).catch((error: unknown) => {
-      // 仅此错误保证发生在格式化和 Git 写入前；其他失败仍保留结果未知保护。
-      if (taskGitErrorCode(error) === 'ZEUS_TASK_COMMIT_SELECTION_CHANGED') workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : '所选文件状态已变化，请刷新代码交付页。');
+      // 这两个错误只在共享提交入口的格式化和 Git 写入前产生；写入后的失败仍保留结果未知保护。
+      if (isTaskCommitPreflightRejection(error)) {
+        workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : '提交前检查未通过，请刷新代码交付页。');
+      }
       throw error;
     });
     const review = await readTaskWorkspaceReview(workspace);
@@ -1403,7 +1465,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     if (!repository.localBranches.includes(targetBranch)) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', '所选目标分支在本地不存在，请刷新后重新选择。');
     if (workspace.worktreePath) {
       const taskReview = await readTaskWorkspaceReview(workspace);
-      if (taskReview.conflictFiles.length > 0) workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve task workspace conflicts before merging.');
+      if (taskReview.conflictFiles.length > 0) {
+        if (workspace.kind === 'conflict') return workspaceGitResponse({ conflictRecovery: await readTaskWorkspaceConflictRecovery(workspace, taskReview) }, 202);
+        workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve task workspace conflicts before merging.');
+      }
       if (!taskReview.clean) workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_DIRTY', 'Commit or discard every task workspace change before merging.');
     } else if (workspace.state !== 'reclaimed' && workspace.state !== 'merged') {
       workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_UNAVAILABLE', 'Task worktree is unavailable before delivery preparation completed.');
@@ -1421,17 +1486,13 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           taskId: task.id,
           eventType: 'task.git_workspace.refresh_conflicted',
           title: '冲突处理开发线追赶后出现新冲突',
-          payload: { workspaceId: workspace.id, baseWorkspaceId: baseWorkspace.id, conflictFiles: refreshed.conflictFiles },
+          payload: { workspaceId: workspace.id, baseWorkspaceId: baseWorkspace.id, conflictFiles: refreshed.conflictFiles, updatedBranch: refreshed.updatedBranch },
         });
         await db.save();
-        return workspaceGitResponse(
-          {
-            error: 'ZEUS_TASK_WORKSPACE_CONFLICTED',
-            message: '来源分支或任务分支已推进并产生新冲突，请回到原冲突处理会话继续处理。',
-            conflictFiles: refreshed.conflictFiles,
-          },
-          409,
-        );
+        /** Git 已确定停在新的冲突现场，这是待处理结果而非结果未知的异常。 */
+        const conflictRecovery = await readTaskWorkspaceConflictRecovery(workspace, await readTaskWorkspaceReview(workspace), refreshed.updatedBranch);
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, workspaceId: workspace.id });
+        return workspaceGitResponse({ conflictRecovery }, 202);
       }
       await db.save();
     }

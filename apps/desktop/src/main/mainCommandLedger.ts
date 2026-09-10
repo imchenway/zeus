@@ -45,6 +45,8 @@ export interface MainCommandOutcome {
   state: MainCommandOutcomeState;
   acceptedAt: string;
   updatedAt: string;
+  /** 实际命令调用在启动前逐条落盘，失败或重启也不丢失已记录内容。 */
+  commandLog?: { commands: string[]; truncated: boolean };
   writeMarker?: {
     externalOperationId: string;
     startedAt: string;
@@ -69,6 +71,8 @@ export interface MainCommandExecutionContext {
   readonly externalOperationId: string;
   /** 必须紧邻并早于第一个本地或外部写出；此调用已 fsync 后才返回。 */
   markWriteStarted(): Promise<void>;
+  /** 调用方先脱敏，再记录即将启动的具体命令；不得用于触发命令重放。 */
+  recordExecutionCommand(command: string): Promise<void>;
 }
 
 export interface MainCommandLedgerOptions {
@@ -76,6 +80,18 @@ export interface MainCommandLedgerOptions {
   now?: () => string;
   inlineReceiptByteLimit?: number;
 }
+
+/** 分页锚点只使用不会随执行结果推进的接纳时间和命令身份。 */
+export interface MainCommandHistoryCursor {
+  acceptedAt: string;
+  commandId: string;
+}
+
+/** 历史页固定大小，避免调用方一次读取整个文件账本。 */
+const historyPageSize = 50;
+
+/** 命令记录保持有界，超过上限时明确标注，不阻断原 Git 操作。 */
+const maximumCommandLogCharacters = 64 * 1024;
 
 const maximumInlineReceiptBytes = 64 * 1024;
 const maximumArtifactReceiptBytes = 64 * 1024 * 1024;
@@ -113,6 +129,8 @@ export class MainCommandLedger {
   readonly #now: () => string;
   readonly #inlineReceiptByteLimit: number;
   readonly #inFlight = new Map<string, { identitySha256: string; promise: Promise<unknown> }>();
+  /** 启动扫描重建范围索引；不缓存结果正文或可变化的执行状态。 */
+  readonly #historyIndex = new Map<string, Map<string, MainCommandHistoryCursor>>();
   #prepared: Promise<void> | undefined;
 
   constructor(options: MainCommandLedgerOptions) {
@@ -154,6 +172,45 @@ export class MainCommandLedger {
     return this.#readOutcome(path, safeCommandId);
   }
 
+  /** 按可信调用方限定的范围分页，逐条投影并释放大结果，避免累积仓库快照。 */
+  async readHistory<T>(
+    input: { commandType: string; scopeKind: CommandEnvelope['scope']['kind']; scopeIds: string[]; cursor?: MainCommandHistoryCursor },
+    project: (scopeId: string, outcome: MainCommandOutcome, result: unknown) => T,
+  ): Promise<{ items: T[]; total: number; nextCursor: MainCommandHistoryCursor | null }> {
+    await this.#prepare();
+    /** 只遍历所选范围的内存元信息，磁盘正文在截取页后才读取。 */
+    const entries = [...new Set(input.scopeIds)].flatMap((scopeId) => [...(this.#historyIndex.get(`${input.commandType}\0${input.scopeKind}\0${scopeId}`)?.values() ?? [])].map((entry) => ({ ...entry, scopeId })));
+    // ponytail: 范围内元信息在分页时排序；历史量使排序可感知时再维护有序索引，不重复扫描磁盘。
+    entries.sort(compareHistoryCursors);
+    /** 游标必须属于同一查询范围，避免跨项目拼接历史。 */
+    const cursorIndex = input.cursor ? entries.findIndex((entry) => entry.commandId === input.cursor!.commandId && entry.acceptedAt === input.cursor!.acceptedAt) : -1;
+    if (input.cursor && cursorIndex < 0) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', '历史分页位置已失效，请刷新记录。');
+    /** 先固定本页边界，读取期间新增的命令不会挤动后续分页。 */
+    const page = entries.slice(cursorIndex + 1, cursorIndex + 1 + historyPageSize);
+    /** 返回值只保存调用方需要的展示信息。 */
+    const items: T[] = [];
+    for (const entry of page) {
+      /** 每次读取耐久结果，执行中的命令无需维护第二份状态。 */
+      const outcome = await this.#readOutcome(this.#outcomePath(entry.commandId), entry.commandId);
+      /** 超出原有保存上限的记录保留身份和状态，不把摘要冒充正文。 */
+      const result = outcome.result && outcome.result.kind !== 'result_omitted' ? await this.#loadResult(outcome.result) : null;
+      items.push(project(entry.scopeId, outcome, result));
+    }
+    /** 末条记录作为稳定锚点，同一毫秒内也能继续分页。 */
+    const last = page.at(-1);
+    return { items, total: entries.length, nextCursor: last && cursorIndex + 1 + page.length < entries.length ? { acceptedAt: last.acceptedAt, commandId: last.commandId } : null };
+  }
+
+  /** 索引仅在记录已落盘或通过身份校验后更新。 */
+  #indexHistory(envelope: CommandEnvelope, outcome: MainCommandOutcome): void {
+    /** 命令类型和作用域共同隔离查询范围。 */
+    const key = `${envelope.commandType}\0${envelope.scope.kind}\0${envelope.scope.id}`;
+    /** 同一命令的状态变化覆盖同一个稳定锚点。 */
+    const scope = this.#historyIndex.get(key) ?? new Map<string, MainCommandHistoryCursor>();
+    scope.set(outcome.commandId, { acceptedAt: outcome.acceptedAt, commandId: outcome.commandId });
+    this.#historyIndex.set(key, scope);
+  }
+
   async #execute<TBody, TResult>(envelope: CommandEnvelope, body: TBody, requestSha256: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
     await this.#prepare();
     const envelopePath = this.#envelopePath(envelope.commandId);
@@ -186,13 +243,32 @@ export class MainCommandLedger {
       updatedAt: acceptedAt,
     };
     await writeAtomicJson(outcomePath, outcome);
+    this.#indexHistory(envelope, outcome);
     let writeStarted = false;
     let markerInFlight: Promise<void> | undefined;
+    /** 同一操作的命令记录顺序写入，避免并行子调用覆盖彼此。 */
+    let commandRecording = Promise.resolve();
     const externalOperationId = `main:${envelope.commandType}:${envelope.commandId}`;
     const context: MainCommandExecutionContext = {
       envelope,
       requestSha256,
       externalOperationId,
+      /** 只有已通过写出门禁的调用才能追加命令，终态仍由原执行流程决定。 */
+      recordExecutionCommand: (command) => {
+        commandRecording = commandRecording.then(async () => {
+          if (!writeStarted || typeof command !== 'string' || !command.trim() || command.includes('\0')) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', '执行命令记录无效或尚未进入执行阶段。');
+          if (outcome.commandLog?.truncated) return;
+          /** ponytail: 每次只重写最多 64 Ki 字符的命令记录；高频长操作出现后再用独立追加文件。 */
+          const commands = outcome.commandLog?.commands ?? [];
+          /** 换行也计入上限，保证大量短命令仍然有界。 */
+          const remaining = maximumCommandLogCharacters - commands.reduce((length, item) => length + item.length + 1, 0);
+          /** 记录截断与状态分开保存，不能把截断误认为执行失败。 */
+          const next: MainCommandOutcome = { ...outcome, commandLog: { commands: remaining > 1 ? [...commands, command.slice(0, remaining - 1)] : commands, truncated: command.length + 1 > remaining } };
+          await writeAtomicJson(outcomePath, next);
+          outcome = next;
+        });
+        return commandRecording;
+      },
       markWriteStarted: async () => {
         if (writeStarted) return;
         markerInFlight ??= (async () => {
@@ -218,6 +294,7 @@ export class MainCommandLedger {
 
     try {
       const result = await effect(body, context);
+      await commandRecording;
       if (!writeStarted) {
         throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', 'Main mutation completed without a durable pre-write marker.', {
           commandId: envelope.commandId,
@@ -234,6 +311,8 @@ export class MainCommandLedger {
       await writeAtomicJson(outcomePath, outcome);
       return result;
     } catch (error) {
+      // 写入终态前先等已开始的记录写完，不能让记录覆盖终态。
+      await commandRecording.catch(() => undefined);
       const failedAt = this.#now();
       const failure = boundedFailure(error, this.#root, writeStarted);
       outcome = {
@@ -265,6 +344,8 @@ export class MainCommandLedger {
         updatedAt: interruptedAt,
         failure: boundedFailure(new Error('replayed_after_immutable_envelope_before_initial_outcome'), this.#root, false),
       } satisfies MainCommandOutcome);
+      // 同一进程内补齐的孤立记录也须通过身份校验进入历史索引。
+      await this.#readOutcome(outcomePath, envelope.commandId);
       throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_FAILED_BEFORE_WRITE', 'Main command replay recovered an immutable envelope that never reached its initial outcome.', {
         commandId: envelope.commandId,
         commandType: envelope.commandType,
@@ -413,6 +494,7 @@ export class MainCommandLedger {
     if (outcome.commandType !== envelopeRecord.envelope.commandType || outcome.requestSha256 !== envelopeRecord.requestSha256) {
       throw receiptCorrupt('Main command outcome identity does not match its immutable envelope.', path);
     }
+    this.#indexHistory(envelopeRecord.envelope, outcome);
     return outcome;
   }
 
@@ -425,6 +507,15 @@ export class MainCommandLedger {
     const id = assertSafeCommandId(commandId);
     return join(this.#outcomeRoot, shardFor(id), `${id}.json`);
   }
+}
+
+/** 倒序使用原始字符比较，不受界面语言影响，时间相同再比较命令身份。 */
+function compareHistoryCursors(left: MainCommandHistoryCursor, right: MainCommandHistoryCursor): number {
+  /** 接纳时间是标准 ISO 时间，可直接按字符排序。 */
+  const leftKey = `${left.acceptedAt}\0${left.commandId}`;
+  /** 命令身份保证同一时刻的排序唯一。 */
+  const rightKey = `${right.acceptedAt}\0${right.commandId}`;
+  return leftKey === rightKey ? 0 : leftKey > rightKey ? -1 : 1;
 }
 
 export function parseMainCommandRequest<TBody>(value: unknown, expectedCommandType: string): { envelope: CommandEnvelope; body: TBody } {
@@ -484,7 +575,7 @@ function parseMainCommandEnvelopeRecord(value: unknown, expectedCommandId: strin
 }
 
 function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path: string): MainCommandOutcome {
-  const record = exactRecord(value, ['schemaVersion', 'commandId', 'commandType', 'requestSha256', 'state', 'acceptedAt', 'updatedAt'], ['writeMarker', 'result', 'failure'], 'outcome', path);
+  const record = exactRecord(value, ['schemaVersion', 'commandId', 'commandType', 'requestSha256', 'state', 'acceptedAt', 'updatedAt'], ['writeMarker', 'result', 'failure', 'commandLog'], 'outcome', path);
   if (
     record.schemaVersion !== 1 ||
     record.commandId !== expectedCommandId ||
@@ -503,6 +594,16 @@ function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path
   const result = record.result === undefined ? undefined : parseStoredResult(record.result, path);
   const failure = record.failure === undefined ? undefined : parseStoredFailure(record.failure, path);
   const state = record.state as MainCommandOutcomeState;
+  /** 旧账本没有该字段；已有字段必须完整通过结构及大小校验。 */
+  const commandLog = record.commandLog === undefined ? undefined : exactRecord(record.commandLog, ['commands', 'truncated'], [], 'commandLog', path);
+  if (
+    commandLog &&
+    (!Array.isArray(commandLog.commands) ||
+      commandLog.commands.some((command) => typeof command !== 'string' || !command || command.includes('\0')) ||
+      commandLog.commands.reduce((length, command) => length + command.length + 1, 0) > maximumCommandLogCharacters ||
+      typeof commandLog.truncated !== 'boolean')
+  )
+    throw receiptCorrupt('执行命令记录结构或大小无效。', path);
   const validStateShape =
     (state === 'accepted' && result === undefined && failure === undefined) ||
     (state === 'failed_before_write' && writeMarker === undefined && result === undefined && failure !== undefined) ||
@@ -518,6 +619,7 @@ function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path
     state,
     acceptedAt,
     updatedAt,
+    ...(commandLog ? { commandLog: { commands: commandLog.commands as string[], truncated: commandLog.truncated as boolean } } : {}),
     ...(writeMarker ? { writeMarker } : {}),
     ...(result ? { result } : {}),
     ...(failure ? { failure } : {}),

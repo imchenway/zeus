@@ -1,6 +1,7 @@
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
+import type { ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -170,6 +171,8 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 }
 
 export interface SessionControllerClient {
+  /** 独立读取全历史目录，不参与事件消费。 */
+  loadConversationNavigation?(projectId: string, conversationId: string): Promise<ConversationNavigationSnapshot>;
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
 
   activateCodexConfig?(): Promise<unknown>;
@@ -256,7 +259,12 @@ export interface SessionControllerClient {
     request: NativePendingRequest;
   }>;
 
-  respondToPlanImplementationRequest(projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }): Promise<NativePlanImplementationResponseAcceptance>;
+  respondToPlanImplementationRequest(
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] },
+  ): Promise<NativePlanImplementationResponseAcceptance>;
 }
 
 export interface SessionDraftStorage {
@@ -319,6 +327,8 @@ export interface SessionController {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ): Promise<void>;
   setPermissionMode(permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
@@ -326,6 +336,10 @@ export interface SessionController {
   setCollaborationMode(collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
   setNextTurnSettings(settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   loadEarlierHistory(): Promise<void>;
+  /** 全历史目录由工作面按进入、重连和稳定消息变化刷新。 */
+  loadNavigation(): Promise<ConversationNavigationSnapshot>;
+  /** 导航只补齐指定轮次模型正文，处理过程继续由展开入口读取。 */
+  loadNavigationTurn(turnId: string): Promise<void>;
   loadTurnProcess(turnId: string): Promise<void>;
   loadConversationResources(): Promise<void>;
   loadTurnArtifacts(turnId: string): Promise<void>;
@@ -1973,6 +1987,66 @@ export function createSessionController(options: CreateSessionControllerOptions)
     persistDraft();
   }
 
+  /** 同一连接和轮次的并发导航读取共用请求，不重复翻页。 */
+  const navigationTurnLoads = new Map<string, Promise<void>>();
+
+  /** 读取独立目录；请求失效后不能把另一连接的结果发布到工作面。 */
+  async function loadNavigation(): Promise<ConversationNavigationSnapshot> {
+    /** 记录连接代次，不把目录进度写回同步控制器。 */
+    const generation = connectionToken;
+    if (!options.client.loadConversationNavigation) throw new Error('当前会话暂时无法读取历史目录。');
+    /** 返回完整目录，错误交给目录自己的重试入口。 */
+    const result = await options.client.loadConversationNavigation(options.projectId, options.conversationId);
+    if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新读取目录。');
+    return result;
+  }
+
+  /** 只补齐被浏览的轮次，不展开或读取过程表中的工具正文。 */
+  function loadNavigationTurn(turnId: string): Promise<void> {
+    /** 连接重建后旧请求不再复用。 */
+    const generation = connectionToken;
+    /** 轮次身份与代次共同隔离按需读取。 */
+    const key = `${generation}:${turnId}`;
+    /** 点击与进入视口可能同时请求同一轮。 */
+    const existing = navigationTurnLoads.get(key);
+    if (existing) return existing;
+    /** 页只合并展示投影，不推进实时同步进度。 */
+    const request = (async () => {
+      /** 沿用已有按轮次模型历史接口。 */
+      const load = options.client.loadNativeConversationTurnModelHistoryV2;
+      if (!load || !state.snapshot?.snapshotV2) throw new Error('会话正文尚未就绪，请重试。');
+      /** 本地与模型轮次身份映射复用现有快照。 */
+      const turn = state.snapshot.turns.find((candidate) => candidate.id === turnId || candidate.providerTurnId === turnId);
+      /** 分页状态使用正文既有的轮次身份。 */
+      const pagingKey = turn?.providerTurnId ?? turnId;
+      /** 冻结游标必须严格前进，失败不能无界重试。 */
+      const seenCursors = new Set<string>();
+      while (true) {
+        if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
+        /** 每页合并后再读取最新分页状态。 */
+        const paging = state.snapshot?.v2Paging?.historyByTurn?.[pagingKey];
+        if (paging?.loaded && !paging.hasMore) return;
+        /** 空游标代表该轮第一页。 */
+        const cursor = paging?.nextCursor ?? '';
+        if (seenCursors.has(cursor)) throw new Error('历史正文分页没有推进。');
+        seenCursors.add(cursor);
+        /** 正文保持已有单页体积上限。 */
+        const page = await load(options.projectId, options.conversationId, turn?.id ?? turnId, { ...(cursor ? { cursor } : {}), limit: 128, byteLimit: 256 * 1024 });
+        if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
+        if (!state.snapshot) throw new Error('会话已关闭。');
+        dispatchV2Snapshot(mergeConversationTurnHistoryV2(state.snapshot, pagingKey, page));
+        if (!page.hasMore) return;
+      }
+    })();
+    navigationTurnLoads.set(key, request);
+    /** 失败保留在调用方的局部状态，允许下一次明确重试。 */
+    const clear = () => {
+      if (navigationTurnLoads.get(key) === request) navigationTurnLoads.delete(key);
+    };
+    void request.then(clear, clear);
+    return request;
+  }
+
   function dispatchV2Snapshot(snapshot: NativeConversationSnapshot): void {
     if (disposed || state.snapshot?.id !== snapshot.id || snapshot.id !== options.conversationId) return;
     // 按需页不拥有 durable event 水位，只合并展示投影；不得重置 gap-recovery 游标。
@@ -2798,7 +2872,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
           }
         },
       );
-      return promise.catch((error) => {
+      return promise.catch(async (error) => {
+        /** 服务端明确拒绝且不要求恢复时，撤销本地占位并读取真实队列。网络未知仍保留原保护。 */
+        const failure = toSessionError(error, true);
+        /** HTTP 拒绝是可核对的服务端响应，不能仅凭缺少 recoveryRequired 判断网络失败。 */
+        const status = error && typeof error === 'object' && 'status' in error ? error.status : null;
+        if (typeof status === 'number' && status >= 400 && status < 500 && !failure.recoveryRequired) {
+          pendingSteeringSubmissions.delete(submissionId);
+          if (!disposed && queuedSubmission && state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, queuedSubmission) });
+          try {
+            const queue = await options.client.loadNativeConversationQueueV2(options.projectId, options.conversationId);
+            if (!disposed) await applyAuthoritativeQueue(queue);
+          } catch {
+            // 状态刷新失败仍报告原拒绝；保留消息，后续正常同步继续收敛，不重发。
+          }
+          throw error;
+        }
         const stillPending = pendingSteeringSubmissions.get(submissionId);
         if (!disposed && stillPending) {
           pendingSteeringSubmissions.delete(submissionId);
@@ -2917,6 +3006,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     },
     loadEarlierHistory: loadEarlierHistoryV2,
+    loadNavigation,
+    loadNavigationTurn,
     loadTurnProcess: loadTurnProcessV2,
     loadConversationResources: loadConversationResourcesV2,
     loadTurnArtifacts: loadTurnArtifactsV2,
