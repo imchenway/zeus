@@ -51,9 +51,9 @@ import {
   type WorkspaceViewId,
 } from './workspaceSupport.js';
 
-/** 项目会话首屏数量。 */
+/** 项目普通会话首屏数量，进行中的会话始终展示且不占额度。 */
 const defaultVisibleConversationCount = 6;
-/** 每次展开更多追加的会话数量。 */
+/** 每次展开更多追加的普通会话数量。 */
 const additionalVisibleConversationCount = 10;
 
 /** 仅用于接收旧界面缓存；之后以本机设置数据库为准。 */
