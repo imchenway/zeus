@@ -5404,10 +5404,6 @@
   display: inline-flex;
   gap: 4px;
   font: inherit;
-  font-size: 11px;
-  max-inline-size: 150px;
-  min-block-size: 28px;
-  padding: 4px 6px 4px 7px !important;
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger > span {
@@ -8672,7 +8668,8 @@
 .session-codex-parity-v1 .session-rui-request .session-question-attachment-button {
   align-items: center;
   appearance: none;
-  align-self: end;
+  /* 附件与行尾操作共用垂直中心，多行输入不再把附件推到底部。 */
+  align-self: center;
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -8724,6 +8721,7 @@
 
 .session-codex-parity-v1 .session-rui-inline-actions {
   align-items: center;
+  align-self: center;
   display: flex;
   flex-wrap: nowrap;
   gap: 8px;
@@ -9985,8 +9983,6 @@
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator > svg {
-  block-size: 22px;
-  inline-size: 22px;
   transform: rotate(-90deg);
 }
 
@@ -10085,30 +10081,6 @@
   }
 }
 
-.session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger {
-  block-size: 32px;
-  border-radius: 999px !important;
-  inline-size: 32px;
-  justify-content: center;
-  padding: 0 !important;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger > svg {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-trigger-icon {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-  justify-content: center;
-}
-
-.session-codex-parity-v1 .session-composer-dropdown-trigger-icon > svg {
-  block-size: 18px;
-  inline-size: 18px;
-}
-
 .session-codex-parity-v1 .session-service-tier-toggle {
   align-items: center;
   background: transparent !important;
@@ -10118,11 +10090,6 @@
   inline-size: 32px;
   justify-content: center;
   padding: 0 !important;
-}
-
-.session-codex-parity-v1 .session-service-tier-toggle > svg {
-  block-size: 21px;
-  inline-size: 21px;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true'] {
@@ -10196,11 +10163,6 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-collaboration-mode-icon > svg {
-  block-size: 19px;
-  inline-size: 19px;
-}
-
 .session-codex-parity-v1 .session-attachment-button {
   align-items: center;
   block-size: 32px;
@@ -10216,8 +10178,13 @@
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 .session-attachment-button > svg {
+/* 两个会话入口的普通图标共用尺寸；下拉箭头和发送、停止图形保留各自语义比例。 */
+.session-codex-parity-v1
+  .session-composer-command-row
+  :is(.session-attachment-button, .zeus-select-trigger-icon, .session-collaboration-mode-icon, .session-goal-trigger, .session-context-usage-indicator, .session-service-tier-toggle)
+  > svg {
   block-size: 20px;
+  flex: 0 0 auto;
   inline-size: 20px;
 }
 
@@ -10242,11 +10209,6 @@
 .session-codex-parity-v1 .session-goal-trigger[data-active='true'] {
   background: color-mix(in srgb, var(--session-accent) 10%, transparent) !important;
   color: var(--zeus-brand-text);
-}
-
-.session-codex-parity-v1 .session-goal-trigger > svg {
-  block-size: 20px;
-  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .session-composer-input-frame[data-goal-input='true'] {
@@ -10424,13 +10386,24 @@
   box-shadow: none;
   color: var(--session-text-muted);
   display: inline-flex;
-  font-size: 11px;
+  /* 文字入口与纯图标入口等高，模型和推理强度使用相同字号及行高。 */
+  block-size: 32px;
+  font-size: 12px;
   font-weight: 400;
   gap: 4px;
   inline-size: auto;
+  line-height: 16px;
   max-inline-size: 180px;
-  min-block-size: 28px;
-  padding: 4px 6px 4px 7px;
+  min-block-size: 32px;
+  padding: 0 6px 0 7px;
+}
+
+/* 直接约束共享下拉框的真实触发器，避免通用文字入口规则覆盖权限按钮的宽度和内边距。 */
+.session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-icon-only='true'] > .session-composer-dropdown-trigger {
+  border-radius: 999px;
+  inline-size: 32px;
+  justify-content: center;
+  padding: 0;
 }
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {

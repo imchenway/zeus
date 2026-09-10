@@ -6,7 +6,7 @@ import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/rend
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
-import { ConversationComposer } from '../src/renderer/session/ConversationComposer.js';
+import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from '../src/renderer/session/sessionTypes.js';
 import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
@@ -476,7 +476,12 @@ function ErrorLayoutQa() {
   );
 }
 
-/** 使用真实会话输入组件验收粘贴，只在本页记录发送结果，不调用模型。 */
+/** 固定附件只进入预览草稿，不读取用户文件或打开原生文件选择器。 */
+async function chooseComposerQaAttachments(): Promise<NativeConversationAttachment[]> {
+  return [{ name: '对齐检查.txt', kind: 'file', mime: 'text/plain', size: 12, uploadRef: `qa:${crypto.randomUUID()}` }];
+}
+
+/** 使用真实会话输入组件验收工具栏及粘贴，只在本页记录发送结果，不调用模型。 */
 function ComposerMarkdownQa() {
   /** 地址参数覆盖窄分栏、深色和英文。 */
   const parameters = new URLSearchParams(window.location.search);
@@ -486,6 +491,8 @@ function ComposerMarkdownQa() {
   const [submitted, setSubmitted] = useState('');
   /** 只读状态可在编辑期间切换，核对发送和编辑禁用条件。 */
   const [readOnly, setReadOnly] = useState(false);
+  /** 真实设置回写控制选中状态，模型切换后不会被旧属性还原。 */
+  const [settings, setSettings] = useState<ComposerRuntimeSettings>({ model: 'qa-model', effort: 'max', permissionMode: 'auto', collaborationMode: 'default' });
   /** 保留统一输入接口，样例通过真实编辑器的粘贴处理插入，不访问系统剪贴板。 */
   const textareaRef = useRef<ComposerInputHandle | null>(null);
   /** 用户提供的十二列表格，保留转义、长编号及前导零。 */
@@ -516,12 +523,27 @@ function ComposerMarkdownQa() {
       data-theme={parameters.has('dark') ? 'dark' : 'light'}
       style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
     >
-      <h1>粘贴 Markdown</h1>
+      <h1>会话输入框与工具栏</h1>
       <p>Markdown 默认排版，点击内容直接修改；Shift+Enter 换行，Enter 记录发送原文。</p>
       <textarea aria-label="粘贴样例" value={pasteSample} onChange={(event) => setPasteSample(event.currentTarget.value)} style={{ display: 'block', width: '100%', height: 72, marginBlock: 12 }} />
       <label>
         <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.currentTarget.checked)} />
         只读
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={state.activeTurnId !== null}
+          onChange={(event) =>
+            setState((current) => ({
+              ...current,
+              conversationState: event.target.checked ? 'active_prework' : 'native_loading',
+              activeTurnId: event.target.checked ? 'qa-turn' : null,
+              startedTurnId: event.target.checked ? 'qa-turn' : null,
+            }))
+          }
+        />
+        响应进行中（清空草稿显示停止）
       </label>
       <button
         type="button"
@@ -577,15 +599,45 @@ function ComposerMarkdownQa() {
           state={state}
           language={parameters.has('en') ? 'en-US' : 'zh-CN'}
           readOnly={readOnly}
-          permissionMode="auto"
-          collaborationMode="default"
+          permissionMode={settings.permissionMode}
+          collaborationMode={settings.collaborationMode}
+          runtimeSettings={settings}
+          onRuntimeSettingsChange={setSettings}
+          goalAvailable
+          onSetGoal={(objective) => {
+            setSubmitted(`目标：${objective}`);
+            return true;
+          }}
           capabilities={{
             generationId: 'qa',
             initializedAt: '',
             projectId: 'qa',
             preferredModel: 'qa-model',
-            models: [{ id: 'qa-model', model: 'qa-model', displayName: '验收模型', supportedReasoningEfforts: [], serviceTiers: [] }],
+            models: [
+              {
+                id: 'qa-model',
+                model: 'GPT-6-Astra',
+                sourceName: 'Codex',
+                displayName: 'GPT-6-Astra',
+                supportedReasoningEfforts: ['xhigh', 'max'],
+                defaultReasoningEffort: 'max',
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '预览速度状态' }],
+              },
+              {
+                id: 'qa-long-model',
+                model: 'Model with a deliberately long name for narrow window inspection',
+                sourceName: 'Long provider name',
+                supportedReasoningEfforts: ['xhigh', 'max'],
+                defaultReasoningEffort: 'xhigh',
+                serviceTiers: [],
+              },
+            ],
             codexAccount: { generationId: 'qa', requiresOpenaiAuth: false, signedIn: false, accountType: null, planType: null },
+          }}
+          onChooseAttachments={async () => {
+            /** 通过真实附件草稿路径加入固定样例。 */
+            const attachments = await chooseComposerQaAttachments();
+            setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }));
           }}
           onAddAttachments={(attachments) => setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
           onRemoveAttachment={(attachment) => setState((current) => ({ ...current, attachments: current.attachments.filter((candidate) => candidate !== attachment) }))}
@@ -596,7 +648,10 @@ function ComposerMarkdownQa() {
             setSubmitted(`原文逐字符一致：是\n${JSON.stringify(settings, null, 2)}`);
             setState((current) => ({ ...current, draft: '' }));
           }}
-          onInterrupt={() => undefined}
+          onInterrupt={() => {
+            setSubmitted('已停止预览响应');
+            setState((current) => ({ ...current, conversationState: 'native_loading', activeTurnId: null, startedTurnId: null }));
+          }}
         />
       </div>
       <output aria-label="当前草稿" style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -713,7 +768,7 @@ function QuestionQa() {
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
   const scenario = parameters.get('case') ?? 'single';
   /** PLAN 真实已答题记录用于对照，跨轮次场景复现用户反馈。 */
-  const synchronous = scenario === 'plan' || scenario === 'multiple';
+  const synchronous = scenario === 'plan' || scenario === 'multiple' || scenario === 'plan-freeform';
   /** 另发消息属于新的执行轮次，不能依赖原题仍在首屏。 */
   const asNewMessage = scenario === 'newturn' || scenario === 'closed';
   /** 独立问题身份避免各场景草稿串用。 */
@@ -736,7 +791,7 @@ function QuestionQa() {
         scenario === 'newturn'
           ? '能看到最新模型的那位用户，Zeus「关于」里显示的具体版本号是多少？需要确认是否也是 0.3.111，才能排除安装包版本差异。'
           : '尺寸会在哪一步变回去？我已确认本机有保存记录，这个信息能帮我区分保存错误和重新打开时的恢复错误。',
-      ...(scenario === 'freeform' || scenario === 'newturn' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
+      ...(scenario === 'freeform' || scenario === 'newturn' || scenario === 'plan-freeform' ? {} : { options: ['手动调整后，关闭再打开同一个任务的代码交付窗口', '重启 Zeus 后，再打开代码交付窗口', '切换到另一个任务的代码交付窗口'] }),
     },
     ...(scenario === 'multi' ? [{ title: '第二个问题：请选择窗口位置。', options: ['上次的屏幕', '当前屏幕'] }] : []),
   ];
@@ -816,11 +871,11 @@ function QuestionQa() {
   }
 
   return (
-    <main className="macos-ai-app zeus-shell qa-page">
+    <main className={`macos-ai-app zeus-shell qa-page theme-${parameters.has('dark') ? 'dark' : 'light'}`} data-theme={parameters.has('dark') ? 'dark' : 'light'}>
       <style>{'.qa-page { display: block !important; box-sizing: border-box; width: 100%; height: auto; overflow: auto; min-width: 0; }'}</style>
       <h1>PLAN 与异步询问共用表单验收</h1>
       <nav aria-label="询问场景">
-        {['single', 'plan', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
+        {['single', 'plan', 'plan-freeform', 'multi', 'multiple', 'freeform', 'failed', 'closed', 'delivered', 'newturn'].map((name) => (
           <a key={name} href={`?questions&case=${name}`} style={{ marginRight: 16 }}>
             {name}
           </a>
@@ -843,12 +898,13 @@ function QuestionQa() {
         <ConversationTranscript state={state} language={language} transcriptHydrated onOpenAsyncQuestion={() => setOpen(true)} />
         {open && !delivery ? (
           <div className="session-interaction-dock">
-            {scenario === 'plan' || scenario === 'multiple' ? (
+            {synchronous ? (
               <RequestUserInputPanel
                 request={{ id: identity, expiresAt: null }}
                 questions={normalizeRequestQuestions({ payload: { questions: asyncMessageQuestions(item.payload).map((question) => ({ ...question, multiple: scenario === 'multiple' })) } })}
                 language={language}
                 autoFocus
+                onChooseAttachments={chooseComposerQaAttachments}
                 onRespond={async (_id, response) => {
                   await accept(item, response.answers as typeof answers);
                   setOpen(false);
