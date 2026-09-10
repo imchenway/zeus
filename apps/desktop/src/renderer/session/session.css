@@ -1373,7 +1373,7 @@
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
 .session-goal-status-dot.is-complete {
-  background: #32a875;
+  background: var(--zeus-brand-primary);
 }
 .session-goal-status-dot.is-blocked,
 .session-goal-status-dot.is-usageLimited,
@@ -1456,8 +1456,8 @@
   background: color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
 .session-goal-status.is-complete {
-  color: #23825a;
-  background: rgb(50 168 117 / 12%);
+  color: var(--zeus-brand-text);
+  background: color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
 .session-goal-description {
   margin: 14px 0 18px;
@@ -2873,9 +2873,10 @@
 }
 
 .session-answered-request-options > li.is-selected .session-answered-request-option-marker {
-  background: var(--session-success);
-  border-color: var(--session-success);
-  color: var(--session-canvas);
+  /* 实心选中标记使用品牌主色与白字，避免深色主题下勾选变暗。 */
+  background: var(--zeus-brand-primary);
+  border-color: var(--zeus-brand-primary);
+  color: white;
 }
 
 .session-answered-request-option-marker svg {
@@ -3069,7 +3070,8 @@
   --session-message-action: rgb(139 143 148);
   --session-danger: rgb(148 55 55);
   --session-warning: rgb(126 85 30);
-  --session-success: rgb(54 112 82);
+  /* 完成和已回答状态直接跟随当前主题的品牌文字色。 */
+  --session-success: var(--zeus-brand-text);
   --session-header: rgb(255 255 255 / 0.94);
   --session-code: rgb(247 248 248);
   --session-shimmer: rgb(255 255 255 / 0.72);
@@ -3136,7 +3138,6 @@
   --session-message-action: rgb(157 162 170);
   --session-danger: rgb(246 157 157);
   --session-warning: rgb(234 190 119);
-  --session-success: rgb(135 211 166);
   --session-header: rgb(24 26 29 / 0.94);
   --session-code: rgb(36 39 43);
   --session-shimmer: rgb(235 237 240 / 0.2);
@@ -3179,7 +3180,6 @@
     --session-message-action: rgb(157 162 170);
     --session-danger: rgb(246 157 157);
     --session-warning: rgb(234 190 119);
-    --session-success: rgb(135 211 166);
     --session-header: rgb(24 26 29 / 0.94);
     --session-code: rgb(36 39 43);
     --session-shimmer: rgb(235 237 240 / 0.2);
@@ -7467,7 +7467,7 @@
 }
 
 .session-codex-parity-v1 .session-change-added {
-  color: rgb(16 151 72);
+  color: var(--zeus-code-addition-text);
 }
 
 .session-codex-parity-v1 .session-change-deleted {

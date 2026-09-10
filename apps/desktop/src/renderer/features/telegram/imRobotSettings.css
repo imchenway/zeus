@@ -11,8 +11,8 @@
   --im-brand: #229ed9;
   /* 可交互控件沿用应用强调色，兼容深浅主题。 */
   --im-accent: var(--zeus-control-accent, var(--zeus-brand-primary));
-  /* 正常连接使用带文字的绿色状态。 */
-  --im-online: #169963;
+  /* 正常连接使用品牌色，并保留明确的状态文字。 */
+  --im-online: var(--zeus-brand-text);
   display: grid;
   gap: 24px;
   color: var(--zeus-product-text);

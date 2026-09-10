@@ -2884,7 +2884,7 @@ a {
   color: var(--zeus-danger-text);
 }
 .project-sidebar-conversations .session-conversation-status-icon.is-completed {
-  color: var(--zeus-task-status-green);
+  color: var(--zeus-status-success-text);
 }
 .project-sidebar-conversations .session-conversation-status-icon.is-unread::before {
   background: var(--session-accent);
@@ -3499,7 +3499,7 @@ a {
   white-space: nowrap;
 }
 .project-git-changed-files em {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
   font-style: normal;
 }
 .project-git-changed-files i {
@@ -3566,7 +3566,7 @@ a {
   white-space: nowrap;
 }
 .project-git-diff-preview > header span {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
 }
 .project-git-diff-preview > header em {
   color: var(--zeus-control-danger-text);
@@ -3593,7 +3593,7 @@ a {
   white-space: pre;
 }
 .project-git-diff-preview .is-addition {
-  background: color-mix(in oklch, var(--zeus-control-success-text) 8%, transparent);
+  background: color-mix(in oklch, var(--zeus-code-addition-text) 8%, transparent);
 }
 .project-git-diff-preview .is-deletion {
   background: color-mix(in oklch, var(--zeus-control-danger-text) 8%, transparent);
@@ -3978,7 +3978,7 @@ a {
   font-style: normal;
 }
 .project-git-push-dialog main > section.is-success > svg {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 .project-git-push-dialog main > section.is-error > svg {
   color: var(--zeus-control-danger-text);
@@ -4061,7 +4061,7 @@ a {
   color: var(--zeus-product-muted);
 }
 .project-git-update-repositories i.is-completed {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 .project-git-update-repositories i.is-conflict,
 .project-git-update-repositories i.is-error {
@@ -4742,7 +4742,7 @@ body[data-surface='project-git-diff'] #root {
   font-style: normal;
 }
 .project-git-diff-window-files button em {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-code-addition-text);
 }
 .project-git-diff-window-files button i {
   color: var(--zeus-control-danger-text);
@@ -4882,7 +4882,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-connection-list em[data-configured='true'] {
-  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .model-connection-editor {
@@ -5239,7 +5239,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-connection-diagnostic.success {
-  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .model-connection-actions {
@@ -9144,7 +9144,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-status-pill-bg: oklch(97.4% 0.001 255);
   --zeus-status-pill-line: oklch(90% 0.001 255);
   --zeus-status-pill-text: oklch(42% 0.003 255);
-  --zeus-status-success-text: oklch(52% 0.08 145);
+  /* 成功反馈跟随品牌文字色，浅色与深色主题共用同一来源。 */
+  --zeus-status-success-text: var(--zeus-brand-text);
+  /* 代码新增保持绿色，与成功反馈的品牌色分离。 */
+  --zeus-code-addition-text: var(--zeus-task-status-green);
   --zeus-status-text: oklch(52% 0.003 255);
   --task-table-grid-template: minmax(260px, 1.55fr) minmax(104px, 0.5fr) minmax(140px, 0.72fr) minmax(160px, 0.78fr) minmax(120px, 0.55fr);
   /* 2026-06-18 全页面产品状态 token 最终覆盖：选中、危险和高风险状态必须有统一低饱和 token，避免按钮、输入框、下拉框和列表状态退回默认样式。 */
@@ -9808,12 +9811,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] button {
-  background: color-mix(in oklch, var(--zeus-control-success-text) 9%, transparent);
-  border-color: color-mix(in oklch, var(--zeus-control-success-text) 24%, transparent);
+  background: color-mix(in oklch, var(--zeus-status-success-text) 9%, transparent);
+  border-color: color-mix(in oklch, var(--zeus-status-success-text) 24%, transparent);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] .automatic-update-indicator-icon {
-  color: var(--zeus-control-success-text);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-spinner {
@@ -10247,7 +10250,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .computer-permission-details > .granted {
-  color: var(--zeus-success-text, oklch(43% 0.085 152));
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .computer-permission-details > .missing {
@@ -12937,7 +12940,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-task-status-orange: oklch(48% 0.11 48);
 }
 
-.macos-ai-app.zeus-shell.theme-dark {
+.macos-ai-app.zeus-shell.theme-dark,
+html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-task-status-blue: oklch(78% 0.1 252);
   --zeus-task-status-violet: oklch(78% 0.1 302);
   --zeus-task-status-green: oklch(76% 0.1 153);
@@ -12946,7 +12950,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 @media (prefers-color-scheme: dark) {
-  .macos-ai-app.zeus-shell.theme-system {
+  .macos-ai-app.zeus-shell.theme-system,
+  html[data-zeus-theme='system'] body > .macos-ai-app {
     --zeus-task-status-blue: oklch(78% 0.1 252);
     --zeus-task-status-violet: oklch(78% 0.1 302);
     --zeus-task-status-green: oklch(76% 0.1 153);
@@ -12980,6 +12985,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-violet,
 .macos-ai-app .task-status-select.task-status-tone-violet .zeus-select-trigger {
   --task-status-tone: var(--zeus-task-status-violet);
+}
+
+/* 执行完成和分支合并采用品牌成功色，不改写可选的绿色分类。 */
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-success,
+.macos-ai-app .task-status-select.task-status-tone-success .zeus-select-trigger {
+  --task-status-tone: var(--zeus-status-success-text);
 }
 
 .macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-green,
@@ -15821,7 +15832,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-stepbar span.is-done {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-stepbar span.is-locked {
@@ -16157,7 +16168,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-feedback.is-success {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-feedback.is-warning {
@@ -16203,7 +16214,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-batch-result li[data-status='succeeded'] b {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-delivery-batch-result li[data-status='attention'] {
@@ -16223,7 +16234,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-success {
-  background: color-mix(in srgb, var(--zeus-success-text, #267a4c) 8%, var(--zeus-product-panel));
+  background: color-mix(in srgb, var(--zeus-status-success-text) 8%, var(--zeus-product-panel));
 }
 
 .macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice.is-warning {
@@ -16373,7 +16384,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-merge-status.is-success {
-  background: color-mix(in srgb, var(--zeus-success-text, #267a4c) 8%, var(--zeus-product-panel));
+  background: color-mix(in srgb, var(--zeus-status-success-text) 8%, var(--zeus-product-panel));
 }
 
 .macos-ai-app .task-git-merge-status.is-warning {
@@ -16409,9 +16420,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inline-size: 36px;
   block-size: 36px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--zeus-success-text, #267a4c) 34%, var(--zeus-product-line-soft));
+  border: 1px solid color-mix(in srgb, var(--zeus-status-success-text) 34%, var(--zeus-product-line-soft));
   border-radius: 50%;
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
   font-size: 18px;
   font-weight: 700;
 }
@@ -16784,8 +16795,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   margin: 0;
   padding: 8px 12px;
   border-block-end: 1px solid var(--zeus-product-line-soft);
-  background: color-mix(in oklab, var(--zeus-success-bg, #eaf6ee) 62%, var(--zeus-product-panel));
-  color: var(--zeus-success-text, #347a4d);
+  background: color-mix(in oklab, color-mix(in srgb, var(--zeus-brand-primary) 8%, var(--zeus-product-panel)) 62%, var(--zeus-product-panel));
+  color: var(--zeus-status-success-text);
   font-size: 12px;
 }
 
@@ -16853,7 +16864,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-side-pane.is-accepted .task-git-conflict-side-state {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-git-conflict-side-pane.is-ignored .task-git-conflict-side-state {
@@ -17033,7 +17044,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-create-third-party-hint-ok {
-  color: var(--zeus-success-text, #267a4c);
+  color: var(--zeus-status-success-text);
 }
 
 .macos-ai-app .task-create-third-party-hint-error {
@@ -21494,6 +21505,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .task-board-card-property {
+  /* 默认色留在基础属性层，避免覆盖后面的成功和分类色调。 */
+  --task-board-property-color: var(--zeus-product-muted);
   min-block-size: 19px;
   padding: 2px 7px;
   border: 1px solid color-mix(in oklab, var(--zeus-product-line-soft, var(--zeus-control-border)) 74%, transparent);
@@ -21505,7 +21518,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 /* 语义色胶囊：文字、边框、浅底均由单一主色派生，配色体系与任务列表的状态胶囊同源。 */
 .macos-ai-app .task-board-card-property.is-toned {
-  --task-board-property-color: var(--zeus-product-muted);
   border-color: color-mix(in srgb, var(--task-board-property-color) 32%, transparent);
   color: color-mix(in oklab, var(--task-board-property-color) 82%, var(--zeus-product-text));
   background: color-mix(in srgb, var(--task-board-property-color) 11%, var(--zeus-product-panel));
@@ -21517,6 +21529,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .task-board-card-property-tone-violet {
   --task-board-property-color: var(--zeus-task-status-violet);
+}
+/* 看板完成状态与任务列表使用相同的品牌成功色。 */
+.macos-ai-app .task-board-card-property-tone-success {
+  --task-board-property-color: var(--zeus-status-success-text);
 }
 .macos-ai-app .task-board-card-property-tone-green {
   --task-board-property-color: var(--zeus-task-status-green);

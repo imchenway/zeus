@@ -10,14 +10,16 @@
   --zeus-brand-text: var(--zeus-brand-primary);
 }
 
-/* 深色背景提高文字亮度，主按钮仍保持原品牌色与白字的对比。 */
+/* 深色背景与移到 body 的弹窗共用亮色文字，主按钮仍保持品牌色与白字。 */
 .macos-ai-app.theme-dark,
+html[data-zeus-theme='dark'] body > .macos-ai-app,
 .menu-bar-usage-root[data-appearance='dark'] {
   --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
 }
 
 @media (prefers-color-scheme: dark) {
   .macos-ai-app.theme-system,
+  html[data-zeus-theme='system'] body > .macos-ai-app,
   .menu-bar-usage-root[data-appearance='system'] {
     --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
   }
