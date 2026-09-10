@@ -3746,6 +3746,19 @@ a {
   gap: 8px;
   padding: 10px;
 }
+/* 刷新时由可见记录锚点补偿滚动位置，避免与浏览器自动补偿叠加。 */
+.project-git-console-surface {
+  overflow-anchor: none;
+}
+/* 加载状态和键盘按钮复用既有文字与按钮样式。 */
+.project-git-console-pagination {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  color: var(--zeus-product-muted);
+}
 .project-git-console-surface article > span {
   display: flex;
   flex: 1;

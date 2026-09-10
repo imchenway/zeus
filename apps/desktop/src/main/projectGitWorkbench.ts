@@ -2,6 +2,7 @@ import { withProjectGitAuthentication } from './projectGitAuthentication.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import type { MainCommandHistoryCursor, MainCommandLedger, MainCommandOutcome } from './mainCommandLedger.js';
 import {
   discoverGitRepositories,
   executeProjectGitAction,
@@ -16,6 +17,8 @@ import {
   type ProjectGitActionResult,
   type ProjectGitCommitDetail,
   type ProjectGitRepositorySnapshot,
+  type ProjectGitOperationPage,
+  type ProjectGitOperationRecord,
 } from '@zeus/git-core';
 
 export interface ProjectGitProjectIdentity {
@@ -84,6 +87,21 @@ export class ProjectGitWorkbenchService {
     return getProjectGitHistory(resolved.repository.localPath, offset, ref);
   }
 
+  /** 仅查询当前可信项目发现的仓库，Renderer 不能直接提交账本作用域或路径。 */
+  async loadOperations(projectId: string, cursor: string | undefined, ledger: MainCommandLedger): Promise<ProjectGitOperationPage> {
+    /** 项目身份与正常工作台入口共用校验。 */
+    const project = await this.requireProject(projectId);
+    /** 仓库名称从当前发现结果取得，不信任历史输出内的名称或路径。 */
+    const repositories = new Map((await discoverGitRepositories(project.localPath)).map((repository) => [stableRepositoryId(project.id, repository.relativePath), repository.name]));
+    /** 游标与项目绑定，禁止拿另一项目的分页位置混合记录。 */
+    const position = parseOperationCursor(project.id, cursor);
+    /** 账本只读取本页结果，投影之后不把仓库快照传到页面。 */
+    const page = await ledger.readHistory({ commandType: 'desktop.project_git.execute_action', scopeKind: 'git_repository', scopeIds: [...repositories.keys()], cursor: position }, (repositoryId, outcome, result) =>
+      projectOperationRecord(project.id, repositoryId, repositories.get(repositoryId)!, outcome, result),
+    );
+    return { ...page, nextCursor: page.nextCursor ? Buffer.from(JSON.stringify([project.id, page.nextCursor.acceptedAt, page.nextCursor.commandId])).toString('base64url') : null };
+  }
+
   async loadCommit(projectId: string, repositoryId: string, commitHash: string): Promise<ProjectGitCommitDetail> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!commitHash.trim()) throw projectGitError('ZEUS_GIT_COMMIT_REQUIRED', '必须选择一个提交。');
@@ -96,7 +114,15 @@ export class ProjectGitWorkbenchService {
     return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode);
   }
 
-  async execute(projectId: string, repositoryId: string, value: unknown, beforeWrite: (repository: DiscoveredGitRepository, action: ProjectGitAction) => Promise<void>, signal?: AbortSignal): Promise<ProjectGitActionResponse> {
+  /** 实际命令由底层执行器逐条回传，历史记录不根据动作名称反推参数。 */
+  async execute(
+    projectId: string,
+    repositoryId: string,
+    value: unknown,
+    beforeWrite: (repository: DiscoveredGitRepository, action: ProjectGitAction) => Promise<void>,
+    signal?: AbortSignal,
+    onCommand?: (command: string) => Promise<void>,
+  ): Promise<ProjectGitActionResponse> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     const action = parseProjectGitAction(value);
     const repositoryPath = resolved.repository.localPath;
@@ -107,7 +133,7 @@ export class ProjectGitWorkbenchService {
       signal?.throwIfAborted();
       // 单独推送标签与分支推送共用凭据入口。
       const remoteAction = action.type === 'subtree' || action.type === 'submodule_update' || action.type === 'fetch' || action.type === 'push' || action.type === 'push_tag' || action.type === 'pull' || action.type === 'update';
-      const run = (env?: NodeJS.ProcessEnv) => executeProjectGitAction(resolved.repository.localPath, action, signal, env);
+      const run = (env?: NodeJS.ProcessEnv) => executeProjectGitAction(resolved.repository.localPath, action, signal, env, onCommand);
       const result = await (remoteAction ? withProjectGitAuthentication(run) : run()).catch((error: unknown) => {
         // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。
         const message = redactGitOutput(error instanceof Error ? error.message : String(error));
@@ -150,6 +176,71 @@ export class ProjectGitWorkbenchService {
     if (!repository) throw projectGitError('ZEUS_GIT_REPOSITORY_NOT_FOUND', '所选仓库已不属于当前项目，请刷新 Git 工作台。');
     return { id: normalizedRepositoryId, project, repository };
   }
+}
+
+/** 游标只是只读翻页位置，长度、格式及所属项目均须在进入账本前核对。 */
+function parseOperationCursor(projectId: string, cursor: string | undefined): MainCommandHistoryCursor | undefined {
+  if (cursor === undefined) return undefined;
+  if (!cursor || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/u.test(cursor)) throw projectGitError('ZEUS_GIT_HISTORY_CURSOR_INVALID', '操作记录分页位置无效，请刷新。');
+  try {
+    /** 不透明游标只包含项目、接纳时间和命令身份。 */
+    const value: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (
+      !Array.isArray(value) ||
+      value.length !== 3 ||
+      value[0] !== projectId ||
+      typeof value[1] !== 'string' ||
+      !Number.isFinite(Date.parse(value[1])) ||
+      typeof value[2] !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u.test(value[2])
+    )
+      throw new Error('invalid cursor');
+    return { acceptedAt: value[1], commandId: value[2] };
+  } catch {
+    throw projectGitError('ZEUS_GIT_HISTORY_CURSOR_INVALID', '操作记录分页位置无效或属于其他项目，请刷新。');
+  }
+}
+
+/** 每条输出最多展示 64 Ki 字符，账本原文仍按原有保存规则保留。 */
+const operationOutputLimit = 64 * 1024;
+
+/** 只从耐久事实投影控制台记录，不能把写出后未知误标为失败。 */
+function projectOperationRecord(projectId: string, repositoryId: string, repositoryName: string, outcome: MainCommandOutcome, value: unknown): ProjectGitOperationRecord {
+  /** 完整历史结果必须与当前查询身份相符。 */
+  const response = isRecord(value) ? value : null;
+  if (response && ((response.projectId !== undefined && response.projectId !== projectId) || (response.repositoryId !== undefined && response.repositoryId !== repositoryId)))
+    throw projectGitError('ZEUS_GIT_HISTORY_IDENTITY_INVALID', '操作记录身份与当前仓库不符。');
+  /** 部分旧记录没有结构化结果，只保留账本已知事实。 */
+  const result = response && isRecord(response.result) ? response.result : null;
+  /** 未保存动作名称时保留空值，由界面明确说明。 */
+  const action = typeof result?.action === 'string' && result.action.trim() ? result.action : null;
+  /** 只有结构化结果明确给出成功或冲突，才展示确定的操作结果。 */
+  const status: ProjectGitOperationRecord['status'] =
+    outcome.state === 'accepted' ? 'running' : outcome.state === 'receipted' ? (result?.outcome === 'completed' || result?.outcome === 'conflict' ? result.outcome : 'recorded') : outcome.state;
+  /** 错误摘要已经由账本脱敏；成功输出仍经过 Git 统一脱敏入口。 */
+  const output = redactGitOutput(
+    result ? [result.stdout, result.stderr, ...(Array.isArray(result.conflictFiles) ? result.conflictFiles : [])].filter((part): part is string => typeof part === 'string' && Boolean(part)).join('\n') : (outcome.failure?.message ?? ''),
+  );
+  /** 信息缺失和展示截断均可见，不用空输出掩盖。 */
+  const limitations: ProjectGitOperationRecord['limitations'] = [];
+  if (!action) limitations.push('action_unavailable');
+  if (outcome.state === 'receipted' && (!result || (typeof result.stdout !== 'string' && typeof result.stderr !== 'string'))) limitations.push('output_not_saved');
+  if (output.length > operationOutputLimit) limitations.push('output_truncated');
+  if (!outcome.commandLog) limitations.push('commands_not_saved');
+  if (outcome.commandLog?.truncated) limitations.push('commands_truncated');
+  return {
+    id: outcome.commandId,
+    repositoryId,
+    repositoryName,
+    action,
+    startedAt: outcome.acceptedAt,
+    durationMs: status === 'running' ? null : Math.max(0, Date.parse(outcome.updatedAt) - Date.parse(outcome.acceptedAt)),
+    status,
+    // ponytail: 列表输出上限 64 Ki 字符；需要阅读超长全文时再增加独立详情读取，避免分页传输完整快照。
+    output: output.slice(0, operationOutputLimit),
+    commands: outcome.commandLog?.commands.map(redactGitOutput) ?? null,
+    limitations,
+  };
 }
 
 function stableRepositoryId(projectId: string, relativePath: string): string {

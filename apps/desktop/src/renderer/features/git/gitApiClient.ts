@@ -11,6 +11,7 @@ import type {
   ProjectGitCommitDetail,
   ProjectGitSnapshotResult,
   ProjectGitWorkbenchSnapshot,
+  ProjectGitOperationPage,
 } from './gitContracts.js';
 import type { ProjectGitWorkbenchBridge } from '../../transport/dashboardClientContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
@@ -18,6 +19,8 @@ import { buildGitCommandRequest, gitClientCommandTypes } from './gitCommandClien
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from './workspaceGitCommandClient.js';
 
 export interface GitApiClient {
+  /** 操作账本属于桌面实例，不能回退到独立执行宿主的其他记录。 */
+  loadProjectGitOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
   generateGitCommitMessage: (projectId: string, input: { repositoryName: string; stagedDiff: string; files: string[]; language: 'zh-CN' | 'en'; modelRef: string }) => Promise<{ message: string; model: string }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
@@ -57,6 +60,13 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     return transport.request<ExecutedGitOperationResult>(`${projectGitPath(projectId)}/${operation}`, jsonRequest('POST', body));
   };
   return {
+    /** 缺少桌面桥接时报告不可用，不能伪装为空历史。 */
+    loadProjectGitOperations: async (projectId, cursor) => {
+      /** 历史读取和工作台操作必须使用同一个桌面账本。 */
+      const nativeBridge = bridge();
+      if (!nativeBridge) throw new Error('桌面 Git 操作历史暂不可用。 / Desktop Git operation history is unavailable.');
+      return nativeBridge.loadOperations(projectId, cursor);
+    },
     loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
     generateGitCommitMessage: (projectId, input) => transport.request(`${projectGitPath(projectId)}/commit-message`, jsonRequest('POST', input)),
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),

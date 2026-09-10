@@ -162,6 +162,8 @@ contextBridge.exposeInMainWorld('zeus', {
   openProjectGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:project-git-diff:open', input),
   loadProjectGitWorkbench: (projectId: string) => ipcRenderer.invoke('zeus:project-git:load-workbench', projectId),
   loadProjectGitHistory: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-history', input),
+  /** 分页读取桌面工作台已落盘的操作记录，不触发 Git 执行。 */
+  loadProjectGitOperations: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-operations', input),
   loadProjectGitCommit: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-commit', input),
   loadProjectGitComparisonDiff: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-comparison', input),
   cancelProjectGitAction: (repositoryId: string) => ipcRenderer.invoke('zeus:project-git:cancel-action', repositoryId),
