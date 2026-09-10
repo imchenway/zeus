@@ -144,7 +144,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
-      const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+      const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       const archiving = archivingConversationId === conversation.id;
       // 可否归档由服务端按当前状态判断；仅旧会话在入口禁用。
       const archiveLabel = archiving ? copy.archiving : runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archive;
@@ -338,7 +338,8 @@ function ConversationStatusIcon(props: { status: ConversationStatusIconKind; lab
   );
 }
 
-function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRuntimeState): TaskAgentRunStatus {
+/** 会话图标与筛选共用运行状态映射，排队沿用运行中。 */
+export function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRuntimeState): TaskAgentRunStatus {
   if (runtimeState === 'connecting') return 'connecting';
   if (runtimeState === 'reconnecting') return 'reconnecting';
   if (runtimeState === 'streaming' || runtimeState === 'queued') return 'running';
@@ -348,6 +349,11 @@ function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRu
   if (runtimeState === 'error') return 'failed';
   if (runtimeState === 'legacy_readonly') return 'legacy_readonly';
   return 'idle';
+}
+
+/** 图标与筛选按同一顺序读取实时状态，缺失时回退到会话列表投影。 */
+export function resolveConversationTreeRuntimeState(conversation: NativeConversationChoice, conversationStates?: Record<string, ConversationTreeRuntimeState>): ConversationTreeRuntimeState {
+  return conversationStates?.[conversationNavigationId(conversation)] ?? conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
 }
 
 /** 合并项目直属与任务会话，按显示标题搜索，再按会话阶段更新时间排序。 */

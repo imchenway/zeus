@@ -136,9 +136,12 @@ export function isTaskManagementStatus(value: unknown): value is TaskManagementS
   return typeof value === 'string' && taskManagementStatusIdPattern.test(value);
 }
 
+/** 会话运行筛选的固定顺序，同时供界面选项和持久偏好校验使用。 */
+export const sidebarConversationRunStatuses = ['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'] as const;
+
 /** 侧边栏漏斗偏好独立于项目任务页筛选，随本机设置保存。 */
 export interface SidebarConversationFilters {
-  /** 空数组表示所有任务状态及项目直属会话。 */
+  /** status: 表示任务状态，run: 表示会话运行状态，project 表示无关联任务；未选择的维度不限。 */
   conversationStatusFilters: string[];
   /** 筛选生效时是否隐藏没有匹配会话的项目。 */
   hideEmptyFilteredProjects: boolean;
@@ -152,7 +155,14 @@ export function normalizeSidebarConversationFilters(value: unknown): SidebarConv
   const saved = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   return {
     conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
-      ? [...new Set(saved.conversationStatusFilters.filter((filter): filter is string => typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))))))]
+      ? [
+          ...new Set(
+            saved.conversationStatusFilters.filter(
+              (filter): filter is string =>
+                typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))) || sidebarConversationRunStatuses.some((status) => filter === `run:${status}`)),
+            ),
+          ),
+        ]
       : [],
     hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
     latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,

@@ -1,5 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { normalizeSidebarConversationFilters, type SidebarConversationFilters } from '@zeus/shared';
+import { normalizeSidebarConversationFilters, sidebarConversationRunStatuses, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -23,7 +23,8 @@ import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/cs
 import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
 import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
-import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../../session/ProjectConversationTree.js';
+import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree, resolveConversationTreeRuntimeState, taskRunStatusFromConversationTreeState } from '../../session/ProjectConversationTree.js';
+import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
@@ -618,15 +619,24 @@ export function SidebarNav(props: {
       statusLabelsById.get(status.id)!.add(status.label);
     }
   }
-  /** 真正的任务状态与其他会话分区展示；清除选择不属于可选值。 */
+  /** 任务状态、会话运行状态与其他会话分区展示；清除选择不属于可选值。 */
   const statusFilterOptions = [
     ...Array.from(statusLabelsById, ([id, labels]) => ({ value: `status:${id}`, label: [...labels].join(' / '), group: copy.taskStatusFilterGroup })),
+    ...sidebarConversationRunStatuses.map((status) => ({ value: `run:${status}`, label: taskAgentRunStatusLabels[props.appLanguage][status], group: copy.conversationStatusFilterGroup })),
     { value: 'project', label: copy.projectConversationsOnly, group: copy.otherConversationFilterGroup },
   ];
   /** 忽略已删除的状态；未选择状态时显示全部会话。 */
   const activeStatusFilters = conversationStatusFilters.filter((value) => statusFilterOptions.some((option) => option.value === value));
-  /** 多个状态按并集筛选，项目直属会话也可一起选中。 */
+  /** 任意维度已选择时，漏斗与清除操作同步显示已筛选。 */
   const hasStatusFilter = activeStatusFilters.length > 0;
+  /** 任务状态与直属会话沿用并集，未选择该维度时不限。 */
+  const hasTaskStatusFilter = activeStatusFilters.some((value) => value === 'project' || value.startsWith('status:'));
+  /** 运行状态独立多选，再与任务维度取交集。 */
+  const activeRunStatusFilters = activeStatusFilters.filter((value) => value.startsWith('run:'));
+  /** 直接从当前权威投影派生筛选结果，状态更新无需额外同步。 */
+  function matchesConversationRunStatus(conversation: NativeConversationChoice): boolean {
+    return activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates))}`);
+  }
   /** 状态筛选或同任务去重生效时，漏斗和空项目选项都反映当前筛选。 */
   const hasConversationFilter = hasStatusFilter || latestConversationOnly;
   /** 已选状态只出现在漏斗悬停提示中，不额外占用侧栏空间。 */
@@ -636,13 +646,14 @@ export function SidebarNav(props: {
         .map((option) => option.label)
         .join(props.appLanguage === 'zh-CN' ? '、' : ', ')
     : copy.allConversations;
-  /** 上游已按阶段时间倒序；先取每个任务首条，再搜索和分页，避免旧会话因搜索重新出现。 */
+  /** 上游已按阶段时间倒序；先取每个任务首条，再筛选运行状态、搜索和分页，避免旧会话重新出现。 */
   const filteredConversationGroups = props.conversationGroups.map((group) => ({
     ...group,
-    conversations: !hasStatusFilter || activeStatusFilters.includes('project') ? group.conversations : [],
-    tasks: (!hasStatusFilter ? group.tasks : group.tasks.filter((task) => activeStatusFilters.includes(`status:${task.managementStatus}`))).map((task) =>
-      latestConversationOnly ? { ...task, conversations: task.conversations.slice(0, 1) } : task,
-    ),
+    conversations: !hasTaskStatusFilter || activeStatusFilters.includes('project') ? group.conversations?.filter(matchesConversationRunStatus) : [],
+    tasks: (!hasTaskStatusFilter ? group.tasks : group.tasks.filter((task) => activeStatusFilters.includes(`status:${task.managementStatus}`))).map((task) => ({
+      ...task,
+      conversations: (latestConversationOnly ? task.conversations.slice(0, 1) : task.conversations).filter(matchesConversationRunStatus),
+    })),
   }));
   /** 空项目是否隐藏由独立显示选项决定；全部模式仍保留空项目。 */
   const visibleProjects = props.projects.filter((project) => {
