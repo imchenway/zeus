@@ -1801,14 +1801,19 @@ function setupIpc(): void {
     manualWindowDragStates.delete(event.sender.id);
     return { dragging: false };
   });
-  ipcMain.handle('zeus:choose-project-directory', () =>
-    chooseProjectDirectory(() =>
-      dialog.showOpenDialog({
+  ipcMain.handle('zeus:choose-project-directory', (event) => {
+    /** 目录选择器归属发起操作的受信工作窗口，避免独立面板漂离应用。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Project directory picker is unavailable for this window.');
+    }
+    return chooseProjectDirectory(() =>
+      dialog.showOpenDialog(requestingWindow, {
         properties: ['openDirectory'],
         title: nativeText('选择项目目录', 'Choose a project folder'),
       }),
-    ),
-  );
+    );
+  });
   ipcMain.handle('zeus:reveal-project-in-finder', (event, projectPath: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {

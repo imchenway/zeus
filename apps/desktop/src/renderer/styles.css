@@ -22490,92 +22490,72 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 首次任务流程：系统字体、灰阶分组与单一主操作，沿用现有主题和动效。 */
+/* 首次工作入口以紧凑的居中构图聚焦选目录，短窗口由工作区滚动承接。 */
 .macos-ai-app .project-start-guide {
   box-sizing: border-box;
-  inline-size: min(720px, 100%);
-  margin: clamp(32px, 8vh, 96px) auto 32px;
-  padding: 32px clamp(24px, 4vw, 48px);
+  flex: none;
+  inline-size: min(560px, 100%);
+  margin: auto;
   color: var(--zeus-product-text);
-  text-align: start;
+  text-align: center;
   animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
 }
+/* 复用文件夹图标，以少量品牌色和细边框建立欢迎入口的视觉标记。 */
 .macos-ai-app .project-start-symbol {
-  color: var(--zeus-product-muted);
-  margin-block-end: 24px;
-}
-.macos-ai-app .project-start-eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--zeus-product-muted);
+  display: grid;
+  place-items: center;
+  inline-size: 64px;
+  block-size: 64px;
+  margin: 0 auto 24px;
+  border: 1px solid color-mix(in srgb, var(--zeus-product-accent) 18%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--zeus-product-accent) 8%, transparent);
+  color: var(--zeus-product-accent);
 }
 .macos-ai-app .project-start-guide h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 32px;
   line-height: 1.35;
   font-weight: 600;
   letter-spacing: -0.025em;
+  text-wrap: balance;
 }
 .macos-ai-app .project-start-description {
-  max-inline-size: 48ch;
-  margin: 16px 0 32px;
+  max-inline-size: 44ch;
+  margin: 14px auto 24px;
   font-size: 14px;
   line-height: 1.75;
   color: var(--zeus-product-muted);
+  text-wrap: pretty;
 }
-.macos-ai-app .project-start-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-  list-style: none;
-  margin: 0 0 32px;
-  padding: 24px 0;
-  border-block: 1px solid var(--zeus-product-line-soft);
-}
-.macos-ai-app .project-start-steps li {
+.macos-ai-app .project-start-action {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-inline-size: 0;
+  justify-content: center;
 }
-.macos-ai-app .project-start-steps li > span {
-  display: grid;
-  place-items: center;
-  flex: 0 0 24px;
-  block-size: 24px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 50%;
-  font-size: 12px;
-  color: var(--zeus-product-muted);
-}
-.macos-ai-app .project-start-steps li[aria-current] > span {
-  background: var(--zeus-product-accent);
-  color: var(--zeus-accent-text, white);
-  border-color: transparent;
-}
-.macos-ai-app .project-start-steps strong {
-  display: block;
-  font-size: 14px;
-  line-height: 24px;
-  font-weight: 500;
-}
-.macos-ai-app .project-start-steps small {
-  display: block;
-  margin-block-start: 4px;
+/* 步骤仅作流程提示；每段与前导箭头一起换行，避免窄窗口出现孤立箭头。 */
+.macos-ai-app .project-start-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 12px;
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
   font-size: 12px;
   line-height: 1.6;
   color: var(--zeus-product-muted);
 }
-.macos-ai-app .project-start-action {
-  display: grid;
-  justify-items: start;
+.macos-ai-app .project-start-steps li {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
-.macos-ai-app .project-start-action > small {
-  max-inline-size: 50ch;
+.macos-ai-app .project-start-note {
+  margin: 16px 0 0;
   font-size: 12px;
   line-height: 1.65;
   color: var(--zeus-product-muted);
+  text-wrap: balance;
 }
 .macos-ai-app .task-flow-context {
   margin: 0;
@@ -22661,15 +22641,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .model-setup-actions small {
   font-size: 12px;
 }
-@media (max-width: 850px) {
-  .macos-ai-app .project-start-steps {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-  .macos-ai-app .project-start-guide {
-    margin-block-start: 24px;
-  }
-}
 /* 窄窗口按左栏、工作区顺序统一滚动，保留同一份表单和控件。 */
 @media (width < 1100px) {
   .macos-ai-app .task-model-push-body {
@@ -22710,9 +22681,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
   .macos-ai-app .task-model-push-footer > span {
     margin-inline-start: auto;
-  }
-  .macos-ai-app .project-start-guide h1 {
-    font-size: 24px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
