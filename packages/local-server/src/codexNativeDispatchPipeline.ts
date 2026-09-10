@@ -762,7 +762,15 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     for (const lifecycle of lease.lifecycles) lifecycle.markRpcStarted(resourceId);
   }
 
-  return dispatchSubmission;
+  /** 只认本宿主仍持有且尚未写出的派发，重启遗留状态不能充当活跃发送。 */
+  function isPreparingDispatch(conversationId: string): boolean {
+    const lease = dispatchLeases.get(conversationId);
+    if (!lease || lease.rpcStartedResourceId || isClosed()) return false;
+    const submission = options.submissions.getById(lease.submissionId);
+    return submission?.status === 'dispatching' && !submission.providerTurnId;
+  }
+
+  return { dispatchSubmission, isPreparingDispatch };
 }
 
 function isRuntimeRejected(error: unknown): boolean {

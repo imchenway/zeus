@@ -1134,14 +1134,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         requireNativeQueueConversation(params);
         return conversationQueueCoreMutations.delete({ conversationId: params.conversationId, submissionId: params.submissionId });
       },
-      queueSendNow: async ({ params, operationIdentity }) => {
+      queueSendNow: async ({ params, operationIdentity, providerWriteLifecycle }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId });
+        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId, providerWriteLifecycle });
         const updatedConversation = conversations.getById(conversation.id);
-        const submission = conversationSubmissions.getById(params.submissionId);
+        const submission = conversationSubmissions.getById(operation.submissionId);
         if (!updatedConversation || !submission) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native send-now acceptance was not persisted.');
-        void operation;
-        return toNativeDurableAcceptance(operationIdentity, params.submissionId, updatedConversation, submission);
+        return toNativeDurableAcceptance(operationIdentity, operation.submissionId, updatedConversation, submission);
       },
       turnInterrupt: async ({ params, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);

@@ -1461,7 +1461,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       {showPendingDeliveryFeedback ? (
         <MessageDeliveryOutcomeFeedback
           item={row.item}
-          submissionId={queuedSubmissionId}
+          submissionId={queuedSubmission?.id}
           language={options.props.language}
           onOpenAiSettings={options.props.onOpenAiSettings}
           onRecoverQueue={options.props.onRecoverQueue}

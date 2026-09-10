@@ -1,5 +1,6 @@
 import type { ZeusConversationMessageRecord, ZeusConversationSubmissionRecord } from '@zeus/storage';
 import type { CreateCodexNativeConversationCoordinatorOptions } from './codexNativeConversationContracts.js';
+import { isSteeringSubmission } from './codexNativeConversationPolicy.js';
 
 /** 精确用户回显补交同分段续发的丢失回执，恢复原提交而不重发请求。 */
 export function reconcileNativeUserMessageAcceptance(
@@ -127,7 +128,7 @@ export function resolveNativeUserMessageSubmission(input: ResolveNativeUserMessa
     : providerClientId
       ? undefined
       : (input.submissions.find((entry) => entry.id === input.clientSubmissionId && !existingClientMessageIds.has(entry.clientMessageId)) ??
-        input.submissions.find((entry) => entry.providerTurnId === input.providerTurnId && !(entry.kind === 'steer' && entry.requestedDelivery === 'send_now') && !existingClientMessageIds.has(entry.clientMessageId)));
+        input.submissions.find((entry) => entry.providerTurnId === input.providerTurnId && !isSteeringSubmission(entry) && !existingClientMessageIds.has(entry.clientMessageId)));
 
   return {
     clientMessageId: durableClientId ?? submission?.clientMessageId ?? null,

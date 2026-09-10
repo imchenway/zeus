@@ -20,6 +20,8 @@ interface CodexProviderThreadAuthorityOptions {
   manager: Pick<CodexAppServerManager, 'generationForThread' | 'readThread' | 'resumeThread'>;
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
   runStates: Map<string, NativeConversationRunState>;
+  /** 当前宿主的实际派发占用；持久状态本身不能证明发送流程仍在运行。 */
+  isPreparingDispatch(conversationId: string): boolean;
   getConversation(conversationId: string): ZeusConversationWithMessagesRecord | undefined;
   requireConversation(conversationId: string): ZeusConversationWithMessagesRecord;
   prepareContext(conversationId: string): Promise<ConversationDispatchContext>;
@@ -232,6 +234,11 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     assertCurrent(conversation.id, providerThreadId, generationId);
     const current = options.requireConversation(conversation.id);
     const snapshot = options.projectedProviderThreadSnapshot(conversation.id, metadata);
+    // Provider 空闲且当前提交还在本地准备时，没有用户回显是正常状态。
+    // 保留发送流程及队首；已写出、取消或重启遗留提交仍走下面的恢复核对。
+    if (providerStatus.type !== 'active' && snapshotConfirmsIdleProviderThread(snapshot) && options.isPreparingDispatch(conversation.id)) {
+      return { type: 'idle', status: providerStatus };
+    }
     // 额度或单轮错误不永久封住线程；先核对真实轮次，未知或仍在执行时继续阻止派发。
     if (providerStatus.type === 'systemError' && !snapshotConfirmsIdleProviderThread(snapshot)) {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_SYSTEM_ERROR', '模型线程仍有错误，尚未确认上一轮已经结束。');

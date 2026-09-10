@@ -276,6 +276,7 @@ try {
     };
 
     observed.recoveryIntents = await verifyRecoveryIntents(application, deliveries);
+    observed.queueSteerWriteBoundary = await verifyQueueSteerWriteBoundary(application, deliveries);
     const structure = await inspectStructure();
     observed.structure = structure;
     observed.quickCheck = db.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check ?? null;
@@ -313,6 +314,59 @@ try {
   }
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
+}
+
+/** 在真实路由与账本上检查两个 Provider 共用的写前拒绝和写后未知边界。 */
+async function verifyQueueSteerWriteBoundary(application: ConversationDispatchCommandApplication, deliveries: CommandDeliveryRepository) {
+  /** 只控制末端 Provider 行为，路由、去重和回执均运行产品实现。 */
+  const server = Fastify();
+  /** 同一操作的执行次数用于核对重复点击。 */
+  const calls = new Map<string, number>();
+  registerConversationDispatchCommandRoutes({
+    server,
+    application,
+    operations: {
+      queueSendNow: async ({ params, providerWriteLifecycle }) => {
+        calls.set(params.submissionId, (calls.get(params.submissionId) ?? 0) + 1);
+        if (params.submissionId.endsWith('rejected')) throw Object.assign(new Error('队首检查未通过'), { code: 'ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', statusCode: 409 });
+        await providerWriteLifecycle.markPrepared(params.submissionId);
+        providerWriteLifecycle.markRpcStarted(params.submissionId);
+        if (params.submissionId.endsWith('unknown')) throw new Error('写出后失去响应');
+        return { submissionId: params.submissionId, status: 'steering' };
+      },
+    } as ConversationDispatchCommandRouteOperations,
+    sendNativeError: (reply, error) => reply.code(500).send({ error: String(error) }),
+    sendChangeSetError: () => {
+      throw new Error('引导不能进入文件变更入口');
+    },
+  });
+  try {
+    for (const provider of ['codex', 'pi']) {
+      for (const outcome of ['rejected', 'accepted', 'unknown']) {
+        /** 每个场景都使用独立但可重复的原命令身份。 */
+        const submissionId = `steer-${provider}-${outcome}`;
+        /** 原封不动重复请求，不能只验证两个不同命令。 */
+        const request = commandRequest({ label: submissionId, commandType: conversationDispatchCommandTypes.queueSendNow, scopeKind: 'submission', scopeId: submissionId, operationIdentity: submissionId, input: {} });
+        /** 真实 HTTP 处理链路不开放额外端口。 */
+        const send = () => server.inject({ method: 'POST', url: `/api/projects/probe/conversations/${provider}/queue/${submissionId}/send-now`, payload: request.body });
+        /** 首次请求决定应记录的耐久结果。 */
+        const response = await send();
+        /** 写出标记必须与实际调用一致。 */
+        const attempt = requiredAttempt(deliveries, request.commandId);
+        assertProbe(attempt.receipt.outcome === (outcome === 'rejected' ? 'failed_before_write' : outcome === 'accepted' ? 'accepted' : 'outcome_unknown_after_write'), `${provider} 引导回执分类错误`);
+        assertProbe((attempt.attempt.providerWriteStartedAt !== null) === (outcome !== 'rejected'), `${provider} 引导写出标记错误`);
+        assertProbe(response.statusCode === (outcome === 'accepted' ? 202 : 409), `${provider} 引导返回状态错误`);
+        if (outcome === 'rejected') assertProbe(response.json().error === 'ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '本地拒绝必须保留原错误');
+        else {
+          await send();
+          assertProbe(calls.get(submissionId) === 1, '重复点击不得重做已接纳或结果未知的引导');
+        }
+      }
+    }
+    return { providers: ['codex', 'pi'], localRejectionHasNoWriteMarker: true, acceptedAndUnknownNotReplayed: true };
+  } finally {
+    await server.close();
+  }
 }
 
 function now(): Date {
@@ -510,6 +564,7 @@ async function verifyRecoveryIntents(application: ConversationDispatchCommandApp
     },
     submissions: { listByConversation: () => [] },
     runStates: new Map(),
+    isPreparingDispatch: () => false,
     getConversation: () => conversation,
     requireConversation: () => conversation,
     inferRunState: () => ({ type: 'idle' }),
