@@ -469,6 +469,8 @@ async function hydrateRenderer(): Promise<void> {
       ? {
           projectGitWorkbench: {
             loadWorkbench: window.zeus.loadProjectGitWorkbench,
+            /** 桌面历史与动作执行使用同一主进程。 */
+            loadOperations: (projectId, cursor) => window.zeus!.loadProjectGitOperations({ projectId, cursor }),
             loadCommit: (projectId, repositoryId, commitHash) => window.zeus!.loadProjectGitCommit({ projectId, repositoryId, commitHash }),
             loadComparison: (projectId, repositoryId, ref, mode) => window.zeus!.loadProjectGitComparisonDiff({ projectId, repositoryId, ref, mode }),
             execute: (projectId, repositoryId, action) => window.zeus!.executeProjectGitAction({ projectId, repositoryId, action }),

@@ -7,7 +7,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const projectGitExecution = new AsyncLocalStorage<{ signal?: AbortSignal; env?: NodeJS.ProcessEnv }>();
+/** 当前工作台操作的取消、凭据环境和命令记录回调，彼此隔离。 */
+const projectGitExecution = new AsyncLocalStorage<{ signal?: AbortSignal; env?: NodeJS.ProcessEnv; onCommand?: (command: string) => Promise<void> }>();
 
 /**
  * Git Core 对外暴露的真实 mutation capability 单一来源。
@@ -322,6 +323,40 @@ export interface ProjectGitActionResult extends GitRunnerResult {
   branch: string;
   headSha: string;
   conflictFiles: string[];
+}
+
+/** 桌面控制台只接收操作展示信息，不携带完整仓库快照。 */
+export interface ProjectGitOperationRecord {
+  /** 耐久命令身份，用于合并刷新结果和去重。 */
+  id: string;
+  /** 当前项目内的稳定仓库身份。 */
+  repositoryId: string;
+  /** 仓库名称来自当前项目发现结果。 */
+  repositoryName: string;
+  /** 历史记录未保存动作时保持未知，不从输出猜测。 */
+  action: string | null;
+  /** 开始接纳操作的真实时间，亦为历史排序时间。 */
+  startedAt: string;
+  /** 终态耗时；仍在执行时不展示虚假的固定耗时。 */
+  durationMs: number | null;
+  /** 忠实区分确定结果、写前失败与写出后未知。 */
+  status: 'running' | 'completed' | 'conflict' | 'failed_before_write' | 'unknown_after_write' | 'recorded';
+  /** 原有脱敏输出或账本保留的错误摘要。 */
+  output: string;
+  /** 实际调用的 Git 命令；旧账本未保存时保持空值。 */
+  commands: string[] | null;
+  /** 明示历史信息缺失和本页输出的展示上限。 */
+  limitations: Array<'action_unavailable' | 'output_not_saved' | 'output_truncated' | 'commands_not_saved' | 'commands_truncated'>;
+}
+
+/** 控制台历史页固定 50 条，计数始终代表整个项目的历史总量。 */
+export interface ProjectGitOperationPage {
+  /** 本页按时间和命令身份倒序排列。 */
+  items: ProjectGitOperationRecord[];
+  /** 当前查询范围内的真实记录总数。 */
+  total: number;
+  /** 服务端生成的不透明分页位置，空值表示已到末尾。 */
+  nextCursor: string | null;
 }
 
 export interface ProjectGitCommitDetail {
@@ -1618,6 +1653,9 @@ function localBranchRef(branchName: string): string {
 async function defaultGitCommandRunner(cwd: string, args: string[], input?: string): Promise<GitRunnerResult> {
   const execution = projectGitExecution.getStore();
   execution?.signal?.throwIfAborted();
+  // 由实际参数生成命令；先耐久记录调用，再启动 Git，失败和中断也能追溯。
+  await execution?.onCommand?.(formatGitCommand(args, input !== undefined));
+  execution?.signal?.throwIfAborted();
   return new Promise((resolveResult, reject) => {
     const child = spawn('git', args, {
       cwd,
@@ -1677,6 +1715,17 @@ async function defaultGitCommandRunner(cwd: string, args: string[], input?: stri
       else resolveResult({ stdout, stderr });
     });
   });
+}
+
+/** 命令仅用于展示；参数按 shell 单引号转义，敏感信息先经过统一脱敏。 */
+function formatGitCommand(args: string[], hasInput: boolean): string {
+  /** 保留参数边界，避免空格、引号或命令替换字符改变展示语义。 */
+  const words = args.map((argument) => {
+    /** 凭据不进入耐久账本，真实执行仍使用未经修改的参数。 */
+    const safe = redactGitOutput(argument);
+    return /^[A-Za-z0-9_./:@%+=,-]+$/u.test(safe) ? safe : `'${safe.replaceAll("'", "'\\''")}'`;
+  });
+  return `git ${words.join(' ')}${hasInput ? ' # 通过标准输入传入内容' : ''}`;
 }
 
 async function runGit(cwd: string, args: string[], input?: string): Promise<GitRunnerResult> {
@@ -2158,8 +2207,8 @@ async function readIntegrationState(cwd: string): Promise<'merge' | 'rebase' | n
 }
 
 /** 执行项目 Git 工作台白名单动作；调用方不能传入任意子命令或任意工作目录。 */
-export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<ProjectGitActionResult> {
-  return projectGitExecution.run({ signal, env }, () => executeProjectGitActionInternal(cwd, action));
+export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onCommand?: (command: string) => Promise<void>): Promise<ProjectGitActionResult> {
+  return projectGitExecution.run({ signal, env, onCommand }, () => executeProjectGitActionInternal(cwd, action));
 }
 
 async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
