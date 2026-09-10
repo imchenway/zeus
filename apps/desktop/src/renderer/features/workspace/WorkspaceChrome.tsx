@@ -4,7 +4,6 @@ import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
@@ -115,6 +114,7 @@ export function ProjectStartGuide(props: { language: AppLanguage; busy: boolean;
   );
 }
 
+/** 先选择工作目录，再确认名称；复用已有创建与弹窗交互。 */
 export function ProjectCreateDialog(props: {
   open: boolean;
   form: ProjectCreateFormState;
@@ -127,15 +127,23 @@ export function ProjectCreateDialog(props: {
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  /** 目录未选时作为首个操作，原生选择器关闭后再恢复表单焦点。 */
+  const directoryButtonRef = useRef<HTMLButtonElement>(null);
+  /** 目录已有值时允许直接确认或修改自动填入的名称。 */
   const nameInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!props.open) return;
-    const focusFrame = window.requestAnimationFrame(() => nameInputRef.current?.focus());
+    if (!props.open || props.directoryBusy) return;
+    /** 等待原生选择器结束且控件恢复可用，兼容首次引导直接选目录的入口。 */
+    const focusFrame = window.requestAnimationFrame(() => {
+      (props.form.localPath ? nameInputRef.current : directoryButtonRef.current)?.focus({ preventScroll: true });
+    });
     return () => window.cancelAnimationFrame(focusFrame);
-  }, [props.open]);
+  }, [props.open, props.directoryBusy, props.form.localPath]);
   if (!props.open) return null;
 
+  /** 选择目录或创建期间，统一阻止重复操作和关闭。 */
   const interactionBusy = props.busy || props.directoryBusy;
+  /** 错误与目录说明一并提供给辅助阅读工具。 */
   const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
 
   return (
@@ -148,28 +156,12 @@ export function ProjectCreateDialog(props: {
           </button>
         </header>
         <div className="project-create-dialog-body">
-          <label htmlFor="project-create-name-input">{props.copy.createNameLabel}</label>
-          <div className="project-create-name-control">
-            <span className="project-create-name-icon" aria-hidden="true">
-              <Folder weight="regular" />
-            </span>
-            <input
-              ref={nameInputRef}
-              id="project-create-name-input"
-              value={props.form.name}
-              placeholder={props.copy.createNamePlaceholder}
-              aria-invalid={props.error === props.copy.createNameRequired ? true : undefined}
-              onChange={(event) => props.onNameChange(event.currentTarget.value)}
-              disabled={interactionBusy}
-            />
-          </div>
           <section className="project-create-folder-field" aria-labelledby="project-create-folder-label">
             <strong id="project-create-folder-label">{props.copy.createFolderLabel}</strong>
-            <p id="project-create-folder-help">{props.copy.createFolderHelp}</p>
             <button
+              ref={directoryButtonRef}
               type="button"
               className="project-create-folder-picker"
-              data-selected={props.form.localPath ? 'true' : 'false'}
               aria-describedby="project-create-folder-help"
               onClick={props.onChooseDirectory}
               disabled={interactionBusy}
@@ -182,9 +174,23 @@ export function ProjectCreateDialog(props: {
                 <strong>{props.form.localPath ? defaultProjectNameFromLocalPath(props.form.localPath) : props.copy.createChooseFolder}</strong>
                 {props.form.localPath ? <small title={props.form.localPath}>{props.form.localPath}</small> : null}
               </span>
-              {props.form.localPath ? <span className="project-create-folder-change">{props.copy.createChangeFolder}</span> : null}
+              <span className="project-create-folder-change">{props.form.localPath ? props.copy.createChangeFolder : props.copy.createSelectFolder}</span>
             </button>
+            <p id="project-create-folder-help">{props.copy.createFolderHelp}</p>
           </section>
+          <label className="project-create-name-field" htmlFor="project-create-name-input">
+            <span>{props.copy.createNameLabel}</span>
+            <input
+              ref={nameInputRef}
+              id="project-create-name-input"
+              value={props.form.name}
+              placeholder={props.copy.createNamePlaceholder}
+              aria-invalid={props.error === props.copy.createNameRequired ? true : undefined}
+              aria-describedby={props.error === props.copy.createNameRequired ? 'project-create-error' : undefined}
+              onChange={(event) => props.onNameChange(event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
+          </label>
           {props.error ? (
             <p className="project-create-error" id="project-create-error" role="alert">
               {props.error}
