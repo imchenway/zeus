@@ -462,6 +462,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const completionAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
+  /** 耗时入口优先锚定最终正文；资源交付仍沿用原有的轮次收尾位置。 */
+  const turnSummaryAnchorKeyByTurn = useMemo(() => {
+    /** 没有最终正文的轮次保留计划、图片或最后记录作为展示位置。 */
+    const anchors = { ...completionAnchorKeyByTurn };
+    for (const row of transcriptRows) {
+      if (row.kind === 'item' && isFinalAnswerItem(row.item)) anchors[row.item.turnId] = row.item.key;
+    }
+    return anchors;
+  }, [completionAnchorKeyByTurn, transcriptRows]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
     return Object.values(props.state.turnsByProviderId)
@@ -908,6 +917,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
+              turn={turnActive ? undefined : turn}
+              requests={props.state.pendingRequests}
               presentation={processLive ? 'inline' : 'disclosure'}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
@@ -926,19 +937,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </SessionTurnProcessDisclosure>
           ) : null}
           {!turnActive && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
-          {!turnActive && containsCompletionAnchor ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
         </>
       );
     }
     const rowItems = row.kind === 'item' ? [row.item] : row.items;
     const lastRowItem = rowItems[rowItems.length - 1]!;
     const turn = props.state.turnsByProviderId[lastRowItem.turnId];
-    const closesVisibleTurn = completionAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
-    /** 普通答复的耗时与消息操作同行；计划、图片或无答复的轮次仍保留独立收尾。 */
-    const durationInMessageFooter = row.kind === 'item' && isFinalAnswerItem(lastRowItem);
-    /** 沿用当前轮次的计时组件，同一收尾位置只渲染一次耗时。 */
-    const duration = closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null;
-    const anchorsTurnArtifacts = closesVisibleTurn;
+    const anchorsTurnArtifacts = completionAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    /** 正文之后还有交付资源时，耗时仍显示在正文之前。 */
+    const anchorsTurnSummary = turnSummaryAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -950,17 +957,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     // 入口只能来自可见过程事实。缺少 turn summary 或仅有历史视图会隐藏的 reasoning，
     // 都不能凭最终回答臆造一个展开后为空的“查看处理过程”。
     const historicalProcessAvailable = Boolean(v2Turn?.process.available);
-    const showV2DeferredDetails = Boolean(closesVisibleTurn && !projectedTurnWorkIds.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
+    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkIds.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
+    /** 只剩用户输入的结束轮次仍先显示输入，随后显示其耗时。 */
+    const opensWithUserMessage = itemRole(lastRowItem) === 'user';
+    /** 同一消息仅渲染一次，根据消息角色决定它与轮次摘要的先后关系。 */
+    const content = renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId));
     return (
       <>
-        {renderTranscriptRow(
-          row,
-          transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
-          durationInMessageFooter ? duration : null,
-        )}
+        {opensWithUserMessage ? content : null}
         {showV2DeferredDetails ? (
           <SessionTurnProcessDisclosure
             language={props.language}
+            turn={turn}
+            requests={props.state.pendingRequests}
             labelKind={historicalProcessAvailable ? 'process' : 'details'}
             loading={Boolean(v2ProcessPaging?.loading)}
             error={v2ProcessPaging?.error}
@@ -974,8 +983,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {null}
           </SessionTurnProcessDisclosure>
         ) : null}
+        {/* 没有处理过程的结束轮次只在正文前显示耗时，不生成空的展开按钮。 */}
+        {anchorsTurnSummary && turn && !isActiveSessionTurn(turn) && !projectedTurnWorkIds.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
+          <div className="session-turn-process-control">
+            <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
+          </div>
+        ) : null}
+        {opensWithUserMessage ? null : content}
         {anchorsTurnArtifacts ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
-        {durationInMessageFooter ? null : duration}
       </>
     );
   };
@@ -1358,8 +1373,8 @@ function transcriptRowRenderOptions(
   return { props, items, showThinking, motionFocus, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
-/** 按消息种类复用现有展示组件，可将轮次收尾内容放入答复操作栏。 */
-function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions, footerContent?: ReactNode): ReactNode {
+/** 按消息种类复用现有展示组件，轮次耗时由顶部处理过程统一呈现。 */
+function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
     return (
@@ -1412,7 +1427,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
-        footerContent={footerContent}
         questionAnswer={row.questionAnswer}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}

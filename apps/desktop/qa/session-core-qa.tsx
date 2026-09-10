@@ -31,7 +31,7 @@ interface QaScene {
 
 const scenes: QaScene[] = [
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
-  { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的执行状态和答复页脚。', answer: '', activities: [] },
+  { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的耗时入口与悬停操作栏。', answer: '', activities: [] },
   { query: 'model-select', title: '模型选择与置顶', summary: '共享选择框的分组、焦点、搜索和持久置顶。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
   { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
@@ -220,7 +220,7 @@ function MessageLayoutQa() {
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
-  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links ? 'completed' : 'running');
+  const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
   const contentRef = useRef<HTMLDivElement>(null);
   /** 保留手动检查和点击的结果，便于在页面核对资源身份。 */
@@ -264,11 +264,28 @@ function MessageLayoutQa() {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
     setLinkResult(`打开回调：${resource.id}`);
   }
+  /** 手动运行生产布局检查，覆盖计时合并、缺失过程与缺失时间的展示边界。 */
+  function checkLayout(): void {
+    /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
+    const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
+    /** 无过程的答复不能出现展开按钮。 */
+    const controls = contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [];
+    if (durations.length !== (active || parameters.has('no-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
+    if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
+    /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
+    const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
+    if (durations[0] && answer && !(durations[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error('耗时入口没有放在最终正文之前');
+    setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
+  }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
     { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。', payload: {}, status: 'completed' },
-    { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
-    { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+    ...(parameters.has('no-process')
+      ? []
+      : [
+          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
+          { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+        ]),
     ...(!active && !parameters.has('no-answer')
       ? [
           {
@@ -276,12 +293,13 @@ function MessageLayoutQa() {
             phase: 'final_answer',
             text: links
               ? '已完成会话消息优化。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
-              : '已检查会话布局，执行状态紧跟处理摘要，消息操作与处理耗时显示在同一行。',
+              : '已检查会话布局，耗时与处理过程合并在正文上方；鼠标放到消息上时显示复制、反馈与时间戳。',
             payload: {},
             status: 'completed',
           },
         ]
       : []),
+    ...(!active && parameters.has('deliverable') ? [{ type: 'fileChange', phase: 'prework', text: '', payload: {}, status: 'completed' }] : []),
   ].map((item, index) => ({
     ...item,
     key: `layout-${index}`,
@@ -289,10 +307,10 @@ function MessageLayoutQa() {
     conversationId: 'qa-layout',
     threadId: 'qa-layout',
     turnId: 'qa-layout-turn',
-    resources: links && item.phase === 'final_answer' ? resources : [],
+    resources: item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' }] : links && item.phase === 'final_answer' ? resources : [],
     updatedAt: completedAt,
   }));
-  /** 计时与终态均使用生产会话结构，覆盖无答复时的独立收尾。 */
+  /** 计时与终态均使用生产会话结构，覆盖无答复和缺少计时信息的轮次。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
     conversationId: 'qa-layout',
@@ -302,7 +320,16 @@ function MessageLayoutQa() {
     items: Object.fromEntries(items.map((item) => [item.key, item])),
     itemOrder: items.map((item) => item.key),
     turnsByProviderId: {
-      'qa-layout-turn': { id: 'qa-layout-turn', providerTurnId: 'qa-layout-turn', submissionId: null, status, startedAt, completedAt: active ? null : completedAt, createdAt: startedAt, updatedAt: completedAt },
+      'qa-layout-turn': {
+        id: 'qa-layout-turn',
+        providerTurnId: 'qa-layout-turn',
+        submissionId: null,
+        status,
+        startedAt: parameters.has('no-time') ? null : startedAt,
+        completedAt: active ? null : completedAt,
+        createdAt: startedAt,
+        updatedAt: completedAt,
+      },
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
@@ -325,19 +352,22 @@ function MessageLayoutQa() {
           <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
             窄分栏
           </Button>
+          <Button onClick={checkLayout}>检查耗时入口</Button>
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
         <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated onOpenResource={openResource} />
       </div>
-      {links ? (
-        <div className="qa-error-layout-note">
-          <p role="status">{linkResult}</p>
-          <span>来源：</span>
-          <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
-        </div>
-      ) : null}
+      <div className="qa-error-layout-note">
+        <p role="status">{linkResult}</p>
+        {links ? (
+          <>
+            <span>来源：</span>
+            <ConversationInlineResource resource={resources[0]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+          </>
+        ) : null}
+      </div>
     </main>
   );
 }
