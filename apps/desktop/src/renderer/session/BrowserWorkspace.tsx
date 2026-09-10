@@ -26,7 +26,6 @@ interface BrowserWorkspaceProps {
   initialSnapshot?: ZeusBrowserConversationSnapshot | null;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
-  suspended?: boolean;
   expanded?: boolean;
   /** 窄窗口自动全宽，避免提供点击后没有变化的分栏操作。 */
   canSplit?: boolean;
@@ -233,7 +232,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     let frame = 0;
     // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
     const isSuspended = (): boolean =>
-      props.suspended === true ||
       [...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport));
     // 每次提交都重新读取弹窗状态和尺寸，避免延迟回调把网页重新盖到弹窗上。
     const syncLayout = (): void => {
@@ -277,7 +275,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         })
         .catch(() => undefined);
     };
-  }, [activeTab?.id, commentsOpen, props.conversationId, props.suspended, snapshot?.pendingApprovals.length]);
+  }, [activeTab?.id, commentsOpen, props.conversationId, snapshot?.pendingApprovals.length]);
 
   /** 使用系统菜单覆盖网页；动作继续复用已有命令和分栏状态。 */
   async function openMoreMenu(trigger: HTMLButtonElement): Promise<void> {
