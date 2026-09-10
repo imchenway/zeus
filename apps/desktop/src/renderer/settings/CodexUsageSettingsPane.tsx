@@ -1,5 +1,7 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
+import { CalendarDotsIcon as CalendarDots } from '@phosphor-icons/react/dist/csr/CalendarDots';
+import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
@@ -122,7 +124,7 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
             <OfficialOverview snapshot={snapshot.official} language={props.language} />
           </UsageSection>
 
-          <UsageSection title={copy.local} description={copy.localHelp} badge={copy.onlyZeus}>
+          <LocalUsageTabs snapshot={snapshot} language={props.language} dataKey={`${range}:${projectId}:${model}`}>
             <div className="codex-usage-filters" aria-label={copy.local}>
               <label>
                 <span>{copy.range}</span>
@@ -156,8 +158,7 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
                 </select>
               </label>
             </div>
-            <LocalOverview key={`${range}:${projectId}:${model}`} snapshot={snapshot} language={props.language} />
-          </UsageSection>
+          </LocalUsageTabs>
         </>
       ) : null}
     </section>
@@ -194,34 +195,121 @@ function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; languag
     );
   return (
     <>
-      {props.snapshot.stale ? <p className="codex-usage-stale">{copy.stale}</p> : null}
-      <MetricGrid
-        language={props.language}
-        items={[
-          [props.language === 'zh-CN' ? '计划' : 'Plan', props.snapshot.planType ?? copy.unavailable],
-          [props.language === 'zh-CN' ? '累计 Token' : 'Lifetime tokens', formatTokens(props.snapshot.lifetimeTokens, props.language)],
-          [props.language === 'zh-CN' ? '日峰值' : 'Peak day', formatTokens(props.snapshot.peakDailyTokens, props.language)],
-          [props.language === 'zh-CN' ? '最长运行' : 'Longest turn', formatDuration(props.snapshot.longestRunningTurnSec, props.language)],
-          [props.language === 'zh-CN' ? '当前连续天数' : 'Current streak', formatDays(props.snapshot.currentStreakDays, props.language)],
-          [props.language === 'zh-CN' ? '最长连续天数' : 'Longest streak', formatDays(props.snapshot.longestStreakDays, props.language)],
-        ]}
-      />
-      <UsageHeatmap days={(props.snapshot.dailyUsageBuckets ?? []).map((day) => ({ date: day.startDate, totalTokens: day.tokens }))} label={copy.allClients} language={props.language} />
-      <div className="codex-usage-limit-list">
-        {props.snapshot.rateLimitWindows.map((window, index) => (
-          <div key={`${window.limitId ?? 'limit'}-${window.kind}-${index}`}>
+      <div className="codex-usage-official-summary">
+        {props.snapshot.stale ? <p className="codex-usage-stale">{copy.stale}</p> : null}
+        <MetricGrid
+          language={props.language}
+          items={[
+            [props.language === 'zh-CN' ? '计划' : 'Plan', props.snapshot.planType ?? copy.unavailable],
+            [props.language === 'zh-CN' ? '累计 Token' : 'Lifetime tokens', formatTokens(props.snapshot.lifetimeTokens, props.language)],
+            [props.language === 'zh-CN' ? '日峰值' : 'Peak day', formatTokens(props.snapshot.peakDailyTokens, props.language)],
+            [props.language === 'zh-CN' ? '最长运行' : 'Longest turn', formatDuration(props.snapshot.longestRunningTurnSec, props.language)],
+            [props.language === 'zh-CN' ? '当前连续天数' : 'Current streak', formatDays(props.snapshot.currentStreakDays, props.language)],
+            [props.language === 'zh-CN' ? '最长连续天数' : 'Longest streak', formatDays(props.snapshot.longestStreakDays, props.language)],
+          ]}
+        />
+      </div>
+      <div className="codex-usage-official-detail-grid">
+        <OfficialUsageCalendar days={(props.snapshot.dailyUsageBuckets ?? []).map((day) => ({ date: day.startDate, totalTokens: day.tokens }))} label={copy.allClients} language={props.language} />
+        <section className="codex-usage-quota-panel" aria-label={props.language === 'zh-CN' ? '账户用量限制' : 'Account usage limits'}>
+          <header>
             <span>
-              <strong>{window.limitName ?? window.limitId ?? (props.language === 'zh-CN' ? '配额窗口' : 'Quota window')}</strong>
-              <small>{formatWindow(window.windowDurationMins, props.language)}</small>
+              <Gauge size={20} weight="regular" aria-hidden="true" />
+              <strong>{props.language === 'zh-CN' ? '账户用量限制' : 'Account usage limits'}</strong>
             </span>
-            <span>
-              <b>{formatPercent(window.remainingPercent / 100, props.language)}</b>
-              <small>{window.resetsAt ? formatReset(window.resetsAt, props.language) : copy.unavailable}</small>
-            </span>
-          </div>
-        ))}
+            <small>{props.language === 'zh-CN' ? `${props.snapshot.rateLimitWindows.length} 个窗口` : `${props.snapshot.rateLimitWindows.length} window${props.snapshot.rateLimitWindows.length === 1 ? '' : 's'}`}</small>
+          </header>
+          {props.snapshot.rateLimitWindows.length > 0 ? (
+            <div className="codex-usage-limit-list">
+              {props.snapshot.rateLimitWindows.map((window, index) => (
+                <div key={`${window.limitId ?? 'limit'}-${window.kind}-${index}`}>
+                  <span>
+                    <strong>{window.limitName ?? window.limitId ?? (props.language === 'zh-CN' ? '配额窗口' : 'Quota window')}</strong>
+                    <small>{formatWindow(window.windowDurationMins, props.language)}</small>
+                  </span>
+                  <span>
+                    <b>{formatPercent(window.remainingPercent / 100, props.language)}</b>
+                    <small>{window.resetsAt ? formatReset(window.resetsAt, props.language) : copy.unavailable}</small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="codex-usage-state">{props.language === 'zh-CN' ? '当前没有可展示的限额窗口。' : 'No usage-limit windows are available.'}</p>
+          )}
+        </section>
       </div>
     </>
+  );
+}
+
+type LocalUsageTab = 'overview' | 'models' | 'projects' | 'conversations';
+
+function LocalUsageTabs(props: { snapshot: CodexUsageAnalyticsSnapshot; language: Language; dataKey: string; children: ReactNode }) {
+  const copy = text[props.language];
+  const [activeTab, setActiveTab] = useState<LocalUsageTab>('overview');
+  const tabGroupId = useId();
+  const tabs: Array<{ id: LocalUsageTab; label: string }> = [
+    { id: 'overview', label: copy.local },
+    { id: 'models', label: props.language === 'zh-CN' ? '模型明细' : 'Models' },
+    { id: 'projects', label: props.language === 'zh-CN' ? '项目明细' : 'Projects' },
+    { id: 'conversations', label: props.language === 'zh-CN' ? '会话明细' : 'Conversations' },
+  ];
+  const tabId = (tab: LocalUsageTab) => `${tabGroupId}-${tab}-tab`;
+  const panelId = (tab: LocalUsageTab) => `${tabGroupId}-${tab}-panel`;
+  const emptyPanel = <p className="codex-usage-state">{copy.empty}</p>;
+
+  return (
+    <section className="codex-usage-section codex-usage-local-tabs">
+      <header className="codex-usage-local-tabs-header">
+        <nav className="codex-usage-local-tab-list" role="tablist" aria-label={copy.local} onKeyDown={handleLocalUsageTabKeyDown}>
+          {tabs.map((tab) => (
+            <button id={tabId(tab.id)} key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={panelId(tab.id)} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)}>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <em>{copy.onlyZeus}</em>
+      </header>
+      <small className="codex-usage-local-help">{copy.localHelp}</small>
+      {props.children}
+      <section id={panelId('overview')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('overview')} tabIndex={0} hidden={activeTab !== 'overview'}>
+        <LocalOverview snapshot={props.snapshot} language={props.language} />
+      </section>
+      <section id={panelId('models')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('models')} tabIndex={0} hidden={activeTab !== 'models'}>
+        {props.snapshot.local.byModel.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:models`} title={props.language === 'zh-CN' ? '模型明细' : 'Models'} rows={props.snapshot.local.byModel} language={props.language} showTitle={false} />
+        ) : (
+          emptyPanel
+        )}
+      </section>
+      <section id={panelId('projects')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('projects')} tabIndex={0} hidden={activeTab !== 'projects'}>
+        {props.snapshot.local.byProject.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:projects`} title={props.language === 'zh-CN' ? '项目明细' : 'Projects'} rows={props.snapshot.local.byProject} language={props.language} showTitle={false} />
+        ) : (
+          emptyPanel
+        )}
+      </section>
+      <section id={panelId('conversations')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('conversations')} tabIndex={0} hidden={activeTab !== 'conversations'}>
+        {props.snapshot.local.byConversation.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:conversations`} title={props.language === 'zh-CN' ? '会话明细' : 'Conversations'} rows={props.snapshot.local.byConversation} language={props.language} showTitle={false} />
+        ) : (
+          emptyPanel
+        )}
+      </section>
+      <p className="codex-usage-pricing-note">
+        {props.snapshot.pricing.note} {props.language === 'zh-CN' ? '价格来源日期' : 'Price source date'}: {props.snapshot.pricing.catalogDate}
+        {' · '}
+        <a href={props.snapshot.pricing.sourceUrls[0]} target="_blank" rel="noreferrer">
+          OpenAI
+        </a>
+      </p>
+      {props.snapshot.local.collectionStartedAt ? (
+        <small>
+          {props.language === 'zh-CN' ? '本地采集始于' : 'Local collection started'} {formatDateTime(props.snapshot.local.collectionStartedAt, props.language)}
+        </small>
+      ) : null}
+    </section>
   );
 }
 
@@ -251,23 +339,19 @@ function LocalOverview(props: { snapshot: CodexUsageAnalyticsSnapshot; language:
       />
       <UsageHeatmap days={props.snapshot.local.daily} label={copy.onlyZeus} language={props.language} />
       {totals.turnCount === 0 ? <p className="codex-usage-state">{copy.empty}</p> : null}
-      <UsageBreakdownTable title={props.language === 'zh-CN' ? '模型明细' : 'Models'} rows={props.snapshot.local.byModel} language={props.language} />
-      <UsageBreakdownTable title={props.language === 'zh-CN' ? '项目明细' : 'Projects'} rows={props.snapshot.local.byProject} language={props.language} />
-      <UsageBreakdownTable title={props.language === 'zh-CN' ? '会话明细' : 'Conversations'} rows={props.snapshot.local.byConversation} language={props.language} />
-      <p className="codex-usage-pricing-note">
-        {props.snapshot.pricing.note} {props.language === 'zh-CN' ? '价格来源日期' : 'Price source date'}: {props.snapshot.pricing.catalogDate}
-        {' · '}
-        <a href={props.snapshot.pricing.sourceUrls[0]} target="_blank" rel="noreferrer">
-          OpenAI
-        </a>
-      </p>
-      {props.snapshot.local.collectionStartedAt ? (
-        <small>
-          {props.language === 'zh-CN' ? '本地采集始于' : 'Local collection started'} {formatDateTime(props.snapshot.local.collectionStartedAt, props.language)}
-        </small>
-      ) : null}
     </>
   );
+}
+
+function handleLocalUsageTabKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+  const currentIndex = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (currentIndex < 0 || tabs.length === 0) return;
+  event.preventDefault();
+  const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (currentIndex + 1) % tabs.length : (currentIndex - 1 + tabs.length) % tabs.length;
+  tabs[nextIndex]?.focus();
+  tabs[nextIndex]?.click();
 }
 
 function MetricGrid(props: { items: Array<[string, string]>; language: Language }) {
@@ -280,6 +364,51 @@ function MetricGrid(props: { items: Array<[string, string]>; language: Language 
         </div>
       ))}
     </dl>
+  );
+}
+
+function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>; label: string; language: Language }) {
+  const calendar = useMemo(() => buildUsageCalendar(props.days, props.language), [props.days, props.language]);
+  const title = props.language === 'zh-CN' ? '最近半年用量' : 'Usage over the last 6 months';
+  return (
+    <section className="codex-usage-calendar-card" aria-label={`${title} · ${props.label}`}>
+      <header>
+        <span className="codex-usage-calendar-card-title">
+          <CalendarDots size={22} weight="regular" aria-hidden="true" />
+          <strong>{title}</strong>
+        </span>
+        <span className="codex-usage-calendar-card-basis" title={props.language === 'zh-CN' ? `${props.label}，按日统计` : `${props.label}, grouped by day`}>
+          <span>{props.language === 'zh-CN' ? '口径' : 'View'}</span>
+          <b>{props.language === 'zh-CN' ? '精细' : 'Detailed'}</b>
+        </span>
+      </header>
+      <div className="codex-usage-calendar-card-scroll">
+        <div className="codex-usage-calendar" role="img" aria-label={`${title} · ${props.label}`}>
+          <div className="codex-usage-calendar-months" style={{ gridTemplateColumns: `repeat(${calendar.weekCount}, var(--usage-heatmap-cell-size))` }} aria-hidden="true">
+            {calendar.months.map((month, index) => (
+              <span key={`${index}-${month ?? 'empty'}`}>{month}</span>
+            ))}
+          </div>
+          <div className="codex-usage-calendar-weekdays" aria-hidden="true">
+            {calendar.weekdays.map((weekday, index) => (
+              <span key={`${index}-${weekday}`}>{weekday}</span>
+            ))}
+          </div>
+          <div className="codex-usage-calendar-cells" style={{ gridTemplateColumns: `repeat(${calendar.weekCount}, var(--usage-heatmap-cell-size))` }} aria-hidden="true">
+            {calendar.cells.map((day) => (
+              <span key={day.date} data-level={day.level} data-future={day.future || undefined} title={day.title} />
+            ))}
+          </div>
+          <div className="codex-usage-calendar-legend" aria-hidden="true">
+            <span>{props.language === 'zh-CN' ? '少' : 'Less'}</span>
+            {[0, 1, 2, 3, 4].map((level) => (
+              <i key={level} data-level={level} />
+            ))}
+            <span>{props.language === 'zh-CN' ? '多' : 'More'}</span>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -302,16 +431,92 @@ function UsageHeatmap(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'to
   );
 }
 
+type UsageCalendarCell = {
+  date: string;
+  level: number;
+  future: boolean;
+  title: string;
+};
+
+type UsageCalendar = {
+  cells: UsageCalendarCell[];
+  months: Array<string | null>;
+  weekdays: string[];
+  weekCount: number;
+};
+
+/** 热力图以周一为首日；半年固定为 26 列，保证月份位置和参考样式稳定。 */
+function buildUsageCalendar(days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>, language: Language, now = new Date()): UsageCalendar {
+  const weekCount = 26;
+  const today = startOfLocalDate(now);
+  const currentWeekStart = addLocalDays(today, -((today.getDay() + 6) % 7));
+  const firstDate = addLocalDays(currentWeekStart, -(weekCount - 1) * 7);
+  const totalsByDate = new Map<string, number>();
+  for (const day of days) {
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(day.date) || !Number.isFinite(day.totalTokens)) continue;
+    totalsByDate.set(day.date, (totalsByDate.get(day.date) ?? 0) + Math.max(0, day.totalTokens));
+  }
+
+  const datedCells = Array.from({ length: weekCount * 7 }, (_, index) => {
+    const date = addLocalDays(firstDate, index);
+    const dateKey = localDateKey(date);
+    return { date, dateKey, totalTokens: totalsByDate.get(dateKey) ?? 0, future: date > today };
+  });
+  const max = datedCells.reduce((value, day) => (day.future ? value : Math.max(value, day.totalTokens)), 0);
+  const cells = datedCells.map<UsageCalendarCell>((day) => ({
+    date: day.dateKey,
+    level: day.future || day.totalTokens <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil((day.totalTokens / max) * 4)),
+    future: day.future,
+    title: day.future ? `${formatCalendarDate(day.date, language)} · ${language === 'zh-CN' ? '未来日期' : 'Future date'}` : `${formatCalendarDate(day.date, language)} · ${formatTokens(day.totalTokens, language)} Token`,
+  }));
+  const months = Array.from<string | null>({ length: weekCount }).fill(null);
+  for (let weekIndex = 0; weekIndex < weekCount; weekIndex += 1) {
+    for (let weekdayIndex = 0; weekdayIndex < 7; weekdayIndex += 1) {
+      const date = datedCells[weekIndex * 7 + weekdayIndex]?.date;
+      if (date?.getDate() === 1) months[weekIndex] = formatCalendarMonth(date, language);
+    }
+  }
+  return {
+    cells,
+    months,
+    weekdays: language === 'zh-CN' ? ['一', '二', '三', '四', '五', '六', '日'] : ['M', 'T', 'W', 'T', 'F', 'S', 'S'],
+    weekCount,
+  };
+}
+
+function startOfLocalDate(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function addLocalDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function localDateKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function formatCalendarMonth(value: Date, language: Language): string {
+  if (language === 'zh-CN') return ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'][value.getMonth()] ?? '';
+  return new Intl.DateTimeFormat(language, { month: 'short' }).format(value);
+}
+
+function formatCalendarDate(value: Date, language: Language): string {
+  return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric', weekday: 'short' }).format(value);
+}
+
 /** 各明细独立分页，过滤条件变更时由父级重新挂载并回到第一页。 */
-function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[]; language: Language }) {
+function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[]; language: Language; showTitle?: boolean }) {
   /** 用户请求页；最新数据缩短时立即夹紧显示范围。 */
   const [requestedPage, setRequestedPage] = useState(1);
   /** 当前可展示页。 */
   const page = settingsPage(props.rows.length, requestedPage);
   if (props.rows.length === 0) return null;
   return (
-    <section className="codex-usage-table-wrap">
-      <h3>{props.title}</h3>
+    <section className="codex-usage-table-wrap" aria-label={props.title}>
+      {props.showTitle === false ? null : <h3>{props.title}</h3>}
       <div className="codex-usage-table-scroll">
         <table>
           <thead>
