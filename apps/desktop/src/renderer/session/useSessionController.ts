@@ -256,7 +256,12 @@ export interface SessionControllerClient {
     request: NativePendingRequest;
   }>;
 
-  respondToPlanImplementationRequest(projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }): Promise<NativePlanImplementationResponseAcceptance>;
+  respondToPlanImplementationRequest(
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] },
+  ): Promise<NativePlanImplementationResponseAcceptance>;
 }
 
 export interface SessionDraftStorage {
@@ -319,6 +324,8 @@ export interface SessionController {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ): Promise<void>;
   setPermissionMode(permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;

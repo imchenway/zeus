@@ -417,6 +417,8 @@ export interface RespondPlanImplementationRequestInput {
   requestId: string;
   action: 'implement' | 'refine' | 'dismiss';
   feedback?: string;
+  /** 修改意见沿用普通提交的受信附件格式。 */
+  attachments?: NativeConversationAttachmentInput[];
   /** 公开 Command 的稳定 operationIdentity；用于避免崩溃重入时生成不同 submission。 */
   operationIdentity?: string;
 }

@@ -207,6 +207,8 @@ export interface SessionWorkspaceActions {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ) => void | Promise<void>;
   onSnoozeRequest?: (requestId: string) => void | Promise<void>;
@@ -2088,6 +2090,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     input: {
       action: 'implement' | 'refine' | 'dismiss';
       feedback?: string;
+      /** 随修改意见交付的附件。 */
+      attachments?: NativeConversationAttachment[];
     },
   ): Promise<void> {
     if (!actions.onRespondToPlanImplementationRequest || !responseGuard.begin(request.id)) return;
@@ -2334,6 +2338,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
             error={requestErrors[blockingPlanImplementationRequest.id]}
             onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+            onChooseAttachments={actions.onChooseStartAttachments}
           />
         </section>
       );

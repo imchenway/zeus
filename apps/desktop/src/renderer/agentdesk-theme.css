@@ -794,7 +794,8 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 旧入口的主操作保留纯色强调；标准 Button 的尺寸和状态只由原语负责。 */
-.macos-ai-app.zeus-shell :is(button.primary, button[data-variant='primary'], .button-primary, [class*='-primary-action'], [class*='-primary-button'], .session-send-button, .menu-bar-usage-primary-action):where(:not(.zeus-button)) {
+/* 会话圆形发送按钮由会话工具栏统一尺寸，普通主按钮不再覆盖它。 */
+.macos-ai-app.zeus-shell :is(button.primary, button[data-variant='primary'], .button-primary, [class*='-primary-action'], [class*='-primary-button'], .menu-bar-usage-primary-action):where(:not(.zeus-button)) {
   min-block-size: 32px;
   padding-inline: 14px;
   border-radius: var(--agentdesk-radius-control);

@@ -86,6 +86,7 @@ import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApp
 import { registerConversationChoiceQueryRoutes } from './conversationChoiceQueryRoutes.js';
 import { registerConversationCommandRoutes } from './conversationCommandRoutes.js';
 import { registerConversationDispatchCommandRoutes } from './conversationDispatchCommandRoutes.js';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 import { ConversationDispatchCommandApplication, conversationDispatchCommandTypes, conversationDispatchInputSha256 } from './conversationDispatchCommandApplication.js';
 import { isPathInsideRoot, readConversationResourcePreview } from './conversationResourcePreview.js';
 import { type ConversationFileOpenGrant, createConversationFileOpenGrant, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
@@ -184,6 +185,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   conversationExperts: ConversationExpertRepository;
   conversationDispatchCommands: ConversationDispatchCommandApplication;
   conversationAttachmentRoot?: string;
+  /** 普通消息与计划修改共享同一个受信资源校验入口。 */
+  normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string): NativeConversationAttachmentInput[];
   taskAttachmentRoot?: string;
   conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
@@ -340,6 +343,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     mapWorkManagementTaskDomainError,
     modelConnections,
     nativeApiError,
+    normalizeNativeConversationAttachments,
     normalizeHeaderValue,
     normalizeTaskPushSupplementalAttachments,
     normalizeImportedTelegramNotificationSettings,
@@ -1196,7 +1200,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         return toNativeInterruptAcceptance(operationIdentity, turn.providerTurnId!, updatedConversation, submission);
       },
       serverRequestRespond: executeConversationDispatchRequestResponse,
-      planImplementationRespond: async ({ params, action, feedback, operationIdentity }) => {
+      preparePlanImplementationAttachments: ({ params, attachments }) => {
+        const conversation = requireNativeQueueConversation(params);
+        /** 已处理请求交给命令回执重放；原附件移动后也不能丢失已接纳结果。 */
+        const planRequest = conversationPlanActions.getById(params.requestId);
+        if (planRequest?.conversationId === conversation.id && planRequest.status !== 'pending') return [];
+        /** 在修改计划前复用普通会话的路径、授权与资源格式校验。 */
+        const project = projects.getById(conversation.projectId);
+        if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project not found.'), { statusCode: 404 });
+        return normalizeNativeConversationAttachments(attachments, project.localPath);
+      },
+      planImplementationRespond: async ({ params, action, feedback, attachments, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
         const operation = await codexNativeCoordinator.respondToPlanImplementationRequest({
           conversationId: conversation.id,
@@ -1204,6 +1218,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           action,
           operationIdentity,
           ...(feedback !== undefined ? { feedback } : {}),
+          ...(attachments?.length ? { attachments } : {}),
         });
         const planRequest = conversationPlanActions.getById(params.requestId);
         const updatedConversation = conversations.getById(conversation.id);
