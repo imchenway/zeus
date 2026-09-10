@@ -21,6 +21,7 @@ import type { ConversationCodeComment, ConversationResource, TurnChangeSet } fro
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
+import { PlanImplementationRequestSurface } from '../src/renderer/session/PlanImplementationRequestSurface.js';
 import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
 import type { ComposerInputHandle } from '../src/renderer/session/MarkdownComposerEditor.js';
 import { buildTaskCreateInitialForm, getLanguageCopy, TaskCreateModal } from '../src/renderer/features/workspace/workspaceSupport.js';
@@ -44,6 +45,7 @@ const scenes: QaScene[] = [
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
+  { query: 'plan-implementation', title: '计划确认与修改', summary: '真实计划确认卡片的单行尺寸、自适应输入和行尾操作。', answer: '', activities: [] },
   { query: 'images', title: '推送图片预览', summary: '检查四类同名图片、失败态、重渲染和嵌套弹窗。', answer: '', activities: [] },
   { query: 'copy', title: '提示语与错误操作', summary: '中英文真实消息提示组件', answer: '', activities: [] },
   {
@@ -117,6 +119,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
   if (props.scene.query === 'review') return <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
+  if (props.scene.query === 'plan-implementation') return <PlanImplementationQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
   if (props.scene.query === 'copy') return <CopyErrorQa />;
   const items = props.scene.activities.map((_, index) => activity(props.scene, index));
@@ -832,6 +835,93 @@ function ErrorLayoutQa() {
   );
 }
 
+/** 计划确认使用真实卡片，响应只显示在页面内，便于检查布局、快捷键及重复操作。 */
+function PlanImplementationQa() {
+  /** 地址参数沿用其他预览的主题、语言和窄宽度入口。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 手动保持处理态，检查禁用按钮的尺寸及颜色。 */
+  const [busy, setBusy] = useState(false);
+  /** 记录每次真实回调，输入法确认和换行不应增加提交次数。 */
+  const [responses, setResponses] = useState<Array<{ action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] }>>([]);
+  /** 复用既有粘贴焦点检查，在页面内显示结果。 */
+  const [pasteResult, setPasteResult] = useState('');
+  /** 浏览器预览模拟资源桥，真实应用仍使用原生授权和文件读取。 */
+  useEffect(() => {
+    if (window.zeus) return;
+    window.zeus = {
+      authorizeConversationFiles: async (files, source) => {
+        await nextQaTask();
+        await nextQaTask();
+        if (parameters.has('resource-error')) throw new Error('附件读取失败（预览）');
+        return {
+          resources: files.map((file) => ({ name: file.name, kind: file.type.startsWith('image/') ? 'image' : 'file', mime: file.type || 'application/octet-stream', size: file.size, source, uploadRef: `qa:${file.name}` })),
+          failedCount: 0,
+        };
+      },
+      materializeConversationResources: async (resources) =>
+        resources.map((resource) => ({
+          name: resource.name ?? 'Pasted text.txt',
+          kind: 'pasted_text',
+          mime: 'text/plain',
+          size: new Blob([resource.text ?? '']).size,
+          source: 'paste',
+          characterCount: resource.text?.length,
+          restorableText: resource.text,
+          uploadRef: 'qa:pasted-text',
+        })),
+      readConversationClipboardResources: async () => ({ resources: [{ name: '剪贴板附件.txt', kind: 'file', mime: 'text/plain', size: 12, source: 'paste', uploadRef: 'qa:clipboard-file' }], text: '' }),
+      discardConversationResources: async (resources) => ({ discardedCount: resources.length }),
+    } as NonNullable<Window['zeus']>;
+    return () => {
+      delete window.zeus;
+    };
+  }, []);
+  return (
+    <main
+      className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${parameters.has('dark') ? 'dark' : 'light'}`}
+      data-theme={parameters.has('dark') ? 'dark' : 'light'}
+      style={{ display: 'block', boxSizing: 'border-box', minHeight: '100vh', padding: 24 }}
+    >
+      <h1>计划确认与修改</h1>
+      <label>
+        <input type="checkbox" checked={busy} onChange={(event) => setBusy(event.currentTarget.checked)} />
+        处理中
+      </label>
+      <button
+        type="button"
+        onClick={async () => {
+          /** 检查真实计划输入节点，不读取系统剪贴板或用户文件。 */
+          const textarea = document.querySelector('.session-plan-refinement textarea');
+          if (!(textarea instanceof HTMLTextAreaElement)) return setPasteResult('先展开修改意见');
+          try {
+            setPasteResult(await checkAttachmentFocus(textarea, textarea));
+          } catch (error) {
+            setPasteResult(error instanceof Error ? error.message : String(error));
+          }
+        }}
+      >
+        检查附件粘贴与焦点
+      </button>
+      <output>{pasteResult}</output>
+      <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', padding: 0, width: parameters.has('narrow') ? 360 : 900, maxWidth: '100%', margin: '24px auto' }}>
+        <div className="session-interaction-dock" style={{ inlineSize: '100%' }}>
+          <PlanImplementationRequestSurface
+            request={{ id: 'qa-plan-implementation', conversationId: 'qa-plan', turnId: 'qa-turn', planItemId: 'qa-plan-item', status: 'pending', submissionId: null, createdAt: '', resolvedAt: null, updatedAt: '' }}
+            language={parameters.has('en') ? 'en-US' : 'zh-CN'}
+            busy={busy}
+            onRespond={(_id, response) => setResponses((current) => [...current, response])}
+            onChooseAttachments={chooseComposerQaAttachments}
+          />
+        </div>
+      </div>
+      <pre aria-label="计划响应记录" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {JSON.stringify(responses, null, 2)}
+      </pre>
+      <ApplicationErrorDialogHost language={parameters.has('en') ? 'en' : 'zh-CN'} />
+    </main>
+  );
+}
+
 /** 固定附件只进入预览草稿，不读取用户文件或打开原生文件选择器。 */
 async function chooseComposerQaAttachments(): Promise<NativeConversationAttachment[]> {
   return [{ name: '对齐检查.txt', kind: 'file', mime: 'text/plain', size: 12, uploadRef: `qa:${crypto.randomUUID()}` }];
@@ -842,7 +932,24 @@ function ComposerMarkdownQa() {
   /** 地址参数覆盖窄分栏、深色和英文。 */
   const parameters = new URLSearchParams(window.location.search);
   /** 草稿沿用真实输入框回写路径。 */
-  const [state, setState] = useState(createInitialSessionState);
+  const [state, setState] = useState(() => {
+    /** 长记录与输入框放在同一真实容器内，核对返回最新按钮的悬停与滚动。 */
+    const initial = createInitialSessionState();
+    if (!parameters.has('history')) return initial;
+    /** 单条长回复足以产生滚动距离，不连接模型或读取用户历史。 */
+    const item = activity(
+      {
+        query: 'composer-history',
+        title: '',
+        summary: '',
+        answer: '',
+        activities: [{ type: 'agentMessage', status: 'completed', text: Array.from({ length: 24 }, (_, index) => `第 ${index + 1} 段会话记录：检查返回最新消息按钮，鼠标悬停和键盘聚焦时保持位置，点击后回到末尾。`).join('\n\n') }],
+      },
+      0,
+    );
+    item.phase = 'final_answer';
+    return { ...initial, conversationId: item.conversationId, items: { [item.key]: item }, itemOrder: [item.key], terminalTurnIds: { [item.turnId]: 'completed' as const } };
+  });
   /** 展示提交内容，便于比较缩进、转义和技能调用是否保留。 */
   const [submitted, setSubmitted] = useState('');
   /** 只读状态可在编辑期间切换，核对发送和编辑禁用条件。 */
@@ -950,6 +1057,11 @@ function ComposerMarkdownQa() {
       </button>
       <output aria-label="附件焦点检查">{focusResult}</output>
       <div className="ai-workspace" style={{ display: 'block', height: 'auto', blockSize: 'auto', boxSizing: 'border-box', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%', marginBlock: 24 }}>
+        {parameters.has('history') ? (
+          <div style={{ display: 'flex', height: 300 }}>
+            <ConversationTranscript state={state} language={parameters.has('en') ? 'en-US' : 'zh-CN'} transcriptHydrated />
+          </div>
+        ) : null}
         <ConversationComposer
           textareaRef={textareaRef}
           state={state}

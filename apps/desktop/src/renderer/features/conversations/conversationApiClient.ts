@@ -6,6 +6,7 @@ import type {
   CodexConversationCapabilities,
   ConversationResourcePreview,
   NativeCollaborationMode,
+  NativeConversationAttachment,
   NativeConversationChangeFileV2Item,
   NativeConversationChangeSetV2Summary,
   NativeConversationChoice,
@@ -133,7 +134,12 @@ export interface ConversationApiClient {
   ) => Promise<{
     request: NativePendingRequest;
   }>;
-  respondToPlanImplementationRequest: (projectId: string, conversationId: string, requestId: string, input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string }) => Promise<NativePlanImplementationResponseAcceptance>;
+  respondToPlanImplementationRequest: (
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string; attachments?: NativeConversationAttachment[] },
+  ) => Promise<NativePlanImplementationResponseAcceptance>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   recoverNativeQueue: (projectId: string, conversationId: string, intent: 'check' | 'continue') => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;

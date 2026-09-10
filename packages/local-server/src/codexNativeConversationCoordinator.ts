@@ -2529,6 +2529,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation> {
     assertOpen();
+    // 内部调用也不能将修改附件误挂到确认或跳过动作。
+    if (input.attachments?.length && input.action !== 'refine') throw coordinatorError('ZEUS_INVALID_PLAN_IMPLEMENTATION_RESPONSE', 'Only plan refinement accepts attachments.');
     const conversation = requireConversation(input.conversationId);
     const request = planActions.getById(input.requestId);
     if (!request || request.conversationId !== conversation.id) {
@@ -2561,7 +2563,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
     const refinement = input.action === 'refine';
     const feedback = input.feedback?.trim() ?? '';
-    if (refinement && !feedback) throw coordinatorError('ZEUS_PLAN_REFINEMENT_REQUIRED', 'Plan refinement feedback is required.');
+    if (refinement && !feedback && !input.attachments?.length) throw coordinatorError('ZEUS_PLAN_REFINEMENT_REQUIRED', 'Plan refinement feedback or attachments are required.');
     const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const nextMode: ConversationCollaborationMode = refinement ? 'plan' : 'default';
     const context: ConversationDispatchContext = {
@@ -2569,7 +2571,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       permissionMode: conversation.permissionMode,
       workMode: nextMode,
     };
-    const content = refinement ? feedback : `请实施以下已确认计划。严格按计划执行，并在完成后报告验证结果。\n\n${planItem.textContent}`;
+    const content = refinement ? feedback || '请根据附件修改计划。' : `请实施以下已确认计划。严格按计划执行，并在完成后报告验证结果。\n\n${planItem.textContent}`;
     const submissionIdentity = input.operationIdentity ?? operationId();
     const submission = options.db.transaction(() => {
       options.conversations.updateCollaborationMode(conversation.id, nextMode);
@@ -2581,6 +2583,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           idempotencyKey: `plan-action:${request.id}:${input.action}`,
           clientUserMessageId: `plan-action-client:${request.id}:${input.action}`,
           origin: refinement ? ('refine_plan' as const) : ('implement_plan' as const),
+          // 冻结到同一提交，排队、恢复和实际模型输入继续复用普通附件交付链路。
+          ...(input.attachments?.length ? { attachments: input.attachments } : {}),
           planItemId: planItem.id,
           ...(refinement ? {} : { displayText: '是，实施此计划' }),
         },
