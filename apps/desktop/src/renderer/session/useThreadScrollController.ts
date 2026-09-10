@@ -18,6 +18,8 @@ export interface ThreadScrollController {
   getState(): ThreadScrollState;
   onUserScroll(metrics: ThreadScrollMetrics): ThreadScrollState;
   onExplicitLatestRequest(): ThreadScrollEffect;
+  /** 明确定位历史时先暂停跟随，等待目标真实挂载。 */
+  onExplicitHistoryRequest(): void;
   onDelta(): ThreadScrollEffect;
   onMessageSubmitted(): ThreadScrollEffect;
   onTurnStarted(): ThreadScrollEffect;
@@ -41,6 +43,9 @@ export function createThreadScrollController(): ThreadScrollController {
     onExplicitLatestRequest() {
       state = { mode: 'user_follow', suppressBounceUntil: 0 };
       return { type: 'scroll_to_bottom' };
+    },
+    onExplicitHistoryRequest() {
+      state = { mode: 'static', suppressBounceUntil: 0 };
     },
     onDelta() {
       if (state.mode === 'static') return { type: 'none' };

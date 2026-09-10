@@ -47,6 +47,17 @@ type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compact
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
   const { server, repository } = options;
 
+  // 目录覆盖完整历史，正文仍按轮次分页；不改变消息读取及实时同步进度。
+  server.get('/api/projects/:projectId/conversations/:conversationId/navigation', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    try {
+      return repository.readNavigation(request.params.conversationId);
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
   // 首屏和恢复共用一次读取；项目分支查询结束后，同一 Core 内的同步查询不会被会话写入穿插。
   server.get('/api/projects/:projectId/conversations/:conversationId/readable-snapshot', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);

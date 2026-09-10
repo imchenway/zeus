@@ -22,7 +22,11 @@ export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemB
     /** 同时比较两端，保证已确认历史位于待发队列之前。 */
     const rightPosition = queuePosition(right);
     if (leftPosition !== undefined || rightPosition !== undefined) return leftPosition === undefined ? -1 : rightPosition === undefined ? 1 : leftPosition - rightPosition;
-    return (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '') || left.key.localeCompare(right.key);
+    /** 同一毫秒的持久历史按既有顺序排列，避免答复被技术 key 排到提问前。 */
+    const chronological = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
+    if (chronological) return chronological;
+    if (typeof left.payload.v2Sequence === 'number' && typeof right.payload.v2Sequence === 'number' && left.payload.v2Sequence !== right.payload.v2Sequence) return left.payload.v2Sequence - right.payload.v2Sequence;
+    return left.key.localeCompare(right.key);
   });
 }
 
