@@ -126,6 +126,8 @@ export interface TaskWorkspaceReview {
   cwd: string;
   branch: string;
   headSha: string;
+  /** 正在合并的另一端提交；用于区分不同冲突现场。 */
+  mergeHeadSha: string | null;
   upstream: string | null;
   ahead: number;
   behind: number;
@@ -734,11 +736,13 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
   const isIgnored = (path: string): boolean => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`));
   const diffPathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
   // Porcelain 的前两列包含有意义的空格，不能经过通用 splitLines 的 trim。
-  const porcelainPromise = runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall', '--', ...diffPathspec]).then((result) => result.stdout);
+  const porcelainPromise = runGit(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', ...diffPathspec]).then((result) => result.stdout);
   const upstreamPromise = readGitStdout(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']).then((value) => value || null);
   const unstagedStatPromise = runGit(cwd, ['diff', '--numstat', '-z', '--', ...diffPathspec]).then((result) => result.stdout);
   const stagedStatPromise = runGit(cwd, ['diff', '--cached', '--numstat', '-z', '--', ...diffPathspec]).then((result) => result.stdout);
-  const [porcelain, upstream, unstagedStat, stagedStat] = await Promise.all([porcelainPromise, upstreamPromise, unstagedStatPromise, stagedStatPromise]);
+  /** 尚未结束的合并用于标识当前冲突现场，不能把已暂存等同于已合入。 */
+  const mergeHeadPromise = readGitStdout(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  const [porcelain, upstream, unstagedStat, stagedStat, mergeHeadSha] = await Promise.all([porcelainPromise, upstreamPromise, unstagedStatPromise, stagedStatPromise, mergeHeadPromise]);
   const fileStatuses = parseGitPorcelainEntries(porcelain).filter((file) => !isIgnored(file.path) && (!file.originalPath || !isIgnored(file.originalPath)));
   const counts = upstream ? parseAheadBehind(await readGitStdout(cwd, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`])) : { ahead: 0, behind: 0 };
   const stagedFiles = fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
@@ -748,6 +752,7 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
     cwd: resolve(cwd),
     branch: context.branch,
     headSha: context.headSha,
+    mergeHeadSha: mergeHeadSha || null,
     upstream,
     ...counts,
     clean: fileStatuses.length === 0,
@@ -896,10 +901,10 @@ export async function getGitBranchHead(repositoryPath: string, branchName: strin
  * 代码交付前让冲突处理开发线同时包含最新来源分支和原任务分支。
  * 新冲突保留在当前命名 worktree，交回原会话继续处理。
  */
-export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceBranch: string; taskBranch: string }): Promise<{ headSha: string; conflictFiles: string[] }> {
+export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceBranch: string; taskBranch: string }): Promise<{ headSha: string; conflictFiles: string[]; updatedBranch: string | null }> {
   const review = await getTaskWorkspaceReview(input.cwd);
   if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Conflict workspace must stay on a named branch.');
-  if (review.conflictFiles.length > 0) return { headSha: review.headSha, conflictFiles: review.conflictFiles };
+  if (review.conflictFiles.length > 0) return { headSha: review.headSha, conflictFiles: review.conflictFiles, updatedBranch: null };
   if (!review.clean) throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', 'Commit or discard every conflict workspace change before refreshing its branches.');
 
   for (const branch of [input.sourceBranch, input.taskBranch]) {
@@ -911,10 +916,10 @@ export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceB
     } catch (error) {
       const conflictFiles = await readTaskIntegrationConflictPaths(input.cwd);
       if (conflictFiles.length === 0) throw error;
-      return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles };
+      return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles, updatedBranch: safeBranch };
     }
   }
-  return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles: [] };
+  return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles: [], updatedBranch: null };
 }
 
 /**
@@ -963,7 +968,7 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
   /** 提交前重新读取文件状态，不把页面打开时的路径当作当前事实。 */
   const review = await getTaskWorkspaceReview(input.cwd, input.ignoredPaths);
   if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Task workspace is detached and cannot be committed.');
-  if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve all conflicts before committing.');
+  if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', `提交尚未开始，请先处理并确认以下冲突文件：${review.conflictFiles.join('、')}`);
   /** 共享目录和子仓库仍由各自的工作区负责提交。 */
   const ignored = (input.ignoredPaths ?? []).map((path) => requireSafeWorkspacePath(path));
   /** 用户勾选的是当前文件名，保留特殊字符并去重。 */

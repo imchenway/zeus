@@ -81,6 +81,26 @@ export function buildTaskCommitMessageSuggestion(input: { taskType: TaskType; ta
   return `${taskCommitPrefixByType[input.taskType]}: ${input.taskCode.trim()} ${input.taskTitle.trim()}`;
 }
 
+/** 命名冲突工作区的实时续办信息，不以历史合入候选代替当前 Git 状态。 */
+export interface TaskWorkspaceConflictRecovery {
+  /** 本次合并现场的稳定身份，用于防止重复发送继续处理指令。 */
+  recoveryKey: string;
+  /** 继续处理和提交必须使用的原工作区。 */
+  workspaceId: string;
+  /** 已经保存在当前分支上的提交。 */
+  headSha: string;
+  /** 能确认时给出本次同步的分支；未知时不猜测。 */
+  updatedBranch: string | null;
+  /** 从当前 Git 索引读取的未解决文件。 */
+  conflictFiles: string[];
+  /** 与原冲突处理尝试绑定的会话，缺失时不另建会话。 */
+  conversationId: string | null;
+  /** 沿用原会话下一轮设置，不隐式切换执行方式。 */
+  collaborationMode: 'default' | 'plan';
+  /** 会话不可用于继续处理时的明确原因。 */
+  unavailableReason: string | null;
+}
+
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；状态标识由项目配置持有，不再限制为固定联合类型。 */
 export type TaskManagementStatus = string;
 
