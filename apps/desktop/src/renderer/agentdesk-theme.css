@@ -2945,6 +2945,8 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 折叠箭头紧跟项目名称；尾部操作仍固定靠右，长名称可以省略。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-disclosure-placement='trailing'] {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: minmax(0, max-content) 24px minmax(52px, 1fr);
   gap: 0;
@@ -2953,6 +2955,8 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 /* 折叠控件可由悬停和键盘焦点发现，触摸设备始终可见。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row-disclosure {
+  position: relative;
+  z-index: 1;
   grid-column: 2;
   grid-row: 1;
   opacity: 0;
@@ -2961,6 +2965,10 @@ body:has(.macos-ai-app.zeus-shell) {
   opacity: 1;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row-actions {
+  /* 操作区空白穿透到项目入口，按钮沿用自身的指针响应规则。 */
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
   grid-column: 3;
   grid-row: 1;
 }
@@ -2973,8 +2981,16 @@ body:has(.macos-ai-app.zeus-shell) {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: none !important;
+}
+/* 项目入口覆盖整行空白，文字仍由标签自身裁剪；独立操作按钮位于上层。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-disclosure-placement='trailing'] > .zeus-source-list-row-main::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row-label {
   display: block;
