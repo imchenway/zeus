@@ -693,24 +693,27 @@
 
 .session-codex-parity-v1 .session-queued-thread-actions {
   align-items: center;
-  border-block-start: 1px solid color-mix(in srgb, var(--session-line) 76%, transparent);
-  display: flex;
+  display: inline-flex;
   gap: 4px;
   justify-content: flex-end;
-  margin-block-start: 8px;
-  padding-block-start: 7px;
+  margin-inline-start: auto;
 }
 
 .session-codex-parity-v1 .session-queued-thread-actions button {
+  align-items: center;
   background: transparent;
   border: 0;
   border-radius: 7px;
   color: var(--session-text-muted);
   font: inherit;
-  font-size: 11px;
-  font-weight: 590;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 400;
+  gap: 5px;
   min-block-size: 28px;
-  padding-inline: 8px;
+  min-inline-size: 28px;
+  padding-inline: 5px;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-steer {
@@ -3978,6 +3981,54 @@
   padding: 10px 13px;
 }
 
+/* 排队消息由正文气泡和正常占位的底栏组成，短消息也为常显操作留出宽度。 */
+.session-codex-parity-v1 .session-thread-item-user.has-queued-footer {
+  background: transparent;
+  margin-block-end: 0;
+  min-inline-size: min(320px, 77%);
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) > .session-queued-message-bubble {
+  background: var(--session-selected);
+  border-radius: 14px;
+  padding: 10px 13px;
+}
+
+.session-codex-parity-v1 .session-queued-thread-footer {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 4px 8px;
+  margin-block-start: 6px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-queued-thread-footer > .session-item-state {
+  flex: 1 1 auto;
+  min-block-size: 28px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 时间与复制继续按原规则显隐，仅取消绝对定位，不与常显队列操作争用第二行。 */
+.session-codex-parity-v1 .session-queued-thread-footer > .session-thread-item-actions {
+  margin-inline-start: auto;
+  position: static;
+}
+
+.session-codex-parity-v1 .session-thread-item-user .session-queued-thread-footer svg {
+  block-size: 14px;
+  flex: 0 0 auto;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-queued-thread-footer .session-message-timestamp {
+  font-size: 12px;
+}
+
 .session-codex-parity-v1 .session-thread-item-assistant,
 .session-codex-parity-v1 .session-thread-item-commentary,
 .session-codex-parity-v1 .session-thread-item-tool,
@@ -6423,6 +6474,10 @@
   .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
     margin-inline-end: 0 !important;
     max-inline-size: 88%;
+  }
+
+  .session-codex-parity-v1 .session-thread-item-user.has-queued-footer {
+    min-inline-size: min(320px, 88%);
   }
 
   .session-codex-parity-v1 .session-transcript {
