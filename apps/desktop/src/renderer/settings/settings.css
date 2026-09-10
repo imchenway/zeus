@@ -1576,7 +1576,7 @@
   }
   .remote-status[data-connected='true'],
   .account-sign-in-state[data-signed-in='true'] {
-    color: var(--zeus-success-text, #247747);
+    color: var(--zeus-status-success-text);
   }
   .remote-connection-summary .settings-row-action-rail {
     grid-column: 1 / -1;

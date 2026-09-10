@@ -148,7 +148,7 @@ body:has(.menu-bar-usage-root),
   block-size: 6px;
   flex: 0 0 6px;
   border-radius: var(--usage-radius-pill, 999px);
-  background: #3aa471;
+  background: var(--usage-ok);
 }
 
 .menu-bar-usage-freshness[data-loading='true'] i {
@@ -735,7 +735,8 @@ body:has(.menu-bar-usage-root),
   --usage-warning-soft: rgb(217 119 6 / 11%);
   --usage-danger: #b4232d;
   --usage-danger-soft: rgb(220 38 38 / 10%);
-  --usage-ok: #16804b;
+  /* 菜单栏正常状态与主窗口共用品牌色。 */
+  --usage-ok: var(--zeus-brand-text);
   --usage-shadow: 0 20px 48px -28px rgb(31 41 55 / 38%);
   --usage-shadow-soft: 0 12px 30px -24px rgb(31 41 55 / 30%);
   background:
@@ -760,7 +761,6 @@ body:has(.menu-bar-usage-root),
   --usage-warning-soft: rgb(245 158 11 / 16%);
   --usage-danger: #ff8c88;
   --usage-danger-soft: rgb(255 69 58 / 15%);
-  --usage-ok: #30d158;
   --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
   --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
   color-scheme: dark;
@@ -787,7 +787,6 @@ body:has(.menu-bar-usage-root),
     --usage-warning-soft: rgb(245 158 11 / 16%);
     --usage-danger: #ff8c88;
     --usage-danger-soft: rgb(255 69 58 / 15%);
-    --usage-ok: #30d158;
     --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
     --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
     color-scheme: dark;

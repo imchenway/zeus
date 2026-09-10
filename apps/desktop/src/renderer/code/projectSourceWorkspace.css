@@ -111,7 +111,7 @@
   background: color-mix(in srgb, var(--zeus-control-danger-bg) 45%, transparent);
 }
 .project-source-message.success {
-  color: var(--zeus-control-success-text, #207a43);
+  color: var(--zeus-status-success-text);
 }
 .project-source-message button {
   min-height: 24px;
