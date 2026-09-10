@@ -3,7 +3,7 @@ import type { ProjectRecord } from '../projects/projectContracts.js';
 import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
 import type { TaskEventRecord, TaskRecord, TaskTableColumnPreferences, TaskTableEnumSortOrders, TaskTemplateRecord } from '../tasks/taskContracts.js';
 import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../telegram/telegramContracts.js';
-import type { NetworkProxySettings } from '@zeus/shared';
+import type { NetworkProxySettings, SidebarConversationFilters } from '@zeus/shared';
 
 export interface AppShellSettings {
   /** 完全退出并重开应用后使用的网络代理。 */
@@ -24,6 +24,8 @@ export interface AppShellSettings {
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  /** 侧边栏漏斗随本机设置恢复；缺省时接收旧本地偏好。 */
+  sidebarConversationFilters?: SidebarConversationFilters;
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns?: TaskTableColumnPreferences;
@@ -58,6 +60,8 @@ export type UpdateAppShellSettingsRequest = Partial<
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];
+  /** 只提交侧边栏拥有的筛选，避免通用设置的旧快照覆盖新选择。 */
+  sidebarConversationFilters?: SidebarConversationFilters;
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;

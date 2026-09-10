@@ -799,6 +799,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       const savedSettings = props.onSaveAppShellSettings ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements))) : nextSettings;
       setAppShellSettings((currentSettings) => ({
         ...savedSettings,
+        // 布局保存期间的漏斗修改由独立写入负责，保留界面最新选择。
+        sidebarConversationFilters: currentSettings.sidebarConversationFilters,
         taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
         taskViewModeByProject: currentSettings.taskViewModeByProject,
         taskPageViewByProject: currentSettings.taskPageViewByProject,

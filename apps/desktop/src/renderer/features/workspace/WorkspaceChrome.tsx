@@ -1,5 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { isTaskManagementStatus } from '@zeus/shared';
+import { normalizeSidebarConversationFilters, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -56,39 +56,18 @@ const defaultVisibleConversationCount = 6;
 /** 每次展开更多追加的会话数量。 */
 const additionalVisibleConversationCount = 10;
 
-/** 侧栏筛选属于本机显示偏好，与项目任务页的独立筛选分开保存。 */
+/** 仅用于接收旧界面缓存；之后以本机设置数据库为准。 */
 const sidebarConversationFilterStorageKey = 'zeus.sidebar.conversation-filters';
 
-/** 漏斗内的状态选择与两个显示开关作为一份偏好恢复。 */
-interface SidebarConversationFilters {
-  /** 空数组表示所有任务状态及项目直属会话。 */
-  conversationStatusFilters: string[];
-  /** 筛选生效时是否隐藏没有匹配会话的项目。 */
-  hideEmptyFilteredProjects: boolean;
-  /** 每个任务是否只展示当前排序中的最新会话。 */
-  latestConversationOnly: boolean;
-}
-
-/** 首次使用或存储损坏时沿用原有默认显示。 */
-const defaultSidebarConversationFilters: SidebarConversationFilters = { conversationStatusFilters: [], hideEmptyFilteredProjects: true, latestConversationOnly: false };
-
-/** 首次挂载读取一次；按状态身份校验，不因项目目录尚未加载而丢掉已保存选择。 */
-function readSidebarConversationFilters(): SidebarConversationFilters {
+/** 旧偏好只读取一次，数据库已有记录时不会被它覆盖。 */
+function readLegacySidebarConversationFilters(): SidebarConversationFilters | undefined {
   try {
     /** 本机存储也可能被清理或损坏，读取后逐字段校验。 */
     const value: unknown = JSON.parse(window.localStorage.getItem(sidebarConversationFilterStorageKey) ?? 'null');
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultSidebarConversationFilters;
-    /** 只接纳已知字段，避免损坏的偏好影响侧栏渲染。 */
-    const saved = value as Record<string, unknown>;
-    return {
-      conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
-        ? [...new Set(saved.conversationStatusFilters.filter((filter): filter is string => typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))))))]
-        : [],
-      hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
-      latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,
-    };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    return normalizeSidebarConversationFilters(value);
   } catch {
-    return defaultSidebarConversationFilters;
+    return undefined;
   }
 }
 
@@ -365,6 +344,10 @@ export function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  /** 启动时已加载的持久漏斗偏好，不依赖项目列表就绪。 */
+  conversationFilters?: SidebarConversationFilters;
+  /** 用户操作与旧偏好接收共用本机设置保存入口。 */
+  onConversationFiltersChange: (filters: SidebarConversationFilters) => void;
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
@@ -394,20 +377,21 @@ export function SidebarNav(props: {
   const [closingProjectMenuIds, setClosingProjectMenuIds] = useState<Set<string>>(() => new Set());
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
-  /** 重开窗口恢复漏斗偏好；搜索文字仍保持临时输入。 */
-  const [conversationFilters, setConversationFilters] = useState(readSidebarConversationFilters);
+  /** 已保存的数据库设置优先；旧缓存只作为首次接收来源。 */
+  const [legacyConversationFilters] = useState(readLegacySidebarConversationFilters);
+  /** 搜索文字仍保持临时输入，漏斗由工作台持久设置直接控制。 */
+  const conversationFilters = props.conversationFilters ?? legacyConversationFilters ?? normalizeSidebarConversationFilters(undefined);
+  useEffect(() => {
+    if (props.conversationFilters !== undefined || !legacyConversationFilters) return;
+    props.onConversationFiltersChange(legacyConversationFilters);
+  }, [props.conversationFilters, props.onConversationFiltersChange, legacyConversationFilters]);
   /** 筛选和显示共用同一份持久偏好，避免分别恢复时出现中间态。 */
   const { conversationStatusFilters, hideEmptyFilteredProjects, latestConversationOnly } = conversationFilters;
-  /** 只在用户操作时立即写入，避免挂载或异步目录刷新覆盖其他窗口保存的选择。 */
+  /** 只提交本次漏斗修改，异步目录刷新不会写回默认值。 */
   function updateConversationFilters(patch: Partial<SidebarConversationFilters>): void {
     /** 合并本次修改，保留同一漏斗内未修改的选项。 */
     const next = { ...conversationFilters, ...patch };
-    setConversationFilters(next);
-    try {
-      window.localStorage.setItem(sidebarConversationFilterStorageKey, JSON.stringify(next));
-    } catch (error) {
-      reportApplicationError(error, { language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
-    }
+    props.onConversationFiltersChange(next);
   }
   const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();

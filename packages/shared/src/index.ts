@@ -136,6 +136,29 @@ export function isTaskManagementStatus(value: unknown): value is TaskManagementS
   return typeof value === 'string' && taskManagementStatusIdPattern.test(value);
 }
 
+/** 侧边栏漏斗偏好独立于项目任务页筛选，随本机设置保存。 */
+export interface SidebarConversationFilters {
+  /** 空数组表示所有任务状态及项目直属会话。 */
+  conversationStatusFilters: string[];
+  /** 筛选生效时是否隐藏没有匹配会话的项目。 */
+  hideEmptyFilteredProjects: boolean;
+  /** 每个任务是否只展示当前排序中的最新会话。 */
+  latestConversationOnly: boolean;
+}
+
+/** 启动、保存和导入共用校验；不因项目目录尚未加载而丢掉合法状态身份。 */
+export function normalizeSidebarConversationFilters(value: unknown): SidebarConversationFilters {
+  /** 只接纳已知字段，损坏值逐字段恢复默认显示。 */
+  const saved = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return {
+    conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
+      ? [...new Set(saved.conversationStatusFilters.filter((filter): filter is string => typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))))))]
+      : [],
+    hideEmptyFilteredProjects: typeof saved.hideEmptyFilteredProjects === 'boolean' ? saved.hideEmptyFilteredProjects : true,
+    latestConversationOnly: typeof saved.latestConversationOnly === 'boolean' ? saved.latestConversationOnly : false,
+  };
+}
+
 /** 设置导入和服务端保存共用同一归一化规则，避免项目状态集合在不同入口发生漂移。 */
 export function normalizeTaskManagementStatusConfig(value: unknown, fallback: TaskManagementStatusConfig = defaultTaskManagementStatusConfig): TaskManagementStatusConfig {
   const normalizedFallback = cloneTaskManagementStatusConfig(fallback);

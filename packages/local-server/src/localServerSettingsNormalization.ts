@@ -3,7 +3,7 @@ import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
 import { listAiCliAdapters, parseModelRef, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
-import { normalizeNetworkProxySettings, type NetworkProxySettings } from '@zeus/shared';
+import { normalizeNetworkProxySettings, type NetworkProxySettings, normalizeSidebarConversationFilters, type SidebarConversationFilters } from '@zeus/shared';
 
 interface TelegramNotificationSettingsSnapshot {
   enabled: boolean;
@@ -363,6 +363,8 @@ export interface AppShellSettingsSnapshot {
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  /** 未保存时省略，供界面一次性接收旧本地偏好。 */
+  sidebarConversationFilters?: SidebarConversationFilters;
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns: TaskTableColumnPreferences;
@@ -403,6 +405,8 @@ export interface UpdateAppShellSettingsBody {
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];
+  /** 仅显式提交时更新侧边栏漏斗，其他设置保存保留原选择。 */
+  sidebarConversationFilters?: SidebarConversationFilters;
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
@@ -529,6 +533,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
     defaultProjectId: normalizeDefaultProjectId(value?.defaultProjectId, identities),
     pinnedProjectIds: normalizeProjectPreferenceIds(value?.pinnedProjectIds),
     collapsedProjectIds: normalizeProjectPreferenceIds(value?.collapsedProjectIds),
+    sidebarConversationFilters: value?.sidebarConversationFilters === undefined ? undefined : normalizeSidebarConversationFilters(value.sidebarConversationFilters),
     defaultModel: normalizeAppShellDefaultModel(value?.defaultModel),
     modelSetupStatus: value?.modelSetupStatus === 'pending' || value?.modelSetupStatus === 'skipped' || value?.modelSetupStatus === 'completed' ? value.modelSetupStatus : null,
     newProjectDefaultModelRef: typeof value?.newProjectDefaultModelRef === 'string' && parseModelRef(value.newProjectDefaultModelRef) ? value.newProjectDefaultModelRef : null,
@@ -578,6 +583,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       defaultProjectId: input.defaultProjectId === null ? null : typeof input.defaultProjectId === 'string' ? input.defaultProjectId : current.defaultProjectId,
       pinnedProjectIds: Array.isArray(input.pinnedProjectIds) ? normalizeProjectPreferenceIds(input.pinnedProjectIds) : current.pinnedProjectIds,
       collapsedProjectIds: Array.isArray(input.collapsedProjectIds) ? normalizeProjectPreferenceIds(input.collapsedProjectIds) : current.collapsedProjectIds,
+      sidebarConversationFilters: input.sidebarConversationFilters === undefined ? current.sidebarConversationFilters : normalizeSidebarConversationFilters(input.sidebarConversationFilters),
       modelSetupStatus: input.modelSetupStatus === undefined ? current.modelSetupStatus : input.modelSetupStatus,
       newProjectDefaultModelRef: input.newProjectDefaultModelRef === undefined ? current.newProjectDefaultModelRef : input.newProjectDefaultModelRef,
       defaultModel: input.defaultModel === null ? null : typeof input.defaultModel === 'string' ? input.defaultModel : current.defaultModel,

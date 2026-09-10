@@ -311,6 +311,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           .then((savedSettings) => {
             setAppShellSettings((latest) => ({
               ...normalizeRendererAppShellSettings(savedSettings),
+              // 源码偏好的较早回执不能覆盖之后选择的侧边栏筛选。
+              sidebarConversationFilters: latest.sidebarConversationFilters,
               codeWorkspaceByProject: latest.codeWorkspaceByProject,
               taskTableColumns: latest.taskTableColumns,
               taskTableColumnsByProject: latest.taskTableColumnsByProject,
