@@ -1196,6 +1196,8 @@ export interface TaskWorkspaceReview {
   cwd: string;
   branch: string;
   headSha: string;
+  /** 当前尚未完成的合并另一端提交。 */
+  mergeHeadSha?: string | null;
   upstream: string | null;
   ahead: number;
   behind: number;
@@ -1209,6 +1211,8 @@ export interface TaskWorkspaceReview {
 }
 
 export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
+  /** 从真实冲突状态和原会话关联读取的继续处理入口。 */
+  conflictRecovery?: import('@zeus/shared').TaskWorkspaceConflictRecovery | null;
   activeConversationCount: number;
   primaryBranch: string | null;
   localBranches: string[];
@@ -1335,6 +1339,9 @@ export interface TaskIntegrationResult {
   localHeadSha: string;
   localWorktreePath: string | null;
 }
+
+/** 合入可能停在原命名工作区的新冲突，不一定生成独立合入候选。 */
+export type TaskIntegrationStartResponse = { integration: TaskIntegrationRecord; result?: TaskIntegrationResult } | { conflictRecovery: import('@zeus/shared').TaskWorkspaceConflictRecovery | null };
 
 export interface TaskIntegrationConflictFile {
   path: string;
