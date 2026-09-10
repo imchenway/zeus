@@ -201,7 +201,6 @@ export interface TaskWorkspaceCopy {
   emptyOutcomeAi: string;
   emptyOutcomeEvidence: string;
   noResultsPrimaryAction: string;
-  noResultsSecondaryAction: string;
   taskListLoadingToolbarStatus: string;
   taskListLoadingTitle: string;
   taskListLoadingHelp: string;
@@ -515,12 +514,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const moreViewActionLabel = isEnglishCopy ? 'More' : '更多';
   const saveViewActionLabel = isEnglishCopy ? 'Save' : '保存';
   const resetColumnsActionLabel = isEnglishCopy ? 'Reset columns' : '恢复默认列';
+  /** 一次清空搜索、标签和状态，恢复完整任务列表。 */
   const handleResetTaskFilters = () => {
     props.onSearchChange('');
     props.onTagFilterChange('');
-    props.onStatusFilterChange('');
-  };
-  const handleViewAllTaskStates = () => {
     props.onStatusFilterChange('');
   };
   const filtersHaveValue = Boolean(props.searchQuery.trim() || props.tagFilter.trim() || props.statusFilter);
@@ -1078,9 +1075,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     <span className="task-empty-state-action-rail">
                       <button className="task-empty-state-primary-action" type="button" onClick={handleResetTaskFilters}>
                         {props.copy.noResultsPrimaryAction}
-                      </button>
-                      <button className="task-empty-state-secondary-action" type="button" onClick={handleViewAllTaskStates}>
-                        {props.copy.noResultsSecondaryAction}
                       </button>
                     </span>
                   ) : null}
