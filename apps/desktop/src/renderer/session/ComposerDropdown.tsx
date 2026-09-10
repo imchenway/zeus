@@ -15,6 +15,8 @@ export interface ComposerDropdownProps<Value extends string = string> {
   disabled?: boolean;
   title?: string;
   className?: string;
+  /** 浮层挂载到应用壳层，单独透传类名以限定业务选项样式。 */
+  popoverClassName?: string;
   triggerLabel?: string;
   displayLabel?: string;
   triggerIcon?: ReactNode;
@@ -42,6 +44,7 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
       }}
       options={props.options}
       pinning={props.pinning}
+      popoverClassName={props.popoverClassName}
       popoverMinWidth={112}
       searchable={props.searchable}
       searchPlaceholder={props.searchPlaceholder}

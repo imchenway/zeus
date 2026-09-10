@@ -4359,7 +4359,8 @@
 
 .session-codex-parity-v1 .session-return-latest:hover:not(:disabled):not([aria-disabled='true']),
 .session-codex-parity-v1 .session-return-latest:focus-visible {
-  background: var(--session-control-hover);
+  /* 悬停色带透明度，必须叠在实色底上，避免消息正文透入悬浮按钮。 */
+  background: linear-gradient(var(--session-control-hover), var(--session-control-hover)), var(--session-control);
   border-color: var(--session-line);
   transform: none;
 }
@@ -5442,36 +5443,40 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-primary-command-slot,
+/* 保留工具栏 32px 行槽，圆形主操作缩为 28px 并在槽内居中。 */
+.session-codex-parity-v1 .session-primary-command-slot {
+  align-items: center;
+  block-size: 32px;
+  display: inline-flex;
+  flex: 0 0 32px;
+  inline-size: 32px;
+  justify-content: center;
+}
+
 .session-codex-parity-v1 .session-primary-command-slot button,
 .session-codex-parity-v1 .session-active-draft-submit {
-  block-size: 30px;
-  inline-size: 30px;
+  block-size: 28px;
+  inline-size: 28px;
 }
 
 .session-codex-parity-v1 .session-primary-command-slot button,
 .session-codex-parity-v1 .session-active-draft-submit {
   align-items: center;
-  background: var(--session-text) !important;
+  background: var(--zeus-brand-primary) !important;
   border: 0;
   border-radius: 999px !important;
-  color: var(--session-canvas) !important;
+  color: white !important;
   display: inline-flex;
   justify-content: center;
   padding: 0 !important;
 }
 
-/* 两个会话入口与活动草稿的发送共用品牌色；暂停仍保留中性控制语义。 */
-.session-codex-parity-v1 .session-primary-command-slot .session-send-button,
-.session-codex-parity-v1 .session-active-draft-submit {
-  background: var(--zeus-brand-primary) !important;
-  color: white !important;
-}
-.session-codex-parity-v1 .session-primary-command-slot .session-send-button:hover:not(:disabled),
+/* 发送与停止共用品牌反馈，通过箭头、实心方块及等待动效区分动作。 */
+.session-codex-parity-v1 .session-primary-command-slot button:hover:not(:disabled),
 .session-codex-parity-v1 .session-active-draft-submit:hover:not(:disabled) {
   background: var(--zeus-interaction-primary-hover) !important;
 }
-.session-codex-parity-v1 .session-primary-command-slot .session-send-button:active:not(:disabled),
+.session-codex-parity-v1 .session-primary-command-slot button:active:not(:disabled),
 .session-codex-parity-v1 .session-active-draft-submit:active:not(:disabled) {
   background: var(--zeus-interaction-primary-pressed) !important;
 }
@@ -6238,7 +6243,6 @@
 }
 
 .session-codex-parity-v1 .session-question-other > :where(input, textarea),
-.session-codex-parity-v1 .session-plan-refinement > textarea,
 .session-codex-parity-v1 .session-question-freeform {
   background: transparent;
   border: 1px solid transparent;
@@ -6251,7 +6255,6 @@
 }
 
 .session-codex-parity-v1 .session-question-other[data-selected='true'] > :where(input, textarea),
-.session-codex-parity-v1 .session-plan-refinement > textarea,
 .session-codex-parity-v1 .session-question-freeform {
   border-color: var(--session-line);
 }
@@ -6269,8 +6272,7 @@
   gap: 8px;
 }
 
-.session-codex-parity-v1 .session-question-panel footer button,
-.session-codex-parity-v1 .session-plan-refinement > button {
+.session-codex-parity-v1 .session-question-panel footer button {
   appearance: none;
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
@@ -6281,8 +6283,7 @@
   padding-inline: 11px;
 }
 
-.session-codex-parity-v1 .session-question-panel footer button[type='submit'],
-.session-codex-parity-v1 .session-plan-refinement > button {
+.session-codex-parity-v1 .session-question-panel footer button[type='submit'] {
   background: var(--session-text);
   border-color: var(--session-text);
   color: var(--session-canvas);
@@ -6298,12 +6299,53 @@
   margin-block: 14px 2px;
 }
 
-.session-codex-parity-v1 .session-plan-implementation-request:not([data-error='true']) > footer {
-  inset-block-end: 10px;
-  inset-inline-end: 18px;
+/* 计划选项与修改意见使用同一行高，表单盒模型不再比按钮多出内边距高度。 */
+.session-codex-parity-v1 .session-plan-implementation-request :is(.session-question-option, .session-plan-refinement) {
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 20px;
+  min-block-size: 40px;
+}
+
+.session-codex-parity-v1 .session-plan-refinement > .session-question-option {
+  grid-column: 1 / 3;
+  min-block-size: 28px;
   padding: 0;
-  position: absolute;
-  z-index: 1;
+}
+
+/* 原生内容自适应保持单行 28px；多行只扩展输入行，超出视口四分之一时在框内滚动。 */
+.session-codex-parity-v1 .session-plan-refinement > textarea {
+  background: transparent;
+  border: 1px solid var(--session-line);
+  border-radius: 9px;
+  box-sizing: border-box;
+  field-sizing: content;
+  font: inherit;
+  inline-size: 100%;
+  max-block-size: 24vh;
+  min-block-size: 28px;
+  min-inline-size: 0;
+  outline: 0;
+  overflow-y: auto;
+  padding: 3px 6px;
+  resize: none;
+}
+
+/* 空值按 rows 的单行尺寸显示，窄宽度下的长占位提示不参与自动增高。 */
+.session-codex-parity-v1 .session-plan-refinement > textarea:placeholder-shown {
+  field-sizing: fixed;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-plan-refinement .session-rui-inline-actions button {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* 附件独占输入行下方，不改变输入框与行尾操作的垂直中心。 */
+.session-codex-parity-v1 .session-plan-refinement > .session-question-answer-attachments {
+  grid-column: 2 / -1;
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-rui-request[data-inline-footer='true']:not([data-error='true']) footer {
@@ -6314,7 +6356,6 @@
   z-index: 1;
 }
 
-.session-codex-parity-v1 .session-plan-implementation-request:not([data-error='true']) .session-question-options > :last-child,
 .session-codex-parity-v1 .session-rui-request[data-inline-footer='true']:not([data-error='true']) .session-question-options > :last-child {
   padding-inline-end: 84px;
 }
@@ -8606,7 +8647,8 @@
   border-color: var(--session-line);
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-answer-editor[data-resource-dragging='true'] {
+.session-codex-parity-v1 .session-rui-request .session-question-answer-editor[data-resource-dragging='true'],
+.session-codex-parity-v1 .session-plan-refinement[data-resource-dragging='true'] {
   border-color: var(--session-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 16%, transparent);
 }
@@ -8665,7 +8707,8 @@
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-attachment-button {
+.session-codex-parity-v1 .session-rui-request .session-question-attachment-button,
+.session-codex-parity-v1 .session-plan-refinement .session-question-attachment-button {
   align-items: center;
   appearance: none;
   /* 附件与行尾操作共用垂直中心，多行输入不再把附件推到底部。 */
@@ -8681,17 +8724,20 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-attachment-button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-codex-parity-v1 .session-rui-request .session-question-attachment-button:hover:not(:disabled):not([aria-disabled='true']),
+.session-codex-parity-v1 .session-plan-refinement .session-question-attachment-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-attachment-button:focus-visible {
+.session-codex-parity-v1 .session-rui-request .session-question-attachment-button:focus-visible,
+.session-codex-parity-v1 .session-plan-refinement .session-question-attachment-button:focus-visible {
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-attachment-button > svg {
+.session-codex-parity-v1 .session-rui-request .session-question-attachment-button > svg,
+.session-codex-parity-v1 .session-plan-refinement .session-question-attachment-button > svg {
   block-size: 16px;
   inline-size: 16px;
 }
@@ -10111,20 +10157,17 @@
   color: var(--zeus-brand-text);
 }
 
-.session-codex-parity-v1 .session-permission-dropdown[data-value='auto'] .session-composer-dropdown-trigger {
-  background: transparent;
-  color: var(--session-text-muted);
+/* 完全访问沿用确认弹窗的警示色，由通用触发器读取，避免悬停或展开时被中性色覆盖。 */
+.session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'] {
+  --session-composer-trigger-color: var(--zeus-danger-text);
+  --session-composer-trigger-active-bg: color-mix(in srgb, var(--zeus-danger-text) 10%, transparent);
 }
 
-.session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'] .session-composer-dropdown-trigger {
-  background: transparent;
-  color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'] .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']),
-.session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'][data-open='true'] .session-composer-dropdown-trigger {
-  background: color-mix(in srgb, var(--session-danger) 10%, transparent);
-  color: var(--session-danger);
+/* 菜单通过共享浮层渲染；仅完全访问选项的文字、勾选和交互底色带警示语义。 */
+.macos-ai-app .session-permission-popover .zeus-select-option[data-value='full-access'] {
+  --zeus-product-text: var(--zeus-danger-text);
+  --zeus-select-check: var(--zeus-danger-text);
+  --zeus-select-option-hover-bg: color-mix(in srgb, var(--zeus-danger-text) 10%, transparent);
 }
 
 .session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger {
@@ -10292,15 +10335,9 @@
   outline: none;
 }
 
-.session-codex-parity-v1 .session-primary-command-slot,
-.session-codex-parity-v1 .session-primary-command-slot button {
-  block-size: 32px;
-  inline-size: 32px;
-}
-
 .session-codex-parity-v1 .session-send-button > svg {
-  block-size: 20px;
-  inline-size: 20px;
+  block-size: 18px;
+  inline-size: 18px;
 }
 
 .session-codex-parity-v1 .session-stop-button > svg {
@@ -10384,7 +10421,7 @@
   border: 0;
   border-radius: 7px;
   box-shadow: none;
-  color: var(--session-text-muted);
+  color: var(--session-composer-trigger-color, var(--session-text-muted));
   display: inline-flex;
   /* 文字入口与纯图标入口等高，模型和推理强度使用相同字号及行高。 */
   block-size: 32px;
@@ -10407,13 +10444,13 @@
 }
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  background: var(--session-composer-trigger-active-bg, var(--zeus-interaction-hover));
+  color: var(--session-composer-trigger-color, var(--session-text));
 }
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .session-composer-dropdown-trigger {
-  background: var(--session-selected);
-  color: var(--session-text);
+  background: var(--session-composer-trigger-active-bg, var(--session-selected));
+  color: var(--session-composer-trigger-color, var(--session-text));
 }
 
 .session-codex-parity-v1 .session-composer-dropdown > .session-composer-dropdown-trigger .zeus-select-value {
