@@ -1,5 +1,5 @@
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
-import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
+import { classifyAssistantMessage, conversationNavigationExcerpt, type ConversationNavigationSnapshot, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -34,8 +34,13 @@ import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
 import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
+import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, navigationStatusText, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 
 export interface ConversationTranscriptProps {
+  /** 主会话读取完整目录，独立子线程不传此入口。 */
+  onLoadNavigation?: () => Promise<ConversationNavigationSnapshot>;
+  /** 按需读取选中轮次的正文，不展开工具过程。 */
+  onLoadNavigationTurn?: (turnId: string) => Promise<void>;
   state: NativeSessionState;
   language: SessionUiLanguage;
   assistantLabel?: string;
@@ -231,6 +236,16 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 
 /** 会话正文、历史过程与当前状态共用原始事件，仅在展示时分配提示职责。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
+  /** 导航和预览共用会话外壳，不被正文滚动裁切。 */
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  /** 显式跳转目标先加入虚拟列表，挂载后再校准。 */
+  const [navigationTargetKey, setNavigationTargetKey] = useState<string | null>(null);
+  /** 仅在阅读位置跨过发言时更新当前刻度。 */
+  const [activeNavigationKey, setActiveNavigationKey] = useState<string | null>(null);
+  /** 跳转读取失败留在当前工作面，不覆盖正文错误状态。 */
+  const [navigationReadError, setNavigationReadError] = useState<{ entry: TranscriptNavigationEntry; message: string } | null>(null);
+  /** 连续点击和会话切换后，旧读取错误不能覆盖当前目标。 */
+  const navigationRequestRef = useRef(0);
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const latestMarkerIntersectingRef = useRef(true);
@@ -398,12 +413,52 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [activeStatusKind, activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds, showStandaloneActiveStatus]);
   const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const closedTurnChangeSetIds = useMemo(() => availableClosedTurnChangeSetIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
-  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
+  const baseTurnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
+  /** 目录只在稳定身份、送达状态、轮次结束或连接变化时重新读取。 */
+  const latestNavigationUser = props.state.items[lastUserKey ?? ''];
+  /** 前插历史不触发完整目录重读，只观察最新发言的确认状态。 */
+  const navigationRefreshKey = `${props.state.transportState}:${latestNavigationUser?.clientUserMessageId ?? latestNavigationUser?.itemId ?? ''}:${latestNavigationUser?.optimistic ? latestNavigationUser.status : 'confirmed'}:${Object.entries(
+    props.state.terminalTurnIds,
+  )
+    .map(([id, status]) => `${id}:${status}`)
+    .join('|')}`;
+  /** 完整目录与首屏正文并行取得，绝不要求用户先滚到更早历史。 */
+  const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: props.onLoadNavigation });
+  /** 真实投影提供已加载身份，目录只补齐缺失历史。 */
+  const liveNavigationEntries = useMemo(() => transcriptNavigationEntries(baseTurnRows, props.state), [baseTurnRows, props.state.turnsByProviderId, props.state.terminalTurnIds]);
+  /** 摘录不变时复用目录，流式长正文不会反复刷新全部刻度。 */
+  const previousNavigationEntriesRef = useRef<TranscriptNavigationEntry[]>([]);
+  /** 目录与实时发送按稳定身份合并。 */
+  const navigationEntries = useMemo(() => {
+    /** 所有成员均为标量字段，字段比较不读取正文。 */
+    const next = mergeNavigationEntries(navigation.snapshot?.entries ?? [], liveNavigationEntries);
+    /** 保持旧对象以隔离刻度与正文的刷新频率。 */
+    const previous = previousNavigationEntriesRef.current;
+    if (next.length === previous.length && next.every((entry, index) => Object.keys(entry).every((key) => entry[key as keyof TranscriptNavigationEntry] === previous[index]?.[key as keyof TranscriptNavigationEntry]))) return previous;
+    previousNavigationEntriesRef.current = next;
+    return next;
+  }, [navigation.snapshot, liveNavigationEntries]);
+  /** 只有接入目录的主会话添加历史占位，其他调用方沿用原列表。 */
+  const turnRows = useMemo(() => (props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows), [baseTurnRows, navigationEntries, props.onLoadNavigation]);
+  /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
+  const navigationKeyByRow = useMemo(() => {
+    /** 目录身份同时标记已加载行与未加载占位。 */
+    const keys = new Set(navigationEntries.map((entry) => entry.rowKey));
+    /** 按正文顺序仅构建一次映射，滚动时不用遍历完整历史。 */
+    const result = new Map<string, string>();
+    /** 首屏可能从某轮回答中途开始，默认对应目录首项。 */
+    let current = navigationEntries[0]?.rowKey;
+    for (const row of turnRows) {
+      if (keys.has(row.key)) current = row.key;
+      if (current) result.set(row.key, current);
+    }
+    return result;
+  }, [turnRows, navigationEntries]);
   const planContinuationTurnIdentities = useMemo(() => planContinuationSourceTurnIdentities(props.state), [props.state.planImplementationRequests, props.state.queue, props.state.turnsByProviderId]);
-  const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(turnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, turnRows]);
+  const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(baseTurnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, baseTurnRows]);
   const defaultExpandedRowKeys = useMemo(
-    () => defaultExpandedTurnProcessKeys(turnRows, props.state.turnsByProviderId, props.state.terminalTurnIds, planContinuationProcessKeys),
-    [planContinuationProcessKeys, props.state.terminalTurnIds, props.state.turnsByProviderId, turnRows],
+    () => defaultExpandedTurnProcessKeys(baseTurnRows, props.state.turnsByProviderId, props.state.terminalTurnIds, planContinuationProcessKeys),
+    [planContinuationProcessKeys, props.state.terminalTurnIds, props.state.turnsByProviderId, baseTurnRows],
   );
   const previousPlanContinuationProcessKeysRef = useRef<ReadonlySet<string>>(new Set());
   useLayoutEffect(() => {
@@ -436,8 +491,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (focusedRowKey) pinned.add(focusedRowKey);
     if (historyAnchorRowKey) pinned.add(historyAnchorRowKey);
     if (staticReadingAnchorRowKey) pinned.add(staticReadingAnchorRowKey);
+    if (navigationTargetKey) pinned.add(navigationTargetKey);
     return pinned;
-  }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey, staticReadingAnchorRowKey]);
+  }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey, staticReadingAnchorRowKey, navigationTargetKey]);
   const isFollowingLatest = useCallback(() => scrollController.getState().mode !== 'static', [scrollController]);
   const requestLatestPositionAfterGeometryChange = useCallback(() => maintainLatestPositionRef.current(), []);
   const viewportVirtualizer = useTranscriptViewportVirtualizer({
@@ -594,6 +650,69 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       publishLatestContentVisibility();
     });
   }, [publishLatestContentVisibility]);
+
+  /** 只读取已经挂载的可见行，当前刻度变化才刷新状态。 */
+  const updateNavigationCurrent = useCallback(
+    (container: HTMLElement) => {
+      if (!props.onLoadNavigation) return;
+      /** 此读取复用正文已有的视口锚点规则，最多检查虚拟窗口内的行。 */
+      const rowKey = captureTranscriptViewportAnchor(container).rowKey;
+      /** 底部留白仍属于最后一次发言。 */
+      const next = rowKey ? (navigationKeyByRow.get(rowKey) ?? null) : (navigationEntries.at(-1)?.rowKey ?? null);
+      setActiveNavigationKey((current) => (current === next ? current : next));
+    },
+    [navigationEntries, navigationKeyByRow, props.onLoadNavigation],
+  );
+
+  /** 导航显式进入历史阅读，先挂载目标行，再由布局阶段定位。 */
+  const navigateToEntry = useCallback(
+    (entry: TranscriptNavigationEntry) => {
+      scrollController.onExplicitHistoryRequest();
+      // 目录可先于首屏正文返回；显式跳转接管首次定位，后到的正文不得拉回最新。
+      positionedConversationIdRef.current = props.state.conversationId;
+      clearUserScrollIntent();
+      clearStaticReadingAnchor();
+      setNavigationReadError(null);
+      setNavigationTargetKey(entry.rowKey);
+      setActiveNavigationKey(entry.rowKey);
+      setReturnToLatestVisible(true);
+      /** 请求只服务当前跳转，旧回执不影响后来的点击。 */
+      const request = ++navigationRequestRef.current;
+      if (entry.loaded && props.onLoadNavigationTurn)
+        void props.onLoadNavigationTurn(entry.turnId).catch((error: unknown) => {
+          if (request === navigationRequestRef.current) setNavigationReadError({ entry, message: error instanceof Error ? error.message : '正文读取失败。' });
+        });
+    },
+    [scrollController, clearUserScrollIntent, clearStaticReadingAnchor, props.onLoadNavigationTurn, props.state.conversationId],
+  );
+
+  useLayoutEffect(() => {
+    /** pinnedRowKeys 确保远处目标可以先挂载，再使用实际高度定位。 */
+    const container = containerRef.current;
+    if (!container || !navigationTargetKey) return;
+    /** 占位替换为真实用户消息时沿用同一行身份。 */
+    const target = viewportVirtualizer.rowElement(navigationTargetKey);
+    if (!target) return;
+    container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
+    staticReadingAnchorRef.current = { rowKey: navigationTargetKey, topOffset: target.getBoundingClientRect().top - container.getBoundingClientRect().top, scrollHeight: container.scrollHeight, scrollTop: container.scrollTop };
+    setStaticReadingAnchorRowKey(navigationTargetKey);
+    setNavigationTargetKey(null);
+    viewportVirtualizer.synchronizeViewport(container);
+    scheduleLatestContentVisibility();
+  }, [navigationTargetKey, viewportVirtualizer.projection, scheduleLatestContentVisibility]);
+
+  useLayoutEffect(() => {
+    if (containerRef.current) updateNavigationCurrent(containerRef.current);
+  }, [viewportVirtualizer.projection, updateNavigationCurrent]);
+
+  useEffect(() => {
+    navigationRequestRef.current += 1;
+    setNavigationTargetKey(null);
+    setNavigationReadError(null);
+    return () => {
+      navigationRequestRef.current += 1;
+    };
+  }, [props.state.conversationId]);
 
   const maintainLatestPosition = useCallback(() => {
     latestPositionConvergenceRequestedRef.current = true;
@@ -845,7 +964,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     });
   }, []);
 
-  const renderTranscriptTurnRow = (row: TranscriptTurnRow): ReactNode => {
+  const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
+    if (row.kind === 'navigation_placeholder') return <NavigationHistoryPlaceholder entry={row.entry} language={props.language} onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined} />;
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
@@ -1000,7 +1120,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       <output className="session-sr-only session-transcript-announcement" aria-live="polite" aria-atomic="true">
         {completedAnnouncement ? <span key={completedAnnouncement.key}>{completedAnnouncement.text}</span> : null}
       </output>
-      <div className="session-transcript-shell">
+      <div ref={shellRef} className="session-transcript-shell" data-navigation-ready={Boolean(navigation.snapshot && !navigation.error && navigationEntries.length) || undefined}>
         <section
           ref={containerRef}
           className="session-transcript"
@@ -1042,13 +1162,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             }
             if (userDriven && !userScrollPointerActiveRef.current) scheduleUserScrollIntentEnd();
             viewportVirtualizer.synchronizeViewport(event.currentTarget);
+            updateNavigationCurrent(event.currentTarget);
             scheduleLatestContentVisibility();
           }}
         >
           <V2HistoryPageSentinel
             key={props.state.conversationId}
             state={props.state}
-            enabled={historyPagingArmed}
+            enabled={historyPagingArmed && !navigation.snapshot}
             onIntersectionChange={updateHistorySentinelIntersection}
             onLoadEarlier={renderProps.onLoadEarlierHistory ? loadEarlierHistoryWithAnchor : undefined}
           />
@@ -1102,6 +1223,25 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
+        {props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 0 ? (
+          <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} />
+        ) : null}
+        {props.onLoadNavigation && (navigation.error || navigationReadError || (!navigation.snapshot && navigation.loading)) ? (
+          <div className="session-navigation-status" role="status">
+            <span>{navigationReadError?.message ?? navigation.error ?? (props.language === 'zh-CN' ? '正在读取完整历史目录…' : 'Loading all messages…')}</span>
+            {navigation.error || navigationReadError ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (navigationReadError) navigateToEntry(navigationReadError.entry);
+                  else navigation.retry();
+                }}
+              >
+                {props.language === 'zh-CN' ? '重试' : 'Retry'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
         <button
           type="button"
@@ -1346,6 +1486,146 @@ export interface TranscriptTurnProcessSegment {
 }
 
 export type TranscriptTurnRow = TranscriptRow | TranscriptTurnWorkRow;
+
+/** 目录补齐尚未读取的发言位置，不伪造一条可编辑或可发送的消息。 */
+type TranscriptViewportRow = TranscriptTurnRow | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry };
+
+/** 真实正文行提供目录所需的身份、状态和短摘录。 */
+function transcriptNavigationEntries(rows: readonly TranscriptTurnRow[], state: NativeSessionState): TranscriptNavigationEntry[] {
+  /** 同轮补充发言共享最终答复，正式计划只作次选。 */
+  const answers = new Map<string, { text: string; final: boolean }>();
+  for (const row of rows) {
+    if (row.kind !== 'item') continue;
+    /** 使用会话已有的最终答复分类，不把思考和工具结果当回答。 */
+    const final = isFinalAnswerItem(row.item);
+    if (final || (row.item.type === 'plan' && !answers.get(row.item.turnId)?.final)) answers.set(row.item.turnId, { text: conversationNavigationExcerpt(transcriptItemText(row.item), 320), final });
+  }
+  return rows.flatMap((row): TranscriptNavigationEntry[] => {
+    if (row.kind !== 'item' || row.questionAnswer || itemRole(row.item) !== 'user') return [];
+    /** 主时间线上的真实用户发言，不包含过程中的问卷答复。 */
+    const item = row.item;
+    /** 无文字发言仍可按附件名称辨认。 */
+    const attachments = Array.isArray(item.payload.attachments)
+      ? item.payload.attachments
+          .map((entry) => primitiveValue(recordValue(entry)?.name))
+          .filter(Boolean)
+          .join('、')
+      : '';
+    /** 已确认轮次优先使用模型身份，目录合并后保留本地读取身份。 */
+    const turn = state.turnsByProviderId[item.turnId];
+    /** 投影仅用于导航，所有原消息字段仍留在正文中。 */
+    const entry = {
+      id: item.itemId,
+      turnId: turn?.id ?? item.turnId,
+      providerTurnId: turn?.providerTurnId ?? item.turnId,
+      clientUserMessageId: item.clientUserMessageId ?? item.durableClientUserMessageId ?? null,
+      providerItemId: item.providerItemId ?? null,
+      sequence: typeof item.payload.v2Sequence === 'number' ? item.payload.v2Sequence : 0,
+      occurredAt: transcriptTimelineAt(item),
+      prompt: conversationNavigationExcerpt(transcriptItemText(item) || attachments || item.resources.map((resource) => resource.displayName).join('、'), 160),
+      response: answers.get(item.turnId)?.text ?? '',
+      status: state.terminalTurnIds[item.turnId] ?? turn?.status ?? item.status,
+      loaded: true,
+    };
+    return [{ ...entry, rowKey: navigationRowKey(entry) }];
+  });
+}
+
+/** 将缺失发言插回原有顺序，加载后的真实消息接管同一占位身份。 */
+function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: readonly TranscriptNavigationEntry[]): TranscriptViewportRow[] {
+  /** 模型、客户端和历史身份分别建索引，不按正文猜测关联。 */
+  const byIdentity = new Map<string, TranscriptNavigationEntry>();
+  for (const entry of entries) {
+    byIdentity.set(`history:${entry.id}`, entry);
+    if (entry.providerItemId) byIdentity.set(`provider:${entry.providerItemId}`, entry);
+    if (entry.clientUserMessageId) byIdentity.set(`client:${entry.clientUserMessageId}`, entry);
+  }
+  /** 仅缺失正文的发言需要占位，重复标题的独立发送仍分别保留。 */
+  const pending = entries.filter((entry) => !entry.loaded);
+  /** 顺序合并保持原有处理过程与交付卡的相对次序。 */
+  const result: TranscriptViewportRow[] = [];
+  /** 顺序指针避免为每条历史重新扫描所有正文行。 */
+  let cursor = 0;
+  for (const row of rows) {
+    /** 过程组以首条记录的时间确定其在用户发言之间的位置。 */
+    const first = row.kind === 'turn_work' ? row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows])[0] : row;
+    /** 稳定首次时间来自既有投影，不使用流式文本更新时间重排。 */
+    const timestamp = !first ? '' : first.kind === 'answered_request' ? first.request.createdAt : transcriptTimelineAt(first.kind === 'item' ? first.item : first.items[0]!);
+    /** 持久消息优先比较会话顺序，批量恢复的相同时间不能把后续占位提前。 */
+    const sequence = first && first.kind !== 'answered_request' ? (first.kind === 'item' ? first.item : first.items[0])?.payload.v2Sequence : undefined;
+    while (cursor < pending.length && (typeof sequence === 'number' && sequence > 0 ? pending[cursor]!.sequence < sequence : pending[cursor]!.occurredAt <= timestamp)) {
+      /** 占位与未来真实行使用相同 key，保持阅读锚点。 */
+      const entry = pending[cursor++]!;
+      result.push({ kind: 'navigation_placeholder', key: entry.rowKey, entry });
+    }
+    if (row.kind === 'item' && !row.questionAnswer && itemRole(row.item) === 'user') {
+      /** 客户端身份优先，历史页接管时不重建用户气泡所在的行。 */
+      const entry =
+        [row.item.clientUserMessageId, row.item.durableClientUserMessageId]
+          .filter(Boolean)
+          .map((id) => byIdentity.get(`client:${id}`))
+          .find(Boolean) ??
+        (row.item.providerItemId ? byIdentity.get(`provider:${row.item.providerItemId}`) : undefined) ??
+        byIdentity.get(`history:${row.item.itemId}`);
+      result.push(entry ? { ...row, key: entry.rowKey } : row);
+    } else result.push(row);
+  }
+  for (; cursor < pending.length; cursor += 1) {
+    /** 尾部尚未读取的发言仍占有真实位置。 */
+    const entry = pending[cursor]!;
+    result.push({ kind: 'navigation_placeholder', key: entry.rowKey, entry });
+  }
+  return result;
+}
+
+/** 只在占位真正靠近视口时读取对应轮次；失败保留在原位，等待用户重试。 */
+function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry; language: SessionUiLanguage; onLoad?: (turnId: string) => Promise<void> }) {
+  /** 观察真实占位，虚拟列表远处保留的节点不能触发无关读取。 */
+  const ref = useRef<HTMLElement | null>(null);
+  /** 同一占位失败后不因重复相交自动重放。 */
+  const [attempt, setAttempt] = useState(0);
+  /** 状态只影响此处占位，不覆盖整个会话。 */
+  const [status, setStatus] = useState<{ loading: boolean; error: string | null }>({ loading: true, error: null });
+  useEffect(() => {
+    if (!ref.current || !props.onLoad) return;
+    /** 卸载或切换目标后不处理旧结果。 */
+    let cancelled = false;
+    /** 一次相交只发起一次读取。 */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        setStatus({ loading: true, error: null });
+        void props.onLoad!(props.entry.turnId)
+          .then(() => {
+            // 正常结果会由真实行替换此占位；若身份未能对应，保留明确反馈而非无界读取。
+            if (!cancelled) setStatus({ loading: false, error: props.language === 'zh-CN' ? '正文已读取；若仍未显示，请重试。' : 'Content loaded; retry if this message is still unavailable.' });
+          })
+          .catch((error: unknown) => {
+            if (!cancelled) setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
+          });
+      },
+      { root: ref.current.closest('.session-transcript'), rootMargin: '200px 0px' },
+    );
+    observer.observe(ref.current);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [props.entry.turnId, props.onLoad, props.language, attempt]);
+  return (
+    <section ref={ref} className="session-navigation-placeholder" aria-busy={status.loading}>
+      <strong>{props.entry.prompt || (props.language === 'zh-CN' ? '用户发言' : 'User message')}</strong>
+      <p>{props.entry.response || navigationStatusText(props.entry.status, props.language === 'zh-CN')}</p>
+      <span role="status">{status.error ?? (props.language === 'zh-CN' ? '正在读取正文…' : 'Loading message…')}</span>
+      {status.error ? (
+        <button type="button" onClick={() => setAttempt((current) => current + 1)}>
+          {props.language === 'zh-CN' ? '重试' : 'Retry'}
+        </button>
+      ) : null}
+    </section>
+  );
+}
 
 interface TranscriptRowRenderOptions {
   props: ConversationTranscriptProps;
@@ -2008,7 +2288,8 @@ function defaultExpandedTurnProcessKeys(
   return expanded;
 }
 
-function transcriptTurnRowTurnId(row: TranscriptTurnRow): string | null {
+function transcriptTurnRowTurnId(row: TranscriptViewportRow): string | null {
+  if (row.kind === 'navigation_placeholder') return row.entry.providerTurnId ?? row.entry.turnId;
   return row.kind === 'turn_work' ? row.turnId : transcriptRowTurnId(row);
 }
 

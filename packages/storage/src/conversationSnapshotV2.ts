@@ -1,4 +1,14 @@
-import { assistantMessageMetadata, asyncMessageQuestions, type AssistantMessageMetadata, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
+import {
+  assistantMessageMetadata,
+  asyncMessageQuestions,
+  classifyAssistantMessage,
+  conversationNavigationExcerpt,
+  type ConversationNavigationEntry,
+  type ConversationNavigationSnapshot,
+  type AssistantMessageMetadata,
+  type AsyncQuestionAnswer,
+  type AsyncQuestionResponse,
+} from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import {
   conversationSnapshotV2StructureGeneration,
@@ -650,6 +660,85 @@ export class ConversationSnapshotV2Repository {
     private readonly db: ZeusDatabasePort,
     private readonly artifactStore?: ArtifactStore,
   ) {}
+
+  /** 同步读取全部发言目录，只取短文本与身份，不装载工具正文或创建持久目录。 */
+  readNavigation(conversationIdValue: string): ConversationNavigationSnapshot {
+    /** 会话范围由路由校验，存储层仍拒绝空身份。 */
+    const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    /** 目录和事件进度处于同一次同步读取中。 */
+    const throughEventSeq = this.throughEventSeq(conversationId);
+    /** 沿现有会话顺序索引读取；数据库内截断，正文不进入目录响应。 */
+    const rows = this.db.select<{
+      id: string;
+      sequence: number;
+      turn_id: string;
+      provider_turn_id: string | null;
+      client_user_message_id: string | null;
+      provider_item_id: string | null;
+      role: string;
+      confirmed_at: string;
+      status: string;
+      preview: string;
+      assistant_phase: string | null;
+      assistant_metadata_json: string | null;
+      formal_plan: number;
+    }>(
+      `SELECT conversation_model_history.id, conversation_model_history.sequence,
+        conversation_model_history.turn_id, turn.provider_turn_id, turn.status,
+        submission.client_message_id AS client_user_message_id,
+        ${modelHistoryProviderItemSql} AS provider_item_id,
+        conversation_model_history.role, conversation_model_history.confirmed_at,
+        ${modelHistoryAssistantPhaseSql} AS assistant_phase,
+        ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
+        ${modelHistoryFormalPlanSql} AS formal_plan,
+        substr(CASE WHEN json_valid(content_json) THEN COALESCE(
+          NULLIF(json_extract(content_json, '$.displayText'), ''),
+          NULLIF(json_extract(content_json, '$.text'), ''),
+          CASE WHEN json_type(content_json, '$') = 'text' THEN json_extract(content_json, '$') END,
+          (SELECT group_concat(json_extract(value, '$.name'), '、') FROM json_each(content_json, '$.attachments')),
+          '') ELSE content_json END, 1, 1024) AS preview
+      FROM conversation_model_history
+      JOIN conversation_turns AS turn ON turn.id = conversation_model_history.turn_id AND turn.conversation_id = conversation_model_history.conversation_id
+      LEFT JOIN conversation_submissions AS submission ON submission.id = conversation_model_history.submission_id AND submission.conversation_id = conversation_model_history.conversation_id
+      WHERE conversation_model_history.conversation_id = ?
+        AND conversation_model_history.role IN ('user', 'assistant') AND tool_pair_id IS NULL
+        AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
+        AND (conversation_model_history.role = 'user' OR reasoning_source_json IS NULL OR ${modelHistoryAssistantPhaseSql} = 'plan')
+        AND ${modelHistoryQuestionAnswerSql} IS NULL
+      ORDER BY conversation_model_history.sequence`,
+      [conversationId],
+    );
+    /** 同轮补充发言共用最终答复；正式计划只有在没有最终答复时使用。 */
+    const answers = new Map<string, { text: string; final: boolean }>();
+    /** 每次用户发言独立占一条刻度，使用持久身份去重。 */
+    const entries = new Map<string, ConversationNavigationEntry>();
+    for (const row of rows) {
+      /** 脱敏沿用现有历史预览规则。 */
+      const text = redactSensitivePreview(row.preview).text;
+      if (row.role === 'assistant') {
+        /** 旧历史没有 phase 时与既有正文适配器保持相同的最终答复口径。 */
+        const final = row.assistant_phase !== 'plan' && classifyAssistantMessage(parseJsonRecordOrNull(row.assistant_metadata_json) ?? {}, row.assistant_phase || 'final_answer') === 'final';
+        if (text.trim() && (final || (row.formal_plan === 1 && !answers.get(row.turn_id)?.final))) answers.set(row.turn_id, { text: conversationNavigationExcerpt(text, 320), final });
+        continue;
+      }
+      /** 客户端身份能连接发送前后两份投影，缺失时使用模型身份或历史身份。 */
+      const identity = row.client_user_message_id ? `client:${row.client_user_message_id}` : row.provider_item_id ? `provider:${row.provider_item_id}` : `history:${row.id}`;
+      if (!entries.has(identity))
+        entries.set(identity, {
+          id: row.id,
+          turnId: row.turn_id,
+          providerTurnId: row.provider_turn_id,
+          clientUserMessageId: row.client_user_message_id,
+          providerItemId: row.provider_item_id,
+          sequence: row.sequence,
+          occurredAt: row.confirmed_at,
+          prompt: conversationNavigationExcerpt(text, 160),
+          response: '',
+          status: row.status,
+        });
+    }
+    return { conversationId, throughEventSeq, entries: [...entries.values()].map((entry) => ({ ...entry, response: answers.get(entry.turnId)?.text ?? '' })) };
+  }
 
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');

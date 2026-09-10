@@ -11676,3 +11676,207 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+/* 完整目录就绪后由刻度替代长滑块；目录失败仍保留原生滚动入口。 */
+.session-codex-parity-v1 .session-transcript-shell[data-navigation-ready='true'] > .session-transcript {
+  scrollbar-width: none;
+}
+.session-codex-parity-v1 .session-transcript-shell[data-navigation-ready='true'] > .session-transcript::-webkit-scrollbar {
+  display: none;
+}
+
+/* 刻度数量自然增长，超出正文区域才在导航内滚动。 */
+.session-codex-parity-v1 .session-navigation-rail {
+  position: absolute;
+  z-index: 4;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  width: 42px;
+  max-height: min(70vh, 640px, calc(100% - 32px));
+  padding: 10px 6px;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  mask-image: linear-gradient(transparent, black 10px, black calc(100% - 10px), transparent);
+}
+.session-codex-parity-v1 .session-navigation-rail::-webkit-scrollbar {
+  display: none;
+}
+
+/* 鼠标命中行仅 10px；波峰由原生悬停选择器产生，不触发正文重排。 */
+.session-codex-parity-v1 button.session-navigation-tick {
+  display: flex;
+  align-items: center;
+  width: 30px;
+  height: 10px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--session-text);
+  cursor: pointer;
+  touch-action: pan-y;
+}
+.session-codex-parity-v1 .session-navigation-tick > span {
+  width: 26px;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.22;
+  transform: scaleX(0.230769);
+  transform-origin: left center;
+  transition:
+    transform 160ms linear(0, 0.398 10%, 0.682 20%, 0.843 30%, 0.925 40%, 0.972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1),
+    opacity 160ms ease-out;
+}
+/* 上下三条分别延展至 10、14、20px，当前刻度为 26px。 */
+.session-codex-parity-v1
+  .session-navigation-tick:is(
+    :has(+ .session-navigation-tick + .session-navigation-tick + :is(:hover, :focus-visible, [data-preview])),
+    :is(:hover, :focus-visible, [data-preview]) + .session-navigation-tick + .session-navigation-tick + .session-navigation-tick
+  )
+  > span {
+  transform: scaleX(0.384615);
+}
+.session-codex-parity-v1 .session-navigation-tick:is(:has(+ .session-navigation-tick + :is(:hover, :focus-visible, [data-preview])), :is(:hover, :focus-visible, [data-preview]) + .session-navigation-tick + .session-navigation-tick) > span {
+  transform: scaleX(0.538462);
+}
+.session-codex-parity-v1 .session-navigation-tick:is(:has(+ :is(:hover, :focus-visible, [data-preview])), :is(:hover, :focus-visible, [data-preview]) + .session-navigation-tick) > span {
+  transform: scaleX(0.769231);
+}
+.session-codex-parity-v1 .session-navigation-tick:is(:hover, :focus-visible, [data-preview]) > span {
+  transform: scaleX(1);
+  opacity: 1;
+}
+.session-codex-parity-v1 .session-navigation-tick[aria-current] > span {
+  opacity: 1;
+}
+.session-codex-parity-v1 button.session-navigation-tick:focus-visible {
+  outline: 1px solid var(--session-text-muted);
+  outline-offset: 1px;
+}
+
+/* 门户继承主题；固定宽度与淡入位移避免内容切换缩放或闪烁。 */
+.session-codex-parity-v1.session-navigation-portal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+.session-codex-parity-v1 .session-navigation-preview {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 16px));
+  padding: 10px 12px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
+  background: var(--session-canvas);
+  color: var(--session-text);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
+  opacity: 0;
+  transform: translateX(-4px);
+  pointer-events: none;
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
+}
+.session-codex-parity-v1 .session-navigation-preview[data-open] {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+@starting-style {
+  .session-codex-parity-v1 .session-navigation-preview[data-open] {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+.session-codex-parity-v1 .session-navigation-preview > strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.session-codex-parity-v1 .session-navigation-preview > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+  color: var(--session-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* 读取反馈局部呈现，正文失败保留原有阅读锚点与重试入口。 */
+.session-codex-parity-v1 .session-navigation-status {
+  position: absolute;
+  left: 48px;
+  bottom: 12px;
+  right: 16px;
+  width: fit-content;
+  max-width: calc(100% - 64px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  background: var(--session-canvas);
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+.session-codex-parity-v1 .session-navigation-placeholder {
+  min-height: 100px;
+  padding: 12px 0;
+  color: var(--session-text-muted);
+  font-size: 13px;
+}
+.session-codex-parity-v1 .session-navigation-placeholder > strong {
+  color: var(--session-text);
+  font-weight: 500;
+}
+.session-codex-parity-v1 .session-navigation-placeholder > p {
+  margin: 8px 0;
+}
+.session-codex-parity-v1 :is(.session-navigation-status, .session-navigation-placeholder) > button {
+  border: 0;
+  background: transparent;
+  color: var(--session-text);
+  padding: 4px 8px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 触摸设备保留逐条可操作面积，刻度数量与键盘顺序不变。 */
+@media (pointer: coarse) {
+  .session-codex-parity-v1 .session-navigation-rail {
+    width: 52px;
+  }
+  .session-codex-parity-v1 button.session-navigation-tick {
+    width: 40px;
+    height: 44px;
+  }
+}
+
+/* 减少动态效果保留轻淡化，取消回弹与空间位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-navigation-tick > span {
+    transition: none;
+  }
+  .session-codex-parity-v1 .session-navigation-preview {
+    transform: none;
+    transition: opacity 150ms linear;
+  }
+  @starting-style {
+    .session-codex-parity-v1 .session-navigation-preview[data-open] {
+      transform: none;
+    }
+  }
+}
