@@ -1476,7 +1476,7 @@ function useOptionalSessionStateSlice(controller: SessionController | undefined,
 function SessionTranscriptProjection(props: Omit<ConversationTranscriptProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
   const { controller, state: fallbackState, ...transcriptProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationTranscriptStateSelector);
-  return <ConversationTranscript {...transcriptProps} state={state} />;
+  return <ConversationTranscript {...transcriptProps} state={state} onLoadNavigation={controller?.loadNavigation} onLoadNavigationTurn={controller?.loadNavigationTurn} />;
 }
 
 function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {

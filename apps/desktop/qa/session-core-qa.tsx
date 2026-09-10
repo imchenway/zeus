@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
-import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
+import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { Button } from '../src/renderer/ui/Button.js';
@@ -34,6 +34,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'navigation', title: '完整历史刻度', summary: '生产时间线的长历史定位与动效记录。', answer: '', activities: [] },
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
   { query: 'conversation-visibility', title: '进行中会话展示', summary: '进行中的会话不受普通会话数量限制。', answer: '', activities: [] },
   { query: 'message-layout', title: '消息间距与耗时', summary: '真实时间线的耗时入口与悬停操作栏。', answer: '', activities: [] },
@@ -99,8 +100,15 @@ export function sceneFromSearch(search: string): QaScene {
   return scenes.find((scene) => parameters.has(scene.query)) ?? scenes[0]!;
 }
 
+/** 统一挂载验收场景，界面就绪回报覆盖每个入口。 */
 export function SessionQaApp(props: { scene: QaScene }) {
+  // 完整测试包通过开发入口承载 QA 时，只有组件实际挂载后才报告界面就绪。
+  useEffect(() => {
+    window.zeus?.reportRendererBootstrapReady?.();
+  }, []);
+  if (props.scene.query === 'navigation') return <NavigationQa />;
   if (props.scene.query === 'conversation-visibility') return <ConversationVisibilityQa />;
+
   if (props.scene.query === 'queue-actions') return <QueueActionsQa />;
   if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'model-select') return <ModelSelectQa />;
@@ -1627,6 +1635,242 @@ function MarkdownReviewQa() {
             }}
           />
         )}
+      </div>
+    </main>
+  );
+}
+
+/** 完整目录与延迟正文使用模拟数据，交互、虚拟化和动画均使用生产组件。 */
+function NavigationQa() {
+  /** 地址允许独立核对超过七条、长历史和窄窗口。 */
+  const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  /** 目录总量可自然增减，不改变生产导航规则。 */
+  const [count, setCount] = useState(Math.max(1, Math.min(10000, Number(parameters.get('count')) || 1000)));
+  /** 启动时只读取最后四轮正文。 */
+  const [loaded, setLoaded] = useState(() => new Set(Array.from({ length: 4 }, (_, index) => count - 4 + index).filter((index) => index >= 0)));
+  /** 持续生成只向最后一轮追加文字。 */
+  const [revision, setRevision] = useState(0);
+  /** 手动控制持续生成，便于比较静止和生成中的帧耗时。 */
+  const [streaming, setStreaming] = useState(false);
+  /** 两种主题使用正式主题变量。 */
+  const [dark, setDark] = useState(parameters.has('dark'));
+  /** 窄容器模拟应用侧栏占用空间。 */
+  const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 失败由下一次真实读取回调抛出，重试仍经过生产入口。 */
+  const directoryFailure = useRef(parameters.has('directory-failure'));
+  /** 正文失败只作用于最早轮次。 */
+  const bodyFailure = useRef(parameters.has('body-failure'));
+  /** 挂载节点用于只读采样实际滚动、帧和长任务。 */
+  const surface = useRef<HTMLDivElement>(null);
+  /** 运行记录不写入应用数据。 */
+  const [report, setReport] = useState('等待运行检查');
+  /** 计时器在离开验收页时停止。 */
+  const frameRef = useRef(0);
+  /** 目录本身与正文加载集合互不依赖。 */
+  const entries = useMemo<ConversationNavigationEntry[]>(
+    () =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `history-${index}`,
+        turnId: `turn-${index}`,
+        providerTurnId: `turn-${index}`,
+        clientUserMessageId: `client-${index}`,
+        providerItemId: `user-${index}`,
+        sequence: index * 2 + 1,
+        occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+        prompt: `第 ${index + 1} 次发言：检查完整历史定位和鼠标移动时的预览。`,
+        response: `这是第 ${index + 1} 轮的最终答复。目录在打开时已经包含完整发言；正文靠近视口后才读取。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。`,
+        status: 'completed',
+      })),
+    [count],
+  );
+  /** 目录首次读取与正文独立。 */
+  const loadNavigation = useCallback(async () => {
+    if (directoryFailure.current) throw new Error('验收注入：目录读取失败');
+    return { conversationId: 'qa-navigation', throughEventSeq: 1, entries };
+  }, [entries]);
+  /** 延迟补齐目标轮次，让锚点补偿经历真实组件尺寸变化。 */
+  const loadTurn = useCallback(async (turnId: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    if (bodyFailure.current && turnId === 'turn-0') throw new Error('验收注入：最早正文读取失败');
+    /** 目录身份直接映射示例轮次。 */
+    const index = Number(turnId.slice(5));
+    setLoaded((previous) => (previous.has(index) ? previous : new Set([...previous, index])));
+  }, []);
+  useEffect(() => {
+    if (!streaming) return;
+    /** 每秒十次增量复现持续生成，计数不影响稳定消息身份。 */
+    const timer = setInterval(() => setRevision((value) => value + 1), 100);
+    return () => clearInterval(timer);
+  }, [streaming]);
+  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
+  /** 实际正文只投影已经读取的轮次。 */
+  const state = useMemo<NativeSessionState>(() => {
+    /** 时间线保持用户与答复的真实相对顺序。 */
+    const items: NativeSessionItemBuffer[] = [...loaded]
+      .sort((a, b) => a - b)
+      .flatMap((index) => {
+        /** 超出当前目录的旧验收项不会进入新场景。 */
+        const entry = entries[index];
+        if (!entry) return [];
+        return ['user', 'assistant'].map((role) => ({
+          key: `${role}-${index}`,
+          conversationId: 'qa-navigation',
+          threadId: 'qa-navigation',
+          turnId: entry.turnId,
+          itemId: role === 'user' ? entry.id : `answer-${index}`,
+          providerItemId: role === 'user' ? entry.providerItemId! : `answer-${index}`,
+          ...(role === 'user' ? { clientUserMessageId: entry.clientUserMessageId! } : {}),
+          type: role === 'user' ? 'userMessage' : 'agentMessage',
+          phase: role === 'user' ? 'user' : 'final_answer',
+          status: 'completed',
+          text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
+          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1) },
+          resources: [],
+          updatedAt: entry.occurredAt,
+        }));
+      });
+    return {
+      ...createInitialSessionState(),
+      conversationId: 'qa-navigation',
+      transportState: 'ready',
+      conversationState: 'idle',
+      transcriptRevision: revision,
+      items: Object.fromEntries(items.map((item) => [item.key, item])),
+      itemOrder: items.map((item) => item.key),
+      turnsByProviderId: Object.fromEntries(
+        entries.map((entry) => [
+          entry.turnId,
+          { id: entry.turnId, providerTurnId: entry.turnId, submissionId: null, status: 'completed', startedAt: entry.occurredAt, completedAt: entry.occurredAt, createdAt: entry.occurredAt, updatedAt: entry.occurredAt },
+        ]),
+      ),
+      terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
+    };
+  }, [loaded, entries, revision, count]);
+
+  /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
+  function recordFrames() {
+    cancelAnimationFrame(frameRef.current);
+    /** 宿主元素只在开始时读取，采样不逐帧测量布局。 */
+    const transcript = surface.current?.querySelector<HTMLElement>('.session-transcript');
+    /** 起始滚动用于核对悬停是否误触发正文定位。 */
+    const initialScroll = transcript?.scrollTop ?? 0;
+    /** 帧间隔来自浏览器实际时钟。 */
+    const frames: number[] = [];
+    /** 长任务记录主线程阻塞。 */
+    const tasks: number[] = [];
+    /** 卡片重建数用于检查相邻预览是否闪回入场。 */
+    const cards = new Set<Element>();
+    /** 只在有长任务时回调，不逐帧扫描正文。 */
+    const observer = new PerformanceObserver((list) => tasks.push(...list.getEntries().map((entry) => entry.duration)));
+    observer.observe({ type: 'longtask', buffered: false });
+    /** 有限采样便于比较不同操作。 */
+    const started = performance.now();
+    /** 上一帧时刻用于计算间隔。 */
+    let previous = started;
+    setReport('采样 10 秒：可扫过、反向、移出重入和进入卡片。');
+    /** 只读取帧时钟、滚动值与容器身份，不写入被验收界面。 */
+    const sample = (now: number) => {
+      frames.push(now - previous);
+      previous = now;
+      /** 单个已知浮层选择器与正文列表无关。 */
+      const card = document.querySelector('.session-navigation-preview');
+      if (card) cards.add(card);
+      if (now - started < 10000) {
+        frameRef.current = requestAnimationFrame(sample);
+        return;
+      }
+      observer.disconnect();
+      frames.sort((a, b) => a - b);
+      /** 中位数估算当前浏览器实际帧节奏，不冒充显示器规格。 */
+      const median = frames[Math.floor(frames.length / 2)] ?? 0;
+      setReport(
+        JSON.stringify(
+          {
+            frames: frames.length,
+            medianMs: median,
+            p95Ms: frames[Math.floor(frames.length * 0.95)],
+            maxMs: frames[frames.length - 1],
+            overOneAndHalfFrames: frames.filter((value) => value > median * 1.5).length,
+            longTasks: tasks,
+            previewContainers: cards.size,
+            scrollDelta: (transcript?.scrollTop ?? 0) - initialScroll,
+            ticks: surface.current?.querySelectorAll('.session-navigation-tick').length,
+            renderedRows: surface.current?.querySelectorAll('[data-transcript-row-key]').length,
+            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+          },
+          null,
+          2,
+        ),
+      );
+    };
+    frameRef.current = requestAnimationFrame(sample);
+  }
+  return (
+    <main
+      className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'}`}
+      data-theme={dark ? 'dark' : 'light'}
+      style={{ padding: '48px 16px 16px', height: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}
+    >
+      <nav aria-label="刻度验收控制" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button onClick={() => setDark(!dark)}>深色</Button>
+        <Button onClick={() => setNarrow(!narrow)}>窄窗口</Button>
+        <Button
+          onClick={() => {
+            setLoaded((previous) => new Set([...previous, count]));
+            setCount(count + 1);
+          }}
+        >
+          新增发言
+        </Button>
+        <Button onClick={() => setStreaming(!streaming)}>{streaming ? '停止生成' : '持续生成'}</Button>
+        <Button
+          onClick={() => {
+            directoryFailure.current = false;
+            bodyFailure.current = false;
+            setReport('故障已解除，可在目录或目标占位点击重试。');
+          }}
+        >
+          解除故障
+        </Button>
+        <Button onClick={recordFrames}>记录帧耗时</Button>
+        <a href="?navigation&count=7">短历史</a>
+        <a href="?navigation&count=1000">长历史</a>
+        <a href="?navigation&count=8&directory-failure">目录故障</a>
+        <a href="?navigation&count=8&body-failure">正文故障</a>
+        <Button
+          onClick={() => {
+            /** 几何检查读取真实样式，不修改被验收的生产元素。 */
+            const ticks = surface.current?.querySelectorAll<HTMLElement>('.session-navigation-tick');
+            /** 采样第一条刻度的真实样式与相邻位置差。 */
+            const first = ticks?.[0];
+            /** 正文虚拟窗口的节点数独立于目录总量。 */
+            const rows = surface.current?.querySelectorAll('[data-transcript-row-key]');
+            setReport(
+              JSON.stringify(
+                {
+                  ticks: ticks?.length,
+                  tickHeight: first?.getBoundingClientRect().height,
+                  pitch: first && ticks?.[1] ? ticks[1].getBoundingClientRect().top - first.getBoundingClientRect().top : null,
+                  lineWidth: first?.firstElementChild?.getBoundingClientRect().width,
+                  lineHeight: first?.firstElementChild?.getBoundingClientRect().height,
+                  renderedRows: rows?.length,
+                  loadedTurns: loaded.size,
+                  railHeight: surface.current?.querySelector('.session-navigation-rail')?.getBoundingClientRect().height,
+                },
+                null,
+                2,
+              ),
+            );
+          }}
+        >
+          检查布局
+        </Button>
+      </nav>
+      <pre role="status" style={{ margin: 0, maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 11 }}>
+        {report}
+      </pre>
+      <div ref={surface} className="ai-workspace" style={{ width: narrow ? 360 : '100%', maxWidth: '100%', flex: 1, minHeight: 0, display: 'flex' }}>
+        <ConversationTranscript state={state} language="zh-CN" transcriptHydrated onLoadNavigation={loadNavigation} onLoadNavigationTurn={loadTurn} />
       </div>
     </main>
   );

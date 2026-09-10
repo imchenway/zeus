@@ -512,8 +512,8 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // Snapshot V2 为控制首屏体积会把结构化模型正文投影为纯文本，reasoningSummary
     // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
-    // 空思考历史不以结构化预览代替正文，与过程分页和全文恢复保持同一口径。
-    const text = projectionText(content, reasoning ? '' : item.content.preview, item.content.truncated);
+    // 空思考和纯附件消息不以 JSON 包装层代替正文；附件仍由既有呈现字段还原。
+    const text = projectionText(content, reasoning || (item.role === 'user' && Array.isArray(contentRecord?.attachments)) ? '' : item.content.preview, item.content.truncated);
     const expertStatus = item.expertExecutionId && typeof contentRecord?.expertStatus === 'string' ? contentRecord.expertStatus : null;
     const persistedPlan = item.phase === 'plan';
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
