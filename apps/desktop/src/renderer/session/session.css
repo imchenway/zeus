@@ -8127,6 +8127,11 @@
   user-select: none;
 }
 
+/* 拖动时宽度立即跟随指针，原生网页沿用尺寸监听同步布局。 */
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-resizing='true'] .session-browser-sidecar {
+  transition-duration: 0s, 120ms, 0s;
+}
+
 .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] > .session-conversation-pane {
   pointer-events: none;
   visibility: hidden;

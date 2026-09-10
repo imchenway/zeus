@@ -2705,7 +2705,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
                           disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
-                          suspended={browserResizing}
                           expanded={contextFullWidth}
                           canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}
