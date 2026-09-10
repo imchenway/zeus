@@ -1,15 +1,21 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { randomId } from './randomId.js';
 import type { CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry } from '@zeus/shared';
 import type { CodexDynamicToolSpec } from '@zeus/ai-runtime';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration, type ConversationExecutionRepository, type ConversationToolResultRecord } from '@zeus/storage';
 
-const maximumProjectionCharacters = 16_384;
-const commandProjectionHeadCharacters = 12_288;
-const commandProjectionTailCharacters = 4_096;
+/** 预览正文按 UTF-8 字节限额，避免同长度中文占用数倍上下文。 */
+const maximumProjectionBytes = 16_384;
+/** 命令保留较多开头，便于定位执行对象。 */
+const commandProjectionHeadBytes = 12_288;
+/** 命令末尾保留退出原因和汇总。 */
+const commandProjectionTailBytes = 4_096;
+/** 文件预览最多展示的行数。 */
 const maximumReadProjectionLines = 300;
+/** 分页仍使用字符偏移，同时受预览字节预算约束。 */
 const maximumPageCharacters = 16_384;
 const maximumManagedImageBytes = 20 * 1024 * 1024;
 const maximumHotImageProjectionBytes = 768 * 1024;
@@ -18,7 +24,8 @@ export interface PortableContextTargetCapabilities {
   readableReasoningSummary: boolean;
   media: boolean;
   contextWindow: number | null;
-  currentInputCharacters: number;
+  /** 待发送输入的 UTF-8 字节数，不能传字符数。 */
+  currentInputUtf8Bytes: number;
 }
 
 export interface PortableContextCompactionPlan {
@@ -45,9 +52,13 @@ export class PortableConversationContextBuilder {
       if (item.toolPairId) toolPairCounts.set(item.toolPairId, (toolPairCounts.get(item.toolPairId) ?? 0) + 1);
       const segment = segments.get(item.segmentId);
       if (!segment) continue;
-      const parsed = parseJson(item.contentJson);
+      /** 在唯一交接出口移除完成通知里的重复结果，已有历史也受约束。 */
+      const sourceContent = parseJson(item.contentJson);
+      const parsed = item.role === 'assistant' && item.toolPairId ? portableHistoryContent(sourceContent) : sourceContent;
       const sourceRuntime = segment.runtimeKind;
-      if (item.role === 'assistant' && item.reasoningSourceJson) {
+      /** 普通回复也有来源记录；只有明确标注的思考摘要才按思考能力转换。 */
+      const reasoningSource = item.reasoningSourceJson ? parseJson(item.reasoningSourceJson) : null;
+      if (item.role === 'assistant' && reasoningSource && typeof reasoningSource === 'object' && 'readableSummary' in reasoningSource && reasoningSource.readableSummary === true) {
         if (!target.readableReasoningSummary) {
           capabilityLosses.push({ sequence: item.sequence, kind: 'hidden_reasoning_omitted', detail: '目标模型不接收可读思考摘要，已从便携历史省略。' });
           continue;
@@ -137,7 +148,7 @@ export function encodeCodexPortableAdditionalContext(context: PortableConversati
 /** 只有便携历史无法直接放入目标窗口时，才选择最旧的闭合历史前缀请求真实压缩。 */
 export function planPortableContextCompaction(context: PortableConversationContext, target: PortableContextTargetCapabilities): PortableContextCompactionPlan | null {
   if (!target.contextWindow || target.contextWindow <= 0 || context.entries.length === 0) return null;
-  const estimatedInputTokens = estimatePortableTokens(context.entries, target.currentInputCharacters);
+  const estimatedInputTokens = estimatePortableTokens(context.entries, target.currentInputUtf8Bytes);
   const reserveTokens = Math.min(16_384, Math.max(1_024, Math.floor(target.contextWindow * 0.125)));
   const targetBudgetTokens = Math.max(1_000, target.contextWindow - reserveTokens);
   if (estimatedInputTokens <= targetBudgetTokens) return null;
@@ -148,14 +159,17 @@ export function planPortableContextCompaction(context: PortableConversationConte
     groups.at(-1)!.push(entry);
   }
   const recentGroups: PortableHistoryEntry[][] = [];
-  let recentCharacters = target.currentInputCharacters;
-  const recentBudgetCharacters = Math.max(4_096, Math.floor(targetBudgetTokens * 4 * 0.45));
+  /** 当前输入与历史使用相同的字节单位。 */
+  let recentBytes = Math.max(0, target.currentInputUtf8Bytes);
+  /** 保留预算与完整历史使用同一 UTF-8 估算口径。 */
+  const recentBudgetBytes = Math.max(4_096, Math.floor(targetBudgetTokens * 4 * 0.45));
   while (groups.length > 1) {
     const candidate = groups.at(-1)!;
-    const candidateCharacters = JSON.stringify(candidate).length;
-    if (recentGroups.length > 0 && recentCharacters + candidateCharacters > recentBudgetCharacters) break;
+    /** 不能按中文字符数当作英文字节数计算。 */
+    const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+    if (recentGroups.length > 0 && recentBytes + candidateBytes > recentBudgetBytes) break;
     recentGroups.unshift(groups.pop()!);
-    recentCharacters += candidateCharacters;
+    recentBytes += candidateBytes;
   }
   const prefixEntries = groups.flat();
   const recentEntries = recentGroups.flat();
@@ -359,7 +373,14 @@ export class ManagedConversationToolResultStore {
     }
     const offset = clampInteger(input.offset ?? 0, 0, text.length);
     const limit = clampInteger(input.limit ?? maximumPageCharacters, 1, maximumPageCharacters);
-    const page = text.slice(offset, offset + limit);
+    /** 拒绝从完整字符中间开始，分页返回的 nextOffset 始终可直接继续读取。 */
+    if (offset > 0 && /[\uD800-\uDBFF]/u.test(text[offset - 1]!) && /[\uDC00-\uDFFF]/u.test(text[offset] ?? '')) {
+      throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_OFFSET_INVALID', '分页偏移位于字符中间，请使用上页返回的 nextOffset。');
+    }
+    /** 小页也保留完整字符，避免表情被拆成两个无效代理项。 */
+    const end = offset + limit;
+    const characterEnd = /[\uD800-\uDBFF]/u.test(text[end - 1] ?? '') && /[\uDC00-\uDFFF]/u.test(text[end] ?? '') ? end + 1 : end;
+    const page = utf8Prefix(text.slice(offset, characterEnd), maximumProjectionBytes);
     const nextOffset = offset + page.length < text.length ? offset + page.length : null;
     return { text: page, offset, nextOffset, totalCharacters: text.length, sha256: contentSha256 };
   }
@@ -425,7 +446,7 @@ export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
                 type: 'integer',
                 minimum: 1,
                 maximum: 16384,
-                description: 'Maximum characters; defaults to 16384.',
+                description: 'Maximum characters; defaults to 16384. Each page also stays within 16384 UTF-8 bytes; continue with nextOffset.',
               },
             },
             required: ['handle'],
@@ -466,19 +487,50 @@ function toolResultProjection(record: ConversationToolResultRecord, image: boole
   return projection.text;
 }
 
+/** 先限定字节，再限定行数；完整原件由同一句柄按需读取。 */
 function projectToolResult(kind: StoreConversationToolResultInput['toolKind'], text: string, handle: string): string {
-  if (kind === 'read') {
-    const lines = text.split('\n');
-    let projected = lines.slice(0, maximumReadProjectionLines).join('\n');
-    if (projected.length > maximumProjectionCharacters) projected = projected.slice(0, maximumProjectionCharacters);
+  if (kind === 'read' || kind === 'search') {
+    /** 只拆分有界前缀，避免为大文件额外创建所有行的数组。 */
+    const projected = utf8Prefix(text, maximumProjectionBytes).split('\n', maximumReadProjectionLines).join('\n');
     if (projected === text) return text;
+    /** 字符偏移依据实际展示正文计算，不能混用字节数。 */
     const nextOffset = projected.length;
     return `${projected}\n\n[结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${nextOffset}, limit=${maximumPageCharacters}) 继续读取]`;
   }
-  if (text.length <= maximumProjectionCharacters) return text;
-  const head = text.slice(0, commandProjectionHeadCharacters);
-  const tail = text.slice(-commandProjectionTailCharacters);
-  return `${head}\n\n[中间结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${commandProjectionHeadCharacters}, limit=${maximumPageCharacters}) 分页读取]\n\n${tail}`;
+  if (Buffer.byteLength(text, 'utf8') <= maximumProjectionBytes) return text;
+  /** 开头和末尾都停在完整字符边界。 */
+  const head = utf8Prefix(text, commandProjectionHeadBytes);
+  const bytes = Buffer.from(text, 'utf8');
+  let tailOffset = Math.max(0, bytes.length - commandProjectionTailBytes);
+  while ((bytes[tailOffset]! & 0xc0) === 0x80) tailOffset += 1;
+  const tail = bytes.subarray(tailOffset).toString('utf8');
+  return `${head}\n\n[中间结果已截断；使用 zeus.read_conversation_tool_result(handle="${handle}", offset=${head.length}, limit=${maximumPageCharacters}) 分页读取]\n\n${tail}`;
+}
+
+/** 标准解码器只输出完整 UTF-8 字符，不把被截断的字节变成替换字符。 */
+function utf8Prefix(text: string, maximumBytes: number): string {
+  return new StringDecoder('utf8').write(Buffer.from(text, 'utf8').subarray(0, maximumBytes));
+}
+
+/** 工具调用保留输入和简短执行结果，重复的大段输出只从相邻工具结果及原件读取。 */
+function portableHistoryContent(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !('type' in value) || value.type !== 'tool_call' || !('payload' in value) || !value.payload || typeof value.payload !== 'object') return value;
+  /** 采用输入字段白名单，避免新的 Provider 输出字段再次绕过结果预算。 */
+  const callFields = ['id', 'type', 'name', 'toolName', 'namespace', 'server', 'tool', 'arguments', 'input', 'command', 'cwd', 'path', 'filePath', 'query', 'queries', 'action'];
+  /** 完成通知是退出码与错误状态的来源，不能仅依赖可能截断这些字段的日志预览。 */
+  const source = value.payload as Record<string, unknown>;
+  /** 只让小型结果字段与调用参数一起进入交接历史。 */
+  const payload = Object.fromEntries(Object.entries(source).filter(([key]) => callFields.includes(key)));
+  if (typeof source.status === 'string') payload.status = utf8Prefix(source.status, 128);
+  if (source.exitCode === null || Number.isSafeInteger(source.exitCode)) payload.exitCode = source.exitCode;
+  /** 兼容文本错误和 Provider 的结构化错误，只展开错误消息。 */
+  const errorMessage = source.error && typeof source.error === 'object' && 'message' in source.error ? source.error.message : source.error;
+  if (typeof errorMessage === 'string') {
+    /** 错误摘要最多 1 KiB 正文，完整错误仍由原件承载。 */
+    const summary = utf8Prefix(errorMessage, 1_024);
+    payload.error = summary === errorMessage ? summary : `${summary}\n[错误摘要已截断；完整内容见工具结果原件]`;
+  }
+  return { ...value, payload };
 }
 
 function clampInteger(value: number, minimum: number, maximum: number): number {
@@ -520,8 +572,9 @@ function parseManagedImageDataUrl(value: string): { mimeType: string; bytes: Buf
   return { mimeType, bytes };
 }
 
-function estimatePortableTokens(entries: PortableHistoryEntry[], currentInputCharacters: number): number {
-  return Math.ceil((JSON.stringify(entries).length + Math.max(0, currentInputCharacters)) / 4);
+/** 与派发编译器一致按 UTF-8 字节估算，不把它声明为精确 token 数。 */
+function estimatePortableTokens(entries: PortableHistoryEntry[], currentInputUtf8Bytes: number): number {
+  return Math.ceil((Buffer.byteLength(JSON.stringify(entries), 'utf8') + Math.max(0, currentInputUtf8Bytes)) / 4);
 }
 
 function parseJson(value: string): unknown {

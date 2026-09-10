@@ -1,8 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArtifactStore, ArtifactStoreError, ConversationExecutionRepository, ZeusStorageWriteFaultError, createZeusDatabase, type ArtifactOwnerIdentity } from '../packages/storage/src/index.js';
-import { ManagedConversationToolResultStore } from '../packages/local-server/src/conversationPortableContext.js';
+import { ManagedConversationToolResultStore, PortableConversationContextBuilder, planPortableContextCompaction } from '../packages/local-server/src/conversationPortableContext.js';
+import { searchPiWorkspace } from '../packages/local-server/src/piWorkspaceSearch.js';
+import { completedItemProjection, liveProgressProjection } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-artifact-store-probe-'));
 const observed: Record<string, unknown> = {};
@@ -12,11 +15,149 @@ try {
   await verifyQuotaCompensation();
   await verifyExternalFaultBridge();
   await verifyConversationToolResultReplay();
+  await verifyContextBudgetAndSearch();
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
 }
 
 console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
+
+/** 在真实文件、ripgrep、SQLite 和原件存储上检查上下文边界与可恢复性。 */
+async function verifyContextBudgetAndSearch(): Promise<void> {
+  /** 独立账本只服务本次上下文检查。 */
+  const database = await createZeusDatabase(join(probeRoot, 'context.db'));
+  try {
+    /** 通过产品仓储读取历史，保留原始完成记录作为核对证据。 */
+    const execution = new ConversationExecutionRepository(database);
+    /** 完整输出写入本次探针目录。 */
+    const store = new ManagedConversationToolResultStore(probeRoot, execution, new ArtifactStore(database, join(probeRoot, 'context-artifacts'), undefined, { minimumFreeBytes: 0 }));
+    /** 同时覆盖中文三字节字符与四字节表情。 */
+    const text = '甲😀乙'.repeat(8_000);
+    /** 每种工具使用独立调用身份。 */
+    const identity = { conversationId: 'context-conversation', turnId: 'context-turn', segmentId: 'context-segment', createdAt: '2026-09-10T08:30:00.000Z' };
+    for (const toolKind of ['read', 'search', 'command', 'other'] as const) {
+      /** 归档后仅预览受限，原件保持完整。 */
+      const stored = await store.store({ ...identity, toolPairId: toolKind, toolKind, text });
+      assertProbe(Buffer.byteLength(stored.projection, 'utf8') < 17_000 && !stored.projection.includes('\uFFFD') && stored.projection.isWellFormed(), '各类中文工具预览必须有界且保持完整字符');
+      /** 按真实返回的分页水位重建原文。 */
+      let restored = '';
+      let offset: number | null = 0;
+      while (offset !== null) {
+        /** 分页读取不会再次执行原始工具。 */
+        const page = await store.readPage({ conversationId: identity.conversationId, handle: stored.record.handle, offset });
+        assertProbe(Buffer.byteLength(page.text, 'utf8') <= 16_384 && page.text.isWellFormed() && (page.nextOffset === null || page.nextOffset > offset), '每页必须有界、完整并推进水位');
+        restored += page.text;
+        offset = page.nextOffset;
+      }
+      assertProbe(restored === text, '有界分页必须能无损重建中文与表情原文');
+      assertProbe((await store.readPage({ conversationId: identity.conversationId, handle: stored.record.handle, offset: 1, limit: 1 })).text === '😀', '小页不能拆开表情字符');
+      assertProbe(await captureArtifactCode(() => store.readPage({ conversationId: identity.conversationId, handle: stored.record.handle, offset: 2 })), '字符中间的非法偏移必须拒绝');
+    }
+    database.execute(`INSERT INTO conversation_runtime_segments (id, conversation_id, runtime_kind, state, opened_at, created_at, updated_at) VALUES (?, ?, 'codex', 'current', ?, ?, ?)`, [
+      identity.segmentId,
+      identity.conversationId,
+      identity.createdAt,
+      identity.createdAt,
+      identity.createdAt,
+    ]);
+    /** 复现既有历史把输出藏在工具调用 payload 中的路径。 */
+    const completedPayload = { type: 'tool_call', itemType: 'commandExecution', payload: { command: 'rg needle source', cwd: probeRoot, status: 'completed', exitCode: 0, aggregatedOutput: text, result: { text }, futureOutput: text } };
+    execution.appendModelHistory({ ...identity, role: 'assistant', toolPairId: 'command', content: completedPayload, confirmedAt: identity.createdAt });
+    execution.appendModelHistory({ ...identity, role: 'tool', toolPairId: 'command', content: { projection: '匹配文件：source.ts' }, confirmedAt: identity.createdAt });
+    execution.appendModelHistory({ ...identity, role: 'assistant', content: { text: '普通回复需要保留' }, reasoningSource: { readableSummary: false }, confirmedAt: identity.createdAt });
+    execution.appendModelHistory({ ...identity, role: 'assistant', content: { text: '按能力省略的思考摘要' }, reasoningSource: { readableSummary: true }, confirmedAt: identity.createdAt });
+    /** 关闭思考摘要能力时，普通回复仍然必须保留。 */
+    const target = { readableReasoningSummary: false, media: false, contextWindow: 4_096, currentInputUtf8Bytes: Buffer.byteLength('继续', 'utf8') };
+    const context = new PortableConversationContextBuilder(execution).build(identity.conversationId, target);
+    const serialized = JSON.stringify(context);
+    assertProbe(serialized.includes('普通回复需要保留') && !serialized.includes('按能力省略的思考摘要'), '普通回复不能误归入思考摘要');
+    assertProbe(
+      serialized.includes('rg needle source') && serialized.includes('"exitCode":0') && !serialized.includes('aggregatedOutput') && !serialized.includes('futureOutput') && Buffer.byteLength(serialized, 'utf8') < 2_048,
+      '交接历史必须保留调用参数、成功退出码并排除重复大输出',
+    );
+    assertProbe(execution.confirmedModelHistory(identity.conversationId)[0]!.contentJson.includes('aggregatedOutput'), '上下文投影不能改写既有历史证据');
+    /** 相同字符数的中文更早触发真实字节预算，英文小上下文保持直传。 */
+    const entry = { sequence: 1, role: 'user' as const, content: '汉'.repeat(5_000), sourceSegmentId: identity.segmentId, sourceRuntime: 'codex' as const };
+    const largeContext = { ...context, entries: [entry, { ...entry, sequence: 2, content: '继续' }] };
+    const plan = planPortableContextCompaction(largeContext, target);
+    assertProbe(plan && plan.estimatedInputTokens === Math.ceil((Buffer.byteLength(JSON.stringify(largeContext.entries), 'utf8') + target.currentInputUtf8Bytes) / 4), '中文交接历史必须按字节计入压缩估算');
+    assertProbe(planPortableContextCompaction({ ...largeContext, entries: [{ ...entry, content: 'a'.repeat(5_000) }] }, target) === null, '小英文历史不能因单位修正被多余压缩');
+    observed.contextBudget = {
+      previewBodyMaximumBytes: 16_384,
+      unicodeRoundTrip: true,
+      toolCallBytesBefore: Buffer.byteLength(JSON.stringify(completedPayload), 'utf8'),
+      portableContextBytesAfter: Buffer.byteLength(serialized, 'utf8'),
+      originalHistoryRetained: true,
+      ordinaryRepliesRetained: true,
+      utf8CompactionEstimate: true,
+    };
+
+    /** 真实进程以非零状态退出，长日志经过流式展示、完成事件、归档和历史交接。 */
+    const failedProcess = spawnSync(process.execPath, ['-e', "process.stdout.write('progress line\\n'.repeat(5000)); process.exit(7)"], { encoding: 'utf8' });
+    assertProbe(failedProcess.status === 7, '诊断进程必须真实产生非零退出码');
+    /** 文本错误和结构化长错误使用相同的结果摘要预算。 */
+    for (const error of ['短错误', { message: '失败😀'.repeat(1_000), data: text }]) {
+      /** 每种错误形状使用独立工具身份。 */
+      const toolPairId = `failed-${typeof error}`;
+      /** 原生事件在日志之前建立命令与状态字段。 */
+      const started = { id: toolPairId, type: 'commandExecution', command: '本地诊断进程', cwd: probeRoot, status: 'inProgress', aggregatedOutput: '', exitCode: null };
+      /** 复用真实流式展示的合并路径，保留后方的长展示文本。 */
+      const streamed = liveProgressProjection({ payloadJson: JSON.stringify(started) }, 'command_output', failedProcess.stdout, true);
+      /** 完成事件结束不等于命令成功，必须单独保留非零退出码。 */
+      const completed = completedItemProjection(
+        { payloadJson: JSON.stringify(streamed.payload), textContent: '' },
+        { ...started, status: 'completed', aggregatedOutput: failedProcess.stdout, exitCode: failedProcess.status, error },
+        'commandExecution',
+      );
+      /** 与原生事件写入归档的正文选择一致。 */
+      const rawText = completed.textContent || JSON.stringify(completed.payload);
+      /** 日志头尾不会包含位于两段长输出之间的退出码。 */
+      const stored = await store.store({ ...identity, toolPairId, toolKind: 'command', text: rawText });
+      assertProbe(rawText.includes('"exitCode":7') && !stored.projection.includes('exitCode'), '诊断必须覆盖日志预览遗漏退出码的真实组合');
+      execution.appendModelHistory({ ...identity, role: 'assistant', toolPairId, content: { type: 'tool_call', itemType: 'commandExecution', payload: completed.payload }, confirmedAt: identity.createdAt });
+      execution.appendModelHistory({ ...identity, role: 'tool', toolPairId, content: { projection: stored.projection, handle: stored.record.handle }, confirmedAt: identity.createdAt });
+      /** 检查交接给目标模型的内容，不以数据库原件存在代替首屏可见。 */
+      const handedOff = new PortableConversationContextBuilder(execution).build(identity.conversationId, target);
+      /** 当前调用的执行摘要应独立于日志预览。 */
+      const call = handedOff.entries.find((candidate) => candidate.role === 'assistant' && candidate.toolPairId === toolPairId)?.content as { payload: Record<string, unknown> };
+      assertProbe(call.payload.exitCode === 7 && call.payload.status === 'completed' && !('aggregatedOutput' in call.payload) && !('presentation' in call.payload), '去重后必须保留非零退出码及完成状态，排除重复日志');
+      assertProbe(typeof call.payload.error === 'string' && call.payload.error.isWellFormed() && Buffer.byteLength(call.payload.error, 'utf8') < 1_200, '错误摘要必须保持字符完整且有界');
+      assertProbe(typeof error === 'string' ? call.payload.error === error : call.payload.error.includes('错误摘要已截断'), '短错误完整保留，长错误须提示读取原件');
+    }
+    observed.contextResultSemantics = { failedProcessExitCode: failedProcess.status, exitCodeRetainedAfterHandoff: true, completedStatusRetained: true, boundedErrorSummary: true, duplicateOutputExcluded: true };
+
+    /** 搜索输入全部来自本次创建的普通文件。 */
+    const cwd = join(probeRoot, 'workspace-search');
+    await mkdir(cwd);
+    await writeFile(join(cwd, 'source.md'), 'needle 原文\nneedle 第二条\nneedle 第三条\n-danger\n');
+    await writeFile(join(cwd, 'ignored.txt'), 'needle 不应被 Markdown 筛选返回\n');
+    /** 调用与运行适配器一致的搜索入口。 */
+    const search = (args: Record<string, unknown>, path = cwd) => searchPiWorkspace({ cwd, path, tool: 'grep', args });
+    const files = await search({ pattern: 'needle', glob: '*.md' });
+    assertProbe(files.includes('source.md') && !files.includes('原文') && !files.includes('ignored.txt'), '默认搜索只返回匹配的文件名并应用文件筛选');
+    const content = await search({ pattern: 'needle', glob: '*.md', outputMode: 'content', limit: 2 });
+    assertProbe(content.includes('原文') && content.includes('第二条') && !content.includes('第三条') && content.includes('最多 2 条'), '正文搜索必须保留行号并明确逐文件上限');
+    assertProbe((await search({ pattern: '-danger' })).includes('source.md'), '以短横线开头的表达式不能被解释成命令参数');
+    assertProbe((await searchPiWorkspace({ cwd, path: cwd, tool: 'find', args: { pattern: '*.md' } })).includes('source.md'), '文件查找必须沿用有界搜索入口');
+    assertProbe((await search({ pattern: 'never-matches' })) === '没有匹配结果。', '只有正常零匹配才能返回无匹配提示');
+    assertProbe(await captureArtifactCode(() => search({ pattern: '[' })), '非法表达式不能被伪装成无匹配');
+    assertProbe(await captureArtifactCode(() => search({ pattern: 'needle' }, join(cwd, 'missing'))), '不存在的路径必须报错');
+    assertProbe(await captureArtifactCode(() => searchPiWorkspace({ cwd, path: cwd, tool: 'grep', args: { pattern: 'needle' }, signal: AbortSignal.abort() })), '取消的搜索必须保持取消状态');
+    await writeFile(join(cwd, 'large-a.txt'), `${'needle'.padEnd(250, 'x')}\n`.repeat(200));
+    await writeFile(join(cwd, 'large-b.txt'), `${'needle'.padEnd(250, 'x')}\n`.repeat(200));
+    const bounded = await search({ pattern: 'needle', glob: 'large-*.txt', outputMode: 'content', limit: 200 });
+    assertProbe(bounded.includes('结果不完整') && Buffer.byteLength(bounded, 'utf8') < 67_000, '大量匹配必须停止收集并明确结果不完整');
+    /** 继续经过 Pi 使用的搜索结果归档与首屏预览，不能只检查搜索函数自身。 */
+    const searchResult = await store.store({ ...identity, toolPairId: 'bounded-search', toolKind: 'search', text: bounded });
+    assertProbe(
+      searchResult.projection.includes('结果不完整') && searchResult.projection.includes('分页仅能读取已收集部分') && searchResult.projection.includes('继续读取') && Buffer.byteLength(searchResult.projection, 'utf8') < 17_000,
+      '收集截断说明必须在有界首屏中可见，不能与普通分页截断混淆',
+    );
+    observed.workspaceSearch = { filenamesFirst: true, scopedContent: true, optionBoundary: true, errorsPreserved: true, cancellationPreserved: true, collectionMaximumBytes: 65_536, incompleteCollectionVisibleInPreview: true };
+  } finally {
+    await database.close();
+  }
+}
 
 /** 在真实临时 SQLite 与 Artifact 文件上验证原文归档、完成回显和并发重复归档。 */
 async function verifyConversationToolResultReplay(): Promise<void> {

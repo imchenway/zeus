@@ -1817,7 +1817,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           readableReasoningSummary: true,
           media: configuredModel?.capability.imageInput.state !== 'unsupported',
           contextWindow: configuredModel?.contextWindow ?? null,
-          currentInputCharacters: content.length,
+          currentInputUtf8Bytes: Buffer.byteLength(content, 'utf8'),
         },
         userHistoryContent: { text: content },
       });

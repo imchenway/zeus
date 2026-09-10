@@ -64,6 +64,7 @@ import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation }
 import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
 import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
 import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
+import { searchPiWorkspace } from './piWorkspaceSearch.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1620,11 +1621,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function executeTool(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
+    // 执行前确认结果归属，缺少身份时不能先运行工具再无界回传原文。
+    const run = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
+    const segment = run ? options.execution.segmentByNativeSession(request.session.nativeSessionId, run.conversationId) : null;
+    if (!run || !segment || (segment.state !== 'current' && segment.state !== 'provisional')) throw piError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
     const raw = await executeToolRaw(request);
     if (request.toolName === 'read_conversation_tool_result' || request.toolName === 'read_conversation_tool_image') return raw;
-    const run = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
-    const segment = run ? options.execution.currentSegment(run.conversationId) : null;
-    if (!run || !segment) return raw;
     const stageId = run.stageIdByToolCallId.get(request.toolCallId) ?? run.currentStageId;
     const protocolFamily = projectionProtocolFamily(run, segment);
     const toolKind = request.toolName === 'read' ? 'read' : request.toolName === 'bash' ? 'command' : request.toolName === 'grep' || request.toolName === 'find' || request.toolName === 'ls' ? 'search' : 'other';
@@ -1709,7 +1711,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         offset: numberArg(request.args.offset, 0),
         limit: numberArg(request.args.limit, 16_384),
       });
-      return { text: page.text, details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };
+      // Pi 的 details 不进入模型正文；分页水位必须与内容一起回传，才能可靠继续读取。
+      return { text: JSON.stringify(page), details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };
     }
     if (request.toolName === 'read_conversation_tool_image') {
       const image = await options.toolResults.readImage({
@@ -1798,10 +1801,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       await writeFile(path, text.replace(oldText, stringArg(request.args.newText, '新文')), 'utf8');
       return { text: `已编辑 ${relative(context.cwd, path)}` };
     }
-    const pattern = stringArg(request.args.pattern, '搜索内容');
-    const args = request.toolName === 'grep' ? ['-n', '--hidden', '--glob', '!.git', pattern, path] : ['--files', path, '-g', pattern];
-    const result = await execFileAsync('rg', args, { cwd: context.cwd, timeout: 30_000, maxBuffer: 2 * 1024 * 1024 }).catch((error: unknown) => ({ stdout: readExitStdout(error), stderr: '' }));
-    return { text: result.stdout.trim() || '没有匹配结果。' };
+    if (request.toolName !== 'grep' && request.toolName !== 'find') throw piError('ZEUS_PI_TOOL_UNSUPPORTED', '无法识别的工作区工具。');
+    return { text: await searchPiWorkspace({ cwd: context.cwd, path, tool: request.toolName, args: request.args, signal: request.signal }) };
   }
 
   async function executePluginTool(context: PiConversationContext, request: PiZeusToolRequest, tool: ZeusPluginDynamicTool): Promise<PiZeusToolResult> {
@@ -2666,11 +2667,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readExitStdout(error: unknown): string {
-  const record = asRecord(error);
-  return typeof record.stdout === 'string' ? record.stdout : '';
 }
 
 function isPiRuntimeRejected(error: unknown): boolean {

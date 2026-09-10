@@ -1381,7 +1381,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               readableReasoningSummary: true,
               media: selectedConfiguredModel?.capability.imageInput.state !== 'unsupported',
               contextWindow: selectedConfiguredModel?.contextWindow ?? selectedContextWindow,
-              currentInputCharacters: providerContent.length + JSON.stringify({ attachments, browserComments }).length,
+              currentInputUtf8Bytes: Buffer.byteLength(providerContent, 'utf8') + Buffer.byteLength(JSON.stringify({ attachments, browserComments }), 'utf8'),
             },
             userHistoryContent: {
               text: providerContent,
@@ -2013,7 +2013,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         readableReasoningSummary: true,
         media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? selectedModel.contextWindow,
-        currentInputCharacters: providerContent.length + JSON.stringify(attachments).length,
+        currentInputUtf8Bytes: Buffer.byteLength(providerContent, 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
       },
       userHistoryContent: { text: providerContent, ...(displayText !== providerContent ? { displayText } : {}), ...(attachments.length ? { attachments } : {}) },
     });
@@ -2245,7 +2245,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         readableReasoningSummary: true,
         media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
-        currentInputCharacters: plan.prompt.length + JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }).length,
+        currentInputUtf8Bytes:
+          Buffer.byteLength(plan.prompt, 'utf8') + Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),
       },
       userHistoryContent: {
         text: plan.prompt,
