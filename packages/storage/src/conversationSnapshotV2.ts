@@ -703,7 +703,8 @@ export class ConversationSnapshotV2Repository {
       WHERE conversation_model_history.conversation_id = ?
         AND conversation_model_history.role IN ('user', 'assistant') AND tool_pair_id IS NULL
         AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
-        AND (conversation_model_history.role = 'user' OR reasoning_source_json IS NULL OR ${modelHistoryAssistantPhaseSql} = 'plan')
+        -- 来源记录也用于普通答复；沿用正文分类，只排除可读思考摘要。
+        AND (conversation_model_history.role = 'user' OR ${modelHistoryReasoningSummarySql} = 0 OR ${modelHistoryAssistantPhaseSql} = 'plan')
         AND ${modelHistoryQuestionAnswerSql} IS NULL
       ORDER BY conversation_model_history.sequence`,
       [conversationId],

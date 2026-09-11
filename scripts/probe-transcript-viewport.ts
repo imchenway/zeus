@@ -197,9 +197,20 @@ async function probeNavigation() {
       );
       for (const [offset, role, content, reasoning] of [
         [0, 'user', { text: index === 0 ? '' : `第 ${index + 1} 次发言 ` + '问题'.repeat(100), providerItemId: `user-${index}`, ...(index === 0 ? { attachments: [{ name: '设计稿.png' }] } : {}) }, null],
-        [1, 'assistant', { text: '内部思考不应进入摘录', providerItemId: `reasoning-${index}` }, '{"itemType":"reasoning"}'],
-        [2, 'assistant', { text: '中途说明不应进入摘录', providerItemId: `progress-${index}`, assistantMessage: { phase: 'commentary' } }, null],
-        [3, 'assistant', { text: `第 ${index + 1} 轮最终答复 ` + '说明'.repeat(200), providerItemId: `answer-${index}`, assistantMessage: { phase: 'final_answer' } }, null],
+        // 普通答复与 Codex 来源答复共用摘录；后续过程说明和思考摘要不能覆盖最终答复。
+        [
+          1,
+          'assistant',
+          { text: `第 ${index + 1} 轮最终答复 ` + '说明'.repeat(200), providerItemId: `answer-${index}`, assistantMessage: { phase: 'final_answer' } },
+          index % 2 === 0 ? null : JSON.stringify({ provider: 'codex', itemId: `answer-${index}`, itemType: 'agentMessage', readableSummary: false }),
+        ],
+        [
+          2,
+          'assistant',
+          { text: '中途说明不应进入摘录', providerItemId: `progress-${index}`, assistantMessage: { phase: 'commentary' } },
+          JSON.stringify({ provider: 'codex', itemId: `progress-${index}`, itemType: 'agentMessage', readableSummary: false }),
+        ],
+        [3, 'assistant', { text: '内部思考不应进入摘录', providerItemId: `reasoning-${index}` }, JSON.stringify({ provider: 'codex', itemId: `reasoning-${index}`, readableSummary: true })],
       ] as const)
         db.execute('INSERT INTO conversation_model_history (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json, reasoning_source_json, confirmed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
           `history-${index}-${offset}`,
