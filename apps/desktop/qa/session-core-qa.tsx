@@ -518,6 +518,8 @@ function MessageLayoutQa() {
   }
   /** 手动运行生产布局检查，覆盖计时合并、缺失过程与缺失时间的展示边界。 */
   function checkLayout(): void {
+    /** 不可读输入不能留下气泡，可读首条指令和每次追加的指令仍须保留。 */
+    if (subagent && contentRef.current?.querySelectorAll('.session-thread-item-user').length !== 1 + followupCount) throw new Error('不可读指令未隐藏或可读指令丢失');
     /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
