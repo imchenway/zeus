@@ -2,7 +2,7 @@ import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import MarkdownRender, { setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
-import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -19,6 +19,7 @@ export const MAX_CONVERSATION_MARKDOWN_TOP_LEVEL_NODES = 512;
 export const MAX_CONVERSATION_MARKDOWN_NODES = 4_096;
 
 const CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown';
+const STRUCTURED_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-structured';
 const EMPTY_RESOURCES: ConversationResource[] = [];
 const CHILD_ARRAY_FIELDS = ['children', 'items', 'rows', 'cells', 'term', 'definition'] as const;
 const SMOOTH_STREAMING_OPTIONS = {
@@ -62,13 +63,21 @@ export interface ConversationMarkdownProps {
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
   onRenderSettled?: () => void;
+  /** 用户消息中的结构化引用标签，按原标签文本渲染为胶囊而不是普通 Markdown 文本。 */
+  structuredTokens?: readonly StructuredMessageToken[];
 }
+
+export type StructuredMessageToken = {
+  label: string;
+  kind: 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
+};
 
 interface MarkdownRuntimeContextValue {
   language: SessionUiLanguage;
   resources: ConversationResource[];
   onOpenResource?: ConversationMarkdownProps['onOpenResource'];
   onLoadResourcePreview?: ConversationMarkdownProps['onLoadResourcePreview'];
+  structuredTokens?: readonly StructuredMessageToken[];
 }
 
 interface MarkstreamNode {
@@ -106,6 +115,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   onRenderSettledRef.current = props.onRenderSettled;
 
   const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language), [props.language, props.text]);
+  const customId = props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID;
   const parseOptions = useMemo<NonNullable<NodeRendererProps['parseOptions']>>(
     () => ({
       reuseStableTopLevelNodes: true,
@@ -122,8 +132,9 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
       resources: props.resources ?? EMPTY_RESOURCES,
       onOpenResource: props.onOpenResource,
       onLoadResourcePreview: props.onLoadResourcePreview,
+      structuredTokens: props.structuredTokens,
     }),
-    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.resources],
+    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.resources, props.structuredTokens],
   );
 
   useLayoutEffect(() => {
@@ -189,7 +200,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           content={bounded.text}
           final={props.phase === 'final'}
           parseOptions={parseOptions}
-          customId={CUSTOM_COMPONENTS_ID}
+          customId={customId}
           indexKey={props.streamId}
           htmlPolicy="escape"
           typewriter={false}
@@ -272,6 +283,43 @@ function PlainMathNode(props: NodeComponentProps<MarkstreamNode>) {
   return props.node.type === 'math_block' ? <pre className="session-markdown-math-plain">{content}</pre> : <span className="session-markdown-math-plain">{content}</span>;
 }
 
+/** 用户消息已完成的文本节点只按原标签切出结构化胶囊，普通 Markdown 结构仍由外层节点处理。 */
+function StructuredTextNode(props: NodeComponentProps<MarkstreamNode>) {
+  const runtime = useContext(MarkdownRuntimeContext);
+  const content = typeof props.node.content === 'string' ? props.node.content : '';
+  if (!runtime?.structuredTokens?.length || !content) return <>{content}</>;
+  return <>{renderStructuredInlineText(content, runtime.structuredTokens)}</>;
+}
+
+function renderStructuredInlineText(content: string, tokens: readonly StructuredMessageToken[]): ReactNode {
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    let nextIndex = content.length;
+    let nextToken: StructuredMessageToken | null = null;
+    for (const token of tokens) {
+      if (!token.label) continue;
+      const index = content.indexOf(token.label, cursor);
+      if (index >= 0 && index < nextIndex) {
+        nextIndex = index;
+        nextToken = token;
+      }
+    }
+    if (!nextToken) {
+      parts.push(content.slice(cursor));
+      break;
+    }
+    if (nextIndex > cursor) parts.push(content.slice(cursor, nextIndex));
+    parts.push(
+      <span key={`${nextIndex}:${nextToken.label}`} className="session-user-message-token" data-kind={nextToken.kind}>
+        {nextToken.label}
+      </span>,
+    );
+    cursor = nextIndex + nextToken.label.length;
+  }
+  return parts;
+}
+
 const customComponents = {
   link: SecureLinkNode,
   image: SecureImageNode,
@@ -285,6 +333,7 @@ const customComponents = {
 } as unknown as CustomComponentMap;
 
 setCustomComponents(CUSTOM_COMPONENTS_ID, customComponents);
+setCustomComponents(STRUCTURED_CUSTOM_COMPONENTS_ID, { ...customComponents, text: StructuredTextNode } as CustomComponentMap);
 
 function ConversationMarkdownCopyButton(props: { label: string; copiedLabel: string; text: string }) {
   const [copied, setCopied] = useState(false);

@@ -90,6 +90,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const [computerEnabled, setComputerEnabled] = useState(false);
   /** 输入法组词期间不显示命令菜单。 */
   const composingRef = useRef(false);
+  /** 只在候选项内容真正变化时重置高亮，避免方向键更新选区后又被拉回第一项。 */
+  const activeOptionKeyRef = useRef('');
 
   useEffect(() => {
     let active = true;
@@ -258,7 +260,12 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
     return values;
   }, [catalog?.plugins, catalog?.skills, computerEnabled, employees, props.goalActive, props.goalAvailable, props.onOpenComputerSettings, tokens, trigger, zh]);
 
-  useEffect(() => setActiveOption(firstEnabledOption(options)), [options]);
+  useEffect(() => {
+    const nextKey = options.map((option) => option.id).join('\u0000');
+    if (nextKey === activeOptionKeyRef.current) return;
+    activeOptionKeyRef.current = nextKey;
+    setActiveOption(firstEnabledOption(options));
+  }, [options]);
 
   function updateTrigger(caret: number): void {
     if (composingRef.current || props.disabled) {
