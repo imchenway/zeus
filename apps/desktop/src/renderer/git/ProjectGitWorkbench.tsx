@@ -2804,19 +2804,10 @@ function StashSurface(props: {
             <header>
               <strong>{props.zh ? `变更文件 (${props.detail.files.length})` : `Changed files (${props.detail.files.length})`}</strong>
             </header>
-            <CommitFileDirectoryTree
-              files={props.detail.files}
-              selectedPath={props.selectedFilePath}
-              onSelect={props.onSelectFile}
-              onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })}
-            />
+            <CommitFileDirectoryTree files={props.detail.files} selectedPath={props.selectedFilePath} onSelect={props.onSelectFile} onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })} />
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
-          <SideBySideDiff
-            diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
-            zh={props.zh}
-            title={props.selectedFilePath}
-          />
+          <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null} zh={props.zh} title={props.selectedFilePath} />
         </div>
       ) : (
         <p className="project-git-empty-copy">{props.zh ? '无法读取该贮藏的文件差异。' : 'The files and diff for this stash could not be loaded.'}</p>
