@@ -235,6 +235,7 @@ const storageRecoveryRestart = new StorageRecoveryRestartCoordinator();
 const execFile = promisify(execFileCallback);
 const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
+const developmentDistributionName = 'Zeus Dev';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
 const menuBarUsageWindowGap = 6;
 const menuBarUsageWindowBlurDelayMs = 150;
@@ -277,7 +278,7 @@ function isTestDistribution(): boolean {
 }
 
 function desktopDisplayName(): string {
-  return isTestDistribution() ? testDistributionName : 'Zeus';
+  return isTestDistribution() ? testDistributionName : app.isPackaged ? 'Zeus' : developmentDistributionName;
 }
 
 function broadcastAutomaticUpdateIndicator(state: HomebrewUpdateIndicatorState): void {
@@ -318,7 +319,8 @@ function disableChromiumSafeStorageKeychainPrompt(): void {
 disableChromiumSafeStorageKeychainPrompt();
 
 function applyExplicitUserDataDirectory(): void {
-  if (isTestDistribution()) app.setName(testDistributionName);
+  // Electron 源码宿主默认继承 Electron.app 的名称；启动准备阶段先覆盖，避免 Dock、菜单与正式 Zeus 混淆。
+  app.setName(desktopDisplayName());
 
   const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
   readOnlyValidationDescriptor = loadDesktopReadOnlyValidationDescriptor({
@@ -430,6 +432,21 @@ try {
 
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
+}
+
+function developmentAppIconPath(): string | undefined {
+  return app.isPackaged ? undefined : join(desktopRoot(), 'assets', 'icon-dev.png');
+}
+
+/** 开发宿主继续使用独立数据目录，并在 macOS Dock 中显式展示开发图标。 */
+function applyDevelopmentVisualIdentity(): void {
+  const iconPath = developmentAppIconPath();
+  if (!iconPath || process.platform !== 'darwin') return;
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) throw new Error(`Zeus Dev 图标无法读取：${iconPath}`);
+  const dock = app.dock;
+  if (!dock) throw new Error('Zeus Dev 无法访问 macOS Dock。');
+  dock.setIcon(icon);
 }
 
 function nativeUpdateProgressHelperPath(): string {
@@ -591,7 +608,7 @@ async function openProjectGitDiffWindow(
     minHeight: Math.min(520, height),
     parent,
     modal: false,
-    title: appShellSettings.appLanguage === 'zh-CN' ? '仓库差异 · Zeus' : 'Repository Diff · Zeus',
+    title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
     show: false,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
@@ -685,7 +702,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     minHeight: taskGitDeliveryMinimumSize.height,
     parent,
     modal: false,
-    title: appShellSettings.appLanguage === 'zh-CN' ? '代码交付 · Zeus' : 'Code Delivery · Zeus',
+    title: `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${desktopDisplayName()}`,
     show: false,
     resizable: true,
     minimizable: true,
@@ -743,6 +760,7 @@ async function createWindow(): Promise<void> {
     'main-window-state.json',
     {
       ...restoredWindowState.bounds,
+      ...(developmentAppIconPath() ? { icon: developmentAppIconPath() } : {}),
       // ZEUS-0240：询问与授权的输入、目标和操作必须保持同行，640px 是仍可完整操作的主窗口下限。
       minWidth: 640,
       minHeight: 560,
@@ -873,6 +891,7 @@ function setupMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildAppShellMenuTemplate({
+        applicationName: desktopDisplayName(),
         settings: appShellSettings,
         createNewConversation: () => {
           void startNewConversationFromMenu();
@@ -2188,7 +2207,7 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) return menuBarUsageWindow;
   const window = new BrowserWindow({
     ...menuBarUsageWindowSize,
-    title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 用量' : 'Zeus Usage',
+    title: appShellSettings.appLanguage === 'zh-CN' ? `${desktopDisplayName()} 用量` : `${desktopDisplayName()} Usage`,
     show: false,
     frame: false,
     transparent: true,
@@ -2271,11 +2290,12 @@ function setupTray(): void {
     if (trayIcon.isEmpty()) throw new Error(`Zeus tray icon is empty: ${trayIconPath}`);
     trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
-    tray.setToolTip('Zeus');
+    tray.setToolTip(desktopDisplayName());
     tray.setIgnoreDoubleClickEvents(true);
   }
   menuBarUsageMenu = Menu.buildFromTemplate(
     buildMenuBarTrayTemplate({
+      applicationName: desktopDisplayName(),
       settings: appShellSettings,
       showMainWindow: () => {
         hideMenuBarUsageWindow();
@@ -2709,6 +2729,7 @@ async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
   traceApplicationStartup('electron_ready');
+  applyDevelopmentVisualIdentity();
   if (readOnlyValidationDescriptor) {
     await verifyDesktopReadOnlyValidationDescriptor(readOnlyValidationDescriptor);
     installReadOnlyValidationIpcFence(ipcMain, readOnlyValidationDescriptor);

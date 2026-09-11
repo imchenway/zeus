@@ -923,7 +923,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   [zh ? '标签' : 'Tags', selectedRepository.snapshot.tags, 'local'],
                 ] as const
               ).map(([title, branches, kind]) => (
-                <details key={title} open>
+                <details key={title} open={branches === selectedRepository.snapshot.localBranches ? true : undefined}>
                   <summary className="project-git-reference-section-heading">
                     {branches === selectedRepository.snapshot.localBranches ? <GitBranch className="project-git-branch-section-icon" aria-hidden="true" /> : null}
                     <span>{title}</span>
@@ -957,7 +957,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   />
                 </details>
               ))}
-              <details open>
+              <details>
                 <summary className="project-git-reference-section-heading">
                   <span>{zh ? '贮藏区' : 'Stashes'}</span>
                   <small>{selectedRepository.snapshot.stashes.length}</small>
@@ -972,7 +972,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   </button>
                 ))}
               </details>
-              <details open>
+              <details>
                 <summary className="project-git-reference-section-heading">
                   <span>{zh ? '子树' : 'Subtrees'}</span>
                 </summary>
@@ -2233,6 +2233,15 @@ function LocalChangesSurface(props: {
   }
   const subtree = props.subtree;
   const matchesSubtree = (path: string) => !subtree || subtree.repositoryId !== props.selectedRepository?.id || path === subtree.path || path.startsWith(`${subtree.path}/`);
+  const visibleFileStatuses = repository?.snapshot.fileStatuses.filter((file) => matchesSubtree(file.path)) ?? [];
+  const visibleChangeCount = visibleFileStatuses.length;
+  const emptyVisibleChanges = Boolean(repository && visibleChangeCount === 0 && repository.snapshot.conflictFiles.length === 0);
+  const workspaceClean = Boolean(emptyVisibleChanges && repository?.snapshot.fileStatuses.length === 0);
+  const visibleStageFiles = {
+    staged: visibleFileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').map((file) => file.path),
+    unstaged: visibleFileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?').map((file) => file.path),
+  };
+  const stageBalance = visibleStageFiles.staged.length > 0 && visibleStageFiles.unstaged.length > 0 ? 'both' : visibleStageFiles.staged.length > 0 ? 'staged' : 'unstaged';
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
   const selectedDiff =
     stageDiff?.fileDiffs.find((file) => (file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) && matchesSubtree(file.newPath || file.oldPath)) ??
@@ -2240,7 +2249,7 @@ function LocalChangesSurface(props: {
     null;
   return (
     <div className="project-git-changes-layout project-git-navigator-layout" data-commit-active={commitActive}>
-      <aside className="project-git-change-tree">
+      <aside className="project-git-change-tree" data-empty={emptyVisibleChanges || undefined}>
         {repository && repository.snapshot.conflictFiles.length > 0 ? (
           <section className="project-git-conflict-files" aria-label={props.zh ? '冲突文件' : 'Conflicted files'}>
             <header>
@@ -2260,6 +2269,7 @@ function LocalChangesSurface(props: {
             className="project-git-file-view-select"
             aria-label={props.zh ? '文件显示方式' : 'File view'}
             value={fileView}
+            disabled={!repository || visibleChangeCount === 0}
             onChange={(event) => {
               const next = event.currentTarget.value === 'flat' ? 'flat' : 'tree';
               setFileView(next);
@@ -2273,7 +2283,7 @@ function LocalChangesSurface(props: {
             <option value="tree">{props.zh ? '树状结构' : 'Tree view'}</option>
             <option value="flat">{props.zh ? '平铺结构' : 'Flat view'}</option>
           </select>
-          <span>{props.selectedRepository?.snapshot.fileStatuses.filter((file) => matchesSubtree(file.path)).length ?? 0}</span>
+          <span>{visibleChangeCount}</span>
           {subtree?.repositoryId === props.selectedRepository?.id ? (
             <button type="button" onClick={props.onClearSubtree}>
               {props.zh ? '清除目录筛选' : 'Clear folder filter'}
@@ -2287,84 +2297,109 @@ function LocalChangesSurface(props: {
             <small title={repository.snapshot.branch}>{repository.snapshot.branch}</small>
           </button>
         ) : null}
-        <div className="project-git-stage-panels">
-          {(['staged', 'unstaged'] as const).map((stage) => {
-            const files =
-              repository?.snapshot.fileStatuses
-                .filter((file) => matchesSubtree(file.path) && (stage === 'staged' ? file.indexStatus !== ' ' && file.indexStatus !== '?' : file.workingTreeStatus !== ' ' || file.indexStatus === '?'))
-                .map((file) => file.path) ?? [];
-            const title = stage === 'staged' ? (props.zh ? '已暂存' : 'Staged') : props.zh ? '未暂存' : 'Unstaged';
-            return (
-              <Fragment key={stage}>
-                {stage === 'unstaged' ? <GitPaneSeparator name="stages" label={props.zh ? '调整已暂存与未暂存区域高度' : 'Resize staged and unstaged panels'} axis="y" initial={50} min={15} max={85} /> : null}
-                <section className="project-git-stage-panel" aria-label={title}>
-                  <header data-git-context={repository ? JSON.stringify({ kind: 'stage', repositoryId: repository.id, ref: title, stage }) : undefined}>
-                    <label className="project-git-stage-select-all">
-                      <input
-                        type="checkbox"
-                        checked={stage === 'staged' && files.length > 0}
-                        disabled={!repository || !files.length || props.busy !== null}
-                        aria-label={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
-                        title={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
-                        onChange={() => {
-                          if (repository && files.length && !props.busy)
-                            void props.onExecute(
-                              repository,
-                              { type: stage === 'staged' ? 'unstage' : 'stage', paths: files },
-                              stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files',
-                            );
-                        }}
-                      />
-                      <strong>{title}</strong>
-                    </label>
-                    <span>{files.length}</span>
-                  </header>
-                  <div className="project-git-stage-scroll">
-                    {repository && files.length > 0 ? (
-                      <ChangeDirectoryTree
-                        view={fileView}
-                        files={files}
-                        stage={stage}
-                        repository={repository}
-                        selectedRepositoryId={repository.id}
-                        selectedFilePath={props.selectedFilePath}
-                        selectedFileStage={props.selectedFileStage}
-                        busy={props.busy}
-                        zh={props.zh}
-                        onSelectRepository={props.onSelectRepository}
-                        onSelectFile={props.onSelectFile}
-                        onOpenDiff={props.onOpenDiff}
-                        onExecute={props.onExecute}
-                      />
-                    ) : (
-                      <p className="project-git-stage-empty">{stage === 'staged' ? (props.zh ? '暂无已暂存文件' : 'No staged files') : props.zh ? '暂无未暂存文件' : 'No unstaged files'}</p>
-                    )}
-                  </div>
-                </section>
-              </Fragment>
-            );
-          })}
-        </div>
+        {emptyVisibleChanges ? (
+          <div className="project-git-clean-state" role="status">
+            <span className="project-git-empty-symbol">
+              <CheckCircle aria-hidden="true" />
+            </span>
+            <strong>{workspaceClean ? (props.zh ? '工作区干净' : 'Working tree clean') : props.zh ? '当前目录没有变更' : 'No changes in this folder'}</strong>
+            <span>{workspaceClean ? (props.zh ? '没有待暂存或提交的文件。' : 'There are no files to stage or commit.') : props.zh ? '清除目录筛选可查看仓库中的其他变更。' : 'Clear the folder filter to view other repository changes.'}</span>
+          </div>
+        ) : (
+          <div className="project-git-stage-panels" data-stage-balance={stageBalance}>
+            {(['staged', 'unstaged'] as const).map((stage) => {
+              const files = visibleStageFiles[stage];
+              const title = stage === 'staged' ? (props.zh ? '已暂存' : 'Staged') : props.zh ? '未暂存' : 'Unstaged';
+              return (
+                <Fragment key={stage}>
+                  {stage === 'unstaged' && stageBalance === 'both' ? <GitPaneSeparator name="stages" label={props.zh ? '调整已暂存与未暂存区域高度' : 'Resize staged and unstaged panels'} axis="y" initial={50} min={15} max={85} /> : null}
+                  <section className="project-git-stage-panel" aria-label={title}>
+                    <header data-git-context={repository ? JSON.stringify({ kind: 'stage', repositoryId: repository.id, ref: title, stage }) : undefined}>
+                      <label className="project-git-stage-select-all">
+                        <input
+                          type="checkbox"
+                          checked={stage === 'staged' && files.length > 0}
+                          disabled={!repository || !files.length || props.busy !== null}
+                          aria-label={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
+                          title={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
+                          onChange={() => {
+                            if (repository && files.length && !props.busy)
+                              void props.onExecute(
+                                repository,
+                                { type: stage === 'staged' ? 'unstage' : 'stage', paths: files },
+                                stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files',
+                              );
+                          }}
+                        />
+                        <strong>{title}</strong>
+                      </label>
+                      <span>{files.length}</span>
+                    </header>
+                    <div className="project-git-stage-scroll">
+                      {repository && files.length > 0 ? (
+                        <ChangeDirectoryTree
+                          view={fileView}
+                          files={files}
+                          stage={stage}
+                          repository={repository}
+                          selectedRepositoryId={repository.id}
+                          selectedFilePath={props.selectedFilePath}
+                          selectedFileStage={props.selectedFileStage}
+                          busy={props.busy}
+                          zh={props.zh}
+                          onSelectRepository={props.onSelectRepository}
+                          onSelectFile={props.onSelectFile}
+                          onOpenDiff={props.onOpenDiff}
+                          onExecute={props.onExecute}
+                        />
+                      ) : (
+                        <p className="project-git-stage-empty">{stage === 'staged' ? (props.zh ? '暂无已暂存文件' : 'No staged files') : props.zh ? '暂无未暂存文件' : 'No unstaged files'}</p>
+                      )}
+                    </div>
+                  </section>
+                </Fragment>
+              );
+            })}
+          </div>
+        )}
       </aside>
       <GitPaneSeparator name="files" label={props.zh ? '调整文件列表宽度' : 'Resize file list'} initial={30} min={15} max={65} />
       <main className="project-git-change-diff">
-        <SideBySideDiff
-          diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
-          zh={props.zh}
-          onHunkAction={
-            repository && selectedDiff && selectedDiff.changeType === 'modified'
-              ? (file, hunk) => {
-                  const patch = buildGitHunkPatch(file, hunk);
-                  void props.onExecute(
-                    repository,
-                    { type: 'apply_patch', patch, reverse: props.selectedFileStage === 'staged' },
-                    props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk',
-                  );
-                }
-              : undefined
-          }
-          hunkActionLabel={props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk'}
-        />
+        {emptyVisibleChanges ? (
+          <div className="project-git-change-diff-empty" role="status">
+            <span className="project-git-empty-symbol">
+              <CheckCircle aria-hidden="true" />
+            </span>
+            <strong>{workspaceClean ? (props.zh ? '当前分支没有本地更改' : 'No local changes on this branch') : props.zh ? '当前目录没有可比较的变更' : 'No comparable changes in this folder'}</strong>
+            <span>
+              {workspaceClean
+                ? props.zh
+                  ? '修改文件后，可在这里逐项查看差异。'
+                  : 'Edit a file to inspect its diff here.'
+                : props.zh
+                  ? '清除目录筛选，或选择其他目录查看差异。'
+                  : 'Clear the folder filter or select another folder to inspect changes.'}
+            </span>
+          </div>
+        ) : (
+          <SideBySideDiff
+            diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
+            zh={props.zh}
+            onHunkAction={
+              repository && selectedDiff && selectedDiff.changeType === 'modified'
+                ? (file, hunk) => {
+                    const patch = buildGitHunkPatch(file, hunk);
+                    void props.onExecute(
+                      repository,
+                      { type: 'apply_patch', patch, reverse: props.selectedFileStage === 'staged' },
+                      props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk',
+                    );
+                  }
+                : undefined
+            }
+            hunkActionLabel={props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk'}
+          />
+        )}
       </main>
       {commitActive ? (
         <>
@@ -2462,13 +2497,24 @@ function LocalChangesSurface(props: {
           <span title={repository?.name}>{repository?.name ?? (props.zh ? '提交' : 'Commit')}</span>
           <button
             type="button"
-            disabled={!repository}
-            aria-label={props.zh ? '展开提交说明编辑区' : 'Expand commit message editor'}
+            disabled={!repository || workspaceClean}
+            aria-label={workspaceClean ? (props.zh ? '当前仓库没有可提交的变更' : 'No changes to commit in this repository') : props.zh ? '展开提交说明编辑区' : 'Expand commit message editor'}
             onClick={() => {
               if (repository) setEditingRepository(repository.id);
             }}
           >
-            {message.split(/\r?\n/u)[0] || (props.zh ? '填写提交说明…' : 'Enter a commit message…')}
+            {message.split(/\r?\n/u)[0] ||
+              (workspaceClean
+                ? props.zh
+                  ? '工作区干净'
+                  : 'Working tree clean'
+                : stagedCount > 0
+                  ? props.zh
+                    ? '填写提交说明…'
+                    : 'Enter a commit message…'
+                  : props.zh
+                    ? '先暂存文件，再填写提交说明…'
+                    : 'Stage files before entering a commit message…')}
           </button>
         </aside>
       )}
