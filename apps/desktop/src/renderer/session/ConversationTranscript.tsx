@@ -2499,8 +2499,10 @@ function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;
 }
 
+/** 共享时间线隐藏内部协作事件与不可读输入，原始记录仍保留在会话状态中。 */
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {
   if (isSubagentCoordinationItem(item)) return false;
+  if (recordValue(item.payload.subagentInput)?.contentState === 'unavailable') return false;
   if (typeof item.payload.requestAnswerId === 'string') return false;
   if (itemRole(item) !== 'commentary') return true;
   return transcriptItemText(item).trim().length > 0;
