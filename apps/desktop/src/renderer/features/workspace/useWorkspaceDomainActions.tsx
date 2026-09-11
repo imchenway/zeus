@@ -1117,6 +1117,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
+  /** 项目创建完成后进入项目页面，任务由用户主动新建。 */
   async function createCurrentProject(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!props.onCreateCurrentProject || creatingProjectBusy) return;
@@ -1145,9 +1146,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setActionState('idle');
       resetProjectCreateDialog();
       if (selectedCreatedProject) {
+        setProjectDetail(selectedCreatedProject);
+        activeProjectIdRef.current = selectedCreatedProject.id;
+        setConversationDraftOpen(false);
         setActiveNavTarget('projects');
         setActiveProjectSection('tasks');
-        openTaskCreateModal(null, selectedCreatedProject.id);
       }
     } catch (error) {
       setProjectCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
@@ -1219,10 +1222,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  /** 初始化草稿时冻结目标项目，支持项目刚创建但界面尚未重绘的情况。 */
-  function openTaskCreateModal(parentTaskId: string | null = null, projectId = activeProjectId): void {
+  /** 用户主动新建任务时，将当前项目固定为草稿目标。 */
+  function openTaskCreateModal(parentTaskId: string | null = null): void {
     taskCreateReturnFocusRef.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), projectId: projectId ?? '', parentTaskId });
+    setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), projectId: activeProjectId ?? '', parentTaskId });
     setTaskCreateError('');
     setTaskCreateModalOpen(true);
   }
