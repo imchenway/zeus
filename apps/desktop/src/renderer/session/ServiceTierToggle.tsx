@@ -1,8 +1,8 @@
-import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { fastServiceTier } from './serviceTierSelection.js';
 import type { CodexTaskPushModelCapability, NativeServiceTierSelection } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
+/** 用闪电表示速度切换，沿用当前模型能力和已选状态。 */
 export function ServiceTierToggle(props: {
   language: SessionUiLanguage;
   model: CodexTaskPushModelCapability | null | undefined;
@@ -37,7 +37,10 @@ export function ServiceTierToggle(props: {
       disabled={props.disabled || (unsupported && !active)}
       onClick={() => void props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: 'priority' })}
     >
-      <Gauge aria-hidden="true" weight={active ? 'bold' : 'regular'} />
+      {/* 实心闪电使用柔和转角，保证小尺寸辨识度；两种速度沿用同一轮廓，以颜色区分。 */}
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M13.6 2.8 5.2 12.2c-.6.7-.1 1.8.8 1.8h4.2l-1 6.1c-.2 1 .9 1.5 1.6.8l8-9.5c.6-.7.1-1.8-.8-1.8h-4.1l1.3-6c.2-1-.9-1.5-1.6-.8Z" />
+      </svg>
       {unsupported && active ? <span>{props.language === 'zh-CN' ? 'Fast（已记住，当前不可用）' : 'Fast (remembered, currently unavailable)'}</span> : null}
     </button>
   );

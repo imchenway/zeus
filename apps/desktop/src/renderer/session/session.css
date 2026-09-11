@@ -3258,7 +3258,7 @@
   white-space: nowrap;
 }
 
-/* 标题工具固定在首行，详情在第二行使用完整内容宽度。 */
+/* 标题工具共用顶栏，运行详情由左侧会话容器独立排版。 */
 .session-codex-parity-v1 .session-thread-header {
   align-items: center;
   background: var(--session-header);
@@ -3272,11 +3272,6 @@
   pointer-events: none;
   position: relative;
   z-index: 31;
-}
-
-/* 详情展开时去掉标题栏叠加的下留白，底部仅保留收起按钮的点击范围。 */
-.session-codex-parity-v1 .session-thread-header:has(> .session-thread-subtitle-row > .session-runtime-details[open]) {
-  padding-block-end: 0;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-motion-title='entered'] {
@@ -11550,15 +11545,15 @@
   grid-column: 2;
 }
 
-/* 分栏时详情仍归左侧会话，保留原节点的展开状态和顶栏工具位置。 */
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-subtitle-row {
-  grid-column: 1;
-  padding-inline: 12px;
+/* 详情只占左侧会话高度；右侧浏览器和源码工作区保持完整可用高度。 */
+.session-codex-parity-v1 .session-conversation-pane > .session-thread-subtitle-row {
+  flex: 0 0 auto;
+  padding: 4px 20px 0;
 }
 
-/* 全宽工作区隐藏整个会话，详情随会话一起收起。 */
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-subtitle-row {
-  display: none;
+/* 分栏摘要与左侧标题使用相同水平内边距。 */
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] > .session-conversation-pane > .session-thread-subtitle-row {
+  padding-inline: 12px;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] .session-thread-header-actions {

@@ -35,6 +35,8 @@ export interface ProjectSourceDocument {
   eol: 'lf' | 'crlf' | 'cr';
   hasBom: boolean;
   editable: boolean;
+  /** 项目内受大小限制的只读图片，以数据地址交给图片元素解码。 */
+  imagePreviewUrl?: string;
   readOnlyReason?: 'binary' | 'invalid_encoding' | 'too_large' | 'symlink' | 'not_regular_file';
   revision: ProjectSourceRevision;
 }

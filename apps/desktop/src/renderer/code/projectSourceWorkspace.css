@@ -110,9 +110,6 @@
   color: var(--zeus-control-danger-text);
   background: color-mix(in srgb, var(--zeus-control-danger-bg) 45%, transparent);
 }
-.project-source-message.success {
-  color: var(--zeus-status-success-text);
-}
 .project-source-message button {
   min-height: 24px;
   font: inherit;
@@ -635,6 +632,23 @@
 .project-source-statusbar strong {
   margin-right: auto;
   color: var(--zeus-control-danger-text);
+}
+
+/* 图片在可用区域内等比缩放，透明区域沿用页面背景。 */
+.project-source-image-preview {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+}
+.project-source-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .project-source-readonly,

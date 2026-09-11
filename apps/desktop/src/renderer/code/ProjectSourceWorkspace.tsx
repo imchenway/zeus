@@ -11,7 +11,6 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
@@ -179,7 +178,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [searchTruncated, setSearchTruncated] = useState(false);
   const [loadingTree, setLoadingTree] = useState(true);
   const [busyPath, setBusyPath] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  /** 只记录解码失败的内容版本；图片在磁盘更新后可自动重新预览。 */
+  const [failedImageRevision, setFailedImageRevision] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
@@ -281,7 +281,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               : candidate,
           ),
         );
-        setNotice(zh ? `已保存 ${relativePath}` : `Saved ${relativePath}`);
         return !editedWhileSaving;
       } catch (saveError) {
         setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: false, externalChange: true } : candidate)));
@@ -289,7 +288,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return false;
       }
     },
-    [bridge, props.project.id, zh],
+    [bridge, props.project.id],
   );
 
   const saveAll = useCallback(async (): Promise<boolean> => {
@@ -432,12 +431,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         if (active) setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, document, draft: document.content, externalChange: false } : candidate)));
       } catch {
         if (active) {
+          // 外部删除、重命名或暂时不可访问只更新标签状态，保留内容，不弹出操作失败提示。
           setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, externalChange: true } : candidate)));
-          setError(
-            zh
-              ? `“${relativePath}”已在磁盘中删除、重命名或变得不可访问。标签内容仍保留，可另存为或关闭。`
-              : `“${relativePath}” was deleted, renamed, or became inaccessible on disk. The tab content is retained and can be saved as or closed.`,
-          );
         }
       }
     }
@@ -541,7 +536,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const entry = await bridge.createProjectSourceEntry({ projectId: props.project.id, parentRelativePath: operationParent, name: operationName, kind: operation.kind === 'create-file' ? 'file' : 'directory' });
         await loadDirectory(operationParent, true);
         if (entry.kind === 'file') await openFile(entry.relativePath);
-        setNotice(zh ? `已创建 ${entry.relativePath}` : `Created ${entry.relativePath}`);
       } else if (operation.kind === 'save-as') {
         const sourceTab = tabsRef.current.find((tab) => tab.document.relativePath === operation.tabPath);
         if (!sourceTab) throw new Error(zh ? '原文件标签已经关闭。' : 'The source tab is already closed.');
@@ -559,7 +553,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setTabs((current) => [...current, { document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }]);
         setActivePath(document.relativePath);
         await loadDirectory(operationParent, true);
-        setNotice(zh ? `已另存为 ${document.relativePath}` : `Saved as ${document.relativePath}`);
       } else if (operation.kind === 'rename' || operation.kind === 'move') {
         const entry = await bridge.moveProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath, targetParentRelativePath: operationParent, targetName: operationName });
         const oldPath = operation.entry.relativePath;
@@ -574,7 +567,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           });
         }
         await Promise.all([loadDirectory(parentPath(oldPath), true), loadDirectory(operationParent, true)]);
-        setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
         if (
@@ -599,7 +591,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           setActivePath(remainingTabs[Math.min(nextIndex, remainingTabs.length - 1)]?.document.relativePath ?? null);
         }
         await loadDirectory(parentPath(operation.entry.relativePath), true);
-        setNotice(zh ? '已移入系统废纸篓，可在 Finder 中恢复。' : 'Moved to system Trash. You can restore it in Finder.');
       }
       setOperation(null);
     } catch (operationError) {
@@ -658,21 +649,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         </span>
       </header>
 
-      {notice || activeTab?.externalChange ? (
-        <div className="project-source-message success" role="status">
-          <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
-          {activeTab?.externalChange ? (
-            <>
-              <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
-                {zh ? '另存为' : 'Save as'}
-              </button>
-              <button type="button" onClick={() => void reloadActiveTab()}>
-                {zh ? '重新加载' : 'Reload'}
-              </button>
-            </>
+      {/* 成功结果由文件树与标签体现；这里只保留需要用户处理的外部修改提醒。 */}
+      {activeTab?.externalChange ? (
+        <div className="project-source-message" role="status">
+          <span>{zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.'}</span>
+          {activeTab.document.editable || activeTab.document.readOnlyReason === 'symlink' ? (
+            <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
+              {zh ? '另存为' : 'Save as'}
+            </button>
           ) : null}
-          <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
-            <X aria-hidden="true" />
+          <button type="button" onClick={() => void reloadActiveTab()}>
+            {zh ? '重新加载' : 'Reload'}
           </button>
         </div>
       ) : null}
@@ -840,10 +827,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <span key={`${part}-${index}`}>{part}</span>
                 ))}
               </nav>
-              {!activeTab.document.editable ? (
+              {activeTab.document.imagePreviewUrl && failedImageRevision !== activeTab.document.revision.sha256 ? (
+                <section className="project-source-image-preview" aria-label={zh ? '图片预览' : 'Image preview'}>
+                  <img
+                    key={`${activeTab.document.relativePath}:${activeTab.document.revision.sha256}`}
+                    src={activeTab.document.imagePreviewUrl}
+                    alt={activeTab.document.name}
+                    decoding="async"
+                    onError={() => setFailedImageRevision(activeTab.document.revision.sha256)}
+                  />
+                </section>
+              ) : !activeTab.document.editable ? (
                 <section className="project-source-readonly" aria-label={zh ? '文件不可编辑' : 'File is read-only'}>
-                  <strong>{zh ? '此文件只能查看或在外部应用中打开' : 'This file is view-only in Zeus'}</strong>
-                  <p>{readOnlyReason(activeTab.document, zh)}</p>
+                  <strong>{activeTab.document.imagePreviewUrl ? (zh ? '无法预览此图片' : 'Unable to preview this image') : zh ? '此文件只能查看或在外部应用中打开' : 'This file is view-only in Zeus'}</strong>
+                  <p>{activeTab.document.imagePreviewUrl ? (zh ? '图片可能已损坏，或当前格式无法解码。' : 'The image may be damaged or cannot be decoded.') : readOnlyReason(activeTab.document, zh)}</p>
                   <Button
                     variant="secondary"
                     onClick={() => {
@@ -872,12 +869,18 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 </Suspense>
               )}
               <footer className="project-source-statusbar">
-                <span>{activeTab.document.language}</span>
-                <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
-                <span>{activeTab.document.eol.toUpperCase()}</span>
-                <span>
-                  Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
-                </span>
+                {activeTab.document.imagePreviewUrl ? (
+                  <span>{zh ? '图片 · 只读' : 'Image · Read-only'}</span>
+                ) : (
+                  <>
+                    <span>{activeTab.document.language}</span>
+                    <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
+                    <span>{activeTab.document.eol.toUpperCase()}</span>
+                    <span>
+                      Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
+                    </span>
+                  </>
+                )}
                 {activeTab.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
               </footer>
             </>
@@ -1167,11 +1170,11 @@ function operationTitle(operation: NonNullable<FileOperation>, zh: boolean): str
 
 function readOnlyReason(document: ProjectSourceDocument, zh: boolean): string {
   const reasons = zh
-    ? { binary: '检测到二进制内容。', invalid_encoding: '文件不是有效的 UTF-8 文本。', too_large: '文件超过 2 MiB 编辑上限。', symlink: '符号链接文件在 Zeus 中保持只读。', not_regular_file: '目标不是普通文件。' }
+    ? { binary: '检测到二进制内容。', invalid_encoding: '文件不是有效的 UTF-8 文本。', too_large: '文件超过页内读取上限，请在外部应用中打开。', symlink: '符号链接文件在 Zeus 中保持只读。', not_regular_file: '目标不是普通文件。' }
     : {
         binary: 'Binary content was detected.',
         invalid_encoding: 'The file is not valid UTF-8 text.',
-        too_large: 'The file exceeds the 2 MiB editor limit.',
+        too_large: 'The file exceeds the inline viewing limit. Open it externally.',
         symlink: 'Symlink files remain read-only in Zeus.',
         not_regular_file: 'The target is not a regular file.',
       };
