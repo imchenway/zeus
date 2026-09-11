@@ -3,11 +3,12 @@ import react from '@vitejs/plugin-react';
 
 const rendererChunkTargetBytes = 360 * 1024;
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: '.',
   // Electron 打包后通过 file:// 加载 index.html，必须使用相对资源路径，避免 /assets 指向磁盘根目录导致白屏。
   base: './',
-  plugins: [react()],
+  // 启动入口含一次性宿主初始化，不可作为 Fast Refresh 边界重复执行。
+  plugins: [react(command === 'serve' ? { exclude: /\/src\/renderer\/main\.tsx$/ } : {})],
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
@@ -78,4 +79,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
