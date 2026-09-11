@@ -1661,18 +1661,34 @@ function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryF
       };
 }
 
-/** 汇总批量操作，携带操作归属与逐仓结果供按钮下方呈现。 */
+/** 单仓直接呈现结果；多仓只汇总非零状态，并保留逐仓详情。 */
 function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: BatchDeliveryResult[], zh: boolean): DeliveryFeedback {
-  const succeeded = results.filter((result) => result.status === 'succeeded').length;
-  const skipped = results.filter((result) => result.status === 'skipped').length;
-  const attention = results.filter((result) => result.status === 'attention').length;
-  const failed = results.filter((result) => result.status === 'failed').length;
+  /** 状态名称同时用于单仓异常提示与多仓统计。 */
+  const labels = zh ? { succeeded: '成功', skipped: '跳过', attention: '待处理', failed: '失败' } : { succeeded: 'succeeded', skipped: 'skipped', attention: 'need attention', failed: 'failed' };
+  /** 单仓成功消息已包含动作，仅异常结果需要补充状态。 */
+  const single = results.length === 1 ? results[0] : undefined;
+  /** 只列出本次实际出现的状态，避免零值占据提示空间。 */
+  const summary = (Object.keys(labels) as BatchDeliveryStatus[])
+    .map((status) => {
+      /** 每种状态对应的仓库数。 */
+      const count = results.filter((result) => result.status === status).length;
+      return count > 0 ? (zh ? `${labels[status]} ${count}` : `${count} ${labels[status]}`) : '';
+    })
+    .filter(Boolean)
+    .join(' · ');
+  /** 操作名称用于多仓汇总和无结果提示。 */
   const actionLabel = zh ? { commit: '提交', merge: '合入', push: '推送' }[action] : { commit: 'Commit', merge: 'Merge', push: 'Push' }[action];
   return {
     action,
-    results,
-    tone: failed > 0 || attention > 0 ? 'warning' : 'success',
-    text: zh ? `${actionLabel}完成：成功 ${succeeded}，跳过 ${skipped}，待处理 ${attention}，失败 ${failed}。` : `${actionLabel} finished: ${succeeded} succeeded, ${skipped} skipped, ${attention} need attention, ${failed} failed.`,
+    results: single ? undefined : results,
+    tone: results.some((result) => result.status === 'failed' || result.status === 'attention') ? 'warning' : results.some((result) => result.status === 'succeeded') ? 'success' : 'info',
+    text: single
+      ? `${single.repositoryName} · ${single.status === 'succeeded' ? '' : `${labels[single.status]} · `}${single.message}`
+      : summary
+        ? `${actionLabel}：${summary}`
+        : zh
+          ? `没有可${actionLabel}的仓库`
+          : `No repositories to ${actionLabel.toLowerCase()}`,
   };
 }
 
