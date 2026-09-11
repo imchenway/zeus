@@ -1643,6 +1643,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
+  /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
@@ -1774,8 +1775,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
   const subagentThreadIds = useMemo(() => [...new Set([...subagentActivity.threadIds, ...(props.subagentListSnapshot?.items.map((item) => item.id) ?? [])])].sort(), [props.subagentListSnapshot?.items, subagentActivity.threadIds]);
   const subagentSnapshotRevision = props.subagentListSnapshot?.items.map((item) => `${item.id}:${item.status}:${item.updatedAt ?? ''}`).join('|') ?? '';
-  const subagentSignature = subagentThreadIds.join(',');
-  const autoOpenedSubagentSignatureRef = useRef('');
 
   useLayoutEffect(() => {
     contextReturnFocusRef.current = null;
@@ -1793,19 +1792,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setGoalPanelOpen(false);
     setGoalBusy(false);
     setGoalError(null);
-    autoOpenedSubagentSignatureRef.current = '';
     setBrowserResizing(false);
     setQuickActionsPopoverOpen(false);
     browserResizeActiveRef.current = false;
   }, [escapeController, props.conversation?.id]);
-
-  useEffect(() => {
-    if (!subagentSignature || subagentSignature === autoOpenedSubagentSignatureRef.current) return;
-    autoOpenedSubagentSignatureRef.current = subagentSignature;
-    if (contextWorkspace.kind !== 'none' || !actions.onLoadSubagents || !actions.onLoadSubagentThread) return;
-    setContextFullWidth(false);
-    setContextWorkspace({ kind: 'subagents' });
-  }, [actions.onLoadSubagentThread, actions.onLoadSubagents, contextWorkspace.kind, subagentSignature]);
 
   useEffect(() => {
     if (!props.state || legacy || composerRuntimeSettingsDirtyRef.current) return;
