@@ -753,9 +753,10 @@ export function resolveSessionDrawerInitialFocusTarget(drawer: HTMLElement): HTM
   return drawer.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? drawer;
 }
 
+/** 在所属项目内统一解析真实会话身份与创建期间保留的导航身份。 */
 export function resolveSelectedNativeConversationForProject(choices: NativeConversationChoice[], selectedConversationId: string | null, activeProjectId: string | undefined): NativeConversationChoice | null {
   if (!selectedConversationId || !activeProjectId) return null;
-  return choices.find((conversation) => resolveConversationNavigationId(conversation) === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
+  return choices.find((conversation) => (resolveConversationNavigationId(conversation) === selectedConversationId || conversation.id === selectedConversationId) && conversation.projectId === activeProjectId) ?? null;
 }
 
 export function resolveConversationNavigationId(conversation: NativeConversationChoice): string {

@@ -105,6 +105,7 @@ import {
   normalizeTaskCreateDraft,
   type ProjectCodeWorkspaceMode,
   resolveConversationNavigationId,
+  resolveSelectedNativeConversationForProject,
   resolveNativeConversationSelectionPresentation,
   resolveTaskManagementStatusConfig,
   selectCreatedProjectTask,
@@ -1538,6 +1539,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     [requestWorkspaceLeaveRef],
   );
 
+  /** 所有入口先沿用当前投影的导航身份，真实会话身份仍用于读取消息。 */
   async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive'): Promise<void> {
     const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
     if (targetProject) {
@@ -1547,7 +1549,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
-    const navigationId = conversation.navigationId ?? conversation.id;
+    /** 任务详情、通知等入口可能只持有真实身份，不能丢掉推送工作面的稳定身份。 */
+    const navigationId = resolveConversationNavigationId(resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId) ?? conversation);
     const resolvedPresentation =
       presentation ?? resolveNativeConversationSelectionPresentation(conversation, nativeConversationRuntimeStates[navigationId] ?? nativeConversationRuntimeStates[conversation.id] ?? conversation.listRuntimeState);
     selectedNativeConversationIdRef.current = navigationId;
@@ -1605,7 +1608,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   /** 从抽屉或任务入口进入同一会话的完整页面，保留现有的实时呈现方式。 */
   async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<void> {
     /** 已打开的会话不因切换展示容器退回历史模式。 */
-    const presentation = state.selectedNativeConversation && resolveConversationNavigationId(state.selectedNativeConversation) === resolveConversationNavigationId(conversation) ? state.selectedNativeConversationPresentation : undefined;
+    const presentation = state.selectedNativeConversation?.projectId === conversation.projectId && state.selectedNativeConversation.id === conversation.id ? state.selectedNativeConversationPresentation : undefined;
     if (!(await selectNativeConversation(conversation, 'page', presentation))) return;
     setTaskDetailPaneTaskId(undefined);
     setSessionDrawerTarget(undefined);
@@ -1711,7 +1714,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function openNativeConversationDrawer(conversation: NativeConversationChoice): Promise<void> {
     if (conversation.projectId !== activeProjectId) return;
     /** 抽屉按稳定导航身份等待正文，兼容普通会话和归档快照。 */
-    const navigationId = resolveConversationNavigationId(conversation);
+    const navigationId = resolveConversationNavigationId(resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId) ?? conversation);
     setConversationDrawer(undefined);
     setSessionDrawerTarget({ projectId: conversation.projectId, taskId: conversation.taskId ?? undefined, conversationId: conversation.id, navigationId, status: 'opening' });
     if (state.selectedNativeConversation && resolveConversationNavigationId(state.selectedNativeConversation) === navigationId) return;
