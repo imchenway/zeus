@@ -5188,7 +5188,7 @@
   border-end-start-radius: 0;
   border-inline-start-color: color-mix(in srgb, var(--session-canvas) 22%, transparent);
   border-start-start-radius: 0;
-  inline-size: 30px;
+  inline-size: 28px;
   padding: 0;
 }
 
@@ -9059,8 +9059,8 @@
 }
 
 .session-codex-parity-v1 .session-approval-grant-control > .session-request-grant-chevron {
-  flex: 0 0 30px;
-  inline-size: 30px;
+  flex: 0 0 28px;
+  inline-size: 28px;
   padding: 0;
   border-end-start-radius: 0 !important;
   border-start-start-radius: 0 !important;
@@ -9069,7 +9069,9 @@
 
 .session-codex-parity-v1 .session-approval-grant-control > .session-request-grant-chevron > svg {
   flex: 0 0 13px;
-  color: inherit;
+  color: var(--session-canvas);
+  fill: currentColor;
+  inline-size: 13px;
 }
 
 .session-codex-parity-v1 .session-approval-grant-menu {
@@ -10259,8 +10261,8 @@
   padding-block: 10px;
 }
 
-.macos-ai-app .session-permission-popover .zeus-select-option-description {
-  color: var(--zeus-product-subtle);
+.macos-ai-app .session-permission-popover .zeus-select-option .zeus-select-option-description {
+  color: color-mix(in srgb, var(--zeus-product-subtle) 72%, transparent);
   font-size: 12px;
   line-height: 1.5;
   margin-block-start: 3px;

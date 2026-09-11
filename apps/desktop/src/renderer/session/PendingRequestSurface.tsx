@@ -388,7 +388,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
               ) : null}
               {hasAllowOnce && menuDecisions.length > 1 ? (
                 <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron" aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
-                  <CaretDown aria-hidden="true" />
+                  <CaretDown aria-hidden="true" size={13} weight="bold" />
                 </button>
               ) : null}
               {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (

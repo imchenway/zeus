@@ -2571,15 +2571,21 @@ function requireNamedCurrentBranch(context: GitRepositoryContext): string {
   return context.branch;
 }
 
-/** 读取一个精确提交的文件和差异，供独立 Repository Diff 与日志检查器复用。 */
+/** 读取一个精确提交或贮藏的文件和差异，供独立 Repository Diff 与历史检查器复用。 */
 export async function getProjectGitCommitDetail(cwd: string, commitHash: string): Promise<ProjectGitCommitDetail> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
-  const commit = await resolveCommit(context.topLevel, commitHash);
+  const requestedRevision = commitHash.trim();
+  const stashRef = /^stash@\{\d+\}$/u.test(requestedRevision) ? requireStashRef(requestedRevision) : null;
+  const commit = await resolveCommit(context.topLevel, stashRef ?? requestedRevision);
   const [metadata, numstat, diffText] = await Promise.all([
     requireGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P%x1f%B', commit]),
-    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--numstat', commit]),
-    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--no-ext-diff', '--find-renames', commit]),
+    stashRef
+      ? requireGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'stash', 'show', '--include-untracked', '--numstat', stashRef])
+      : readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--numstat', commit]),
+    stashRef
+      ? requireGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'stash', 'show', '--include-untracked', '--patch', '--no-ext-diff', '--find-renames', stashRef])
+      : readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--no-ext-diff', '--find-renames', commit]),
   ]);
   const [hash = commit, shortHash = commit.slice(0, 8), subject = '', author = '', authoredAt = '', parents = '', ...bodyParts] = metadata.split('\x1f');
   const files = splitLines(numstat).flatMap((line) => {

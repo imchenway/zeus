@@ -1983,11 +1983,11 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator button[aria-current='true'] {
   background: var(--zeus-card-background) !important;
 }
-.macos-ai-app.zeus-shell .project-git-navigator button.project-git-navigation-repository[aria-current='true'],
-.macos-ai-app.zeus-shell .project-git-navigator button.project-git-navigation-repository[aria-current='true']:hover {
+.macos-ai-app.zeus-shell .project-git-navigator button:is(.project-git-navigation-repository, .project-git-navigation-stash)[aria-current='true'],
+.macos-ai-app.zeus-shell .project-git-navigator button:is(.project-git-navigation-repository, .project-git-navigation-stash)[aria-current='true']:hover {
   background: var(--zeus-source-list-selected) !important;
   color: var(--zeus-brand-text);
-  box-shadow: inset 3px 0 var(--zeus-brand-text) !important;
+  box-shadow: none !important;
   font-weight: 600;
 }
 .macos-ai-app.zeus-shell .project-git-navigator .project-git-repository-scope {

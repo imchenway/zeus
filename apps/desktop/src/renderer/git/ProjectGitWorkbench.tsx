@@ -112,6 +112,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
   const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
+  const [selectedStashRef, setSelectedStashRef] = useState('');
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
   const [commitLoading, setCommitLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState('');
@@ -201,6 +202,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
   const stashRepository = repositories.find((repository) => repository.id === stashRepositoryId) ?? null;
+  const activeStash = selectedRepository?.snapshot.stashes.find((stash) => stash.ref === selectedStashRef) ?? selectedRepository?.snapshot.stashes[0] ?? null;
+  const activeStashRef = activeStash?.ref ?? '';
+  const activeTopLevelTab = tab === 'stash' ? 'log' : tab;
   /** 其他仓库的选择不能借用当前仓库读取详情。 */
   const selectedCommitHash = selectedCommit?.repositoryId === selectedRepository?.id ? (selectedCommit?.ref ?? '') : '';
   const changedCount = repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0);
@@ -218,6 +222,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   useEffect(() => {
     setHistoryRef('');
     setHistoryPage(null);
+    setSelectedStashRef('');
   }, [selectedRepository?.id]);
   useEffect(() => {
     if (tab === 'log') void loadHistory(false);
@@ -303,14 +308,15 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   useEffect(() => {
     // 新选择立即清除旧详情，避免旧行高亮在异步读取期间冒充当前选择。
     setCommitDetail(null);
-    if (!selectedRepository || !selectedCommitHash || tab !== 'log') {
+    const revision = tab === 'stash' ? activeStashRef : selectedCommitHash;
+    if (!selectedRepository || !revision || (tab !== 'log' && tab !== 'stash')) {
       setCommitLoading(false);
       return;
     }
     let cancelled = false;
     setCommitLoading(true);
     props.client
-      .loadProjectGitCommit(props.project.id, selectedRepository.id, selectedCommitHash)
+      .loadProjectGitCommit(props.project.id, selectedRepository.id, revision)
       .then((detail) => {
         if (cancelled) return;
         setCommitDetail(detail);
@@ -325,7 +331,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.project.id, selectedRepository?.id, selectedCommitHash, tab]);
+  }, [props.project.id, selectedRepository?.id, selectedCommitHash, activeStashRef, activeStash?.hash, tab]);
 
   async function loadWorkbench(): Promise<void> {
     // 历史与仓库快照独立读取，仓库刷新失败不能伪装成没有操作记录。
@@ -856,13 +862,12 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <nav className="project-git-tabs" aria-label={zh ? 'Git 工作区' : 'Git workspace'}>
         {(
           [
-            ['changes', zh ? '本地变更' : 'Local Changes', changedCount],
-            ['stash', 'Stash', repositories.reduce((total, repository) => total + repository.snapshot.stashes.length, 0)],
-            ['log', zh ? '日志' : 'Log', null],
+            ['changes', zh ? '文件状态' : 'File Status', changedCount],
+            ['log', zh ? '历史' : 'History', null],
             ['console', zh ? '控制台' : 'Console', operationHistory.total],
           ] as const
         ).map(([id, label, count]) => (
-          <button key={id} type="button" className={tab === id ? 'is-active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+          <button key={id} type="button" className={activeTopLevelTab === id ? 'is-active' : ''} aria-current={activeTopLevelTab === id ? 'page' : undefined} onClick={() => setTab(id)}>
             {label}
             {count !== null ? <span>{count}</span> : null}
           </button>
@@ -1012,12 +1017,20 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   <small>{selectedRepository.snapshot.stashes.length}</small>
                 </summary>
                 {selectedRepository.snapshot.stashes.map((stash) => (
-                  <button key={stash.ref} data-git-context={JSON.stringify({ kind: 'stash', repositoryId: selectedRepository.id, ref: stash.ref })} type="button" onClick={() => setTab('stash')} title={stash.subject}>
+                  <button
+                    key={stash.ref}
+                    className="project-git-navigation-stash"
+                    data-git-context={JSON.stringify({ kind: 'stash', repositoryId: selectedRepository.id, ref: stash.ref })}
+                    type="button"
+                    aria-current={tab === 'stash' && activeStashRef === stash.ref ? 'true' : undefined}
+                    onClick={() => {
+                      setSelectedStashRef(stash.ref);
+                      setTab('stash');
+                    }}
+                    title={stash.subject}
+                  >
                     <Archive aria-hidden="true" />
-                    <span>
-                      {stash.subject}
-                      <small>{stash.ref}</small>
-                    </span>
+                    <span>{stash.subject}</span>
                   </button>
                 ))}
               </details>
@@ -1115,7 +1128,18 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               onCommitMessageChange={(repositoryId, message) => setCommitDrafts((current) => ({ ...current, [repositoryId]: message }))}
             />
           ) : tab === 'stash' ? (
-            <StashSurface zh={zh} repositories={selectedRepository ? [selectedRepository] : []} busy={busy} onOpenStash={(repository) => setStashRepositoryId(repository.id)} onExecute={execute} />
+            <StashSurface
+              zh={zh}
+              repository={selectedRepository}
+              stash={activeStash}
+              detail={commitDetail?.commit.hash === activeStash?.hash ? commitDetail : null}
+              loading={commitLoading}
+              selectedFilePath={selectedFilePath}
+              busy={busy}
+              onSelectFile={setSelectedFilePath}
+              onOpenDiff={openDiffWindow}
+              onExecute={execute}
+            />
           ) : (
             <ConsoleSurface zh={zh} history={operationHistory} />
           )}
@@ -2723,49 +2747,81 @@ function buildChangeTree(paths: string[]): ChangeTreeNode {
 
 function StashSurface(props: {
   zh: boolean;
-  repositories: ProjectGitRepositoryWorkbenchItem[];
+  repository: ProjectGitRepositoryWorkbenchItem | null;
+  stash: ProjectGitRepositoryWorkbenchItem['snapshot']['stashes'][number] | null;
+  detail: ProjectGitCommitDetail | null;
+  loading: boolean;
+  selectedFilePath: string;
   busy: BusyState;
-  onOpenStash: (repository: ProjectGitRepositoryWorkbenchItem) => void;
+  onSelectFile: (path: string) => void;
+  onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
+  const selectedDiff = props.detail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? props.detail?.diff.fileDiffs[0] ?? null;
+  if (!props.repository || !props.stash) {
+    return (
+      <div className="project-git-empty-surface">
+        <Archive aria-hidden="true" />
+        <strong>{props.zh ? '没有可查看的贮藏' : 'No stash to inspect'}</strong>
+        <span>{props.zh ? '左侧“贮藏区”会显示当前仓库中的贮藏。' : 'Stashes in the current repository appear in the sidebar.'}</span>
+      </div>
+    );
+  }
+  const repository = props.repository;
+  const stash = props.stash;
   return (
-    <div className="project-git-stash-surface">
-      {props.repositories.map((repository) => (
-        <section key={repository.id}>
-          <header>
-            <span>
-              <GitBranch aria-hidden="true" />
-              <strong>{repository.name}</strong>
-              <small>{repository.snapshot.branch}</small>
-            </span>
-            <Button variant="secondary" size="compact" disabled={props.busy !== null || repository.snapshot.clean || repository.snapshot.conflictFiles.length > 0} onClick={() => props.onOpenStash(repository)}>
-              {props.zh ? '备份并移出当前修改' : 'Back up and set aside current changes'}
-            </Button>
-          </header>
-          {repository.snapshot.stashes.length === 0 ? <p>{props.zh ? '这个仓库没有 Stash。' : 'No stash in this repository.'}</p> : null}
-          {repository.snapshot.stashes.map((stash) => (
-            <article key={stash.ref} data-git-context={JSON.stringify({ kind: 'stash', repositoryId: repository.id, ref: stash.ref })}>
-              <Archive aria-hidden="true" />
-              <span>
-                <strong>{displayStashSubject(stash.subject, props.zh)}</strong>
-                <small>
-                  {stash.ref} · {stash.author} · {formatRelativeTime(stash.authoredAt, props.zh)}
-                </small>
-              </span>
-              <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref }, props.zh ? '应用 Stash' : 'Apply stash')}>
-                {props.zh ? '应用' : 'Apply'}
-              </Button>
-              <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref, pop: true }, props.zh ? '弹出 Stash' : 'Pop stash')}>
-                {props.zh ? '弹出' : 'Pop'}
-              </Button>
-              <Button variant="danger" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'drop_stash', stashRef: stash.ref }, props.zh ? '删除 Stash' : 'Drop stash')}>
-                {props.zh ? '删除' : 'Delete'}
-              </Button>
-            </article>
-          ))}
-        </section>
-      ))}
-    </div>
+    <section className="project-git-stash-surface" aria-label={props.zh ? '贮藏详情' : 'Stash details'}>
+      <header className="project-git-stash-toolbar">
+        <span className="project-git-stash-identity">
+          <Archive aria-hidden="true" />
+          <span>
+            <strong>{displayStashSubject(stash.subject, props.zh)}</strong>
+            <small>
+              {stash.ref} · {stash.author} · {formatRelativeTime(stash.authoredAt, props.zh)}
+            </small>
+          </span>
+        </span>
+        <span className="project-git-stash-actions">
+          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref }, props.zh ? '应用 Stash' : 'Apply stash')}>
+            {props.zh ? '应用' : 'Apply'}
+          </Button>
+          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref, pop: true }, props.zh ? '弹出 Stash' : 'Pop stash')}>
+            {props.zh ? '弹出' : 'Pop'}
+          </Button>
+          <Button variant="danger" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'drop_stash', stashRef: stash.ref }, props.zh ? '删除 Stash' : 'Drop stash')}>
+            {props.zh ? '删除' : 'Delete'}
+          </Button>
+        </span>
+      </header>
+      {props.loading ? (
+        <div className="project-git-inspector-loading">
+          <CircleNotch aria-hidden="true" />
+          {props.zh ? '正在读取贮藏差异' : 'Loading stash diff'}
+        </div>
+      ) : props.detail ? (
+        <div className="project-git-stash-diff-layout">
+          <aside className="project-git-changed-files project-git-stash-files" aria-label={props.zh ? '贮藏中的变更文件' : 'Files changed in stash'}>
+            <header>
+              <strong>{props.zh ? `变更文件 (${props.detail.files.length})` : `Changed files (${props.detail.files.length})`}</strong>
+            </header>
+            <CommitFileDirectoryTree
+              files={props.detail.files}
+              selectedPath={props.selectedFilePath}
+              onSelect={props.onSelectFile}
+              onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })}
+            />
+          </aside>
+          <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
+          <SideBySideDiff
+            diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
+            zh={props.zh}
+            title={props.selectedFilePath}
+          />
+        </div>
+      ) : (
+        <p className="project-git-empty-copy">{props.zh ? '无法读取该贮藏的文件差异。' : 'The files and diff for this stash could not be loaded.'}</p>
+      )}
+    </section>
   );
 }
 
@@ -3115,7 +3171,7 @@ function OperationsMenu(props: {
       </button>
       <hr />
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('log'))}>
-        {props.zh ? '显示 Git 日志' : 'Show Git Log'}
+        {props.zh ? '显示 Git 历史' : 'Show Git History'}
       </button>
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('changes'))}>
         {props.zh ? '未提交的变更' : 'Uncommitted Changes'}

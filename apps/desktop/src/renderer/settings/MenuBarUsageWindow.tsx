@@ -219,8 +219,8 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               </small>
             </span>
           </span>
-          <button className="menu-bar-usage-refresh" type="button" aria-label={text.retry} title={text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
-            <RefreshIcon />
+          <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
+            {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
           </button>
         </header>
 
@@ -521,6 +521,14 @@ function RefreshIcon() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
       <path d="M13 4.5V1.75m0 0h-2.75M13 1.75l-1.6 1.6A5 5 0 1 0 12.78 8" />
+    </svg>
+  );
+}
+
+function RefreshPendingIcon() {
+  return (
+    <svg className="menu-bar-usage-hourglass" viewBox="0 0 256 256" aria-hidden="true">
+      <path d="M211.31 196.69A16 16 0 0 1 200 224H56a16 16 0 0 1-11.32-27.31L116.43 128 44.82 59.44a1.59 1.59 0 0 0-.13-.13A16 16 0 0 1 56 32h144a16 16 0 0 1 11.32 27.31 1.59 1.59 0 0 0-.13.13L139.57 128l71.61 68.56a1.59 1.59 0 0 0 .13.13Z" />
     </svg>
   );
 }

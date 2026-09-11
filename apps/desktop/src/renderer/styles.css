@@ -4032,35 +4032,85 @@ a {
 .project-git-commit-rail .zeus-button {
   margin-top: auto;
 }
-.project-git-stash-surface,
 .project-git-console-surface {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 12px;
 }
-.project-git-stash-surface > section {
-  border-bottom: 1px solid var(--zeus-product-line);
-  padding: 8px 0 14px;
-}
-.project-git-stash-surface header,
-.project-git-stash-surface article {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-height: 38px;
-}
-.project-git-stash-surface header > span,
-.project-git-stash-surface article > span {
+.project-git-stash-surface {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
-.project-git-stash-surface small {
-  color: var(--zeus-product-muted);
+.project-git-stash-toolbar {
+  align-items: center;
+  background: var(--zeus-product-panel);
+  border-bottom: 1px solid var(--zeus-product-line);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 8px 12px;
 }
-.project-git-stash-surface p {
+.project-git-stash-identity {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+}
+.project-git-stash-identity > svg {
   color: var(--zeus-product-muted);
+  flex: 0 0 auto;
+  height: 17px;
+  width: 17px;
+}
+.project-git-stash-identity > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.project-git-stash-identity strong,
+.project-git-stash-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-stash-identity strong {
+  font-size: 13px;
+}
+.project-git-stash-identity small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+.project-git-stash-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.project-git-stash-diff-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(160px, var(--git-stash-files, 28%)) 6px minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.project-git-stash-files {
+  border-bottom: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+}
+.project-git-stash-diff-layout > .git-separator-stash-files {
+  grid-column: 2;
+}
+.project-git-stash-diff-layout > .project-git-diff-preview {
+  grid-column: 3;
 }
 .project-git-console-surface article {
   align-items: start;
@@ -4752,6 +4802,9 @@ a {
   min-height: 40px;
   padding: 2px 10px 2px 118px;
 }
+.macos-ai-app .project-git-commit-row {
+  border-radius: 0;
+}
 .project-git-commit-row time {
   text-align: right;
 }
@@ -4763,7 +4816,7 @@ a {
   font-size: 10.5px;
 }
 .project-git-commit-row.is-current {
-  box-shadow: inset 2px 0 var(--zeus-control-accent, var(--zeus-brand-primary));
+  box-shadow: none;
 }
 .project-git-inspector {
   display: flex;

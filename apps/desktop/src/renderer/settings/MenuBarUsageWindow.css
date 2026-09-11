@@ -743,8 +743,16 @@ body:has(.menu-bar-usage-root),
   }
 }
 
-@keyframes menu-bar-usage-spin {
-  to {
+@keyframes menu-bar-usage-hourglass {
+  0%,
+  42% {
+    transform: rotate(0deg);
+  }
+  50%,
+  92% {
+    transform: rotate(180deg);
+  }
+  100% {
     transform: rotate(360deg);
   }
 }
@@ -906,8 +914,14 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-.menu-bar-usage-refresh[aria-busy='true'] svg {
-  animation: menu-bar-usage-spin 850ms linear infinite;
+.menu-bar-usage-refresh .menu-bar-usage-hourglass {
+  fill: currentcolor;
+  stroke: none;
+}
+
+.menu-bar-usage-refresh[aria-busy='true'] .menu-bar-usage-hourglass {
+  animation: menu-bar-usage-hourglass 1.2s ease-in-out infinite;
+  transform-origin: center;
 }
 
 .menu-bar-usage-tabs button {
