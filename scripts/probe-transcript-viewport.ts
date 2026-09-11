@@ -7,11 +7,32 @@ import { registerConversationSnapshotV2Api } from '../packages/local-server/src/
 import { mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
+import { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } from '../apps/desktop/src/renderer/features/workspace/workspaceSupport.js';
 import type { ConversationNavigationSnapshot } from '@zeus/shared';
 import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.js';
 import { TranscriptRowMeasurementCache, TranscriptViewportLayout, transcriptViewportMaximumWindowRows, transcriptViewportMeasurementCacheLimit } from '../apps/desktop/src/renderer/session/transcriptViewportVirtualizer.js';
 import { rememberSessionHotState, sessionHotCacheByteLimit, sessionHotCacheEntryByteLimit, type SessionHotCache } from '../apps/desktop/src/renderer/session/sessionHotCache.js';
-import type { NativeConversationSnapshot, NativeConversationSnapshotV2Page, NativeConversationModelHistoryV2Item, NativeSessionState, NativeQueuedSubmission, NativeQueueSnapshot } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import type {
+  NativeConversationChoice,
+  NativeConversationSnapshot,
+  NativeConversationSnapshotV2Page,
+  NativeConversationModelHistoryV2Item,
+  NativeSessionState,
+  NativeQueuedSubmission,
+  NativeQueueSnapshot,
+} from '../apps/desktop/src/renderer/session/sessionTypes.js';
+
+/** 已有消息的任务会话仍保留首发工作面的导航身份；入口可能只持有真实身份。 */
+const linkedConversation = { id: 'linked-conversation', navigationId: 'task-push:linked-operation', projectId: 'linked-project' } as NativeConversationChoice;
+assertProbe(resolveSelectedNativeConversationForProject([linkedConversation], linkedConversation.id, linkedConversation.projectId) === linkedConversation, '关联会话的真实身份必须解析到当前工作面，不能退回空白新对话。');
+assertProbe(resolveSelectedNativeConversationForProject([linkedConversation], linkedConversation.navigationId!, linkedConversation.projectId) === linkedConversation, '侧栏的稳定导航身份仍须命中同一会话。');
+assertProbe(
+  resolveConversationNavigationId(resolveSelectedNativeConversationForProject([linkedConversation], linkedConversation.id, linkedConversation.projectId)!) === linkedConversation.navigationId,
+  '关联入口必须沿用稳定导航身份，保留首发工作面。',
+);
+assertProbe(resolveSelectedNativeConversationForProject([linkedConversation], linkedConversation.id, 'another-project') === null, '真实身份不能绕过项目边界。');
+assertProbe(resolveSelectedNativeConversationForProject([linkedConversation], 'missing-conversation', linkedConversation.projectId) === null, '不存在的会话不能误选其他消息。');
+assertProbe(resolveSelectedNativeConversationForProject([{ ...linkedConversation, navigationId: undefined }], linkedConversation.id, linkedConversation.projectId)?.id === linkedConversation.id, '未经历本地首发的普通会话仍可打开。');
 
 /** 普通发送已保存、模型尚未接手时的队首。 */
 const dispatchPendingSubmission: NativeQueuedSubmission = { id: 'pending-head', content: '普通发送', position: 1, status: 'queued', pausedReason: null };

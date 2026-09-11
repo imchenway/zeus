@@ -1324,6 +1324,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     nativeConversationChoiceTaskStates,
     nativeConversationChoicesByProjectRef,
     nativeConversationChoicesByTask,
+    nativeConversationChoices,
     nativeConversationChoicesByTaskRef,
     nativeConversationGroups,
     nativeConversationHotCacheRef,
