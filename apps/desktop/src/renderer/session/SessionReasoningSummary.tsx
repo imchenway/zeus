@@ -102,6 +102,12 @@ function cleanReasoningSummary(value: string): string {
     .map((segment) => segment.trim())
     .filter(Boolean)
     .at(-1)!;
+  // 同一行可能紧邻多个 **动作** 标题；此时只保留最后一个动作，避免中间的
+  // “****”被当作正文显示成重复文本。
+  if (/^(?:\s*\*\*[^*\n]+\*\*\s*)+$/u.test(latest)) {
+    const lastAction = latest.match(/\*\*[^*\n]+\*\*/gu)?.at(-1);
+    if (lastAction) return lastAction.slice(2, -2);
+  }
   const bold = /^\*\*([^\n]+)\*\*$/u.exec(latest);
   return bold?.[1] ?? latest;
 }
