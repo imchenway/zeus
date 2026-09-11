@@ -1881,6 +1881,14 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* Git 导航、当前仓库文件和差异各自成栏，不再串联所有仓库的文件树。 */
+.macos-ai-app.zeus-shell .project-git-toolbar-actions > .project-git-branch-trigger {
+  flex: 0 0 auto;
+  margin-inline-start: 0;
+  min-inline-size: 0;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-reference-section-heading + .project-git-branch-directory-tree {
+  margin-inline-start: 20px;
+}
 .macos-ai-app.zeus-shell .project-git-navigator {
   grid-area: navigation;
   min-inline-size: 0;
@@ -1919,7 +1927,7 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-reference-section-heading::marker {
   content: '';
 }
-.macos-ai-app.zeus-shell .project-git-reference-section-heading::before {
+.macos-ai-app.zeus-shell .project-git-reference-section-heading::after {
   content: '';
   flex: 0 0 6px;
   inline-size: 6px;
@@ -1927,12 +1935,14 @@ body:has(.macos-ai-app.zeus-shell) {
   border-inline-end: 1.5px solid currentColor;
   border-block-end: 1.5px solid currentColor;
   transform: rotate(-45deg);
-  margin-inline-end: 4px;
+  margin-inline-start: 6px;
+  margin-inline-end: 2px;
 }
-.macos-ai-app.zeus-shell details[open] > .project-git-reference-section-heading::before {
+.macos-ai-app.zeus-shell details[open] > .project-git-reference-section-heading::after {
   transform: rotate(45deg);
 }
 .macos-ai-app.zeus-shell .project-git-reference-section-heading > span {
+  flex: 1;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;

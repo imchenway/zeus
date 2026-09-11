@@ -716,6 +716,25 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           </div>
         ) : null}
         <span className="project-git-toolbar-actions">
+          {selectedRepository ? (
+            <BranchSwitcher
+              zh={zh}
+              repositories={repositories}
+              selectedRepository={selectedRepository}
+              busy={busy}
+              onSelectRepository={setSelectedRepositoryId}
+              onExecute={execute}
+              onOpenDiff={openDiffWindow}
+              onOpenUpdate={() => setUpdateOpen(true)}
+              onOpenCommit={openCommit}
+              onOpenPush={() => setPushOpen(true)}
+              onOpenNewBranch={(baseRef) => {
+                setNewBranchBase(baseRef ?? '');
+                setNewBranchOpen(true);
+              }}
+              onOpenRevision={() => setRevisionOpen(true)}
+            />
+          ) : null}
           <Button variant="secondary" size="compact" disabled={!selectedRepository || busy !== null} onClick={() => setSubtreeDialogOpen(true)}>
             {zh ? '子树…' : 'Subtree…'}
           </Button>
@@ -851,7 +870,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <aside className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
           {selectedRepository?.snapshot.submodules?.length ? (
             <details>
-              <summary>{zh ? '子模块初始化与更新' : 'Initialize / update submodules'}</summary>
+              <summary className="project-git-reference-section-heading">
+                <span>{zh ? '子模块初始化与更新' : 'Initialize / update submodules'}</span>
+              </summary>
               {selectedRepository.snapshot.submodules.map((module) => (
                 <button
                   type="button"
@@ -871,8 +892,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             { title: zh ? '子模块' : 'Submodules', items: repositories.filter((repository) => repository.isSubmodule) },
           ].map((group) => (
             <details key={group.title} open>
-              <summary>
-                {group.title}
+              <summary className="project-git-reference-section-heading">
+                <span>{group.title}</span>
                 <small>{group.items.length}</small>
               </summary>
               <RepositoryNavigationTree
@@ -935,28 +956,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   />
                 </details>
               ))}
-              <div className="project-git-navigator-branch-actions">
-                <BranchSwitcher
-                  zh={zh}
-                  repositories={repositories}
-                  selectedRepository={selectedRepository}
-                  busy={busy}
-                  onSelectRepository={setSelectedRepositoryId}
-                  onExecute={execute}
-                  onOpenDiff={openDiffWindow}
-                  onOpenUpdate={() => setUpdateOpen(true)}
-                  onOpenCommit={openCommit}
-                  onOpenPush={() => setPushOpen(true)}
-                  onOpenNewBranch={(baseRef) => {
-                    setNewBranchBase(baseRef ?? '');
-                    setNewBranchOpen(true);
-                  }}
-                  onOpenRevision={() => setRevisionOpen(true)}
-                />
-              </div>
               <details open>
-                <summary>
-                  {zh ? '贮藏区' : 'Stashes'}
+                <summary className="project-git-reference-section-heading">
+                  <span>{zh ? '贮藏区' : 'Stashes'}</span>
                   <small>{selectedRepository.snapshot.stashes.length}</small>
                 </summary>
                 {selectedRepository.snapshot.stashes.map((stash) => (
@@ -970,7 +972,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 ))}
               </details>
               <details open>
-                <summary>{zh ? '子树' : 'Subtrees'}</summary>
+                <summary className="project-git-reference-section-heading">
+                  <span>{zh ? '子树' : 'Subtrees'}</span>
+                </summary>
                 {(selectedRepository.subtreePaths ?? []).map((path) => (
                   <button
                     key={path}
@@ -1300,7 +1304,7 @@ function BranchSwitcher(props: {
     <>
       <button ref={triggerRef} type="button" className={`project-git-branch-trigger${open ? ' is-open' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
         <GitBranch aria-hidden="true" />
-        <span>{triggerLabel}</span>
+        <span title={triggerLabel}>{props.zh ? '分支操作' : 'Branch actions'}</span>
         <CaretDown aria-hidden="true" />
       </button>
       {typeof document !== 'undefined' && document.body && popover ? createPortal(popover, triggerRef.current?.closest('.macos-ai-app') ?? document.body) : popover}

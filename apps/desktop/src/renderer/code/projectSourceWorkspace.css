@@ -127,12 +127,61 @@
 }
 
 .project-source-tree {
+  overflow: auto;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--zeus-control-border);
   background: var(--zeus-product-panel-muted);
+}
+
+.project-source-module {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--zeus-control-border);
+}
+.project-source-module > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+.project-source-module .project-source-tree-scroll {
+  max-height: 55vh;
+  overflow: auto;
+}
+.project-source-changes-body {
+  padding: 0 12px 12px;
+}
+.project-source-changes-body details > details,
+.project-source-changes-body details > button,
+.project-source-changes-body details > p {
+  margin-inline-start: 16px;
+}
+.project-source-changes-body summary {
+  padding-block: 7px;
+  cursor: pointer;
+}
+.project-source-changes-body small {
+  margin-inline-start: 8px;
+  color: var(--zeus-product-muted);
+}
+.project-source-changes-body button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 5px;
+  cursor: pointer;
+}
+.project-source-changes-body button > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.project-source-changes-body button > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .project-source-search {

@@ -16,10 +16,83 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
+import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
 
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
+
+function SourceChanges(props: { projectId: string; zh: boolean; onOpen(path: string): void }) {
+  const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
+  const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setSnapshot(null);
+    setError('');
+    const load = window.zeus?.loadProjectGitWorkbench;
+    if (!load) {
+      setError(props.zh ? '当前环境不支持读取 Git 更改。' : 'Git changes are unavailable.');
+      return;
+    }
+    void load(props.projectId)
+      .then((value) => {
+        if (active) setSnapshot(value);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.projectId, props.zh, refreshKey]);
+  useEffect(() => {
+    const refresh = () => setRefreshKey((key) => key + 1);
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
+  return (
+    <details className="project-source-module project-source-changes" open>
+      <summary>{props.zh ? '更改' : 'Changes'}</summary>
+      <div className="project-source-changes-body">
+        <button type="button" onClick={() => setRefreshKey((key) => key + 1)}>
+          {props.zh ? '刷新更改' : 'Refresh changes'}
+        </button>
+        {error ? <p role="alert">{error}</p> : !snapshot ? <p>{props.zh ? '正在读取更改…' : 'Loading changes…'}</p> : null}
+        {snapshot?.repositories.length === 0 ? <p>{props.zh ? '此项目没有 Git 仓库。' : 'No Git repository.'}</p> : null}
+        {snapshot?.repositories.map((repository) => (
+          <details key={repository.id} open>
+            <summary>
+              <strong>{repository.name}</strong>
+              <small>{repository.snapshot.branch}</small>
+            </summary>
+            {(
+              [
+                [props.zh ? '暂存的更改' : 'Staged changes', repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?' && file.indexStatus !== '!')],
+                [props.zh ? '更改' : 'Changes', repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '!')],
+              ] as const
+            ).map(([label, files]) => (
+              <details key={label} open>
+                <summary>
+                  {label}
+                  <small>{files.length}</small>
+                </summary>
+                {files.map((file) => (
+                  <button key={file.path} type="button" title={file.path} onClick={() => props.onOpen([repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'))}>
+                    <File aria-hidden="true" />
+                    <span>{file.path}</span>
+                    <small>{file.indexStatus.trim() || file.workingTreeStatus.trim()}</small>
+                  </button>
+                ))}
+                {files.length === 0 ? <p>{props.zh ? '暂无更改' : 'No changes'}</p> : null}
+              </details>
+            ))}
+          </details>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -576,33 +649,37 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       <div className="project-source-main">
         <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
-          <label className="project-source-search">
-            <MagnifyingGlass aria-hidden="true" />
-            <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} placeholder={zh ? '搜索文件名' : 'Search file names'} />
-          </label>
-          <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
-            {searchQuery.trim() ? (
-              <SearchResults entries={searchResults} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
-            ) : loadingTree ? (
-              <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
-            ) : (
-              <TreeRows
-                directoryPath=""
-                depth={0}
-                directories={directories}
-                expandedDirectories={expandedDirectories}
-                activePath={activePath}
-                busyPath={busyPath}
-                onToggle={(path) => void toggleDirectory(path)}
-                onOpen={(path) => void openFile(path)}
-                onContextMenu={(entry, event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setContextMenu({ entry, x: event.clientX, y: event.clientY });
-                }}
-              />
-            )}
-          </div>
+          <details className="project-source-module" open>
+            <summary>{zh ? '源码' : 'Source'}</summary>
+            <label className="project-source-search">
+              <MagnifyingGlass aria-hidden="true" />
+              <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} placeholder={zh ? '搜索文件名' : 'Search file names'} />
+            </label>
+            <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
+              {searchQuery.trim() ? (
+                <SearchResults entries={searchResults} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
+              ) : loadingTree ? (
+                <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
+              ) : (
+                <TreeRows
+                  directoryPath=""
+                  depth={0}
+                  directories={directories}
+                  expandedDirectories={expandedDirectories}
+                  activePath={activePath}
+                  busyPath={busyPath}
+                  onToggle={(path) => void toggleDirectory(path)}
+                  onOpen={(path) => void openFile(path)}
+                  onContextMenu={(entry, event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setContextMenu({ entry, x: event.clientX, y: event.clientY });
+                  }}
+                />
+              )}
+            </div>
+          </details>
+          <SourceChanges projectId={props.project.id} zh={zh} onOpen={(path) => void openFile(path)} />
         </aside>
         <div
           className="project-source-tree-resizer"
