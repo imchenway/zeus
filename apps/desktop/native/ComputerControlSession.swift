@@ -60,8 +60,16 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var frameTime = CMTime.invalid
     /** 供会话内预览使用的有界缩略图，不写入磁盘或另开采集流。 */
     private var previewData: Data?
-    /** 用户接管目标窗口时暂停，只有用户界面的继续动作可以解除。 */
+    /** 用户接管目标窗口时暂让输入，空闲后恢复观察资格。 */
     private var paused = false
+    /** 接管空闲窗口使用单调时钟，避免系统校时影响恢复。 */
+    private var lastUserInput = 0.0
+    /** 连续空闲三秒后允许重新观察；明确停止始终不可自动恢复。 */
+    private let userIdleInterval = 3.0
+    /** 记住目标窗口内按下的实体键，长按不能被当成空闲。 */
+    private var userKeys = Set<CGKeyCode>()
+    /** 拖拽越出窗口后仍等待实体按钮释放。 */
+    private var userButtons = Set<UInt32>()
     /** 继续或窗口移动后，必须重新观察才能输入。 */
     private var needsObservation = true
     /** 原生停止先锁住输入，再通知宿主释放 Helper。 */
@@ -177,7 +185,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     func requireTarget(pid: pid_t, sessionId: String) throws -> ComputerWindowTarget {
         let current = try lock.withLock { () throws -> ComputerWindowTarget in
             guard !stopped, capture != nil, let target, target.pid == pid, target.sessionId == sessionId else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口，不能直接开始输入。") }
-            guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户正在操作目标应用；等待用户在会话预览中点击继续，禁止自动恢复。") }
+            guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户正在操作目标窗口；宿主会等待空闲后返回，请保留任务并重新观察，不能重放旧动作。") }
             guard !needsObservation else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "窗口位置或用户控制状态已变化，请重新观察。") }
             return target
         }
@@ -191,9 +199,11 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 检查与投递在同一把锁内完成，停止不能插入检查和鼠标按下之间。 */
     func postInput(_ event: CGEvent, pid: pid_t, sessionId: String) throws {
         try lock.withLock {
-            guard !stopped, !paused, !needsObservation, target?.pid == pid, target?.sessionId == sessionId else {
+            guard !stopped, target?.pid == pid, target?.sessionId == sessionId else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "输入投递前控制状态已改变，请停止并重新观察，不能重放动作。")
             }
+            guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户接管中，动作可能已部分投递；等待空闲后重新观察，不能重放。") }
+            guard !needsObservation else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "输入前窗口状态已变化，请重新观察，不能重放动作。") }
             let type = event.type
             let mouse = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .leftMouseUp, .rightMouseUp, .otherMouseUp] as [CGEventType]
             if mouse.contains(type) {
@@ -219,7 +229,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         for (event, pid) in releases { event.postToPid(pid) }
     }
 
-    /** 将暂停状态附在观察结果中；观察本身不能替用户恢复控制。 */
+    /** 将接管状态附在观察结果中；读取状态不会绕过空闲等待。 */
     var status: [String: Any] {
         lock.withLock { ["active": !stopped && capture != nil, "paused": paused, "needs_observation": needsObservation] }
     }
@@ -294,7 +304,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         /** 同一把锁确认流身份并清理，迟到的旧流事件不能使新窗口失效。 */
         let invalidated = lock.withLock { () -> Bool in
             guard !stopped, capture === stream else { return false }
-            capture = nil; image = nil; previewData = nil; frameTime = .invalid; needsObservation = true
+            capture = nil; image = nil; previewData = nil; frameTime = .invalid; paused = false; needsObservation = true
             return true
         }
         guard invalidated else { return }
@@ -353,7 +363,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             menu.addItem(stopItem)
             status.menu = menu
             statusItem = status; statusCaption = heading; resumeItem = resume
-            inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]) { [weak self] event in self?.observeUserInput(event) }
+            inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .rightMouseUp, .otherMouseUp, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .keyDown, .keyUp, .flagsChanged, .scrollWheel]) { [weak self] event in self?.observeUserInput(event) }
             lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.refreshPresentation() }
         }
         refreshPresentation()
@@ -376,7 +386,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if let payload, let data = try? JSONSerialization.data(withJSONObject: payload) { writeComputerOutput(data) }
     }
 
-    /** 只有用户界面可以恢复；恢复后仍必须重新观察，停止的会话不能复活。 */
+    /** 用户可以提前结束等待；恢复后仍必须重新观察，停止的会话不能复活。 */
     func resume(sessionId: String) throws {
         try lock.withLock {
             guard !stopped, capture != nil, target?.sessionId == sessionId else {
@@ -399,10 +409,20 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private func observeUserInput(_ event: NSEvent) {
         guard let current = lock.withLock({ stopped ? nil : target }), let cgEvent = event.cgEvent,
               cgEvent.getIntegerValueField(.eventSourceUnixProcessID) != Int64(ProcessInfo.processInfo.processIdentifier) else { return }
-        let touchesTarget = event.type == .keyDown
+        /** 按键与修饰键以目标应用焦点判断，鼠标只命中固定窗口。 */
+        let keyboard = [.keyDown, .keyUp, .flagsChanged].contains(event.type)
+        let touchesTarget = keyboard
             ? NSWorkspace.shared.frontmostApplication?.processIdentifier == current.pid
             : topWindow(at: cgEvent.location) == current.windowId
-        if touchesTarget { lock.withLock { paused = true; needsObservation = true }; releaseInput(); refreshPresentation() }
+        if touchesTarget {
+            lock.withLock {
+                paused = true; needsObservation = true
+                lastUserInput = ProcessInfo.processInfo.systemUptime
+                if keyboard { userKeys.insert(event.keyCode) }
+                if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) { userButtons.insert(UInt32(event.buttonNumber)) }
+            }
+            releaseInput(); refreshPresentation()
+        }
     }
 
     /** 跟随目标窗口生命周期，光标只出现在目标自身可见区域。 */
@@ -416,9 +436,18 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             return
         }
         if frame != current.frame { lock.withLock { needsObservation = true } }
+        lock.withLock {
+            guard paused else { return }
+            userKeys = userKeys.filter { CGEventSource.keyState(.combinedSessionState, key: $0) }
+            userButtons = userButtons.filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: $0)!) }
+            /** 长按和跨窗口拖拽保持等待，释放后重新计算空闲时间。 */
+            let now = ProcessInfo.processInfo.systemUptime
+            if !userKeys.isEmpty || !userButtons.isEmpty { lastUserInput = now }
+            if now - lastUserInput >= userIdleInterval { paused = false; needsObservation = true }
+        }
         let state = lock.withLock { (paused, needsObservation) }
-        statusCaption?.title = state.0 ? "已暂停 · \(targetLabel)" : targetLabel
-        statusItem?.button?.toolTip = state.0 ? "Zeus 屏幕控制已暂停" : "Zeus 正在控制 \(targetLabel)"
+        statusCaption?.title = state.0 ? "等待用户操作结束 · \(targetLabel)" : targetLabel
+        statusItem?.button?.toolTip = state.0 ? "目标窗口空闲 3 秒后自动继续；停止可结束本轮控制" : "Zeus 正在控制 \(targetLabel)"
         resumeItem?.isHidden = !state.0
         publishPreview()
         guard !state.0, !state.1, let point = cursorPoint, current.frame.contains(point) else { cursorPanel?.orderOut(nil); return }

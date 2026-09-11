@@ -62,6 +62,8 @@ interface CreateComputerHostOptions {
 const serviceIdleTimeoutMs = 2 * 60_000;
 const serviceRequestTimeoutMs = 35_000;
 const snapshotDeadlineMs = 30_000;
+/** 长时间接管分段返回等待状态，避免跨进程 HTTP 请求超时结束原任务。 */
+const userControlWaitTimeoutMs = 60_000;
 const serviceTerminationGraceMs = 1_000;
 const serviceTerminationKillWaitMs = 2_000;
 const maximumServiceLineBytes = 16 * 1024 * 1024;
@@ -102,6 +104,8 @@ export class ComputerHost implements BrowserAutomationPort {
   private controlPreview: ZeusComputerPreview | null = null;
   /** 用户停止或关闭能力时同步关闭本轮尚未回答的确认框。 */
   private actionApproval: AbortController | null = null;
+  /** 串行工具在接管期间挂起；恢复、停止或服务退出都唤醒同一等待者。 */
+  private userControlWaiter: (() => void) | null = null;
 
   constructor(private readonly options: CreateComputerHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -251,6 +255,10 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.refreshServiceStatus();
       await this.requestMissingPermissionsForTool(input);
       this.assertControlAllowed(input, generation);
+      if (input.tool !== 'list_apps' && this.controlPreview?.paused) {
+        await this.waitForUserControl(input, generation);
+        return this.userControlContinuation('当前请求尚未执行。');
+      }
       const serviceArguments = this.prepareServiceArguments(input);
       await this.ensureSensitiveActionApproval(input, serviceArguments, generation);
       this.assertControlAllowed(input, generation);
@@ -262,6 +270,10 @@ export class ComputerHost implements BrowserAutomationPort {
       const result = await this.callService(input.tool, serviceArguments);
       const serviceFinishedAt = performance.now();
       this.assertControlAllowed(input, generation);
+      if (this.controlPreview?.paused || asRecord(asRecord(result).control).paused === true || asRecord(asRecord(result).confirmation).code === 'ZEUS_COMPUTER_PAUSED') {
+        await this.waitForUserControl(input, generation);
+        return this.userControlContinuation(input.tool === 'get_app_state' ? '观察期间发生用户接管，旧观察已作废。' : '动作已经返回，可能已执行；不得重放，必须重新观察实际结果。');
+      }
       if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result);
       // 先记住动作回读的观察世代，再裁剪模型投影；审批始终读取实时控件。
       const { textValue, image } = await this.projectResult(result, input.arguments.full_output === true);
@@ -287,9 +299,54 @@ export class ComputerHost implements BrowserAutomationPort {
       const record = isRecord(error) ? error : {};
       const code = typeof record.code === 'string' ? record.code : 'ZEUS_COMPUTER_OPERATION_FAILED';
       const message = error instanceof Error ? error.message : String(error);
+      if (code === 'ZEUS_COMPUTER_PAUSED' || this.controlPreview?.paused) {
+        try {
+          await this.waitForUserControl(input, generation);
+          return this.userControlContinuation(`请求被用户接管打断（${code}: ${message.slice(0, 500)}），可能尚未执行或仅部分执行；不得重放，必须重新观察实际结果。`);
+        } catch (interruption) {
+          return computerText(interruption instanceof Error ? interruption.message : String(interruption), false);
+        }
+      }
       this.settings = { ...this.settings, serviceState: this.child ? 'ready' : 'error', detail: `${code}: ${message}`.slice(0, 1000) };
       return computerText(`${code}: ${message}`.slice(0, 2000), false);
     }
+  }
+
+  /** 等待原生空闲通知，不占用原生请求超时，也不向服务投递恢复或旧动作。 */
+  private async waitForUserControl(input: BrowserAutomationToolCall, generation: number): Promise<void> {
+    this.latestSnapshots.clear();
+    this.assertControlAllowed(input, generation);
+    /** 错误响应可能先于预览事件到达，先核对原生状态，不能误报已空闲。 */
+    const status = asRecord(await this.callService('status', {}));
+    this.assertControlAllowed(input, generation);
+    if (this.controlPreview?.paused || asRecord(status.control).paused === true)
+      await new Promise<void>((resolveWait) => {
+        /** 恢复、停止和等待上限共用清理出口，避免遗留计时器或回调。 */
+        const finish = (): void => {
+          clearTimeout(timer);
+          this.userControlWaiter = null;
+          resolveWait();
+        };
+        /** 等待上限只返回继续等待的结果，不撤销控制或执行动作。 */
+        const timer = setTimeout(finish, userControlWaitTimeoutMs);
+        this.userControlWaiter = finish;
+      });
+    this.assertControlAllowed(input, generation);
+  }
+
+  /** 将临时接管作为可继续的工具结果，明确要求重新观察而非结束任务。 */
+  private userControlContinuation(outcome: string): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
+    /** 超时后仍在接管时继续等候，不谎报已恢复。 */
+    const waiting = this.controlPreview?.paused === true;
+    return computerText(
+      JSON.stringify({
+        status: waiting ? 'waiting_for_user' : 'user_control_resumed',
+        requires_observation: true,
+        action_replayed: false,
+        message: `${outcome} ${waiting ? '用户仍在操作，请保留原任务并再次调用 get_app_state 继续等待，不要结束本轮。' : '用户操作等待已结束，请立即调用 get_app_state 获取新状态后继续原任务。'} 无需用户点击继续或发送新消息。`,
+      }),
+      true,
+    );
   }
 
   /** 统一接收正常完成、失败和用户中断；旧轮次通知不得停止新轮次。 */
@@ -314,6 +371,8 @@ export class ComputerHost implements BrowserAutomationPort {
     this.controlOwner = null;
     this.controlPreview = null;
     this.latestSnapshots.clear();
+    this.userControlWaiter?.();
+    this.userControlWaiter = null;
   }
 
   async close(): Promise<void> {
@@ -516,6 +575,11 @@ export class ComputerHost implements BrowserAutomationPort {
       imageUrl: value.imageUrl as string | null,
       cursor,
     };
+    if (value.paused || value.needsObservation) this.latestSnapshots.clear();
+    if (!value.paused) {
+      this.userControlWaiter?.();
+      this.userControlWaiter = null;
+    }
   }
 
   private handleServiceExit(child: ChildProcessWithoutNullStreams, error: Error): void {
