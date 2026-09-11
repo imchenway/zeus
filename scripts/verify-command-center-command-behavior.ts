@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArtifactStore, CommandDefinitionRepository, CommandDeliveryRepository, CommandDeliveryStoreError, ProjectRepository, RuntimeSessionRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import { createCommandCenter } from '../packages/local-server/src/commandCenter.js';
+import { installBuiltinWechatCommands } from '../packages/local-server/src/builtinWechatCommands.js';
 import { CommandCenterCommandApplication, commandCenterCommandTypes, createCommandCenterCommandRequest } from '../packages/local-server/src/commandCenterCommandApplication.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-command-center-command-probe-'));
@@ -316,6 +317,7 @@ try {
       '只读验证关闭不得让复制库中的历史 command run 驱动 Runtime kill、能力撤销或业务投影收口',
     );
     assertProbe(observed.quickCheck === 'ok', '临时数据库 quick_check 必须通过');
+    await verifyBuiltinWechatCommands();
   } finally {
     await db.close();
   }
@@ -324,6 +326,40 @@ try {
 }
 
 console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
+
+/** 使用隔离数据库验证首次安装、用户修改持久化以及名称和别名冲突保护。 */
+async function verifyBuiltinWechatCommands(): Promise<void> {
+  /** 分开验证新安装和带历史命令的升级，不接触真实用户数据。 */
+  for (const hasExisting of [false, true]) {
+    /** 每个场景使用独立数据库，初始化行为可重复执行。 */
+    const db = await createZeusDatabase(join(probeRoot, `wechat-${hasExisting}.db`));
+    try {
+      /** 直接使用生产仓库验证落库后的命令投影。 */
+      const definitions = new CommandDefinitionRepository(db);
+      if (hasExisting) definitions.create({ scope: 'global', projectId: null, name: 'my-upload', aliases: ['WX-DEV-UPLOAD'], title: '用户上传', command: 'echo user', enabled: false });
+      installBuiltinWechatCommands(db);
+      /** 所有安装场景都保留四条有效定义，冲突时其中一条来自用户。 */
+      const initial = definitions.listGlobal();
+      assertProbe(initial.length === 4, '微信全局命令必须安装且不重复创建别名冲突项');
+      assertProbe(definitions.listMerged('another-project').length === 4, '每个项目都能获得全局微信命令');
+      if (hasExisting) assertProbe(definitions.findByToken('another-project', 'wx-dev-upload', false)?.command === 'echo user', '不得覆盖用户已有的同名或同别名命令');
+      else
+        assertProbe(
+          initial.every((command) => command.enabled && !command.telegramEnabled && command.riskFlags.externalServiceWrite && command.command.includes('$ZEUS_BUILTIN_WECHAT')),
+          '内置命令必须使用随包入口并保留风险声明',
+        );
+      /** 模拟用户编辑、停用和删除，重启初始化必须尊重这些操作。 */
+      const preview = definitions.getById('builtin_wx-dev-preview')!;
+      definitions.update(preview.id, { ...preview, title: '我的预览', enabled: false, revision: preview.revision + 1 });
+      definitions.delete('builtin_wx-auto-preview');
+      installBuiltinWechatCommands(db);
+      assertProbe(definitions.listGlobal().length === 3 && definitions.getById(preview.id)?.title === '我的预览' && !definitions.getById(preview.id)?.enabled, '重启不得恢复已删除命令或重置用户修改');
+    } finally {
+      await db.close();
+    }
+  }
+  observed.builtinWechatCommands = '首次安装、项目可见性、别名冲突、编辑停用与删除持久化均通过';
+}
 
 function externalRequest(label: string, runId: string) {
   const externalOperationId = `command-run-${label}:${runId}`;
