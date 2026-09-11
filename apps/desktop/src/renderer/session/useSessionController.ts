@@ -3169,7 +3169,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.model === undefined || typeof pending.model === 'string') &&
     (pending.effort === undefined || typeof pending.effort === 'string') &&
     (pending.serviceTier === undefined || pending.serviceTier === null || typeof pending.serviceTier === 'string') &&
-    (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'full-access') &&
+    (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'auto-review' || pending.permissionMode === 'full-access') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     (pending.pluginReferences === undefined || isPluginSkillReferences(pending.pluginReferences)) &&
     (pending.expertMentions === undefined || isStableIdReferences(pending.expertMentions, 'employeeId')) &&

@@ -73,7 +73,7 @@ interface PiConversationContext {
   projectId: string;
   taskId: string | null;
   cwd: string;
-  permissionMode: 'read-only' | 'auto' | 'full-access';
+  permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   model: string;
   attachmentRoots: string[];
   session: AgentSessionIdentity;
@@ -142,7 +142,7 @@ export interface StartPiConversationInput {
   displayText?: string;
   model: AgentModelIdentity;
   thinkingLevel?: string;
-  permissionMode: 'read-only' | 'auto' | 'full-access';
+  permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   idempotencyKey: string;
   clientUserMessageId: string;
   workspaceId?: string;
@@ -270,6 +270,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function startConversation(input: StartPiConversationInput) {
+    if (input.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const existingConversation = options.conversations.getById(input.conversationId);
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
@@ -799,6 +800,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
+    if (input.conversation.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const createdAt = options.now();
     /** 续发和重启恢复都使用当前产品工作区，不根据首条消息猜测目录。 */
     const executionContext = await options.ensureExecutionContext({ conversationId: input.conversation.id, mode: 'dispatch' });
@@ -1099,7 +1101,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     displayText?: string;
     model: AgentModelIdentity;
     thinkingLevel?: string;
-    permissionMode?: 'read-only' | 'auto' | 'full-access';
+    permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     idempotencyKey: string;
     clientUserMessageId: string;
     attachments?: NativeConversationAttachmentInput[];
@@ -1704,6 +1706,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   async function executeToolRaw(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
     const context = contexts.get(request.session.nativeSessionId);
     if (!context) throw piError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具请求没有对应的 Zeus 会话。');
+    if (context.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     if (request.toolName === 'read_conversation_tool_result') {
       const page = await options.toolResults.readPage({
         conversationId: context.conversationId,

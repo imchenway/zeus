@@ -902,9 +902,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 ] as const
               ).map(([title, branches, kind]) => (
                 <details key={title} open>
-                  <summary>
+                  <summary className="project-git-reference-section-heading">
                     {branches === selectedRepository.snapshot.localBranches ? <GitBranch className="project-git-branch-section-icon" aria-hidden="true" /> : null}
-                    {title}
+                    <span>{title}</span>
                     <small>{branches.length}</small>
                   </summary>
                   <BranchDirectoryTree

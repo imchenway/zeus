@@ -1153,7 +1153,7 @@ function nativeAgentAndModelIdentity(conversation: Record<string, unknown>): Pic
 }
 
 function permissionModeField(value: unknown): NativePermissionMode | undefined {
-  return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : undefined;
+  return value === 'read-only' || value === 'auto' || value === 'auto-review' || value === 'full-access' ? value : undefined;
 }
 
 function conversationAttentionKindField(value: unknown): NativeConversationAttentionKind {
@@ -3356,7 +3356,7 @@ function NewConversationComposer(props: {
                 <Paperclip aria-hidden="true" weight="regular" />
               </button>
             ) : null}
-            <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
+            <PermissionModeControl language={props.language} value={permissionMode} supportsAutoReview={Boolean(selectedModel) && selectedModel?.agentKind !== 'pi'} disabled={submitting || !props.owner} onChange={setPermissionMode} />
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
             {goalAvailable ? (
               <button
@@ -3481,7 +3481,7 @@ function readConversationNextTurnSettings(storage: Pick<Storage, 'getItem'> | un
       !parsed.model.trim() ||
       (parsed.effort !== undefined && (typeof parsed.effort !== 'string' || !parsed.effort.trim())) ||
       (parsed.serviceTier !== undefined && parsed.serviceTier !== null && (typeof parsed.serviceTier !== 'string' || !parsed.serviceTier.trim())) ||
-      (parsed.permissionMode !== 'read-only' && parsed.permissionMode !== 'auto' && parsed.permissionMode !== 'full-access') ||
+      (parsed.permissionMode !== 'read-only' && parsed.permissionMode !== 'auto' && parsed.permissionMode !== 'auto-review' && parsed.permissionMode !== 'full-access') ||
       (parsed.collaborationMode !== 'default' && parsed.collaborationMode !== 'plan')
     ) {
       return null;

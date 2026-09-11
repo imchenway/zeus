@@ -5,6 +5,7 @@ export interface ComposerDropdownOption<Value extends string = string> {
   value: Value;
   label: string;
   description?: string;
+  disabled?: boolean;
   group?: string;
   searchText?: string;
 }

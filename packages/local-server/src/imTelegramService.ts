@@ -100,7 +100,7 @@ export interface ImTelegramPresetSnapshot {
   agentKind: 'codex' | 'pi';
   model: string | null;
   reasoningEffort: string | null;
-  permissionMode: 'read-only' | 'auto' | 'full-access';
+  permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   workMode: 'default' | 'plan';
   prompt: string;
   skillId: string | null;

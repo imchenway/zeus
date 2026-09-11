@@ -17,6 +17,7 @@ export interface PermissionModeControlProps {
   language: SessionUiLanguage;
   value: NativePermissionMode;
   disabled?: boolean;
+  supportsAutoReview?: boolean;
   onChange: (permissionMode: NativePermissionMode) => void | Promise<void>;
 }
 
@@ -31,6 +32,9 @@ const labels = {
     readOnlyDescription: '默认仅查看文件，修改文件或运行联网命令需批准',
     auto: '自动',
     autoDescription: '自动修改工作区文件，访问区外或运行联网命令需批准',
+    autoReview: '替我批准',
+    autoReviewDescription: '自动审核需批准的操作，有风险时仍可能询问或拒绝',
+    autoReviewUnavailable: '当前引擎不支持替我批准，请切换到 Codex 或选择其他权限',
     fullAccess: '完全访问',
     fullAccessDescription: '可访问任意文件、运行命令和联网，无需逐次批准',
     title: '要开启完全访问吗？',
@@ -52,6 +56,9 @@ const labels = {
     readOnlyDescription: 'View files by default; file changes and network commands need approval',
     auto: 'Auto',
     autoDescription: 'Edit workspace files automatically; outside access and network commands need approval',
+    autoReview: 'Approve for me',
+    autoReviewDescription: 'Automatically review approval requests; risky actions may still prompt or be denied',
+    autoReviewUnavailable: 'This engine cannot review approvals; switch to Codex or choose another mode',
     fullAccess: 'Full access',
     fullAccessDescription: 'Access any file, run commands, and use the network without per-action approval',
     title: 'Enable full access?',
@@ -79,6 +86,7 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
   const options = [
     { value: 'read-only', label: copy.readOnly, description: copy.readOnlyDescription },
     { value: 'auto', label: copy.auto, description: copy.autoDescription },
+    { value: 'auto-review', label: copy.autoReview, description: props.supportsAutoReview === false ? copy.autoReviewUnavailable : copy.autoReviewDescription, disabled: props.supportsAutoReview === false },
     { value: 'full-access', label: copy.fullAccess, description: copy.fullAccessDescription },
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;

@@ -434,9 +434,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     if (section === 'sessions') {
       const group = nativeConversationGroups.find((item) => item.projectId === project.id);
       const conversations = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])];
-      const latest = conversations
-        .filter((conversation) => conversation.projectId === project.id && !conversation.archived)
-        .sort((a, b) => Date.parse(b.activityAt ?? b.updatedAt) - Date.parse(a.activityAt ?? a.updatedAt))[0];
+      const latest = conversations.filter((conversation) => conversation.projectId === project.id && !conversation.archived).sort((a, b) => Date.parse(b.activityAt ?? b.updatedAt) - Date.parse(a.activityAt ?? a.updatedAt))[0];
       if (latest) {
         void selectNativeConversation(latest);
         return;

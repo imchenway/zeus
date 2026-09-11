@@ -533,7 +533,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
     const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
     if (!value || typeof value.model !== 'string' || typeof value.effort !== 'string') return null;
     if (value.workMode !== 'default' && value.workMode !== 'plan') return null;
-    if (value.permissionMode !== 'read-only' && value.permissionMode !== 'auto' && value.permissionMode !== 'full-access') return null;
+    if (value.permissionMode !== 'read-only' && value.permissionMode !== 'auto' && value.permissionMode !== 'auto-review' && value.permissionMode !== 'full-access') return null;
     return {
       model: value.model,
       effort: value.effort,
@@ -966,6 +966,7 @@ export function TaskModelPushModal(props: {
                   options={[
                     { value: 'read-only', label: zh ? '只读' : 'Read only' },
                     { value: 'auto', label: zh ? '自动' : 'Auto' },
+                    { value: 'auto-review', label: zh ? '替我批准' : 'Approve for me', disabled: !selectedModel || selectedModel.agentKind === 'pi' || Boolean(props.form.stageId) },
                     { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
                   ]}
                   onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}

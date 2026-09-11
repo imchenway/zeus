@@ -358,7 +358,7 @@ export interface ConversationSnapshotV2NextTurnSettings {
   model: string;
   effort?: string;
   serviceTier?: string | null;
-  permissionMode: 'read-only' | 'auto' | 'full-access';
+  permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   collaborationMode: 'default' | 'plan';
 }
 
@@ -2490,9 +2490,9 @@ function parseNextTurnSettings(value: string, permissionModeValue: string, colla
   const settings = parseSettingsRecord(value);
   const model = boundedSettingString(settings?.model, 256);
   if (!settings || !model) return null;
-  const permissionMode = ['read-only', 'auto', 'full-access'].includes(String(settings.permissionMode))
+  const permissionMode = ['read-only', 'auto', 'auto-review', 'full-access'].includes(String(settings.permissionMode))
     ? (settings.permissionMode as ConversationSnapshotV2NextTurnSettings['permissionMode'])
-    : ['read-only', 'auto', 'full-access'].includes(permissionModeValue)
+    : ['read-only', 'auto', 'auto-review', 'full-access'].includes(permissionModeValue)
       ? (permissionModeValue as ConversationSnapshotV2NextTurnSettings['permissionMode'])
       : null;
   const collaborationMode = ['default', 'plan'].includes(String(settings.collaborationMode))

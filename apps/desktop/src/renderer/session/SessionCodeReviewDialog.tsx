@@ -358,5 +358,6 @@ function findModel(capabilities: CodexConversationCapabilities | null, model: st
 function permissionModeLabel(permissionMode: NativePermissionMode, zh: boolean): string {
   if (permissionMode === 'full-access') return zh ? '完全访问' : 'Full access';
   if (permissionMode === 'auto') return zh ? '自动' : 'Auto';
+  if (permissionMode === 'auto-review') return zh ? '替我批准' : 'Approve for me';
   return zh ? '只读（固定）' : 'Read only (fixed)';
 }

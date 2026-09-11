@@ -34,7 +34,7 @@ export type ConversationState =
   | 'turn_failed';
 
 export type ThreadFollowMode = 'static' | 'prework_watch' | 'prework_follow' | 'user_follow';
-export type NativePermissionMode = 'read-only' | 'auto' | 'full-access';
+export type NativePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type NativeCollaborationMode = 'default' | 'plan';
 export type NativeGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
 

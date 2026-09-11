@@ -1197,6 +1197,7 @@ function permissionModeLabel(permissionMode: NativePermissionMode, language: Ses
   const labels: Record<NativePermissionMode, readonly [string, string]> = {
     'read-only': ['只读', 'Read only'],
     auto: ['自动', 'Auto'],
+    'auto-review': ['替我批准', 'Approve for me'],
     'full-access': ['完全访问', 'Full access'],
   };
   return labels[permissionMode][language === 'zh-CN' ? 0 : 1];

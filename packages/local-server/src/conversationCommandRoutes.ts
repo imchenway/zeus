@@ -457,8 +457,8 @@ function parseNextTurnSettings(input: NextTurnSettingsInput): ConversationNextTu
 }
 
 function parsePermissionMode(value: unknown): ConversationPermissionMode {
-  if (value === 'read-only' || value === 'auto' || value === 'full-access') return value;
-  throw routeError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.', 400);
+  if (value === 'read-only' || value === 'auto' || value === 'auto-review' || value === 'full-access') return value;
+  throw routeError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.', 400);
 }
 
 function parseCollaborationMode(value: unknown): ConversationCollaborationMode {

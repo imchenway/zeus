@@ -230,7 +230,7 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
   serviceTier?: string | null;
   cwd: string;
   approvalPolicy?: string;
-  approvalsReviewer?: string;
+  approvalsReviewer?: 'user' | 'auto_review';
   sandbox: CodexSandboxPolicy;
   config?: never;
   responsesRuntime?: CodexResponsesRuntime;
@@ -283,7 +283,7 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   summary?: CodexReasoningSummary;
   cwd?: string;
   approvalPolicy?: string;
-  approvalsReviewer?: string;
+  approvalsReviewer?: 'user' | 'auto_review';
   sandboxPolicy?: CodexSandboxPolicy;
 }
 
@@ -1547,6 +1547,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           { traceIdentity: input.traceIdentity },
         ),
       );
+      if (input.approvalsReviewer === 'auto_review' && response.approvalsReviewer !== 'auto_review' && response.approvalsReviewer !== 'guardian_subagent') {
+        throw managerError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '当前 Codex 未启用自动审批，请更新 Codex 或选择其他权限模式。');
+      }
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : input.model;
       threadModels.set(thread.id, responseModel);

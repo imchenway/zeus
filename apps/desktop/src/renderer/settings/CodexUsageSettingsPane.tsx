@@ -392,7 +392,17 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
   const rows = hover
     ? [
         ['Runtime', 'Codex'],
-        [zh ? '总量' : 'Total', totals.length ? `${formatTokens(totals.reduce((sum, day) => sum + Math.max(0, day.totalTokens), 0), props.language)} Token` : zh ? '无记录' : 'No record'],
+        [
+          zh ? '总量' : 'Total',
+          totals.length
+            ? `${formatTokens(
+                totals.reduce((sum, day) => sum + Math.max(0, day.totalTokens), 0),
+                props.language,
+              )} Token`
+            : zh
+              ? '无记录'
+              : 'No record',
+        ],
         [zh ? '未缓存' : 'Uncached', missing],
         [zh ? '缓存' : 'Cached', missing],
         [zh ? '输出' : 'Output', missing],

@@ -1905,6 +1905,48 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator summary small {
   float: right;
 }
+.macos-ai-app.zeus-shell .project-git-navigator summary.project-git-reference-section-heading {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+}
+.macos-ai-app.zeus-shell .project-git-reference-section-heading::-webkit-details-marker {
+  display: none;
+}
+.macos-ai-app.zeus-shell .project-git-reference-section-heading::marker {
+  content: '';
+}
+.macos-ai-app.zeus-shell .project-git-reference-section-heading::before {
+  content: '';
+  flex: 0 0 6px;
+  inline-size: 6px;
+  block-size: 6px;
+  border-inline-end: 1.5px solid currentColor;
+  border-block-end: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-inline-end: 4px;
+}
+.macos-ai-app.zeus-shell details[open] > .project-git-reference-section-heading::before {
+  transform: rotate(45deg);
+}
+.macos-ai-app.zeus-shell .project-git-reference-section-heading > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-reference-section-heading > svg {
+  flex: 0 0 14px;
+  margin: 0;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-reference-section-heading > small {
+  float: none;
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
 .macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-section-icon {
   inline-size: 14px;
   block-size: 14px;
