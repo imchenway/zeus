@@ -245,6 +245,7 @@ private final class ComputerService {
         [
             "accessibilityTrusted": AXIsProcessTrusted(),
             "screenCaptureAvailable": CGPreflightScreenCaptureAccess(),
+            "control": control.status,
             "servicePid": ProcessInfo.processInfo.processIdentifier,
             "protocolVersion": "zeus.computer.v1",
         ]

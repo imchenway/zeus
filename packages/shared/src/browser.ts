@@ -144,7 +144,7 @@ export interface ZeusComputerControlIdentity {
 export interface ZeusComputerPreview extends ZeusComputerControlIdentity {
   /** 当前受控应用的系统名称。 */
   appName: string;
-  /** 用户接管后等待明确继续。 */
+  /** 用户接管期间暂让输入，目标窗口空闲后恢复观察资格。 */
   paused: boolean;
   /** 恢复或窗口变化后需由模型重新观察。 */
   needsObservation: boolean;

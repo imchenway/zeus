@@ -75,12 +75,24 @@ export function SessionComputerPreview(props: { conversationId: string; language
           <header>
             <span>
               <strong>{preview.appName}</strong>
-              <small role="status">{preview.paused ? (zh ? '已暂停 · 用户接管' : 'Paused · user control') : preview.needsObservation ? (zh ? '等待重新观察' : 'Waiting for observation') : zh ? '正在控制' : 'Controlling'}</small>
+              <small role="status">
+                {preview.paused
+                  ? zh
+                    ? '等待用户操作结束 · 空闲 3 秒后自动继续'
+                    : 'Waiting for user · continues after 3 seconds idle'
+                  : preview.needsObservation
+                    ? zh
+                      ? '等待重新观察'
+                      : 'Waiting for observation'
+                    : zh
+                      ? '正在控制'
+                      : 'Controlling'}
+              </small>
             </span>
             <div>
               {preview.paused ? (
                 <button type="button" disabled={busy} onClick={() => void control('resume')}>
-                  {zh ? '继续' : 'Resume'}
+                  {zh ? '立即继续' : 'Resume now'}
                 </button>
               ) : null}
               <button type="button" disabled={busy} aria-label={zh ? '停止本会话屏幕控制' : 'Stop screen control for this conversation'} onClick={() => void control('stop')}>
