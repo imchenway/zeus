@@ -82,22 +82,18 @@ export function ProjectStartGuide(props: { language: AppLanguage; busy: boolean;
         <FolderOpen size={32} weight="regular" />
       </div>
       <h1 id="project-start-title">{zh ? '让想法，从这里开始' : 'Your ideas start here'}</h1>
-      <p className="project-start-description">{zh ? '选择一个工作文件夹，创建项目，开始你的第一个任务。' : 'Choose a working folder, create a project, and start your first task.'}</p>
+      <p className="project-start-description">{zh ? '选择一个工作文件夹，创建你的项目。' : 'Choose a working folder and create your project.'}</p>
       <div className="project-start-action">
         <Button variant="primary" size="regular" onClick={props.onChooseFolder} disabled={props.busy || !props.available} busy={props.busy}>
           <FolderPlus size={18} aria-hidden="true" />
           {zh ? '选择工作文件夹' : 'Choose working folder'}
         </Button>
       </div>
-      <ol className="project-start-steps" aria-label={zh ? '开始工作的三个步骤' : 'Three steps to start'}>
+      <ol className="project-start-steps" aria-label={zh ? '创建项目的两个步骤' : 'Two steps to create a project'}>
         <li aria-current="step">{zh ? '选择文件夹' : 'Choose a folder'}</li>
         <li>
           <span aria-hidden="true">→</span>
-          {zh ? '创建任务' : 'Create a task'}
-        </li>
-        <li>
-          <span aria-hidden="true">→</span>
-          {zh ? '确认并推送' : 'Review and push'}
+          {zh ? '创建项目' : 'Create a project'}
         </li>
       </ol>
       <p className="project-start-note">{zh ? '模型可稍后接入 · 项目与任务保存在本机' : 'Connect a model later · Projects and tasks stay on your Mac'}</p>
