@@ -26,7 +26,6 @@ import {
   type AiRuntimeSession,
   type CodexConfigImportResult,
   type CodexConfigImportPreview,
-  type CodexLegacyImportSnapshot,
   createEmptyDashboardSnapshot,
   type DashboardSnapshot,
   type GitDiffSummary,
@@ -375,10 +374,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusSnapshot | undefined>(props.initialRuntimeStatus);
   const [runtimeAdapters, setRuntimeAdapters] = useState<AiRuntimeAdapterDescriptor[]>(() => props.initialRuntimeAdapters ?? []);
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(() => normalizeRuntimeSettings(props.initialRuntimeSettings));
-  const [codexLegacyImportSnapshot, setCodexLegacyImportSnapshot] = useState<CodexLegacyImportSnapshot | null>(null);
-  const [codexLegacyImportLoading, setCodexLegacyImportLoading] = useState(false);
-  const [codexLegacyImportBusy, setCodexLegacyImportBusy] = useState(false);
-  const [codexLegacyImportError, setCodexLegacyImportError] = useState<string | null>(null);
   const [codexConfigImportPreview, setCodexConfigImportPreview] = useState<CodexConfigImportPreview | null>(null);
   const [codexConfigImportResult, setCodexConfigImportResult] = useState<CodexConfigImportResult | null>(null);
   const [codexConfigImportLoading, setCodexConfigImportLoading] = useState(false);
@@ -1278,10 +1273,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     codexConfigImportLoading,
     codexConfigImportPreview,
     codexConfigImportResult,
-    codexLegacyImportBusy,
-    codexLegacyImportError,
-    codexLegacyImportLoading,
-    codexLegacyImportSnapshot,
     codexUsageRevision,
     confirmingGitOperationBusy,
     conversationDraftOpen,
@@ -1445,10 +1436,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setCodexConfigImportLoading,
     setCodexConfigImportPreview,
     setCodexConfigImportResult,
-    setCodexLegacyImportBusy,
-    setCodexLegacyImportError,
-    setCodexLegacyImportLoading,
-    setCodexLegacyImportSnapshot,
     setCodexUsageRevision,
     setConversationDraftOpen,
     setConversationDrawer,

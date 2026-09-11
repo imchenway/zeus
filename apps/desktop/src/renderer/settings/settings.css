@@ -1192,9 +1192,6 @@
   .legacy-import-heading h2 {
     font-size: 15px;
   }
-  .legacy-import-row {
-    padding: 12px 0;
-  }
   .settings-runtime-advanced-field-list {
     display: grid;
     grid-template-columns: 1fr;
@@ -1415,15 +1412,6 @@
   }
   .settings-form-wide {
     grid-column: 1 / -1;
-  }
-  .settings-duration-field {
-    display: grid;
-    grid-template-columns: minmax(80px, 1fr) 110px;
-    gap: 8px;
-  }
-  .runtime-settings-section {
-    padding-top: 24px;
-    border-top: 1px solid var(--zeus-product-line-soft);
   }
   .task-fields-workspace {
     display: grid;

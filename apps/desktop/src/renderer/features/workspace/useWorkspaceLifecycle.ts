@@ -15,8 +15,6 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     archivedConversationLoadState,
     codexConfigImportLoading,
     codexConfigImportPreview,
-    codexLegacyImportLoading,
-    codexLegacyImportSnapshot,
     latestConversationContentVisible,
     nativeConversationChoiceLoadCoordinator,
     nativeConversationStartEnvelopeManager,
@@ -42,12 +40,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     zeusWindowForeground,
   } = state;
   const { acknowledgeNativeConversationAttention, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
-  const { openProjectSection, refreshCodexConfigImport, refreshCodexLegacyImports, requestWorkspaceLeave } = operations;
-  useEffect(() => {
-    if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
-    void refreshCodexLegacyImports();
-  }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);
-
+  const { openProjectSection, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexConfigImportPreview || codexConfigImportLoading || !props.onInspectCodexConfigImport) return;
     void refreshCodexConfigImport();

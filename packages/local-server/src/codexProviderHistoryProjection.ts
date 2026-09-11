@@ -358,7 +358,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       const existingTurn = localTurns.get(providerTurn.id);
       // 终态基线只定义历史边界；仍在执行的基线必须投影，否则首次对账会再次把目标自主 turn 误判为空闲。
       if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn && classifySnapshotTurn(providerTurn) !== 'active') continue;
-      const projected = projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
+      const projected = await projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
       localTurns.set(providerTurn.id, projected);
     }
     await reconcileRecoveredRequestUserInput(options.conversations.getById(conversation.id) ?? conversation, providerThreadId, eligibleDescending, localTurns);
@@ -416,7 +416,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     });
   }
 
-  function projectProviderSnapshotTurn(conversation: ZeusConversationWithMessagesRecord, providerThreadId: string, providerTurn: CodexTurnSnapshot, existingTurn: ZeusConversationTurnRecord | undefined): ZeusConversationTurnRecord {
+  async function projectProviderSnapshotTurn(
+    conversation: ZeusConversationWithMessagesRecord,
+    providerThreadId: string,
+    providerTurn: CodexTurnSnapshot,
+    existingTurn: ZeusConversationTurnRecord | undefined,
+  ): Promise<ZeusConversationTurnRecord> {
     const classification = classifySnapshotTurn(providerTurn);
     if (classification === 'unknown') throw coordinatorError('ZEUS_NATIVE_PROVIDER_TURN_INVALID', `Provider turn has an unknown status: ${providerTurn.id}`);
     const timestamp = now();
@@ -529,7 +534,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       });
       runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', completedAt ?? timestamp);
-      if (!wasTerminal) options.changeSets.seal({ conversation, turn, timestamp });
+      if (!wasTerminal) {
+        // 补收终态与实时结束事件共用完整快照，不漏掉连接中断期间的脚本修改。
+        await options.changeSets.finishWorkspace({ conversation, turn, timestamp });
+        options.changeSets.seal({ conversation, turn, timestamp });
+      }
       if (!wasTerminal && !options.goals.get(conversation.id)) {
         options.conversations.markAttentionUnread(conversation.id, {
           kind: classification,

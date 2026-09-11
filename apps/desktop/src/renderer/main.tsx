@@ -244,11 +244,8 @@ async function renderWithClient(
             onLoadReleaseUpdateStatus={() => client.loadReleaseUpdateStatus()}
             onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
             onLoadRuntimeSettings={() => client.settings.loadRuntimeSettings()}
-            onSaveRuntimeSettings={(input) => client.settings.saveRuntimeSettings(input)}
             onLoadAppShellSettings={() => client.settings.loadAppShellSettings()}
             onSaveAppShellSettings={(input) => client.settings.saveAppShellSettings(input)}
-            onLoadCodexLegacyImports={() => client.loadCodexLegacyImports()}
-            onStartCodexLegacyImport={(sourceConversationIds) => client.startCodexLegacyImport(sourceConversationIds)}
             onInspectCodexConfigImport={() => client.inspectCodexConfigImport()}
             onImportCodexConfig={() => client.importCodexConfig()}
             onActivateCodexConfig={() => client.activateCodexConfig()}

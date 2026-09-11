@@ -194,7 +194,6 @@ export interface SessionWorkspaceActions {
   onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
   onOpenProjectCommands?: () => void;
-  onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
@@ -2534,7 +2533,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
       {legacy && props.conversation ? (
         <>
-          <LegacyConversationBanner conversation={props.conversation} language={props.language} onOpenImportSettings={actions.onOpenImportSettings} />
+          <LegacyConversationBanner language={props.language} />
           {props.loadState === 'loading' ? (
             <p className="session-legacy-load-status" role="status" aria-live="polite">
               <span className="session-command-spinner" aria-hidden="true" />

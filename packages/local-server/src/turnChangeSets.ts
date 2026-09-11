@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { diffTurnWorkspaceFile, readTurnWorkspaceSnapshot, type TurnWorkspaceFile } from './turnWorkspaceSnapshot.js';
 import { type TurnChangeConflict, type TurnChangeFile, type TurnChangeFileType, type TurnChangeSet, type TurnChangeSetOperationRequest, type TurnChangeSetOperationResult } from '@zeus/shared';
 import {
   type AuditLogRepository,
@@ -43,6 +44,12 @@ export interface TurnChangeSetCaptureInput {
 }
 
 export interface TurnChangeSetService {
+  /** 在真正启动 Provider 前记录工作目录，避免把已有改动算进本轮。 */
+  beginWorkspace(conversation: ZeusConversationWithMessagesRecord, submissionId: string): Promise<void>;
+  /** 将启动前快照绑定到 Provider 返回的轮次，拒绝迟到事件错用快照。 */
+  bindWorkspace(conversationId: string, submissionId: string, providerTurnId: string): void;
+  /** 本轮结束时补齐脚本修改，再由既有变更集封存与恢复链路处理。 */
+  finishWorkspace(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): Promise<void>;
   capture(input: TurnChangeSetCaptureInput): TurnChangeSet | null;
   updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet;
   seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null;
@@ -72,11 +79,27 @@ export interface CreateTurnChangeSetServiceOptions {
 
 const absentDigest = 'sha256:absent';
 
+/** 同一路径的整轮前后快照替代中间编辑事件，避免重复计数和部分撤销。 */
+const workspaceSnapshotSource = 'zeus-workspace-snapshot';
+
+/** 快照仅在本进程内使用；重启后的历史不从当前目录猜造过去的变化。 */
+interface WorkspaceBaseline {
+  submissionId: string;
+  providerTurnId: string | null;
+  root: string;
+  files: Map<string, TurnWorkspaceFile> | null;
+  unavailableReason: string | null;
+}
+
 export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOptions): TurnChangeSetService {
   const now = options.now ?? (() => new Date().toISOString());
   const maxFileBytes = options.maxFileBytes ?? 20 * 1024 * 1024;
   const maxChangeSetBytes = options.maxChangeSetBytes ?? 100 * 1024 * 1024;
   const busy = new Set<string>();
+  /** 每个会话只有一轮执行；不同会话共享目录时禁止整轮恢复。 */
+  const workspaceBaselines = new Map<string, WorkspaceBaseline>();
+  /** 本轮扫描失败不能让已有卡片误开放整轮撤销。 */
+  const workspaceFailures = new Map<string, string>();
   if (!options.readOnlyValidation) mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
 
   function assertMutationAllowed(): void {
@@ -86,6 +109,121 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       statusCode: 503,
       recoveryRequired: false,
     });
+  }
+
+  /** 在模型获得执行机会前读取目录，扫描故障不阻断用户发送。 */
+  async function beginWorkspace(conversation: ZeusConversationWithMessagesRecord, submissionId: string): Promise<void> {
+    assertMutationAllowed();
+    /** 重复派发不能覆盖最初的快照。 */
+    if (workspaceBaselines.get(conversation.id)?.submissionId === submissionId) return;
+    /** 使用会话的真实 worktree，不能退回另一项目目录。 */
+    const project = options.projects.getById(conversation.projectId);
+    if (!project) return;
+    /** 先登记再异步读取，使重叠轮次互相看到对方。 */
+    const baseline: WorkspaceBaseline = { submissionId, providerTurnId: null, root: conversationExecutionRoot(conversation.id, project.localPath), files: null, unavailableReason: null };
+    workspaceBaselines.set(conversation.id, baseline);
+    try {
+      baseline.root = realpathSync(baseline.root);
+      for (const [id, other] of workspaceBaselines) {
+        if (id !== conversation.id && (isInsideRoot(baseline.root, other.root) || isInsideRoot(other.root, baseline.root))) {
+          baseline.unavailableReason = other.unavailableReason = '同一工作目录存在重叠轮次，无法确认变更归属；仅供审核，不能自动撤销。';
+        }
+      }
+      baseline.files = await readTurnWorkspaceSnapshot(baseline.root, { maxFileBytes, maxTotalBytes: maxChangeSetBytes });
+    } catch {
+      baseline.unavailableReason = '未能完整读取本轮开始时的工作目录；仅展示已记录的变化，不能自动撤销。';
+    }
+  }
+
+  /** Provider 回执到达后才确认这份快照的轮次身份。 */
+  function bindWorkspace(conversationId: string, submissionId: string, providerTurnId: string): void {
+    /** 不覆盖新一轮或其他提交的身份。 */
+    const baseline = workspaceBaselines.get(conversationId);
+    if (baseline?.submissionId === submissionId) baseline.providerTurnId = providerTurnId;
+  }
+
+  /** 以首末内容生成完整记录，覆盖同路径的中间工具事件。 */
+  async function finishWorkspace(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): Promise<void> {
+    assertMutationAllowed();
+    /** 没有可信起点的历史轮次保持原记录，不把当前脏文件归给过去。 */
+    const baseline = workspaceBaselines.get(input.conversation.id);
+    if (!baseline || (baseline.providerTurnId !== input.turn.providerTurnId && baseline.submissionId !== input.turn.clientSubmissionId)) return;
+    try {
+      if (!baseline.files) throw new Error('工作目录起始快照不可用。');
+      /** 在结束事件封存前读取终点；下一轮尚未开始。 */
+      const after = await readTurnWorkspaceSnapshot(baseline.root, { maxFileBytes, maxTotalBytes: maxChangeSetBytes });
+      /** 同路径补丁最终也使用整轮首末状态，避免补丁与脚本交替时重复或漏记。 */
+      const existing = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
+      /** 被忽略的本地文档等继续保留 Provider 已明确报告的记录。 */
+      const providerPaths = new Set(existing ? options.files.listByChangeSet(existing.id).flatMap((file) => [file.oldPath, file.newPath].filter((path): path is string => Boolean(path))) : []);
+      /** 稳定排序确保重入时同一文件身份不变。 */
+      const paths = [...new Set([...baseline.files.keys(), ...after.keys()])].sort();
+      /** 先生成所有差异，再更新已有记录，避免扫描失败留下半套覆盖结果。 */
+      const updates: { path: string; pre: TurnWorkspaceFile; post: TurnWorkspaceFile; diff: string; unchanged: boolean }[] = [];
+      for (const path of paths) {
+        /** 缺失路径用显式不存在状态表示新增和删除。 */
+        const absent: TurnWorkspaceFile = { exists: false, bytes: null, hash: null, mode: null, unavailableReason: null };
+        /** 原内容来自启动前，不使用 HEAD 或上轮结果代替。 */
+        const pre = baseline.files.get(path) ?? absent;
+        /** 终点内容只来自本次读取。 */
+        const post = after.get(path) ?? absent;
+        /** 变更后又还原的路径也覆盖中间 Provider 记录，再由净变化过滤移除。 */
+        const unchanged = pre.exists === post.exists && pre.hash === post.hash && pre.mode === post.mode;
+        if (unchanged && !providerPaths.has(path)) continue;
+        updates.push({ path, pre, post, diff: unchanged ? '' : await diffTurnWorkspaceFile(path, pre, post), unchanged });
+      }
+      if (!updates.length) return;
+      /** 只在确实有变化或需要消除中间记录时创建变更集。 */
+      const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
+      /** 沿用既有恢复目录与容量限制，不另建撤销实现。 */
+      let capturedBytes = existingCaptureBytes(changeSet.id);
+      for (const [index, update] of updates.entries()) {
+        /** 整轮起点终点均转换为现有内容寻址快照。 */
+        const snapshot = (file: TurnWorkspaceFile, phase: 'pre' | 'post'): SnapshotState => {
+          if (!file.exists) return absentSnapshot();
+          if (!file.bytes) return { ...unavailableSnapshot(file.unavailableReason ?? '缺少文件快照正文。'), exists: true, hash: file.hash, mode: file.mode };
+          /** 原权限也属于撤销的前置条件。 */
+          const captured = captureBytesSnapshot(changeSet.id, workspaceSnapshotSource, index, phase, file.bytes, file.mode!, capturedBytes);
+          if (captured.blobRef) capturedBytes += file.bytes.length;
+          return { ...captured, exists: true, hash: file.hash, mode: file.mode };
+        };
+        /** 恢复前像保留本轮开始前的脏内容。 */
+        const pre = snapshot(update.pre, 'pre');
+        /** 恢复后像用于阻止覆盖本轮之后的修改。 */
+        const post = snapshot(update.post, 'post');
+        /** 跨轮次重叠或容量不足时仍列出差异，但拒绝恢复。 */
+        const reason = update.unchanged ? null : (baseline.unavailableReason ?? pre.unavailableReason ?? post.unavailableReason);
+        /** 行数来自 Git 的差异块，而非工具事件累计值。 */
+        const counts = countDiffLines(update.diff);
+        options.files.upsert({
+          changeSetId: changeSet.id,
+          sourceItemId: workspaceSnapshotSource,
+          sourceIndex: index,
+          oldPath: pre.exists || update.unchanged ? update.path : null,
+          newPath: post.exists || update.unchanged ? update.path : null,
+          changeType: isBinaryDiff(update.diff) ? 'binary' : !pre.exists ? 'added' : !post.exists ? 'deleted' : 'modified',
+          addedLines: counts.added,
+          deletedLines: counts.deleted,
+          preHash: pre.hash,
+          postHash: post.hash,
+          preExists: pre.exists,
+          postExists: post.exists,
+          preMode: pre.mode,
+          postMode: post.mode,
+          unifiedDiff: update.diff,
+          preBlobRef: pre.blobRef,
+          postBlobRef: post.blobRef,
+          reversible: !reason,
+          unavailableReason: reason,
+          updatedAt: input.timestamp,
+          replacePreImage: true,
+        });
+      }
+    } catch {
+      workspaceFailures.set(input.turn.id, baseline.unavailableReason ?? '未能完整记录本轮工作目录变化；仅展示已记录的变化，不能自动撤销。');
+    } finally {
+      if (workspaceBaselines.get(input.conversation.id) === baseline) workspaceBaselines.delete(input.conversation.id);
+    }
   }
 
   function ensureChangeSet(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, timestamp: string): ZeusTurnChangeSetRecord {
@@ -278,9 +416,10 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
     if (files.length === 0) return null;
     const incompleteFile = files.find((file) => !file.reversible);
-    const unavailableReason = incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null;
+    const unavailableReason = workspaceFailures.get(input.turn.id) ?? (incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null);
+    workspaceFailures.delete(input.turn.id);
     const unifiedDiff =
-      changeSet.unifiedDiff ||
+      (!options.files.listByChangeSet(changeSet.id).some((file) => file.sourceItemId === workspaceSnapshotSource) && changeSet.unifiedDiff) ||
       files
         .map((file) => file.unifiedDiff)
         .filter(Boolean)
@@ -549,6 +688,9 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   return {
+    beginWorkspace,
+    bindWorkspace,
+    finishWorkspace,
     capture,
     updateUnifiedDiff,
     seal,
@@ -695,8 +837,11 @@ function validateExistingAncestor(path: string, root: string): void {
 
 /** 同路径连续修改只保留最早和最终快照，避免新增后修改在撤销时重新写回文件。 */
 function aggregateChangeFiles(files: ZeusTurnChangeFileRecord[]): AggregatedChangeFile[] {
+  /** 整轮快照覆盖的路径不能再次累计中间工具事件。 */
+  const workspacePaths = new Set(files.filter((file) => file.sourceItemId === workspaceSnapshotSource).flatMap((file) => [file.oldPath, file.newPath].filter((path): path is string => Boolean(path))));
   const byPath = new Map<string, AggregatedChangeFile>();
   for (const file of files) {
+    if (file.sourceItemId !== workspaceSnapshotSource && [file.oldPath, file.newPath].filter(Boolean).every((path) => workspacePaths.has(path!))) continue;
     const key = `${file.oldPath ?? file.newPath ?? ''}\0${file.newPath ?? file.oldPath ?? ''}`;
     const existing = byPath.get(key);
     if (!existing) {
