@@ -1,10 +1,10 @@
-/* 品牌色取自 assets/icon.svg 的 zeus-accent 渐变，所有窗口共用同一来源。 */
+/* 所有窗口共用既定紫色品牌色，应用图标替换不改变交互配色。 */
 :root {
-  /* 图标的深紫色端点用于主操作与交互反馈。 */
+  /* 深紫色用于主操作与交互反馈。 */
   --zeus-brand-primary: #6155d8;
   /* 普通悬停统一为浅紫色，主窗口与独立窗口保持同样的轻量反馈。 */
   --zeus-brand-hover: color-mix(in srgb, var(--zeus-brand-primary) 5%, transparent);
-  /* 图标的亮紫色端点用于辅助强调。 */
+  /* 亮紫色用于辅助强调。 */
   --zeus-brand-highlight: #7a6ff0;
   /* 浅色背景上的强调文字使用品牌主色。 */
   --zeus-brand-text: var(--zeus-brand-primary);

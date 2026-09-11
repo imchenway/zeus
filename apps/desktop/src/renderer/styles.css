@@ -8721,7 +8721,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 /* 复用应用已有图标，资源随样式打包，不再用普通字母代替品牌。 */
 .startup-failure-mark {
-  background: url('../../assets/icon.svg') center / contain no-repeat;
+  background: url('../../assets/icon.png') center / contain no-repeat;
   block-size: 64px;
   grid-column: 1;
   grid-row: 1 / span 2;
