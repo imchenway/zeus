@@ -110,6 +110,8 @@ export interface ProjectGitRepositorySnapshot {
   checkedOutBranches?: string[];
   remoteDetails?: Array<{ name: string; fetchUrl: string; pushUrl: string }>;
   branchUpstreams?: Record<string, string>;
+  /** 混合版本宿主缺失时仅降级为不显示非当前分支的差异标识。 */
+  branchDivergences?: Record<string, { ahead: number; behind: number }>;
   remoteBranches: string[];
   remotes: string[];
   tags: string[];

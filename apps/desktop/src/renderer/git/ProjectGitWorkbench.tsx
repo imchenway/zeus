@@ -933,7 +933,19 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                     hideBranchIcons={branches === selectedRepository.snapshot.localBranches}
                     branches={[...branches]}
                     current={selectedRepository.snapshot.branch}
+                    branchDivergences={
+                      branches === selectedRepository.snapshot.localBranches
+                        ? {
+                            ...selectedRepository.snapshot.branchDivergences,
+                            [selectedRepository.snapshot.branch]: {
+                              ahead: selectedRepository.snapshot.ahead,
+                              behind: selectedRepository.snapshot.behind,
+                            },
+                          }
+                        : undefined
+                    }
                     kind={kind}
+                    zh={zh}
                     onSelect={(ref) => {
                       if (title === (zh ? '分支' : 'Branches')) {
                         if (!selectedRepository.snapshot.detached && selectedRepository.snapshot.branch === ref) {
@@ -1972,7 +1984,9 @@ function BranchDirectoryTree(props: {
   onSelect?: (branch: string) => void;
   branches: string[];
   current: string;
+  branchDivergences?: Record<string, { ahead: number; behind: number }>;
   kind: BranchKind;
+  zh: boolean;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void;
 }) {
   const tree = useMemo(() => buildBranchTree(props.branches), [props.branches.join('\0')]);
@@ -1987,18 +2001,15 @@ function BranchDirectoryTree(props: {
 
 function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { node: BranchTreeNode; depth: number }) {
   if (props.node.children.size > 0) {
-    return (
-      <details className="project-git-branch-folder" open={props.node.branch ? props.node.branch === props.current || props.current.startsWith(`${props.node.branch}/`) : true}>
-        <summary style={{ paddingLeft: `${props.depth * 20 + 5}px` }}>
-          <CaretRight aria-hidden="true" />
-          <span>{props.node.name}</span>
-        </summary>
-        {Array.from(props.node.children.values()).map((child) => (
-          <BranchTreeEntry key={child.branch || child.name} {...props} node={child} depth={props.depth + 1} />
-        ))}
-      </details>
-    );
+    return <BranchTreeFolder {...props} />;
   }
+  const divergence = props.branchDivergences?.[props.node.branch];
+  const divergenceText = divergence ? [divergence.ahead ? `↑${divergence.ahead}` : '', divergence.behind ? `↓${divergence.behind}` : ''].filter(Boolean).join(' ') : '';
+  const divergenceLabel = divergence
+    ? [divergence.ahead ? (props.zh ? `领先 ${divergence.ahead}` : `Ahead ${divergence.ahead}`) : '', divergence.behind ? (props.zh ? `落后 ${divergence.behind}` : `Behind ${divergence.behind}`) : '']
+        .filter(Boolean)
+        .join(props.zh ? '，' : ', ')
+    : '';
   return (
     <button
       type="button"
@@ -2009,7 +2020,27 @@ function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { no
     >
       {props.hideBranchIcons ? null : <GitBranch aria-hidden="true" />}
       <span>{props.node.name}</span>
+      {divergenceText ? (
+        <span className="git-tracking-badge" aria-label={divergenceLabel} title={divergenceLabel}>
+          {divergenceText}
+        </span>
+      ) : null}
     </button>
+  );
+}
+
+function BranchTreeFolder(props: Parameters<typeof BranchTreeEntry>[0]) {
+  const [open, setOpen] = useState(() => (props.node.branch ? props.node.branch === props.current || props.current.startsWith(`${props.node.branch}/`) : true));
+  return (
+    <details className="project-git-branch-folder" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary style={{ paddingLeft: `${props.depth * 20 + 5}px` }}>
+        <CaretRight aria-hidden="true" />
+        <span>{props.node.name}</span>
+      </summary>
+      {Array.from(props.node.children.values()).map((child) => (
+        <BranchTreeEntry key={child.branch || child.name} {...props} node={child} depth={props.depth + 1} />
+      ))}
+    </details>
   );
 }
 

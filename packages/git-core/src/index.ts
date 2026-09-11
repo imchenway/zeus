@@ -281,6 +281,8 @@ export interface ProjectGitRepositorySnapshot {
   /** 仅用于展示的脱敏远端地址与各本地分支的跟踪关系。 */
   remoteDetails?: Array<{ name: string; fetchUrl: string; pushUrl: string }>;
   branchUpstreams?: Record<string, string>;
+  /** 每个已设置上游的本地分支，相对其远端跟踪分支的提交差异。 */
+  branchDivergences?: Record<string, { ahead: number; behind: number }>;
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
@@ -2140,8 +2142,9 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
         return { name, fetchUrl: redactGitOutput(fetchUrl), pushUrl: redactGitOutput(pushUrl) };
       }),
     ),
-    readGitStdout(context.topLevel, ['for-each-ref', '--format=%(refname:short)%09%(upstream:short)', 'refs/heads/']),
+    readGitStdout(context.topLevel, ['for-each-ref', '--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)', 'refs/heads/'], { ...process.env, LANG: 'C', LC_ALL: 'C' }),
   ]);
+  const parsedBranchTracking = parseProjectGitBranchTracking(branchTracking);
   const recentRefs = await readProjectGitRecentRefs(context.topLevel, reflogText, context, tags);
   return {
     branch: context.branch,
@@ -2159,12 +2162,8 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     localBranches: context.localBranches,
     checkedOutBranches: context.worktrees.flatMap((worktree) => (worktree.branch ? [worktree.branch] : [])),
     remoteDetails,
-    branchUpstreams: Object.fromEntries(
-      splitLines(branchTracking).map((line) => {
-        const [branch, upstream = ''] = line.split('\t');
-        return [branch, upstream];
-      }),
-    ),
+    branchUpstreams: parsedBranchTracking.upstreams,
+    branchDivergences: parsedBranchTracking.divergences,
     remoteBranches: context.remoteBranches,
     remotes: context.remotes,
     tags,
@@ -2572,6 +2571,23 @@ function parseProjectGitStashes(stdout: string): ProjectGitStashEntry[] {
     .filter((entry) => entry.ref.length > 0 && entry.hash.length > 0);
 }
 
+/** Git 一次性返回所有本地分支的上游及差异，避免为每个分支额外启动 rev-list。 */
+function parseProjectGitBranchTracking(stdout: string): {
+  upstreams: Record<string, string>;
+  divergences: Record<string, { ahead: number; behind: number }>;
+} {
+  const rows = splitLines(stdout).map((line) => {
+    const [branch = '', upstream = '', track = ''] = line.split('\t');
+    const ahead = Number.parseInt(track.match(/\bahead (\d+)\b/u)?.[1] ?? '0', 10) || 0;
+    const behind = Number.parseInt(track.match(/\bbehind (\d+)\b/u)?.[1] ?? '0', 10) || 0;
+    return { branch, upstream, ahead, behind };
+  });
+  return {
+    upstreams: Object.fromEntries(rows.filter((row) => row.branch).map((row) => [row.branch, row.upstream])),
+    divergences: Object.fromEntries(rows.filter((row) => row.branch && row.upstream).map((row) => [row.branch, { ahead: row.ahead, behind: row.behind }])),
+  };
+}
+
 async function readProjectGitRecentRefs(cwd: string, reflog: string, context: GitRepositoryContext, tags: string[]): Promise<ProjectGitRecentRef[]> {
   const local = new Set(context.localBranches);
   const remote = new Set(context.remoteBranches);
@@ -2699,9 +2715,9 @@ function classifyGitFileStatus(indexStatus: string, workingTreeStatus: string): 
   return 'other';
 }
 
-async function readGitStdout(cwd: string, args: string[]): Promise<string> {
+async function readGitStdout(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   try {
-    return (await execFileAsync('git', args, { cwd, timeout: 30_000, maxBuffer: 20 * 1024 * 1024 })).stdout.trim();
+    return (await execFileAsync('git', args, { cwd, env, timeout: 30_000, maxBuffer: 20 * 1024 * 1024 })).stdout.trim();
   } catch {
     return '';
   }
