@@ -28,8 +28,11 @@ const labels = {
   'zh-CN': {
     label: '权限模式',
     readOnly: '只读',
+    readOnlyDescription: '默认仅查看文件，修改文件或运行联网命令需批准',
     auto: '自动',
+    autoDescription: '自动修改工作区文件，访问区外或运行联网命令需批准',
     fullAccess: '完全访问',
+    fullAccessDescription: '可访问任意文件、运行命令和联网，无需逐次批准',
     title: '要开启完全访问吗？',
     introduction: '开启后，Zeus 可以在无需逐次批准的情况下，于这台 Mac 的任意位置运行命令、访问互联网以及创建和编辑文件，包括但不限于：',
     filesTitle: '文件与文件夹',
@@ -46,8 +49,11 @@ const labels = {
   'en-US': {
     label: 'Permission mode',
     readOnly: 'Read only',
+    readOnlyDescription: 'View files by default; file changes and network commands need approval',
     auto: 'Auto',
+    autoDescription: 'Edit workspace files automatically; outside access and network commands need approval',
     fullAccess: 'Full access',
+    fullAccessDescription: 'Access any file, run commands, and use the network without per-action approval',
     title: 'Enable full access?',
     introduction: 'Zeus will be able to run commands, use the internet, and create or edit files anywhere on this Mac without asking for approval each time, including:',
     filesTitle: 'Files and folders',
@@ -71,9 +77,9 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
   const riskId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const options = [
-    { value: 'read-only', label: copy.readOnly },
-    { value: 'auto', label: copy.auto },
-    { value: 'full-access', label: copy.fullAccess },
+    { value: 'read-only', label: copy.readOnly, description: copy.readOnlyDescription },
+    { value: 'auto', label: copy.auto, description: copy.autoDescription },
+    { value: 'full-access', label: copy.fullAccess, description: copy.fullAccessDescription },
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
   const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : props.value === 'full-access' ? <ShieldWarning weight="fill" /> : <ShieldCheck weight="regular" />;

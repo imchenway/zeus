@@ -1304,6 +1304,50 @@ a {
   opacity: 0.58;
 }
 
+.macos-ai-app .codex-usage-calendar-cells > span:focus-visible {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: 2px;
+}
+
+.macos-ai-app .codex-usage-calendar-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: 264px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--zeus-product-border);
+  border-radius: 12px;
+  background: var(--zeus-product-panel, #fff);
+  color: var(--zeus-product-text, #171923);
+  box-shadow: 0 8px 28px #0002;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.macos-ai-app .codex-usage-calendar-tooltip > strong {
+  font-size: 14px;
+}
+.macos-ai-app .codex-usage-calendar-tooltip dl {
+  margin: 8px 0;
+}
+.macos-ai-app .codex-usage-calendar-tooltip dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 3px 0;
+}
+.macos-ai-app .codex-usage-calendar-tooltip dt,
+.macos-ai-app .codex-usage-calendar-tooltip small {
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .codex-usage-calendar-tooltip dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .macos-ai-app .codex-usage-calendar-legend {
   display: flex;
   grid-column: 1 / -1;

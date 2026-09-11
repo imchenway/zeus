@@ -4,6 +4,7 @@ import { ZeusSelect, type ZeusSelectProps } from '../ZeusSelect.js';
 export interface ComposerDropdownOption<Value extends string = string> {
   value: Value;
   label: string;
+  description?: string;
   group?: string;
   searchText?: string;
 }

@@ -1,4 +1,5 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
 import { CalendarDotsIcon as CalendarDots } from '@phosphor-icons/react/dist/csr/CalendarDots';
 import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
@@ -369,6 +370,36 @@ function MetricGrid(props: { items: Array<[string, string]>; language: Language 
 
 function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>; label: string; language: Language }) {
   const calendar = useMemo(() => buildUsageCalendar(props.days, props.language), [props.days, props.language]);
+  const [hover, setHover] = useState<{ day: UsageCalendarCell; left: number; top: number } | null>(null);
+  const tooltipId = useId();
+  const zh = props.language === 'zh-CN';
+  const hide = useCallback(() => setHover(null), []);
+  useEffect(() => {
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+    return () => {
+      window.removeEventListener('scroll', hide, true);
+      window.removeEventListener('resize', hide);
+    };
+  }, [hide]);
+  const show = (day: UsageCalendarCell, element: HTMLElement) => {
+    if (day.future) return;
+    const rect = element.getBoundingClientRect();
+    setHover({ day, left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)), top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 310)) });
+  };
+  const totals = hover ? props.days.filter((day) => day.date === hover.day.date && Number.isFinite(day.totalTokens)) : [];
+  const missing = zh ? '未提供' : 'Not provided';
+  const rows = hover
+    ? [
+        ['Runtime', 'Codex'],
+        [zh ? '总量' : 'Total', totals.length ? `${formatTokens(totals.reduce((sum, day) => sum + Math.max(0, day.totalTokens), 0), props.language)} Token` : zh ? '无记录' : 'No record'],
+        [zh ? '未缓存' : 'Uncached', missing],
+        [zh ? '缓存' : 'Cached', missing],
+        [zh ? '输出' : 'Output', missing],
+        [zh ? '估算' : 'Estimate', missing],
+        [zh ? '口径' : 'Scope', props.label],
+      ]
+    : [];
   const title = props.language === 'zh-CN' ? '最近半年用量' : 'Usage over the last 6 months';
   return (
     <section className="codex-usage-calendar-card" aria-label={`${title} · ${props.label}`}>
@@ -383,7 +414,7 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
         </span>
       </header>
       <div className="codex-usage-calendar-card-scroll">
-        <div className="codex-usage-calendar" role="img" aria-label={`${title} · ${props.label}`}>
+        <div className="codex-usage-calendar" role="group" aria-label={`${title} · ${props.label}`}>
           <div className="codex-usage-calendar-months" style={{ gridTemplateColumns: `repeat(${calendar.weekCount}, var(--usage-heatmap-cell-size))` }} aria-hidden="true">
             {calendar.months.map((month, index) => (
               <span key={`${index}-${month ?? 'empty'}`}>{month}</span>
@@ -394,9 +425,23 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
               <span key={`${index}-${weekday}`}>{weekday}</span>
             ))}
           </div>
-          <div className="codex-usage-calendar-cells" style={{ gridTemplateColumns: `repeat(${calendar.weekCount}, var(--usage-heatmap-cell-size))` }} aria-hidden="true">
+          <div className="codex-usage-calendar-cells" style={{ gridTemplateColumns: `repeat(${calendar.weekCount}, var(--usage-heatmap-cell-size))` }}>
             {calendar.cells.map((day) => (
-              <span key={day.date} data-level={day.level} data-future={day.future || undefined} title={day.title} />
+              <span
+                key={day.date}
+                data-level={day.level}
+                data-future={day.future || undefined}
+                tabIndex={day.future ? undefined : 0}
+                aria-label={day.title}
+                aria-describedby={hover?.day.date === day.date ? tooltipId : undefined}
+                onMouseEnter={(event) => show(day, event.currentTarget)}
+                onMouseLeave={hide}
+                onFocus={(event) => show(day, event.currentTarget)}
+                onBlur={hide}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') hide();
+                }}
+              />
             ))}
           </div>
           <div className="codex-usage-calendar-legend" aria-hidden="true">
@@ -408,6 +453,24 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
           </div>
         </div>
       </div>
+      {hover &&
+        createPortal(
+          <div className="macos-ai-app" style={{ display: 'contents' }}>
+            <div id={tooltipId} role="tooltip" className="codex-usage-calendar-tooltip" style={{ left: hover.left, top: hover.top }}>
+              <strong>{formatCalendarDate(new Date(`${hover.day.date}T00:00:00`), props.language)}</strong>
+              <dl>
+                {rows.map(([label, value]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <small>{zh ? '官方按日统计未提供缓存拆分和费用。' : 'Daily account statistics do not include cache breakdown or costs.'}</small>
+            </div>
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }

@@ -24,7 +24,7 @@ export interface GitApiClient {
   loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
   generateGitCommitMessage: (
     projectId: string,
-    input: { repositoryId: string; language: 'zh-CN' | 'en'; modelRef: string },
+    input: { repositoryId: string; relativePath?: string; language: 'zh-CN' | 'en'; modelRef: string },
     onText?: (text: string) => void,
     signal?: AbortSignal,
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;

@@ -1905,6 +1905,12 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator summary small {
   float: right;
 }
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-section-icon {
+  inline-size: 14px;
+  block-size: 14px;
+  margin-inline-end: 6px;
+  vertical-align: -2px;
+}
 .macos-ai-app.zeus-shell .project-git-navigator button {
   display: flex;
   align-items: center;

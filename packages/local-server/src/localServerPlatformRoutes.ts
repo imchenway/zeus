@@ -592,6 +592,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     } catch (error) {
       warning = redactSensitiveText(error instanceof Error ? error.message : 'Codex 模型加载失败。').text;
     }
+    if (codexNativeEnabled && !readOnlyValidation && items.some((item: { id: string }) => item.id.startsWith('codex:'))) {
+      void commitCodexPool.warm({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }).catch(() => {
+        console.info(JSON.stringify({ event: 'git_commit_prewarm_failed' }));
+      });
+    }
     return { items, warning };
   });
 
@@ -600,12 +605,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.post(
     '/api/projects/:projectId/git/commit-message',
     { bodyLimit: 512_000 },
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean } }>, reply) => {
+    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean } }>, reply) => {
       const project = projects.getById(request.params.projectId);
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
       const body = request.body;
       if (readOnlyValidation) return reply.code(403).send({ error: 'ZEUS_READ_ONLY_VALIDATION', message: '只读验收模式不运行 AI 提交说明生成。' });
-      if (typeof body?.repositoryId !== 'string' || body.repositoryId.length > 200 || (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000))) {
+      if (
+        typeof body?.repositoryId !== 'string' ||
+        body.repositoryId.length > 200 ||
+        (body.relativePath !== undefined && (typeof body.relativePath !== 'string' || body.relativePath.length > 4096)) ||
+        (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000))
+      ) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
       }
       const controller = new AbortController();
@@ -619,7 +629,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
       const generate = async () => {
         const started = performance.now();
-        const repository = await resolveCommitRepository(project, body.repositoryId as string);
+        console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage: '读取暂存区', elapsedMs: 0 }));
+        const repository = await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
         const context = await readGitCommitContext(repository.localPath);
         controller.signal.throwIfAborted();
         const prepared = performance.now();
@@ -642,6 +653,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
               signal: controller.signal,
               onText: (text) => emit({ type: 'text', text }),
+              onProgress: (stage, elapsedMs) => console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage, elapsedMs, prepareMs: Math.round(prepared - started), diffChars: input.stagedDiff.length })),
             });
           }
           return await generateGitCommitMessage(modelConnections, request.params.projectId, input, controller.signal);
@@ -668,7 +680,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         void generate()
           .then(
             (result) => emit({ type: 'result', ...result }),
-            (error: unknown) => emit({ type: 'error', message: error instanceof Error ? error.message : 'AI 生成失败。' }),
+            (error: unknown) => {
+              console.info(JSON.stringify({ event: 'git_commit_generation_failed', requestId: request.id, cancelled: controller.signal.aborted }));
+              emit({ type: 'error', message: error instanceof Error ? error.message : 'AI 生成失败。' });
+            },
           )
           .finally(() => {
             stream.end();

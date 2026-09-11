@@ -396,7 +396,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     try {
       const result = await props.client.generateGitCommitMessage(
         props.project.id,
-        { repositoryId: repository.id, language: zh ? 'zh-CN' : 'en', modelRef: commitModelRef },
+        { repositoryId: repository.id, relativePath: repository.relativePath, language: zh ? 'zh-CN' : 'en', modelRef: commitModelRef },
         (text) => {
           if (!controller.signal.aborted) updateGenerated(text);
         },
@@ -903,10 +903,12 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               ).map(([title, branches, kind]) => (
                 <details key={title} open>
                   <summary>
+                    {branches === selectedRepository.snapshot.localBranches ? <GitBranch className="project-git-branch-section-icon" aria-hidden="true" /> : null}
                     {title}
                     <small>{branches.length}</small>
                   </summary>
                   <BranchDirectoryTree
+                    hideBranchIcons={branches === selectedRepository.snapshot.localBranches}
                     branches={[...branches]}
                     current={selectedRepository.snapshot.branch}
                     kind={kind}
@@ -1960,7 +1962,14 @@ interface BranchTreeNode {
   children: Map<string, BranchTreeNode>;
 }
 
-function BranchDirectoryTree(props: { onSelect?: (branch: string) => void; branches: string[]; current: string; kind: BranchKind; onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void }) {
+function BranchDirectoryTree(props: {
+  hideBranchIcons?: boolean;
+  onSelect?: (branch: string) => void;
+  branches: string[];
+  current: string;
+  kind: BranchKind;
+  onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void;
+}) {
   const tree = useMemo(() => buildBranchTree(props.branches), [props.branches.join('\0')]);
   return (
     <div className="project-git-branch-directory-tree">
@@ -1993,7 +2002,7 @@ function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { no
       onClick={() => props.onSelect?.(props.node.branch)}
       onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}
     >
-      <GitBranch aria-hidden="true" />
+      {props.hideBranchIcons ? null : <GitBranch aria-hidden="true" />}
       <span>{props.node.name}</span>
     </button>
   );
