@@ -51,10 +51,6 @@ const attachmentMimeTypesByExtension = new Map<string, string>([
   ['.zip', 'application/zip'],
 ]);
 
-const embeddedFileReferenceExtensions = Array.from(attachmentMimeTypesByExtension.keys())
-  .map((extension) => extension.slice(1).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
-  .join('|');
-
 const nativeClipboardImageFormats = new Map<string, { type: string; extension: string }>([
   ['public.png', { type: 'image/png', extension: 'png' }],
   ['png', { type: 'image/png', extension: 'png' }],
@@ -321,13 +317,11 @@ function extractFileReferencesFromPlainText(value: string): string[] {
 
 function extractEmbeddedFileReferenceCandidates(value: string): string[] {
   const candidates: string[] = [];
+  // 只提取明确的 file:// 引用；不再从正文中抓取内嵌绝对路径，避免把日志里
+  // <zeus_attachment> 描述的附件地址误当成待写入的文件附件。
   const fileUrlPattern = /\bfile:\/\/\/[^\s"'<>]+/giu;
   for (const match of value.matchAll(fileUrlPattern)) {
     candidates.push(match[0]);
-  }
-  const absolutePathPattern = new RegExp(`(?:^|[^\\w])((?:/(?:Users|Volumes|private|var|tmp|opt|Applications)/)[^\\0\\r\\n"'<>]*?\\.(?:${embeddedFileReferenceExtensions}))\\b`, 'giu');
-  for (const match of value.matchAll(absolutePathPattern)) {
-    if (match[1]) candidates.push(match[1].trim());
   }
   return candidates;
 }
