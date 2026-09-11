@@ -1793,6 +1793,20 @@ function MarkdownReviewQa() {
 function NavigationQa() {
   /** 地址允许独立核对超过七条、长历史和窄窗口。 */
   const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  /** 模拟先取得历史目录、随后模型确认编号的任务推送恢复。 */
+  const taskHistory = parameters.has('task-history');
+  /** 任务正文沿用发送时的布局快照，两条相同文字的独立发送仍分别保留。 */
+  const taskLayout = useMemo(
+    () =>
+      buildTaskPushLayout({
+        taskTitle: '任务详情页优化',
+        taskType: 'optimization',
+        optimizationCurrentState: '优化信息布局，可以考虑增加 1/3 宽度来重构布局。\n保留任务说明的分段和完整内容。',
+        conversationPaths: ['/workspace/history/任务详情页优化.jsonl'],
+        supplementalInfo: '根据历史对话中的功能点进行验收。',
+      }),
+    [],
+  );
   /** 目录总量可自然增减，不改变生产导航规则。 */
   const [count, setCount] = useState(Math.max(1, Math.min(10000, Number(parameters.get('count')) || 1000)));
   /** 启动时只读取最后四轮正文。 */
@@ -1822,16 +1836,18 @@ function NavigationQa() {
         id: `history-${index}`,
         turnId: `turn-${index}`,
         providerTurnId: `turn-${index}`,
-        clientUserMessageId: `client-${index}`,
-        providerItemId: `user-${index}`,
+        clientUserMessageId: taskHistory ? null : `client-${index}`,
+        providerItemId: taskHistory ? null : `user-${index}`,
         sequence: index * 2 + 1,
         occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
         /** 示例使用普通发言，避免把验收序号误当成产品标题。 */
-        prompt: ['任务说明直接收起来了吗？', '请保留完整的任务说明。', '鼠标移出后应该回到原来的阅读位置。', '预览里只显示发言和答复。'][index % 4]!,
+        prompt: taskHistory
+          ? '任务详情页优化 现状： 优化信息布局，可以考虑增加 1/3 宽度来重构布局 当前任务历史会话信息：…'
+          : ['任务说明直接收起来了吗？', '请保留完整的任务说明。', '鼠标移出后应该回到原来的阅读位置。', '预览里只显示发言和答复。'][index % 4]!,
         response: '任务说明已保留，可以继续阅读完整内容。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。',
         status: 'completed',
       })),
-    [count],
+    [count, taskHistory],
   );
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
@@ -1867,14 +1883,14 @@ function NavigationQa() {
           conversationId: 'qa-navigation',
           threadId: 'qa-navigation',
           turnId: entry.turnId,
-          itemId: role === 'user' ? entry.id : `answer-${index}`,
-          providerItemId: role === 'user' ? entry.providerItemId! : `answer-${index}`,
-          ...(role === 'user' ? { clientUserMessageId: entry.clientUserMessageId! } : {}),
+          itemId: role === 'user' ? (taskHistory ? `user-${index}` : entry.id) : `answer-${index}`,
+          providerItemId: role === 'user' ? `user-${index}` : `answer-${index}`,
+          ...(role === 'user' ? { localItemId: entry.id, ...(entry.clientUserMessageId ? { clientUserMessageId: entry.clientUserMessageId } : {}) } : {}),
           type: role === 'user' ? 'userMessage' : 'agentMessage',
           phase: role === 'user' ? 'user' : 'final_answer',
           status: 'completed',
           text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
-          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1) },
+          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1), ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}) },
           resources: [],
           updatedAt: entry.occurredAt,
         }));
@@ -1895,7 +1911,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, revision, count]);
+  }, [loaded, entries, revision, count, taskHistory, taskLayout]);
 
   /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
   function recordFrames() {
@@ -1987,6 +2003,7 @@ function NavigationQa() {
         <a href="?navigation&count=1000">长历史</a>
         <a href="?navigation&count=8&directory-failure">目录故障</a>
         <a href="?navigation&count=8&body-failure">正文故障</a>
+        <a href="?navigation&count=8&task-history">任务推送恢复</a>
         <Button
           onClick={() => {
             /** 几何检查读取真实样式，不修改被验收的生产元素。 */
@@ -2006,6 +2023,14 @@ function NavigationQa() {
                   renderedRows: rows?.length,
                   loadedTurns: loaded.size,
                   railHeight: surface.current?.querySelector('.session-navigation-rail')?.getBoundingClientRect().height,
+                  ...(taskHistory
+                    ? {
+                        taskHistoryCheck:
+                          loaded.has(0) && ticks?.length === count && Boolean(surface.current?.querySelector('.session-task-push-field')) && !surface.current?.querySelector('.session-navigation-placeholder')
+                            ? '通过'
+                            : '失败：目录重复、任务布局缺失或正文尚未恢复',
+                      }
+                    : {}),
                 },
                 null,
                 2,
