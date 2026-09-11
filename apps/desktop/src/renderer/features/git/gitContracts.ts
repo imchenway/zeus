@@ -154,7 +154,7 @@ export type ProjectGitAction =
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
-  | { type: 'apply_patch'; patch: string; reverse?: boolean }
+  | { type: 'apply_patch'; patch: string; reverse?: boolean; target?: 'index' | 'worktree' }
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }

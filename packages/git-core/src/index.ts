@@ -306,7 +306,7 @@ export type ProjectGitAction =
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
-  | { type: 'apply_patch'; patch: string; reverse?: boolean }
+  | { type: 'apply_patch'; patch: string; reverse?: boolean; target?: 'index' | 'worktree' }
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }
@@ -2314,7 +2314,8 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       if (!patch || patch.length > 2 * 1024 * 1024 || patch.includes('\0') || (!patch.includes('\ndiff --git ') && !patch.startsWith('diff --git '))) {
         throw gitCoreError('ZEUS_GIT_PATCH_INVALID', 'Git hunk patch is invalid or exceeds the size limit.');
       }
-      args = ['apply', '--cached', ...(action.reverse ? ['--reverse'] : []), '--whitespace=nowarn', '-'];
+      if (action.target === 'worktree' && !action.reverse) throw gitCoreError('ZEUS_GIT_PATCH_TARGET_INVALID', 'Working-tree patches may only discard an existing hunk.');
+      args = ['apply', ...(action.target === 'worktree' ? [] : ['--cached']), ...(action.reverse ? ['--reverse'] : []), '--whitespace=nowarn', '-'];
       return finishProjectGitAction(repositoryPath, action.type, await runGit(repositoryPath, args, patch));
     }
     case 'commit':

@@ -5090,6 +5090,91 @@ a {
   border-left: 1px solid var(--zeus-product-line);
   grid-column: 3;
 }
+.project-git-diff-hunks {
+  background: var(--zeus-page-background, #f7f8fa);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 0;
+  scrollbar-gutter: stable;
+}
+.project-git-diff-hunk {
+  background: var(--zeus-product-panel);
+  border-bottom: 1px solid var(--zeus-product-line);
+  border-top: 1px solid var(--zeus-product-line);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.project-git-diff-hunk-header {
+  align-items: center;
+  background: var(--zeus-product-panel-muted);
+  border-bottom: 1px solid var(--zeus-product-line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 3px 8px 3px 10px;
+}
+.project-git-diff-hunk-header > span:first-child {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.project-git-diff-hunk-header strong {
+  color: var(--zeus-product-text);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.project-git-diff-hunk-header small {
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-diff-hunk-commands {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+.project-git-diff-hunk-commands button {
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 5px;
+  color: var(--zeus-product-muted);
+  font-size: 10.5px;
+  min-height: 23px;
+  padding: 2px 7px;
+}
+.project-git-diff-hunk-commands button:hover:not(:disabled) {
+  border-color: var(--zeus-product-accent, #306cff);
+  color: var(--zeus-product-accent, #306cff);
+}
+.project-git-diff-hunk-commands button.is-danger:hover:not(:disabled) {
+  background: var(--zeus-control-danger-bg, #fff5f5);
+  border-color: var(--zeus-control-danger-line, #e3a3a3);
+  color: var(--zeus-control-danger-text, #a52c2c);
+}
+.project-git-diff-hunk-commands button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.project-git-diff-hunk-body {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.project-git-diff-hunk-body .code-diff-view {
+  height: 100%;
+}
 body[data-surface='project-git-diff'] {
   background: var(--zeus-product-panel);
   margin: 0;

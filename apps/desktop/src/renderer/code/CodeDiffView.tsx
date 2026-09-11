@@ -46,6 +46,8 @@ interface CodeDiffViewProps {
   alignReplacements?: boolean;
   /** Git 工作台保留可拖动的左右分隔条。 */
   resizable?: boolean;
+  /** 外层已经提供区块标题时，不再重复显示原始 @@ 片段头。 */
+  omitHunkHeaders?: boolean;
   /** 视图无障碍名称。 */
   label: string;
   /** 只有实际存在评论或草稿的行需要区块装饰。 */
@@ -61,7 +63,7 @@ interface CodeDiffViewProps {
 /** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
 export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
   /** 文件内容和布局变化时才构造显示行。 */
-  const rows = useMemo(() => diffRows(props.file, Boolean(props.alignReplacements && !props.unified)), [props.file, props.alignReplacements, props.unified]);
+  const rows = useMemo(() => diffRows(props.file, Boolean(props.alignReplacements && !props.unified), Boolean(props.omitHunkHeaders)), [props.file, props.alignReplacements, props.unified, props.omitHunkHeaders]);
   /** 行文本只生成一次，不跟随评论或会话输入更新。 */
   const documents = useMemo(
     () => ({
@@ -341,10 +343,10 @@ function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | '
 }
 
 /** 将补丁转换成左右显示行；不截断，完整内容可滚动和复制。 */
-function diffRows(file: TaskGitFileDiff, align: boolean): DiffRow[] {
+function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolean): DiffRow[] {
   const rows: DiffRow[] = [];
   for (const hunk of file.hunks) {
-    rows.push({ left: hunk.header, right: hunk.header, leftNumber: null, rightNumber: null, kind: 'header' });
+    if (!omitHunkHeaders) rows.push({ left: hunk.header, right: hunk.header, leftNumber: null, rightNumber: null, kind: 'header' });
     for (let index = 0; index < hunk.lines.length; ) {
       const line = hunk.lines[index]!;
       if (align && (line.type === 'deletion' || line.type === 'addition')) {

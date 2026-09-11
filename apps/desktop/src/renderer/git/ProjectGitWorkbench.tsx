@@ -16,7 +16,9 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { DashboardClient, GitDiffHunk, GitFileDiff, ProjectGitAction, ProjectGitCommitDetail, ProjectGitOperationRecord, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
@@ -948,23 +950,29 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                     zh={zh}
                     onSelect={(ref) => {
                       if (title === (zh ? '分支' : 'Branches')) {
-                        if (!selectedRepository.snapshot.detached && selectedRepository.snapshot.branch === ref) {
-                          setTab('log');
-                          setHistoryRef('');
-                          return;
-                        }
-                        void execute(selectedRepository, { type: 'checkout', branchName: ref }, zh ? `切换到分支“${ref}”` : `Checkout '${ref}'`).then((outcome) => {
-                          if (outcome !== 'completed') return;
-                          setTab('log');
-                          setHistoryRef('');
-                          setSelectedCommit(null);
-                        });
+                        const current = !selectedRepository.snapshot.detached && selectedRepository.snapshot.branch === ref;
+                        setTab('log');
+                        setHistoryRef(current ? '' : ref);
+                        if (!current) selectCommit(selectedRepository, ref);
                         return;
                       }
                       setTab('log');
                       setHistoryRef(ref);
                       selectCommit(selectedRepository, ref);
                     }}
+                    onCheckout={
+                      branches === selectedRepository.snapshot.localBranches
+                        ? (ref) => {
+                            if (!selectedRepository.snapshot.detached && selectedRepository.snapshot.branch === ref) return;
+                            void execute(selectedRepository, { type: 'checkout', branchName: ref }, zh ? `切换到分支“${ref}”` : `Checkout '${ref}'`).then((outcome) => {
+                              if (outcome !== 'completed') return;
+                              setTab('log');
+                              setHistoryRef('');
+                              setSelectedCommit(null);
+                            });
+                          }
+                        : undefined
+                    }
                     onContextMenu={(event, ref) => showGitContextMenu(event, { kind: branches === selectedRepository.snapshot.tags ? 'tag' : kind, repositoryId: selectedRepository.id, ref })}
                   />
                 </details>
@@ -1055,6 +1063,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               }}
               onOpenDiff={openDiffWindow}
               onExecute={execute}
+              onConfirmAction={(repository, action, title, description, danger) =>
+                setMenuConfirmation({
+                  title,
+                  description: `${repository.name}\n${description}`,
+                  danger,
+                  run: async () => (await execute(repository, action, title)) === 'completed',
+                })
+              }
               onCommit={openCommit}
               commitDrafts={commitDrafts}
               commitModels={commitModels}
@@ -1987,6 +2003,7 @@ function BranchDirectoryTree(props: {
   branchDivergences?: Record<string, { ahead: number; behind: number }>;
   kind: BranchKind;
   zh: boolean;
+  onCheckout?: (branch: string) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void;
 }) {
   const tree = useMemo(() => buildBranchTree(props.branches), [props.branches.join('\0')]);
@@ -2016,7 +2033,9 @@ function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { no
       className={props.node.branch === props.current ? 'is-current' : ''}
       style={{ paddingLeft: `${props.depth * 20 + 25}px` }}
       onClick={() => props.onSelect?.(props.node.branch)}
+      onDoubleClick={() => props.onCheckout?.(props.node.branch)}
       onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}
+      title={props.onCheckout ? (props.zh ? `双击切换到分支“${props.node.branch}”` : `Double-click to check out '${props.node.branch}'`) : undefined}
     >
       {props.hideBranchIcons ? null : <GitBranch aria-hidden="true" />}
       <span>{props.node.name}</span>
@@ -2216,6 +2235,7 @@ function LocalChangesSurface(props: {
   onSelectFile: (path: string, stage: ChangeStage) => void;
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
+  onConfirmAction: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, title: string, description: string, danger: boolean) => void;
   onCommit: () => void;
   commitDrafts: Record<string, string>;
   commitModels: Array<{ id: string; label: string }>;
@@ -2272,7 +2292,6 @@ function LocalChangesSurface(props: {
     staged: visibleFileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?').map((file) => file.path),
     unstaged: visibleFileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?').map((file) => file.path),
   };
-  const stageBalance = visibleStageFiles.staged.length > 0 && visibleStageFiles.unstaged.length > 0 ? 'both' : visibleStageFiles.staged.length > 0 ? 'staged' : 'unstaged';
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
   const selectedDiff =
     stageDiff?.fileDiffs.find((file) => (file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) && matchesSubtree(file.newPath || file.oldPath)) ??
@@ -2296,24 +2315,28 @@ function LocalChangesSurface(props: {
         ) : null}
         <header>
           <strong>{props.zh ? '变更文件' : 'Changed files'}</strong>
-          <select
-            className="project-git-file-view-select"
-            aria-label={props.zh ? '文件显示方式' : 'File view'}
-            value={fileView}
-            disabled={!repository || visibleChangeCount === 0}
-            onChange={(event) => {
-              const next = event.currentTarget.value === 'flat' ? 'flat' : 'tree';
-              setFileView(next);
-              try {
-                localStorage.setItem('zeus.git.file-view.v1', next);
-              } catch {
-                /* 存储不可用时保留当前会话选择。 */
-              }
-            }}
-          >
-            <option value="tree">{props.zh ? '树状结构' : 'Tree view'}</option>
-            <option value="flat">{props.zh ? '平铺结构' : 'Flat view'}</option>
-          </select>
+          <span className="project-git-file-view-control" title={fileView === 'flat' ? (props.zh ? '平铺结构' : 'Flat view') : props.zh ? '树状结构' : 'Tree view'}>
+            {fileView === 'flat' ? <ListBullets aria-hidden="true" /> : <TreeStructure aria-hidden="true" />}
+            <CaretDown aria-hidden="true" />
+            <select
+              className="project-git-file-view-select"
+              aria-label={props.zh ? `文件显示方式：${fileView === 'flat' ? '平铺结构' : '树状结构'}` : `File view: ${fileView === 'flat' ? 'Flat view' : 'Tree view'}`}
+              value={fileView}
+              disabled={!repository || visibleChangeCount === 0}
+              onChange={(event) => {
+                const next = event.currentTarget.value === 'flat' ? 'flat' : 'tree';
+                setFileView(next);
+                try {
+                  localStorage.setItem('zeus.git.file-view.v1', next);
+                } catch {
+                  /* 存储不可用时保留当前会话选择。 */
+                }
+              }}
+            >
+              <option value="tree">{props.zh ? '树状结构' : 'Tree view'}</option>
+              <option value="flat">{props.zh ? '平铺结构' : 'Flat view'}</option>
+            </select>
+          </span>
           <span>{visibleChangeCount}</span>
           {subtree?.repositoryId === props.selectedRepository?.id ? (
             <button type="button" onClick={props.onClearSubtree}>
@@ -2337,13 +2360,13 @@ function LocalChangesSurface(props: {
             <span>{workspaceClean ? (props.zh ? '没有待暂存或提交的文件。' : 'There are no files to stage or commit.') : props.zh ? '清除目录筛选可查看仓库中的其他变更。' : 'Clear the folder filter to view other repository changes.'}</span>
           </div>
         ) : (
-          <div className="project-git-stage-panels" data-stage-balance={stageBalance}>
+          <div className="project-git-stage-panels">
             {(['staged', 'unstaged'] as const).map((stage) => {
               const files = visibleStageFiles[stage];
               const title = stage === 'staged' ? (props.zh ? '已暂存' : 'Staged') : props.zh ? '未暂存' : 'Unstaged';
               return (
                 <Fragment key={stage}>
-                  {stage === 'unstaged' && stageBalance === 'both' ? <GitPaneSeparator name="stages" label={props.zh ? '调整已暂存与未暂存区域高度' : 'Resize staged and unstaged panels'} axis="y" initial={50} min={15} max={85} /> : null}
+                  {stage === 'unstaged' ? <GitPaneSeparator name="stages" label={props.zh ? '调整已暂存与未暂存区域高度' : 'Resize staged and unstaged panels'} axis="y" initial={50} min={15} max={85} /> : null}
                   <section className="project-git-stage-panel" aria-label={title}>
                     <header data-git-context={repository ? JSON.stringify({ kind: 'stage', repositoryId: repository.id, ref: title, stage }) : undefined}>
                       <label className="project-git-stage-select-all">
@@ -2416,6 +2439,8 @@ function LocalChangesSurface(props: {
           <SideBySideDiff
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
+            partitionHunks
+            hunkActionsDisabled={props.busy !== null}
             onHunkAction={
               repository && selectedDiff && selectedDiff.changeType === 'modified'
                 ? (file, hunk) => {
@@ -2423,12 +2448,28 @@ function LocalChangesSurface(props: {
                     void props.onExecute(
                       repository,
                       { type: 'apply_patch', patch, reverse: props.selectedFileStage === 'staged' },
-                      props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk',
+                      props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存区块' : 'Unstage hunk') : props.zh ? '暂存区块' : 'Stage hunk',
                     );
                   }
                 : undefined
             }
-            hunkActionLabel={props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存代码块' : 'Unstage hunk') : props.zh ? '暂存代码块' : 'Stage hunk'}
+            hunkActionLabel={props.selectedFileStage === 'staged' ? (props.zh ? '取消暂存区块' : 'Unstage hunk') : props.zh ? '暂存区块' : 'Stage hunk'}
+            onHunkDiscard={
+              repository && selectedDiff && selectedDiff.changeType === 'modified' && props.selectedFileStage === 'unstaged'
+                ? (file, hunk, index) => {
+                    const patch = buildGitHunkPatch(file, hunk);
+                    const title = props.zh ? `放弃区块 ${index + 1}` : `Discard hunk ${index + 1}`;
+                    props.onConfirmAction(
+                      repository,
+                      { type: 'apply_patch', patch, reverse: true, target: 'worktree' },
+                      title,
+                      props.zh ? `将“${file.newPath || file.oldPath}”的区块 ${index + 1} 恢复为暂存区内容。此操作无法撤销。` : `Restore hunk ${index + 1} in '${file.newPath || file.oldPath}' to the index version. This cannot be undone.`,
+                      true,
+                    );
+                  }
+                : undefined
+            }
+            hunkDiscardLabel={props.zh ? '放弃区块' : 'Discard hunk'}
           />
         )}
       </main>
@@ -3517,7 +3558,7 @@ function formatRelativeTime(value: string, zh: boolean): string {
   return zh ? `${days} 天前` : `${days}d ago`;
 }
 
-/** 将当前文件的单个 hunk 重建为 Git 可接受的 patch，供暂存/取消暂存使用。 */
+/** 将当前文件的单个 hunk 重建为 Git 可接受的 patch，供暂存、取消暂存或放弃使用。 */
 function buildGitHunkPatch(file: GitFileDiff, hunk: GitDiffHunk): string {
   const oldPath = file.oldPath || file.newPath;
   const newPath = file.newPath || file.oldPath;

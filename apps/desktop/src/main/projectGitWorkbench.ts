@@ -282,7 +282,12 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'unstage':
       return { type: 'unstage', paths: paths() };
     case 'apply_patch':
-      return { type: 'apply_patch', patch: typeof value.patch === 'string' ? value.patch : '', reverse: value.reverse === true };
+      return {
+        type: 'apply_patch',
+        patch: typeof value.patch === 'string' ? value.patch : '',
+        reverse: value.reverse === true,
+        target: value.target === 'worktree' ? 'worktree' : 'index',
+      };
     case 'commit':
       return { type: 'commit', message: stringValue('message') ?? '' };
     case 'push':

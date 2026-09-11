@@ -11,6 +11,20 @@ import '../styles.css';
 import '../ui/primitives.css';
 
 type DiffViewMode = 'side-by-side' | 'unified';
+
+interface SideBySideDiffProps {
+  diff: GitDiffSummary | null;
+  zh: boolean;
+  title?: string;
+  fill?: boolean;
+  partitionHunks?: boolean;
+  hunkActionsDisabled?: boolean;
+  onHunkAction?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void;
+  hunkActionLabel?: string;
+  onHunkDiscard?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void;
+  hunkDiscardLabel?: string;
+}
+
 export function ProjectGitDiffWindow(props: {
   client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff'>;
   projectId: string;
@@ -111,7 +125,7 @@ export function ProjectGitDiffWindow(props: {
   );
 }
 
-export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean; title?: string; fill?: boolean; onHunkAction?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void; hunkActionLabel?: string }) {
+export function SideBySideDiff(props: SideBySideDiffProps) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
@@ -135,15 +149,6 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
           </button>
         </span>
       </header>
-      {props.onHunkAction && file.hunks.length > 0 ? (
-        <div className="project-git-diff-hunk-actions" aria-label={props.zh ? '代码块操作' : 'Hunk actions'}>
-          {file.hunks.map((hunk, index) => (
-            <button key={`${hunk.header}:${index}`} type="button" onClick={() => props.onHunkAction?.(file, hunk, index)} title={hunk.header}>
-              {props.hunkActionLabel ?? (props.zh ? '应用代码块' : 'Apply hunk')} {index + 1}
-            </button>
-          ))}
-        </div>
-      ) : null}
       <div className="project-git-diff-side-by-side">
         {mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">
@@ -152,11 +157,85 @@ export function SideBySideDiff(props: { diff: GitDiffSummary | null; zh: boolean
           </div>
         ) : null}
         <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
-          <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
+          {props.partitionHunks ? (
+            <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
+              {file.hunks.map((hunk, index) => (
+                <DiffHunkSection
+                  key={`${hunk.header}:${index}`}
+                  file={file}
+                  hunk={hunk}
+                  index={index}
+                  unified={mode === 'unified'}
+                  zh={props.zh}
+                  disabled={props.hunkActionsDisabled}
+                  actionLabel={props.hunkActionLabel}
+                  discardLabel={props.hunkDiscardLabel}
+                  onAction={props.onHunkAction}
+                  onDiscard={props.onHunkDiscard}
+                />
+              ))}
+            </div>
+          ) : (
+            <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
+          )}
         </Suspense>
       </div>
     </section>
   );
+}
+
+/** 工作区差异按 hunk 分段呈现，操作始终贴近将被影响的代码。 */
+function DiffHunkSection(props: {
+  file: GitFileDiff;
+  hunk: GitDiffHunk;
+  index: number;
+  unified: boolean;
+  zh: boolean;
+  disabled?: boolean;
+  actionLabel?: string;
+  discardLabel?: string;
+  onAction?: SideBySideDiffProps['onHunkAction'];
+  onDiscard?: SideBySideDiffProps['onHunkDiscard'];
+}) {
+  const file = useMemo(() => ({ ...props.file, hunks: [props.hunk] }), [props.file, props.hunk]);
+  const label = props.zh ? `区块 ${props.index + 1}` : `Hunk ${props.index + 1}`;
+  const range = props.zh
+    ? `原始行 ${formatHunkRange(props.hunk.oldStart, props.hunk.oldLines, true)} → 新行 ${formatHunkRange(props.hunk.newStart, props.hunk.newLines, true)}`
+    : `Old ${formatHunkRange(props.hunk.oldStart, props.hunk.oldLines, false)} → new ${formatHunkRange(props.hunk.newStart, props.hunk.newLines, false)}`;
+  const height = Math.min(560, Math.max(72, props.hunk.lines.length * 20 + 32));
+  return (
+    <section className="project-git-diff-hunk" aria-label={`${label} · ${range}`}>
+      <header className="project-git-diff-hunk-header">
+        <span>
+          <strong>{label}</strong>
+          <small title={props.hunk.header}>{range}</small>
+        </span>
+        {props.onAction || props.onDiscard ? (
+          <span className="project-git-diff-hunk-commands">
+            {props.onAction ? (
+              <button type="button" disabled={props.disabled} onClick={() => props.onAction?.(props.file, props.hunk, props.index)}>
+                {props.actionLabel ?? (props.zh ? '应用区块' : 'Apply hunk')}
+              </button>
+            ) : null}
+            {props.onDiscard ? (
+              <button className="is-danger" type="button" disabled={props.disabled} onClick={() => props.onDiscard?.(props.file, props.hunk, props.index)}>
+                {props.discardLabel ?? (props.zh ? '放弃区块' : 'Discard hunk')}
+              </button>
+            ) : null}
+          </span>
+        ) : null}
+      </header>
+      <div className="project-git-diff-hunk-body" style={{ height }}>
+        <CodeDiffView file={file} unified={props.unified} alignReplacements resizable omitHunkHeaders label={`${props.zh ? '文件差异' : 'File diff'} · ${label}`} />
+      </div>
+    </section>
+  );
+}
+
+function formatHunkRange(start: number, lines: number, zh: boolean): string {
+  if (lines === 0) return zh ? '空' : 'empty';
+  const end = start + lines - 1;
+  return start === end ? String(start) : `${start}–${end}`;
 }
 
 /** 独立差异窗口只把选中文件交给代码视图。 */
