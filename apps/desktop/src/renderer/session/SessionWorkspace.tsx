@@ -2509,16 +2509,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               ) : null}
             </div>
           </div>
-          {/* 摘要与详情独占通栏，展开高度不再影响标题栏工具的位置。 */}
-          <div key={`runtime:${displayedHeader.conversationId}`} className="session-thread-subtitle-row">
-            {!legacy && props.state ? (
-              <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} contextLabel={displayedHeader.contextLabel ?? undefined} />
-            ) : displayedHeader.contextLabel ? (
+          {/* 运行详情归左侧正文；旧会话或未就绪会话仅在标题下保留项目名称。 */}
+          {(legacy || !props.state) && displayedHeader.contextLabel ? (
+            <div className="session-thread-subtitle-row">
               <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
                 {displayedHeader.contextLabel}
               </small>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </header>
       ) : null}
 
@@ -2572,7 +2570,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 data-browser-resizing={browserResizing || undefined}
               >
                 <div className="session-conversation-pane">
-                  {!displayedHeader ? <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} /> : null}
+                  {/* 固定在左栏内挂载，开关右侧工作区不重建详情，也不改变浏览器高度。 */}
+                  <div key={`runtime:${displayedHeader?.conversationId ?? props.state.conversationId}`} className="session-thread-subtitle-row">
+                    <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} contextLabel={displayedHeader?.contextLabel ?? undefined} />
+                  </div>
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}

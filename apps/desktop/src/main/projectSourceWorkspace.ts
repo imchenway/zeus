@@ -3,6 +3,7 @@ import { createReadStream, watch, type FSWatcher } from 'node:fs';
 import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { detectSourceLanguage } from '@zeus/shared';
+import { buildTaskAttachmentPreviewDataUrl, inferTaskClipboardAttachmentMimeType, isSupportedImageInputMimeType } from './taskClipboard.js';
 import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
@@ -16,6 +17,8 @@ import type {
 } from '@zeus/shared';
 
 const maximumEditableBytes = 2 * 1024 * 1024;
+/** ponytail: 单张最多读取 10 MiB；多标签内存成为瓶颈时再改为按需图片资源。 */
+const maximumImagePreviewBytes = 10 * 1024 * 1024;
 const maximumSearchResults = 200;
 const maximumSearchVisits = 50_000;
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -78,6 +81,7 @@ export class ProjectSourceWorkspaceService {
     return { entries, truncated: resultLimitReached || directories.length > 0 || visited >= maximumSearchVisits };
   }
 
+  /** 在项目目录边界内读取文件；图片返回只读预览，文本继续走原有编辑链路。 */
   async readFile(projectId: string, relativePath: string): Promise<ProjectSourceDocument> {
     const root = await this.#projectRoot(projectId);
     const target = await resolveExistingPath(root, relativePath);
@@ -86,9 +90,17 @@ export class ProjectSourceWorkspaceService {
     const isSymlink = targetLstat.isSymbolicLink();
     const basicRevision = revisionFromStat(targetStat.size, targetStat.mtimeMs);
     if (!targetStat.isFile()) return readOnlyDocument(target.relativePath, basicRevision, 'not_regular_file');
-    if (targetStat.size > maximumEditableBytes) return readOnlyDocument(target.relativePath, await revisionFromFile(target.absolutePath, targetStat.size, targetStat.mtimeMs), 'too_large');
+    /** 先识别可预览图片，避免图片被文本大小或空字节检查提前挡住。 */
+    const mimeType = inferTaskClipboardAttachmentMimeType(target.relativePath);
+    /** 复用已有格式白名单，其他二进制文件继续交给外部应用。 */
+    const imagePreview = isSupportedImageInputMimeType(mimeType);
+    /** 文本编辑与图片预览各自遵守读取上限。 */
+    const maximumBytes = imagePreview ? maximumImagePreviewBytes : maximumEditableBytes;
+    if (targetStat.size > maximumBytes) return readOnlyDocument(target.relativePath, await revisionFromFile(target.absolutePath, targetStat.size, targetStat.mtimeMs), 'too_large');
     const bytes = await readFile(target.absolutePath);
     const revision = revisionFromBytes(bytes, targetStat.mtimeMs);
+    if (bytes.byteLength > maximumBytes) return readOnlyDocument(target.relativePath, revision, 'too_large');
+    if (imagePreview) return { ...readOnlyDocument(target.relativePath, revision, 'binary'), imagePreviewUrl: buildTaskAttachmentPreviewDataUrl(bytes, mimeType) };
     if (bytes.includes(0)) return readOnlyDocument(target.relativePath, revision, 'binary');
     const hasBom = bytes.subarray(0, utf8Bom.length).equals(utf8Bom);
     const contentBytes = hasBom ? bytes.subarray(utf8Bom.length) : bytes;
