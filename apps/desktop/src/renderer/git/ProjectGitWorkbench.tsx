@@ -141,7 +141,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       .then(([models, selection]) => {
         if (!active) return;
         const available = models.items;
-        setCommitModelsError(models.warning);
+        // 单个来源不可用不代表整个模型列表失败；有可用模型时不阻挡生成反馈。
+        setCommitModelsError(available.length ? '' : models.warning);
         let remembered: string | null = null;
         try {
           remembered = localStorage.getItem(`zeus.git.commit-model.${props.project.id}`);
@@ -2378,6 +2379,13 @@ function LocalChangesSurface(props: {
               <div className="project-git-commit-message-heading">
                 <label htmlFor="project-git-commit-message">{props.zh ? '提交说明' : 'Commit message'}</label>
                 <div className="project-git-commit-generation-controls">
+                  <small className="project-git-commit-generation-feedback" role="status" title={props.commitModelsError || undefined}>
+                    {!props.commitModelsLoading && !props.commitModels.length
+                      ? props.zh
+                        ? '暂无可用模型，请在设置中配置模型连接后刷新。'
+                        : 'No models available. Configure a model connection in Settings, then refresh.'
+                      : props.generationFeedback || props.commitModelsError}
+                  </small>
                   <select
                     aria-label={props.zh ? '生成提交说明的模型' : 'Commit message model'}
                     value={props.commitModelRef}
@@ -2433,10 +2441,6 @@ function LocalChangesSurface(props: {
                   }
                 }}
               />
-              <small role="status">
-                {props.commitModelsError ||
-                  (!props.commitModelsLoading && !props.commitModels.length ? (props.zh ? '请登录 Codex 或配置模型连接，再刷新列表。' : 'Sign in to Codex or configure a model connection, then refresh.') : props.generationFeedback)}
-              </small>
             </div>
             <div className="project-git-commit-actions">
               <Button variant="secondary" disabled={props.busy !== null || generating} onClick={() => setEditingRepository(null)}>

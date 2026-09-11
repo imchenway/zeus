@@ -196,6 +196,8 @@
 }
 
 .project-source-module {
+  --source-module-header-height: 30px;
+  position: relative;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--zeus-control-border);
 }
@@ -211,6 +213,19 @@
   cursor: pointer;
   padding: 10px 12px;
   font-weight: 600;
+}
+.macos-ai-app .project-source-tree .project-source-module > summary {
+  height: var(--source-module-header-height);
+  min-height: var(--source-module-header-height);
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.macos-ai-app .project-source-tree .project-source-changes-body summary {
+  padding: 3px 7px;
+  min-height: 26px;
+  font-size: 12px;
+  line-height: 20px;
 }
 .project-source-module > summary::-webkit-details-marker,
 .project-source-changes-body summary::-webkit-details-marker {
@@ -243,6 +258,7 @@
   overflow: hidden;
 }
 .project-source-tree > .project-source-module[open] {
+  height: 0;
   min-height: 80px;
   overflow: hidden;
   flex: 1;
@@ -250,13 +266,19 @@
 .project-source-tree:has(> .project-source-changes[open]) > .project-source-module:first-child[open] {
   flex: 0 1 var(--source-module-share, 55%);
 }
-.project-source-module::details-content {
+/* 分栏模块的高度由拖动布局决定，不使用通用 details 的自然高度动画。 */
+.macos-ai-app .project-source-tree > .project-source-module[open]::details-content {
+  position: absolute;
+  inset: var(--source-module-header-height) 0 0;
   display: flex;
   flex-direction: column;
-  height: calc(100% - 40px);
+  min-height: 0;
+  block-size: auto;
+  transition: none;
   overflow: hidden;
 }
 .project-source-module > .project-source-changes-body {
+  flex: 1;
   overflow: auto;
   min-height: 0;
 }
@@ -358,6 +380,7 @@
 
 .project-source-search {
   display: flex;
+  flex-shrink: 0;
   min-height: 42px;
   align-items: center;
   gap: 7px;
