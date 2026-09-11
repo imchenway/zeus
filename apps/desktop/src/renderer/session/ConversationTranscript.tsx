@@ -34,7 +34,7 @@ import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
 import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
-import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, navigationStatusText, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
+import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 
 export interface ConversationTranscriptProps {
   /** 主会话读取完整目录，独立子线程不传此入口。 */
@@ -683,7 +683,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       setReturnToLatestVisible(true);
       /** 请求只服务当前跳转，旧回执不影响后来的点击。 */
       const request = ++navigationRequestRef.current;
-      if (entry.loaded && props.onLoadNavigationTurn)
+      // 显式跳转立即读取目标轮次，不等待虚拟占位进入观察区域；控制器会合并并发请求。
+      if (props.onLoadNavigationTurn)
         void props.onLoadNavigationTurn(entry.turnId).catch((error: unknown) => {
           if (request === navigationRequestRef.current) setNavigationReadError({ entry, message: error instanceof Error ? error.message : '正文读取失败。' });
         });
@@ -1518,9 +1519,9 @@ function transcriptNavigationEntries(rows: readonly TranscriptTurnRow[], state: 
       : '';
     /** 已确认轮次优先使用模型身份，目录合并后保留本地读取身份。 */
     const turn = state.turnsByProviderId[item.turnId];
-    /** 投影仅用于导航，所有原消息字段仍留在正文中。 */
+    /** 持久行身份独立于模型编号；目录先于模型确认返回时仍能接管同一条正文。 */
     const entry = {
-      id: item.itemId,
+      id: item.localItemId ?? item.itemId,
       turnId: turn?.id ?? item.turnId,
       providerTurnId: turn?.providerTurnId ?? item.turnId,
       clientUserMessageId: item.clientUserMessageId ?? item.durableClientUserMessageId ?? null,
@@ -1571,7 +1572,7 @@ function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: read
           .map((id) => byIdentity.get(`client:${id}`))
           .find(Boolean) ??
         (row.item.providerItemId ? byIdentity.get(`provider:${row.item.providerItemId}`) : undefined) ??
-        byIdentity.get(`history:${row.item.itemId}`);
+        byIdentity.get(`history:${row.item.localItemId ?? row.item.itemId}`);
       result.push(entry ? { ...row, key: entry.rowKey } : row);
     } else result.push(row);
   }
@@ -1603,8 +1604,8 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
         setStatus({ loading: true, error: null });
         void props.onLoad!(props.entry.turnId)
           .then(() => {
-            // 正常结果会由真实行替换此占位；若身份未能对应，保留明确反馈而非无界读取。
-            if (!cancelled) setStatus({ loading: false, error: props.language === 'zh-CN' ? '正文已读取；若仍未显示，请重试。' : 'Content loaded; retry if this message is still unavailable.' });
+            // 正常结果由真实行接管；仍留在占位时只报告展示未完成，不把请求成功等同于正文可见。
+            if (!cancelled) setStatus({ loading: false, error: props.language === 'zh-CN' ? '正文暂未显示，请重试。' : 'Message not displayed yet. Please retry.' });
           })
           .catch((error: unknown) => {
             if (!cancelled) setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
@@ -1620,8 +1621,6 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
   }, [props.entry.turnId, props.onLoad, props.language, attempt]);
   return (
     <section ref={ref} className="session-navigation-placeholder" aria-busy={status.loading}>
-      <strong>{props.entry.prompt || (props.language === 'zh-CN' ? '用户发言' : 'User message')}</strong>
-      <p>{props.entry.response || navigationStatusText(props.entry.status, props.language === 'zh-CN')}</p>
       <span role="status">{status.error ?? (props.language === 'zh-CN' ? '正在读取正文…' : 'Loading message…')}</span>
       {status.error ? (
         <button type="button" onClick={() => setAttempt((current) => current + 1)}>

@@ -52,7 +52,23 @@ type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'con
 // 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
 // 用户消息的附件、任务布局和上下文是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
 // 继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
-const modelHistoryVisibleContentSql = `CASE
+// 旧任务历史只保存纯文字时，按同会话的发送身份补回展示快照；不读取或暴露执行配置。
+// 首屏、历史分页和完整正文共用此投影，保证预览长度与内容句柄一致。
+const modelHistoryVisibleContentSql = `COALESCE(
+  (SELECT json_patch(conversation_model_history.content_json, json_object(
+     'taskPushLayout', json_extract(submission.input_json, '$.taskPushLayout'),
+     'attachments', COALESCE(json_extract(conversation_model_history.content_json, '$.attachments'), json_extract(submission.input_json, '$.attachments'), json('[]'))
+   ))
+   FROM conversation_submissions AS submission
+   WHERE conversation_model_history.role = 'user'
+     AND submission.id = conversation_model_history.submission_id
+     AND submission.conversation_id = conversation_model_history.conversation_id
+     AND json_valid(conversation_model_history.content_json)
+     AND json_type(conversation_model_history.content_json, '$') = 'object'
+     AND json_type(conversation_model_history.content_json, '$.taskPushLayout') IS NULL
+     AND json_valid(submission.input_json)
+     AND json_type(submission.input_json, '$.taskPushLayout') = 'object'),
+  CASE
   WHEN conversation_model_history.role = 'user'
    AND json_valid(content_json)
    AND (
@@ -64,7 +80,7 @@ const modelHistoryVisibleContentSql = `CASE
   WHEN json_valid(content_json) AND json_type(content_json, '$.text') = 'text'
     THEN json_extract(content_json, '$.text')
   ELSE content_json
-END`;
+END)`;
 const modelHistoryUserProviderItemSql = `(SELECT message.provider_item_id
   FROM conversation_submissions AS submission
   JOIN conversation_messages AS message
