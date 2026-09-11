@@ -1,4 +1,4 @@
-/** 命令中心只描述用户脚本的通用执行契约，不包含 Git、微信等产品内置业务类型。 */
+/** 内置命令与用户脚本共用全局或项目作用域，不引入业务专属执行类型。 */
 export type CommandScope = 'global' | 'project';
 
 export type CommandParameterType = 'string' | 'number' | 'boolean';

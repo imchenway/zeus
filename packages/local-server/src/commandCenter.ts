@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   assertExpectedRevision,
@@ -93,7 +94,7 @@ export interface CommandCenterController {
   close: () => void;
 }
 
-/** 注册通用用户脚本命令中心；该控制器不包含任何 Git、微信或 agents-sync 专用分支。 */
+/** 注册通用命令中心，内置与用户命令共用权限、确认、执行与产物链路。 */
 export function createCommandCenter(options: CommandCenterOptions): CommandCenterController {
   const definitions = new CommandDefinitionRepository(options.db);
   const runs = new CommandRunRepository(options.db);
@@ -606,6 +607,9 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         ZEUS_COMMAND_RUN_DIR: runDirectory,
         ZEUS_COMMAND_ID: command.id,
         ZEUS_COMMAND_RUN_ID: runId,
+        // 随包的运行时和微信入口使用绝对路径，不依赖用户安装 Node.js 或复制脚本。
+        ZEUS_BUILTIN_NODE: process.execPath,
+        ZEUS_BUILTIN_WECHAT: fileURLToPath(new URL('./wechatCommandRunner.js', import.meta.url)),
         ...(releaseNotesCapability
           ? {
               ZEUS_RELEASE_NOTES_API_URL: releaseNotesCapability.url,

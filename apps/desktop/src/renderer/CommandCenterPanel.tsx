@@ -668,8 +668,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           <p>
             {props.mode === 'global'
               ? zh
-                ? '添加你自己的命令脚本，可在各项目目录中运行。'
-                : 'Add your own command scripts to run in project folders.'
+                ? '内置微信上传、预览和真机调试，也可添加自己的脚本。在项目命令中运行。'
+                : 'Built-in WeChat upload, preview and device debugging. Add your own scripts and run commands from a project.'
               : zh
                 ? '全局命令只读展示；项目命令可在这里维护和执行。'
                 : 'Global commands are read-only here; project commands can be maintained and run.'}
