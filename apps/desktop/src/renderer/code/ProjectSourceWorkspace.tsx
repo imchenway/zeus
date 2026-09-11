@@ -2,7 +2,8 @@ import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FloppyDiskIcon as FloppyDisk } from '@phosphor-icons/react/dist/csr/FloppyDisk';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -17,12 +18,14 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
+import type { GitDiffSummary } from '../features/git/gitContracts.js';
+import { SideBySideDiff } from '../git/ProjectGitDiffViewer.js';
 
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
 
-function SourceChanges(props: { projectId: string; zh: boolean; onOpen(path: string): void }) {
+function SourceChanges(props: { projectId: string; zh: boolean; onConflict(path: string): void; onOpen(path: string, diff: GitDiffSummary, staged: boolean): void }) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -68,8 +71,12 @@ function SourceChanges(props: { projectId: string; zh: boolean; onOpen(path: str
             </summary>
             {(
               [
-                [props.zh ? '暂存的更改' : 'Staged changes', repository.snapshot.fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?' && file.indexStatus !== '!')],
-                [props.zh ? '更改' : 'Changes', repository.snapshot.fileStatuses.filter((file) => file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '!')],
+                [props.zh ? '合并更改' : 'Merge changes', repository.snapshot.fileStatuses.filter((file) => repository.snapshot.conflictFiles.includes(file.path))],
+                [
+                  props.zh ? '暂存的更改' : 'Staged changes',
+                  repository.snapshot.fileStatuses.filter((file) => !repository.snapshot.conflictFiles.includes(file.path) && file.indexStatus !== ' ' && file.indexStatus !== '?' && file.indexStatus !== '!'),
+                ],
+                [props.zh ? '更改' : 'Changes', repository.snapshot.fileStatuses.filter((file) => !repository.snapshot.conflictFiles.includes(file.path) && file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '!')],
               ] as const
             ).map(([label, files]) => (
               <details key={label} open>
@@ -78,7 +85,24 @@ function SourceChanges(props: { projectId: string; zh: boolean; onOpen(path: str
                   <small>{files.length}</small>
                 </summary>
                 {files.map((file) => (
-                  <button key={file.path} type="button" title={file.path} onClick={() => props.onOpen([repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'))}>
+                  <button
+                    key={file.path}
+                    type="button"
+                    title={file.path}
+                    onClick={() => {
+                      if (repository.snapshot.conflictFiles.includes(file.path)) {
+                        props.onConflict([repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'));
+                        return;
+                      }
+                      const staged = label === (props.zh ? '暂存的更改' : 'Staged changes');
+                      const source = staged ? repository.snapshot.stagedDiff : repository.snapshot.unstagedDiff;
+                      props.onOpen(
+                        [repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'),
+                        { ...source, fileDiffs: source.fileDiffs.filter((entry) => entry.newPath === file.path || entry.oldPath === file.path), files: [file.path] },
+                        staged,
+                      );
+                    }}
+                  >
                     <File aria-hidden="true" />
                     <span>{file.path}</span>
                     <small>{file.indexStatus.trim() || file.workingTreeStatus.trim()}</small>
@@ -135,13 +159,17 @@ export interface ProjectSourceWorkspaceProps {
 
 export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, ProjectSourceWorkspaceProps>(function ProjectSourceWorkspace(props, ref) {
   const zh = props.language === 'zh-CN';
+  const [conflictComparison, setConflictComparison] = useState<{ current: string; incoming: string } | null>(null);
+  const conflictExtensions = useMemo(() => sourceConflictExtensions(zh, (current, incoming) => setConflictComparison({ current, incoming })), [zh]);
   const bridge = typeof window === 'undefined' ? undefined : window.zeus;
   const initialPreference = normalizePreference(props.preference);
   const [directories, setDirectories] = useState<Record<string, ProjectSourceDirectorySnapshot>>({});
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
+  const [changePreview, setChangePreview] = useState<{ projectId: string; path: string; diff: GitDiffSummary; staged: boolean } | null>(null);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
+  const [sourceShare, setSourceShare] = useState(55);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
   /** 窄布局遮罩退出完成后再移除，关闭立即停止命中。 */
   const treeBackdrop = useMotionPresence<HTMLButtonElement>(treeDrawerOpen);
@@ -183,6 +211,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   const openFile = useCallback(
     async (relativePath: string, line?: number) => {
+      setChangePreview(null);
       fileOpenRequestedRef.current = true;
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
@@ -647,8 +676,34 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         </div>
       ) : null}
 
+      {conflictComparison ? (
+        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)}>
+          <section className="project-source-conflict-comparison" role="dialog" aria-modal="true" aria-label={zh ? '比较变更' : 'Compare changes'}>
+            <header>
+              <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
+              <button type="button" onClick={() => setConflictComparison(null)}>
+                {zh ? '关闭' : 'Close'}
+              </button>
+            </header>
+            <div className="project-source-conflict-columns">
+              <section>
+                <h3>{zh ? '当前更改' : 'Current changes'}</h3>
+                <Suspense fallback={null}>
+                  <CodeEditor path="conflict-current" language={activeTab?.document.language ?? null} content={conflictComparison.current} readOnly />
+                </Suspense>
+              </section>
+              <section>
+                <h3>{zh ? '传入更改' : 'Incoming changes'}</h3>
+                <Suspense fallback={null}>
+                  <CodeEditor path="conflict-incoming" language={activeTab?.document.language ?? null} content={conflictComparison.incoming} readOnly />
+                </Suspense>
+              </section>
+            </div>
+          </section>
+        </ModalPortal>
+      ) : null}
       <div className="project-source-main">
-        <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
+        <aside className="project-source-tree" style={{ '--source-module-share': `${sourceShare}%` } as CSSProperties} aria-label={zh ? '代码目录' : 'Source tree'}>
           <details className="project-source-module" open>
             <summary>{zh ? '源码' : 'Source'}</summary>
             <label className="project-source-search">
@@ -679,7 +734,35 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               )}
             </div>
           </details>
-          <SourceChanges projectId={props.project.id} zh={zh} onOpen={(path) => void openFile(path)} />
+          <div
+            className="project-source-module-resizer"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={zh ? '调整源码与更改模块高度' : 'Resize source and changes panels'}
+            aria-valuemin={15}
+            aria-valuemax={85}
+            aria-valuenow={sourceShare}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              const bounds = event.currentTarget.parentElement!.getBoundingClientRect();
+              setSourceShare(Math.max(15, Math.min(85, ((event.clientY - bounds.top) / bounds.height) * 100)));
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onDoubleClick={() => setSourceShare(55)}
+            onKeyDown={(event) => {
+              if (!['ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
+              event.preventDefault();
+              setSourceShare((value) => (event.key === 'Home' ? 55 : Math.max(15, Math.min(85, value + (event.key === 'ArrowUp' ? -5 : 5)))));
+            }}
+          />
+          <SourceChanges projectId={props.project.id} zh={zh} onConflict={(path) => void openFile(path)} onOpen={(path, diff, staged) => setChangePreview({ projectId: props.project.id, path, diff, staged })} />
         </aside>
         <div
           className="project-source-tree-resizer"
@@ -709,7 +792,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
             {tabs.map((tab) => (
               <div key={tab.document.relativePath} className={`project-source-tab${tab.document.relativePath === activePath ? ' active' : ''}`}>
-                <button type="button" role="tab" aria-selected={tab.document.relativePath === activePath} onClick={() => setActivePath(tab.document.relativePath)}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={!changePreview && tab.document.relativePath === activePath}
+                  onClick={() => {
+                    setChangePreview(null);
+                    setActivePath(tab.document.relativePath);
+                  }}
+                >
                   <span>{tab.document.name}</span>
                   {tab.dirty ? (
                     <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
@@ -725,7 +816,23 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               </div>
             ))}
           </div>
-          {activeTab ? (
+          {changePreview?.projectId === props.project.id ? (
+            <section className="project-source-change-preview">
+              <header>
+                <span>
+                  {changePreview.path} · {changePreview.staged ? (zh ? 'HEAD → 暂存区' : 'HEAD → Index') : zh ? '暂存区 → 工作区' : 'Index → Working tree'}
+                </span>
+                <button type="button" onClick={() => setChangePreview(null)}>
+                  {zh ? '关闭对比' : 'Close diff'}
+                </button>
+              </header>
+              {changePreview.diff.fileDiffs.length ? (
+                <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
+              ) : (
+                <p>{zh ? '当前快照没有此文件的文本差异，请刷新更改；二进制文件不支持文本对比。' : 'No text diff in this snapshot. Refresh changes; binary files cannot be compared as text.'}</p>
+              )}
+            </section>
+          ) : activeTab ? (
             <>
               <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
                 {breadcrumbs.map((part, index) => (
@@ -749,6 +856,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               ) : (
                 <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
                   <CodeEditor
+                    extensions={conflictExtensions}
                     path={activeTab.document.relativePath}
                     language={activeTab.document.language}
                     content={activeTab.draft}
