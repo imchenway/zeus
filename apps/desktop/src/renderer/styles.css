@@ -9314,7 +9314,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 /* 与启动占位页共用透明底图标，保留品牌底板并随样式打包。 */
 .startup-failure-mark {
-  background: url('../../assets/startup-mark.svg') center / contain no-repeat;
+  background: url('../../assets/startup-mark.png') center / contain no-repeat;
   block-size: 64px;
   grid-column: 1;
   grid-row: 1 / span 2;
