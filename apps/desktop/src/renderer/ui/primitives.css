@@ -1018,6 +1018,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 /* 非模态浮层只承载定位，复用主题变量时不能把整页画布绘制到窗口上方。 */
 .zeus-select-portal-root.macos-ai-app[data-zeus-primitive='select-popover'],
+.macos-ai-app.session-navigation-portal,
 .macos-ai-app.session-context-usage-tooltip-portal,
 .macos-ai-app.session-open-with-portal {
   background: transparent;

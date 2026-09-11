@@ -602,8 +602,14 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     defineTool({
       name: 'grep',
       label: '搜索文本',
-      description: '在 Zeus 当前工作区中搜索文本。',
-      parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
+      description: '在当前工作区搜索，默认只返回匹配文件名。需要正文时使用 outputMode="content"，支持 glob 筛选；limit 是每文件的匹配上限（默认 50，最多 200），长行只展示预览。',
+      parameters: Type.Object({
+        pattern: Type.String(),
+        path: Type.Optional(Type.String()),
+        glob: Type.Optional(Type.String()),
+        outputMode: Type.Optional(Type.Union([Type.Literal('files'), Type.Literal('content')])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      }),
       execute: (id, args, signal) => execute(id, 'grep', args, signal),
     }),
     defineTool({
@@ -617,8 +623,8 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     defineTool({
       name: 'read_conversation_tool_result',
       label: '读取完整工具结果',
-      description: '按 Zeus 句柄分页读取此前工具调用的原始结果，不会重新执行命令或工具。',
-      parameters: Type.Object({ handle: Type.String(), offset: Type.Optional(Type.Number()), limit: Type.Optional(Type.Number()) }),
+      description: '按句柄分页读取已有工具结果，不会重新执行。每页最多 16384 个 UTF-8 字节；使用返回的 nextOffset 继续读取，null 表示结束。',
+      parameters: Type.Object({ handle: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 16384 })) }),
       execute: (id, args, signal) => execute(id, 'read_conversation_tool_result', args, signal),
     }),
     defineTool({

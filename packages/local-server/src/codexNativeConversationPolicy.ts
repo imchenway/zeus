@@ -159,7 +159,9 @@ export function replayResolvedRequest(request: NonNullable<ReturnType<Conversati
 /** 生成宿主补充指令；Git 操作遵循用户授权与执行权限，不注入旧任务的绝对禁令。 */
 export function developerInstructionsFor(context: ConversationDispatchContext, browserToolsAvailable: boolean): string {
   /** 当前会话需要补充的宿主指令。 */
-  const instructions: string[] = [];
+  const instructions: string[] = [
+    '管理上下文时，搜索先用 rg --files 或 rg -l 定位文件，再按文件和行范围读取；避免广域 grep、整文件 cat 和重复读取已确认内容。命令与 functions.exec 默认显式设置约 2000 token 的输出预算，按实际需要增加；并行调用共用外层总输出预算，不逐项打印完整大对象。构建日志保存到本地文件，只回传结论和必要错误段；大工具结果按已返回的句柄分页读取，不为补看输出而重跑有副作用的操作。',
+  ];
   if (browserToolsAvailable) {
     instructions.push(
       '用户未明确指定其他浏览器时，在 Zeus 会话中执行网页打开、导航、点击、输入、页面检查或截图，必须优先使用当前会话的 zeus_browser 动态工具。不得把 Codex Browser 插件返回的浏览器列表为空视为 Zeus 内置浏览器不可用，也不得因此改用外部 Playwright。用户明确点名其他浏览器时，尊重该选择并如实报告其可用性。',

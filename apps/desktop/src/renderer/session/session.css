@@ -1627,6 +1627,8 @@
 
 /* 回答选区的两个动作与本地注释锚点保持轻量，不遮挡正文。 */
 .session-selection-toolbar {
+  inset: auto;
+  margin: 0;
   background: color-mix(in srgb, var(--session-canvas, #fff) 96%, transparent);
   border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
   border-radius: 10px;
@@ -1667,12 +1669,12 @@
   background: var(--session-control-hover, rgb(0 0 0 / 6%));
 }
 
-.session-response-annotation-marker {
+.macos-ai-app .session-response-annotation-marker {
   align-items: center;
-  background: color-mix(in oklab, var(--session-accent, var(--zeus-brand-primary)) 10%, var(--session-canvas, #fff));
-  border: 1px solid color-mix(in oklab, var(--session-accent, var(--zeus-brand-primary)) 36%, var(--session-line, rgb(0 0 0 / 10%)));
-  border-radius: 999px;
-  box-shadow: 0 1px 3px var(--session-shadow-soft, rgb(0 0 0 / 10%));
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
   color: var(--zeus-brand-text);
   cursor: pointer;
   display: flex;
@@ -1681,6 +1683,9 @@
     sans-serif;
   block-size: 24px;
   inline-size: 24px;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  padding: 0;
   justify-content: center;
   position: absolute;
   transform: translate(5px, -5px);
@@ -1692,12 +1697,15 @@
   z-index: 998;
 }
 
-.session-response-annotation-marker:hover:not(:disabled):not([aria-disabled='true']),
-.session-response-annotation-marker[aria-expanded='true'] {
-  background: var(--session-accent, var(--zeus-brand-primary));
-  border-color: var(--session-accent, var(--zeus-brand-primary));
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--session-accent, var(--zeus-brand-primary)) 24%, transparent);
-  color: var(--session-canvas, #fff);
+.macos-ai-app .session-response-annotation-marker:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .session-response-annotation-marker[aria-expanded='true'] {
+  background: var(--session-control-hover, rgb(0 0 0 / 6%));
+}
+
+/* 气泡直接表达评论语义，保留完整点击范围。 */
+.session-response-annotation-marker > svg {
+  inline-size: 22px;
+  block-size: 22px;
 }
 
 .session-response-annotation-marker:focus-visible {
@@ -1706,6 +1714,9 @@
 }
 
 .session-response-annotation-editor {
+  box-sizing: border-box;
+  inset: auto;
+  margin: 0;
   background: var(--session-canvas, #fff);
   border: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
   border-radius: 10px;
@@ -1716,7 +1727,7 @@
   display: grid;
   gap: 0;
   inline-size: min(300px, calc(100vw - 24px));
-  overflow: hidden;
+  overflow: auto;
   padding: 0;
   position: fixed;
   z-index: 1001;
@@ -1741,21 +1752,6 @@
   font-size: 12px;
   font-weight: 650;
   line-height: 17px;
-}
-
-.session-response-annotation-editor blockquote {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  background: var(--session-control, var(--session-sidebar, #f7f7f7));
-  border-block: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
-  color: var(--session-text-muted, #60656f);
-  display: -webkit-box;
-  font-size: 11px;
-  line-height: 16px;
-  margin: 0;
-  overflow: hidden;
-  padding: 6px 10px;
-  white-space: pre-wrap;
 }
 
 /* 批注输入区自行管理边框与留白，避免通用表单圆角、投影覆盖后贴住弹层边缘。 */
@@ -4607,7 +4603,8 @@
   font-weight: 590;
   gap: 9px;
   min-block-size: 28px;
-  padding: 4px 8px;
+  /* 图标沿用正文列的起点，标题行不再额外横向缩进。 */
+  padding: 4px 0;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary:hover:not(:disabled):not([aria-disabled='true']) {
@@ -4653,7 +4650,8 @@
   gap: 8px;
   grid-template-columns: 20px minmax(0, 1fr);
   line-height: 1.45;
-  margin: 2px 0 0 2px;
+  /* 进行中的活动与折叠标题共用同一条左边界。 */
+  margin: 2px 0 0;
   min-block-size: 24px;
   padding: 0;
 }
@@ -5542,23 +5540,6 @@
 .session-codex-parity-v1 .session-primary-command-slot button:active:not(:disabled),
 .session-codex-parity-v1 .session-active-draft-submit:active:not(:disabled) {
   background: var(--zeus-interaction-primary-pressed) !important;
-}
-
-.session-codex-parity-v1 .session-stop-button > span {
-  background: currentColor;
-  border-radius: 2px;
-  block-size: 9px;
-  inline-size: 9px;
-}
-
-.session-codex-parity-v1 .session-command-spinner {
-  animation: session-spinner 700ms linear infinite;
-  block-size: 12px;
-  border: 1.5px solid currentColor;
-  border-inline-end-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  inline-size: 12px;
 }
 
 .session-codex-parity-v1 .session-queue ol {
@@ -7204,7 +7185,8 @@
 }
 
 .session-codex-parity-v1 button.session-inline-resource {
-  align-items: center;
+  /* 链接以文字基线参与正文排版，避免前置图标把整段链接抬高。 */
+  align-items: baseline;
   appearance: none;
   background: transparent;
   border: 0;
@@ -7241,6 +7223,7 @@
 }
 
 .session-codex-parity-v1 .session-inline-resource > svg {
+  align-self: center;
   block-size: 15px;
   display: block;
   flex: 0 0 auto;
@@ -7622,11 +7605,8 @@
   padding-inline: 10px !important;
 }
 
-.session-codex-parity-v1 .session-turn-change-error {
+.session-codex-parity-v1 :where(.session-turn-change-error, .session-turn-change-notice) {
   align-items: flex-start;
-  background: color-mix(in oklab, var(--session-danger) 8%, transparent);
-  border-block: 1px solid color-mix(in oklab, var(--session-danger) 24%, var(--session-line));
-  color: var(--session-danger);
   display: flex;
   font-size: 12px;
   gap: 7px;
@@ -7634,7 +7614,18 @@
   padding: 9px 14px;
 }
 
-.session-codex-parity-v1 .session-turn-change-error svg {
+/* 无法撤销是已知能力限制；仅真实操作冲突使用红色告警。 */
+.session-codex-parity-v1 .session-turn-change-notice {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-turn-change-error {
+  background: color-mix(in oklab, var(--session-danger) 8%, transparent);
+  border-block: 1px solid color-mix(in oklab, var(--session-danger) 24%, var(--session-line));
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 :where(.session-turn-change-error, .session-turn-change-notice) svg {
   block-size: 16px;
   flex: 0 0 auto;
   inline-size: 16px;
@@ -7642,9 +7633,19 @@
 
 .session-codex-parity-v1 .session-turn-change-files {
   border-block-start: 1px solid var(--session-line-soft);
+  /* 全列表共享新增、删除两列的自然宽度，数字位数变化不挤偏相邻列。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  column-gap: 8px;
   list-style: none;
   margin: 0;
   padding: 9px 14px 7px;
+}
+
+.session-codex-parity-v1 .session-turn-change-files > li {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .session-codex-parity-v1 .session-turn-change-files button {
@@ -7654,10 +7655,10 @@
   border: 0;
   border-radius: 7px;
   cursor: pointer;
-  display: flex;
-  gap: 14px;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   inline-size: 100%;
-  justify-content: space-between;
   min-block-size: 34px;
   padding: 5px 7px;
   text-align: start;
@@ -7675,10 +7676,20 @@
 }
 
 .session-codex-parity-v1 .session-turn-change-file-counts {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 8px;
+  display: grid;
+  grid-column: 2 / -1;
+  grid-template-columns: subgrid;
   font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* 单边变化仍占据对应列，缺失的计数不冒充另一列。 */
+.session-codex-parity-v1 .session-turn-change-file-counts > .session-change-added {
+  grid-column: 1;
+}
+
+.session-codex-parity-v1 .session-turn-change-file-counts > .session-change-deleted {
+  grid-column: 2;
 }
 
 .session-codex-parity-v1 .session-turn-change-more {
@@ -10442,20 +10453,6 @@
   opacity: 1;
 }
 
-.session-codex-parity-v1 .session-stop-button[aria-busy='true'] > .session-command-spinner {
-  border-color: currentColor;
-  border-inline-end-color: transparent;
-}
-
-.session-codex-parity-v1 .session-command-spinner {
-  animation: session-spinner 700ms linear infinite;
-  block-size: 19px;
-  border: 0;
-  border-radius: 0;
-  display: block;
-  inline-size: 19px;
-}
-
 @media (max-width: 559px) {
   .session-codex-parity-v1 .session-composer-command-row {
     align-items: end;
@@ -11078,8 +11075,11 @@
   flex: 0 0 auto;
 }
 
+/* 命令等待只使用共享圆环，跟随按钮文字颜色，保持发送与停止的对比度。 */
 .session-codex-parity-v1 .session-command-spinner {
   block-size: 16px;
+  border-color: currentColor;
+  border-inline-end-color: transparent;
   inline-size: 16px;
 }
 
@@ -11544,8 +11544,14 @@
   grid-column: 2;
 }
 
-/* 标签打开时顶栏只保留任务名称，将阅读空间交给页面；收起后恢复摘要。 */
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] .session-thread-subtitle-row {
+/* 分栏时详情仍归左侧会话，保留原节点的展开状态和顶栏工具位置。 */
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-subtitle-row {
+  grid-column: 1;
+  padding-inline: 12px;
+}
+
+/* 全宽工作区隐藏整个会话，详情随会话一起收起。 */
+.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-subtitle-row {
   display: none;
 }
 

@@ -6623,7 +6623,8 @@ body[data-surface='project-git-diff'] #root {
   pointer-events: none;
 }
 
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true'])::after {
+/* 已有命令等待圆环的按钮不再追加圆点，避免双重动画挤偏主图形。 */
+.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner)))::after {
   animation: zeus-control-loading-pulse 900ms ease-out infinite;
   background: var(--zeus-control-loading-dot);
   block-size: 5px;

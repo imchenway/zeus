@@ -1,6 +1,7 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { type RefObject, useEffect, useLayoutEffect, useState } from 'react';
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ChatCircleTextIcon as ChatCircleText } from '@phosphor-icons/react/dist/csr/ChatCircleText';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -12,6 +13,10 @@ interface SelectionCandidate {
 interface AnnotationEditorPoint {
   left: number;
   top: number;
+  /** 实际可用宽度同步到样式，窄分栏不沿用视口宽度。 */
+  width: number;
+  /** 极矮会话中允许编辑框内部滚动，操作按钮不落到裁剪区域。 */
+  maxHeight: number;
   placement: 'above' | 'below';
 }
 
@@ -22,8 +27,11 @@ interface OverlayBounds {
   bottom: number;
 }
 
+/** 标记尺寸与样式保持一致。 */
 const ANNOTATION_MARKER_SIZE = 24;
+/** 标记放在选中文字末尾右侧。 */
 const ANNOTATION_MARKER_INLINE_OFFSET = 5;
+/** 标记略高于文字，减少对下一行的遮挡。 */
 const ANNOTATION_MARKER_BLOCK_OFFSET = -5;
 
 export function ResponseSelectionActions(props: {
@@ -39,6 +47,16 @@ export function ResponseSelectionActions(props: {
   const [candidate, setCandidate] = useState<SelectionCandidate | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  /** 原生浮层保留主题继承，同时绕开会话祖先的位移与裁剪。 */
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  /** 位置使用真实编辑框高度，不以固定高度猜测上下可用空间。 */
+  const editorRef = useRef<HTMLDivElement>(null);
+  /** 未挂载时暂为零，布局阶段会在绘制前补上真实尺寸。 */
+  const [editorHeight, setEditorHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    if (candidate) toolbarRef.current?.showPopover();
+  }, [candidate]);
 
   useEffect(() => {
     const article = props.articleRef.current;
@@ -84,7 +102,8 @@ export function ResponseSelectionActions(props: {
     };
   }, [props.articleRef, props.enabled, props.itemId]);
 
-  useLayoutEffect(() => {
+  // 正文引用属于父节点，提交完成后再绑定，避免子组件布局阶段仍读到空引用。
+  useEffect(() => {
     const article = props.articleRef.current;
     const view = article?.ownerDocument.defaultView;
     const transcript = article?.closest<HTMLElement>('.session-transcript');
@@ -96,12 +115,34 @@ export function ResponseSelectionActions(props: {
     };
     view.addEventListener('resize', update);
     transcript?.addEventListener('scroll', update, { passive: true });
+    /** 分栏宽度与正文换行同样会改变选区位置。 */
+    const observer = new ResizeObserver(update);
+    if (article) observer.observe(article);
+    if (transcript) observer.observe(transcript);
     update();
     return () => {
       view.removeEventListener('resize', update);
       transcript?.removeEventListener('scroll', update);
+      observer.disconnect();
     };
   }, [props.articleRef, props.itemId]);
+
+  useLayoutEffect(() => {
+    /** 编辑、换行或调整输入框高度后沿用相同尺寸通知。 */
+    const editor = editorRef.current;
+    if (!editor) return;
+    // 进入浏览器顶层后固定定位才真正以视口为原点，输入焦点也不会滚动正文。
+    if (!editor.matches(':popover-open')) {
+      editor.showPopover();
+      editor.querySelector('textarea')?.focus({ preventScroll: true });
+    }
+    /** 布局尺寸不受浮层进出动画的缩放影响。 */
+    const update = () => setEditorHeight(editor.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(editor);
+    return () => observer.disconnect();
+  }, [editingId, revision]);
 
   if (!props.enabled) return null;
   const article = props.articleRef.current;
@@ -123,7 +164,8 @@ export function ResponseSelectionActions(props: {
   const editingAnnotation = props.annotations.find((annotation) => annotation.id === editingId) ?? null;
   const editingRange = root && editingAnnotation ? rangeFromOffsets(root, editingAnnotation.anchor.startOffset, editingAnnotation.anchor.endOffset) : null;
   const editingRect = editingRange ? rangeEndRect(editingRange) : null;
-  const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? annotationEditorPoint(editingRect, view, overlayBounds) : null;
+  // 标记必须留在会话可见区，编辑浮层则可利用整个视口的上下空间。
+  const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? annotationEditorPoint(editingRect, view, { ...overlayBounds, top: 0, bottom: view?.innerHeight ?? overlayBounds.bottom }, editorHeight) : null;
   void revision;
   const portalRoot = transcript ?? article?.closest<HTMLElement>('.session-codex-parity-v1') ?? article?.ownerDocument.body ?? document.body;
 
@@ -132,6 +174,8 @@ export function ResponseSelectionActions(props: {
       <MotionPresence>
         {candidate ? (
           <PopoverSurface
+            ref={toolbarRef}
+            popover="manual"
             className="session-selection-toolbar"
             data-placement={candidate.point.placement}
             style={{ left: candidate.point.left, top: candidate.point.top }}
@@ -162,12 +206,20 @@ export function ResponseSelectionActions(props: {
           aria-expanded={editingId === annotation.id}
           onClick={() => setEditingId(annotation.id)}
         >
-          {index + 1}
+          <ChatCircleText aria-hidden="true" weight="fill" />
         </button>
       ))}
       <MotionPresence>
         {editingAnnotation && editorPoint ? (
-          <ResponseAnnotationEditor annotation={editingAnnotation} point={editorPoint} language={props.language} onClose={() => setEditingId(null)} onUpdate={props.onUpdateAnnotation} onRemove={props.onRemoveAnnotation} />
+          <ResponseAnnotationEditor
+            editorRef={editorRef}
+            annotation={editingAnnotation}
+            point={editorPoint}
+            language={props.language}
+            onClose={() => setEditingId(null)}
+            onUpdate={props.onUpdateAnnotation}
+            onRemove={props.onRemoveAnnotation}
+          />
         ) : null}
       </MotionPresence>
     </>,
@@ -176,6 +228,8 @@ export function ResponseSelectionActions(props: {
 }
 
 function ResponseAnnotationEditor(props: {
+  /** 供定位逻辑读取实际浮层高度。 */
+  editorRef: RefObject<HTMLDivElement | null>;
   annotation: ConversationResponseAnnotation;
   point: AnnotationEditorPoint;
   language: SessionUiLanguage;
@@ -187,15 +241,21 @@ function ResponseAnnotationEditor(props: {
   useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
   const zh = props.language === 'zh-CN';
   return (
-    <PopoverSurface className="session-response-annotation-editor" data-placement={props.point.placement} style={{ left: props.point.left, top: props.point.top }} aria-label={zh ? '回答批注' : 'Response annotation'}>
+    <PopoverSurface
+      ref={props.editorRef}
+      popover="manual"
+      className="session-response-annotation-editor"
+      data-placement={props.point.placement}
+      style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
+      aria-label={zh ? '回答批注' : 'Response annotation'}
+    >
       <header>
         <strong>{zh ? '添加评论' : 'Add comment'}</strong>
         <button type="button" onClick={props.onClose} aria-label={zh ? '关闭' : 'Close'}>
           ×
         </button>
       </header>
-      <blockquote title={props.annotation.anchor.selectedText}>{props.annotation.anchor.selectedText}</blockquote>
-      <textarea autoFocus rows={2} value={note} placeholder={zh ? '写下评论…' : 'Write a comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
+      <textarea autoFocus rows={2} value={note} placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
       <footer>
         <button
           type="button"
@@ -247,21 +307,24 @@ function selectionToolbarPoint(rect: DOMRect, article: HTMLElement, view: Window
   };
 }
 
-function annotationEditorPoint(rect: DOMRect, view: Window | null, overlayBounds: OverlayBounds): AnnotationEditorPoint {
+/** 编辑框贴住标记下方，右侧空间不足时只做边界夹紧，不跳到另一侧。 */
+function annotationEditorPoint(rect: DOMRect, view: Window | null, overlayBounds: OverlayBounds, editorHeight: number): AnnotationEditorPoint {
   const viewportWidth = view?.innerWidth ?? 380;
   const margin = 12;
   const gap = 10;
   const availableWidth = Math.max(1, overlayBounds.right - overlayBounds.left - margin * 2);
   const editorWidth = Math.min(300, viewportWidth - margin * 2, availableWidth);
-  const editorHeight = 196;
-  const roomOnRight = overlayBounds.right - rect.right - margin;
+  /** 整个编辑框保留在会话可见区域内，空间不足时内部滚动。 */
+  const maxHeight = Math.max(1, overlayBounds.bottom - overlayBounds.top - margin * 2);
   const minimumLeft = overlayBounds.left + margin;
   const maximumLeft = overlayBounds.right - editorWidth - margin;
-  const left = roomOnRight >= editorWidth + gap ? rect.right + gap : Math.max(minimumLeft, Math.min(rect.right - editorWidth - gap, maximumLeft));
-  const placeBelow = rect.bottom + gap + editorHeight <= overlayBounds.bottom - margin || rect.top - gap - editorHeight < overlayBounds.top + margin;
+  const left = Math.max(minimumLeft, Math.min(rect.right + ANNOTATION_MARKER_INLINE_OFFSET, maximumLeft));
+  const placeBelow = rect.bottom + gap + editorHeight <= overlayBounds.bottom - margin || rect.top + ANNOTATION_MARKER_BLOCK_OFFSET - gap - editorHeight < overlayBounds.top + margin;
   return {
     left,
-    top: placeBelow ? rect.bottom + gap : rect.top - gap,
+    width: editorWidth,
+    maxHeight,
+    top: placeBelow ? Math.max(overlayBounds.top + margin, Math.min(rect.bottom + gap, overlayBounds.bottom - margin - editorHeight)) : rect.top + ANNOTATION_MARKER_BLOCK_OFFSET - gap,
     placement: placeBelow ? 'below' : 'above',
   };
 }

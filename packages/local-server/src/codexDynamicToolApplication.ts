@@ -13,12 +13,15 @@ interface CodexDynamicToolApplicationOptions {
   plugins?: ZeusConversationPluginRuntime;
   findConversation(threadId: string): { id: string; permissionMode?: string } | undefined;
   turns: Pick<ConversationTurnRepository, 'getByProvider'>;
-  execution: Pick<ConversationExecutionRepository, 'currentSegment'>;
+  execution: Pick<ConversationExecutionRepository, 'segmentByNativeSession'>;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
   now(): string;
 }
+
+/** 执行前冻结结果归属，异步返回时不能换用另一个运行分段。 */
+type ToolResultScope = { conversationId: string; turnId: string; segmentId: string };
 
 /** 动态工具先完成本地计算，再以单一、可审计的 server-request response 写入 Provider。 */
 export function createCodexDynamicToolApplication(options: CodexDynamicToolApplicationOptions) {
@@ -118,6 +121,12 @@ async function resolveResponse(input: {
         true,
       );
     }
+    /** 未具备归档身份时先拒绝调用，不能执行后绕过预算直接返回原文或原图。 */
+    const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
+    const segment = input.options.execution.segmentByNativeSession(input.threadId, input.conversation.id);
+    if (!turn || !segment || (segment.state !== 'current' && segment.state !== 'provisional')) throw dynamicToolError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
+    /** 后续正文与图片共用同一份已核实的身份。 */
+    const scope: ToolResultScope = { conversationId: input.conversation.id, turnId: turn.id, segmentId: segment.id };
     if (input.options.plugins && input.namespace.startsWith('mcp__') && input.tool) {
       const pluginContext = input.options.pluginContext(input.conversation.id);
       if (!pluginContext) throw dynamicToolError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'The Plugin Host is not bound to this conversation context.');
@@ -173,7 +182,7 @@ async function resolveResponse(input: {
         payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: args, tool_response: result.text },
       });
       const text = post.replaceToolResult ?? result.text;
-      const projection = await projectToolResult(input, text);
+      const projection = await projectToolResult(input, text, scope);
       if (result.app) {
         input.options.broadcast('conversation.plugin_app.created', {
           conversationId: input.conversation.id,
@@ -207,41 +216,31 @@ async function resolveResponse(input: {
       tool: input.tool,
       arguments: input.argumentsValue,
     });
-    return dynamicToolResponse(input.event, await projectContentItems(input, result.contentItems), result.success);
+    return dynamicToolResponse(input.event, await projectContentItems(input, result.contentItems, scope), result.success);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return dynamicToolResponse(input.event, [{ type: 'inputText', text: `Zeus dynamic tool failed: ${detail.slice(0, 1200)}` }], false);
   }
 }
 
+/** 文字与图片都使用执行前冻结的归档身份，不存在无界回传分支。 */
 async function projectContentItems(
   input: Parameters<typeof resolveResponse>[0],
   contentItems: Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems'],
+  scope: ToolResultScope,
 ): Promise<Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems']> {
   const text = contentItems
     .filter((item): item is Extract<(typeof contentItems)[number], { type: 'inputText' }> => item.type === 'inputText')
     .map((item) => item.text)
     .join('\n');
-  const projection = text ? await projectToolResult(input, text) : null;
+  const projection = text ? await projectToolResult(input, text, scope) : null;
   let emitted = false;
   let imageOrdinal = 0;
   const projected: Extract<CodexServerRequestResponse, { type: 'dynamic_tool' }>['contentItems'] = [];
   for (const item of contentItems) {
     if (item.type === 'inputImage') {
-      if (!input.conversation) {
-        projected.push(item);
-        continue;
-      }
-      const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
-      const segment = input.options.execution.currentSegment(input.conversation.id);
-      if (!turn || !segment) {
-        projected.push(item);
-        continue;
-      }
       const stored = await input.options.toolResults.storeImage({
-        conversationId: input.conversation.id,
-        turnId: turn.id,
-        segmentId: segment.id,
+        ...scope,
         toolPairId: `${input.callId}:image:${imageOrdinal++}`,
         imageUrl: item.imageUrl,
         createdAt: input.options.now(),
@@ -257,15 +256,10 @@ async function projectContentItems(
   return projected;
 }
 
-async function projectToolResult(input: Parameters<typeof resolveResponse>[0], text: string): Promise<string> {
-  if (!input.conversation) return text;
-  const turn = input.options.turns.getByProvider(input.threadId, input.turnId);
-  const segment = input.options.execution.currentSegment(input.conversation.id);
-  if (!turn || !segment) return text;
+/** 先归档完整结果，再向 Provider 返回有界预览。 */
+async function projectToolResult(input: Parameters<typeof resolveResponse>[0], text: string, scope: ToolResultScope): Promise<string> {
   const stored = await input.options.toolResults.store({
-    conversationId: input.conversation.id,
-    turnId: turn.id,
-    segmentId: segment.id,
+    ...scope,
     toolPairId: input.callId,
     toolKind: 'other',
     text,
