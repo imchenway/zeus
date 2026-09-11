@@ -30,14 +30,14 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     setNativeConversationChoicesByTask,
     setSelectedNativeConversationId,
     setSelectedNativeConversationPresentation,
-    setTaskConversationDrawerTarget,
+    setSessionDrawerTarget,
     setTaskDetail,
     setZeusWindowForeground,
     settingsCategory,
     snapshot,
     sourceWorkspaceDirty,
-    taskConversationDrawerReady,
-    taskConversationDrawerTarget,
+    sessionDrawerReady,
+    sessionDrawerTarget,
     taskTableLayoutDirty,
     zeusWindowForeground,
   } = state;
@@ -163,12 +163,12 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     };
   }, [props.executionHostTransition, props.nativeConversationClient, snapshot.tasks]);
   useEffect(() => {
-    if (!taskConversationDrawerTarget || taskConversationDrawerTarget.status !== 'opening' || taskConversationDrawerReady) return;
-    const target = taskConversationDrawerTarget;
+    if (!sessionDrawerTarget || sessionDrawerTarget.status !== 'opening' || sessionDrawerReady) return;
+    const target = sessionDrawerTarget;
     const frame = window.requestAnimationFrame(() => {
-      recordLocalError('task-conversation-drawer-open', new Error(`Task conversation ${target.conversationId} did not resolve to navigation identity ${target.navigationId}.`));
-      setTaskConversationDrawerTarget((current) =>
-        current?.taskId === target.taskId && current.navigationId === target.navigationId
+      recordLocalError('session-drawer-open', new Error(`Conversation ${target.conversationId} did not resolve to navigation identity ${target.navigationId}.`));
+      setSessionDrawerTarget((current) =>
+        current?.projectId === target.projectId && current.navigationId === target.navigationId
           ? {
               ...current,
               status: 'error',
@@ -177,7 +177,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       );
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [taskConversationDrawerReady, taskConversationDrawerTarget]);
+  }, [sessionDrawerReady, sessionDrawerTarget]);
   useEffect(() => {
     function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
       if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return;

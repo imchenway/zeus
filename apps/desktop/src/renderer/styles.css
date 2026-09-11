@@ -3114,12 +3114,18 @@ a {
   box-shadow: inset var(--zeus-control-focus);
   outline: 0;
 }
-.project-workspace-mode-toolbar button span {
+/* 当前会话是右侧抽屉入口，独立于左侧工作区切换。 */
+.project-workspace-mode-toolbar > .project-workspace-current-conversation {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+.project-workspace-mode-toolbar nav button span {
   align-items: center;
   color: var(--zeus-project-menu-muted);
   display: inline-flex;
 }
-.project-workspace-mode-toolbar button span svg {
+.project-workspace-mode-toolbar nav button span svg {
   block-size: 16px;
   display: block;
   flex: 0 0 auto;

@@ -1410,31 +1410,32 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none !important;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button {
-  display: inline-flex;
+/* 顶部的项目选择、导航和当前会话使用同一密度，区别于表单输入框。 */
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.zeus-select > .project-workspace-identity-trigger, nav button, .project-workspace-current-conversation) {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-inline-size: 90px;
-  min-block-size: 36px;
-  padding: 8px 12px;
+  min-inline-size: 0;
+  block-size: 32px;
+  min-block-size: 32px;
+  padding: 0 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   box-shadow: none;
   color: var(--agentdesk-text-secondary);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 20px;
-  text-align: center;
+  text-align: start;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button span {
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.project-workspace-identity-trigger, nav button, .project-workspace-current-conversation) span {
   /* 图标与文案始终继承按钮状态色，避免深色主题的通用文字规则单独染灰。 */
   color: inherit !important;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button svg {
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.project-workspace-identity-trigger, nav button, .project-workspace-current-conversation) svg {
   display: block;
   inline-size: 18px;
   block-size: 18px;
@@ -1512,13 +1513,13 @@ body:has(.macos-ai-app.zeus-shell) {
   text-align: center;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.zeus-select > .project-workspace-identity-trigger, nav button, .project-workspace-current-conversation):hover:not(:disabled):not([aria-disabled='true']),
 .macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
   color: var(--agentdesk-text);
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button.is-active,
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.zeus-select > .project-workspace-identity-trigger, nav button, .project-workspace-current-conversation).is-active,
 .macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-status-segment, .task-table-view-pill)[aria-pressed='true'],
 .macos-ai-app.zeus-shell .task-table-primary-toolbar :is(.task-table-field-settings, .task-table-more-settings):has(> :popover-open) > button {
   background: var(--agentdesk-accent-soft);
@@ -1540,7 +1541,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 扁平按钮仍保留独立的键盘焦点轮廓。 */
-.macos-ai-app.zeus-shell .project-workspace-mode-toolbar nav button:focus-visible,
+.macos-ai-app.zeus-shell .project-workspace-mode-toolbar :is(.zeus-select > .project-workspace-identity-trigger, nav button, .project-workspace-current-conversation):focus-visible,
 .macos-ai-app.zeus-shell .task-table-primary-toolbar button:focus-visible {
   outline: 2px solid var(--agentdesk-accent);
   outline-offset: 2px;
@@ -3128,17 +3129,25 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 .macos-ai-app.zeus-shell .project-workspace-identity {
   box-sizing: border-box;
-  flex: 0 0 213px;
-  width: 213px;
-  min-width: 213px;
-  max-width: 213px;
-  padding-right: 12px;
-  border-right: 1px solid var(--zeus-product-line);
+  flex: 0 1 220px;
+  width: 220px;
+  min-width: 120px;
+  max-width: 220px;
+}
+/* 分隔符独立参与顶部栏布局，由同一个 gap 保证两侧等距。 */
+.macos-ai-app.zeus-shell .project-workspace-separator {
+  flex: 0 0 1px;
+  block-size: 18px;
+  background: var(--zeus-product-line);
 }
 .macos-ai-app.zeus-shell .project-workspace-identity-trigger {
   width: 100%;
   min-width: 0;
-  font-weight: 600;
+}
+/* 空会话状态仍可辨认入口，但不与可用操作争夺注意力。 */
+.macos-ai-app.zeus-shell .project-workspace-current-conversation:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root {
   background: var(--zeus-source-list-selected) !important;

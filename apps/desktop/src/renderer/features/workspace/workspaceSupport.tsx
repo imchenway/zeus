@@ -105,9 +105,11 @@ export function resolveNativeConversationSelectionPresentation(conversation: Nat
   return interactiveConversationStages.has(conversation.stage) ? 'interactive' : 'history';
 }
 
-export type TaskConversationDrawerTarget =
+/** 顶部入口与任务状态共用会话抽屉，并保留所属项目及稳定导航身份。 */
+export type SessionDrawerTarget =
   | Readonly<{
-      taskId: string;
+      projectId: string;
+      taskId?: string;
       conversationId: string;
       navigationId: string;
       status: 'opening' | 'error';
