@@ -332,7 +332,7 @@ export function TaskGitConflictWorkspace(props: {
                     {props.zh ? '取消' : 'Cancel'}
                   </Button>
                   <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
-                    {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
+                    {props.zh ? `以${aiPermissionMode === 'auto' ? '请求批准' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'request approval' : 'full access'}`}
                   </Button>
                 </footer>
               </section>

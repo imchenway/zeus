@@ -3983,23 +3983,6 @@ a {
   justify-content: space-between;
   padding: 4px 7px 8px;
 }
-.project-git-change-repository {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  display: grid;
-  font: inherit;
-  gap: 6px;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  margin-top: 6px;
-  padding: 5px 7px;
-  text-align: left;
-  width: 100%;
-}
-.project-git-change-repository small {
-  color: var(--zeus-product-muted);
-}
 .project-git-change-group-title {
   color: var(--zeus-product-muted);
   display: block;
@@ -4431,6 +4414,60 @@ a {
   overflow: auto;
   padding: 8px 20px;
 }
+.project-git-reference-dialog.project-git-stash-dialog {
+  width: min(620px, calc(100vw - 40px));
+}
+.project-git-stash-dialog main {
+  gap: 18px;
+  max-height: none;
+  padding: 22px 28px 12px;
+}
+.project-git-stash-introduction {
+  line-height: 1.55;
+  margin: 0;
+}
+.project-git-reference-dialog.project-git-stash-dialog main > .project-git-stash-message {
+  align-items: center;
+  display: grid;
+  flex: none;
+  gap: 12px;
+  grid-template-columns: 86px minmax(0, 1fr);
+}
+.project-git-stash-message > span {
+  font-weight: 600;
+}
+.project-git-stash-message > input {
+  min-width: 0;
+  width: 100%;
+}
+.project-git-reference-dialog.project-git-stash-dialog main > .project-git-stash-keep-index {
+  align-items: center;
+  display: flex;
+  flex: none;
+  flex-direction: row;
+  gap: 9px;
+  margin-left: 98px;
+}
+.project-git-stash-keep-index > input {
+  block-size: 16px;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  margin: 0;
+  min-block-size: 0;
+  padding: 0;
+}
+.project-git-stash-dialog > footer {
+  padding: 14px 28px 22px;
+}
+@media (max-width: 620px) {
+  .project-git-reference-dialog.project-git-stash-dialog main > .project-git-stash-message {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .project-git-reference-dialog.project-git-stash-dialog main > .project-git-stash-keep-index {
+    margin-left: 0;
+  }
+}
 .project-git-update-strategies {
   border: 0;
   display: grid;
@@ -4819,36 +4856,6 @@ a {
 .project-git-change-tree {
   grid-area: tree;
   padding: 8px 6px;
-}
-.project-git-change-repository {
-  border-radius: 6px;
-  grid-template-areas:
-    'icon name'
-    'icon branch';
-  grid-template-columns: 14px minmax(0, 1fr);
-  min-height: 42px;
-}
-.project-git-change-repository > svg {
-  align-self: start;
-  grid-area: icon;
-  margin-top: 2px;
-}
-.project-git-change-repository > strong {
-  grid-area: name;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.project-git-change-repository > small {
-  grid-area: branch;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.project-git-change-repository:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-source-list-hover);
 }
 .project-git-change-group-title {
   font-size: 11px;

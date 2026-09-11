@@ -63,7 +63,7 @@ export function AgentExecutionConfigFields(props: {
   const serviceValues = (selectedModel?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: tier.name || tier.id }));
   const permissionOptions = (['read-only', 'auto', 'full-access'] as const).map((permissionMode) => ({
     value: permissionMode,
-    label: permissionMode === 'read-only' ? (zh ? '只读' : 'Read-only') : permissionMode === 'auto' ? (zh ? '自动' : 'Auto') : zh ? '完全访问' : 'Full access',
+    label: permissionMode === 'read-only' ? (zh ? '只读' : 'Read-only') : permissionMode === 'auto' ? (zh ? '请求批准' : 'Request approval') : zh ? '完全访问' : 'Full access',
   }));
 
   return (

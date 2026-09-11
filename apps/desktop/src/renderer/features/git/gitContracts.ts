@@ -167,7 +167,7 @@ export type ProjectGitAction =
   | { type: 'cherry_pick'; revision: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
-  | { type: 'stash'; message?: string; includeUntracked?: boolean }
+  | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
   | { type: 'drop_stash'; stashRef: string }
   | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };

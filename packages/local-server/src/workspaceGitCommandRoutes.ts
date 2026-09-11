@@ -94,6 +94,7 @@ export function registerWorkspaceGitCommandRoutes(options: {
         'branchName',
         'forceWithLease',
         'includeUntracked',
+        'keepIndex',
         'message',
         'paths',
         'pop',

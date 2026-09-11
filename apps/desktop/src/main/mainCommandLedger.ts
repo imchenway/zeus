@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { canonicalCommandInputJson, parseCommandEnvelope, type CommandEnvelope } from '@zeus/shared';
+import { canonicalCommandInputJson, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type UserFacingErrorCause } from '@zeus/shared';
 
 export interface MainCommandRequest<TBody = unknown> {
   envelope: unknown;
@@ -112,8 +112,10 @@ export class MainCommandLedgerError extends Error {
       | 'ZEUS_MAIN_COMMAND_RESULT_NOT_REPLAYABLE',
     message: string,
     readonly details: Readonly<Record<string, string | number | boolean | null>> = {},
+    /** Git 等外部命令在写入门禁后失败时，保留已识别的底层原因供界面解释。 */
+    override readonly cause?: UserFacingErrorCause,
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
   }
 }
 
@@ -323,11 +325,17 @@ export class MainCommandLedger {
       };
       await writeAtomicJson(outcomePath, outcome);
       if (!writeStarted) throw error;
-      throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_OUTCOME_UNKNOWN_AFTER_WRITE', 'Main command outcome is unknown after a durable write marker; automatic retry is forbidden.', {
-        commandId: envelope.commandId,
-        commandType: envelope.commandType,
-        externalOperationId,
-      });
+      const errorCode = error && typeof error === 'object' && 'code' in error && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : '';
+      throw new MainCommandLedgerError(
+        'ZEUS_MAIN_COMMAND_OUTCOME_UNKNOWN_AFTER_WRITE',
+        'Main command outcome is unknown after a durable write marker; automatic retry is forbidden.',
+        {
+          commandId: envelope.commandId,
+          commandType: envelope.commandType,
+          externalOperationId,
+        },
+        errorCode.startsWith('ZEUS_GIT_') ? userFacingErrorCause(error) : undefined,
+      );
     }
   }
 

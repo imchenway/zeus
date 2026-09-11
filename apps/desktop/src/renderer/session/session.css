@@ -9986,7 +9986,7 @@
 .session-codex-parity-v1 {
   --session-answer-text: rgb(29 31 34);
   --session-process-text: var(--session-text-muted);
-  --session-readable-font-size: 15px;
+  --session-readable-font-size: 14px;
 }
 
 .session-codex-parity-v1 :where(.ai-workspace, .session-workspace-root) {
@@ -10254,22 +10254,19 @@
   --session-composer-trigger-active-bg: color-mix(in srgb, var(--zeus-danger-text) 10%, transparent);
 }
 
-/* 菜单通过共享浮层渲染；仅完全访问选项的文字、勾选和交互底色带警示语义。 */
+/* 菜单通过共享浮层渲染；副标题统一弱化，仅完全访问的标题、勾选和交互底色带警示语义。 */
 .macos-ai-app .session-permission-popover .zeus-select-option {
   padding-block: 10px;
 }
 
 .macos-ai-app .session-permission-popover .zeus-select-option-description {
+  color: var(--zeus-product-subtle);
   font-size: 12px;
   line-height: 1.5;
   margin-block-start: 3px;
   max-inline-size: 340px;
   overflow-wrap: anywhere;
   white-space: normal;
-}
-
-.macos-ai-app .session-permission-popover .zeus-select-option[data-value='full-access'] .zeus-select-option-description {
-  color: var(--zeus-danger-text);
 }
 
 .macos-ai-app .session-permission-popover .zeus-select-option[data-value='full-access'] {

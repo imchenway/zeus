@@ -123,6 +123,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
   const [pullOpen, setPullOpen] = useState(false);
+  const [stashRepositoryId, setStashRepositoryId] = useState<string | null>(null);
   const operationsTriggerRef = useRef<HTMLButtonElement>(null);
   const [commitOpen, setCommitOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
@@ -199,6 +200,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const historyRequest = useRef(0);
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
+  const stashRepository = repositories.find((repository) => repository.id === stashRepositoryId) ?? null;
   /** 其他仓库的选择不能借用当前仓库读取详情。 */
   const selectedCommitHash = selectedCommit?.repositoryId === selectedRepository?.id ? (selectedCommit?.ref ?? '') : '';
   const changedCount = repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0);
@@ -370,7 +372,20 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       if (response.result.outcome === 'conflict') setTab('changes');
       return response.result.outcome;
     } catch (reason) {
-      const message = errorMessage(reason, zh);
+      const message = errorMessage(reason, zh, {
+        title: label,
+        ...((action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && errorHasCode(reason, 'ZEUS_GIT_CHECKOUT_BLOCKED')
+          ? {
+              action: {
+                label: zh ? '打开贮藏入口' : 'Open stash action',
+                onClick: () => {
+                  setSelectedRepositoryId(repository.id);
+                  setStashRepositoryId(repository.id);
+                },
+              },
+            }
+          : {}),
+      });
       operationErrorsByRepositoryRef.current = { ...operationErrorsByRepositoryRef.current, [repository.id]: message };
       await loadWorkbench();
       setError(`${label}: ${message}`);
@@ -610,7 +625,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           setPushOpen(true);
         },
       });
-      form(label('贮藏当前修改…', 'Stash changes…'), label('贮藏说明', 'Stash message'), (message) => ({ type: 'stash', message, includeUntracked: true }));
+      items.push({
+        label: label('贮藏当前修改…', 'Stash changes…'),
+        disabled: busy !== null || repository.snapshot.clean || repository.snapshot.conflictFiles.length > 0,
+        run: () => {
+          setSelectedRepositoryId(repository.id);
+          setStashRepositoryId(repository.id);
+        },
+      });
       items.push({ label: label('复制仓库名称', 'Copy repository name'), run: () => copy(repository.name) });
     }
     setContextMenu({ x: event.clientX, y: event.clientY, title: target.ref || repository.name, items });
@@ -741,6 +763,16 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           <Button variant="secondary" size="compact" disabled={!selectedRepository || busy !== null} onClick={() => setSubtreeDialogOpen(true)}>
             {zh ? '子树…' : 'Subtree…'}
           </Button>
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.clean || selectedRepository.snapshot.conflictFiles.length > 0}
+            onClick={() => {
+              if (selectedRepository) setStashRepositoryId(selectedRepository.id);
+            }}
+          >
+            {zh ? '贮藏' : 'Stash'}
+          </Button>
           {busy && window.zeus?.cancelProjectGitAction ? (
             <Button
               variant="secondary"
@@ -772,9 +804,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               </Button>
             </>
           ) : null}
-          <Button variant="secondary" size="compact" busy={loadState === 'loading'} onClick={() => void loadWorkbench()}>
-            {zh ? '刷新' : 'Refresh'}
-          </Button>
           <Button
             variant="secondary"
             size="compact"
@@ -1086,7 +1115,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               onCommitMessageChange={(repositoryId, message) => setCommitDrafts((current) => ({ ...current, [repositoryId]: message }))}
             />
           ) : tab === 'stash' ? (
-            <StashSurface zh={zh} repositories={selectedRepository ? [selectedRepository] : []} busy={busy} onExecute={execute} />
+            <StashSurface zh={zh} repositories={selectedRepository ? [selectedRepository] : []} busy={busy} onOpenStash={(repository) => setStashRepositoryId(repository.id)} onExecute={execute} />
           ) : (
             <ConsoleSurface zh={zh} history={operationHistory} />
           )}
@@ -1099,6 +1128,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>{contextMenu ? <GitContextMenu {...contextMenu} onClose={() => setContextMenu(null)} onError={(reason) => setError(errorMessage(reason, zh))} /> : null}</MotionPresence>
       <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
       <MotionPresence>{commitOpen ? <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} /> : null}</MotionPresence>
+      <MotionPresence>{stashRepository ? <StashDialog key={stashRepository.id} repository={stashRepository} zh={zh} busy={busy} onClose={() => setStashRepositoryId(null)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>
         {updateOpen ? (
           <UpdateProjectDialog
@@ -1762,6 +1792,7 @@ function GitLogSurface(props: {
                 branches={repository.snapshot.localBranches}
                 current={repository.snapshot.branch}
                 kind="local"
+                zh={props.zh}
                 onContextMenu={(event, branch) => {
                   event.preventDefault();
                   setBranchMenu({ x: event.clientX, y: event.clientY, repository, branch, kind: 'local' });
@@ -1772,6 +1803,7 @@ function GitLogSurface(props: {
                 branches={repository.snapshot.remoteBranches}
                 current=""
                 kind="remote"
+                zh={props.zh}
                 onContextMenu={(event, branch) => {
                   event.preventDefault();
                   setBranchMenu({ x: event.clientX, y: event.clientY, repository, branch, kind: 'remote' });
@@ -2344,13 +2376,6 @@ function LocalChangesSurface(props: {
             </button>
           ) : null}
         </header>
-        {repository ? (
-          <button className="project-git-change-repository" type="button" onClick={() => props.onSelectRepository(repository.id)}>
-            <GitBranch aria-hidden="true" />
-            <strong title={repository.name}>{repository.name}</strong>
-            <small title={repository.snapshot.branch}>{repository.snapshot.branch}</small>
-          </button>
-        ) : null}
         {emptyVisibleChanges ? (
           <div className="project-git-clean-state" role="status">
             <span className="project-git-empty-symbol">
@@ -2700,6 +2725,7 @@ function StashSurface(props: {
   zh: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   busy: BusyState;
+  onOpenStash: (repository: ProjectGitRepositoryWorkbenchItem) => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
   return (
@@ -2712,12 +2738,7 @@ function StashSurface(props: {
               <strong>{repository.name}</strong>
               <small>{repository.snapshot.branch}</small>
             </span>
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={props.busy !== null || repository.snapshot.clean}
-              onClick={() => void props.onExecute(repository, { type: 'stash', includeUntracked: true, message: 'Zeus stash' }, props.zh ? '创建 Stash' : 'Create stash')}
-            >
+            <Button variant="secondary" size="compact" disabled={props.busy !== null || repository.snapshot.clean || repository.snapshot.conflictFiles.length > 0} onClick={() => props.onOpenStash(repository)}>
               {props.zh ? '备份并移出当前修改' : 'Back up and set aside current changes'}
             </Button>
           </header>
@@ -3104,6 +3125,62 @@ function OperationsMenu(props: {
       </button>
     </MenuSurface>,
     document.body,
+  );
+}
+
+function StashDialog(props: {
+  repository: ProjectGitRepositoryWorkbenchItem;
+  zh: boolean;
+  busy: BusyState;
+  onClose: () => void;
+  onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
+}) {
+  const [message, setMessage] = useState('');
+  const [keepIndex, setKeepIndex] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const locked = submitting || props.busy !== null;
+  return (
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
+      <section className="project-git-reference-dialog project-git-stash-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? `贮藏 ${props.repository.name} 的变更` : `Stash changes in ${props.repository.name}`}>
+        <main>
+          <p className="project-git-stash-introduction">
+            {props.zh
+              ? '将当前工作区的已跟踪修改和未跟踪文件保存到 Stash，然后恢复为干净状态。不会自动切换分支。'
+              : 'Save tracked and untracked changes in the working tree to a Stash, then return to a clean state. This will not switch branches automatically.'}
+          </p>
+          <label className="project-git-stash-message">
+            <span>{props.zh ? '信息：' : 'Message:'}</span>
+            <input autoFocus value={message} disabled={locked} placeholder={props.zh ? '可选' : 'Optional'} onChange={(event) => setMessage(event.currentTarget.value)} />
+          </label>
+          <label className="project-git-stash-keep-index" title={props.zh ? '保留当前已经暂存到索引中的修改' : 'Leave changes already staged in the index intact'}>
+            <input type="checkbox" checked={keepIndex} disabled={locked} onChange={(event) => setKeepIndex(event.currentTarget.checked)} />
+            <span>{props.zh ? '保留已暂存的变更' : 'Keep staged changes'}</span>
+          </label>
+        </main>
+        <footer>
+          <Button variant="secondary" disabled={locked} onClick={props.onClose}>
+            {props.zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button
+            variant="primary"
+            busy={submitting || props.busy?.action === 'stash'}
+            disabled={locked}
+            onClick={async () => {
+              if (locked) return;
+              setSubmitting(true);
+              try {
+                const outcome = await props.onExecute(props.repository, { type: 'stash', message: message.trim() || undefined, includeUntracked: true, keepIndex }, props.zh ? '贮藏工作区变更' : 'Stash working tree changes');
+                if (outcome === 'completed') props.onClose();
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            {props.zh ? '贮藏' : 'Stash'}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
   );
 }
 
@@ -3542,8 +3619,20 @@ function displayStashSubject(subject: string, zh: boolean): string {
   return cleaned || (zh ? '未命名 Stash' : 'Untitled stash');
 }
 
-function errorMessage(error: unknown, zh: boolean): string {
-  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
+function errorMessage(error: unknown, zh: boolean, options: { title?: string; action?: { label: string; onClick: () => void | Promise<void> } } = {}): string {
+  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en', ...options });
+}
+
+function errorHasCode(error: unknown, expected: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (typeof current === 'string') return current.startsWith(`${expected}:`) || current === expected;
+    if (typeof current !== 'object' || Array.isArray(current)) return false;
+    const candidate = current as { code?: unknown; error?: unknown; cause?: unknown };
+    if (candidate.code === expected || candidate.error === expected) return true;
+    current = candidate.cause;
+  }
+  return false;
 }
 
 function formatRelativeTime(value: string, zh: boolean): string {

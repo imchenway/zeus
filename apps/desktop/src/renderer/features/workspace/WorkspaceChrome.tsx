@@ -286,9 +286,32 @@ export function ProjectWorkspaceModeToolbar(props: {
   codeMode: ProjectCodeWorkspaceMode;
   language: AppLanguage;
   onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
+  onCreateConversation: () => void;
 }) {
   /** 导航文案跟随当前应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** Option 将普通导航临时切换为当前项目的新会话入口。 */
+  const [optionPressed, setOptionPressed] = useState(false);
+  useEffect(() => {
+    const syncOptionState = (event: globalThis.KeyboardEvent) => setOptionPressed(event.altKey);
+    const releaseOption = () => setOptionPressed(false);
+    window.addEventListener('keydown', syncOptionState);
+    window.addEventListener('keyup', syncOptionState);
+    window.addEventListener('blur', releaseOption);
+    return () => {
+      window.removeEventListener('keydown', syncOptionState);
+      window.removeEventListener('keyup', syncOptionState);
+      window.removeEventListener('blur', releaseOption);
+    };
+  }, []);
+  const conversationLabel = optionPressed ? (zh ? '新会话' : 'New conversation') : zh ? '会话' : 'Conversations';
+  const conversationTitle = optionPressed
+    ? zh
+      ? `在“${props.project.name}”中创建新会话`
+      : `Create a new conversation in “${props.project.name}”`
+    : zh
+      ? '打开会话；按住 Option 点击可在当前项目创建新会话'
+      : 'Open conversations; Option-click to create one in the current project';
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
@@ -324,11 +347,21 @@ export function ProjectWorkspaceModeToolbar(props: {
         />
       </div>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
-        <button type="button" className={props.section === 'sessions' ? 'is-active' : ''} aria-current={props.section === 'sessions' ? 'page' : undefined} onClick={() => props.onOpen('sessions')}>
+        <button
+          type="button"
+          className={props.section === 'sessions' ? 'is-active' : ''}
+          aria-label={conversationTitle}
+          aria-current={props.section === 'sessions' ? 'page' : undefined}
+          title={conversationTitle}
+          onClick={(event) => {
+            if (event.altKey) props.onCreateConversation();
+            else props.onOpen('sessions');
+          }}
+        >
           <span aria-hidden="true">
             <PencilSimple size={18} weight="regular" />
           </span>
-          <span className="project-workspace-mode-label">{zh ? '会话' : 'Conversations'}</span>
+          <span className="project-workspace-mode-label">{conversationLabel}</span>
         </button>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           /** 当前工作区与源码子模式共同决定选中态。 */

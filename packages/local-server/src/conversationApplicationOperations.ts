@@ -3511,7 +3511,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'rebase':
         return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
       case 'stash':
-        return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true };
+        return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true, keepIndex: value.keepIndex === true };
       case 'apply_stash':
         return { type: 'apply_stash', stashRef: stringValue('stashRef') ?? '', pop: value.pop === true };
       case 'drop_stash':

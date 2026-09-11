@@ -319,7 +319,7 @@ export type ProjectGitAction =
   | { type: 'cherry_pick'; revision: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
-  | { type: 'stash'; message?: string; includeUntracked?: boolean }
+  | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
   | { type: 'drop_stash'; stashRef: string }
   | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };
@@ -2088,8 +2088,8 @@ export function redactGitOutput(message: string): string {
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+)\b/gu, '[已隐藏]');
 }
 
-function gitCoreError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(redactGitOutput(message)), { code });
+function gitCoreError(code: string, message: string, details?: string): Error & { code: string; details?: string } {
+  return Object.assign(new Error(redactGitOutput(message)), { code, ...(details ? { details: redactGitOutput(details) } : {}) });
 }
 
 /** 只读获取 Git 状态，不执行提交、回退、合并等高风险写操作。 */
@@ -2387,7 +2387,7 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       args = ['rebase', await assertGitBranchFormat(repositoryPath, action.branchName, 'rebase branch')];
       break;
     case 'stash':
-      args = ['stash', 'push', ...(action.includeUntracked ? ['-u'] : []), '-m', requireSafeGitText(action.message || 'Zeus shelf', 'stash message')];
+      args = ['stash', 'push', ...(action.includeUntracked ? ['-u'] : []), ...(action.keepIndex ? ['--keep-index'] : []), '-m', requireSafeGitText(action.message || 'Zeus shelf', 'stash message')];
       break;
     case 'apply_stash':
       args = ['stash', action.pop ? 'pop' : 'apply', requireStashRef(action.stashRef)];
@@ -2406,13 +2406,56 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
     action.type === 'revert' ||
     action.type === 'cherry_pick';
   const operation = () => (conflictCapable ? runGitPreservingConflict(repositoryPath, args) : runGit(repositoryPath, args));
-  const switching = action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch';
-  if (switching && (await getGitStatus(repositoryPath)).conflictFiles.length > 0) {
-    throw gitCoreError('ZEUS_GIT_CONFLICT_IN_PROGRESS', '当前仓库存在未解决的冲突，无法切换分支。请先处理冲突；未执行切换或自动贮藏。');
+  const switchingAction = action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch' ? action : null;
+  if (switchingAction && (await getGitStatus(repositoryPath)).conflictFiles.length > 0) {
+    throw gitCoreError('ZEUS_GIT_CHECKOUT_CONFLICTED', `当前仓库存在未解决的冲突，无法切换到${projectGitSwitchTarget(switchingAction)}。请先处理并确认冲突文件；本次切换未执行。`);
   }
   // 切换始终使用 Git 的保护性检查，不自动贮藏、恢复或强制覆盖用户修改。
-  const output = await operation();
-  return finishProjectGitAction(repositoryPath, action.type, output);
+  try {
+    const output = await operation();
+    return finishProjectGitAction(repositoryPath, action.type, output);
+  } catch (error) {
+    if (switchingAction) throw classifyGitSwitchFailure(switchingAction, error);
+    throw error;
+  }
+}
+
+type ProjectGitSwitchAction = Extract<ProjectGitAction, { type: 'checkout' | 'checkout_revision' | 'create_branch' }>;
+
+function projectGitSwitchTarget(action: ProjectGitSwitchAction): string {
+  if (action.type === 'checkout') return `分支“${action.branchName}”`;
+  if (action.type === 'checkout_revision') return `所选提交“${action.revision}”`;
+  return `新分支“${action.branchName}”`;
+}
+
+/** 把 Git 的保护性拒绝转换为可执行的用户提示；原始输出只进入详情，不作为摘要。 */
+function classifyGitSwitchFailure(action: ProjectGitSwitchAction, error: unknown): Error & { code: string; details?: string } {
+  const output = gitErrorOutput(error);
+  const target = projectGitSwitchTarget(action);
+  if (/(?:already (?:used by|checked out(?: in| at)?|in use).*worktree|is already used by worktree|is already checked out)/iu.test(output)) {
+    return gitCoreError('ZEUS_GIT_CHECKOUT_BRANCH_IN_USE', `无法切换到${target}：该分支已在其他工作区中使用。请先在其他工作区切换到别的分支，或在对应工作区继续操作；本次切换未执行。`, output);
+  }
+  const trackedChanges =
+    /(?:local changes to the following files would be overwritten by (?:checkout|switch)|your local changes[\s\S]*would be overwritten by (?:checkout|switch)|please commit your changes or stash them before you switch branches)/iu.test(
+      output,
+    );
+  const untrackedFiles = /(?:following )?untracked working tree files would be overwritten by (?:checkout|switch)/iu.test(output);
+  if (trackedChanges || untrackedFiles) {
+    const kind = trackedChanges && untrackedFiles ? '未提交修改和未跟踪文件' : trackedChanges ? '未提交修改' : '未跟踪文件';
+    return gitCoreError('ZEUS_GIT_CHECKOUT_BLOCKED', `无法切换到${target}：当前工作区的${kind}会被目标内容覆盖。切换未执行；请先提交、贮藏，或检查后放弃/移开相关文件。`, output);
+  }
+  return gitCoreError('ZEUS_GIT_SWITCH_FAILED', `切换到${target}未完成，Git 未确认是否修改了工作区。请刷新仓库状态并查看错误详情后再继续。`, output);
+}
+
+function gitErrorOutput(error: unknown): string {
+  if (!error || typeof error !== 'object') return typeof error === 'string' ? error : 'Git 命令执行失败。';
+  const candidate = error as { message?: unknown; stderr?: unknown; stdout?: unknown };
+  return (
+    [candidate.stderr, candidate.stdout, candidate.message]
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value) => value.trim())
+      .join('\n') || 'Git 命令执行失败。'
+  );
 }
 
 async function finishProjectGitAction(repositoryPath: string, action: ProjectGitAction['type'], output: GitRunnerResult): Promise<ProjectGitActionResult> {

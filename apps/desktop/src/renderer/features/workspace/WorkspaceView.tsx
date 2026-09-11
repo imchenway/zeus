@@ -828,6 +828,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             codeMode={projectCodeWorkspaceMode}
             language={appShellSettings.appLanguage}
             onOpen={(section, codeMode) => openProjectView(selectedProject, section, codeMode)}
+            onCreateConversation={prepareNewConversationDraft}
           />
         ) : null}
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (

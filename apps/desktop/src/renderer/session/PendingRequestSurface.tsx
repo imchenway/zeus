@@ -1196,7 +1196,7 @@ async function discardAnswerAttachmentResources(attachments: NativeConversationA
 function permissionModeLabel(permissionMode: NativePermissionMode, language: SessionUiLanguage): string {
   const labels: Record<NativePermissionMode, readonly [string, string]> = {
     'read-only': ['只读', 'Read only'],
-    auto: ['自动', 'Auto'],
+    auto: ['请求批准', 'Request approval'],
     'auto-review': ['替我批准', 'Approve for me'],
     'full-access': ['完全访问', 'Full access'],
   };

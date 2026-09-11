@@ -263,6 +263,28 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['工作目录还有未提交修改，暂时不能继续。请先提交修改；不需要的修改可以在确认后放弃。', 'The working folder has uncommitted changes. Commit them before continuing, or discard unwanted changes after reviewing them.'],
   ],
   [
+    ['ZEUS_GIT_CHECKOUT_BLOCKED'],
+    [
+      '当前工作区的本地修改会被目标内容覆盖，无法切换分支。本次切换未执行；请先提交、贮藏，或检查后放弃/移开相关文件。',
+      'Local changes in the working tree would be overwritten by the target, so the branch was not switched. Commit, stash, or review and discard/move the affected files first.',
+    ],
+  ],
+  [
+    ['ZEUS_GIT_CHECKOUT_CONFLICTED'],
+    ['当前仓库存在未解决的冲突，无法切换分支。本次切换未执行；请先处理并确认所有冲突文件。', 'The repository has unresolved conflicts, so the branch was not switched. Resolve and confirm all conflicted files first.'],
+  ],
+  [
+    ['ZEUS_GIT_CHECKOUT_BRANCH_IN_USE'],
+    [
+      '目标分支已在其他工作区中使用，无法在这里切换。本次切换未执行；请先在另一工作区切换到其他分支。',
+      'The target branch is already in use by another worktree, so it was not checked out here. Switch that worktree to another branch first.',
+    ],
+  ],
+  [
+    ['ZEUS_GIT_SWITCH_FAILED'],
+    ['切换分支未完成，当前工作区可能未改变。请刷新仓库状态并查看错误详情后再继续。', 'The branch switch did not complete; the working tree may be unchanged. Refresh the repository status and check the error details before continuing.'],
+  ],
+  [
     ['ZEUS_TASK_GIT_REMOTE_UNAVAILABLE', 'ZEUS_GIT_REMOTE_REQUIRED'],
     ['代码仓库尚未配置远端地址，无法执行远端操作。请先配置 Git 远端。', 'The repository has no remote configured. Configure a Git remote before performing remote operations.'],
   ],
