@@ -603,3 +603,4 @@ export function zentaoInstanceApiBase(instance: Pick<ZentaoInstanceRecord, 'host
 export const digitalEmployeeAvatarIds = ['loki', 'argus', 'eric', 'higgins', 'vidar'] as const;
 /** 头像身份跨模板与项目员工保持一致。 */
 export type DigitalEmployeeAvatarId = (typeof digitalEmployeeAvatarIds)[number];
+export * from './employeeWorkPlanning.js';

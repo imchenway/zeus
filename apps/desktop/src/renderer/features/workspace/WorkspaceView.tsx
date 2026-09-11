@@ -1020,7 +1020,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     ) : null}
                   </MotionPresence>
                 </>
-              ) : (
+              ) : taskDetailPaneTask || taskConversationDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
 
@@ -1108,7 +1108,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail}>
                     <section className="task-detail-center-dialog" role="dialog" aria-modal="true" aria-label={taskWorkspaceCopy.detailPaneLabel}>
                       <header className="task-detail-presentation-header">
-                        <strong>{taskDetailPaneTask.title}</strong>
+                        <strong>{taskWorkspaceCopy.detailPaneLabel}</strong>
                         <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
                           {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
                         </Button>

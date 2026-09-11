@@ -1,3 +1,6 @@
+import { EmployeeMemoryProposalRepository } from '@zeus/storage';
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
+import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
 import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
 import {
@@ -222,6 +225,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
 
 export async function registerLocalServerPlatformRoutes(dependencies: LocalServerPlatformRouteDependencies): Promise<{
   close(): Promise<void>;
+  /** 原生工作工具由已注册的工作管理器处理。 */
+  workTools: TaskWorkToolPort;
   recover(): void;
   projectGitQueries: ProjectGitQueryApplication;
   conversationCapabilityQueries: ConversationCapabilityQueryApplication;
@@ -2757,6 +2762,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     employees: digitalEmployees,
     legacyExecutions: digitalEmployeeExecutions,
     items: taskWorkItems,
+    conversationGoals,
+    memoryProposals: new EmployeeMemoryProposalRepository(db, () => now().toISOString()),
+    planning: new TaskWorkPlanningRepository(db, () => now().toISOString()),
+    reviews: new TaskWorkReviewRepository(db, () => now().toISOString()),
+    deployments: new TaskWorkDeploymentRepository(db, () => now().toISOString()),
+    memory: longTermMemories,
+    turnChanges: turnChangeSets,
+    providerItems: conversationProviderItems,
     runs: taskWorkRuns,
     deliverables: taskWorkDeliverables,
     decisions: taskWorkDecisions,
@@ -3607,6 +3620,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   };
   return {
     close: closeLocalServerResources,
+    workTools: {
+      invoke: (input) => {
+        if (!taskWorkManagement) throw new Error('工作服务已停止。');
+        return taskWorkManagement.workTools.invoke(input);
+      },
+    },
     recover: () => {
       if (!readOnlyValidation) {
         workManagementTaskEffects.recover();

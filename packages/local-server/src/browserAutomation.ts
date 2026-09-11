@@ -3,7 +3,7 @@ export interface BrowserAutomationToolCall {
   threadId: string;
   turnId: string;
   callId: string;
-  namespace?: 'zeus_browser' | 'zeus_computer';
+  namespace?: 'zeus_browser' | 'zeus_computer' | 'zeus_work';
   tool: string;
   arguments: Record<string, unknown>;
 }

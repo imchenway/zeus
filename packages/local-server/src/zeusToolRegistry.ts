@@ -1,10 +1,11 @@
+import { zeusWorkDynamicTools, type TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { CodexDynamicToolNamespaceSpec, CodexDynamicToolSpec, PiZeusToolDefinitionSpec } from '@zeus/ai-runtime';
 import type { BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
 import { browserFrozenContractEntry, browserFrozenContractVersion, browserFrozenMethodSupportsSurface, validateBrowserFrozenArguments } from './browserFrozenContract.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { zeusComputerDynamicTools } from './computerDynamicTools.js';
 
-export const zeusNativeToolNamespaces = ['zeus_browser', 'zeus_computer'] as const;
+export const zeusNativeToolNamespaces = ['zeus_browser', 'zeus_computer', 'zeus_work'] as const;
 export type ZeusNativeToolNamespace = (typeof zeusNativeToolNamespaces)[number];
 
 export interface ZeusToolRegistry {
@@ -36,12 +37,14 @@ export interface ZeusToolAuditEvent {
 }
 
 export interface CreateZeusToolBrokerOptions {
+  /** 工作工具由本地业务服务执行，不转交浏览器宿主。 */
+  work?: TaskWorkToolPort;
   timeoutMs?: number;
   audit?: (event: ZeusToolAuditEvent) => void | Promise<void>;
 }
 
-export function createZeusToolRegistry(): ZeusToolRegistry {
-  const codexTools = [...zeusBrowserDynamicTools(), ...zeusComputerDynamicTools()];
+export function createZeusToolRegistry(options: { automation?: boolean; work?: boolean } = {}): ZeusToolRegistry {
+  const codexTools = [...(options.automation !== false ? [...zeusBrowserDynamicTools(), ...zeusComputerDynamicTools()] : []), ...(options.work ? zeusWorkDynamicTools() : [])];
   const mapping = new Map<string, { namespace: ZeusNativeToolNamespace; tool: string }>();
   const piTools: PiZeusToolDefinitionSpec[] = [];
   for (const namespace of codexTools.filter(isNamespace)) {
@@ -67,8 +70,8 @@ export function createZeusToolRegistry(): ZeusToolRegistry {
   };
 }
 
-export function createZeusToolBroker(automation: BrowserAutomationPort, options: CreateZeusToolBrokerOptions = {}): ZeusToolBroker {
-  const registry = createZeusToolRegistry();
+export function createZeusToolBroker(automation: BrowserAutomationPort | undefined, options: CreateZeusToolBrokerOptions = {}): ZeusToolBroker {
+  const registry = createZeusToolRegistry({ automation: Boolean(automation), work: Boolean(options.work) });
   const timeoutMs = options.timeoutMs ?? 120_000;
   const invoke = async (input: BrowserAutomationToolCall & { namespace: ZeusNativeToolNamespace }): Promise<BrowserAutomationToolResult> => {
     validateToolIdentity(input);
@@ -90,7 +93,8 @@ export function createZeusToolBroker(automation: BrowserAutomationPort, options:
         timer = setTimeout(() => reject(Object.assign(new Error(`Zeus 原生工具调用超时：${input.namespace}.${input.tool}`), { code: 'ZEUS_NATIVE_TOOL_TIMEOUT' })), timeoutMs);
         timer.unref();
       });
-      const result = await Promise.race([automation.invoke(input), timeout]);
+      const operation = input.namespace === 'zeus_work' ? options.work!.invoke(input) : automation!.invoke(input);
+      const result = await Promise.race([operation, timeout]);
       await options.audit?.({
         phase: 'completed',
         conversationId: input.conversationId,
@@ -137,6 +141,7 @@ export function createZeusToolBroker(automation: BrowserAutomationPort, options:
 }
 
 export function isZeusNativeToolMutation(namespace: ZeusNativeToolNamespace, tool: string, args: Record<string, unknown>): boolean {
+  if (namespace === 'zeus_work') return tool !== 'inspect';
   if (namespace === 'zeus_computer') return tool !== 'list_apps' && tool !== 'get_app_state';
   if (tool === 'invoke') {
     const path = typeof args.path === 'string' ? args.path : '';
@@ -178,11 +183,12 @@ function asSchemaRecord(value: unknown): Record<string, unknown> {
 }
 
 function isSequentialTool(namespace: ZeusNativeToolNamespace, tool: string): boolean {
+  if (namespace === 'zeus_work') return tool !== 'inspect';
   if (namespace === 'zeus_computer') return tool !== 'list_apps' && tool !== 'get_app_state';
   return !['list_tabs', 'snapshot', 'element', 'wait', 'screenshot', 'downloads', 'catalog'].includes(tool);
 }
 
 function piToolLabel(namespace: ZeusNativeToolNamespace, tool: string): string {
-  const prefix = namespace === 'zeus_browser' ? '浏览器' : '电脑';
+  const prefix = namespace === 'zeus_work' ? '任务工作' : namespace === 'zeus_browser' ? '浏览器' : '电脑';
   return `${prefix} · ${tool}`;
 }

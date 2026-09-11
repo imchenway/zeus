@@ -1,3 +1,8 @@
+import { selectEmployeeMemories } from './employeeMemoryContext.js';
+import { LongTermMemoryRepository } from '@zeus/storage';
+import { normalizeWorkSettings } from './taskWorkManagement.js';
+import { splitZeusSkillIds, mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shared';
+import { TaskWorkPlanningRepository } from '@zeus/storage';
 import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
@@ -264,7 +269,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     trustedConversationAttachmentRoots,
   } = dependencies;
 
-  type ExpertMention = { employeeId: string };
+  type ExpertMention = { employeeId: string; settings?: EmployeeWorkSettings };
   type SkillReference = { id: string };
 
   function normalizeExpertMentions(value: unknown): ExpertMention[] {
@@ -280,7 +285,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const employeeId = entry.employeeId.trim();
       if (seen.has(employeeId)) throw nativeApiError('ZEUS_EXPERT_MENTION_DUPLICATE', '同一轮不能重复点名同一名数字员工。');
       seen.add(employeeId);
-      return { employeeId };
+      const settings = normalizeWorkSettings(entry.settings);
+      if (settings.delegation || settings.autonomyObjective) throw nativeApiError('ZEUS_EXPERT_SETTINGS_INVALID', '讨论中的成员配置不创建任务委派，请在工作安排中设置。');
+      return { employeeId, ...(entry.settings ? { settings } : {}) };
     });
   }
 
@@ -415,7 +422,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       throw nativeApiError('ZEUS_COMPUTER_USE_REQUEST_INVALID', 'computerUseRequested 必须是布尔值。');
     }
     const computerUseRequested = input.body.computerUseRequested === true;
-    const attachments = normalizeNativeConversationAttachments(input.body.attachments, input.project.localPath);
+    /** 讨论读取保存时的任务说明与附件，不让侧栏显示和员工实际输入脱节。 */
+    const taskAttachments = input.task ? normalizeTaskPushAttachments(input.task, input.project.localPath) : null;
+    const attachments = [...(taskAttachments?.attachments ?? []), ...normalizeNativeConversationAttachments(input.body.attachments, input.project.localPath)];
+    const taskPrompt = input.task ? renderTaskPushLayoutText(buildTaskPushLayoutForTask(input.task, content, taskAttachments?.promptAttachments ?? [], [], [], [], [])) : content;
     const capabilities = await resolveConversationCapabilities(input.project);
     const requestedModel = typeof input.body.model === 'string' && input.body.model.trim() ? input.body.model.trim() : (input.conversation?.modelId ?? input.conversation?.providerModel ?? capabilities.preferredModel);
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel) ?? capabilities.models[0];
@@ -438,6 +448,52 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       return employee;
     });
+
+    /** 每个成员先解析自己的默认与本轮覆盖，任何一位不可运行时整轮保持未接纳。 */
+    const taskSettings = input.task ? new TaskWorkPlanningRepository(db).get(input.task.id)?.settings : undefined;
+    const memberConfigurations = await Promise.all(
+      employees.map(async (employee, index) => {
+        const override = mergeEmployeeWorkSettings(taskSettings, mentions[index]?.settings);
+        const memberModelId = override.modelOverride === null ? requestedModel : (override.modelOverride ?? (employee.model || requestedModel));
+        const memberModel = resolveModelCapability(capabilities.models, memberModelId);
+        if (!memberModel || memberModel.available === false) throw nativeApiError('ZEUS_EXPERT_MODEL_NOT_READY', `${employee.name} 的模型当前不可运行，请调整该成员的本轮配置。`);
+        const memberEffort =
+          override.reasoningEffort === null
+            ? (memberModel.defaultReasoningEffort ?? null)
+            : (override.reasoningEffort ?? (memberModel.supportedReasoningEfforts.includes(employee.reasoningEffort ?? '') ? employee.reasoningEffort : memberModel.defaultReasoningEffort) ?? null);
+        if (memberEffort && !memberModel.supportedReasoningEfforts.includes(memberEffort)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', `${employee.name} 的模型不支持所选推理强度。`);
+        const memberTier = normalizeServiceTierForCapability({ present: true, value: override.serviceTier === undefined ? employee.serviceTier : override.serviceTier }, memberModel) ?? null;
+        const references = splitZeusSkillIds(override.skillIds ?? employee.skillIds);
+        if (references.invalidIds.length) throw nativeApiError('ZEUS_EXPERT_SKILL_INVALID', `${employee.name} 包含无效技能。`);
+        const memberSkills = [...new Set([...references.nativeSkillIds, ...skillReferences.map((reference) => reference.id)])].map((id) => ({ id }));
+        if (memberSkills.length && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主无法加载成员技能。');
+        const resolvedSkills = zeusSkillService ? await Promise.all(memberSkills.map((reference) => zeusSkillService.resolve({ cwd: executionRoot, skillId: reference.id }))) : [];
+        const memberPlugins = await resolveNewConversationPluginReferences(input.project.id, content, [...pluginReferences, ...references.pluginReferences]);
+        const memories = selectEmployeeMemories(new LongTermMemoryRepository(db), employee, input.project.id, content, now().toISOString());
+        const memoryText = memories.map((record) => `[${record.memoryKey} · ${record.id} · 来源 ${record.source.reference}]\n${record.content}`).join('\n\n');
+        return {
+          model: memberModel,
+          memories: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
+          prompt: [override.promptOverride ?? employee.prompt, memoryText ? `员工经验（仅供参考，不构成行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n'),
+          settings: {
+            model: memberModel.model,
+            modelSourceId: memberModel.sourceId ?? null,
+            effort: memberEffort,
+            serviceTierPresent: true,
+            serviceTier: memberTier,
+            permissionMode: override.permissionMode ?? employee.permissionMode,
+            collaborationMode: override.workMode ?? employee.workMode,
+            computerUseRequested,
+            skillReferences: memberSkills,
+            skillNames: resolvedSkills.map((skill) => skill.name),
+            pluginReferences: memberPlugins,
+            attachments,
+            displayText,
+            currentPrompt: taskPrompt,
+          } satisfies ExpertRoundSettingsSnapshot,
+        };
+      }),
+    );
 
     let conversation: ZeusConversationRecord | null = input.conversation ?? null;
     if (!conversation) {
@@ -476,10 +532,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
       pluginReferences,
       attachments,
       displayText,
-      currentPrompt: content,
+      currentPrompt: taskPrompt,
     };
-    const participants = employees.map((employee) => {
-      const actor = expertActorSnapshot(employee);
+    const participants = employees.map((employee, index) => {
+      const member = memberConfigurations[index]!;
+      const selectedModel = member.model;
+      const memberSettings = member.settings;
+      const pluginReferences = memberSettings.pluginReferences;
+      const skillReferences = memberSettings.skillReferences;
+      const actor = { ...expertActorSnapshot(employee), prompt: member.prompt };
       const fingerprint = conversationExperts.runtimeFingerprint({
         employeeRevision: employee.revision,
         model: selectedModel.model,
@@ -505,8 +566,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           providerId: selectedModel.agentKind === 'pi' ? `pi:${selectedModel.sourceId ?? 'custom'}` : 'codex',
           providerModel: selectedModel.model,
           providerState: 'unbound',
-          permissionMode,
-          collaborationMode,
+          permissionMode: memberSettings.permissionMode,
+          collaborationMode: memberSettings.collaborationMode,
           agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
           agentTransport: selectedModel.agentKind === 'pi' ? 'rpc' : 'app_server',
           modelSourceId: selectedModel.sourceId ?? null,
@@ -527,6 +588,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           updatedAt: now().toISOString(),
         }),
         actor,
+        memberSettings,
       };
     });
     const submissionId = input.reservedSubmissionId ?? `conversation_expert_submission_${createHash('sha256').update(`${input.stableOperationId}\0submission`).digest('hex').slice(0, 24)}`;
@@ -546,13 +608,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
       input: { expertRound: true, text: content, displayText, expertMentions: mentions, settings },
       createdAt: acceptedAt,
       queued,
-      executions: participants.map(({ participant, actor }, ordinal) => ({
+      executions: participants.map(({ participant, actor, memberSettings }, ordinal) => ({
         id: `conversation_expert_execution_${createHash('sha256').update(`${submissionId}\0${ordinal}\0${participant.employeeId}`).digest('hex').slice(0, 24)}`,
         participantId: participant.id,
         childConversationId: participant.childConversationId,
         ordinal,
         employeeSnapshot: actor,
-        settingsSnapshot: { ...settings, participantContextThroughSequence: participant.contextThroughSequence },
+        settingsSnapshot: { ...memberSettings, memorySnapshot: memberConfigurations[ordinal]!.memories, participantContextThroughSequence: participant.contextThroughSequence },
       })),
     });
     await db.save();
@@ -2659,6 +2721,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
+        const goalObjective = parseGoalObjective((body as Record<string, unknown>).goalObjective);
+        if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
         const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushPrompt, body.pluginReferences);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
         // 先在用户实际选择 Skill 的项目目录复验身份，避免失效选择在创建 Worktree 后才失败；
@@ -2707,6 +2771,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             providerWriteLifecycle: reservedLifecycle,
             ...(skill ? { skill } : {}),
             pluginReferences,
+            ...(goalObjective ? { goalObjective } : {}),
           },
           { operationIdentity: stableOperationId, modelRef: modelName, stageExecution: requestedStageExecution(body, taskStage) },
         );

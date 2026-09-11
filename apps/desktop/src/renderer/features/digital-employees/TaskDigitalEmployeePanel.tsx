@@ -1,13 +1,13 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { TextFilePreview } from '../../code/TextFilePreview.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CodexTaskPushCapabilities, TaskPushSupplementalAttachmentDraft } from '../../session/sessionTypes.js';
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
+import type { NativeConversationChoice, CodexTaskPushCapabilities, TaskPushSupplementalAttachmentDraft } from '../../session/sessionTypes.js';
 import { useConversationInputResources } from '../../session/useConversationInputResources.js';
 import { mergeTaskPushSupplementalAttachments, taskPushEnvironmentLabel, taskPushSupplementalAttachmentIdentity, taskPushSupplementalRequestAttachments, TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
 import { TaskPushSupplementalAttachmentCards } from '../../task/TaskPushSupplementalAttachmentCards.js';
@@ -21,11 +21,34 @@ import type { DigitalEmployeeRecord, TaskWorkConversationRequestRecord, TaskWork
 import { errorMessage, formatDateTime, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
+import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
+import { TaskConversationPane } from './TaskConversationPane.js';
+import { TaskDeliverableReader, TaskDeliverableContent, readTaskDeliverableContent } from './TaskDeliverableReader.js';
+import { TaskWorkReviewPanel } from './TaskWorkReviewPanel.js';
+import { TaskWorkPlanPanel } from './TaskWorkPlanPanel.js';
 import './digitalEmployees.css';
 
 export type TaskDigitalEmployeeSkillClient = Pick<NativeConversationAppClient, 'loadSkills'>;
 
 export interface TaskDigitalEmployeePanelProps {
+  /** 工作安排复用项目技能目录。 */
+  skillClient?: TaskDigitalEmployeeSkillClient | null;
+  /** 当前任务会话使用原始身份，不复制消息。 */
+  conversations?: NativeConversationChoice[];
+  /** 会话列表读取状态。 */
+  conversationsLoading?: boolean;
+  /** 会话列表失败保留可见原因。 */
+  conversationsError?: string | null;
+  /** 当前唯一会话控制器身份。 */
+  activeConversationId?: string | null;
+  /** 从工作区注入原会话组件。 */
+  conversationWorkspace?: ReactNode;
+  /** 首次讨论复用原新建会话输入与耐久接纳。 */
+  newConversationWorkspace?: ReactNode;
+  /** 内嵌选择不会离开任务详情。 */
+  onSelectConversation?(conversationId: string): Promise<void>;
+  /** 重读会话列表的真实操作。 */
+  onReloadConversations?(): void;
   taskId: string;
   projectId: string;
   terminalReadOnly: boolean;
@@ -52,32 +75,68 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 新读取与任务切换使旧返回失效。 */
+  const readGeneration = useRef(0);
+  /** 已显示的内容不因轮询闪回加载态。 */
+  const hasLoaded = useRef(false);
+  /** 同步保护快速双击，避免重复写入。 */
+  const actionInFlight = useRef(false);
 
   const load = useCallback(async () => {
     if (!props.client) return;
-    setLoadState('loading');
+    /** 每次读取拥有独立代次。 */
+    const generation = ++readGeneration.current;
+    if (!hasLoaded.current) setLoadState('loading');
     try {
       const [nextEmployees, nextProjection] = await Promise.all([props.client.loadProjectDigitalEmployees(props.projectId), props.client.loadTaskWorkManagement(props.taskId)]);
-      setEmployees(nextEmployees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent'));
+      if (generation !== readGeneration.current) return;
+      hasLoaded.current = true;
+      setEmployees(nextEmployees);
       setProjection(nextProjection);
       setError(null);
       setLoadState('ready');
     } catch (cause) {
+      if (generation !== readGeneration.current) return;
       setLoadState('failed');
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
   }, [props.client, props.projectId, props.taskId, zh]);
 
-  useEffect(() => void load(), [load]);
-  const shouldPoll = Boolean(projection?.summary.activeWorkItems || projection?.summary.pendingActions);
+  useEffect(() => {
+    hasLoaded.current = false;
+    setProjection(null);
+    setEmployees([]);
+    setError(null);
+    void load();
+    return () => {
+      readGeneration.current += 1;
+    };
+  }, [load]);
+  const shouldPoll = Boolean(
+    projection?.summary.activeWorkItems || projection?.summary.pendingActions || projection?.plan?.state === 'running' || projection?.workItems.some((item) => item.arrangement?.cancellationRequested && item.status !== 'cancelled'),
+  );
   useEffect(() => {
     if (!shouldPoll) return;
-    const timer = window.setInterval(() => void load(), 3_000);
-    return () => window.clearInterval(timer);
+    /** 等上一次读取完成再调度，慢网络下不积压轮询。 */
+    let stopped = false;
+    /** 只记录本轮定时器，卸载后不产生下一次读取。 */
+    let timer: number;
+    /** 刷新不重置已显示内容，失败保留原因。 */
+    const poll = async () => {
+      await load();
+      if (!stopped) timer = window.setTimeout(() => void poll(), 3_000);
+    };
+    timer = window.setTimeout(() => void poll(), 3_000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [load, shouldPoll]);
 
   const act = useCallback(
     async (identity: string, operation: () => Promise<unknown>): Promise<boolean> => {
+      if (actionInFlight.current) return false;
+      actionInFlight.current = true;
       setBusy(identity);
       setError(null);
       try {
@@ -88,6 +147,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
         setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
         return false;
       } finally {
+        actionInFlight.current = false;
         setBusy(null);
       }
     },
@@ -97,29 +157,69 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
   return { employees, projection, loadState, busy, error, load, act };
 }
 
-type ManagementTab = 'overview' | 'collaboration' | 'deliverables' | 'evidence';
+type ManagementTab = 'collaboration' | 'work' | 'deliverables' | 'evidence';
 
+/** 在任务概览与工作管理间切换，不重复堆叠两套详情。 */
 export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
+  /** 页签和提示跟随应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** 进入详情直接对照任务说明阅读沟通内容。 */
   const [tab, setTab] = useState<ManagementTab>('collaboration');
+  /** 待办和工作都定位原会话身份。 */
+  const [conversationRequest, setConversationRequest] = useState<{ conversationId: string } | null>(null);
+  /** 正式成果保留独立全文阅读状态。 */
+  const [readingDeliverable, setReadingDeliverable] = useState<TaskWorkDeliverableRecord | null>(null);
+  /** 页签和内容区域共享无障碍身份。 */
+  const panelId = useId();
+  /** 固定页签顺序用于键盘导航。 */
+  const tabs = ['collaboration', 'work', 'deliverables', 'evidence'] as const;
+  /** 选中的待处理事项继续使用原有确认弹窗。 */
   const [decisionOpen, setDecisionOpen] = useState<TaskWorkDecisionRecord | null>(null);
+  /** 证据预览只读取用户选中的命令。 */
   const [commandEvidenceRunId, setCommandEvidenceRunId] = useState<string | null>(null);
 
-  if (!props.client) return null;
+  if (!props.client) return <p className="task-conversation-feedback">{zh ? '工作服务未连接，任务说明仍可编辑。' : 'The work service is disconnected. Task requirements remain editable.'}</p>;
   const { projection, loadState, busy, error, load, act } = props.management;
-  const summary = projection?.summary;
   const pendingDecisions = projection?.managerDecisions.filter((decision) => decision.status === 'pending') ?? [];
   const pendingConversationRequests = projection?.conversationRequests ?? [];
 
+  /** 工作和待办进入任务内原会话，没有内嵌能力时使用完整会话入口。 */
+  function openConversation(conversationId: string): void {
+    if (!props.onSelectConversation) {
+      props.onOpenConversation?.(conversationId);
+      return;
+    }
+    setConversationRequest({ conversationId });
+    setTab('collaboration');
+  }
   return (
-    <section className="task-work-cockpit" aria-label={zh ? '数字员工管理驾驶舱' : 'Digital employee management cockpit'}>
+    <section className="task-work-cockpit" aria-label={zh ? '任务内容与协作' : 'Task content and collaboration'}>
       <header className="task-work-cockpit-header">
-        <nav aria-label={zh ? '任务详情页签' : 'Task detail tabs'}>
-          {(['overview', 'collaboration', 'deliverables', 'evidence'] as const).map((value) => (
-            <button key={value} type="button" className={tab === value ? 'is-active' : undefined} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>
+        <nav role="tablist" aria-label={zh ? '任务详情页签' : 'Task detail tabs'}>
+          {tabs.map((value) => (
+            <button
+              key={value}
+              id={`${panelId}-${value}-tab`}
+              type="button"
+              role="tab"
+              aria-controls={`${panelId}-${value}`}
+              tabIndex={tab === value ? 0 : -1}
+              className={tab === value ? 'is-active' : undefined}
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              onKeyDown={(event) => {
+                /** 方向键、首尾键只切换页签，不影响正文草稿。 */
+                const index = tabs.indexOf(value);
+                /** 仅处理页签导航按键。 */
+                const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+                if (next === null) return;
+                event.preventDefault();
+                setTab(tabs[next]!);
+                document.getElementById(`${panelId}-${tabs[next]}-tab`)?.focus();
+              }}
+            >
               {tabLabel(value, props.language)}
-              {value === 'collaboration' && summary?.activeWorkItems ? <small>{summary.activeWorkItems}</small> : null}
-              {value === 'deliverables' && summary?.submittedDeliverables ? <small>{summary.submittedDeliverables}</small> : null}
+              {value === 'deliverables' && projection?.deliverables.length ? <small>{projection.deliverables.length}</small> : null}
             </button>
           ))}
         </nav>
@@ -136,25 +236,107 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         </p>
       ) : null}
 
-      {tab === 'overview' ? <WorkOverview projection={projection} language={props.language} /> : null}
-      {tab === 'collaboration' ? (
-        <div className="task-work-cockpit-grid">
-          <WorkItemBoard
-            items={projection?.workItems ?? []}
-            relationships={projection?.relationships ?? []}
-            busy={busy}
-            readOnly={props.terminalReadOnly}
-            language={props.language}
-            onOpenConversation={props.onOpenConversation}
-            onRetry={(item) => void act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
-            onCancel={(item) => void act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
-          />
-          <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={props.onOpenConversation} onSelect={setDecisionOpen} />
+      {projection?.plan && tab !== 'work' ? (
+        <button type="button" className="task-work-progress-summary" onClick={() => setTab('work')}>
+          <span>
+            {projection.plan.state === 'paused'
+              ? '后续工作暂停'
+              : projection.plan.state === 'completed'
+                ? '本轮工作已通过'
+                : projection.plan.state === 'cancelled'
+                  ? '本轮安排已结束'
+                  : projection.plan.state === 'draft'
+                    ? '工作安排尚未启动'
+                    : '当前阶段'}{' '}
+            · {projection.plan.stages.find((stage) => !['accepted', 'skipped'].includes(stage.status))?.title ?? '全部阶段已结束'}
+          </span>
+          <small>
+            {projection.plan.stages.filter((stage) => stage.status === 'accepted').length} / {projection.plan.stages.length} 阶段通过 · 查看安排
+          </small>
+        </button>
+      ) : null}
+      {/* 隐藏而不卸载正文，切换页签后仍能继续处理未保存的内容。 */}
+      <div id={`${panelId}-collaboration`} role="tabpanel" aria-labelledby={`${panelId}-collaboration-tab`} className="task-work-conversation-panel" hidden={tab !== 'collaboration'}>
+        {projection && (pendingConversationRequests.length > 0 || pendingDecisions.length > 0) ? (
+          <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
+        ) : null}
+        <TaskConversationPane
+          conversations={props.conversations ?? []}
+          loading={props.conversationsLoading}
+          error={props.conversationsError}
+          employees={props.management.employees}
+          items={projection?.workItems ?? []}
+          activeConversationId={props.activeConversationId}
+          workspace={props.conversationWorkspace}
+          newWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
+          conversationRequest={conversationRequest}
+          language={props.language}
+          onSelect={props.onSelectConversation}
+          onOpen={props.onOpenConversation}
+          onReload={props.onReloadConversations}
+        />
+      </div>
+      {tab === 'work' && projection ? (
+        <div id={`${panelId}-work`} role="tabpanel" aria-labelledby={`${panelId}-work-tab`} className="task-work-collaboration">
+          {pendingConversationRequests.length + pendingDecisions.length > 0 ? (
+            <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
+          ) : null}
+          <TaskWorkPlanPanel taskId={props.taskId} projectId={props.projectId} client={props.client} skillClient={props.skillClient ?? null} management={props.management} readOnly={props.terminalReadOnly} />
+          {projection.workItems.some((item) => !item.arrangement || item.currentRunId) ? (
+            <WorkItemBoard
+              items={projection.workItems.filter((item) => !item.arrangement || item.currentRunId)}
+              employees={props.management.employees}
+              relationships={projection?.relationships ?? []}
+              busy={busy}
+              readOnly={props.terminalReadOnly}
+              language={props.language}
+              onOpenConversation={openConversation}
+              onRetry={(item) => void act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
+              onCancel={(item) => void act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
+            />
+          ) : null}
         </div>
       ) : null}
-      {tab === 'deliverables' ? <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} /> : null}
-      {tab === 'evidence' ? <EvidenceView refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={props.onOpenConversation} onOpenCommand={setCommandEvidenceRunId} /> : null}
+      {tab === 'deliverables' && projection ? (
+        <div id={`${panelId}-deliverables`} role="tabpanel" aria-labelledby={`${panelId}-deliverables-tab`}>
+          <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} onOpen={setReadingDeliverable} />
+        </div>
+      ) : null}
+      {tab === 'evidence' && projection ? (
+        <div id={`${panelId}-evidence`} role="tabpanel" aria-labelledby={`${panelId}-evidence-tab`}>
+          <EvidenceView items={projection?.workItems ?? []} refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={openConversation} onOpenCommand={setCommandEvidenceRunId} />
+        </div>
+      ) : null}
 
+      {tab !== 'collaboration' && !projection && loadState === 'loading' ? (
+        <p className="task-conversation-feedback" role="status">
+          {zh ? '正在读取工作记录…' : 'Loading work records…'}
+        </p>
+      ) : null}
+      <MotionPresence>
+        {readingDeliverable ? (
+          <TaskDeliverableReader
+            taskId={props.taskId}
+            deliverable={readingDeliverable}
+            revisions={projection?.deliverables ?? []}
+            client={props.client}
+            language={props.language}
+            onClose={() => setReadingDeliverable(null)}
+            onReview={
+              !props.terminalReadOnly && pendingDecisions.some((candidate) => candidate.deliverableId === readingDeliverable.id)
+                ? () => {
+                    /** 验收沿用原决定，历史成果不会重新生成待办。 */
+                    const pending = pendingDecisions.find((candidate) => candidate.deliverableId === readingDeliverable.id);
+                    if (pending) {
+                      setReadingDeliverable(null);
+                      setDecisionOpen(pending);
+                    }
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+      </MotionPresence>
       <MotionPresence>
         {decisionOpen ? (
           <DecisionDialog
@@ -164,6 +346,8 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
             taskId={props.taskId}
             language={props.language}
             busy={busy === `decision:${decisionOpen.id}`}
+            readOnly={props.terminalReadOnly}
+            operationError={error}
             onDismiss={() => setDecisionOpen(null)}
             onAccept={async (deliverable) => {
               const success = await act(`decision:${decisionOpen.id}`, () => props.client!.acceptTaskWorkDeliverable(props.taskId, deliverable));
@@ -185,37 +369,11 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   );
 }
 
-function WorkOverview(props: { projection: TaskWorkManagementProjection | null; language: DigitalEmployeeLanguage }) {
-  const zh = props.language === 'zh-CN';
-  const summary = props.projection?.summary;
-  return (
-    <div className="task-work-overview">
-      <span>
-        <small>{zh ? '工作项' : 'Work items'}</small>
-        <strong>{summary?.workItems ?? 0}</strong>
-        <p>{zh ? '每个工作项对应一次单独指派的工作。' : 'Each work item represents a separately assigned piece of work.'}</p>
-      </span>
-      <span>
-        <small>{zh ? '待我处理' : 'Needs me'}</small>
-        <strong>{summary?.pendingActions ?? 0}</strong>
-        <p>{zh ? '会话请求、验收与异常处置。' : 'Conversation requests, acceptance, and recovery.'}</p>
-      </span>
-      <span>
-        <small>{zh ? '正式交付物' : 'Deliverables'}</small>
-        <strong>{props.projection?.deliverables.length ?? 0}</strong>
-        <p>{zh ? '保留各次交付的内容，供你检查并确认验收。' : 'Keep each delivery for you to review and accept.'}</p>
-      </span>
-      <span>
-        <small>{zh ? '历史执行' : 'Legacy runs'}</small>
-        <strong>{summary?.legacyExecutions ?? 0}</strong>
-        <p>{zh ? '旧阶段和旧执行只读展示，不会被改写。' : 'Legacy stages and runs remain read-only.'}</p>
-      </span>
-    </div>
-  );
-}
-
+/** 连续列表先展示工作目标，再展示执行者、状态与原有操作。 */
 function WorkItemBoard(props: {
   items: TaskWorkItemRecord[];
+  /** 项目员工身份与顶部头像保持一致，停用员工仍可追溯。 */
+  employees: DigitalEmployeeRecord[];
   relationships: Array<Record<string, unknown>>;
   busy: string | null;
   readOnly: boolean;
@@ -224,43 +382,56 @@ function WorkItemBoard(props: {
   onRetry(item: TaskWorkItemRecord): void;
   onCancel(item: TaskWorkItemRecord): void;
 }) {
+  /** 工作标题和操作名称跟随应用语言。 */
   const zh = props.language === 'zh-CN';
   return (
     <section className="task-work-board" aria-label={zh ? '工作项' : 'Work items'}>
       <header>
         <span>
           <strong>{zh ? '工作项' : 'Work items'}</strong>
-          <small>{zh ? '每次指派创建独立工作项；活动与历史工作项完整保留' : 'Each assignment creates an independent work item; active and historical items remain available'}</small>
+          <small>{zh ? '每次指派与运行记录均保留在这里' : 'Every assignment and run remains available here'}</small>
         </span>
       </header>
       {props.relationships.length === 0 && props.items.length > 1 ? <p className="task-work-relationship-note">{zh ? '这些是独立指派，当前没有依赖关系。' : 'These are independent assignments with no dependencies.'}</p> : null}
       <div className="task-work-item-list">
         {props.items.map((item) => {
+          /** 采用当前运行，旧记录缺少指针时沿用最后一次运行。 */
           const current = item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
+          /** 使用真实员工头像，命令与没有员工身份的历史保留类型图标。 */
+          const employee = props.employees.find((candidate) => candidate.id === current?.employeeId);
           return (
             <article key={item.id} className={`task-work-item is-${item.status}`}>
               <span className="task-work-entry-icon" aria-hidden="true">
-                {item.entrypointKind === 'command' ? <TerminalWindow size={20} /> : <ChatCircle size={20} />}
+                {employee ? <DigitalEmployeeAvatar {...employee} /> : item.entrypointKind === 'command' ? <TerminalWindow size={20} /> : <ChatCircle size={20} />}
               </span>
-              <span className="task-work-item-copy">
-                <span>
-                  <strong>{employeeName(current) || item.title}</strong>
-                  <small>
-                    {item.entrypointKind === 'command' ? 'Command' : 'Agent'} · {workItemStatus(item.status, props.language)}
-                  </small>
-                </span>
-                <p>{item.description || (zh ? '使用启动时确认的配置执行此任务。' : 'Run this task with the settings confirmed at the start.')}</p>
+              <div className="task-work-item-copy">
+                <div className="task-work-item-heading">
+                  <strong>{item.title}</strong>
+                  <span className={`task-work-item-status is-${item.status}`}>{workItemStatus(item.status, props.language)}</span>
+                </div>
+                <small className="task-work-item-meta">
+                  <span>{employeeName(current) || (item.entrypointKind === 'command' ? (zh ? '命令执行' : 'Command') : zh ? '数字员工' : 'Digital employee')}</span>
+                  {current ? (
+                    <span>
+                      {zh ? `第 ${current.attempt} 次运行` : `Run ${current.attempt}`} · {runStatus(current.status, props.language)}
+                    </span>
+                  ) : null}
+                </small>
+                {item.description ? <p>{item.description}</p> : null}
+                {current?.goal ? (
+                  <p>
+                    自主目标 · {({ active: '推进中', paused: '已暂停', blocked: '等待处理', complete: '已完成' } as Record<string, string>)[current.goal.status] ?? current.goal.status}：{current.goal.objective}
+                  </p>
+                ) : null}
+                {item.arrangement?.parentWorkItemId ? <small>团队子工作 · 通过审查后交回上级汇总</small> : null}
+                {item.arrangement?.dependencyIds.length ? <small>等待 {item.arrangement.dependencyIds.length} 份前序分工通过</small> : null}
+
                 {current?.errorMessage ? (
                   <small className="is-error">
                     <VisibleApplicationError error={{ code: current.errorCode, message: current.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
                   </small>
                 ) : null}
-                {current ? (
-                  <small>
-                    {zh ? `第 ${current.attempt} 次运行` : `Run ${current.attempt}`} · {runStatus(current.status, props.language)}
-                  </small>
-                ) : null}
-              </span>
+              </div>
               <span className="task-work-item-actions">
                 {current?.conversationId && props.onOpenConversation ? (
                   <Button variant="secondary" size="compact" onClick={() => props.onOpenConversation?.(current.conversationId!)}>
@@ -282,16 +453,18 @@ function WorkItemBoard(props: {
           );
         })}
         {props.items.length === 0 ? (
-          <span className="task-work-empty">
-            <strong>{zh ? '尚无工作项' : 'No work items yet'}</strong>
-            <small>{zh ? '请在上方“执行者”中选择数字员工并配置本次运行。' : 'Choose a digital employee from Executor above and configure this run.'}</small>
-          </span>
+          <div className="task-work-empty">
+            <ChatCircle size={28} weight="light" aria-hidden="true" />
+            <strong>{zh ? '指派第一项工作' : 'Assign the first work item'}</strong>
+            <small>{zh ? '在上方“执行人”中选择员工，明确本次工作后开始。' : 'Choose a digital employee from Executor in task properties to configure and start a run.'}</small>
+          </div>
         ) : null}
       </div>
     </section>
   );
 }
 
+/** 待办放在工作列表前，空态仅占一行，不再挤出第三列。 */
 function ManagerInbox(props: {
   requests: TaskWorkConversationRequestRecord[];
   decisions: TaskWorkDecisionRecord[];
@@ -299,14 +472,25 @@ function ManagerInbox(props: {
   onOpenConversation?: (conversationId: string) => void;
   onSelect(decision: TaskWorkDecisionRecord): void;
 }) {
+  /** 待办与空态文案跟随应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** 原始会话请求和管理决策共同组成当前待办。 */
   const count = props.requests.length + props.decisions.length;
+  if (count === 0) {
+    return (
+      <aside className="task-work-inbox is-empty" aria-label={zh ? '待我处理' : 'Needs my attention'}>
+        <CheckCircle size={19} aria-hidden="true" />
+        <strong>{zh ? '当前无需处理' : 'Nothing needs your attention'}</strong>
+        <span>{zh ? '新的会话请求、验收和异常会出现在这里' : 'New requests, reviews, and issues will appear here'}</span>
+      </aside>
+    );
+  }
   return (
     <aside className="task-work-inbox" aria-label={zh ? '待我处理' : 'Needs my attention'}>
       <header>
         <span>
           <strong>{zh ? '待我处理' : 'Needs me'}</strong>
-          <small>{count ? (zh ? `${count} 项待办` : `${count} pending`) : zh ? '当前无待办' : 'Nothing pending'}</small>
+          <small>{zh ? `${count} 项待办` : `${count} pending`}</small>
         </span>
       </header>
       <div>
@@ -320,6 +504,7 @@ function ManagerInbox(props: {
               <small>{zh ? '打开任务会话处理原始请求' : 'Open the task conversation to handle the original request'}</small>
               <time>{formatDateTime(request.createdAt, props.language)}</time>
             </span>
+            <CaretRightIcon size={15} aria-hidden="true" />
           </button>
         ))}
         {props.decisions.map((decision) => (
@@ -332,15 +517,16 @@ function ManagerInbox(props: {
               <small>{decisionCopy(decision, 'prompt', zh)}</small>
               <time>{formatDateTime(decision.createdAt, props.language)}</time>
             </span>
+            <CaretRightIcon size={15} aria-hidden="true" />
           </button>
         ))}
-        {count === 0 ? <p>{zh ? '会话请求、交付物验收和异常处置会集中出现在这里。' : 'Conversation requests, deliverable acceptance, and recovery appear here.'}</p> : null}
       </div>
     </aside>
   );
 }
 
-function DeliverablesView(props: { deliverables: TaskWorkDeliverableRecord[]; language: DigitalEmployeeLanguage }) {
+/** 全部成果均可打开冻结正文，已验收成果也保留完整阅读入口。 */
+function DeliverablesView(props: { deliverables: TaskWorkDeliverableRecord[]; language: DigitalEmployeeLanguage; onOpen(deliverable: TaskWorkDeliverableRecord): void }) {
   const zh = props.language === 'zh-CN';
   return (
     <section className="task-work-deliverables">
@@ -353,11 +539,13 @@ function DeliverablesView(props: { deliverables: TaskWorkDeliverableRecord[]; la
           <span>
             <strong>{deliverable.title}</strong>
             <small>
-              v{deliverable.version} · {deliverableStatus(deliverable.status, props.language)}
+              {zh ? '修订' : 'Revision'} {deliverable.version} · {deliverableStatus(deliverable.status, props.language)}
             </small>
           </span>
           <p>{deliverable.summary}</p>
-          <code>{deliverable.contentSha256.slice(0, 16)}…</code>
+          <Button variant="secondary" size="compact" onClick={() => props.onOpen(deliverable)}>
+            {zh ? '查看成果' : 'Read deliverable'}
+          </Button>
         </article>
       ))}
       {props.deliverables.length === 0 ? <p>{zh ? '尚无正式交付物。' : 'No formal deliverables yet.'}</p> : null}
@@ -365,29 +553,45 @@ function DeliverablesView(props: { deliverables: TaskWorkDeliverableRecord[]; la
   );
 }
 
-function EvidenceView(props: { refs: Array<Record<string, unknown>>; language: DigitalEmployeeLanguage; onOpenConversation?: (conversationId: string) => void; onOpenCommand(runId: string): void }) {
+/** 运行入口显示对应工作名称；没有可打开原会话的历史记录按文本呈现。 */
+function EvidenceView(props: { refs: Array<Record<string, unknown>>; items: TaskWorkItemRecord[]; language: DigitalEmployeeLanguage; onOpenConversation?: (conversationId: string) => void; onOpenCommand(runId: string): void }) {
+  /** 文案与工作状态沿用界面语言。 */
   const zh = props.language === 'zh-CN';
   return (
     <section className="task-work-evidence">
       <header>
-        <strong>{zh ? '证据' : 'Evidence'}</strong>
-        <small>{zh ? '查看相关对话、命令日志和历史运行' : 'View related conversations, command logs, and past runs'}</small>
+        <strong>{zh ? '运行记录' : 'Activity'}</strong>
+        <small>{zh ? '按工作查看原会话、命令日志和历史记录' : 'Open original conversations, command logs, and history by work item'}</small>
       </header>
-      {props.refs.map((ref, index) => (
-        <button
-          key={`${String(ref.kind)}:${String(ref.id)}:${index}`}
-          type="button"
-          disabled={typeof ref.id !== 'string' || (ref.kind !== 'conversation' && ref.kind !== 'command_run') || (ref.kind === 'conversation' && !props.onOpenConversation)}
-          onClick={() => (typeof ref.id !== 'string' ? undefined : ref.kind === 'conversation' ? props.onOpenConversation?.(ref.id) : ref.kind === 'command_run' ? props.onOpenCommand(ref.id) : undefined)}
-        >
-          <span>{ref.kind === 'command_run' ? <TerminalWindow size={18} /> : <ChatCircle size={18} />}</span>
-          <span>
-            <strong>{evidenceLabel(ref.kind, props.language)}</strong>
-            <small>{String(ref.id ?? '')}</small>
-          </span>
-        </button>
-      ))}
-      {props.refs.length === 0 ? <p>{zh ? '尚无运行证据。' : 'No runtime evidence yet.'}</p> : null}
+      {props.refs.map((ref, index) => {
+        /** 工作与尝试身份用于呈现实际名称和状态，不把内部编号作为主要信息。 */
+        const item = props.items.find((candidate) => candidate.id === ref.workItemId);
+        const run = item?.runs.find((candidate) => candidate.id === ref.runId);
+        /** 旧员工执行记录存在原会话时仍可读取，没有来源时不伪造点击行为。 */
+        const conversationId = ref.kind === 'conversation' && typeof ref.id === 'string' ? ref.id : ref.kind === 'legacy_execution' && typeof ref.conversationId === 'string' ? ref.conversationId : null;
+        const commandId = ref.kind === 'command_run' && typeof ref.id === 'string' ? ref.id : null;
+        const content = (
+          <>
+            <span aria-hidden="true">{commandId ? <TerminalWindow size={18} /> : <ChatCircle size={18} />}</span>
+            <span>
+              <strong>{item?.title ?? evidenceLabel(ref.kind, props.language)}</strong>
+              <small>
+                {evidenceLabel(ref.kind, props.language)}
+                {run ? ` · ${runStatus(run.status, props.language)}` : ''}
+              </small>
+            </span>
+          </>
+        );
+        const key = `${String(ref.kind)}:${String(ref.id)}:${index}`;
+        return commandId || (conversationId && props.onOpenConversation) ? (
+          <button key={key} type="button" onClick={() => (commandId ? props.onOpenCommand(commandId) : props.onOpenConversation?.(conversationId!))}>
+            {content}
+          </button>
+        ) : (
+          <article key={key}>{content}</article>
+        );
+      })}
+      {props.refs.length === 0 ? <p>{zh ? '尚无运行记录。' : 'No activity yet.'}</p> : null}
     </section>
   );
 }
@@ -401,33 +605,71 @@ export function TaskDigitalEmployeeExecutor(props: {
   language: DigitalEmployeeLanguage;
   management: TaskDigitalEmployeeManagement;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
+  /** 缺少员工时直接进入该项目员工管理。 */
+  onManageEmployees?(): void;
 }) {
   const zh = props.language === 'zh-CN';
   const [selectedEmployee, setSelectedEmployee] = useState<DigitalEmployeeRecord | null>(null);
-  if (!props.client) return <strong>{zh ? '不可用' : 'Unavailable'}</strong>;
-  const activeItems = activeTaskWorkItems(props.management.projection);
+  if (!props.client) return <span>{zh ? '未连接工作服务' : 'Work service is disconnected'}</span>;
+  /** 进行中数量沿用服务端权威投影，草稿和等待前序的分工不冒充已启动。 */
+  const activeCount = props.management.projection?.summary.activeWorkItems ?? 0;
+  /** 一个员工的多次运行只显示一次身份，不把工作数量写成员工数量。 */
+  const assignedEmployees = props.management.employees.filter(
+    (employee) =>
+      props.management.projection?.workItems.some((item) => item.runs.some((run) => run.employeeId === employee.id)) ||
+      props.management.projection?.plan?.stages.some((stage) => stage.items.some((item) => item.employeeId === employee.id && item.status !== 'cancelled')),
+  );
+  /** 停用员工保留历史身份，但不能成为新指派候选。 */
+  const runnableEmployees = props.management.employees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent');
   const options = [
-    { value: '', label: zh ? '选择数字员工' : 'Choose an employee' },
-    ...props.management.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${entrypointLabel(employee, props.language)}`, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
+    ...runnableEmployees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}`, icon: <DigitalEmployeeAvatar {...employee} />, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
   ];
   return (
     <span className="task-digital-employee-executor">
-      <ZeusSelect
-        size="regular"
-        ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
-        value=""
-        options={options}
-        searchable
-        searchPlaceholder={zh ? '搜索员工、岗位或领域' : 'Search employee, role, or domain'}
-        emptyLabel={zh ? '没有可执行的数字员工' : 'No runnable digital employees'}
-        disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || props.management.employees.length === 0}
-        onChange={(employeeId) => {
-          const employee = props.management.employees.find((candidate) => candidate.id === employeeId);
-          if (employee) setSelectedEmployee(employee);
-        }}
-        triggerLabel={zh ? '选择数字员工' : 'Choose an employee'}
-      />
-      {activeItems.length > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeItems.length} 个执行者运行中` : `${activeItems.length} active ${activeItems.length === 1 ? 'executor' : 'executors'}`}</small> : null}
+      {assignedEmployees.length ? (
+        <span className="task-assigned-employees" aria-label={zh ? '参与员工' : 'Assigned employees'}>
+          {assignedEmployees.map((employee) => (
+            <span key={employee.id} title={employee.role}>
+              <DigitalEmployeeAvatar {...employee} />
+              <span>{employee.name}</span>
+            </span>
+          ))}
+        </span>
+      ) : null}
+      {props.terminalReadOnly ? (
+        assignedEmployees.length === 0 ? (
+          <span>{zh ? '尚无员工记录' : 'No employee history'}</span>
+        ) : null
+      ) : runnableEmployees.length > 0 ? (
+        <ZeusSelect
+          size="regular"
+          ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
+          value=""
+          options={options}
+          searchable
+          searchPlaceholder={zh ? '搜索员工、岗位或领域' : 'Search employee, role, or domain'}
+          emptyLabel={zh ? '没有可执行的数字员工' : 'No runnable digital employees'}
+          disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || runnableEmployees.length === 0}
+          onChange={(employeeId) => {
+            const employee = props.management.employees.find((candidate) => candidate.id === employeeId);
+            if (employee) setSelectedEmployee(employee);
+          }}
+          triggerLabel={assignedEmployees.length ? (zh ? '指派工作' : 'Assign work') : zh ? '选择执行人' : 'Choose an employee'}
+        />
+      ) : props.management.loadState === 'loading' ? (
+        <span role="status">{zh ? '正在读取员工…' : 'Loading employees…'}</span>
+      ) : props.management.loadState === 'failed' ? (
+        <Button variant="secondary" size="compact" onClick={() => void props.management.load()}>
+          {zh ? '重新读取员工' : 'Reload employees'}
+        </Button>
+      ) : props.onManageEmployees ? (
+        <Button variant="secondary" size="compact" onClick={props.onManageEmployees}>
+          {zh ? '配置数字员工' : 'Set up employees'}
+        </Button>
+      ) : (
+        <span>{zh ? '项目尚无可指派员工' : 'No employees available'}</span>
+      )}
+      {activeCount > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeCount} 项工作进行中` : `${activeCount} active ${activeCount === 1 ? 'work item' : 'work items'}`}</small> : null}
       <MotionPresence>
         {selectedEmployee ? (
           <TaskEmployeeRunDialog
@@ -441,6 +683,7 @@ export function TaskDigitalEmployeeExecutor(props: {
             language={props.language}
             busy={props.management.busy === 'start-executor'}
             operationError={props.management.error}
+            onOpenProjectSettings={props.onManageEmployees}
             onLoadCapabilities={props.onLoadCapabilities}
             onDismiss={() => setSelectedEmployee(null)}
             onSubmit={async (preview) => {
@@ -466,12 +709,16 @@ function TaskEmployeeRunDialog(props: {
   busy: boolean;
   operationError: string | null;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
+  /** 没有可运行模型时提供真实项目设置入口。 */
+  onOpenProjectSettings?(): void;
   onDismiss(): void;
   onSubmit(preview: TaskWorkPreview): Promise<boolean>;
 }) {
   const zh = props.language === 'zh-CN';
   const agentEntrypoint = props.employee.entrypoint?.kind === 'agent' ? props.employee.entrypoint : null;
   const [models, setModels] = useState<CodexTaskPushCapabilities['models']>([]);
+  /** 首次读取完成前不把空模型数组解释成配置缺失。 */
+  const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false);
   const [capabilities, setCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<'create' | 'continue' | null>(null);
   const [workspaceTarget, setWorkspaceTarget] = useState('');
@@ -518,6 +765,7 @@ function TaskEmployeeRunDialog(props: {
     void request
       .then((nextCapabilities: CodexTaskPushCapabilities | Awaited<ReturnType<typeof props.client.loadDigitalEmployeeCapabilities>>) => {
         if (!active) return;
+        setCapabilitiesLoaded(true);
         const taskCapabilities = 'repositories' in nextCapabilities ? nextCapabilities : null;
         const initialWorkspace = taskCapabilities ? initialTaskWorkWorkspaceChoice(taskCapabilities) : ({ mode: 'create' } as const);
         if (modelRevision === modelRevisionRef.current) setCapabilities(taskCapabilities);
@@ -533,14 +781,17 @@ function TaskEmployeeRunDialog(props: {
                 ...current,
                 agentKind: model.agentKind ?? 'codex',
                 model: model.id,
-                reasoningEffort: model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? '',
-                serviceTier: model.defaultServiceTier ?? '',
+                reasoningEffort: current.reasoningEffort || model.defaultReasoningEffort || model.supportedReasoningEfforts[0] || '',
+                serviceTier: current.serviceTier || model.defaultServiceTier || '',
               }
             : current;
         });
       })
       .catch((cause) => {
-        if (active) setCapabilityError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
+        if (active) {
+          setCapabilitiesLoaded(true);
+          setCapabilityError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
+        }
       });
     return () => {
       active = false;
@@ -632,6 +883,11 @@ function TaskEmployeeRunDialog(props: {
   const selectedEnvironment = workspaceTarget.startsWith('environment:') ? existingEnvironments.find((environment) => environment.id === workspaceTarget.slice('environment:'.length)) : undefined;
   const selectedLocalBranch = workspaceTarget.startsWith('local:') ? localTaskBranches.find((branch) => branch.branchName === workspaceTarget.slice('local:'.length)) : undefined;
 
+  /** 运行条件缺失时提供设置入口，不堆叠不能使用的配置控件。 */
+  const hasRunnableModel = models.some((model) => model.available !== false);
+  /** 选择器与摘要使用同一模型身份。 */
+  const selectedModel = models.find((model) => model.id === config.model || model.model === config.model);
+
   async function submit(): Promise<void> {
     if (!preview || preview.blockers.length > 0 || inputResources.processing) return;
     setSubmitError(null);
@@ -644,7 +900,7 @@ function TaskEmployeeRunDialog(props: {
       <section className="task-work-run-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-run-title">
         <header>
           <span>
-            <strong id="task-work-run-title">{zh ? '开始任务执行' : 'Start task execution'}</strong>
+            <strong id="task-work-run-title">{zh ? '指派工作' : 'Assign work'}</strong>
             <small>{zh ? '修改只用于本次工作，不改变员工或模板的默认设置。' : 'Changes apply only to this run and do not change employee or template defaults.'}</small>
           </span>
           <Button variant="secondary" size="compact" disabled={props.busy} onClick={props.onDismiss}>
@@ -652,30 +908,25 @@ function TaskEmployeeRunDialog(props: {
           </Button>
         </header>
         <div className="task-work-run-body">
-          <section className="task-work-run-identity" aria-label={zh ? '只读员工身份' : 'Read-only employee identity'}>
+          <section className="task-work-run-person" aria-label={zh ? '执行人' : 'Employee'}>
+            <DigitalEmployeeAvatar {...props.employee} />
             <span>
-              <small>{zh ? '员工' : 'Employee'}</small>
               <strong>{props.employee.name}</strong>
-            </span>
-            <span>
-              <small>{zh ? '岗位与领域' : 'Role and domain'}</small>
-              <strong>{props.employee.role}</strong>
-              <p>{props.employee.domain || (zh ? '通用' : 'General')}</p>
-            </span>
-            <span>
-              <small>{zh ? '运行方式' : 'Runtime'}</small>
-              <strong>{entrypointLabel(props.employee, props.language)}</strong>
-            </span>
-            <span>
-              <small>{zh ? '员工默认值' : 'Employee defaults'}</small>
-              <strong>{props.employee.permissionMode}</strong>
-              <p>{zh ? `${props.employee.skillIds.length} 个 Skill` : `${props.employee.skillIds.length} skills`}</p>
+              <small>
+                {props.employee.role}
+                {props.employee.domain ? ` · ${props.employee.domain}` : ''}
+              </small>
             </span>
           </section>
+          {capabilitiesLoaded && !hasRunnableModel && !capabilityError ? (
+            <p className="task-work-setup-note" role="status">
+              {zh ? '项目尚未配置可运行模型。请先在项目设置的“可用模型”中启用模型，再回来指派。' : 'Enable a runnable model in project settings before assigning work.'}
+            </p>
+          ) : null}
 
           <section className="task-work-run-supplemental" aria-busy={inputResources.processing || undefined} aria-labelledby="task-work-run-supplemental-label">
             <label id="task-work-run-supplemental-label" htmlFor="task-work-run-supplemental-input">
-              {zh ? '补充信息' : 'Supplemental information'}
+              {zh ? '本次工作要求' : 'Instructions for this work'}
             </label>
             <TaskPushSupplementalAttachmentCards
               attachments={supplementalAttachments}
@@ -694,7 +945,7 @@ function TaskEmployeeRunDialog(props: {
               rows={4}
               maxLength={20_000}
               value={supplementalInfo}
-              placeholder={zh ? '例如：本次优先处理的边界、已知线索或验收重点' : 'For example: priorities, known clues, or acceptance focus for this work item'}
+              placeholder={zh ? '任务说明已包含在内。可补充这位员工本次要负责的范围与完成标准。' : 'For example: priorities, known clues, or acceptance focus for this work item'}
               disabled={props.busy}
               onChange={(event) => setSupplementalInfo(event.currentTarget.value)}
               onPaste={inputResources.handlePaste}
@@ -788,13 +1039,29 @@ function TaskEmployeeRunDialog(props: {
             </fieldset>
           ) : null}
 
-          {agentEntrypoint ? (
-            <AgentExecutionConfigFields value={config} models={models} skillClient={props.skillClient} projectId={props.projectId} language={props.language} compact onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))} />
+          {agentEntrypoint && hasRunnableModel ? (
+            <details className="task-work-config-details">
+              <summary>
+                <span>{zh ? '本次能力设置' : 'Settings for this work'}</span>
+                <small>
+                  {selectedModel?.displayName ?? config.model} · {config.skillIds.length} Skills
+                </small>
+              </summary>
+              <AgentExecutionConfigFields
+                value={config}
+                models={models}
+                skillClient={props.skillClient}
+                projectId={props.projectId}
+                language={props.language}
+                compact
+                onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
+              />
+            </details>
           ) : null}
 
           {props.acceptedDeliverables.length > 0 ? (
             <details className="task-work-context-details">
-              <summary>{zh ? `已验收交付物上下文（已选 ${selectedDeliverableIds.length}）` : `Accepted deliverable context (${selectedDeliverableIds.length} selected)`}</summary>
+              <summary>{zh ? `参考已验收成果 · 已选 ${selectedDeliverableIds.length}` : `Accepted deliverable context (${selectedDeliverableIds.length} selected)`}</summary>
               {props.acceptedDeliverables.map((deliverable) => (
                 <label key={deliverable.id} className="task-work-checkbox">
                   <input
@@ -803,47 +1070,20 @@ function TaskEmployeeRunDialog(props: {
                     onChange={(event) => setSelectedDeliverableIds((current) => (event.currentTarget.checked ? [...current, deliverable.id] : current.filter((id) => id !== deliverable.id)))}
                   />
                   <span>
-                    {deliverable.title} · v{deliverable.version}
+                    {deliverable.title} · {zh ? '修订' : 'Revision'} {deliverable.version}
                   </span>
                 </label>
               ))}
             </details>
           ) : null}
 
-          {preview ? (
-            <section className="task-work-preview" aria-label={zh ? '本次使用的配置' : 'Settings for this run'}>
-              <span>
-                <small>{zh ? '执行能力' : 'Execution capability'}</small>
-                <strong>{zh ? 'Agent 会话' : 'Agent conversation'}</strong>
-              </span>
-              {preview.model ? (
-                <span>
-                  <small>{zh ? '模型与 AI 服务' : 'Model and AI service'}</small>
-                  <strong>{String(preview.model.displayName ?? preview.model.id)}</strong>
-                  <p>
-                    {String(preview.model.agentKind ?? '—')} · {String(preview.model.reasoningEffort ?? '—')} · {String(preview.model.serviceTier ?? '—')}
-                  </p>
-                </span>
-              ) : null}
-              <span>
-                <small>Skills</small>
-                <strong>{preview.skills.length}</strong>
-                <p>{preview.skills.map((skill) => skill.name).join(zh ? '、' : ', ') || (zh ? '未选择' : 'None')}</p>
-              </span>
-              <span>
-                <small>{zh ? '权限' : 'Permission'}</small>
-                <strong>{String(preview.authority.permissionMode ?? '—')}</strong>
-              </span>
-              {preview.workspace ? (
-                <span>
-                  <small>{zh ? '代码工作目录' : 'Code working folder'}</small>
-                  <strong>{workspacePreviewLabel(preview.workspace, zh)}</strong>
-                </span>
-              ) : null}
-            </section>
+          {preview?.promptPreview && hasRunnableModel ? (
+            <details className="task-work-context-details">
+              <summary>{zh ? '核对将提供给员工的完整内容' : 'Review the full employee context'}</summary>
+              <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} previewAttachments={supplementalAttachments} />
+            </details>
           ) : null}
-          {preview?.promptPreview ? <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} previewAttachments={supplementalAttachments} /> : null}
-          {previewBusy ? (
+          {!capabilitiesLoaded || (previewBusy && hasRunnableModel) ? (
             <p className="task-work-preview-status" role="status">
               {zh ? '正在更新运行配置预览…' : 'Updating the run settings preview…'}
             </p>
@@ -853,24 +1093,38 @@ function TaskEmployeeRunDialog(props: {
               {capabilityError ?? previewError ?? supplementalResourceError ?? props.operationError ?? submitError}
             </p>
           ) : null}
-          {preview?.blockers.map((blocker) => (
-            <p key={blocker.code} className="digital-employee-feedback is-error">
-              <WarningCircle size={17} aria-hidden="true" />
-              <VisibleApplicationError error={blocker} language={zh ? 'zh-CN' : 'en'} />
-            </p>
-          ))}
+          {hasRunnableModel &&
+            preview?.blockers.map((blocker) => (
+              <p key={blocker.code} className="digital-employee-feedback is-error">
+                <WarningCircle size={17} aria-hidden="true" />
+                <VisibleApplicationError error={blocker} language={zh ? 'zh-CN' : 'en'} />
+              </p>
+            ))}
         </div>
         <footer>
-          <small>{zh ? '确认后创建独立工作项；不会停止或改写其他执行者。' : 'Confirmation creates an independent work item without stopping or changing other executors.'}</small>
-          <Button
-            variant="primary"
-            size="regular"
-            busy={props.busy || inputResources.processing}
-            disabled={!preview || previewBusy || inputResources.processing || preview.blockers.length > 0 || Boolean(capabilityError || supplementalResourceError)}
-            onClick={() => void submit()}
-          >
-            {zh ? '开始执行' : 'Start execution'}
-          </Button>
+          <small>{zh ? '指派后开始工作，进展和成果会回到当前任务。' : 'Work starts after assignment. Progress and deliverables return to this task.'}</small>
+          {capabilitiesLoaded && !hasRunnableModel && props.onOpenProjectSettings ? (
+            <Button
+              variant="primary"
+              size="regular"
+              onClick={() => {
+                props.onDismiss();
+                props.onOpenProjectSettings?.();
+              }}
+            >
+              {zh ? '打开项目设置' : 'Open project settings'}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="regular"
+              busy={props.busy || inputResources.processing}
+              disabled={!preview || previewBusy || inputResources.processing || preview.blockers.length > 0 || Boolean(capabilityError || supplementalResourceError)}
+              onClick={() => void submit()}
+            >
+              {zh ? '指派并开始' : 'Assign and start'}
+            </Button>
+          )}
         </footer>
       </section>
     </ModalPortal>
@@ -889,10 +1143,6 @@ function initialRunConfig(employee: DigitalEmployeeRecord): AgentExecutionConfig
     skillIds: [...(entrypoint?.skillPolicy.allowedSkillIds ?? employee.skillIds)],
     prompt: entrypoint?.prompt ?? employee.prompt,
   };
-}
-
-function currentWorkRun(item: TaskWorkItemRecord): TaskWorkItemRecord['runs'][number] | undefined {
-  return item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
 }
 
 interface CommonLocalTaskBranch {
@@ -939,21 +1189,6 @@ function initialTaskWorkWorkspaceChoice(capabilities: CodexTaskPushCapabilities)
   if (available.length === 0) return { mode: 'create' };
   if (available.length === 1) return available[0]!;
   return null;
-}
-
-function workspacePreviewLabel(workspace: NonNullable<TaskWorkPreview['workspace']>, zh: boolean): string {
-  if (workspace.mode === 'direct') return zh ? '项目目录' : 'Project directory';
-  if (workspace.mode === 'existing') return zh ? '继续已有任务分支' : 'Continue existing task branches';
-  const branches = Array.from(new Set(workspace.repositories.map((repository) => repository.branchName)));
-  if (workspace.mode === 'local') return branches.length === 1 ? branches[0]! : zh ? `${branches.length} 个已有本地分支` : `${branches.length} existing local branches`;
-  return branches.length === 1 ? branches[0]! : zh ? `${branches.length} 个新任务分支` : `${branches.length} new task branches`;
-}
-
-function activeTaskWorkItems(projection: TaskWorkManagementProjection | null): TaskWorkItemRecord[] {
-  return (projection?.workItems ?? []).filter((item) => {
-    const run = currentWorkRun(item);
-    return run ? ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status) : item.status === 'queued' || item.status === 'active';
-  });
 }
 
 function CommandEvidenceDialog(props: { runId: string; client: DigitalEmployeeApiClient; language: DigitalEmployeeLanguage; onDismiss(): void }) {
@@ -1043,16 +1278,24 @@ function DecisionDialog(props: {
   taskId: string;
   language: DigitalEmployeeLanguage;
   busy: boolean;
+  /** 结束的任务保留阅读，重新打开后再处理未决事项。 */
+  readOnly: boolean;
+  /** 写入失败必须出现在当前弹窗内，不能藏在背后的工作区。 */
+  operationError: string | null;
   onDismiss(): void;
   onAccept(deliverable: TaskWorkDeliverableRecord): Promise<void>;
   onRequestChanges(deliverable: TaskWorkDeliverableRecord, reason: string): Promise<void>;
   onRespond(response: Record<string, unknown>): Promise<void>;
 }) {
+  /** 审查意见读取完成且无阻塞后允许验收。 */
+  const [reviewReady, setReviewReady] = useState(false);
   const zh = props.language === 'zh-CN';
   const [reason, setReason] = useState('');
   const [commandParameters, setCommandParameters] = useState<Record<string, string | number | boolean>>({});
   const [deliverableContent, setDeliverableContent] = useState<string | null>(null);
   const [deliverableContentError, setDeliverableContentError] = useState<string | null>(null);
+  /** 读取失败可在原审查空间重试，不丢失修改意见。 */
+  const [contentRetry, setContentRetry] = useState(0);
   const deliverable = props.decision.deliverableId ? (props.projection?.deliverables.find((candidate) => candidate.id === props.decision.deliverableId) ?? null) : null;
   const command = isRecord(props.decision.requestPayload.command) ? props.decision.requestPayload.command : null;
   const commandParametersSchema = command && Array.isArray(command.parameters) ? command.parameters.filter(isRecord) : [];
@@ -1061,10 +1304,9 @@ function DecisionDialog(props: {
     let active = true;
     setDeliverableContent(null);
     setDeliverableContentError(null);
-    void props.client
-      .loadTaskWorkDeliverableContent(props.taskId, deliverable.id)
-      .then((result) => {
-        if (active) setDeliverableContent(result.content);
+    void readTaskDeliverableContent(props.client, props.taskId, deliverable, props.language)
+      .then((content) => {
+        if (active) setDeliverableContent(content);
       })
       .catch((cause) => {
         if (active) setDeliverableContentError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
@@ -1072,10 +1314,10 @@ function DecisionDialog(props: {
     return () => {
       active = false;
     };
-  }, [deliverable?.id, props.client, props.taskId, zh]);
+  }, [deliverable?.id, deliverable?.version, deliverable?.contentSha256, props.client, props.taskId, zh, contentRetry]);
   return (
     <ModalPortal rootClassName="task-work-decision-root" backdropClassName="task-work-decision-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
-      <section className="task-work-decision-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-work-decision-title">
+      <section className={`task-work-decision-dialog zeus-solid-form-surface${deliverable ? ' task-work-deliverable-review' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-work-decision-title">
         <header>
           <span>
             <strong id="task-work-decision-title">{decisionCopy(props.decision, 'title', zh)}</strong>
@@ -1090,16 +1332,30 @@ function DecisionDialog(props: {
             <>
               <span className="task-work-decision-deliverable">
                 <small>
-                  v{deliverable.version} · {deliverable.contentSha256.slice(0, 12)}…
+                  {zh ? '修订' : 'Revision'} {deliverable.version}
                 </small>
                 <strong>{deliverable.title}</strong>
                 <p>{deliverable.summary}</p>
               </span>
-              {deliverableContent ? <TextFilePreview id={deliverable.id} title={deliverable.title} content={deliverableContent} /> : <p>{deliverableContentError ?? (zh ? '正在读取正式交付物…' : 'Loading formal deliverable…')}</p>}
-              <label>
-                <span>{zh ? '要求修改' : 'Request changes'}</span>
-                <textarea rows={4} maxLength={4_000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder={zh ? '说明必须修改的内容…' : 'Describe the required changes…'} />
-              </label>
+              {deliverableContent !== null ? (
+                <TaskDeliverableContent key={deliverable.id} id={deliverable.id} title={deliverable.title} content={deliverableContent} language={props.language} />
+              ) : (
+                <div>
+                  <p role={deliverableContentError ? 'alert' : 'status'}>{deliverableContentError ?? (zh ? '正在读取正式交付物…' : 'Loading formal deliverable…')}</p>
+                  {deliverableContentError ? (
+                    <Button variant="secondary" size="compact" onClick={() => setContentRetry((current) => current + 1)}>
+                      {zh ? '重新读取' : 'Try again'}
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+              <TaskWorkReviewPanel key={deliverable.id} taskId={props.taskId} deliverable={deliverable} client={props.client} readOnly={props.readOnly} onReady={setReviewReady} />
+              {!props.readOnly ? (
+                <label>
+                  <span>{zh ? '修改意见' : 'Review feedback'}</span>
+                  <textarea rows={4} maxLength={4_000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder={zh ? '如需返工，请说明具体要修改的内容。' : 'Describe the changes needed before acceptance.'} />
+                </label>
+              ) : null}
             </>
           ) : null}
           {props.decision.kind === 'command_confirmation' ? (
@@ -1157,55 +1413,60 @@ function DecisionDialog(props: {
             </p>
           ) : null}
         </div>
-        <footer>
-          {deliverable ? (
-            <>
-              <Button variant="secondary" size="compact" busy={props.busy && Boolean(reason)} disabled={!reason.trim()} onClick={() => void props.onRequestChanges(deliverable, reason.trim())}>
-                {zh ? '要求修改' : 'Request changes'}
+        {props.operationError ? (
+          <p className="digital-employee-feedback is-error" role="alert">
+            <VisibleApplicationError error={props.operationError} language={zh ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
+        {props.readOnly ? (
+          <p className="task-conversation-feedback">{zh ? '任务已结束，当前仅查看记录。重新打开任务后可继续处理。' : 'This task is closed. Reopen it to resolve this item.'}</p>
+        ) : (
+          <footer>
+            {deliverable ? (
+              <>
+                <Button variant="secondary" size="compact" busy={props.busy && Boolean(reason)} disabled={!reason.trim()} onClick={() => void props.onRequestChanges(deliverable, reason.trim())}>
+                  {zh ? '要求修改' : 'Request changes'}
+                </Button>
+                <Button variant="primary" size="compact" busy={props.busy && !reason} disabled={deliverableContent === null || !reviewReady} onClick={() => void props.onAccept(deliverable)}>
+                  {zh ? '接受交付物' : 'Accept deliverable'}
+                </Button>
+              </>
+            ) : null}
+            {props.decision.kind === 'command_confirmation' ? (
+              <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ parameters: commandParameters })}>
+                {zh ? '确认并启动命令' : 'Confirm and start command'}
               </Button>
-              <Button variant="primary" size="compact" busy={props.busy && !reason} disabled={!deliverableContent} onClick={() => void props.onAccept(deliverable)}>
-                {zh ? '接受交付物' : 'Accept deliverable'}
-              </Button>
-            </>
-          ) : null}
-          {props.decision.kind === 'command_confirmation' ? (
-            <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ parameters: commandParameters })}>
-              {zh ? '确认并启动命令' : 'Confirm and start command'}
-            </Button>
-          ) : null}
-          {props.decision.kind === 'outcome_unknown' ? (
-            <>
-              <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_failed' })}>
-                {zh ? '确认失败' : 'Mark failed'}
-              </Button>
-              <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_succeeded' })}>
-                {zh ? '确认成功' : 'Mark succeeded'}
-              </Button>
-            </>
-          ) : null}
-          {props.decision.kind === 'command_failure' ? (
-            <>
-              <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'cancel' })}>
-                {zh ? '取消工作项' : 'Cancel work item'}
-              </Button>
-              <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'retry' })}>
-                {zh ? '创建新尝试' : 'Create new attempt'}
-              </Button>
-            </>
-          ) : null}
-        </footer>
+            ) : null}
+            {props.decision.kind === 'outcome_unknown' ? (
+              <>
+                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_failed' })}>
+                  {zh ? '确认失败' : 'Mark failed'}
+                </Button>
+                <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_succeeded' })}>
+                  {zh ? '确认成功' : 'Mark succeeded'}
+                </Button>
+              </>
+            ) : null}
+            {props.decision.kind === 'command_failure' ? (
+              <>
+                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'cancel' })}>
+                  {zh ? '取消工作项' : 'Cancel work item'}
+                </Button>
+                <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'retry' })}>
+                  {zh ? '创建新尝试' : 'Create new attempt'}
+                </Button>
+              </>
+            ) : null}
+          </footer>
+        )}
       </section>
     </ModalPortal>
   );
 }
 
+/** 用户按沟通、工作、成果和记录的目的切换内容。 */
 function tabLabel(tab: ManagementTab, language: DigitalEmployeeLanguage): string {
-  const zh = language === 'zh-CN';
-  return tab === 'overview' ? (zh ? '概览' : 'Overview') : tab === 'collaboration' ? (zh ? '协作' : 'Collaboration') : tab === 'deliverables' ? (zh ? '交付物' : 'Deliverables') : zh ? '证据' : 'Evidence';
-}
-function entrypointLabel(employee: DigitalEmployeeRecord, language: DigitalEmployeeLanguage): string {
-  if (employee.entrypoint?.kind !== 'agent') return language === 'zh-CN' ? '历史配置不可执行' : 'Legacy configuration unavailable';
-  return `Agent · ${employee.entrypoint.agentKind}`;
+  return (language === 'zh-CN' ? { collaboration: '沟通', work: '工作', deliverables: '成果', evidence: '运行记录' } : { collaboration: 'Conversation', work: 'Work', deliverables: 'Deliverables', evidence: 'Activity' })[tab];
 }
 function employeeName(run: TaskWorkItemRecord['runs'][number] | undefined): string {
   return typeof run?.employeeSnapshot.name === 'string' ? run.employeeSnapshot.name : '';

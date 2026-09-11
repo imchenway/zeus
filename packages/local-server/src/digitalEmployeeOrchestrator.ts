@@ -190,12 +190,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
   async function processProjectEvents(automation: DigitalEmployeeAutomationRecord, employee: DigitalEmployeeRecord, events: DigitalEmployeeProjectEvent[]): Promise<void> {
     for (const event of events) {
       if (event.suppressAutomation) {
+        consumeAutomationWithoutExecution(automation, event.identity, '来源事件明确禁止再次触发自动化');
         options.automations.advance({ id: automation.id, cursorSequence: event.sequence, lastTriggeredAt: automation.lastTriggeredAt ?? automation.createdAt });
         await options.save();
         continue;
       }
       const task = options.tasks.getById(event.taskId);
       if (!task || task.projectId !== automation.projectId) {
+        consumeAutomationWithoutExecution(automation, event.identity, '来源任务已经不可用或不属于当前项目');
         options.automations.advance({ id: automation.id, cursorSequence: event.sequence, lastTriggeredAt: automation.lastTriggeredAt ?? automation.createdAt });
         await options.save();
         continue;
@@ -205,6 +207,11 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       const ignoreAutomationCreated = automation.triggerConfig.ignoreAutomationCreated !== false;
       const automationChainDepth = typeof source.digitalEmployeeAutomationDepth === 'number' ? Math.max(0, Math.trunc(source.digitalEmployeeAutomationDepth)) : automationCreated ? 1 : 0;
       if ((automationCreated && ignoreAutomationCreated) || automationChainDepth >= MAX_AUTOMATION_CHAIN_DEPTH || !taskMatchesEmployee(task, employee)) {
+        consumeAutomationWithoutExecution(
+          automation,
+          event.identity,
+          automationChainDepth >= MAX_AUTOMATION_CHAIN_DEPTH ? '自动化触发链已达到边界' : automationCreated && ignoreAutomationCreated ? '该规则忽略自动化创建的任务' : '任务不符合员工领取条件',
+        );
         options.automations.advance({ id: automation.id, cursorSequence: event.sequence, lastTriggeredAt: automation.lastTriggeredAt ?? automation.createdAt });
         await options.save();
         continue;
@@ -307,8 +314,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     for (const employee of options.employees.listEnabled()) {
       if (!employee.autoClaim) continue;
       for (const task of options.tasks.listByProject(employee.projectId)) {
-        const sourceRef = `task_pool:${employee.id}:${task.id}`;
-        if (!taskMatchesEmployee(task, employee) || options.taskWorkManagement.hasAutomationSource(sourceRef)) continue;
+        if (!taskMatchesEmployee(task, employee)) continue;
+        if (options.taskWorkManagement.claimPlannedWork(task.id, employee.id)) {
+          await options.save();
+          continue;
+        }
+        /** 没有阶段安排时，同一任务的默认分工也只允许一名员工领取。 */
+        const sourceRef = `task_pool:${task.id}`;
+        if (!taskMatchesEmployee(task, employee) || options.taskWorkManagement.hasAutomationSource(sourceRef) || options.taskWorkManagement.hasExistingTaskWork(task.id)) continue;
         try {
           await queueExecution({ employee, task, source: 'task_pool', sourceRef });
         } catch (error) {
@@ -337,6 +350,12 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
   }): Promise<void> {
     if (input.employee.entrypoint?.kind !== 'agent' || input.employee.entrypointMigrationState !== 'ready') {
       throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行；自动化不会运行旧版入口配置。', false);
+    }
+    /** 有阶段安排的任务只领取其中的分工，不另建整份任务的重复执行。 */
+    if (options.taskWorkManagement.claimPlannedWork(input.task.id, input.employee.id)) {
+      if (input.automation && input.eventIdentity) options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: null, createdAt: now().toISOString() });
+      await options.save();
+      return;
     }
     const sourceRef = input.source === 'task_pool' ? input.sourceRef : `${input.employee.id}:${input.sourceRef}`;
     const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef });

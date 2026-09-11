@@ -191,7 +191,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     setRunState: (conversationId, state) => runStates.set(conversationId, state),
   });
-  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
+  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,

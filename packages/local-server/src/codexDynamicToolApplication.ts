@@ -191,10 +191,10 @@ async function resolveResponse(input: {
       return dynamicToolResponse(input.event, [{ type: 'inputText', text: projection }], !result.isError);
     }
     if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
-    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
+    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer' && input.namespace !== 'zeus_work')) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
     }
-    if (input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
+    if (input.namespace !== 'zeus_work' && input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
     }
     // Computer Use 由原生宿主按全局开关统一检查，输入框标签仅表达调用意图。
