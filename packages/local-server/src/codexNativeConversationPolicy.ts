@@ -48,13 +48,13 @@ interface ConversationDispatchContext {
   holdDispatch?: boolean;
 }
 
-export function providerPermissionProfile(context: ConversationDispatchContext): { sandbox: CodexSandboxPolicy; approvalPolicy: 'on-request' | 'never'; approvalsReviewer: 'user' } {
+export function providerPermissionProfile(context: ConversationDispatchContext): { sandbox: CodexSandboxPolicy; approvalPolicy: 'on-request' | 'never'; approvalsReviewer: 'user' | 'auto_review' } {
   if (context.permissionMode === 'full-access') return { sandbox: { type: 'dangerFullAccess' }, approvalPolicy: 'never', approvalsReviewer: 'user' };
-  if (context.permissionMode === 'auto') {
+  if (context.permissionMode === 'auto' || context.permissionMode === 'auto-review') {
     return {
       sandbox: { type: 'workspaceWrite', writableRoots: (context.writableRoots?.length ? context.writableRoots : [context.projectLocalPath]).map((root) => resolve(root)), networkAccess: false },
       approvalPolicy: 'on-request',
-      approvalsReviewer: 'user',
+      approvalsReviewer: context.permissionMode === 'auto-review' ? 'auto_review' : 'user',
     };
   }
   return { sandbox: { type: 'readOnly', networkAccess: false }, approvalPolicy: 'on-request', approvalsReviewer: 'user' };
@@ -172,7 +172,7 @@ export function developerInstructionsFor(context: ConversationDispatchContext, b
 }
 
 export function permissionModeFromValue(value: unknown, fallback: ConversationPermissionMode): ConversationPermissionMode {
-  return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : fallback;
+  return value === 'read-only' || value === 'auto' || value === 'auto-review' || value === 'full-access' ? value : fallback;
 }
 
 export function providerEventReceipt(event: CodexAppServerEvent, identity: string): ProviderEventReceiptInput {

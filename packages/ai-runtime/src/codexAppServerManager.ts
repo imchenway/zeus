@@ -230,7 +230,7 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
   serviceTier?: string | null;
   cwd: string;
   approvalPolicy?: string;
-  approvalsReviewer?: string;
+  approvalsReviewer?: 'user' | 'auto_review';
   sandbox: CodexSandboxPolicy;
   config?: never;
   responsesRuntime?: CodexResponsesRuntime;
@@ -283,7 +283,7 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   summary?: CodexReasoningSummary;
   cwd?: string;
   approvalPolicy?: string;
-  approvalsReviewer?: string;
+  approvalsReviewer?: 'user' | 'auto_review';
   sandboxPolicy?: CodexSandboxPolicy;
 }
 
@@ -535,6 +535,8 @@ type PendingRequest = {
 };
 
 interface CreateCodexAppServerManagerOptions {
+  /** 提交说明专用进程不读取目标能力和上下文预算，不影响普通会话能力发现。 */
+  lightweightGeneration?: boolean;
   spawn?: CodexAppServerSpawn;
   /** Codex 自己的持久目录；桌面内嵌运行时不能依赖父进程偶然继承的环境变量。 */
   codexHome?: string;
@@ -773,16 +775,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (requireFreshModels) await waitForFreshSubscriptionModels(generationId, providerVersion, modelsFreshSince);
       const models = await readModelCatalogPages(generationId);
       if (requireFreshModels) assertFreshModelCatalog(providerVersion, models, modelsFreshSince);
-      const goals = await readGoalCapability(generationId);
+      const goals = options.lightweightGeneration ? { supported: false, enabled: false, stage: null } : await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
       const initializedAt = now();
-      const modelBudgets = await resolveModelBudgetSnapshotAfterBoundedRetry({
-        codexHome,
-        generationId,
-        initializedAt,
-        providerVersion,
-        models,
-      });
+      const modelBudgets = options.lightweightGeneration
+        ? {}
+        : await resolveModelBudgetSnapshotAfterBoundedRetry({
+            codexHome,
+            generationId,
+            initializedAt,
+            providerVersion,
+            models,
+          });
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt,
@@ -954,6 +958,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     if (child !== process) return;
     child = null;
     rejectGeneration(generationId, error);
+    if (!preparingForShutdown && state.type !== 'closed') emitEvent(generationId, 'transport/process_exit', { message: 'Codex app-server process exited.' });
     for (const [key, request] of serverRequests) {
       if (request.generationId === generationId) serverRequests.delete(key);
     }
@@ -1542,6 +1547,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           { traceIdentity: input.traceIdentity },
         ),
       );
+      if (input.approvalsReviewer === 'auto_review' && response.approvalsReviewer !== 'auto_review' && response.approvalsReviewer !== 'guardian_subagent') {
+        throw managerError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '当前 Codex 未启用自动审批，请更新 Codex 或选择其他权限模式。');
+      }
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : input.model;
       threadModels.set(thread.id, responseModel);

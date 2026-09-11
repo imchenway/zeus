@@ -388,7 +388,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
               ) : null}
               {hasAllowOnce && menuDecisions.length > 1 ? (
                 <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron" aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
-                  <CaretDown aria-hidden="true" />
+                  <CaretDown aria-hidden="true" size={13} weight="bold" />
                 </button>
               ) : null}
               {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
@@ -1196,7 +1196,8 @@ async function discardAnswerAttachmentResources(attachments: NativeConversationA
 function permissionModeLabel(permissionMode: NativePermissionMode, language: SessionUiLanguage): string {
   const labels: Record<NativePermissionMode, readonly [string, string]> = {
     'read-only': ['只读', 'Read only'],
-    auto: ['自动', 'Auto'],
+    auto: ['请求批准', 'Request approval'],
+    'auto-review': ['替我批准', 'Approve for me'],
     'full-access': ['完全访问', 'Full access'],
   };
   return labels[permissionMode][language === 'zh-CN' ? 0 : 1];

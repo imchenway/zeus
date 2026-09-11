@@ -108,6 +108,10 @@ export interface ProjectGitRepositorySnapshot {
   localBranches: string[];
   /** 同一 Git 仓库中已经由任一 worktree 检出的本地分支；混合版本宿主缺失时按空集合降级。 */
   checkedOutBranches?: string[];
+  remoteDetails?: Array<{ name: string; fetchUrl: string; pushUrl: string }>;
+  branchUpstreams?: Record<string, string>;
+  /** 混合版本宿主缺失时仅降级为不显示非当前分支的差异标识。 */
+  branchDivergences?: Record<string, { ahead: number; behind: number }>;
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
@@ -150,10 +154,10 @@ export type ProjectGitAction =
   | { type: 'fetch'; remote?: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
-  | { type: 'apply_patch'; patch: string; reverse?: boolean }
+  | { type: 'apply_patch'; patch: string; reverse?: boolean; target?: 'index' | 'worktree' }
   | { type: 'commit'; message: string }
-  | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
-  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
+  | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
+  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }
   | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }
   | { type: 'checkout'; branchName: string; smart?: boolean }
   | { type: 'checkout_revision'; revision: string; smart?: boolean }
@@ -163,7 +167,7 @@ export type ProjectGitAction =
   | { type: 'cherry_pick'; revision: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
-  | { type: 'stash'; message?: string; includeUntracked?: boolean }
+  | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
   | { type: 'drop_stash'; stashRef: string }
   | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };

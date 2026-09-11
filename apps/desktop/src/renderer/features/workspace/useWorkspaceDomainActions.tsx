@@ -225,7 +225,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setSelectedTaskIds,
     setSnapshot,
     setStorageRecoveryFault,
-    setTaskConversationDrawerTarget,
+    setSessionDrawerTarget,
     setTaskConversationReopenState,
     setTaskCreateError,
     setTaskCreateForm,
@@ -1599,17 +1599,25 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return runAfterWorkspaceLeave(() => applyNativeConversationSelection(conversation, navigation, presentation));
   }
 
-  async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
-    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
-    if (!conversation) return;
-    if (!(await selectNativeConversation(conversation))) return;
+  /** 从抽屉或任务入口进入同一会话的完整页面，保留现有的实时呈现方式。 */
+  async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<void> {
+    /** 已打开的会话不因切换展示容器退回历史模式。 */
+    const presentation = state.selectedNativeConversation && resolveConversationNavigationId(state.selectedNativeConversation) === resolveConversationNavigationId(conversation) ? state.selectedNativeConversationPresentation : undefined;
+    if (!(await selectNativeConversation(conversation, 'page', presentation))) return;
     setTaskDetailPaneTaskId(undefined);
-    setTaskConversationDrawerTarget(undefined);
+    setSessionDrawerTarget(undefined);
     setConversationDrawer(undefined);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /** 任务入口沿用统一的完整会话页跳转。 */
+  async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
+    /** 仅打开该任务实际存在的会话。 */
+    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
+    if (conversation) await openNativeConversationPage(conversation);
   }
 
   async function openTaskConflictAiConversation(taskId: string, conversationId: string): Promise<void> {
@@ -1644,7 +1652,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (!navigated) return;
     setTaskGitMergeTaskId(null);
     setTaskDetailPaneTaskId(undefined);
-    setTaskConversationDrawerTarget(undefined);
+    setSessionDrawerTarget(undefined);
     setConversationDrawer(undefined);
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1696,17 +1704,30 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       .catch((error: unknown) => recordLocalError('conversation-notification-open', error));
   };
 
+  /** 顶部与任务状态入口共用抽屉，打开时保留底层工作区。 */
+  async function openNativeConversationDrawer(conversation: NativeConversationChoice): Promise<void> {
+    if (conversation.projectId !== activeProjectId) return;
+    /** 抽屉按稳定导航身份等待正文，兼容普通会话和归档快照。 */
+    const navigationId = resolveConversationNavigationId(conversation);
+    setConversationDrawer(undefined);
+    setSessionDrawerTarget({ projectId: conversation.projectId, taskId: conversation.taskId ?? undefined, conversationId: conversation.id, navigationId, status: 'opening' });
+    if (state.selectedNativeConversation && resolveConversationNavigationId(state.selectedNativeConversation) === navigationId) return;
+    await selectNativeConversation(conversation, 'preserve');
+  }
+
+  /** 任务状态先定位所属会话，再交给统一抽屉入口。 */
   async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
+    /** 列表投影包含归档会话的稳定导航身份。 */
     const conversation = projectedTaskConversationChoices[taskId]?.find((candidate) => candidate.id === conversationId || resolveConversationNavigationId(candidate) === conversationId);
     if (!conversation) {
-      setTaskConversationDrawerTarget({ taskId, conversationId, navigationId: conversationId, status: 'error' });
+      /** 缺失会话的错误仍限制在原任务所在项目。 */
+      const projectId = snapshot.tasks.find((task) => task.id === taskId)?.projectId ?? activeProjectId;
+      if (!projectId) return;
+      setSessionDrawerTarget({ projectId, taskId, conversationId, navigationId: conversationId, status: 'error' });
       recordLocalError('task-conversation-drawer-open', new Error(`Task conversation ${conversationId} is no longer available in task ${taskId}.`));
       return;
     }
-    const navigationId = resolveConversationNavigationId(conversation);
-    setConversationDrawer(undefined);
-    setTaskConversationDrawerTarget({ taskId, conversationId: conversation.id, navigationId, status: 'opening' });
-    await selectNativeConversation(conversation, 'preserve');
+    await openNativeConversationDrawer(conversation);
   }
 
   async function chooseNativeConversationAttachments(): Promise<NativeConversationAttachment[]> {
@@ -2925,6 +2946,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskConflictAiConversation,
     openTaskConversation,
     openTaskConversationDrawer,
+    openNativeConversationDrawer,
+    openNativeConversationPage,
     openTaskCreateModal,
     openTaskCopyModal,
     openTaskDetailPane,

@@ -17,6 +17,7 @@ export interface PermissionModeControlProps {
   language: SessionUiLanguage;
   value: NativePermissionMode;
   disabled?: boolean;
+  supportsAutoReview?: boolean;
   onChange: (permissionMode: NativePermissionMode) => void | Promise<void>;
 }
 
@@ -28,8 +29,14 @@ const labels = {
   'zh-CN': {
     label: '权限模式',
     readOnly: '只读',
-    auto: '自动',
+    readOnlyDescription: '默认仅查看文件，修改文件或运行联网命令需批准',
+    auto: '请求批准',
+    autoDescription: '自动修改工作区文件，访问区外或运行联网命令需批准',
+    autoReview: '替我批准',
+    autoReviewDescription: '自动审核需批准的操作，有风险时仍可能询问或拒绝',
+    autoReviewUnavailable: '当前引擎不支持替我批准，请切换到 Codex 或选择其他权限',
     fullAccess: '完全访问',
+    fullAccessDescription: '可访问任意文件、运行命令和联网，无需逐次批准',
     title: '要开启完全访问吗？',
     introduction: '开启后，Zeus 可以在无需逐次批准的情况下，于这台 Mac 的任意位置运行命令、访问互联网以及创建和编辑文件，包括但不限于：',
     filesTitle: '文件与文件夹',
@@ -38,7 +45,7 @@ const labels = {
     terminalDescription: '运行命令、安装软件或更改系统设置',
     internetTitle: '互联网访问',
     internetDescription: '访问网站，并可能向外部服务发送本机数据',
-    risk: '这可能造成敏感数据丢失或泄露，也会增加提示词注入带来的风险。你可以随时切换回“自动”或“只读”模式。',
+    risk: '这可能造成敏感数据丢失或泄露，也会增加提示词注入带来的风险。你可以随时切换回“请求批准”或“只读”模式。',
     locked: '权限模式只能在会话空闲时切换',
     confirm: '确认开启',
     cancel: '取消',
@@ -46,8 +53,14 @@ const labels = {
   'en-US': {
     label: 'Permission mode',
     readOnly: 'Read only',
-    auto: 'Auto',
+    readOnlyDescription: 'View files by default; file changes and network commands need approval',
+    auto: 'Request approval',
+    autoDescription: 'Edit workspace files automatically; outside access and network commands need approval',
+    autoReview: 'Approve for me',
+    autoReviewDescription: 'Automatically review approval requests; risky actions may still prompt or be denied',
+    autoReviewUnavailable: 'This engine cannot review approvals; switch to Codex or choose another mode',
     fullAccess: 'Full access',
+    fullAccessDescription: 'Access any file, run commands, and use the network without per-action approval',
     title: 'Enable full access?',
     introduction: 'Zeus will be able to run commands, use the internet, and create or edit files anywhere on this Mac without asking for approval each time, including:',
     filesTitle: 'Files and folders',
@@ -56,7 +69,7 @@ const labels = {
     terminalDescription: 'Run commands, install software, or change system settings',
     internetTitle: 'Internet access',
     internetDescription: 'Visit websites and potentially send local data to external services',
-    risk: 'This can cause loss or exposure of sensitive data and increases the risk of prompt injection. You can switch back to Auto or Read only at any time.',
+    risk: 'This can cause loss or exposure of sensitive data and increases the risk of prompt injection. You can switch back to Request approval or Read only at any time.',
     locked: 'Permission mode can change only while the conversation is idle',
     confirm: 'Enable full access',
     cancel: 'Cancel',
@@ -71,9 +84,10 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
   const riskId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const options = [
-    { value: 'read-only', label: copy.readOnly },
-    { value: 'auto', label: copy.auto },
-    { value: 'full-access', label: copy.fullAccess },
+    { value: 'read-only', label: copy.readOnly, description: copy.readOnlyDescription },
+    { value: 'auto', label: copy.auto, description: copy.autoDescription },
+    { value: 'auto-review', label: copy.autoReview, description: props.supportsAutoReview === false ? copy.autoReviewUnavailable : copy.autoReviewDescription, disabled: props.supportsAutoReview === false },
+    { value: 'full-access', label: copy.fullAccess, description: copy.fullAccessDescription },
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
   const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : props.value === 'full-access' ? <ShieldWarning weight="fill" /> : <ShieldCheck weight="regular" />;

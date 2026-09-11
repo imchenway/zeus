@@ -1354,6 +1354,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   white-space: normal;
 }
 
+/* 抽屉的辅助操作与关闭按钮始终靠右并保持紧凑间距。 */
+.workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'] .workspace-drawer-header-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'] .workspace-drawer-close-button {
   align-items: center;
   background: transparent;

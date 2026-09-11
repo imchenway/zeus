@@ -61,7 +61,7 @@ function preferenceKey(projectId: string, kind: ConversationRuntimePreferenceKin
 }
 
 function isPermissionMode(value: unknown): value is NativePermissionMode {
-  return value === 'read-only' || value === 'auto' || value === 'full-access';
+  return value === 'read-only' || value === 'auto' || value === 'auto-review' || value === 'full-access';
 }
 
 function isCollaborationMode(value: unknown): value is NativeCollaborationMode {

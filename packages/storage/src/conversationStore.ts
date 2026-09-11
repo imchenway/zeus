@@ -59,7 +59,7 @@ export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
 export type ConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
-export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
+export type ConversationPermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
 export type ConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
 export type ConversationOriginKind = 'ordinary' | 'automation' | 'expert_participant';
@@ -713,7 +713,7 @@ export class ConversationRepository {
   create(input: CreateConversationInput): ZeusConversationRecord {
     const transportKind = assertEnum(input.transportKind ?? 'legacy_cli', ['legacy_cli', 'codex_native'] as const, 'conversation transport kind');
     const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
-    const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode');
+    const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation permission mode');
     const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
     const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
     const agentTransport = input.agentTransport ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport') : transportKind === 'codex_native' ? 'app_server' : null;
@@ -815,7 +815,7 @@ export class ConversationRepository {
   }
 
   updatePermissionMode(conversationId: string, permissionMode: ConversationPermissionMode): ZeusConversationWithMessagesRecord {
-    const normalized = assertEnum(permissionMode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode');
+    const normalized = assertEnum(permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation permission mode');
     this.db.execute(`UPDATE conversations SET permission_mode = ?, updated_at = ? WHERE id = ?`, [normalized, nowIso(), conversationId]);
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -2726,7 +2726,7 @@ function validateNextTurnSettings(settings: unknown): asserts settings is Conver
   ) {
     throw new Error('Invalid conversation next turn settings');
   }
-  assertEnum(settings.permissionMode, ['read-only', 'auto', 'full-access'] as const, 'conversation next turn permission mode');
+  assertEnum(settings.permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation next turn permission mode');
   assertEnum(settings.collaborationMode, ['default', 'plan'] as const, 'conversation next turn collaboration mode');
 }
 
@@ -3241,7 +3241,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     legacySourceConversationId: row.legacy_source_conversation_id,
     providerSettingsJson: row.provider_settings_json,
     providerTokenUsageJson: row.provider_token_usage_json,
-    permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode'),
+    permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation permission mode'),
     collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
     nextTurnSettingsJson: row.next_turn_settings_json,
     attentionUnread: row.completion_unread === 1,

@@ -116,7 +116,7 @@ import {
   type SettingsCategory,
   syncRecordFromSnapshot,
   type TaskBulkActionStatusState,
-  type TaskConversationDrawerTarget,
+  type SessionDrawerTarget,
   type TaskConversationReopenState,
   type TaskCreateFormState,
   type TaskModelPushNavigationTarget,
@@ -717,12 +717,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     if (props.initialTaskTemplates?.length) return 'templates';
     return undefined;
   });
-  const [taskConversationDrawerTarget, setTaskConversationDrawerTarget] = useState<TaskConversationDrawerTarget>();
+  /** 当前打开的会话抽屉与底层项目页面分开保存。 */
+  const [sessionDrawerTarget, setSessionDrawerTarget] = useState<SessionDrawerTarget>();
   const [taskConversationReopenState, setTaskConversationReopenState] = useState<TaskConversationReopenState>();
-  useEffect(() => {
-    if (activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'tasks') return;
-    setTaskConversationDrawerTarget(undefined);
-  }, [activeNavTarget, activeProjectSection]);
   const [localSettingsCategory, setLocalSettingsCategory] = useState<SettingsCategory>(() => {
     const categoryFromHash = readSettingsCategoryFromHash();
     if (categoryFromHash) return categoryFromHash;
@@ -761,6 +758,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
+  useEffect(() => {
+    // 切换项目或页面时收起旧抽屉，避免显示其他项目的会话。
+    setSessionDrawerTarget(undefined);
+  }, [activeNavTarget, activeProjectSection, activeProjectId]);
   const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
   const taskPageViewMode: TaskPageViewMode = activeProjectId ? (appShellSettings.taskPageViewByProject?.[activeProjectId] ?? 'list') : 'list';
   const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
@@ -929,9 +930,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     // 都随“可见会话数量 × 全部历史”增长，直接抵消热缓存的收益。
     void preloadCodexConversationCapabilities(props.nativeConversationClient, activeProjectId).catch(() => undefined);
   }, [activeProjectId, props.nativeConversationClient]);
-  const taskConversationDrawerReady = Boolean(
-    taskConversationDrawerTarget && selectedNativeConversation?.taskId === taskConversationDrawerTarget.taskId && resolveConversationNavigationId(selectedNativeConversation) === taskConversationDrawerTarget.navigationId,
-  );
+  /** 项目和导航身份都一致时才展示正文，普通项目会话也可打开。 */
+  const sessionDrawerReady = Boolean(sessionDrawerTarget && selectedNativeConversation?.projectId === sessionDrawerTarget.projectId && resolveConversationNavigationId(selectedNativeConversation) === sessionDrawerTarget.navigationId);
   useEffect(() => {
     if (!selectedNativeConversation?.taskId) return;
     const taskId = selectedNativeConversation.taskId;
@@ -1532,7 +1532,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setStorageRecoveryFault,
     setTaskBoardSnapshots,
     setTaskBulkActionStatus,
-    setTaskConversationDrawerTarget,
+    setSessionDrawerTarget,
     setTaskConversationReopenState,
     setTaskCreateError,
     setTaskCreateForm,
@@ -1584,8 +1584,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskBoardLoadState,
     taskBoardSnapshots,
     taskBulkActionStatus,
-    taskConversationDrawerReady,
-    taskConversationDrawerTarget,
+    sessionDrawerReady,
+    sessionDrawerTarget,
     taskConversationReopenState,
     taskCreateError,
     taskCreateForm,

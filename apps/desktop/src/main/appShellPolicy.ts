@@ -9,6 +9,7 @@ export interface MainAppShellSettings {
 }
 
 export interface AppShellMenuActions {
+  applicationName: string;
   settings: MainAppShellSettings;
   createNewConversation: () => void | Promise<void>;
   toggleDevTools: () => void;
@@ -21,6 +22,7 @@ export interface AppShellMenuActions {
 }
 
 export interface MenuBarTrayActions {
+  applicationName: string;
   settings: Pick<MainAppShellSettings, 'multiWindowEnabled' | 'backgroundModeEnabled'> & { appLanguage?: MainAppShellSettings['appLanguage'] };
   showMainWindow: () => void;
   createWindow: () => void | Promise<void>;
@@ -42,11 +44,12 @@ export interface AppShellMenuItem {
 export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShellMenuItem[] {
   // 设置加载前沿用中文；角色菜单也显式跟随应用语言。
   const zh = actions.settings.appLanguage !== 'en-US';
+  const appName = actions.applicationName;
   return [
     {
-      label: 'Zeus',
+      label: appName,
       submenu: [
-        { role: 'about', label: zh ? '关于 Zeus' : 'About Zeus' },
+        { role: 'about', label: zh ? `关于 ${appName}` : `About ${appName}` },
         { type: 'separator' },
         {
           label: zh ? '设置…' : 'Settings...',
@@ -59,14 +62,14 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
           click: actions.checkForUpdates,
         },
         { type: 'separator' },
-        { label: zh ? '显示 Zeus' : 'Show Zeus', click: actions.showMainWindow },
+        { label: zh ? `显示 ${appName}` : `Show ${appName}`, click: actions.showMainWindow },
         {
           label: zh ? '打开日志文件夹' : 'Open Logs Folder',
           accelerator: 'CommandOrControl+L',
           click: actions.openLogsDirectory,
         },
         { type: 'separator' },
-        { role: 'quit', label: zh ? '退出 Zeus' : 'Quit Zeus', click: actions.quit },
+        { role: 'quit', label: zh ? `退出 ${appName}` : `Quit ${appName}`, click: actions.quit },
       ],
     },
     {
@@ -126,15 +129,16 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
 export function buildMenuBarTrayTemplate(actions: MenuBarTrayActions): AppShellMenuItem[] {
   // 设置加载前沿用中文；角色菜单也显式跟随应用语言。
   const zh = actions.settings.appLanguage !== 'en-US';
+  const appName = actions.applicationName;
   return [
-    { label: zh ? '显示 Zeus' : 'Show Zeus', click: actions.showMainWindow },
+    { label: zh ? `显示 ${appName}` : `Show ${appName}`, click: actions.showMainWindow },
     {
       label: zh ? '新建窗口' : 'New Window',
       enabled: actions.settings.multiWindowEnabled,
       click: actions.createWindow,
     },
     { type: 'separator' },
-    { label: zh ? '退出 Zeus' : 'Quit Zeus', click: actions.quit },
+    { label: zh ? `退出 ${appName}` : `Quit ${appName}`, click: actions.quit },
   ];
 }
 

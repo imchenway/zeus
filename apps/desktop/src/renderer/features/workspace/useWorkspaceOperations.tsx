@@ -1481,7 +1481,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     requestWorkspaceLeave(navigate);
   }
 
-  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source'): void {
+  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = projectCodeWorkspaceMode): void {
     const navigate = () => {
       activeProjectIdRef.current = project.id;
       setProjectDetail(project);

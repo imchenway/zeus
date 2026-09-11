@@ -494,6 +494,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             ) : null}
             <PermissionModeControl
               language={props.language}
+              supportsAutoReview={Boolean(selectedCapability) && selectedCapability?.agentKind !== 'pi'}
               value={props.permissionMode}
               disabled={props.readOnly === true || props.inputBlocked === true || !props.onRuntimeSettingsChange}
               onChange={(permissionMode) =>

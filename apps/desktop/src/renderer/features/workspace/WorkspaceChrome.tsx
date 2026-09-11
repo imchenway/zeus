@@ -11,6 +11,7 @@ import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/Car
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
@@ -280,13 +281,25 @@ export function ProjectRenameDialog(props: {
 /** 项目主导航统一图标尺寸与字重，并让图标和文案作为整体居中。 */
 export function ProjectWorkspaceModeToolbar(props: {
   project: ProjectRecord;
+  projects: ProjectRecord[];
+  onSelectProject: (project: ProjectRecord) => void;
   section: ProjectWorkspaceSection;
   codeMode: ProjectCodeWorkspaceMode;
   language: AppLanguage;
   onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
+  /** 当前项目有已选中的会话时才提供抽屉入口。 */
+  currentConversationAvailable: boolean;
+  /** 展开状态同步给辅助技术。 */
+  currentConversationOpen: boolean;
+  /** 只打开当前会话，不切换项目工作区。 */
+  onOpenCurrentConversation: () => void;
 }) {
   /** 导航文案跟随当前应用语言。 */
   const zh = props.language === 'zh-CN';
+  /** 当前会话入口的固定名称不再随 Option 键切换。 */
+  const conversationLabel = zh ? '当前会话' : 'Current conversation';
+  /** 未选中会话时解释入口不可用的原因。 */
+  const conversationTitle = props.currentConversationAvailable ? conversationLabel : zh ? '先从侧栏选择一段会话' : 'Select a conversation in the sidebar first';
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
@@ -303,6 +316,26 @@ export function ProjectWorkspaceModeToolbar(props: {
   };
   return (
     <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
+      <div className="project-workspace-identity" title={props.project.localPath}>
+        <ZeusSelect
+          ariaLabel={zh ? '当前项目，切换项目' : 'Current project, switch project'}
+          value={props.project.id}
+          options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+          onChange={(id) => {
+            const project = props.projects.find((item) => item.id === id);
+            if (project && project.id !== props.project.id) props.onSelectProject(project);
+          }}
+          triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
+          triggerClassName="project-workspace-identity-trigger"
+          triggerTitle={props.project.name}
+          searchable
+          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+          emptyLabel={zh ? '没有匹配项目' : 'No matching projects'}
+          popoverMinWidth={260}
+          size="compact"
+        />
+      </div>
+      <span className="project-workspace-separator" aria-hidden="true" />
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           /** 当前工作区与源码子模式共同决定选中态。 */
@@ -328,6 +361,19 @@ export function ProjectWorkspaceModeToolbar(props: {
           );
         })}
       </nav>
+      <button
+        type="button"
+        className="project-workspace-current-conversation"
+        aria-label={conversationLabel}
+        aria-haspopup="dialog"
+        aria-expanded={props.currentConversationOpen}
+        title={conversationTitle}
+        disabled={!props.currentConversationAvailable}
+        onClick={props.onOpenCurrentConversation}
+      >
+        <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
+        <span>{conversationLabel}</span>
+      </button>
     </header>
   );
 }
@@ -898,7 +944,6 @@ export function SidebarNav(props: {
                   level="root"
                   surface="fill"
                   expanded={expanded}
-                  className={isActiveProject && props.activeProjectSection !== 'sessions' ? 'is-active-project-root' : undefined}
                   disclosure={
                     <button
                       type="button"
@@ -924,7 +969,9 @@ export function SidebarNav(props: {
                     type: 'button',
                     tabIndex: isActiveProject ? 0 : -1,
                     'data-source-list-item': 'true',
-                    'aria-label': `${copy.sections.tasks}${copy.labelSeparator}${project.name}`,
+                    'aria-label': `${props.appLanguage === 'zh-CN' ? '项目' : 'Project'}${copy.labelSeparator}${project.name}`,
+                    'aria-current': isActiveProject ? 'true' : undefined,
+                    // 侧边栏项目名称固定作为该项目的任务页入口。
                     onClick: () => props.onOpenProjectSection(project, 'tasks'),
                   }}
                   actions={

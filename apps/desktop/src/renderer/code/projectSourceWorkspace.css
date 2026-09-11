@@ -127,6 +127,7 @@
 }
 
 .project-source-tree {
+  overflow: auto;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -134,9 +135,252 @@
   border-right: 1px solid var(--zeus-control-border);
   background: var(--zeus-product-panel-muted);
 }
+.project-source-conflict-comparison {
+  width: min(1200px, 94vw);
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--zeus-product-panel);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.project-source-conflict-comparison > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px;
+}
+.project-source-conflict-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.project-source-conflict-columns > section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--zeus-control-border);
+}
+.project-source-conflict-columns h3 {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: color-mix(in srgb, #249b83 18%, transparent);
+}
+.project-source-conflict-columns > section + section h3 {
+  background: color-mix(in srgb, #408bd8 18%, transparent);
+}
+.project-source-change-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.project-source-change-preview > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--zeus-control-border);
+}
+.project-source-change-preview > header > span {
+  overflow-wrap: anywhere;
+}
+.project-source-change-preview > .project-git-diff-preview {
+  flex: 1;
+  min-height: 0;
+}
+
+.project-source-module {
+  --source-module-header-height: 30px;
+  position: relative;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--zeus-control-border);
+}
+.macos-ai-app .project-source-tree .project-source-module > summary,
+.macos-ai-app .project-source-tree .project-source-changes-body summary {
+  box-sizing: border-box;
+  width: 100%;
+  inline-size: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+.macos-ai-app .project-source-tree .project-source-module > summary {
+  height: var(--source-module-header-height);
+  min-height: var(--source-module-header-height);
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.macos-ai-app .project-source-tree .project-source-changes-body summary {
+  padding: 3px 7px;
+  min-height: 26px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.project-source-module > summary::-webkit-details-marker,
+.project-source-changes-body summary::-webkit-details-marker {
+  display: none;
+}
+.project-source-module > summary::after,
+.project-source-changes-body summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-right: 3px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.project-source-module[open] > summary::after,
+.project-source-changes-body details[open] > summary::after {
+  transform: rotate(45deg);
+}
+.project-source-module > summary::marker,
+.project-source-changes-body summary::marker {
+  content: '';
+}
+.project-source-changes-body summary > small {
+  margin-inline-end: 10px;
+}
+.project-source-tree:has(> .project-source-module) {
+  overflow: hidden;
+}
+.project-source-tree > .project-source-module[open] {
+  height: 0;
+  min-height: 80px;
+  overflow: hidden;
+  flex: 1;
+}
+.project-source-tree:has(> .project-source-changes[open]) > .project-source-module:first-child[open] {
+  flex: 0 1 var(--source-module-share, 55%);
+}
+/* 分栏模块的高度由拖动布局决定，不使用通用 details 的自然高度动画。 */
+.macos-ai-app .project-source-tree > .project-source-module[open]::details-content {
+  position: absolute;
+  inset: var(--source-module-header-height) 0 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  block-size: auto;
+  transition: none;
+  overflow: hidden;
+}
+.project-source-module > .project-source-changes-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.project-source-module-resizer {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  touch-action: none;
+  background: var(--zeus-control-border);
+}
+.project-source-module-resizer:hover,
+.project-source-module-resizer:focus-visible {
+  background: var(--zeus-control-accent);
+}
+.project-source-tree:has(> .project-source-module:not([open])) > .project-source-module-resizer {
+  display: none;
+}
+.project-source-module .project-source-tree-scroll {
+  max-height: none;
+  overflow: auto;
+}
+.project-source-changes-body {
+  padding: 2px 6px 12px;
+  color: var(--zeus-control-text);
+  font-size: 12px;
+  line-height: 20px;
+}
+.project-source-changes-body details > details,
+.project-source-changes-body details > button,
+.project-source-changes-body details > p {
+  margin-inline-start: 16px;
+}
+.project-source-changes-body summary {
+  padding: 3px 7px;
+  min-height: 26px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.project-source-changes-body summary:hover {
+  background: var(--zeus-interaction-hover);
+}
+.project-source-changes-body summary strong {
+  font-weight: 600;
+}
+.project-source-changes-body p {
+  margin-block: 2px 6px;
+  padding-inline: 7px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+.project-source-changes-body small {
+  margin-inline-start: 8px;
+  color: var(--zeus-product-muted);
+}
+.project-source-changes-body button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 16px);
+  min-height: 26px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-text);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.project-source-changes-body button:hover {
+  background: var(--zeus-interaction-hover);
+}
+.project-source-changes-body button:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: -2px;
+}
+.project-source-changes-body button > small {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+.project-source-changes-body > button {
+  width: auto;
+  margin: 0 0 4px auto;
+  color: var(--zeus-product-muted);
+}
+.project-source-changes-body button > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.project-source-changes-body button > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 .project-source-search {
   display: flex;
+  flex-shrink: 0;
   min-height: 42px;
   align-items: center;
   gap: 7px;

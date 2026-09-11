@@ -403,7 +403,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!content) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', '专家群聊需要非空提示正文。');
     if (displayText.length > 100_000) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'displayText 不能超过 100000 字符。');
     const permissionMode = input.body.permissionMode === undefined ? (input.conversation?.permissionMode ?? 'auto') : parseConversationPermissionMode(input.body.permissionMode);
-    if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+    if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
     const collaborationMode =
       input.body.collaborationMode === undefined
         ? input.body.workMode === 'plan' || input.body.workMode === 'default'
@@ -1090,6 +1090,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const permissionMode = input.settings.permissionMode === undefined ? conversation.permissionMode : parseConversationPermissionMode(input.settings.permissionMode);
     const collaborationMode = input.settings.collaborationMode === undefined ? conversation.collaborationMode : parseConversationCollaborationMode(input.settings.collaborationMode);
     if (!permissionMode || !collaborationMode) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '改路由的权限或工作模式无效。');
+    if (permissionMode === 'auto-review' && selectedModel.agentKind === 'pi') throw nativeApiError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const modelSourceId = selectedModel.sourceId ?? (selectedModel.agentKind === 'codex' ? 'codex' : conversation.modelSourceId);
     const connection = modelSourceId && modelSourceId !== 'codex' ? await modelConnections.get(modelSourceId) : undefined;
     if (modelSourceId && modelSourceId !== 'codex' && !connection) throw nativeApiError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '目标模型连接已经不存在。');
@@ -1295,7 +1296,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
     const requestedServiceTier = readServiceTierOverride(body);
     const permissionMode = body.permissionMode === undefined ? undefined : parseConversationPermissionMode(body.permissionMode);
-    if (body.permissionMode !== undefined && !permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+    if (body.permissionMode !== undefined && !permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
     const collaborationMode = body.collaborationMode === undefined ? undefined : parseConversationCollaborationMode(body.collaborationMode);
     if (body.collaborationMode !== undefined && !collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const expectedTurnId = typeof body.expectedTurnId === 'string' && body.expectedTurnId.trim() ? body.expectedTurnId.trim() : null;
@@ -1947,7 +1948,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
     if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content must be a string.');
     const permissionMode = body.permissionMode === undefined ? 'auto' : parseConversationPermissionMode(body.permissionMode);
-    if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+    if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
     const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
     if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
@@ -2180,6 +2181,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     executionRoot: string;
   }) {
     const connectionId = input.modelSourceId && input.modelSourceId !== 'codex' ? input.modelSourceId : null;
+    if (input.permissionMode === 'auto-review' && input.agentKind !== 'codex') throw nativeApiError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const connection = connectionId ? await modelConnections.get(connectionId) : undefined;
     if (connectionId && !connection) throw nativeApiError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '目标模型连接已经不存在。');
     const configuredModel = connection?.models.find((model) => model.id === input.modelId);
@@ -2509,6 +2511,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         workspaceId: conversation?.workspaceId ?? plan.workspaceId ?? null,
         environmentId: conversation?.environmentId ?? plan.environmentId ?? null,
         ...actual,
+        // 上方已核对阶段配置一致，冻结尝试继续保存阶段定义中的权限。
+        permissionMode: stage.permissionMode,
       });
       recordTaskEvent({
         taskId: stage.taskId,
@@ -2615,7 +2619,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (!workMode) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push workMode must be default or plan.');
         if (supplementalInfo.length > 20_000) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalInfo must be no longer than 20000 characters.');
         const permissionMode = body.permissionMode === undefined ? 'read-only' : parseConversationPermissionMode(body.permissionMode);
-        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         // 提交阶段只需要复验模型、账户和附件能力；仓库发现与远端刷新由
         // resolveTaskPushEnvironment 在冻结工作区引用时统一完成，不能在这里重复执行。
         const capabilities = await resolveTaskPushExecutionCapabilities(project);
@@ -2738,7 +2742,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (taskStage) validateReviewStageSource(taskStage, inheritConversationId);
 
         const permissionMode = body.permissionMode === undefined ? 'read-only' : parseConversationPermissionMode(body.permissionMode);
-        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         if (permissionMode !== 'read-only') {
           throw nativeApiError('ZEUS_CODE_REVIEW_PERMISSION_MISMATCH', 'Code review permission is fixed to read-only.');
         }
@@ -2994,7 +2998,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
         if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
         const permissionMode = body.permissionMode === undefined ? (task.allowCodeChanges ? 'auto' : 'read-only') : parseConversationPermissionMode(body.permissionMode);
-        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         const explicitAttachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
         const canonicalAttachmentInput = body.attachments === undefined && !explicitContent ? normalizeTaskPushAttachments(task, project.localPath) : null;
@@ -3117,7 +3121,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       if (!content || messageIds.length === 0) throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Legacy reference content and explicit messageIds are required.');
       const permissionMode = body.permissionMode === undefined ? (task.allowCodeChanges ? 'auto' : 'read-only') : parseConversationPermissionMode(body.permissionMode);
-      if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+      if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
       const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
       if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
       const capabilities = await resolveConversationCapabilities(project);
@@ -3465,6 +3469,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         return {
           type: 'push',
           remote: stringValue('remote'),
+          sourceBranch: stringValue('sourceBranch'),
+          setUpstream: typeof value.setUpstream === 'boolean' ? value.setUpstream : undefined,
+          pushAllTags: value.pushAllTags === true,
           targetBranch: stringValue('targetBranch'),
           forceWithLease: value.forceWithLease === true,
           pushTags: value.pushTags === true,
@@ -3472,7 +3479,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'pull': {
         const strategy = value.strategy;
         if (strategy !== 'rebase' && strategy !== 'merge') throw nativeApiError('ZEUS_GIT_PULL_STRATEGY_INVALID', 'Pull strategy must be rebase or merge.');
-        return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy };
+        return {
+          type: 'pull',
+          remote: stringValue('remote'),
+          targetBranch: stringValue('targetBranch'),
+          strategy,
+          commitMerge: value.commitMerge !== false,
+          includeMergeLog: value.includeMergeLog === true,
+          noFastForward: value.noFastForward === true,
+        };
       }
       case 'update': {
         const strategy = value.strategy;
@@ -3496,7 +3511,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'rebase':
         return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
       case 'stash':
-        return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true };
+        return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true, keepIndex: value.keepIndex === true };
       case 'apply_stash':
         return { type: 'apply_stash', stashRef: stringValue('stashRef') ?? '', pop: value.pop === true };
       case 'drop_stash':
@@ -3513,7 +3528,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   function parseConversationPermissionMode(value: unknown): ConversationPermissionMode | null {
-    return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : null;
+    return value === 'read-only' || value === 'auto' || value === 'auto-review' || value === 'full-access' ? value : null;
   }
 
   function parseConversationCollaborationMode(value: unknown): ConversationCollaborationMode | null {

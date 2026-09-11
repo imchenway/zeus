@@ -13,6 +13,8 @@ Zeus 是一款 AI 研发工作台，将项目与任务管理、Coding Agent 会�
 
 AI 访问网站和执行浏览器操作无需 Zeus 逐次确认，包括点击、按键、剪贴板与高级页面操作。网站自身的设备权限、登录输入与本机文件选择仍按各自流程处理。
 
+会话权限菜单提供“只读”“自动”“替我批准”和“完全访问”，每项下方说明权限范围。“自动”允许工作区内修改，需审批的操作交给用户；“替我批准”保留工作区限制，由 Codex 自动审核审批请求，有风险时仍可能询问或拒绝，不等于完全访问。此选项仅支持具备自动审核能力的 Codex，其他引擎不可选择。
+
 任务仍有关联的未归档会话时，代码合入后会保留工作目录，可继续对话；需要释放空间时可显式回收，或随任务完成、取消清理。恢复已交付任务时，失去 Git 登记的残留目录会先整体保留，再按任务分支重建；原目录的保留位置记在任务动态中，残留内容不会自动混入重建代码。
 
 ## 安装
@@ -72,7 +74,9 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。
 
-- `pnpm dev`：构建后直接运行 Electron 源码，不生成安装包；开发数据使用当前仓库的 `.tmp/electron-development-data`，与 DMG 安装版分开。
+- `pnpm dev`：首次构建运行依赖后启动 Electron + Vite；React/CSS 修改热更新，不生成安装包。主进程、preload 和共享后端包修改后需重启命令。退出开发窗口或按 Ctrl+C 会关闭本次开发服务，不影响已安装应用。
+- 开发配置读取根目录 `.env`、`.env.development`，系统环境变量优先；`ZEUS_DEV_MODE=test pnpm dev` 读取 `.env`、`.env.test`。数据默认隔离到 `.tmp/electron-development-data` 或 `.tmp/electron-test-data`，可通过 `ZEUS_USER_DATA_DIR` 指定兼容的开发数据目录。不要指向正式数据目录。修改环境文件后重启开发命令；只有 `VITE_` 前缀变量可供前端读取，勿放入密钥。
+- `pnpm build`、`pnpm verify:publish` 和所有打包、签名、发布入口保持原有行为，不启动开发服务、不读取上述开发入口配置。
 - `pnpm verify:publish`：本地与 CI 共用的检查入口，执行冲突、格式、Lint、架构边界、类型和构建检查，不发布。
 - `pnpm package:mac`：默认只生成独立身份 `Zeus Test.app`，输出到 `dist/test/mac-arm64/`（Intel 为 `dist/test/mac/`）；运行验收使用独立用户数据目录。
 - `pnpm package:mac:release`：生成正式 DMG；仅在明确需要安装包或发布时执行。

@@ -22,7 +22,12 @@ export interface GitApiClient {
   /** 操作账本属于桌面实例，不能回退到独立执行宿主的其他记录。 */
   loadProjectGitOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
-  generateGitCommitMessage: (projectId: string, input: { repositoryName: string; stagedDiff: string; files: string[]; language: 'zh-CN' | 'en'; modelRef: string }) => Promise<{ message: string; model: string }>;
+  generateGitCommitMessage: (
+    projectId: string,
+    input: { repositoryId: string; relativePath?: string; language: 'zh-CN' | 'en'; modelRef: string },
+    onText?: (text: string) => void,
+    signal?: AbortSignal,
+  ) => Promise<{ message: string; model: string; truncated?: boolean }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
   loadProjectGitStatus: (projectId: string) => Promise<GitStatusSummary>;
   loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
@@ -68,7 +73,20 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
       return nativeBridge.loadOperations(projectId, cursor);
     },
     loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
-    generateGitCommitMessage: (projectId, input) => transport.request(`${projectGitPath(projectId)}/commit-message`, jsonRequest('POST', input)),
+    generateGitCommitMessage: async (projectId, input, onText, signal) => {
+      let result: { message: string; model: string; truncated?: boolean } | undefined;
+      await transport.requestStream<{ type: string; text?: string; message?: string; model?: string; truncated?: boolean }>(
+        `${projectGitPath(projectId)}/commit-message`,
+        { ...jsonRequest('POST', { ...input, stream: true }), signal },
+        (event) => {
+          if (event.type === 'error') throw new Error(event.message ?? '提交说明生成失败。');
+          if (event.type === 'text' && typeof event.text === 'string') onText?.(event.text);
+          if (event.type === 'result' && typeof event.message === 'string' && typeof event.model === 'string') result = { message: event.message, model: event.model, truncated: event.truncated };
+        },
+      );
+      if (!result) throw new Error('生成连接已中断，请重试。');
+      return result;
+    },
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => transport.request<GitStatusSummary>(`${projectGitPath(projectId)}/status`),
     loadProjectGitWorkbench: (projectId) => bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench`),

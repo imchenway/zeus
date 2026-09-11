@@ -5192,7 +5192,7 @@
   border-end-start-radius: 0;
   border-inline-start-color: color-mix(in srgb, var(--session-canvas) 22%, transparent);
   border-start-start-radius: 0;
-  inline-size: 30px;
+  inline-size: 28px;
   padding: 0;
 }
 
@@ -9063,9 +9063,19 @@
 }
 
 .session-codex-parity-v1 .session-approval-grant-control > .session-request-grant-chevron {
+  flex: 0 0 28px;
+  inline-size: 28px;
+  padding: 0;
   border-end-start-radius: 0 !important;
   border-start-start-radius: 0 !important;
   margin-inline-start: -1px;
+}
+
+.session-codex-parity-v1 .session-approval-grant-control > .session-request-grant-chevron > svg {
+  flex: 0 0 13px;
+  color: var(--session-canvas);
+  fill: currentColor;
+  inline-size: 13px;
 }
 
 .session-codex-parity-v1 .session-approval-grant-menu {
@@ -9977,7 +9987,7 @@
 .session-codex-parity-v1 {
   --session-answer-text: rgb(29 31 34);
   --session-process-text: var(--session-text-muted);
-  --session-readable-font-size: 15px;
+  --session-readable-font-size: 14px;
 }
 
 .session-codex-parity-v1 :where(.ai-workspace, .session-workspace-root) {
@@ -10245,7 +10255,21 @@
   --session-composer-trigger-active-bg: color-mix(in srgb, var(--zeus-danger-text) 10%, transparent);
 }
 
-/* 菜单通过共享浮层渲染；仅完全访问选项的文字、勾选和交互底色带警示语义。 */
+/* 菜单通过共享浮层渲染；副标题统一弱化，仅完全访问的标题、勾选和交互底色带警示语义。 */
+.macos-ai-app .session-permission-popover .zeus-select-option {
+  padding-block: 10px;
+}
+
+.macos-ai-app .session-permission-popover .zeus-select-option .zeus-select-option-description {
+  color: color-mix(in srgb, var(--zeus-product-subtle) 72%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-block-start: 3px;
+  max-inline-size: 340px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .macos-ai-app .session-permission-popover .zeus-select-option[data-value='full-access'] {
   --zeus-product-text: var(--zeus-danger-text);
   --zeus-select-check: var(--zeus-danger-text);

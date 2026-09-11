@@ -554,7 +554,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                       {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
                       <span className="zeus-select-option-label">
                         {option.label}
-                        {pinned && (option.description || option.group) ? <small className="zeus-select-option-description">{option.description ?? option.group}</small> : null}
+                        {option.description || (pinned && option.group) ? <small className="zeus-select-option-description">{option.description ?? option.group}</small> : null}
                       </span>
                       <span className="zeus-select-option-check" aria-hidden="true">
                         {selected ? '✓' : ''}

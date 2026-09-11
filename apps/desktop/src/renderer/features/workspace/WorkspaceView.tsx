@@ -251,7 +251,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setRuntimeShowArchived,
     setSettingsCategory,
     setSourceWorkspaceDirty,
-    setTaskConversationDrawerTarget,
+    setSessionDrawerTarget,
     setTaskCreateForm,
     setTaskDeleteDialogTaskId,
     setTaskEvents,
@@ -271,8 +271,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskBoardLoadState,
     taskBoardSnapshots,
     taskBulkActionStatus,
-    taskConversationDrawerReady,
-    taskConversationDrawerTarget,
+    sessionDrawerReady,
+    sessionDrawerTarget,
     taskCreateError,
     taskCreateForm,
     taskCreateModalOpen,
@@ -330,6 +330,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openProjectCreateDialog,
     openTaskConflictAiConversation,
     openTaskConversationDrawer,
+    openNativeConversationDrawer,
+    openNativeConversationPage,
     openTaskCreateModal,
     openTaskDetailPane,
     openThirdPartyLinkInBrowser,
@@ -810,10 +812,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
+            projects={orderedProjects}
+            onSelectProject={(project) => openProjectSection(project, activeProjectSection === 'project-settings' ? 'tasks' : activeProjectSection, projectCodeWorkspaceMode)}
             section={activeProjectSection}
             codeMode={projectCodeWorkspaceMode}
             language={appShellSettings.appLanguage}
             onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
+            currentConversationAvailable={Boolean(selectedNativeConversation) && !state.conversationDraftOpen}
+            currentConversationOpen={Boolean(sessionDrawerTarget)}
+            onOpenCurrentConversation={() => {
+              if (selectedNativeConversation) void openNativeConversationDrawer(selectedNativeConversation);
+            }}
           />
         ) : null}
         {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
@@ -1033,7 +1042,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     ) : null}
                   </MotionPresence>
                 </>
-              ) : (
+              ) : sessionDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
 
@@ -1129,40 +1138,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       {renderTaskDetailPaneContent()}
                     </section>
                   </ModalPortal>
-                ) : null}
-              </MotionPresence>
-
-              <MotionPresence>
-                {taskConversationDrawerTarget ? (
-                  <WorkspaceDrawer
-                    presentation="sheet"
-                    backdrop="dimmed"
-                    size="wide"
-                    label={taskWorkspaceCopy.taskConversationDrawerLabel}
-                    backdropLabel={taskWorkspaceCopy.taskConversationDrawerBackdrop}
-                    closeLabel={taskWorkspaceCopy.taskConversationDrawerClose}
-                    className={`task-conversation-drawer session-codex-parity-v1 theme-${appShellSettings.appearance}`}
-                    portalStyle={workspaceDrawerPortalStyle}
-                    onClose={() => setTaskConversationDrawerTarget(undefined)}
-                  >
-                    {taskConversationDrawerReady ? (
-                      renderNativeConversationWorkspace((taskId) => {
-                        setTaskConversationDrawerTarget(undefined);
-                        void openTaskDetailPane(taskId);
-                      })
-                    ) : taskConversationDrawerTarget.status === 'error' ? (
-                      <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
-                        <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
-                        <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(taskConversationDrawerTarget.taskId, taskConversationDrawerTarget.conversationId)}>
-                          {taskWorkspaceCopy.taskConversationDrawerRetry}
-                        </Button>
-                      </section>
-                    ) : (
-                      <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
-                        {taskWorkspaceCopy.taskConversationDrawerLoading}
-                      </section>
-                    )}
-                  </WorkspaceDrawer>
                 ) : null}
               </MotionPresence>
 
@@ -1577,6 +1552,54 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </section>
           </section>
         ) : null}
+
+        <MotionPresence>
+          {sessionDrawerTarget ? (
+            <WorkspaceDrawer
+              presentation="floating"
+              backdrop="dimmed"
+              size="wide"
+              label={appShellSettings.appLanguage === 'zh-CN' ? '当前会话' : 'Current conversation'}
+              backdropLabel={taskWorkspaceCopy.taskConversationDrawerBackdrop}
+              closeLabel={taskWorkspaceCopy.taskConversationDrawerClose}
+              headerAction={
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={!sessionDrawerReady}
+                  onClick={() => {
+                    if (sessionDrawerReady && selectedNativeConversation) void openNativeConversationPage(selectedNativeConversation);
+                  }}
+                >
+                  {appShellSettings.appLanguage === 'zh-CN' ? '进入会话页' : 'Open conversation page'}
+                </Button>
+              }
+              className={`task-conversation-drawer session-codex-parity-v1 theme-${appShellSettings.appearance}`}
+              portalStyle={workspaceDrawerPortalStyle}
+              onClose={() => setSessionDrawerTarget(undefined)}
+            >
+              {sessionDrawerReady ? (
+                renderNativeConversationWorkspace((taskId) => {
+                  setSessionDrawerTarget(undefined);
+                  void openTaskDetailPane(taskId);
+                })
+              ) : sessionDrawerTarget.status === 'error' ? (
+                <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
+                  <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
+                  {sessionDrawerTarget.taskId ? (
+                    <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(sessionDrawerTarget.taskId!, sessionDrawerTarget.conversationId)}>
+                      {taskWorkspaceCopy.taskConversationDrawerRetry}
+                    </Button>
+                  ) : null}
+                </section>
+              ) : (
+                <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
+                  {taskWorkspaceCopy.taskConversationDrawerLoading}
+                </section>
+              )}
+            </WorkspaceDrawer>
+          ) : null}
+        </MotionPresence>
 
         <MotionPresence>
           {Boolean(taskGitReviewState) && (snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null) ? (

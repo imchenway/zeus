@@ -22,6 +22,8 @@ export type WorkspaceDrawerProps = WorkspaceDrawerVisual & {
   label: string;
   backdropLabel: string;
   closeLabel: string;
+  /** 可选的右上角操作，和关闭按钮共用同一栏。 */
+  headerAction?: ReactNode;
   className?: string;
   portalStyle?: CSSProperties;
   onClose: () => void;
@@ -96,9 +98,12 @@ export function WorkspaceDrawer(props: WorkspaceDrawerProps) {
         >
           <div className="workspace-drawer-chrome">
             <strong>{props.label}</strong>
-            <button type="button" className="workspace-drawer-close-button" aria-label={props.closeLabel} onClick={props.onClose}>
-              {props.closeLabel}
-            </button>
+            <div className="workspace-drawer-header-actions">
+              {props.headerAction}
+              <button type="button" className="workspace-drawer-close-button" aria-label={props.closeLabel} onClick={props.onClose}>
+                {props.closeLabel}
+              </button>
+            </div>
           </div>
           <div className="workspace-drawer-content">{props.children}</div>
         </aside>

@@ -137,13 +137,17 @@ export class ProjectGitWorkbenchService {
       const result = await (remoteAction ? withProjectGitAuthentication(run) : run()).catch((error: unknown) => {
         // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。
         const message = redactGitOutput(error instanceof Error ? error.message : String(error));
+        const code = isRecord(error) && typeof error.code === 'string' ? error.code : '';
+        const details = isRecord(error) && typeof error.details === 'string' ? error.details : undefined;
         if (signal?.aborted) throw projectGitError('ZEUS_GIT_CANCELLED', `Git 操作已中止，请刷新核对仓库状态。已完成的写入不会自动撤销；推送结果需要核对远端。\n${message}`);
         if (/authentication failed|could not read Username|terminal prompts disabled|permission denied.*publickey/iu.test(message)) {
           throw projectGitError('ZEUS_GIT_AUTH_REQUIRED', `Git 鉴权失败。请检查系统凭据管理器、SSH agent 和仓库访问权限后重试。\n${message}`);
         }
         if (/host key verification failed/iu.test(message)) throw projectGitError('ZEUS_GIT_HOST_UNVERIFIED', `SSH 主机验证失败，请核对服务器指纹和 known_hosts 后重试。\n${message}`);
         if (/SIGKILL|ETIMEDOUT/iu.test(message)) throw projectGitError('ZEUS_GIT_TIMEOUT', 'Git 操作超过两分钟，已停止等待。请刷新仓库核对操作结果；推送结果也需要核对远端。');
-        throw projectGitError('ZEUS_GIT_ACTION_FAILED', message);
+        // Git Core 已经识别出的可处理原因不能再次降级成通用失败，否则界面会丢失具体提示。
+        if (code.startsWith('ZEUS_GIT_') && code !== 'ZEUS_GIT_COMMAND_FAILED') throw projectGitError(code, message, details);
+        throw projectGitError('ZEUS_GIT_ACTION_FAILED', message, details);
       });
       return {
         projectId: resolved.project.id,
@@ -282,14 +286,36 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'unstage':
       return { type: 'unstage', paths: paths() };
     case 'apply_patch':
-      return { type: 'apply_patch', patch: typeof value.patch === 'string' ? value.patch : '', reverse: value.reverse === true };
+      return {
+        type: 'apply_patch',
+        patch: typeof value.patch === 'string' ? value.patch : '',
+        reverse: value.reverse === true,
+        target: value.target === 'worktree' ? 'worktree' : 'index',
+      };
     case 'commit':
       return { type: 'commit', message: stringValue('message') ?? '' };
     case 'push':
-      return { type: 'push', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), forceWithLease: value.forceWithLease === true, pushTags: value.pushTags === true };
+      return {
+        type: 'push',
+        remote: stringValue('remote'),
+        sourceBranch: stringValue('sourceBranch'),
+        targetBranch: stringValue('targetBranch'),
+        setUpstream: typeof value.setUpstream === 'boolean' ? value.setUpstream : undefined,
+        forceWithLease: value.forceWithLease === true,
+        pushTags: value.pushTags === true,
+        pushAllTags: value.pushAllTags === true,
+      };
     case 'pull': {
       if (value.strategy !== 'rebase' && value.strategy !== 'merge') throw projectGitError('ZEUS_GIT_PULL_STRATEGY_INVALID', '拉取策略必须是 merge 或 rebase。');
-      return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy: value.strategy };
+      return {
+        type: 'pull',
+        remote: stringValue('remote'),
+        targetBranch: stringValue('targetBranch'),
+        strategy: value.strategy,
+        commitMerge: value.commitMerge !== false,
+        includeMergeLog: value.includeMergeLog === true,
+        noFastForward: value.noFastForward === true,
+      };
     }
     case 'update': {
       if (value.strategy !== 'merge' && value.strategy !== 'rebase' && value.strategy !== 'reset') throw projectGitError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', '更新策略必须是 merge、rebase 或 reset。');
@@ -312,7 +338,7 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'rebase':
       return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
     case 'stash':
-      return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true };
+      return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true, keepIndex: value.keepIndex === true };
     case 'apply_stash':
       return { type: 'apply_stash', stashRef: stringValue('stashRef') ?? '', pop: value.pop === true };
     case 'drop_stash':
@@ -347,8 +373,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function projectGitError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function projectGitError(code: string, message: string, details?: string): Error & { code: string; details?: string } {
+  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
 }
 
 // 通过 Git 自身识别子模块关系；子树来自标准 git-subtree 提交标记。

@@ -11,6 +11,7 @@ export interface LocalApiTransport {
   readonly protocol: 'zeus-local-api-v1';
   request<T>(path: string, init?: RequestInit): Promise<T>;
   requestBlob(path: string): Promise<Blob>;
+  requestStream<T>(path: string, init: RequestInit, onEvent: (event: T) => void): Promise<void>;
   connectEvents<T>(onEvent: (event: T) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
 }
 
@@ -140,7 +141,40 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
     return socket;
   };
 
-  return { protocol: 'zeus-local-api-v1', request, requestBlob, connectEvents };
+  const requestStream = async <T>(path: string, init: RequestInit, onEvent: (event: T) => void): Promise<void> => {
+    const connection = options.getConnection();
+    const headers = new Headers(init.headers);
+    headers.set('authorization', `Bearer ${connection.apiToken}`);
+    headers.set('content-type', 'application/json');
+    headers.set('x-zeus-trace-id', createClientTraceId(path));
+    // 生成请求不可自动重放；超时覆盖整个响应流。
+    const signal = init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000);
+    const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers, signal });
+    if (!response.ok) throw await responseError(response, path);
+    if (!response.body) throw new Error('生成响应为空。');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        if (pending.length > 1_000_000) throw new Error('生成响应过大。');
+        let end: number;
+        while ((end = pending.indexOf('\n')) >= 0) {
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          if (line.trim()) onEvent(JSON.parse(line) as T);
+        }
+        if (done) break;
+      }
+      if (pending.trim()) onEvent(JSON.parse(pending) as T);
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  };
+  return { protocol: 'zeus-local-api-v1', request, requestBlob, requestStream, connectEvents };
 }
 
 export function jsonRequest(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown): RequestInit {

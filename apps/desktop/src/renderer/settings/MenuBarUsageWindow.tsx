@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -20,6 +20,16 @@ const copy = {
     noProvidersDetail: '使用 AI 后，这里会显示各个服务的用量。',
     quota: '配额剩余',
     noQuota: '暂无官方配额数据',
+    todayToken: '今日 token',
+    available: '可用',
+    localOnly: '本机统计',
+    staleStatus: '数据过期',
+    signedOut: '未登录',
+    unavailableStatus: '配额异常',
+    removedStatus: '已移除',
+    officialAndLocal: '官方配额 + Zeus 本地统计',
+    localQuotaUnavailable: 'Zeus 本地统计；官方配额暂不可用',
+    localQuotaSignIn: 'Zeus 本地统计；登录后可查看官方配额',
     today: '今日 Zeus Token',
     todayShort: '今日 Zeus Token',
     todaySummary: '今日',
@@ -39,10 +49,11 @@ const copy = {
     officialUsageUnavailable: '官方账户暂未提供日用量',
     insufficientHistory: '用量积累后显示趋势',
     missingDay: '暂无数据',
-    fullStatistics: '查看完整统计',
+    fullStatistics: '用量详情',
     showZeus: '显示 Zeus',
     quitZeus: '退出 Zeus',
     retry: '重新读取',
+    refreshed: '刷新',
     stale: '上次成功结果',
     failed: '暂时无法更新用量',
     failedDetail: '未能读取本地用量数据，请重试。',
@@ -61,6 +72,16 @@ const copy = {
     noProvidersDetail: 'Usage for each AI service appears here after you use it.',
     quota: 'Quota remaining',
     noQuota: 'No official quota data',
+    todayToken: 'Today tokens',
+    available: 'Available',
+    localOnly: 'Local stats',
+    staleStatus: 'Stale data',
+    signedOut: 'Signed out',
+    unavailableStatus: 'Quota error',
+    removedStatus: 'Removed',
+    officialAndLocal: 'Official quota + Zeus local stats',
+    localQuotaUnavailable: 'Zeus local stats; official quota unavailable',
+    localQuotaSignIn: 'Zeus local stats; sign in for official quota',
     today: 'Zeus tokens today',
     todayShort: 'Zeus today',
     todaySummary: 'Today',
@@ -80,10 +101,11 @@ const copy = {
     officialUsageUnavailable: 'Official daily account usage is unavailable',
     insufficientHistory: 'A trend appears after usage is recorded',
     missingDay: 'No data',
-    fullStatistics: 'View full statistics',
+    fullStatistics: 'Usage details',
     showZeus: 'Show Zeus',
     quitZeus: 'Quit Zeus',
     retry: 'Reload',
+    refreshed: 'Refreshed',
     stale: 'Last successful result',
     failed: 'Usage cannot be updated',
     failedDetail: 'Local usage data could not be read. Please retry.',
@@ -154,7 +176,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   }, [load, props.client]);
 
   useEffect(() => {
-    if (selection === 'all' || snapshot?.providers.some((provider) => provider.providerId === selection)) return;
+    if (!snapshot || selection === 'all' || snapshot.providers.some((provider) => provider.providerId === selection)) return;
     setSelection('all');
     storeSelection('all');
   }, [selection, snapshot]);
@@ -163,11 +185,24 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     setSelection(providerId);
     storeSelection(providerId);
   };
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    if (currentIndex < 0 || tabs.length === 0) return;
+
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (currentIndex + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) return;
+
+    event.preventDefault();
+    nextTab.click();
+    nextTab.focus();
+  };
   const selectedProvider = snapshot?.providers.find((provider) => provider.providerId === selection) ?? null;
-  const selectedProviderName = selectedProvider ? providerDisplayName(selectedProvider) : null;
   const updatedAt = selectedProvider?.updatedAt ?? snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
-  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : text.updated) : loading ? text.loading : error ? text.failed : text.loading;
+  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : text.refreshed) : loading ? text.loading : error ? text.failed : text.loading;
 
   return (
     <main className="menu-bar-usage-root" data-appearance={surfaceSettings.appearance} lang={surfaceSettings.language} aria-label={surfaceSettings.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
@@ -179,17 +214,18 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             </span>
             <span>
               <strong>Zeus</strong>
-              <small title={selectedProvider?.deleted ? (selectedProviderName ?? undefined) : undefined}>{selectedProvider ? providerDisplayName(selectedProvider, true) : text.allProviders}</small>
+              <small className="menu-bar-usage-freshness" data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite">
+                {freshness}
+              </small>
             </span>
           </span>
-          <span className="menu-bar-usage-freshness" data-loading={loading ? 'true' : 'false'} data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite">
-            <i aria-hidden="true" />
-            {freshness}
-          </span>
+          <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
+            {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
+          </button>
         </header>
 
         <nav className="menu-bar-usage-tabs" role="tablist" aria-label={text.allProviders}>
-          <button type="button" role="tab" aria-selected={selection === 'all'} onClick={() => select('all')}>
+          <button type="button" role="tab" aria-selected={selection === 'all'} tabIndex={selection === 'all' ? 0 : -1} onClick={() => select('all')} onKeyDown={handleTabKeyDown}>
             {text.all}
           </button>
           {snapshot?.providers.map((provider) => (
@@ -199,8 +235,10 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               role="tab"
               aria-label={providerDisplayName(provider)}
               aria-selected={selection === provider.providerId}
+              tabIndex={selection === provider.providerId ? 0 : -1}
               title={provider.deleted ? providerDisplayName(provider) : undefined}
               onClick={() => select(provider.providerId)}
+              onKeyDown={handleTabKeyDown}
             >
               {providerDisplayName(provider, true)}
             </button>
@@ -230,16 +268,13 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
         <footer className="menu-bar-usage-actions">
           <button className="menu-bar-usage-primary-action" type="button" onClick={() => void window.zeus?.openMenuBarUsageSettings?.('usage')}>
             {text.fullStatistics}
-            <Chevron />
           </button>
-          <div>
-            <button type="button" onClick={() => void window.zeus?.showMainWindowFromMenuBarUsage?.()}>
-              {text.showZeus}
-            </button>
-            <button type="button" onClick={() => void window.zeus?.quitFromMenuBarUsage?.()}>
-              {text.quitZeus}
-            </button>
-          </div>
+          <button type="button" onClick={() => void window.zeus?.showMainWindowFromMenuBarUsage?.()}>
+            {text.showZeus}
+          </button>
+          <button type="button" onClick={() => void window.zeus?.quitFromMenuBarUsage?.()}>
+            {text.quitZeus}
+          </button>
         </footer>
       </section>
     </main>
@@ -307,13 +342,7 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
   return (
     <article className="menu-bar-usage-detail">
-      <section className="menu-bar-usage-token-hero" aria-label={text.today}>
-        <span>{text.today}</span>
-        <strong>{formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language)}</strong>
-        <small>{provider.todayLocalComplete ? text.localUsage : text.localUsageIncomplete}</small>
-      </section>
-
-      {urgent ? <QuotaSummary window={urgent} language={language} /> : null}
+      <ProviderSummaryCard provider={provider} window={urgent} language={language} />
 
       <dl className="menu-bar-usage-metrics">
         <Metric
@@ -339,21 +368,69 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   );
 }
 
-function QuotaSummary(props: { window: CodexOfficialRateWindow; language: Language }) {
-  const text = copy[props.language];
-  const label = props.window.limitName || windowLabel(props.window, props.language);
+type ProviderStatusTone = 'success' | 'warning' | 'danger' | 'info';
+
+function ProviderSummaryCard(props: { provider: UsageProviderSummary; window?: CodexOfficialRateWindow; language: Language }) {
+  const { provider, language } = props;
+  const text = copy[language];
+  const name = providerDisplayName(provider);
+  const status = providerStatus(provider, language);
+  const quotaHeading = props.window ? windowRemainingLabel(props.window, language) : language === 'zh-CN' ? '额度' : 'Quota';
+  const todayValue = formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language);
+  const quotaValue = props.window ? formatPercent(props.window.remainingPercent / 100, language) : text.noQuota;
+  const source = props.window ? text.officialAndLocal : provider.officialState === 'signed_out' ? text.localQuotaSignIn : text.localQuotaUnavailable;
   return (
-    <section className="menu-bar-usage-quota-summary" aria-label={text.quota}>
-      <span>
-        <strong>{label}</strong>
-        <small>{props.window.resetsAt ? formatReset(props.window.resetsAt, props.language, text.resets) : text.noQuota}</small>
-      </span>
-      <span className="menu-bar-usage-progress" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={props.window.remainingPercent}>
-        <i style={{ inlineSize: `${Math.max(0, Math.min(100, props.window.remainingPercent))}%` }} />
-      </span>
-      <b>{formatPercent(props.window.remainingPercent / 100, props.language)}</b>
+    <section className="menu-bar-usage-account-card" data-status={status.tone} aria-label={`${name}，${status.label}，${quotaHeading} ${quotaValue}，${text.todayToken} ${todayValue}`}>
+      <header className="menu-bar-usage-account-header">
+        <span className="menu-bar-usage-account-identity">
+          <span className="menu-bar-usage-account-symbol" aria-hidden="true">
+            {name.slice(0, 1).toUpperCase()}
+          </span>
+          <strong>{name}</strong>
+        </span>
+        <span className="menu-bar-usage-account-state" data-tone={status.tone}>
+          {status.label}
+        </span>
+      </header>
+
+      <div className="menu-bar-usage-account-body">
+        <div className="menu-bar-usage-account-quota" data-empty={props.window ? 'false' : 'true'}>
+          <small>{quotaHeading}</small>
+          <strong>{quotaValue}</strong>
+          {props.window ? (
+            <>
+              <span className="menu-bar-usage-progress" role="progressbar" aria-label={quotaHeading} aria-valuemin={0} aria-valuemax={100} aria-valuenow={props.window.remainingPercent}>
+                <i style={{ inlineSize: `${Math.max(0, Math.min(100, props.window.remainingPercent))}%` }} />
+              </span>
+              <time dateTime={props.window.resetsAt ? new Date(props.window.resetsAt * 1_000).toISOString() : undefined} title={props.window.resetsAt ? formatReset(props.window.resetsAt, language, text.resets) : undefined}>
+                {props.window.resetsAt ? formatResetTime(props.window.resetsAt, language) : '—'}
+              </time>
+            </>
+          ) : (
+            <small>{provider.officialState === 'signed_out' ? text.signedOut : text.localOnly}</small>
+          )}
+        </div>
+        <div className="menu-bar-usage-account-today">
+          <small>{text.todayToken}</small>
+          <strong>{todayValue}</strong>
+        </div>
+      </div>
+
+      <small className="menu-bar-usage-account-source" title={source}>
+        {source}
+      </small>
     </section>
   );
+}
+
+function providerStatus(provider: UsageProviderSummary, language: Language): { label: string; tone: ProviderStatusTone } {
+  const text = copy[language];
+  if (provider.deleted) return { label: text.removedStatus, tone: 'danger' };
+  if (provider.stale) return { label: text.staleStatus, tone: 'info' };
+  if (provider.officialState === 'available') return { label: text.available, tone: 'success' };
+  if (provider.officialState === 'signed_out') return { label: text.signedOut, tone: 'warning' };
+  if (provider.officialState === 'unavailable') return { label: text.unavailableStatus, tone: 'danger' };
+  return { label: text.localOnly, tone: 'warning' };
 }
 
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
@@ -440,6 +517,22 @@ function Chevron() {
   );
 }
 
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M13 4.5V1.75m0 0h-2.75M13 1.75l-1.6 1.6A5 5 0 1 0 12.78 8" />
+    </svg>
+  );
+}
+
+function RefreshPendingIcon() {
+  return (
+    <svg className="menu-bar-usage-hourglass" viewBox="0 0 256 256" aria-hidden="true">
+      <path d="M211.31 196.69A16 16 0 0 1 200 224H56a16 16 0 0 1-11.32-27.31L116.43 128 44.82 59.44a1.59 1.59 0 0 0-.13-.13A16 16 0 0 1 56 32h144a16 16 0 0 1 11.32 27.31 1.59 1.59 0 0 0-.13.13L139.57 128l71.61 68.56a1.59 1.59 0 0 0 .13.13Z" />
+    </svg>
+  );
+}
+
 function findMostUrgentWindow(windows: CodexOfficialRateWindow[]): CodexOfficialRateWindow | undefined {
   return windows.reduce<CodexOfficialRateWindow | undefined>((selected, candidate) => (!selected || candidate.remainingPercent < selected.remainingPercent ? candidate : selected), undefined);
 }
@@ -480,10 +573,11 @@ function localDateKey(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function windowLabel(window: CodexOfficialRateWindow, language: Language): string {
+function windowRemainingLabel(window: CodexOfficialRateWindow, language: Language): string {
+  if (window.limitName) return language === 'zh-CN' ? `${window.limitName}剩余` : `${window.limitName} remaining`;
   if (!window.windowDurationMins) return copy[language].quota;
-  if (window.windowDurationMins >= 24 * 60) return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 1_440)} 日窗口` : `${Math.round(window.windowDurationMins / 1_440)} day window`;
-  return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 60)} 小时窗口` : `${Math.round(window.windowDurationMins / 60)} hour window`;
+  if (window.windowDurationMins >= 24 * 60) return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 1_440)} 日剩余` : `${Math.round(window.windowDurationMins / 1_440)} day remaining`;
+  return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 60)} 小时剩余` : `${Math.round(window.windowDurationMins / 60)} hour remaining`;
 }
 
 function formatTokens(value: number, language: Language): string {
@@ -511,6 +605,10 @@ function formatCost(provider: UsageProviderSummary, language: Language, unavaila
 
 function formatReset(timestamp: number, language: Language, prefix: string): string {
   return `${prefix} ${new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000))}`;
+}
+
+function formatResetTime(timestamp: number, language: Language): string {
+  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000));
 }
 
 function formatUpdatedAt(value: string, language: Language, prefix: string): string {
