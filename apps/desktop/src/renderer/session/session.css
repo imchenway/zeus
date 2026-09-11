@@ -4037,6 +4037,10 @@
   font-size: 12px;
 }
 
+/* 消息、摘要与状态入口共用内缩；宽度包含内边距，避免居中时起点偏移或窄分栏溢出。 */
+.session-codex-parity-v1 .session-reasoning-summary,
+.session-codex-parity-v1 .session-transcript-thinking,
+.session-codex-parity-v1 .session-turn-process-control,
 .session-codex-parity-v1 .session-thread-item-assistant,
 .session-codex-parity-v1 .session-thread-item-commentary,
 .session-codex-parity-v1 .session-thread-item-tool,
@@ -4044,6 +4048,7 @@
 .session-codex-parity-v1 .session-thread-item-request,
 .session-codex-parity-v1 .session-thread-item-error,
 .session-codex-parity-v1 .session-thread-item-unknown {
+  box-sizing: border-box;
   padding-inline: 2px;
 }
 
@@ -4538,7 +4543,6 @@
   line-height: 1.5;
   margin-block: 0;
   min-block-size: 28px;
-  padding: 0 2px;
 }
 
 .session-codex-parity-v1 .session-reasoning-summary > span:last-child {
@@ -9220,12 +9224,7 @@
   font-size: var(--session-readable-font-size);
 }
 
-/* 过程与无过程的耗时行共用答复的内缩，宽屏居中和窄分栏都与正文对齐。 */
-.session-codex-parity-v1 .session-turn-process,
-.session-codex-parity-v1 .session-transcript-window-row > .session-turn-process-control {
-  padding-inline: 2px;
-}
-
+/* 过程容器不重复叠加摘要和消息自身的内边距。 */
 .session-codex-parity-v1 .session-turn-process {
   display: grid;
   inline-size: min(var(--session-thread-max), 100%);
