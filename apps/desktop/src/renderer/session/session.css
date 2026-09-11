@@ -9848,15 +9848,22 @@
   }
 }
 
-.session-codex-parity-v1 .structured-composer-token {
+.session-codex-parity-v1 .structured-composer-token,
+.session-codex-parity-v1 .session-user-message-token {
   border: 0;
-  border-radius: 6px;
+  border-radius: 999px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--session-accent) 42%, transparent);
+  font-size: 0.86em;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 1px 7px;
+  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .structured-composer-token[data-kind='expert'] {
+.session-codex-parity-v1 .structured-composer-token[data-kind='expert'],
+.session-codex-parity-v1 .session-user-message-token[data-kind='expert'] {
   background: color-mix(in srgb, #3b82f6 15%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, #3b82f6 46%, transparent);
   color: color-mix(in srgb, #2563eb 86%, var(--session-text));
@@ -9864,13 +9871,17 @@
 
 .session-codex-parity-v1 .structured-composer-token[data-kind='skill'],
 .session-codex-parity-v1 .structured-composer-token[data-kind='plugin'],
-.session-codex-parity-v1 .structured-composer-token[data-kind='plugin-skill'] {
+.session-codex-parity-v1 .structured-composer-token[data-kind='plugin-skill'],
+.session-codex-parity-v1 .session-user-message-token[data-kind='skill'],
+.session-codex-parity-v1 .session-user-message-token[data-kind='plugin'],
+.session-codex-parity-v1 .session-user-message-token[data-kind='plugin-skill'] {
   background: color-mix(in srgb, #8b5cf6 13%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, #8b5cf6 42%, transparent);
   color: color-mix(in srgb, #7c3aed 82%, var(--session-text));
 }
 
-.session-codex-parity-v1 .structured-composer-token[data-kind='computer'] {
+.session-codex-parity-v1 .structured-composer-token[data-kind='computer'],
+.session-codex-parity-v1 .session-user-message-token[data-kind='computer'] {
   background: color-mix(in srgb, #0f9f87 13%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, #0f9f87 42%, transparent);
   color: color-mix(in srgb, #087f6c 84%, var(--session-text));

@@ -23,7 +23,7 @@ import {
 import { ConversationGeneratedImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
+import { ConversationMarkdown, conversationMarkdownPhaseForStatus, type StructuredMessageToken } from './ConversationMarkdown.js';
 import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 
@@ -484,6 +484,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const contextOnlyPlaceholder = role === 'user' && conversationContext ? isConversationContextPlaceholder(itemText) : false;
   const longUserMessage = role === 'user' && !taskPushLayout && !contextOnlyPlaceholder && itemText.length > 640;
   const visibleText = contextOnlyPlaceholder ? '' : longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : itemText;
+  const structuredUserTokens = role === 'user' && !taskPushLayout && !contextOnlyPlaceholder ? structuredMessageTokens(itemText) : [];
   const expertActor = role === 'assistant' ? digitalEmployeeActor(props.item.payload.actor) : null;
   const expertExecutionId = typeof props.item.payload.expertExecutionId === 'string' ? props.item.payload.expertExecutionId : null;
   const expertFailed = Boolean(expertActor && expertExecutionId && props.item.payload.expertStatus === 'failed');
@@ -674,6 +675,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
               phase="final"
               language={props.language}
               resources={props.item.resources}
+              structuredTokens={structuredUserTokens}
               onOpenResource={props.onOpenResource}
               onLoadResourcePreview={props.onLoadResourcePreview}
               onVisibleContentChange={props.onVisibleContentChange}
@@ -867,6 +869,29 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   if (type.includes('request') || type.includes('approval')) return 'request';
   if (type === 'error' || type.endsWith('error') || item.status === 'failed') return 'error';
   return 'unknown';
+}
+
+/** 发送后的用户消息从展示文本恢复结构化标签，普通文本不受影响。 */
+function structuredMessageTokens(text: string): StructuredMessageToken[] {
+  const tokens: StructuredMessageToken[] = [];
+  const seen = new Set<string>();
+  const computerLabel = '/Computer Use';
+  const searchableText = text.includes(computerLabel) ? text.replaceAll(computerLabel, ' ') : text;
+  if (text.includes(computerLabel)) {
+    tokens.push({ label: computerLabel, kind: 'computer' });
+    seen.add(computerLabel);
+  }
+  const pattern = /(^|\s)([/@][^\s]+)/gu;
+  for (const match of searchableText.matchAll(pattern)) {
+    const label = match[2]?.trim();
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    tokens.push({
+      label,
+      kind: label === '/Computer Use' ? 'computer' : label.startsWith('@') ? 'expert' : 'skill',
+    });
+  }
+  return tokens;
 }
 
 function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
