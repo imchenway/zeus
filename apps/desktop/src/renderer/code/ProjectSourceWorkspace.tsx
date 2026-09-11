@@ -1,4 +1,5 @@
 import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
@@ -904,41 +905,46 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         />
       ) : null}
 
-      <MotionPresence>
-        {contextMenu ? (
-          <MenuSurface onClose={() => setContextMenu(null)} className="project-source-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-            {contextMenu.entry.kind === 'directory' ? (
-              <>
-                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
-                  {zh ? '新建文件' : 'New file'}
+      {createPortal(
+        <div className="macos-ai-app project-source-menu-layer" style={{ display: 'contents' }}>
+          <MotionPresence>
+            {contextMenu ? (
+              <MenuSurface onClose={() => setContextMenu(null)} className="project-source-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+                {contextMenu.entry.kind === 'directory' ? (
+                  <>
+                    <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
+                      {zh ? '新建文件' : 'New file'}
+                    </button>
+                    <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
+                      {zh ? '新建目录' : 'New folder'}
+                    </button>
+                  </>
+                ) : null}
+                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
+                  {zh ? '重命名' : 'Rename'}
                 </button>
-                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
-                  {zh ? '新建目录' : 'New folder'}
+                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
+                  {zh ? '移动…' : 'Move…'}
                 </button>
-              </>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
+                    setContextMenu(null);
+                  }}
+                >
+                  {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+                </button>
+                <button role="menuitem" type="button" className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+                  {zh ? '移入废纸篓…' : 'Move to Trash…'}
+                </button>
+              </MenuSurface>
             ) : null}
-            <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
-              {zh ? '重命名' : 'Rename'}
-            </button>
-            <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
-              {zh ? '移动…' : 'Move…'}
-            </button>
-            <button
-              role="menuitem"
-              type="button"
-              onClick={() => {
-                void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
-                setContextMenu(null);
-              }}
-            >
-              {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
-            </button>
-            <button role="menuitem" type="button" className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
-              {zh ? '移入废纸篓…' : 'Move to Trash…'}
-            </button>
-          </MenuSurface>
-        ) : null}
-      </MotionPresence>
+          </MotionPresence>
+        </div>,
+        document.body,
+      )}
 
       <MotionPresence>
         {operation ? (
