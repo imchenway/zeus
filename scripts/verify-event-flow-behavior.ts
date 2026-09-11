@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,8 +14,145 @@ import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/
 import { ConversationEventFlowControl } from '../packages/local-server/src/eventFlowControl.js';
 import { ConversationSyncProtocol } from '../packages/local-server/src/conversationSyncProtocol.js';
 import { type ConversationRealtimeSocket, registerConversationSyncRoutes } from '../packages/local-server/src/conversationSyncRoutes.js';
-import { toRealtimeChangeSet } from '../packages/local-server/src/turnChangeSets.js';
-import { ConversationProviderItemRepository, ConversationSyncEventRepository, createZeusDatabase, resolveSnapshotProviderItemId, scopedSnapshotProviderItemId } from '../packages/storage/src/index.js';
+import { createTurnChangeSetService, toRealtimeChangeSet } from '../packages/local-server/src/turnChangeSets.js';
+import {
+  AuditLogRepository,
+  ConversationRepository,
+  ConversationTurnRepository,
+  IdempotencyRequestRepository,
+  ProjectRepository,
+  TurnChangeFileRepository,
+  TurnChangeSetRepository,
+  ConversationProviderItemRepository,
+  ConversationSyncEventRepository,
+  createZeusDatabase,
+  resolveSnapshotProviderItemId,
+  scopedSnapshotProviderItemId,
+} from '../packages/storage/src/index.js';
+
+/** 用真实临时目录与数据库验证脚本修改、原有脏内容和恢复保护，不调用外部模型。 */
+async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
+  /** 探针不使用用户工作区，也不创建提交。 */
+  const root = await mkdtemp(join(tmpdir(), 'zeus-workspace-turn-'));
+  /** 数据库与恢复文件放在仓库外，避免被当成待记录内容。 */
+  const workspace = join(root, 'project');
+  await mkdir(workspace);
+  /** 真实仓储验证持久化、去重和恢复前置条件。 */
+  const db = await createZeusDatabase(join(root, 'probe.db'));
+  try {
+    execFileSync('git', ['init', '--quiet', workspace]);
+    await writeFile(join(workspace, '.gitignore'), 'docs/\n');
+    /** 包含空格和中文路径，确认枚举不会拆分文件名。 */
+    const paths = Array.from({ length: 12 }, (_, index) => (index === 0 ? '中文 file.txt' : `file-${index}.txt`));
+    for (const path of [...paths, 'unrelated.txt', 'reverted.txt']) await writeFile(join(workspace, path), 'original\n');
+    execFileSync('git', ['-C', workspace, 'add', '.']);
+    await writeFile(join(workspace, paths[0]!), 'user-dirty\n');
+    await writeFile(join(workspace, 'unrelated.txt'), 'prior-user-change\n');
+    /** 使用生产仓储构造最小实际会话。 */
+    const projects = new ProjectRepository(db);
+    /** 项目根与运行目录保持一致。 */
+    const project = projects.create({ name: '快照验证', localPath: workspace });
+    /** 主会话和并发会话共用同一目录以验证归属保护。 */
+    const conversations = new ConversationRepository(db);
+    /** 唯一 Provider 身份隔离每个探针轮次。 */
+    const conversation = conversations.getById(conversations.create({ projectId: project.id, title: '快照验证', transportKind: 'codex_native', providerId: 'codex', providerThreadId: 'snapshot-thread' }).id)!;
+    /** 既有恢复链路消费实际轮次身份。 */
+    const turns = new ConversationTurnRepository(db);
+    /** 探针不依赖时间推进。 */
+    const timestamp = new Date().toISOString();
+    /** 固定创建方式避免构造不完整的数据库记录。 */
+    const newTurn = (id: string) =>
+      turns.upsert({
+        conversationId: conversation.id,
+        providerThreadId: 'snapshot-thread',
+        providerTurnId: id,
+        clientSubmissionId: null,
+        status: 'running',
+        startedAt: timestamp,
+        completedAt: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    /** 验证对象就是线上文件变更服务。 */
+    const service = createTurnChangeSetService({
+      db,
+      projects,
+      changeSets: new TurnChangeSetRepository(db),
+      files: new TurnChangeFileRepository(db),
+      auditLogs: new AuditLogRepository(db),
+      idempotency: new IdempotencyRequestRepository(db),
+      recoveryRoot: join(root, 'recovery'),
+    });
+    /** 本轮开始前的用户修改必须成为恢复起点。 */
+    const turn = newTurn('mixed-edits');
+    await service.beginWorkspace(conversation, 'mixed-submission');
+    service.bindWorkspace(conversation.id, 'mixed-submission', turn.providerTurnId!);
+    /** 同一路径先补丁再脚本，只能算一个文件。 */
+    const changes = [{ path: paths[0]!, kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-user-dirty\n+patched\n' }];
+    service.capture({ conversation, turn, providerItemId: 'patch', changes, phase: 'pre', timestamp });
+    await writeFile(join(workspace, paths[0]!), 'patched\n');
+    service.capture({ conversation, turn, providerItemId: 'patch', changes, phase: 'post', timestamp });
+    for (const path of paths.slice(0, 10)) await writeFile(join(workspace, path), 'script-final\n');
+    for (const path of paths.slice(10)) await unlink(join(workspace, path));
+    await writeFile(join(workspace, 'created.txt'), 'new-script-file\n');
+    /** 被忽略的文档保留 Provider 已明确记录的变化。 */
+    const documentChanges = [{ path: 'docs/task.md', kind: { type: 'add' }, diff: '本地文档\n' }];
+    service.capture({ conversation, turn, providerItemId: 'document', changes: documentChanges, phase: 'pre', timestamp });
+    await mkdir(join(workspace, 'docs'));
+    await writeFile(join(workspace, 'docs/task.md'), '本地文档\n');
+    service.capture({ conversation, turn, providerItemId: 'document', changes: documentChanges, phase: 'post', timestamp });
+    /** 补丁改动后恢复原值应被净变化过滤。 */
+    const reverted = [{ path: 'reverted.txt', kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-original\n+temporary\n' }];
+    service.capture({ conversation, turn, providerItemId: 'reverted', changes: reverted, phase: 'pre', timestamp });
+    await writeFile(join(workspace, 'reverted.txt'), 'temporary\n');
+    service.capture({ conversation, turn, providerItemId: 'reverted', changes: reverted, phase: 'post', timestamp });
+    await writeFile(join(workspace, 'reverted.txt'), 'original\n');
+    await service.finishWorkspace({ conversation, turn, timestamp });
+    /** 12 个原文件、1 个新文件、1 个明确记录的忽略文档。 */
+    const changeSet = service.seal({ conversation, turn, timestamp });
+    assertBehavior(changeSet?.fileCount === 14, '脚本与补丁必须完整合并，且不计入轮次前的其他脏文件或已还原文件。');
+    assertBehavior(changeSet.state === 'applied' && changeSet.files.every((file) => file.reversible), '完整首末快照必须可恢复。');
+    assertBehavior(changeSet.files.filter((file) => file.newPath === paths[0]).length === 1, '同路径补丁与脚本不能重复计数。');
+    assertBehavior(changeSet.addedLines === 12 && changeSet.deletedLines === 12, '行数必须使用首末净变化，不能累计中间补丁。');
+    await service.operate({ projectId: project.id, conversationId: conversation.id, turnId: turn.id, action: 'undo', request: { changeSetId: changeSet.id, expectedState: 'applied', idempotencyKey: 'undo-mixed' } });
+    assertBehavior((await readFile(join(workspace, paths[0]!), 'utf8')) === 'user-dirty\n', '撤销必须保留本轮前的脏内容。');
+    assertBehavior((await readFile(join(workspace, 'unrelated.txt'), 'utf8')) === 'prior-user-change\n', '撤销不能触碰其他已有修改。');
+    assertBehavior((await readFile(join(workspace, paths[11]!), 'utf8')) === 'original\n', '脚本删除的文件必须可恢复。');
+    assertBehavior(
+      await readFile(join(workspace, 'created.txt')).then(
+        () => false,
+        () => true,
+      ),
+      '撤销必须移除脚本新增文件。',
+    );
+    await service.operate({ projectId: project.id, conversationId: conversation.id, turnId: turn.id, action: 'reapply', request: { changeSetId: changeSet.id, expectedState: 'undone', idempotencyKey: 'reapply-mixed' } });
+    assertBehavior((await readFile(join(workspace, paths[0]!), 'utf8')) === 'script-final\n', '重新应用必须恢复脚本最终内容。');
+    await writeFile(join(workspace, paths[0]!), 'later-user-change\n');
+    /** 后续写入必须触发明确冲突，且不执行任何文件恢复。 */
+    const conflicted = await service
+      .operate({ projectId: project.id, conversationId: conversation.id, turnId: turn.id, action: 'undo', request: { changeSetId: changeSet.id, expectedState: 'applied', idempotencyKey: 'undo-after-user-edit' } })
+      .then(
+        () => false,
+        (error) => error.code === 'ZEUS_TURN_CHANGE_SET_CONTENT_CONFLICT',
+      );
+    assertBehavior(conflicted, '后续修改必须拒绝整轮撤销。');
+    assertBehavior((await readFile(join(workspace, paths[0]!), 'utf8')) === 'later-user-change\n', '撤销冲突不能覆盖后续用户修改。');
+    /** 重叠轮次只开放审阅，不猜测哪个会话拥有文件变化。 */
+    const overlapping = conversations.getById(conversations.create({ projectId: project.id, title: '并发验证', transportKind: 'codex_native', providerId: 'codex', providerThreadId: 'other-thread' }).id)!;
+    /** 第二轮复用真实目录，检验跨会话保护。 */
+    const overlapTurn = newTurn('overlap');
+    await service.beginWorkspace(conversation, 'overlap-main');
+    service.bindWorkspace(conversation.id, 'overlap-main', overlapTurn.providerTurnId!);
+    await service.beginWorkspace(overlapping, 'overlap-other');
+    await writeFile(join(workspace, paths[1]!), 'concurrent\n');
+    await service.finishWorkspace({ conversation, turn: overlapTurn, timestamp });
+    assertBehavior(service.seal({ conversation, turn: overlapTurn, timestamp })?.state === 'unavailable', '重叠目录变化不得自动撤销。');
+    return { files: changeSet.fileCount, scriptAndPatchMerged: true, dirtyBaselinePreserved: true, undoReapply: true, concurrentUndoBlocked: true };
+  } finally {
+    await db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 // 行为探针只调用转录纯函数；Node 不需要加载渲染组件依赖的样式文件。
 registerHooks({
@@ -560,5 +698,7 @@ const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
 const stageSummaryGrouping = verifyStageSummaryProcessGrouping();
 const interruptedQueueTakeover = verifyInterruptedQueueTakeoverProjection();
 const realtimeChangeSetProjection = verifyRealtimeChangeSetProjection();
+/** 同一事件流探针同时检查文件变化的真实捕获链路。 */
+const workspaceTurnChanges = await verifyWorkspaceTurnChanges();
 
-console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover, realtimeChangeSetProjection }, null, 2));
+console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover, realtimeChangeSetProjection, workspaceTurnChanges }, null, 2));

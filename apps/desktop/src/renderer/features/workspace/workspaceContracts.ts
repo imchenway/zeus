@@ -12,8 +12,6 @@ import {
   type CodexConfigActivationResult,
   type CodexConfigImportPreview,
   type CodexConfigImportResult,
-  type CodexLegacyImportResult,
-  type CodexLegacyImportSnapshot,
   type CreateProjectRequest,
   type DashboardClient,
   type DashboardSnapshot,
@@ -144,10 +142,7 @@ export type WorkspacePageProps = {
   initialRuntimeStatus?: RuntimeStatusSnapshot;
   onLoadRuntimeStatus?: () => Promise<RuntimeStatusSnapshot>;
   onLoadRuntimeSettings?: () => Promise<RuntimeSettings>;
-  onSaveRuntimeSettings?: (input: RuntimeSettings) => Promise<RuntimeSettings>;
   onLoadAppShellSettings?: () => Promise<AppShellSettings>;
-  onLoadCodexLegacyImports?: () => Promise<CodexLegacyImportSnapshot>;
-  onStartCodexLegacyImport?: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   onInspectCodexConfigImport?: () => Promise<CodexConfigImportPreview>;
   onImportCodexConfig?: () => Promise<CodexConfigImportResult>;
   onActivateCodexConfig?: () => Promise<CodexConfigActivationResult>;

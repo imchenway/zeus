@@ -82,7 +82,13 @@ export function TurnChangeCard(props: {
         </span>
         <nav aria-label={zh ? '文件变更操作' : 'File change actions'}>
           {action ? (
-            <button type="button" className="session-turn-change-undo" disabled={Boolean(busy) || !props.onOperate} onClick={() => void operate()}>
+            <button
+              type="button"
+              className="session-turn-change-undo"
+              title={zh ? '仅操作此卡片列出的已记录变更' : 'Only affects recorded changes listed in this card'}
+              disabled={Boolean(busy) || !props.onOperate}
+              onClick={() => void operate()}
+            >
               {action === 'undo' ? <ArrowCounterClockwise aria-hidden="true" /> : <ArrowClockwise aria-hidden="true" />}
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
             </button>
@@ -591,7 +597,7 @@ function changeSetTitle(changeSet: TurnChangeSet, language: SessionUiLanguage): 
   if (changeSet.state === 'undone') return zh ? `已撤销 ${subject}` : `Undid ${subject}`;
   if (changeSet.state === 'conflicted') return zh ? `无法安全更新 ${subject}` : `Could not safely update ${subject}`;
   if (changeSet.state === 'unavailable') return zh ? '文件变更不可撤销' : 'File changes are not reversible';
-  return zh ? `已编辑 ${subject}` : `Edited ${subject}`;
+  return zh ? `已记录 ${subject}的变更` : `Recorded changes to ${subject}`;
 }
 
 function displayPath(file: TurnChangeFile): string {

@@ -19701,7 +19701,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .legacy-import-heading,
 .macos-ai-app .legacy-import-command-row,
-.macos-ai-app .legacy-import-row,
 .macos-ai-app .legacy-import-history li {
   align-items: center;
   display: flex;
@@ -19710,7 +19709,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .legacy-import-heading > span,
-.macos-ai-app .legacy-import-row > span,
 .macos-ai-app .legacy-import-history li > span {
   display: grid;
   gap: 4px;
@@ -19718,36 +19716,15 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .legacy-import-heading small,
-.macos-ai-app .legacy-import-row small,
 .macos-ai-app .legacy-import-history small {
   color: var(--zeus-product-muted);
   overflow-wrap: anywhere;
 }
 
-.macos-ai-app .legacy-import-picker {
-  border: 0;
-  display: grid;
-  gap: 0;
-  margin: 0;
-  min-inline-size: 0;
-  padding: 0;
-}
-
-.macos-ai-app .legacy-import-picker legend {
-  font-size: 12px;
-  font-weight: 650;
-  padding-block-end: 8px;
-}
-
-.macos-ai-app .legacy-import-row,
 .macos-ai-app .legacy-import-history li {
   border-block-start: 1px solid var(--zeus-product-line-soft);
   justify-content: flex-start;
   padding-block: 10px;
-}
-
-.macos-ai-app .legacy-import-row input {
-  flex: 0 0 auto;
 }
 
 .macos-ai-app .legacy-import-command-row {
@@ -19772,7 +19749,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: oklch(47% 0.14 28);
 }
 
-/* Settings 的旧会话导入继续使用留白分组，不让历史实现重新带回装饰横线。 */
+/* 配置导入使用留白分组，保持设置页的布局一致。 */
 .macos-ai-app .settings-reference-shell .legacy-import-settings {
   border-block-start: 0;
   gap: 12px;
@@ -19780,15 +19757,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block-start: 0;
 }
 
-.macos-ai-app .settings-reference-shell .legacy-import-picker {
-  gap: 4px;
-}
-
-.macos-ai-app .settings-reference-shell :where(.legacy-import-row, .legacy-import-history li, .legacy-import-command-row) {
+.macos-ai-app .settings-reference-shell :where(.legacy-import-history li, .legacy-import-command-row) {
   border-block-start: 0;
 }
 
-.macos-ai-app .settings-reference-shell :where(.legacy-import-row, .legacy-import-history li) {
+.macos-ai-app .settings-reference-shell :where(.legacy-import-history li) {
   padding-block: 7px;
 }
 

@@ -487,6 +487,9 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       assertSubmissionDispatchable(submission.id);
+      // 模型运行前保存真实工作目录起点，命令行和专用编辑工具共用这一基线。
+      await options.changeSets.beginWorkspace(conversation, submission.id);
+      assertSubmissionDispatchable(submission.id);
       if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
       else
         options.commandDeliveries.markProviderWriteStarted({
@@ -524,6 +527,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         approvalsReviewer: profile.approvalsReviewer,
         sandboxPolicy: profile.sandbox,
       });
+      options.changeSets.bindWorkspace(conversation.id, submission.id, turn.id);
       volatileSubmissionText.delete(submission.id);
       const timestamp = now();
       const acceptedTurnId = segmentLifecycle?.acceptSynchronously({

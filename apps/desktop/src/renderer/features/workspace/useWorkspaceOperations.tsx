@@ -134,10 +134,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setCodexConfigImportLoading,
     setCodexConfigImportPreview,
     setCodexConfigImportResult,
-    setCodexLegacyImportBusy,
-    setCodexLegacyImportError,
-    setCodexLegacyImportLoading,
-    setCodexLegacyImportSnapshot,
     setConversationDraftOpen,
     setDataPortabilityStatus,
     setExternalApiKeyInput,
@@ -504,39 +500,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
   }
 
-  async function refreshCodexLegacyImports(): Promise<void> {
-    if (!props.onLoadCodexLegacyImports) return;
-    setCodexLegacyImportLoading(true);
-    setCodexLegacyImportError(null);
-    try {
-      setCodexLegacyImportSnapshot(await props.onLoadCodexLegacyImports());
-    } catch (error) {
-      setCodexLegacyImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
-    } finally {
-      setCodexLegacyImportLoading(false);
-    }
-  }
-
-  async function startCodexLegacyImport(sourceConversationIds: string[]): Promise<void> {
-    if (!props.onStartCodexLegacyImport || !props.onLoadCodexLegacyImports || sourceConversationIds.length === 0) return;
-    setCodexLegacyImportBusy(true);
-    setCodexLegacyImportError(null);
-    try {
-      const started = await props.onStartCodexLegacyImport(sourceConversationIds);
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        const snapshot = await props.onLoadCodexLegacyImports();
-        setCodexLegacyImportSnapshot(snapshot);
-        const activeRun = snapshot.runs.some((run) => run.importId === started.importId && (run.status === 'prepared' || run.status === 'waiting'));
-        if (!activeRun) break;
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
-      }
-    } catch (error) {
-      setCodexLegacyImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
-    } finally {
-      setCodexLegacyImportBusy(false);
-    }
-  }
-
   async function refreshCodexConfigImport(): Promise<void> {
     if (!props.onInspectCodexConfigImport) return;
     setCodexConfigImportLoading(true);
@@ -614,19 +577,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           },
         }));
       }
-      setActionState('idle');
-    } catch (error) {
-      recordLocalError('renderer-action', error);
-    }
-  }
-
-  async function saveRuntimeSettings(): Promise<void> {
-    if (!props.onSaveRuntimeSettings) return;
-    setActionState('loading-runtime');
-    try {
-      // 保存设置不触发外部 CLI；真实可用性只能由用户随后明确点击检查确认。
-      setRuntimeSettings(normalizeRuntimeSettings(await props.onSaveRuntimeSettings(runtimeSettings)));
-      if (props.onLoadRuntimeStatus) setRuntimeStatus(await props.onLoadRuntimeStatus());
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -1922,10 +1872,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
-          onOpenImportSettings: () => {
-            setSettingsCategory('runtime');
-            handleMainNavigate('settings');
-          },
           onSelectTask: (task) => {
             const selectedTask = snapshot.tasks.find((candidate) => candidate.id === task.id);
             if (selectedTask) setTaskDetail(selectedTask);
@@ -2072,7 +2018,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     projectSidebarShellStyle,
     projectSidebarWidth,
     refreshCodexConfigImport,
-    refreshCodexLegacyImports,
     refreshRuntimeSessions,
     rejectGenericRuntimeConfirmation,
     rejectGitOperation,
@@ -2088,7 +2033,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     runBulkTaskStatusChange,
     saveAppShellSettings,
     saveExternalApiKey,
-    saveRuntimeSettings,
     saveSourceWorkspaceAndLeave,
     saveTaskPageViewMode,
     saveTaskStatusFilter,
@@ -2099,7 +2043,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     sendRuntimeInput,
     setGitHunkDecision,
     setRuntimeSessionFavorite,
-    startCodexLegacyImport,
     startRuntimeSession,
     stopRuntimeSession,
     testTelegramConnection,

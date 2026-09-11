@@ -564,6 +564,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       completedAt: timestamp,
       updatedAt: timestamp,
     });
+    // 补齐脚本写入后再封存，卡片与撤销读取同一份首末快照。
+    await options.changeSets.finishWorkspace({ conversation, turn, timestamp });
     options.changeSets.seal({ conversation, turn, timestamp });
     const submissions = options.submissions.listByConversation(conversation.id);
     const internalContextCompaction = turn.clientSubmissionId === null && turnItems.some((item) => item.itemType === 'contextCompaction');
