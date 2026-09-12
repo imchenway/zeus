@@ -202,7 +202,7 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: .tmp/homebrew-tap
       - name: 下载已校验正式产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: zeus-macos-${{ inputs.commit_sha }}
           path: dist
