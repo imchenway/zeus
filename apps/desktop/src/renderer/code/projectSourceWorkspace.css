@@ -402,10 +402,6 @@
   font: inherit;
   font-size: 12px;
 }
-.project-source-search input:focus {
-  border-color: var(--zeus-control-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zeus-control-accent) 18%, transparent);
-}
 
 .project-source-tree-scroll {
   min-height: 0;

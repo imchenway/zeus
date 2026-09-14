@@ -914,12 +914,6 @@
   resize: none;
 }
 
-.session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 0;
-}
-
 .session-codex-parity-v1 .session-queued-message-editor > footer {
   align-items: center;
   display: flex;
@@ -1588,10 +1582,6 @@
 }
 .session-goal-clear-action {
   margin-inline-end: auto;
-}
-.session-goal-objective-field textarea:focus-visible {
-  outline: 2px solid var(--zeus-brand-primary);
-  outline-offset: 2px;
 }
 .session-goal-objective-field small.is-invalid {
   color: var(--zeus-control-danger-text);
@@ -3245,8 +3235,6 @@
 }
 
 .session-codex-parity-v1 .ai-workspace button:focus-visible,
-.session-codex-parity-v1 .ai-workspace input:focus-visible,
-.session-codex-parity-v1 .ai-workspace textarea:focus-visible,
 .session-codex-parity-v1 .ai-workspace a:focus-visible,
 .session-codex-parity-v1 > .session-mobile-source-backdrop:focus-visible {
   outline: 2px solid var(--session-focus-outline);
@@ -4120,12 +4108,6 @@
   min-block-size: 72px;
   padding: 4px 5px;
   resize: none;
-}
-
-.session-codex-parity-v1 .session-user-message-editor > textarea:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 0;
 }
 
 .session-codex-parity-v1 .session-user-message-editor > footer {
@@ -6643,11 +6625,9 @@
 .session-codex-parity-v1 .session-browser-toggle:focus-visible,
 .session-codex-parity-v1 .session-quick-actions-trigger:focus-visible,
 .session-codex-parity-v1 .browser-tab-strip button:focus-visible,
-.session-codex-parity-v1 .browser-workspace button:focus-visible,
-.session-codex-parity-v1 .browser-workspace input:focus-visible {
-  box-shadow: 0 0 0 3px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 1px;
+.session-codex-parity-v1 .browser-workspace button:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
 }
 
 .session-codex-parity-v1 .session-browser-toggle svg {

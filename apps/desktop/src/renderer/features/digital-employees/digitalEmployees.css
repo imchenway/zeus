@@ -240,12 +240,6 @@
   resize: vertical;
 }
 
-.macos-ai-app .digital-employee-form :where(input:not([type='checkbox']), textarea):focus-visible {
-  border-color: var(--zeus-product-accent);
-  outline: 2px solid color-mix(in oklab, var(--zeus-product-accent) 25%, transparent);
-  outline-offset: 1px;
-}
-
 .macos-ai-app .digital-employee-form :where(input, textarea):disabled {
   opacity: 0.68;
 }

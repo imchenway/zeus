@@ -1290,12 +1290,26 @@ function DeliveryRepositoryFileTree(props: {
   return (
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
-        <span>
-          <button type="button" className={props.diffScope === 'working' ? 'is-active' : ''} onClick={() => props.onScopeChange('working')} disabled={props.disabled}>
-            {props.zh ? '本机未提交' : 'Local uncommitted'} <small>{props.totalWorkingFiles}</small>
+        <span role="group" aria-label={props.zh ? '文件范围' : 'File scope'}>
+          <button
+            type="button"
+            className={props.diffScope === 'working' ? 'is-active' : ''}
+            aria-pressed={props.diffScope === 'working'}
+            title={props.zh ? '本机未提交' : 'Local uncommitted'}
+            onClick={() => props.onScopeChange('working')}
+            disabled={props.disabled}
+          >
+            <span>{props.zh ? '本机未提交' : 'Local uncommitted'}</span> <small>{props.totalWorkingFiles}</small>
           </button>
-          <button type="button" className={props.diffScope === 'committed' ? 'is-active' : ''} onClick={() => props.onScopeChange('committed')} disabled={props.disabled}>
-            {props.zh ? '已提交成果' : 'Committed result'} <small>{props.totalCommittedFiles}</small>
+          <button
+            type="button"
+            className={props.diffScope === 'committed' ? 'is-active' : ''}
+            aria-pressed={props.diffScope === 'committed'}
+            title={props.zh ? '已提交成果' : 'Committed result'}
+            onClick={() => props.onScopeChange('committed')}
+            disabled={props.disabled}
+          >
+            <span>{props.zh ? '已提交成果' : 'Committed result'}</span> <small>{props.totalCommittedFiles}</small>
           </button>
         </span>
       </header>

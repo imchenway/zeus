@@ -382,7 +382,7 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  :is(button, a, input, select):focus-visible {
+  :is(button, a, input[type='checkbox'], input[type='radio']):focus-visible {
     outline: 2px solid var(--im-accent);
     outline-offset: 3px;
     box-shadow: none;

@@ -61,7 +61,7 @@
   :where(input, button, select, textarea) {
     font-family: inherit;
   }
-  :where(button, input, select, textarea, summary):focus-visible {
+  :where(button, summary, input[type='checkbox'], input[type='radio']):focus-visible {
     outline: 2px solid var(--zeus-product-accent);
     outline-offset: 2px;
   }
