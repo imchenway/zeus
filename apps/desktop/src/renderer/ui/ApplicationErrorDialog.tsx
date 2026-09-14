@@ -182,8 +182,15 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
   return (
     <MotionPresence>
       {current ? (
-        <ModalPortal rootClassName="application-error-dialog-portal-root" backdropClassName="application-error-dialog-backdrop" onDismiss={dismissCurrentError}>
-          <section className="application-error-dialog zeus-solid-form-surface" role="alertdialog" aria-modal="true" aria-labelledby="application-error-dialog-title" aria-describedby="application-error-dialog-summary">
+        <ModalPortal
+          rootClassName="application-error-dialog-portal-root"
+          backdropClassName="application-error-dialog-backdrop"
+          onDismiss={dismissCurrentError}
+          role="alertdialog"
+          aria-labelledby="application-error-dialog-title"
+          aria-describedby="application-error-dialog-summary"
+        >
+          <section className="application-error-dialog zeus-solid-form-surface" data-modal-surface="alertdialog">
             <div className="application-error-dialog-icon" aria-hidden="true">
               <WarningCircle weight="fill" />
             </div>

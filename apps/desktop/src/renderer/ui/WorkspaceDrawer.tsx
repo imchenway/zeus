@@ -50,11 +50,15 @@ export function WorkspaceDrawer(props: WorkspaceDrawerProps) {
     props.onClose();
   };
 
-  /** 门户只承载当前抽屉，不改变调用方的业务状态。 */
+  /** 模态与焦点边界共同包含正文和门户弹层，避免下拉选项被辅助功能排除。 */
   const drawerSurface = (
     <div
       ref={portalRef}
       tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={props.label}
+      onKeyDown={handleWorkspaceDrawerKeyDown}
       className="macos-ai-app workspace-drawer-portal-root"
       data-zeus-primitive="drawer"
       data-motion-state={open ? 'open' : 'closing'}
@@ -84,17 +88,13 @@ export function WorkspaceDrawer(props: WorkspaceDrawerProps) {
       >
         <aside
           className={`workspace-drawer ${props.className ?? ''}`.trim()}
-          role="dialog"
-          aria-modal="true"
           inert={!open}
           aria-hidden={!open || undefined}
-          aria-label={props.label}
           data-motion-surface="drawer"
           data-motion-state={open ? 'open' : 'closing'}
           ref={workspaceDrawerRef}
           tabIndex={-1}
           onClick={(event) => event.stopPropagation()}
-          onKeyDown={handleWorkspaceDrawerKeyDown}
         >
           <div className="workspace-drawer-chrome">
             <strong>{props.label}</strong>

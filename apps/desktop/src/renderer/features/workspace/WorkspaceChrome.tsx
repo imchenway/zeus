@@ -134,8 +134,16 @@ export function ProjectCreateDialog(props: {
   const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
 
   return (
-    <ModalPortal rootClassName="project-create-dialog-portal-root" backdropClassName="project-create-dialog-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
-      <form className="project-create-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-create-dialog-title" aria-describedby={describedBy} onSubmit={props.onSubmit}>
+    <ModalPortal
+      rootClassName="project-create-dialog-portal-root"
+      backdropClassName="project-create-dialog-backdrop"
+      dismissDisabled={interactionBusy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="project-create-dialog-title"
+      aria-describedby={describedBy}
+    >
+      <form className="project-create-dialog zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="project-create-dialog-header">
           <strong id="project-create-dialog-title">{props.copy.createDialogTitle}</strong>
           <button type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
@@ -220,19 +228,24 @@ export function ProjectRenameDialog(props: {
 
   const describedBy = props.error ? 'project-rename-dialog-help project-rename-error' : 'project-rename-dialog-help';
   const surface = (
-    <ModalPortal rootClassName="project-rename-dialog-portal-root" backdropClassName="project-rename-dialog-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+    <ModalPortal
+      rootClassName="project-rename-dialog-portal-root"
+      backdropClassName="project-rename-dialog-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="project-rename-dialog-title"
+      aria-describedby={describedBy}
+    >
       <form
         className="project-rename-dialog zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-rename-dialog-title"
-        aria-describedby={describedBy}
         onSubmit={props.onSubmit}
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || props.busy) return;
           event.stopPropagation();
           props.onClose();
         }}
+        data-modal-surface="dialog"
       >
         <header className="project-rename-dialog-header">
           <span>
@@ -294,8 +307,6 @@ export function ProjectWorkspaceModeToolbar(props: {
   const zh = props.language === 'zh-CN';
   /** 当前会话入口的固定名称不再随 Option 键切换。 */
   const conversationLabel = zh ? '当前会话' : 'Current conversation';
-  /** 未选中会话时解释入口不可用的原因。 */
-  const conversationTitle = props.currentConversationAvailable ? conversationLabel : zh ? '先从侧栏选择一段会话' : 'Select a conversation in the sidebar first';
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
@@ -357,19 +368,21 @@ export function ProjectWorkspaceModeToolbar(props: {
           );
         })}
       </nav>
-      <button
-        type="button"
-        className="project-workspace-current-conversation"
-        aria-label={conversationLabel}
-        aria-haspopup="dialog"
-        aria-expanded={props.currentConversationOpen}
-        title={conversationTitle}
-        disabled={!props.currentConversationAvailable}
-        onClick={props.onOpenCurrentConversation}
-      >
-        <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
-        <span>{conversationLabel}</span>
-      </button>
+      {/* 没有当前会话时不展示无效操作；选中会话后沿用同一个共享抽屉入口。 */}
+      {props.currentConversationAvailable ? (
+        <button
+          type="button"
+          className="project-workspace-current-conversation"
+          aria-label={conversationLabel}
+          aria-haspopup="dialog"
+          aria-expanded={props.currentConversationOpen}
+          title={conversationLabel}
+          onClick={props.onOpenCurrentConversation}
+        >
+          <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
+          <span>{conversationLabel}</span>
+        </button>
+      ) : null}
     </header>
   );
 }

@@ -65,8 +65,8 @@ export function GoalPanel(props: GoalPanelProps) {
   const unfinished = Boolean(props.goal && props.goal.status !== 'complete');
 
   return (
-    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
-      <section className="session-goal-panel zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <section className="session-goal-panel zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="session-goal-panel-header">
           <div>
             <span className="session-goal-eyebrow">{zh ? '持续执行' : 'Continuous work'}</span>

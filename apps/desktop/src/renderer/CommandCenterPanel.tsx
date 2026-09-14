@@ -829,8 +829,8 @@ function CommandRunHistoryModal(props: {
   const activeRunSyncState = props.runDetail?.run.status === 'running' ? props.syncState : 'live';
   const stopUnavailable = activeRunSyncState !== 'live';
   return (
-    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <div className="command-modal command-history-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-history-modal-title">
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-history-modal-title">
+      <div className="command-modal command-history-modal zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-history-modal-title">{zh ? `${props.command.title} · 执行历史` : `${props.command.title} · Run history`}</h3>
@@ -967,8 +967,8 @@ function CommandDefinitionModal(props: {
       props.draft.parameters.map((parameter, parameterIndex) => (parameterIndex === index ? { ...parameter, ...patch } : parameter)),
     );
   return (
-    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-definition-modal-title" onSubmit={props.onSubmit}>
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-definition-modal-title">
+      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
@@ -1106,8 +1106,16 @@ function CommandDefinitionModal(props: {
 function CommandPermissionModal(props: { request: CommandPermissionRequest; project: ProjectRecord; busy: boolean; language: 'zh-CN' | 'en-US'; onClose: () => void; onContinue: () => void }) {
   const zh = props.language === 'zh-CN';
   return (
-    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <div className="command-modal command-permission-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-permission-modal-title" aria-describedby="command-permission-modal-description">
+    <ModalPortal
+      rootClassName="command-modal-portal-root"
+      backdropClassName="command-modal-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="command-permission-modal-title"
+      aria-describedby="command-permission-modal-description"
+    >
+      <div className="command-modal command-permission-modal zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-permission-modal-title">{zh ? '开启项目命令权限' : 'Enable project command permissions'}</h3>
@@ -1166,8 +1174,8 @@ function CommandRunModal(props: {
   const highRisk = commandNeedsHighRiskConfirmation(props.command.riskFlags);
   const riskLabels = commandRiskLabels(props.command.riskFlags, zh);
   return (
-    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-run-modal-title" onSubmit={props.onSubmit}>
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-run-modal-title">
+      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-run-modal-title">{props.command.title}</h3>

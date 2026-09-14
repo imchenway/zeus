@@ -355,8 +355,8 @@ export function ModelConnectionsSettingsPane(props: {
   const httpConfirmation = pendingInsecureHttpSave ? (
     <section
       className="model-connection-http-risk-dialog zeus-solid-form-surface"
-      role={props.onComplete ? 'alert' : 'dialog'}
-      aria-modal={props.onComplete ? undefined : true}
+      role={props.onComplete ? 'alert' : undefined}
+      data-modal-surface={props.onComplete ? undefined : 'dialog'}
       aria-labelledby="model-connection-http-risk-title"
       aria-describedby="model-connection-http-risk-description"
     >
@@ -709,7 +709,14 @@ export function ModelConnectionsSettingsPane(props: {
           props.onComplete ? (
             httpConfirmation
           ) : (
-            <ModalPortal rootClassName="model-connection-http-risk-portal" dismissDisabled={busy} onDismiss={() => setPendingInsecureHttpSave(null)}>
+            <ModalPortal
+              rootClassName="model-connection-http-risk-portal"
+              dismissDisabled={busy}
+              onDismiss={() => setPendingInsecureHttpSave(null)}
+              role="dialog"
+              aria-labelledby="model-connection-http-risk-title"
+              aria-describedby="model-connection-http-risk-description"
+            >
               {httpConfirmation}
             </ModalPortal>
           )

@@ -1,5 +1,6 @@
 import { buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, prepareTaskWorktree } from '@zeus/git-core';
 import {
+  ConversationExpertRepository,
   ConversationRepository,
   ConversationSubmissionRepository,
   ProjectRepository,
@@ -28,6 +29,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ConversationExecutionContextDependencies = Record<string, any> & {
+  /** 专家通道只能继承已持久化的父会话目录身份。 */
+  conversationExperts: ConversationExpertRepository;
   conversationSubmissions: ConversationSubmissionRepository;
   conversations: ConversationRepository;
   db: ZeusDatabase;
@@ -44,6 +47,7 @@ export type ConversationExecutionContextDependencies = Record<string, any> & {
 
 export function createConversationExecutionContextOperations(dependencies: ConversationExecutionContextDependencies) {
   const {
+    conversationExperts,
     conversationSubmissions,
     conversations,
     db,
@@ -112,6 +116,16 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     // 旧 Worktree 会话已有精确工作区身份，可以安全沿用并在后续复验真实目录。
     if (conversation.workspaceId || conversation.environmentId) return 'worktree';
     if (!project) return null;
+    /** 新专家通道尚无首条提交时，从精确父子关系继承已确认的直接目录模式。 */
+    const participant = conversationExperts.getParticipantByChildConversation(conversation.id);
+    const parent = participant ? conversations.getRecordById(participant.conversationId) : undefined;
+    if (parent && parent.projectId === conversation.projectId && parent.taskId === conversation.taskId && parent.workspaceId === conversation.workspaceId && parent.environmentId === conversation.environmentId) {
+      for (const submission of conversationSubmissions.listByConversation(parent.id)) {
+        const input = parseJsonObject(submission.inputJson);
+        const context = isNativeApiRecord(input.context) ? input.context : null;
+        if (input.expertRound === true && context?.executionWorkspaceMode === 'direct' && typeof context.projectLocalPath === 'string' && resolve(context.projectLocalPath) === resolve(project.localPath)) return 'direct';
+      }
+    }
     const initialSubmission = submissions.at(-1);
     const initialInput = initialSubmission ? parseJsonObject(initialSubmission.inputJson) : {};
     const initialContext = isNativeApiRecord(initialInput.context) ? initialInput.context : null;

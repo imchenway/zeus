@@ -30,6 +30,22 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 
 /** 跨页面、原生窗口和通知共用的原因目录。每组只合并具有相同产品含义的错误。 */
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
+  // 工作安排表单复用后端明确的校验原因，用户可按提示修正草稿。
+  [['请选择实际需要的成果类型。'], ['请为每份分工至少选择一种成果类型，再保存安排。', 'Select at least one output type for each assignment before saving the plan.']],
+  [['请安排 1 到 12 个阶段。'], ['请安排 1 到 12 个阶段。', 'Create between 1 and 12 stages.']],
+  [['每个阶段需要 1 到 24 份明确分工。'], ['每个阶段需要 1 到 24 份明确分工。', 'Each stage needs between 1 and 24 assignments.']],
+  [['每个阶段至少需要一份必要分工。'], ['每个阶段至少需要一份必要分工。', 'Each stage needs at least one required assignment.']],
+  [['请填写阶段名称。'], ['请填写阶段名称。', 'Enter a stage name.']],
+  [['请填写分工目标。'], ['请填写分工目标。', 'Enter an assignment objective.']],
+  [['请填写工作边界与完成标准。'], ['请填写工作边界与完成标准。', 'Enter the work scope and completion criteria.']],
+  [['阶段推进方式无效。'], ['请重新选择阶段通过后的动作。', 'Select the action to take after the stage passes again.']],
+  [['成果接纳方式无效。'], ['请重新选择成果接纳方式。', 'Select the output acceptance method again.']],
+  [['分工内容无效。'], ['分工内容无法读取，请重新检查工作安排。', 'The assignment could not be read. Review the work plan.']],
+  // 自动接纳的输入校验必须说明补齐方式，不把可纠正的表单错误显示为未知故障。
+  [
+    ['自动接纳需要至少一条明确的验证命令。', '验证命令不能为空。'],
+    ['请至少填写一条验证命令，并移除空白行，再保存安排。', 'Enter at least one verification command and remove blank lines before saving the plan.'],
+  ],
   [
     ['ZEUS_CONVERSATION_READ_FAILED', 'ZEUS_CONVERSATION_SNAPSHOT_V2_READ_FAILED', 'Snapshot V2 首屏身份、结构代次或事件水位不一致。'],
     ['会话内容暂时无法刷新', 'Conversation content could not be refreshed right now.', 'retry'],

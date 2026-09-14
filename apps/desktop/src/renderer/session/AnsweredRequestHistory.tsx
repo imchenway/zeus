@@ -230,8 +230,8 @@ function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversation
   }, [localPath, uploadRef]);
 
   return (
-    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose}>
-      <div className="session-answered-request-preview-sheet" role="dialog" aria-modal="true" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
+    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose} role="dialog" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
+      <div className="session-answered-request-preview-sheet" data-modal-surface="dialog">
         <header>
           <span>
             <strong id={`${previewId}-title`}>{props.attachment.name || copy.imagePreview}</strong>

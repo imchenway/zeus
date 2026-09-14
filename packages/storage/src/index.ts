@@ -1,3 +1,5 @@
+import { migrateEmployeeMemoryProposalSchema } from './employeeMemoryProposalStore.js';
+export * from './employeeMemoryProposalStore.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, lstatSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, open, rename, stat, statfs, unlink } from 'node:fs/promises';
@@ -22,10 +24,14 @@ import { migrateImSchema } from './imStore.js';
 import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
 import { migrateDigitalEmployeeLegacyRetirement } from './digitalEmployeeLegacyRetirementMigration.js';
 import { migrateConversationExpertSchema } from './conversationExpertStore.js';
+import { migrateEmployeeMemorySchema } from './employeeMemoryMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
 import { migrateTaskStageSchema } from './taskStageStore.js';
+import { migrateTaskWorkReviewSchema } from './taskWorkReviewStore.js';
+import { migrateTaskWorkDeploymentSchema } from './taskWorkDeploymentStore.js';
+import { migrateTaskWorkPlanningSchema } from './taskWorkPlanningStore.js';
 import { migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { type DbCodexUsageLedgerRow, deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown } from './conversationStore.js';
@@ -56,6 +62,9 @@ export * from './pluginStore.js';
 export * from './taskEventFileProjectionStore.js';
 export * from './taskStageStore.js';
 export * from './taskWorkStore.js';
+export * from './taskWorkPlanningStore.js';
+export * from './taskWorkReviewStore.js';
+export * from './taskWorkDeploymentStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
@@ -202,7 +211,6 @@ export class ZeusStorageReadOnlyValidationError extends Error {
 export class ZeusDatabase implements ZeusDatabasePort {
   private requestedSaveRevision = 0;
   private persistedSaveRevision = 0;
-  private saveLoop: Promise<void> | null = null;
   private savepointSequence = 0;
   private savepointDepth = 0;
   private closed = false;
@@ -407,24 +415,16 @@ export class ZeusDatabase implements ZeusDatabasePort {
     if (this.businessMutationAdmissionFrozen && this.executionHostHandoffWriteDepth === 0 && !this.db.isTransaction && this.persistedSaveRevision >= this.requestedSaveRevision) return;
     this.assertWritable();
     if (this.savepointDepth > 0) throw new Error('事务回调执行期间不能调用 ZeusDatabase.save()。');
-    const requestedRevision = ++this.requestedSaveRevision;
-    while (this.persistedSaveRevision < requestedRevision) {
-      if (!this.saveLoop) {
-        const loop = this.runSaveLoop();
-        const trackedLoop = loop.finally(() => {
-          if (this.saveLoop === trackedLoop) this.saveLoop = null;
-        });
-        this.saveLoop = trackedLoop;
-      }
-      await this.saveLoop;
-    }
+    this.requestedSaveRevision += 1;
+    // SQLite 提交本身同步完成；不能被上一轮已完成 Promise 的清理时序推迟。
+    this.runSaveLoop();
   }
 
   /**
-   * 同一时刻只提交一个待持久事务；并发保存会合并到当前提交后的至多一次补提交流程。
+   * 在当前调用栈排空保存请求，使紧随其后的关键事实事务看到真实提交状态。
    * SQLite WAL 只追加变化页，不再生成或替换完整数据库文件。
    */
-  private async runSaveLoop(): Promise<void> {
+  private runSaveLoop(): void {
     while (this.persistedSaveRevision < this.requestedSaveRevision) {
       const targetRevision = this.requestedSaveRevision;
       const committedCallbacks = this.commitPendingTransaction();
@@ -515,7 +515,7 @@ export class ZeusDatabase implements ZeusDatabasePort {
     this.assertOpen();
     if (this.writeFailure) throw this.writeFailure;
     if (this.businessMutationAdmissionFrozen) return;
-    if (this.savepointDepth > 0 || this.db.isTransaction || this.saveLoop || this.persistedSaveRevision < this.requestedSaveRevision) {
+    if (this.savepointDepth > 0 || this.db.isTransaction || this.persistedSaveRevision < this.requestedSaveRevision) {
       throw Object.assign(new Error('冻结业务 SQLite 写入前仍有未提交事务或保存循环。'), {
         code: 'ZEUS_EXECUTION_HOST_MUTATION_FENCE_NOT_DRAINED',
         statusCode: 409,
@@ -1017,6 +1017,9 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateDigitalEmployeeCapabilitySchema(zeusDb);
     migrateTaskWorkSchema(zeusDb);
     migrateTaskWorkWorkspaceBindingSchema(zeusDb);
+    migrateTaskWorkPlanningSchema(zeusDb);
+    migrateTaskWorkReviewSchema(zeusDb);
+    migrateTaskWorkDeploymentSchema(zeusDb);
     migrateDigitalEmployeeLegacyRetirement(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
@@ -1029,6 +1032,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateConversationSyncEventStoreSchema(zeusDb);
     migrateConversationSyncProtocolV2(zeusDb);
     migrateLongTermMemorySchema(zeusDb);
+    migrateEmployeeMemorySchema(zeusDb);
+    migrateEmployeeMemoryProposalSchema(zeusDb);
     migratePluginStoreSchema(zeusDb);
     migrateExecutionHostWorkSchema(zeusDb);
     migrateExecutionHostHandoffSchema(zeusDb);

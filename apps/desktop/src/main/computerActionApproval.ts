@@ -76,7 +76,8 @@ export function computerActionApprovalReason(tool: string, args: Record<string, 
     }
   }
   if (tool === 'click' && target.editable) return null;
-  if (tool === 'perform_secondary_action' && args.action === 'AXShowMenu') return null;
+  // 定位控件仅改变滚动位置，不会触发该控件的发送、删除或确认动作。
+  if (tool === 'perform_secondary_action' && (args.action === 'AXShowMenu' || args.action === 'AXScrollToVisible')) return null;
   if (tool === 'perform_secondary_action' && ['AXDelete', 'AXConfirm'].includes(String(args.action))) return english ? 'This accessibility action deletes or confirms the selected object.' : '这个控件操作会删除或确认选中的对象。';
   if (sensitiveActionPattern.test(descriptor)) return english ? 'This control may send information, submit changes, or perform a consequential action.' : '这个控件可能发送信息、提交修改或执行有实际影响的操作。';
   if (textInput) return english ? 'The target does not expose an editable text field. Input may trigger an application action.' : '目标没有公开可编辑文本框，输入可能触发应用操作。';

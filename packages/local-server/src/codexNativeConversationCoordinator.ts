@@ -193,7 +193,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     setRunState: (conversationId, state) => runStates.set(conversationId, state),
   });
-  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
+  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,
@@ -2890,6 +2890,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (!requestedConversationIds.has(submission.conversationId)) continue;
       if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
       if ((submission.status !== 'dispatching' && submission.status !== 'active') || boundConversationIds.has(submission.conversationId)) continue;
+      // 当前宿主仍在创建首轮线程时尚无已接纳分段，不能当成重启遗留的未知派发。
+      if (isPreparingDispatch(submission.conversationId, submission.id)) continue;
       markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', 'Native submission has no recoverable provider thread.'));
     }
   }

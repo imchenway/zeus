@@ -957,8 +957,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   return (
-    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
-      <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
+    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose} role="dialog" aria-labelledby="task-git-merge-title">
+      <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} data-modal-surface="dialog">
         <header className="task-git-merge-header">
           <span>
             <strong id="task-git-merge-title">

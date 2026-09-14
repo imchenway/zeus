@@ -1,3 +1,4 @@
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { parseJsonObject } from './localServerPlatformSupport.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
@@ -1192,6 +1193,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const piAgentDirectory = readOnlyValidation ? dataLayout.piConfig : migrateRuntimeDirectory(join(dataLayout.root, 'pi-agent'), dataLayout.piConfig);
   const piSessionDirectory = readOnlyValidation ? dataLayout.piSessions : migrateRuntimeDirectory(join(dataLayout.root, 'pi-sessions'), dataLayout.piSessions);
   if (!readOnlyValidation) ensurePiGlobalAgentProjection(options.codexHome ?? dataLayout.codexHome, piAgentDirectory);
+  /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */
+  let taskWorkTools: TaskWorkToolPort | null = null;
+  /** 未完成初始化或停止时禁止工具绕开工作服务。 */
+  const nativeWorkTools: TaskWorkToolPort = {
+    invoke: (input) => {
+      if (!taskWorkTools) throw new Error('工作服务尚未就绪。');
+      return taskWorkTools.invoke(input);
+    },
+  };
   const piNativeCoordinator = readOnlyValidation
     ? createReadOnlyValidationPiCoordinator(() => now().toISOString())
     : createPiNativeConversationCoordinator({
@@ -1215,6 +1225,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         toolResults: conversationToolResults,
         plugins: zeusConversationPluginRuntime,
         browserAutomation: options.browserAutomation,
+        workTools: nativeWorkTools,
         auditNativeTool: async (event) => {
           auditLogs.append({
             actorType: 'zeus_native_tool',
@@ -1394,6 +1405,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   const generatedImageRoot = codexHome ? join(codexHome, 'generated_images') : undefined;
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
+    conversationExperts,
     conversationSubmissions,
     conversations,
     db,
@@ -1682,6 +1694,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       eventFlow: conversationEventFlow,
       resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
+      workTools: nativeWorkTools,
       plugins: zeusConversationPluginRuntime,
       auditNativeTool: async (event) => {
         auditLogs.append({
@@ -3427,6 +3440,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     unsubscribeCodexModels();
     await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
   };
+  taskWorkTools = platformRoutes.workTools;
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;

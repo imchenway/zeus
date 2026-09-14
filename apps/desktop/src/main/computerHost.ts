@@ -218,6 +218,8 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    // 直接宿主入口也必须有期限；已有调度期限不能因排队或确认而重新计时。
+    input = { ...input, deadlineUnixMs: input.deadlineUnixMs ?? Date.now() + 120_000 };
     if (input.namespace !== 'zeus_computer') return computerText(`ComputerHost 不支持命名空间：${String(input.namespace)}`, false);
     if (this.options.readOnlyValidation) return computerText('只读验证模式禁止启动或调用 Computer Use。', false);
     if (!this.settings.enabled) return computerText('Zeus Computer Use 尚未在设置中全局启用。', false);
@@ -357,6 +359,9 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 所有异步边界复核同一停止世代，审批通过不代表已撤销控制可以恢复。 */
   private assertControlAllowed(input: BrowserAutomationToolCall, generation: number): void {
+    if (input.deadlineUnixMs !== undefined && (!Number.isFinite(input.deadlineUnixMs) || Date.now() >= input.deadlineUnixMs)) {
+      throw Object.assign(new Error('ZEUS_COMPUTER_CALL_EXPIRED: 本次调用期限已结束；不得继续或重放动作，请重新观察实际结果。'), { code: 'ZEUS_COMPUTER_CALL_EXPIRED' });
+    }
     if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || this.revokedTurns.has(JSON.stringify([input.conversationId, input.turnId]))) {
       throw Object.assign(new Error('ZEUS_COMPUTER_STOPPED: 本轮桌面控制已撤销；需要用户发起新轮次，禁止自动恢复或重试动作。'), { code: 'ZEUS_COMPUTER_STOPPED' });
     }
@@ -707,6 +712,20 @@ export class ComputerHost implements BrowserAutomationPort {
     /** 一次性取消信号跟随控制生命周期。 */
     const controller = new AbortController();
     this.actionApproval = controller;
+    /** 留出跨进程回传时间；无人确认时关闭弹窗并释放队列，绝不视为同意。 */
+    const remainingMs = Math.max(0, (input.deadlineUnixMs ?? Date.now()) - Date.now() - 1_000);
+    /** 明确区分确认过期和用户停止，便于代理判断动作尚未执行。 */
+    const expiredError = Object.assign(new Error('电脑操作确认已过期，动作尚未执行；请重新观察目标。'), { code: 'ZEUS_COMPUTER_APPROVAL_EXPIRED' });
+    /** 即使系统弹窗取消回执延迟，也必须释放本次串行调用。 */
+    let expirationTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 到期撤销当前一次性确认，迟到的允许结果不能启动动作。 */
+    const expiration = new Promise<never>((_resolve, reject) => {
+      expirationTimer = setTimeout(() => {
+        controller.abort(expiredError);
+        reject(expiredError);
+      }, remainingMs);
+      expirationTimer.unref();
+    });
     /** 默认拒绝，具体应用与动作在说明中展示。 */
     const options: Electron.MessageBoxOptions = {
       type: 'warning',
@@ -721,10 +740,12 @@ export class ComputerHost implements BrowserAutomationPort {
     };
     try {
       /** 只接受明确的本次批准；停止信号优先于稍晚到达的按钮结果。 */
-      const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-      if (controller.signal.aborted) throw Object.assign(new Error('本轮桌面控制已停止，动作尚未执行。'), { code: 'ZEUS_COMPUTER_STOPPED' });
+      if (remainingMs === 0) throw expiredError;
+      const result = await Promise.race([window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options), expiration]);
+      if (controller.signal.aborted) throw controller.signal.reason === expiredError ? expiredError : Object.assign(new Error('本轮桌面控制已停止，动作尚未执行。'), { code: 'ZEUS_COMPUTER_STOPPED' });
       if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });
     } finally {
+      if (expirationTimer) clearTimeout(expirationTimer);
       if (this.actionApproval === controller) this.actionApproval = null;
     }
   }

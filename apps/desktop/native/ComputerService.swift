@@ -4,6 +4,7 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 import ScreenCaptureKit
+import Vision
 
 /** 供原生控制和辅助功能层共用的结构化失败。 */
 struct ServiceFailure: Error {
@@ -79,9 +80,62 @@ private struct PreparedComputerAction {
     /** 包含控制身份的完整动作参数。 */
     let arguments: Data
     /** 系统控件引用，防止同名控件相互替换。 */
-    let element: AXUIElement
+    let element: AXUIElement?
     /** 应用、窗口、控件及内容指纹。 */
     let state: Data
+}
+
+/** 原生菜单通过系统通知公开引用，后台应用不保证把它放进 AXWindows 或焦点属性。 */
+private final class ComputerMenuObservation: @unchecked Sendable {
+    /** 系统回调与工具读取之间只同步菜单引用。 */
+    private let lock = NSLock()
+    /** 当前观察应用的系统监听。 */
+    private var observer: AXObserver?
+    /** 当前监听进程，切换应用时清除旧菜单。 */
+    private var pid: pid_t?
+    /** 尚未关闭的菜单引用保留到下一次真实观察。 */
+    private var menus: [AXUIElement] = []
+
+    /** 先订阅再执行打开菜单的动作，避免丢失仅通过通知公开的菜单根。 */
+    @MainActor func observe(pid nextPid: pid_t) {
+        if lock.withLock({ pid == nextPid }) { return }
+        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes) }
+        observer = nil
+        lock.withLock { pid = nextPid; menus.removeAll() }
+        /** 回调只保存引用，具体控件和窗口归属仍在执行时重新读取。 */
+        var nextObserver: AXObserver?
+        guard AXObserverCreate(nextPid, { _, element, notification, context in
+            guard let context else { return }
+            let observation = Unmanaged<ComputerMenuObservation>.fromOpaque(context).takeUnretainedValue()
+            observation.record(element, opened: notification as String == kAXMenuOpenedNotification)
+        }, &nextObserver) == .success, let nextObserver else { return }
+        /** 通知限定当前应用，不订阅其他进程的界面。 */
+        let application = AXUIElementCreateApplication(nextPid)
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        for name in [kAXMenuOpenedNotification, kAXMenuClosedNotification] {
+            _ = AXObserverAddNotification(nextObserver, application, name as CFString, context)
+        }
+        observer = nextObserver
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(nextObserver), .commonModes)
+    }
+
+    /** 关闭通知立即清除对应引用，有限列表避免异常应用无界增长。 */
+    private func record(_ element: AXUIElement, opened: Bool) {
+        /** 已移除监听的迟到通知不能混入另一个应用的菜单。 */
+        var elementPid: pid_t = 0
+        guard AXUIElementGetPid(element, &elementPid) == .success else { return }
+        lock.withLock {
+            guard pid == elementPid else { return }
+            menus.removeAll { CFEqual($0, element) }
+            if opened { menus.append(element) }
+            if menus.count > 16 { menus.removeFirst(menus.count - 16) }
+        }
+    }
+
+    /** 仅给当前进程返回候选；失效引用随后会被实时窗口校验拒绝。 */
+    func roots(for requestedPid: pid_t) -> [AXUIElement] {
+        lock.withLock { pid == requestedPid ? menus : [] }
+    }
 }
 
 @main
@@ -117,6 +171,8 @@ private final class ComputerService {
     private var snapshotHistory: [Int: ElementSnapshot] = [:]
     /** 唯一控制窗口、持续采集和原生停止入口。 */
     private let control = ComputerControlSession()
+    /** 系统菜单不依赖主窗口的普通子控件树。 */
+    private let menuObservation = ComputerMenuObservation()
     /** 当前串行请求由宿主签发的控制身份。 */
     private var controlSessionId = ""
     /** 串行动作只保留一份待执行检查，使用后立即消费。 */
@@ -173,7 +229,7 @@ private final class ComputerService {
 
     private func invoke(method: String, params: [String: Any]) async throws -> Any {
         let condition = try ComputerStateCondition.parse(params["wait_for"])
-        if preparedActionMethods.contains(method) { try validatePreparedAction(method, params) }
+        if preparedActionMethods.contains(method) { try await validatePreparedAction(method, params) }
         switch method {
         case "status":
             return status()
@@ -189,7 +245,7 @@ private final class ComputerService {
             preparedAction = nil
             return try await getAppState(params, condition: condition)
         case "describe_target":
-            return try describeTarget(params)
+            return try await describeTarget(params)
         default:
             break
         }
@@ -208,13 +264,13 @@ private final class ComputerService {
         case "press_key":
             action = try performKey(params)
         case "scroll":
-            action = try performScroll(params)
+            action = try await performScroll(params)
         case "select_text":
             action = try selectText(params)
         case "set_value":
             action = try setValue(params)
         case "type_text":
-            action = try typeText(params)
+            action = try await typeText(params)
         default:
             throw ServiceFailure(code: "ZEUS_COMPUTER_METHOD_UNSUPPORTED", message: "Computer 方法不受支持：\(method)")
         }
@@ -292,6 +348,7 @@ private final class ComputerService {
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
         try rejectSelf(app)
+        await menuObservation.observe(pid: app.processIdentifier)
         // 观察与后续输入固定同一窗口；截屏关闭只省略返回图片，不隐藏正在控制的系统状态。
         let target = afterAction ? try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) : try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
         let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 1000)
@@ -313,20 +370,25 @@ private final class ComputerService {
         var elements: [AXUIElement] = []
         var summaries: [[String: Any]] = []
         var truncatedReason: String?
+        /** 只有找到与采集窗口对应的窗口、面板或菜单树才声明完整。 */
+        var windowMatched = false
         repeat {
             try requireUnlockedSession()
             if condition != nil { _ = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) }
             axStartedAt = Date()
             let readStarted = ProcessInfo.processInfo.systemUptime
             // 每次重新定位窗口树，不复用已经离开页面的 AX 控件引用。
-            let observedWindow = (attribute(applicationElement, kAXWindowsAttribute) as? [AXUIElement])?.first { matchesWindow($0, target: target) }
+            let observedWindow = accessibilityRoot(applicationElement, target: target)
+            windowMatched = observedWindow != nil
             elements.removeAll(keepingCapacity: true)
             summaries.removeAll(keepingCapacity: true)
             var visited = Set<CFHashCode>()
+            /** Finder 列视图包含大量屏幕外祖先目录，先完成当前窗口内的控件读取。 */
+            var deferredElements: [(AXUIElement, Int)] = []
             truncatedReason = nil
             reportProgress(params, stage: "ax_walk", elementCount: 0, startedAt: startedAt)
-            walk(
-                element: observedWindow ?? applicationElement,
+            if let observedWindow { walk(
+                element: observedWindow,
                 depth: 0,
                 maxElements: maxElements,
                 deadlineUnixMilliseconds: readDeadline,
@@ -334,17 +396,32 @@ private final class ComputerService {
                 elements: &elements,
                 summaries: &summaries,
                 truncatedReason: &truncatedReason,
+                visibleFrame: target.frame,
+                deferredElements: &deferredElements,
                 progress: { count in
                     if count == 1 || count.isMultiple(of: 50) {
                         self.reportProgress(params, stage: "ax_walk", elementCount: count, startedAt: startedAt)
                     }
                 }
-            )
+            ) } else { truncatedReason = "window_accessibility_unavailable" }
+            /** 可见控件之后才消耗剩余额度读取屏幕外内容，不谎报省略后的树为完整。 */
+            var deferredIndex = 0
+            while deferredIndex < deferredElements.count && elements.count < maxElements && !deadlineExceeded(readDeadline) {
+                let (element, depth) = deferredElements[deferredIndex]
+                deferredIndex += 1
+                if walk(element: element, depth: depth, maxElements: maxElements, deadlineUnixMilliseconds: readDeadline, visited: &visited, elements: &elements, summaries: &summaries, truncatedReason: &truncatedReason, visibleFrame: target.frame, deferredElements: &deferredElements, progress: { _ in }) { break }
+            }
+            if deferredIndex < deferredElements.count && truncatedReason == nil { truncatedReason = elements.count >= maxElements ? "element_limit" : "deadline" }
+            if let observedWindow, stringAttribute(observedWindow, kAXRoleAttribute) == kAXMenuRole, elements.count == 1 {
+                /** 系统声明有子项却拒绝返回时，保留菜单根并明确标记不完整。 */
+                var childCount: CFIndex = 0
+                if AXUIElementGetAttributeValueCount(observedWindow, kAXChildrenAttribute as CFString, &childCount) == .success && childCount > 0 { truncatedReason = "menu_children_unavailable" }
+            }
             if truncatedReason == nil, elements.count >= maxElements { truncatedReason = "element_limit" }
             axFinishedAt = Date()
             axMilliseconds += (ProcessInfo.processInfo.systemUptime - readStarted) * 1000
             readCount += 1
-            satisfied = condition?.isSatisfied(by: summaries, complete: truncatedReason == nil, windowMatched: observedWindow != nil) ?? false
+            satisfied = condition?.isSatisfied(by: summaries, complete: truncatedReason == nil, windowMatched: windowMatched) ?? false
             guard let condition, !satisfied, !deadlineExceeded(readDeadline), (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000 < condition.timeoutMilliseconds else { break }
             // ponytail: 有界复用现有 AX 扫描；大型树确有瓶颈时再引入目标区域订阅。
             try await Task.sleep(nanoseconds: UInt64(min(100, max(0, remainingMilliseconds(until: readDeadline)))) * 1_000_000)
@@ -365,6 +442,8 @@ private final class ComputerService {
             "snapshot_generation": generation,
             "action_sequence": actionSequence,
             "window": target.metadata,
+            "available_windows": control.availableWindows,
+            "window_accessibility_matched": windowMatched,
             "control": control.status,
             "elements": summaries,
             "text": accessibilityText(summaries),
@@ -377,6 +456,7 @@ private final class ComputerService {
             result["confirmation"] = ["status": satisfied ? "satisfied" : "timed_out", "scope": "accessibility_condition", "elapsed_ms": confirmationMilliseconds, "read_count": readCount]
         }
         if let truncatedReason { result["truncated_reason"] = truncatedReason }
+        if isObservedMenu(target), let menu = try? await visualMenuSnapshot(target, notBefore: axCompletedTime) { result["visual_menu_items"] = menu.items }
         let screenshotStarted = ProcessInfo.processInfo.systemUptime
         if params["include_screenshot"] as? Bool != false {
             if remainingMilliseconds(until: deadlineUnixMilliseconds) < minimumScreenshotBudgetMilliseconds {
@@ -417,6 +497,8 @@ private final class ComputerService {
         elements: inout [AXUIElement],
         summaries: inout [[String: Any]],
         truncatedReason: inout String?,
+        visibleFrame: CGRect,
+        deferredElements: inout [(AXUIElement, Int)],
         progress: (Int) -> Void
     ) -> Bool {
         if elements.count >= maxElements {
@@ -451,7 +533,21 @@ private final class ComputerService {
             return true
         }
         let children = described.children
+        /** 滚动容器会裁剪子项；仅与整个窗口相交的祖先目录不等于实际可见。 */
+        let childVisibleFrame: CGRect
+        if summary["role"] as? String == kAXScrollAreaRole,
+           let frame = summary["frame"] as? [String: Double],
+           let x = frame["x"], let y = frame["y"], let width = frame["width"], let height = frame["height"] {
+            childVisibleFrame = visibleFrame.intersection(CGRect(x: x, y: y, width: width, height: height))
+        } else {
+            childVisibleFrame = visibleFrame
+        }
         for child in children {
+            if deadlineExceeded(deadlineUnixMilliseconds) { truncatedReason = "deadline"; return true }
+            if let frame = frameAttribute(child), let x = frame["x"], let y = frame["y"], let width = frame["width"], let height = frame["height"], !childVisibleFrame.intersects(CGRect(x: x, y: y, width: width, height: height)) {
+                deferredElements.append((child, depth + 1))
+                continue
+            }
             if walk(
                 element: child,
                 depth: depth + 1,
@@ -461,6 +557,8 @@ private final class ComputerService {
                 elements: &elements,
                 summaries: &summaries,
                 truncatedReason: &truncatedReason,
+                visibleFrame: childVisibleFrame,
+                deferredElements: &deferredElements,
                 progress: progress
             ) { return true }
         }
@@ -468,7 +566,7 @@ private final class ComputerService {
     }
 
     /** 检查实际执行路径上的控件，不使用先前展示给模型的缓存描述。 */
-    private func inspectActionTarget(_ method: String, _ params: [String: Any]) throws -> (element: AXUIElement, summary: [String: Any], state: Data) {
+    private func inspectActionTarget(_ method: String, _ params: [String: Any]) async throws -> (element: AXUIElement?, summary: [String: Any], state: Data) {
         try requireAccessibility()
         try requireUnlockedSession()
         let (app, requestedElement) = try appAndElement(params, elementRequired: method == "set_value")
@@ -484,6 +582,25 @@ private final class ComputerService {
         else if method == "drag" { target = try hitElement(app.processIdentifier, params: hitParams) }
         else { target = try requestedElement ?? hitElement(app.processIdentifier, params: hitParams) }
         guard let target else {
+            if method == "click", requestedElement == nil, let x = numberValue(params["x"]), let y = numberValue(params["y"]), isObservedMenu(window) {
+                /** 只识别系统已确认的菜单截图；普通窗口及文字输入没有此路径。 */
+                let menu = try await visualMenuSnapshot(window, notBefore: CMClockGetTime(CMClockGetHostTimeClock()))
+                let matching = menu.items.filter { item in
+                    guard let frame = item["frame"] as? [String: CGFloat], let itemX = frame["x"], let itemY = frame["y"], let width = frame["width"], let height = frame["height"] else { return false }
+                    return CGRect(x: itemX, y: itemY, width: width, height: height).contains(CGPoint(x: x, y: y))
+                }
+                guard matching.count == 1, let item = matching.first, let label = item["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "点击位置没有唯一可识别的菜单文字，请重新观察菜单截图。") }
+                /** 可见文字仍交给同一宿主敏感动作判定，不能用未命名菜单跳过确认。 */
+                let summary: [String: Any] = ["appName": app.localizedName ?? "", "windowId": window.windowId, "windowTitle": window.title, "role": kAXMenuRole, "subrole": "", "title": label, "description": "系统菜单截图识别文字", "identifier": "", "editable": false, "secure": false, "target_source": "menu_image"]
+                return (nil, summary, try encoder.data(withJSONObject: ["pid": Int(app.processIdentifier), "window": window.metadata, "menu_image": menu.fingerprint, "label": label], options: [.sortedKeys]))
+            }
+            // Escape 等导航键不激活控件；已捕获且仍存活的窗口本身就是可验证目标。
+            // 文字、回车、点击及组合快捷键继续要求真实控件，不能借此绕过敏感动作检查。
+            if method == "press_key", isWindowNavigation(params["key"] as? String ?? "") {
+                /** 原生签发的窗口说明不冒充缺失的菜单选项。 */
+                let summary: [String: Any] = ["appName": app.localizedName ?? "", "windowId": window.windowId, "windowTitle": window.title, "role": kAXWindowRole, "subrole": "", "title": window.title, "description": "已观察窗口的导航操作", "identifier": "", "editable": false, "secure": false]
+                return (nil, summary, try encoder.data(withJSONObject: ["pid": Int(app.processIdentifier), "window": window.metadata, "target": "window_navigation"], options: [.sortedKeys]))
+            }
             throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "无法确认目标控件；请重新读取目标窗口，动作尚未执行。")
         }
         try requireElementWindow(target, target: window)
@@ -535,26 +652,30 @@ private final class ComputerService {
     }
 
     /** 为宿主提供可确认的目标，并签发只用于这一次动作的凭据。 */
-    private func describeTarget(_ params: [String: Any]) throws -> [String: Any] {
+    private func describeTarget(_ params: [String: Any]) async throws -> [String: Any] {
         preparedAction = nil
         guard let method = params["_action_tool"] as? String, preparedActionMethods.contains(method) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_REQUIRED", message: "目标检查缺少具体动作。")
         }
-        let target = try inspectActionTarget(method, params)
+        let target = try await inspectActionTarget(method, params)
         let token = UUID().uuidString
         preparedAction = PreparedComputerAction(token: token, method: method, arguments: try actionArguments(params), element: target.element, state: target.state)
         return target.summary.merging(["token": token]) { _, value in value }
     }
 
     /** 在实际输入前消费凭据并重新读取目标；确认不能授权变化后的控件或内容。 */
-    private func validatePreparedAction(_ method: String, _ params: [String: Any]) throws {
+    private func validatePreparedAction(_ method: String, _ params: [String: Any]) async throws {
         let prepared = preparedAction
         preparedAction = nil
         guard let prepared, params["_action_token"] as? String == prepared.token, method == prepared.method, try actionArguments(params) == prepared.arguments else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_CHANGED", message: "本次操作的目标检查已失效，动作尚未执行；请重新观察后发起操作。")
         }
-        let current = try inspectActionTarget(method, params)
-        guard CFEqual(current.element, prepared.element), current.state == prepared.state else {
+        let current = try await inspectActionTarget(method, params)
+        /** 无控件仅能对应受限窗口导航，其他动作仍比较真实控件引用。 */
+        let sameElement: Bool
+        if let currentElement = current.element, let preparedElement = prepared.element { sameElement = CFEqual(currentElement, preparedElement) }
+        else { sameElement = current.element == nil && prepared.element == nil }
+        guard sameElement, current.state == prepared.state else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_CHANGED", message: "等待期间目标窗口、控件或内容已变化，动作尚未执行；请重新观察并确认实际操作。")
         }
     }
@@ -631,11 +752,91 @@ private final class ComputerService {
 
     /** 语义动作不能利用同一应用的旧元素跨到未观察窗口。 */
     private func requireElementWindow(_ element: AXUIElement, target: ComputerWindowTarget) throws {
-        let value = attribute(element, kAXWindowAttribute)
-        let window = stringAttribute(element, kAXRoleAttribute) == kAXWindowRole ? element : value.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
-        guard let window, matchesWindow(window, target: target) else {
+        // 文件选择框以 AXSheet 挂在主窗口内；AXWindow 指向主窗口不代表控件不属于面板。
+        guard enclosingSurfaces(element).contains(where: { matchesWindow($0, target: target) }) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_MISMATCH", message: "无法确认元素或键盘焦点属于已观察窗口，请重新观察目标窗口。")
         }
+    }
+
+    /** 使用系统顶层容器和祖先链确认面板、菜单及窗口，不用坐标包含关系放宽到其他窗口。 */
+    private func enclosingSurfaces(_ element: AXUIElement) -> [AXUIElement] {
+        /** 有界去重，避免不完整或循环的辅助功能父子关系。 */
+        var surfaces: [AXUIElement] = []
+        /** 从实际控件开始，也覆盖本身就是面板的情形。 */
+        var current: AXUIElement? = element
+        /** 系统属性提供的直接顶层关系优先于父级窗口。 */
+        for name in [kAXTopLevelUIElementAttribute, kAXWindowAttribute] {
+            if let value = attribute(element, name), CFGetTypeID(value) == AXUIElementGetTypeID() { surfaces.append(value as! AXUIElement) }
+        }
+        /** 祖先链不遍历应用的其他窗口。 */
+        for _ in 0..<32 {
+            guard let node = current else { break }
+            let role = stringAttribute(node, kAXRoleAttribute) ?? ""
+            if [kAXWindowRole, kAXSheetRole, kAXDrawerRole, kAXMenuRole].contains(role) { surfaces.append(node) }
+            guard role != kAXApplicationRole, let parent = attribute(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID(), !CFEqual(node, parent) else { break }
+            current = (parent as! AXUIElement)
+        }
+        return surfaces
+    }
+
+    /** 读取与捕获边界一致的辅助功能根；原生文件面板不一定直接列在 AXWindows 中。 */
+    private func accessibilityRoot(_ application: AXUIElement, target: ComputerWindowTarget) -> AXUIElement? {
+        /** 焦点链可能直接指向独立面板或正在跟踪的菜单。 */
+        var candidates = menuObservation.roots(for: target.pid)
+        for name in [kAXFocusedUIElementAttribute, kAXFocusedWindowAttribute] {
+            if let value = attribute(application, name), CFGetTypeID(value) == AXUIElementGetTypeID() { candidates.append(contentsOf: enclosingSurfaces(value as! AXUIElement)) }
+        }
+        candidates.append(contentsOf: attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? [])
+        candidates.append(contentsOf: attribute(application, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+        /** 只展开窗口和面板的容器关系，不扫描整页或隐藏的菜单栏。 */
+        var visited = Set<CFHashCode>()
+        var offset = 0
+        while offset < candidates.count && offset < 128 {
+            let candidate = candidates[offset]
+            offset += 1
+            guard visited.insert(CFHash(candidate)).inserted else { continue }
+            if matchesWindow(candidate, target: target) { return candidate }
+            let role = stringAttribute(candidate, kAXRoleAttribute) ?? ""
+            guard [kAXWindowRole, kAXSheetRole, kAXDrawerRole, kAXGroupRole, kAXSplitGroupRole].contains(role) else { continue }
+            candidates.append(contentsOf: attribute(candidate, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+        }
+        return nil
+    }
+
+    /** 仅无修饰键或 Shift 导航可使用窗口目标，绝不包含回车、空格、删除或任意快捷键。 */
+    private func isWindowNavigation(_ chord: String) -> Bool {
+        /** 与实际键盘解析保持相同的大小写和空白规则。 */
+        let parts = chord.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard let key = parts.last, parts.dropLast().allSatisfy({ $0 == "shift" }) else { return false }
+        return ["escape", "tab", "left", "right", "up", "down", "arrowleft", "arrowright", "arrowup", "arrowdown", "home", "end", "pageup", "pagedown"].contains(key)
+    }
+
+    /** 只有系统菜单通知与已捕获窗口一致时才允许菜单图像定位。 */
+    private func isObservedMenu(_ target: ComputerWindowTarget) -> Bool {
+        menuObservation.roots(for: target.pid).contains { stringAttribute($0, kAXRoleAttribute) == kAXMenuRole && matchesWindow($0, target: target) }
+    }
+
+    /** 菜单缺少可读子项时返回实际截图文字和坐标，绝不伪造辅助功能元素索引。 */
+    private func visualMenuSnapshot(_ target: ComputerWindowTarget, notBefore: CMTime) async throws -> (items: [[String: Any]], fingerprint: String) {
+        /** 新帧和当前窗口必须相同，不能用打开前或另一窗口的图像定位。 */
+        let (image, capturedTarget, _, _) = try await control.snapshot(notBefore: notBefore)
+        guard capturedTarget.pid == target.pid, capturedTarget.windowId == target.windowId, capturedTarget.frame == target.frame, isObservedMenu(target) else { throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_CHANGED", message: "菜单窗口已变化，请重新观察。") }
+        /** 识别保留原文字，不用语言纠正把动作名称改写为猜测结果。 */
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["zh-Hans", "en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        /** 菜单文字框与截图使用同一全局逻辑坐标。 */
+        let items: [[String: Any]] = (request.results ?? []).compactMap { observation in
+            guard let text = observation.topCandidates(1).first, !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let bounds = observation.boundingBox
+            return ["text": text.string, "confidence": text.confidence, "frame": ["x": target.frame.minX + bounds.minX * target.frame.width, "y": target.frame.minY + (1 - bounds.maxY) * target.frame.height, "width": bounds.width * target.frame.width, "height": bounds.height * target.frame.height]]
+        }
+        /** 执行前重读同一菜单图像；等待期间菜单变化时原批准立即失效。 */
+        guard let pixels = image.dataProvider?.data else { throw ServiceFailure(code: "ZEUS_COMPUTER_FRAME_UNAVAILABLE", message: "菜单截图没有可验证的像素。") }
+        let fingerprint = SHA256.hash(data: pixels as Data).map { String(format: "%02x", $0) }.joined()
+        return (items, fingerprint)
     }
 
     /** 辅助功能窗口与采集窗口使用相同的逻辑边界，允许系统的小数舍入。 */
@@ -657,16 +858,22 @@ private final class ComputerService {
             guard let element, let action = params["action"] as? String, !action.isEmpty else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_SECONDARY_ACTION_INVALID", message: "perform_secondary_action 需要元素公开的 action。")
             }
-            guard AXUIElementPerformAction(element, action as CFString) == .success else {
+            /** 菜单关闭会使 AX 引用立即失效；错误回执不能证明动作没有执行。 */
+            let result = AXUIElementPerformAction(element, action as CFString)
+            guard result != .actionUnsupported && result != .notImplemented else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_SECONDARY_ACTION_FAILED", message: "目标元素拒绝辅助功能动作：\(action)")
             }
+            if result != .success { return ["attempted": action, "semantic": true, "outcome": "unknown", "ax_error": result.rawValue, "effect_verified": false] }
             return ["performed": action, "semantic": true]
         }
         let requestedButton = try mouseButton(params["mouse_button"])
         let requestedCount = boundedInt(params["click_count"], fallback: 1, min: 1, max: 3)
         if let element {
-            if requestedButton == .left && requestedCount == 1 && AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
-                return ["performed": "press", "semantic": true]
+            if requestedButton == .left && requestedCount == 1 {
+                /** 仅明确不支持语义动作时改用一次坐标点击，未知回执不能导致重复操作。 */
+                let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+                if result == .success { return ["performed": "press", "semantic": true] }
+                if result != .actionUnsupported && result != .notImplemented { return ["attempted": "press", "semantic": true, "outcome": "unknown", "ax_error": result.rawValue, "effect_verified": false] }
             }
             if let point = centerPoint(element) {
                 try postClick(pid: app.processIdentifier, point: point, button: requestedButton, count: requestedCount)
@@ -743,7 +950,7 @@ private final class ComputerService {
         return ["dispatched": "key", "key": chord, "effect_verified": false]
     }
 
-    private func performScroll(_ params: [String: Any]) throws -> [String: Any] {
+    private func performScroll(_ params: [String: Any]) async throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
         let (app, requestedElement) = try appAndElement(params, elementRequired: false)
@@ -753,12 +960,43 @@ private final class ComputerService {
         let normalized = ["u": "up", "d": "down", "l": "left", "r": "right"][direction] ?? direction
         guard ["up", "down", "left", "right"].contains(normalized) else { throw ServiceFailure(code: "ZEUS_COMPUTER_SCROLL_DIRECTION_INVALID", message: "scroll direction 无效。") }
         let pages = max(0.1, min(100, numberValue(params["pages"]) ?? 1))
-        if let element {
-            let actions = ["up": "AXScrollUpByPage", "down": "AXScrollDownByPage", "left": "AXScrollLeftByPage", "right": "AXScrollRightByPage"]
+        /** 只调用目标明确公开的滚动动作，不能将任意控件的成功回执解释成实际滚动。 */
+        let actions = ["up": "AXScrollUpByPage", "down": "AXScrollDownByPage", "left": "AXScrollLeftByPage", "right": "AXScrollRightByPage"]
+        let action = actions[normalized]!
+        /** 依据请求方向选择滚动条，避免 Finder 内层竖向列抢占外层横向滚动。 */
+        let barName = ["left", "right"].contains(normalized) ? kAXHorizontalScrollBarAttribute : kAXVerticalScrollBarAttribute
+        if let element, let scrollTarget = try semanticScrollTarget(element, action: action, barName: barName, pid: app.processIdentifier) {
+            /** 滚动条属于实际处理滚动的容器，用它核对动作造成的位置变化。 */
+            let bar = attribute(scrollTarget, barName).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+            let initialValue = bar.flatMap { numberValue(attribute($0, kAXValueAttribute)) }
+            /** 每页只投递一次；未知结果立即停止，不重放也不改走鼠标滚动。 */
             let count = max(1, Int(ceil(pages)))
             var completed = 0
-            for _ in 0..<count where AXUIElementPerformAction(element, actions[normalized]! as CFString) == .success { completed += 1 }
-            if completed > 0 { return ["scrolled": true, "semantic": true, "direction": normalized, "pages": completed] }
+            for _ in 0..<count {
+                _ = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
+                /** Finder 可能在实际滚动后返回错误；先读回位置，绝不因此重复投递。 */
+                let before = bar.flatMap { numberValue(attribute($0, kAXValueAttribute)) }
+                let result = AXUIElementPerformAction(scrollTarget, action as CFString)
+                let after = try await observedScrollValue(bar, before: before, pid: app.processIdentifier)
+                if let before, let after, before != after {
+                    completed += 1
+                    if result != .success {
+                        return ["dispatched": "scroll", "semantic": true, "scroll_position_changed": true, "effect_verified": false, "direction": normalized, "pages": completed, "ax_error": result.rawValue, "scroll_value_before": initialValue ?? before, "scroll_value_after": after]
+                    }
+                    continue
+                }
+                if result == .success { completed += 1; continue }
+                if result != .actionUnsupported && result != .notImplemented {
+                    return ["attempted": action, "semantic": true, "outcome": "unknown", "ax_error": result.rawValue, "effect_verified": false, "pages": completed]
+                }
+                break
+            }
+            if completed > 0 {
+                /** 只有真实滚动条位置改变才声明已验证；到达边界或缺少位置证据仍不冒充成功。 */
+                let finalValue = bar.flatMap { numberValue(attribute($0, kAXValueAttribute)) }
+                let changed = initialValue != nil && finalValue != nil && initialValue != finalValue
+                return ["dispatched": "scroll", "semantic": true, "scroll_position_changed": changed, "effect_verified": false, "direction": normalized, "pages": completed]
+            }
         }
         let distance = Int32(min(Double(Int32.max), 600 * pages))
         let deltaX: Int32 = normalized == "left" ? -distance : normalized == "right" ? distance : 0
@@ -779,6 +1017,40 @@ private final class ComputerService {
         try postEvent(event, pid: app.processIdentifier, point: point)
         control.showCursor(point)
         return ["dispatched": "scroll", "effect_verified": false, "semantic": false, "direction": normalized, "pages": pages, "delta_x": deltaX, "delta_y": deltaY]
+    }
+
+    /** 从命中的子控件向上寻找公开滚动动作的容器，只允许当前已观察窗口内的祖先。 */
+    private func semanticScrollTarget(_ element: AXUIElement, action: String, barName: String, pid: pid_t) throws -> AXUIElement? {
+        /** 有界遍历及去重避免异常辅助功能树无限循环。 */
+        var current: AXUIElement? = element
+        var visited = Set<CFHashCode>()
+        /** 不公开滚动条的自绘控件仍可使用其公开动作，但优先选取方向明确的容器。 */
+        var fallback: AXUIElement?
+        let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        for _ in 0..<32 {
+            guard let node = current, visited.insert(CFHash(node)).inserted else { break }
+            try requireElementWindow(node, target: target)
+            if actionNames(node)?.contains(action) == true {
+                if let bar = attribute(node, barName), CFGetTypeID(bar) == AXUIElementGetTypeID() { return node }
+                if fallback == nil { fallback = node }
+            }
+            if stringAttribute(node, kAXRoleAttribute) == kAXWindowRole { break }
+            current = attribute(node, kAXParentAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        }
+        return fallback
+    }
+
+    /** 有界等待滚动条位置更新；期间只读状态，不重放动作，并保留用户停止与接管检查。 */
+    private func observedScrollValue(_ bar: AXUIElement?, before: Double?, pid: pid_t) async throws -> Double? {
+        guard let bar, let before else { return nil }
+        /** 只等待当前操作后的界面更新，最长三百毫秒。 */
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.3
+        repeat {
+            _ = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+            let value = numberValue(attribute(bar, kAXValueAttribute))
+            if value == nil || value != before || ProcessInfo.processInfo.systemUptime >= deadline { return value }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        } while true
     }
 
     private func selectText(_ params: [String: Any]) throws -> [String: Any] {
@@ -821,7 +1093,7 @@ private final class ComputerService {
         return ["set": true, "length": value.utf16.count]
     }
 
-    private func typeText(_ params: [String: Any]) throws -> [String: Any] {
+    private func typeText(_ params: [String: Any]) async throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
         let (app, element) = try appAndElement(params, elementRequired: false)
@@ -831,6 +1103,8 @@ private final class ComputerService {
         try requireElementWindow(target, target: control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId))
         if element != nil { try focus(target) }
         defer { control.didMutate() }
+        /** 写入前冻结预期文字；富文本没有可靠选择范围时不能宣称输入已确认。 */
+        let expectedValue = expectedTextAfterInsertion(target, text: text)
         var selectedTextSettable = DarwinBoolean(false)
         // Chromium 单行框声明可写 SelectedText 却可能不更新值，直接使用可验证的值与范围接口。
         let singleLine = stringAttribute(target, kAXRoleAttribute) == kAXTextFieldRole
@@ -855,7 +1129,31 @@ private final class ComputerService {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_EFFECT_UNKNOWN", message: "文字已写入，但无法确认光标位置；请重新观察，不得自动重复输入。")
             }
         }
-        return ["typed": true, "length": text.utf16.count, "semantic": true]
+        /** 系统 success 不保证控件采纳输入，有界只读等待，禁止补发或整篇替换富文本。 */
+        if let expectedValue {
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.3
+            repeat {
+                _ = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
+                if stringAttribute(target, kAXValueAttribute) == expectedValue {
+                    return ["typed": true, "text_value_verified": true, "length": text.utf16.count, "semantic": true]
+                }
+                if ProcessInfo.processInfo.systemUptime >= deadline { break }
+                try await Task.sleep(nanoseconds: 25_000_000)
+            } while true
+        }
+        return ["attempted": "text", "outcome": "unknown", "text_value_verified": false, "length": text.utf16.count, "semantic": true,
+                "message": "系统已接受输入请求，但控件未确认预期文字。请重新观察，不得自动重复输入。"]
+    }
+
+    /** 仅使用目标公开的文字和有效 UTF-16 选择范围计算插入后的预期值。 */
+    private func expectedTextAfterInsertion(_ element: AXUIElement, text: String) -> String? {
+        guard let current = stringAttribute(element, kAXValueAttribute),
+              let selection = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(selection) == AXValueGetTypeID(), AXValueGetType(selection as! AXValue) == .cfRange else { return nil }
+        /** 校验范围避免控件更新中返回过期位置导致越界。 */
+        var range = CFRange()
+        guard AXValueGetValue(selection as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0,
+              range.location <= (current as NSString).length, range.length <= (current as NSString).length - range.location else { return nil }
+        return (current as NSString).replacingCharacters(in: NSRange(location: range.location, length: range.length), with: text)
     }
 
     /** 使用应用自己的命中检测，避免被前台应用遮挡时误读或点击其他应用。 */
@@ -943,16 +1241,25 @@ private final class ComputerService {
         try postEvent(event, pid: pid, point: point)
     }
 
-    /** 用公开 AppKit 构造器附带窗口身份，再设置全局逻辑坐标与独立输入状态。 */
+    /** 用公开 AppKit 构造器附带窗口身份，并在投递前验证两套坐标一致。 */
     private func windowMouseEvent(pid: pid_t, type: CGEventType, point: CGPoint, clickState: Int64) throws -> CGEvent {
         let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
+        /** AppKit 保留窗口内坐标，不能只在桥接后修改全局坐标；窗口坐标以左下角为原点。 */
+        let windowPoint = CGPoint(x: point.x - target.frame.minX, y: target.frame.maxY - point.y)
         guard let eventType = NSEvent.EventType(rawValue: UInt(type.rawValue)),
-              let event = NSEvent.mouseEvent(with: eventType, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+              let event = NSEvent.mouseEvent(with: eventType, location: windowPoint, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                             windowNumber: Int(target.windowId), context: nil, eventNumber: 0, clickCount: Int(clickState), pressure: 1)?.cgEvent else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建目标窗口鼠标事件。")
         }
         event.setSource(inputSource)
-        event.location = point
+        /** 外部窗口不一定能被 AppKit 正确换算；拒绝投递与已观察目标位置不一致的事件。 */
+        let decoded = NSEvent(cgEvent: event)
+        guard abs(event.location.x - point.x) < 1, abs(event.location.y - point.y) < 1,
+              let decoded, decoded.windowNumber == Int(target.windowId),
+              abs(decoded.locationInWindow.x - windowPoint.x) < 1,
+              abs(decoded.locationInWindow.y - windowPoint.y) < 1 else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_COORDINATE_MISMATCH", message: "系统未能为目标窗口生成一致的鼠标坐标，动作未投递。请使用目标公开的辅助功能动作；不能将本次点击视为已执行。")
+        }
         return event
     }
 

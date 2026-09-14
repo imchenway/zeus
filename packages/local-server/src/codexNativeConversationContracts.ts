@@ -1,3 +1,4 @@
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
@@ -57,6 +58,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   broadcast: (type: string, payload: Record<string, unknown>) => void;
   now: () => string;
   browserAutomation?: BrowserAutomationPort;
+  /** 当前任务的本地编排工具。 */
+  workTools?: TaskWorkToolPort;
   plugins?: ZeusConversationPluginRuntime;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   trustedAttachmentRoots: string[];
