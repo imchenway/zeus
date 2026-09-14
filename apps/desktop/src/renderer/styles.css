@@ -23457,3 +23457,69 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-table-column-resize-handle {
   touch-action: none;
 }
+
+/* 2026-09-14 任务列表操作列：三个单任务入口固定在横向滚动视口右侧，不再占用详情抽屉底部。 */
+.macos-ai-app :where(.task-table-header, .task-table-row) .task-table-cell.task-table-action-cell {
+  align-items: center;
+  background: var(--zeus-product-canvas);
+  box-shadow:
+    -1px 0 0 var(--zeus-product-line-soft),
+    -14px 0 20px -20px var(--zeus-product-shadow, black);
+  display: flex;
+  inset-inline-end: 0;
+  justify-content: flex-end;
+  overflow: visible;
+  padding-inline-start: 10px;
+  position: sticky;
+  text-align: end;
+  z-index: 4;
+}
+
+.macos-ai-app .task-table-header .task-table-cell.task-table-action-cell {
+  background: color-mix(in srgb, var(--zeus-product-panel-muted) 72%, var(--zeus-product-canvas));
+  justify-content: center;
+  text-align: center;
+  z-index: 6;
+}
+
+.macos-ai-app .task-table-row:not(.selected):where(:hover, :focus-visible) .task-table-action-cell {
+  background: var(--zeus-source-list-hover);
+}
+
+.macos-ai-app .task-table-row.selected .task-table-action-cell {
+  background: var(--zeus-source-list-selected);
+}
+
+.macos-ai-app .task-table-row.selected:where(:hover, :focus-visible) .task-table-action-cell {
+  background: color-mix(in oklch, var(--zeus-source-list-selected) 88%, var(--zeus-source-list-hover));
+}
+
+.macos-ai-app .task-table-row-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  inline-size: 100%;
+}
+
+.macos-ai-app .task-table-row-actions .task-table-row-action {
+  font-size: 11px;
+  inline-size: 100%;
+  min-block-size: 26px;
+  overflow: hidden;
+  padding-inline: 8px;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 760px) {
+  .macos-ai-app .task-table-row .task-table-cell.task-table-action-cell {
+    background: transparent;
+    box-shadow: none;
+    inset-inline-end: auto;
+    padding-inline-start: 0;
+    position: static;
+  }
+
+  .macos-ai-app .task-table-row .task-table-action-cell .task-table-row-actions {
+    grid-column: 2;
+  }
+}

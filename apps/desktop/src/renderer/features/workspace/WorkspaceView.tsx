@@ -326,6 +326,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openNativeConversationPage,
     openTaskCreateModal,
     openTaskDetailPane,
+    openTaskGitDelivery,
+    openTaskModelPush,
     openThirdPartyLinkInBrowser,
     persistCodeWorkspacePreference,
     prepareNewConversationDraft,
@@ -951,6 +953,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       bulkActionBusy={updatingTaskBusy}
                       statusChangeBusy={updatingTaskBusy}
                       bulkActionStatus={taskBulkActionStatus}
+                      modelPushEntry={
+                        taskModelPushTaskId && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')
+                          ? { taskId: taskModelPushTaskId, status: taskModelPushEntry, error: taskModelPushEntry === 'error' ? taskModelPushError : null }
+                          : undefined
+                      }
+                      taskActionBusy={updatingTaskBusy}
                       listState={!props.snapshot ? 'loading' : 'ready'}
                       activeProjectId={activeProjectId}
                       pageViewMode={taskPageViewMode}
@@ -964,6 +972,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
                       onCreateTask={() => openTaskCreateModal()}
                       onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
+                      onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
+                      onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
+                      onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
                       onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
                       onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
                       onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
