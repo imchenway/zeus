@@ -11,6 +11,7 @@ const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) 
 
 import '../styles.css';
 import '../ui/primitives.css';
+import '../agentdesk-theme.css';
 
 type DiffViewMode = 'side-by-side' | 'unified';
 
@@ -41,8 +42,19 @@ export function ProjectGitDiffWindow(props: {
   comparisonRef?: string;
   comparisonMode?: 'current' | 'working-tree';
   language: 'zh-CN' | 'en-US';
+  /** 独立窗口沿用应用外观，系统模式由主题样式实时跟随。 */
+  appearance: 'light' | 'dark' | 'system';
 }) {
   const zh = props.language === 'zh-CN';
+  /** 将主题同步给正文之外的菜单和错误弹层。 */
+  useEffect(() => {
+    /** 文档主题使门户内容与独立窗口保持一致。 */
+    const root = document.documentElement;
+    root.dataset.zeusTheme = props.appearance;
+    return () => {
+      if (root.dataset.zeusTheme === props.appearance) delete root.dataset.zeusTheme;
+    };
+  }, [props.appearance]);
   const [diff, setDiff] = useState<GitDiffSummary | null>(null);
   const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
   const [selectedPath, setSelectedPath] = useState(props.filePath);
@@ -111,7 +123,7 @@ export function ProjectGitDiffWindow(props: {
   ) : null;
 
   return (
-    <main className="macos-ai-app project-git-diff-window" aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
+    <main className={`macos-ai-app zeus-shell theme-${props.appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
       {diff ? (
         diff.fileDiffs.length > 1 ? (
           <div className="project-git-diff-window-layout">

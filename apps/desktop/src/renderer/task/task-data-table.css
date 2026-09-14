@@ -28,6 +28,15 @@
   max-width: 100%;
 }
 
+/* 调宽命中区保持原尺寸，静止时不显示分隔线。 */
+.task-data-table .ag-header-cell-resize::after {
+  opacity: 0;
+}
+
+.task-data-table .ag-header-cell:is(:hover, :focus-within, .ag-column-resizing) .ag-header-cell-resize::after {
+  opacity: 1;
+}
+
 /* 所有只读与可编辑胶囊共用尺寸和表面，颜色继续表达各自状态。 */
 .macos-ai-app .task-data-table :is(.task-status-chip, .task-status-select > .zeus-select-trigger) {
   box-sizing: border-box;
