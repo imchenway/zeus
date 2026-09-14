@@ -2283,13 +2283,18 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
   );
 }
 
+/** 创建固定显示尺寸的菜单栏图标，并同步菜单与点击行为。 */
 function setupTray(): void {
   if (!tray) {
+    /** 菜单栏专用透明图案保留当前品牌造型。 */
     const trayIconPath = join(desktopRoot(), 'assets/trayTemplate.png');
+    /** 解码后先检查资源，避免无效图片进入系统菜单栏。 */
     const trayIcon = nativeImage.createFromBuffer(readFileSync(trayIconPath));
     if (trayIcon.isEmpty()) throw new Error(`Zeus tray icon is empty: ${trayIconPath}`);
-    trayIcon.setTemplateImage(true);
-    tray = new Tray(trayIcon);
+    /** 固定为 18×18 逻辑像素，避免替换成大图时按原始尺寸撑开菜单栏。 */
+    const menuBarIcon = trayIcon.resize({ width: 18, height: 18, quality: 'best' });
+    menuBarIcon.setTemplateImage(true);
+    tray = new Tray(menuBarIcon);
     tray.setToolTip(desktopDisplayName());
     tray.setIgnoreDoubleClickEvents(true);
   }
