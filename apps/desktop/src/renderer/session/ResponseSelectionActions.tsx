@@ -107,10 +107,23 @@ export function ResponseSelectionActions(props: {
     const article = props.articleRef.current;
     const view = article?.ownerDocument.defaultView;
     const transcript = article?.closest<HTMLElement>('.session-transcript');
-    if (!view) return;
+    if (!article || !view) return;
+    /** 布局通知只刷新仍有效的选区，避免浮层出现后的自动滚动把入口立即清掉。 */
     const update = () => {
-      // 选区工具条只服务当前静止选区；滚动或窗口变化后关闭，避免悬浮在已经离开的文字上。
-      setCandidate(null);
+      setCandidate((current) => {
+        if (!current) return null;
+        /** 已取消或更换的选区不能继续使用上一次批注入口。 */
+        const selection = view.getSelection();
+        /** 正文节点只从当前回答读取，避免跨消息复用入口。 */
+        const root = article.querySelector<HTMLElement>('.session-markdown');
+        if (!root || !selection?.rangeCount || selection.isCollapsed) return null;
+        /** 文字相同也必须属于当前回答，不能跟随另一条消息的选区。 */
+        const selectedRange = selection.getRangeAt(0);
+        if (!root.contains(selectedRange.startContainer) || !root.contains(selectedRange.endContainer) || selectedRange.toString() !== current.anchor.selectedText) return null;
+        /** 原生选区提供滚动及换行后的实际位置，越界时仍关闭入口。 */
+        const point = selectionToolbarPoint(selectedRange.getBoundingClientRect(), article, view);
+        return point ? { ...current, point } : null;
+      });
       setRevision((value) => value + 1);
     };
     view.addEventListener('resize', update);

@@ -517,6 +517,32 @@ function MessageLayoutQa() {
     if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
     setLinkResult('运行检查通过：历史链接和实时链接均可点击，未登记及同名不同网址的链接不可打开');
   }
+  /** 手动检查真实批注入口在布局通知后仍可点击，选区取消后正常关闭。 */
+  async function checkSelectionToolbar(): Promise<void> {
+    /** 使用当前预览的真实正文，不创建替代组件。 */
+    const paragraph = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown p');
+    /** 浏览器原生选区驱动生产入口。 */
+    const selection = window.getSelection();
+    if (!paragraph || !selection) throw new Error('批注检查失败：正文尚未就绪');
+    /** 等待选区事件与 React 提交完成，不改变生产帧调度。 */
+    const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    /** 选中首段，覆盖鼠标抬起后的入口生成。 */
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    await settle();
+    window.dispatchEvent(new Event('resize'));
+    paragraph.closest('.session-transcript')?.dispatchEvent(new Event('scroll'));
+    await settle();
+    if (!document.querySelector('.session-selection-toolbar:popover-open[data-motion-state="open"]:not([inert])')) throw new Error('批注检查失败：布局通知误关闭入口');
+    selection.removeAllRanges();
+    window.dispatchEvent(new Event('resize'));
+    await settle();
+    if (document.querySelector('.session-selection-toolbar[data-motion-state="open"]')) throw new Error('批注检查失败：取消选区后入口未关闭');
+    setLinkResult('运行检查通过：布局通知保留批注入口，取消选区后正常关闭');
+  }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
   function openResource(resource: ConversationResource): void {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
@@ -657,6 +683,7 @@ function MessageLayoutQa() {
           <Button onClick={checkLayout}>检查耗时入口</Button>
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
+          {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查批注入口</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
