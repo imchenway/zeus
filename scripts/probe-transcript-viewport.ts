@@ -82,6 +82,9 @@ for (const [name, expected] of [
   assertProbe(presentation.type === expected && presentation.payload.toolName === name && presentation.payload.output === '完成', 'Pi 工具声明和结果必须统一为既有活动组件使用的类型和字段。');
   if (name === 'bash') assertProbe(presentation.payload.command === 'pwd', '工具结束后不能丢失原始命令。');
 }
+/** 受管命令的真实非零退出码必须进入公共展示，不能因工具已返回而丢失失败依据。 */
+const failedCommand = conversationProcessPresentation('tool', { provider: 'pi', payload: { toolName: 'bash', result: { details: { exitCode: 7 } } } });
+assertProbe(failedCommand.payload.exitCode === 7, '命令失败退出码必须在实时与历史共用的转换中保留。');
 assertProbe(
   conversationProcessPresentation('waiting', { provider: 'pi' }).type === 'commentary' && conversationProcessPresentation('retry', { provider: 'pi' }).type === 'commentary',
   'Pi 等待和重试只显示状态说明，不伪装工具或可回答问题。',

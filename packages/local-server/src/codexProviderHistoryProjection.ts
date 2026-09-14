@@ -112,6 +112,8 @@ export interface CodexProviderHistoryProjectionDependencies {
   markConversationRecoveryRequired(conversationId: string, error: unknown): boolean;
 
   markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void;
+  /** 本宿主仍持有的写入前派发不属于断线未知结果。 */
+  isPreparingDispatch?(conversationId: string): boolean;
 
   failUnsentSubmissionsBeforeProviderDispatch(conversationId: string): void;
 
@@ -605,8 +607,10 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
-    const itemFailed = itemPayload.status === 'failed';
-    const itemTerminal = turnClassification !== 'active' || itemFailed || itemPayload.status === 'completed';
+    /** 中断轮次中的未完成命令没有成功证据；正常回合结束也不能结束后台进程。 */
+    const unfinishedCommand = itemType === 'commandExecution' && itemPayload.status === 'inProgress';
+    const itemFailed = itemPayload.status === 'failed' || (unfinishedCommand && (turnClassification === 'interrupted' || turnClassification === 'failed'));
+    const itemTerminal = itemFailed || itemPayload.status === 'completed' || (!unfinishedCommand && turnClassification !== 'active');
     const projectedStatus = itemFailed ? 'failed' : itemTerminal ? 'completed' : 'in_progress';
     if (compatibilitySnapshotItem) {
       const sourceItems = claimCompatibilitySnapshotSourceItems(
@@ -881,6 +885,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       return;
     }
     for (const submission of inFlight) {
+      if (!submission.providerTurnId && dependencies.isPreparingDispatch?.(conversation.id)) continue;
       const currentSubmission = options.submissions.getById(submission.id);
       if (
         !currentSubmission ||

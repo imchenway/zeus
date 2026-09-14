@@ -126,7 +126,7 @@ export function GoalPanel(props: GoalPanelProps) {
               <dd>{formatDuration(props.goal.timeUsedSeconds, zh)}</dd>
             </div>
             <div>
-              <dt>{zh ? '已用令牌' : 'Tokens used'}</dt>
+              <dt>{props.goal.usageComplete === false ? (zh ? '已知令牌（回报不完整）' : 'Known tokens (incomplete usage)') : zh ? '已用令牌' : 'Tokens used'}</dt>
               <dd>{new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US').format(props.goal.tokensUsed)}</dd>
             </div>
             <div>
@@ -208,7 +208,8 @@ export function GoalRail(props: { goal: NativeGoalSnapshot; language: SessionUiL
         <span title={props.goal.objective}>{props.goal.objective}</span>
       </span>
       <span className="session-goal-rail-meta">
-        {formatDuration(props.goal.timeUsedSeconds, zh)} · {new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { notation: 'compact' }).format(props.goal.tokensUsed)} {zh ? '令牌' : 'tokens'}
+        {formatDuration(props.goal.timeUsedSeconds, zh)} ·{' '}
+        {props.goal.usageComplete === false ? (zh ? '用量回报不完整' : 'Incomplete usage') : `${new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { notation: 'compact' }).format(props.goal.tokensUsed)} ${zh ? '令牌' : 'tokens'}`}
       </span>
     </button>
   );

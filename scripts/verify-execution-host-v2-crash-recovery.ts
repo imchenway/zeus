@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +10,7 @@ import { createZeusDataLayout } from '../packages/local-server/src/zeusDataLayou
 import { expectedBundleIdForDataRootProfile, prepareZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from '../apps/desktop/src/main/dataRootIdentity.js';
 import {
   acquireExecutionHostKernelLease,
+  executionHostKernelLeasePath,
   executionHostLockPath,
   executionHostProtocolVersion,
   executionHostRendezvousPath,
@@ -26,6 +29,31 @@ const probeRoot = await realpath(await mkdtemp(join(tmpdir(), 'zeus-execution-ho
 const observed: Record<string, unknown> = {};
 
 try {
+  /** 独立进程模拟状态探针短暂持锁，真正宿主必须等待后取得唯一租约。 */
+  const probeRaceRoot = await createSyntheticRoot('short-probe-race');
+  acquireExecutionHostKernelLease(probeRaceRoot.root, probeRaceRoot.identity).close();
+  /** 子进程持锁后才通知父进程，避免靠固定启动等待猜测竞争时机。 */
+  const probeHolder = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(process.argv[1]); db.exec('BEGIN EXCLUSIVE'); process.stdout.write('held'); setTimeout(() => { db.exec('ROLLBACK'); db.close(); }, 150);",
+      executionHostKernelLeasePath(probeRaceRoot.root),
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  /** 先订阅退出，保证同步 SQLite 等待期间子进程结束也不会漏掉回执。 */
+  const probeExited = once(probeHolder, 'exit');
+  await Promise.race([once(probeHolder.stdout, 'data'), probeExited.then(() => Promise.reject(new Error('租约探针未报告持锁即退出。')))]);
+  assert.equal(inspectExecutionHostKernelLease(probeRaceRoot.root, probeRaceRoot.identity), 'held');
+  /** 取得租约后其他探测仍能确认占有，不能将等待实现成抢锁。 */
+  const racedLease = acquireExecutionHostKernelLease(probeRaceRoot.root, probeRaceRoot.identity);
+  assert.equal(inspectExecutionHostKernelLease(probeRaceRoot.root, probeRaceRoot.identity), 'held');
+  racedLease.close();
+  assert.equal((await probeExited)[0], 0);
+  observed.shortProbeRace = { startupWaitedForProbe: true, exclusiveOwnerPreserved: true };
+
   const crashRoot = await createSyntheticRoot('crash-recovery');
   const generationA = randomUUID();
   const generationB = randomUUID();

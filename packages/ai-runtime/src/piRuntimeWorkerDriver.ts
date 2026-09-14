@@ -24,7 +24,7 @@ import type {
   SteerAgentRunInput,
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
-import type { PiRuntimeConnection, PiZeusToolBroker, PiZeusToolDefinitionSpec, PiZeusToolRequest } from './piSdkRuntimeDriver.js';
+import type { PiPermissionReviewInput, PiPermissionReviewResult, PiRuntimeConnection, PiZeusToolBroker, PiZeusToolDefinitionSpec, PiZeusToolRequest } from './piSdkRuntimeDriver.js';
 import {
   isPiRuntimeWorkerToCoreMessage,
   piRuntimeWorkerError,
@@ -51,6 +51,8 @@ export interface CreatePiRuntimeWorkerDriverOptions {
 
 export interface PiRuntimeWorkerDriver extends SupervisedAgentRuntimeDriver {
   readonly kind: 'pi';
+  /** 独立审查不占用主会话请求通道。 */
+  reviewPermission(input: PiPermissionReviewInput): Promise<PiPermissionReviewResult>;
   invalidateModelRuntime(): Promise<void>;
 }
 
@@ -271,6 +273,11 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
       return;
     }
     const error = piRuntimeWorkerError(response.error!);
+    // 独立审查失败转人工，不改变主会话的运行熔断状态。
+    if (pending.method === 'reviewPermission') {
+      pending.reject(error);
+      return;
+    }
     const classified = classifyOperationFailure(error, false);
     if (shouldOpenCircuit(classified)) openCircuit(classified);
     else if (lifecycle === 'healthy') {
@@ -397,6 +404,11 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
         if (!pending) return;
         pendingRequests.delete(id);
         const timeoutFailure = failure('timeout', input.effectful ? 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN' : 'ZEUS_PI_WORKER_RPC_TIMEOUT', `Pi Worker 调用超时：${method}`, input.effectful);
+        // 独立审查超时只转人工，不能杀死仍在等待审批的主会话。
+        if (method === 'reviewPermission') {
+          pending.reject(snapshotError(timeoutFailure));
+          return;
+        }
         openCircuit(timeoutFailure);
         pending.reject(snapshotError(timeoutFailure));
         void terminateWorker(false);
@@ -590,6 +602,9 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     },
     getRuntimeHealth(): AgentRuntimeHealthSnapshot {
       return health();
+    },
+    async reviewPermission(input): Promise<PiPermissionReviewResult> {
+      return (await request('reviewPermission', input, 35_000)) as PiPermissionReviewResult;
     },
     async invalidateModelRuntime(): Promise<void> {
       if (!child || !generationId) {

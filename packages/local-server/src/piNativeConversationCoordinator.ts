@@ -1,11 +1,9 @@
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
 import {
   type AgentImageInput,
   type AgentModelIdentity,
@@ -30,11 +28,12 @@ import {
   conversationProcessProviderItemId,
   calculateCacheHitRate,
   type CodexUsageEstimate,
-  type ConversationContextDraft,
   emptyTokenUsageBreakdown,
   estimateDeepSeekUsage,
   type NativeTokenUsageSnapshot,
-  serializeConversationContext,
+  asyncMessageQuestions,
+  parseCanonicalRequestUserInputQuestions,
+  validateCanonicalRequestUserInputAnswers,
   type TaskPushMessageLayout,
   type TokenUsageBreakdown,
 } from '@zeus/shared';
@@ -43,6 +42,7 @@ import type {
   CommandDeliveryRepository,
   ConversationExecutionRepository,
   ConversationProviderItemRepository,
+  ConversationPlanActionRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
@@ -55,7 +55,7 @@ import { projectConversationTurnFailure } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { CreateCodexNativeConversationCoordinatorOptions, NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
+import { appendConversationResourceContext, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
@@ -68,8 +68,11 @@ import { emitPluginCompactionHook } from './codexConversationDispatchContext.js'
 import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
 import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 import { searchPiWorkspace } from './piWorkspaceSearch.js';
-
-const execFileAsync = promisify(execFile);
+import { effectiveToolPermission, resolveConversationToolPath } from './conversationToolPolicy.js';
+import type { ConversationToolProcesses } from './conversationToolProcesses.js';
+import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput } from './codexNativeConversationContracts.js';
+import type { createConversationApplicationOperations } from './conversationApplicationOperations.js';
+import type { createPiGoalApplication } from './piGoalApplication.js';
 
 interface PiConversationContext {
   conversationId: string;
@@ -79,6 +82,10 @@ interface PiConversationContext {
   permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   model: string;
   attachmentRoots: string[];
+  /** 与模型收到的冻结插件 Skill 清单一致，仅供文件工具只读访问。 */
+  pluginSkillRoots: string[];
+  /** 当前执行快照的模式，不能由正在编辑的下一轮设置覆盖。 */
+  workMode: 'default' | 'plan';
   session: AgentSessionIdentity;
 }
 
@@ -92,6 +99,8 @@ interface PiRunContext {
   sourceId: string;
   modelId: string;
   usage: TokenUsageBreakdown;
+  /** 任一真实请求缺少用量时，不再把整轮累计冒充完整值。 */
+  usageComplete: boolean;
   /** 最后一次真实模型请求的用量；上下文规模只能来自它，不能用整轮累加值。 */
   lastRequestUsage: TokenUsageBreakdown | null;
   modelRequestCount: number;
@@ -118,6 +127,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   providerItems: ConversationProviderItemRepository;
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
+  /** 两条执行链共用正式计划与确认记录。 */
+  planActions: ConversationPlanActionRepository;
   modelConnections: ModelConnectionService;
   usageLedger: CodexUsageLedgerRepository;
   agentDirectory: string;
@@ -128,6 +139,15 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   execution: ConversationExecutionRepository;
   toolResults: ManagedConversationToolResultStore;
   plugins?: ZeusConversationPluginRuntime;
+  /** 与界面、app-server 共用的本地 Skill 目录。 */
+  loadSkills?(cwd: string, identity: string): Promise<NativeConversationSkillInput[]>;
+  /** 宿主管理的长命令通道，不随 SDK 回合或界面关闭而丢失。 */
+  processes: ConversationToolProcesses;
+  /** Zeus 拥有的 Pi 目标控制器，沿用目标面板和提交队列。 */
+  goals: ReturnType<typeof createPiGoalApplication>;
+  /** 子代理沿用普通提交和停止入口。 */
+  executeSubagentTool: ReturnType<typeof createConversationApplicationOperations>['executeSubagentTool'];
+  stopSubagents(conversationId: string): Promise<void>;
   browserAutomation?: BrowserAutomationPort;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
@@ -147,6 +167,10 @@ export interface StartPiConversationInput {
   displayText?: string;
   model: AgentModelIdentity;
   thinkingLevel?: string;
+  /** 本轮冻结的产品模式。 */
+  workMode?: 'default' | 'plan';
+  /** 仅用户明确建立的初始目标。 */
+  goalObjective?: string;
   permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   idempotencyKey: string;
   clientUserMessageId: string;
@@ -159,6 +183,8 @@ export interface StartPiConversationInput {
   conversationContext?: Record<string, unknown>;
   taskPushLayout?: TaskPushMessageLayout;
   skill?: NativeConversationSkillInput;
+  /** 本轮完整的显式 Skill 选择。 */
+  skills?: NativeConversationSkillInput[];
   computerUseRequested?: boolean;
   holdDispatch?: boolean;
   operationContext?: Record<string, unknown>;
@@ -184,7 +210,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const interruptedRuns = new Set<string>();
   const processProjector = new TurnProcessProjector(options.execution);
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
-  const pendingApprovals = new Map<string, { resolve: (allowed: boolean) => void; session: AgentSessionIdentity; conversationId: string }>();
+  const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
   const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
 
@@ -194,7 +220,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const pending = pendingApprovals.get(input.requestId);
       if (!pending || pending.session.nativeSessionId !== input.session.nativeSessionId) throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', 'Pi 工具审批已不在等待。');
       pendingApprovals.delete(input.requestId);
-      pending.resolve(readApprovalDecision(input.response));
+      pending.resolve(input.response);
     },
   };
   const driver = createPiRuntimeWorkerDriver({
@@ -206,7 +232,28 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
     now: options.now,
   });
-  const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
+  /** 同轮图片落盘、消息投影和终态按原事件顺序完成，不阻塞其他会话。 */
+  const eventTails = new Map<string, Promise<void>>();
+  const unsubscribe = driver.subscribe((event) => {
+    if (!event.nativeRunId) return;
+    const runId = event.nativeRunId;
+    const tail = (eventTails.get(runId) ?? Promise.resolve())
+      .then(() => handleRuntimeEvent(event))
+      .catch(async (error: unknown) => {
+        const message = options.redactSensitiveText(error instanceof Error ? error.message : String(error)).text;
+        console.error('Pi 事件未能完整保存，停止续跑并保留结果待核对。', message);
+        const run = runs.get(runId);
+        const context = run ? contexts.get(run.providerThreadId) : undefined;
+        if (context) await driver.interruptRun({ session: context.session, nativeRunId: runId }).catch(() => undefined);
+        await handleRuntimeEvent({ ...event, type: 'runtime_error', payload: { code: 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', message } }).catch((failure: unknown) => {
+          console.error('Pi 失败状态无法落盘；保留存储故障供宿主恢复。', options.redactSensitiveText(String(failure)).text);
+        });
+      })
+      .finally(() => {
+        if (eventTails.get(runId) === tail) eventTails.delete(runId);
+      });
+    eventTails.set(runId, tail);
+  });
 
   function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
     const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
@@ -277,7 +324,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function startConversation(input: StartPiConversationInput) {
-    if (input.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const existingConversation = options.conversations.getById(input.conversationId);
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
@@ -290,9 +336,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const rawPathReferences = orderedAttachments.flatMap((attachment) => (attachment.localPath ? [{ name: attachment.name, path: attachment.localPath }] : []));
-    const skillRoot = input.skill ? resolveSkillResourceRoot(input.skill) : null;
-    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? []), ...(skillRoot ? [skillRoot] : [])]);
-    let providerPrompt = appendPiConversationContext(
+    let selectedSkills = input.skills ?? (input.skill ? [input.skill] : []);
+    const skillRoots = selectedSkills.map(resolveSkillResourceRoot);
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? []), ...skillRoots]);
+    let providerPrompt = appendConversationResourceContext(
       input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, orderedAttachments) : appendPiAttachmentReferences(input.prompt, rawPathReferences),
       input.browserCommentContent,
       input.browserComments,
@@ -314,7 +361,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
           providerState: 'unbound',
           permissionMode: input.permissionMode,
-          collaborationMode: 'default',
+          collaborationMode: input.workMode ?? 'default',
           agentKind: 'pi',
           agentTransport: 'rpc',
           modelSourceId: input.model.sourceId ?? undefined,
@@ -325,7 +372,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
         ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
         permissionMode: input.permissionMode,
-        collaborationMode: 'default',
+        collaborationMode: input.workMode ?? 'default',
       });
       const createdAt = options.now();
       const submission = options.submissions.createOrGet({
@@ -343,9 +390,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(orderedAttachments.length > 0 ? { attachments: orderedAttachments } : {}),
           ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+          ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
-          ...(input.skill ? { skill: input.skill } : {}),
+          ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
           ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectId: input.projectId,
@@ -386,7 +434,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
         providerState: 'unbound',
         permissionMode: input.permissionMode,
-        collaborationMode: 'default',
+        collaborationMode: input.workMode ?? 'default',
         agentKind: 'pi',
         agentTransport: 'rpc',
         modelSourceId: input.model.sourceId ?? undefined,
@@ -397,7 +445,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
       ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
       permissionMode: input.permissionMode,
-      collaborationMode: 'default',
+      collaborationMode: input.workMode ?? 'default',
     });
     const acceptedAt = options.now();
     const existingSubmission = options.submissions.getById(input.submissionId);
@@ -421,9 +469,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
           ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
           ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+          ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
           ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
           ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
-          ...(input.skill ? { skill: input.skill } : {}),
+          ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
           ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectLocalPath: input.cwd,
@@ -444,15 +493,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const providerCommandIssuedAt = submission.createdAt;
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
     let pluginPreparation: ZeusPluginConversationPreparation | null = null;
+    let skillCatalog: NativeConversationSkillInput[] = [];
     let providerMetadata: Record<string, unknown> = {};
     try {
-      attachmentInput = await resolvePiAttachmentInput(orderedAttachments, allowedResourceRoots);
-      providerPrompt = appendPiConversationContext(
+      attachmentInput = await resolvePiAttachmentInput(orderedAttachments, allowedResourceRoots, input.cwd);
+      providerPrompt = appendConversationResourceContext(
         input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences),
         input.browserCommentContent,
         input.browserComments,
         input.conversationContext,
       );
+      skillCatalog = (await options.loadSkills?.(input.cwd, input.submissionId)) ?? [];
+      selectedSkills = selectedSkills.map((skill) => skillCatalog.find((frozen) => frozen.id === skill.id) ?? skill);
       if (options.plugins) {
         pluginPreparation = await options.plugins.prepare({
           conversationId: input.conversationId,
@@ -470,7 +522,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           permissionMode: input.permissionMode,
         });
       }
-      providerMetadata = piPluginMetadata(pluginPreparation, input.segmentLifecycle?.portableContext);
+      providerMetadata = { ...piPluginMetadata(pluginPreparation, input.segmentLifecycle?.portableContext), zeusSkills: skillCatalog };
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: 'pi',
@@ -595,8 +647,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       permissionMode: input.permissionMode,
       model: piModelIdentity(input.model),
       attachmentRoots: attachmentInput.allowedRoots,
+      pluginSkillRoots: uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path))),
+      workMode: input.workMode ?? 'default',
       session,
     });
+    await options.goals.bind(input.conversationId, session.nativeSessionId);
+    if (input.goalObjective) await options.goals.setGoal({ conversationId: input.conversationId, objective: input.goalObjective });
     let acceptedTurnId: string | undefined;
     let acceptedTurnProjection: ReturnType<typeof options.turns.upsert> | undefined;
     let run;
@@ -640,7 +696,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           thinkingLevel: input.thinkingLevel ?? null,
           imagesSha256: stableSha256(JSON.stringify(attachmentInput.images)),
           contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
-          skillId: input.skill?.id ?? null,
+          skillIds: selectedSkills.map((skill) => skill.id),
         },
         providerGenerationId: session.runtimeInstanceId,
       });
@@ -652,7 +708,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         clientRequestId: input.clientUserMessageId,
         model: input.model,
         ...toPiRunDispatchContext(compiledDispatchContext),
-        ...(input.skill ? { skill: input.skill } : {}),
+        skillCatalog,
+        workMode: input.workMode ?? 'default',
+        skills: selectedSkills,
+        resourceSnapshot: {
+          id: submission.id,
+          skillCatalog,
+          skills: selectedSkills,
+          readableRoots: [...attachmentInput.allowedRoots, ...skillCatalog.map((skill) => dirname(skill.path)), ...(pluginPreparation?.skills ?? []).map((skill) => dirname(skill.path))],
+        },
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         preflightResult: () => undefined,
@@ -776,6 +840,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       sourceId: input.model.sourceId ?? 'custom',
       modelId: input.model.modelId,
       usage: emptyTokenUsageBreakdown(),
+      usageComplete: true,
       lastRequestUsage: null,
       modelRequestCount: 0,
       pendingModelRequest: null,
@@ -794,6 +859,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     displayText?: string;
     model: AgentModelIdentity;
     thinkingLevel?: string;
+    /** 本轮冻结的产品模式。 */
+    workMode: 'default' | 'plan';
+    /** 本轮冻结的权限，不能被后续界面设置覆盖。 */
+    permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     idempotencyKey: string;
     clientUserMessageId: string;
     attachments?: NativeConversationAttachmentInput[];
@@ -802,12 +871,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
     skill?: NativeConversationSkillInput;
+    /** 本轮完整的显式 Skill 选择。 */
+    skills?: NativeConversationSkillInput[];
     computerUseRequested?: boolean;
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
-    if (input.conversation.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
     const createdAt = options.now();
     /** 续发和重启恢复都使用当前产品工作区，不根据首条消息猜测目录。 */
     const executionContext = await options.ensureExecutionContext({ conversationId: input.conversation.id, mode: 'dispatch' });
@@ -817,15 +887,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       // 已运行的原生会话不可静默改到另一目录；由统一模型切换链路处理真正的工作区变化。
       throw piError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '当前模型会话的工作目录与任务记录不一致。');
     }
-    const skillRoot = input.skill ? resolveSkillResourceRoot(input.skill) : null;
-    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...(skillRoot ? [skillRoot] : [])]);
+    let selectedSkills = input.skills ?? (input.skill ? [input.skill] : []);
+    const skillRoots = selectedSkills.map(resolveSkillResourceRoot);
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...skillRoots]);
     let attachmentInput: PiAttachmentResolution = { attachments: input.attachments ?? [], images: [], pathReferences: [], allowedRoots: allowedResourceRoots };
     let providerContent = input.content;
+    /** 已接纳的队列输入沿用原请求摘要，恢复问题的回答不能被重新计算为另一请求。 */
+    const storedSubmission = options.submissions.getById(input.submissionId);
     let submission = options.submissions.createOrGet({
       id: input.submissionId,
       conversationId: input.conversation.id,
       idempotencyKey: input.idempotencyKey,
-      requestHash: input.idempotencyKey,
+      requestHash: storedSubmission?.conversationId === input.conversation.id && storedSubmission.idempotencyKey === input.idempotencyKey ? storedSubmission.requestHash : input.idempotencyKey,
       clientMessageId: input.clientUserMessageId,
       kind: 'message',
       requestedDelivery: 'queue',
@@ -837,7 +910,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
-        ...(input.skill ? { skill: input.skill } : {}),
+        ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
         ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
         context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: cwd },
       },
@@ -847,6 +920,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await input.segmentLifecycle?.prepare(submission);
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    const skillCatalog = (await options.loadSkills?.(cwd, submission.id)) ?? [];
+    selectedSkills = selectedSkills.map((skill) => skillCatalog.find((frozen) => frozen.id === skill.id) ?? skill);
     const pluginPreparation = options.plugins
       ? await options.plugins.prepare({
           conversationId: input.conversation.id,
@@ -856,7 +931,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           source: 'resume',
         })
       : null;
-    const providerMetadata = piPluginMetadata(pluginPreparation);
+    const providerMetadata = { ...piPluginMetadata(pluginPreparation), zeusSkills: skillCatalog };
     if (!context) {
       if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
       const session = await driver.resumeSession({
@@ -870,15 +945,19 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         projectId: input.conversation.projectId,
         taskId: input.conversation.taskId,
         cwd,
-        permissionMode: input.conversation.permissionMode,
+        permissionMode: input.permissionMode,
         model: piModelIdentity(input.model),
         attachmentRoots: [],
+        pluginSkillRoots: uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path))),
+        workMode: input.workMode,
         session,
       };
       contexts.set(session.nativeSessionId, context);
     }
     context.model = piModelIdentity(input.model);
-    context.permissionMode = input.conversation.permissionMode;
+    context.permissionMode = input.permissionMode;
+    context.workMode = input.workMode;
+    context.pluginSkillRoots = uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path)));
     if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
       submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
     }
@@ -892,16 +971,19 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       // 预备和原生身份校验也属于发送失败边界，异常必须进入下方统一收尾。
       await input.segmentLifecycle?.beginDispatch();
       input.segmentLifecycle?.nativeSessionReady({ nativeSessionId: context.session.nativeSessionId, nativeSessionPath: context.session.nativeSessionPath, observedAt: createdAt });
-      attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], allowedResourceRoots);
+      await options.goals.bind(input.conversation.id, context.session.nativeSessionId);
+      const initialGoal = asRecord(JSON.parse(submission.inputJson)).goalObjective;
+      if (typeof initialGoal === 'string' && !(await options.goals.readGoal({ conversationId: input.conversation.id }))) await options.goals.setGoal({ conversationId: input.conversation.id, objective: initialGoal });
+      attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], allowedResourceRoots, cwd);
       context.attachmentRoots = attachmentInput.allowedRoots;
-      providerContent = appendPiConversationContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext);
+      providerContent = appendConversationResourceContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext);
       if (options.plugins && pluginPreparation) {
         providerContent = await applyPiPromptHooks(options.plugins, pluginPreparation, {
           conversationId: input.conversation.id,
           cwd,
           model: piModelIdentity(input.model),
           prompt: providerContent,
-          permissionMode: input.conversation.permissionMode,
+          permissionMode: input.permissionMode,
         });
       }
       compiledDispatchContext = options.compileDispatchContext
@@ -937,7 +1019,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           thinkingLevel: input.thinkingLevel ?? null,
           contextFingerprint: compiledDispatchContext?.compiled.fingerprint ?? null,
           imagesSha256: stableSha256(JSON.stringify(attachmentInput.images)),
-          skillId: input.skill?.id ?? null,
+          skillIds: selectedSkills.map((skill) => skill.id),
         },
         providerGenerationId: context.session.runtimeInstanceId,
       });
@@ -950,7 +1032,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         model: input.model,
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         ...toPiRunDispatchContext(compiledDispatchContext),
-        ...(input.skill ? { skill: input.skill } : {}),
+        skillCatalog,
+        workMode: input.workMode,
+        skills: selectedSkills,
+        resourceSnapshot: {
+          id: submission.id,
+          skillCatalog,
+          skills: selectedSkills,
+          readableRoots: [...attachmentInput.allowedRoots, ...skillCatalog.map((skill) => dirname(skill.path)), ...(pluginPreparation?.skills ?? []).map((skill) => dirname(skill.path))],
+        },
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         preflightResult: () => undefined,
         durableTransactionSync: (acceptance) => {
@@ -1046,8 +1136,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     options.conversations.updateNextTurnSettings(input.conversation.id, {
       model: providerModel,
       ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
-      permissionMode: input.conversation.permissionMode,
-      collaborationMode: input.conversation.collaborationMode,
+      permissionMode: input.permissionMode,
+      collaborationMode: input.workMode,
     });
     const turn =
       acceptedTurnProjection ??
@@ -1086,6 +1176,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       sourceId: input.model.sourceId ?? 'custom',
       modelId: input.model.modelId,
       usage: emptyTokenUsageBreakdown(),
+      usageComplete: true,
       lastRequestUsage: null,
       modelRequestCount: 0,
       pendingModelRequest: null,
@@ -1108,6 +1199,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     displayText?: string;
     model: AgentModelIdentity;
     thinkingLevel?: string;
+    /** 本轮冻结的产品模式。 */
+    workMode?: 'default' | 'plan';
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     idempotencyKey: string;
     clientUserMessageId: string;
@@ -1116,6 +1209,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     browserCommentContent?: string;
     conversationContext?: Record<string, unknown>;
     skill?: NativeConversationSkillInput;
+    /** 本轮完整的显式 Skill 选择。 */
+    skills?: NativeConversationSkillInput[];
     computerUseRequested?: boolean;
     holdDispatch?: boolean;
     providerWriteLifecycle?: {
@@ -1144,7 +1239,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
         ...(input.browserCommentContent ? { browserCommentContent: input.browserCommentContent } : {}),
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
-        ...(input.skill ? { skill: input.skill } : {}),
+        ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
         ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
         context: {
           projectId: input.conversation.projectId,
@@ -1153,6 +1248,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           model: input.model.modelId,
           modelSourceId: input.model.sourceId,
           agentKind: 'pi',
+          workMode: input.workMode ?? input.conversation.collaborationMode,
           thinkingLevel: input.thinkingLevel,
           permissionMode: input.permissionMode ?? input.conversation.permissionMode,
           holdDispatch: input.holdDispatch ?? true,
@@ -1167,14 +1263,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       model: providerModel,
       ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
       permissionMode: input.permissionMode ?? input.conversation.permissionMode,
-      collaborationMode: input.conversation.collaborationMode,
+      collaborationMode: input.workMode ?? input.conversation.collaborationMode,
     });
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
   }
 
+  /** 恢复已接纳且尚未发送的内部输入，保留原提交身份。 */
   async function dispatchNextQueued(conversationId: string): Promise<void> {
+    if (options.turns.getLatestActiveByConversation(conversationId) || options.requests.listPendingByConversation(conversationId).length > 0) return;
+    if (options.planActions.listByConversation(conversationId).some((request) => request.status === 'pending')) return;
     if ([...runs.values()].some((run) => run.conversationId === conversationId)) return;
     const conversation = options.conversations.getById(conversationId);
     if (!conversation?.nativeSessionId || conversation.archived || conversation.agentKind !== 'pi') return;
@@ -1188,7 +1287,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const selectedModel = selectedModelRef
       ? { sourceId: selectedModelRef.sourceId, modelId: selectedModelRef.modelId, displayName: null }
       : { sourceId: conversation.modelSourceId, modelId: settings?.model ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null };
-    const skill = readNativeSubmissionSkill(next);
+    const skills = readNativeSubmissionSkills(next);
     await submitMessage({
       conversation,
       submissionId: next.id,
@@ -1202,7 +1301,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       browserComments: Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isRecord) : [],
       ...(typeof persisted.browserCommentContent === 'string' ? { browserCommentContent: persisted.browserCommentContent } : {}),
       ...(isRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
-      ...(skill ? { skill } : {}),
+      skills,
+      workMode: settings?.collaborationMode ?? conversation.collaborationMode,
+      permissionMode: settings?.permissionMode ?? conversation.permissionMode,
     });
   }
 
@@ -1215,6 +1316,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     expectedTurnId: string;
     idempotencyKey: string;
     clientUserMessageId: string;
+    /** 插话资源在接纳前校验，随下一次模型调用整体交付。 */
+    attachments?: NativeConversationAttachmentInput[];
+    /** 只冻结本次显式 Skill 内容，不重载忙碌中的 SDK。 */
+    skills?: NativeConversationSkillInput[];
+    /** 原批注与结构化上下文继续挂在同一提交。 */
+    browserComments?: Record<string, unknown>[];
+    browserCommentContent?: string;
+    conversationContext?: Record<string, unknown>;
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
   }) {
     if (options.conversations.getRecordById(input.conversation.id)?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
@@ -1222,6 +1331,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 插话目标不是当前执行轮次。');
     const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     if (!context) throw piError('ZEUS_PI_SESSION_NOT_LOADED', 'Pi 会话当前未载入运行内核。');
+    const attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], context.attachmentRoots, context.cwd);
+    const selectedCatalog = input.skills?.length ? ((await options.loadSkills?.(context.cwd, input.submissionId)) ?? []) : [];
+    const selectedSkills = (input.skills ?? []).map((skill) => selectedCatalog.find((frozen) => frozen.id === skill.id) ?? skill);
+    const skillRoots = selectedSkills.map(resolveSkillResourceRoot);
+    const skillContents = await Promise.all(selectedSkills.map(async (skill) => `本次显式 Skill ${JSON.stringify({ name: skill.name, path: skill.path })}：\n${await readFile(skill.path, 'utf8')}`));
+    const providerContent = [
+      ...skillContents,
+      appendConversationResourceContext(appendPiAttachmentReferences(input.content, attachmentInput.pathReferences), input.browserCommentContent, input.browserComments, input.conversationContext),
+    ].join('\n\n');
+    if (runs.get(input.expectedTurnId) !== run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '资源准备期间原轮次已经结束，请保留队列后继续发送。');
     const createdAt = options.now();
     const submission = options.submissions.createOrGet({
       id: input.submissionId,
@@ -1232,7 +1351,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       kind: 'message',
       requestedDelivery: 'send_now',
       status: 'dispatching',
-      input: { text: input.content, ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}), context: { agentKind: 'pi', projectLocalPath: context.cwd }, delivery: 'steer_now', expectedTurnId: input.expectedTurnId },
+      input: {
+        text: input.content,
+        attachments: attachmentInput.attachments,
+        skills: selectedSkills,
+        browserComments: input.browserComments,
+        browserCommentContent: input.browserCommentContent,
+        conversationContext: input.conversationContext,
+        ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
+        context: { agentKind: 'pi', projectLocalPath: context.cwd, workMode: context.workMode, permissionMode: context.permissionMode },
+        delivery: 'steer_now',
+        expectedTurnId: input.expectedTurnId,
+      },
       createdAt,
       dispatchedAt: createdAt,
     });
@@ -1251,7 +1381,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       requestIdentity: {
         nativeSessionId: context.session.nativeSessionId,
         nativeRunId: input.expectedTurnId,
-        contentSha256: stableSha256(input.content),
+        contentSha256: stableSha256(providerContent),
+        imageSha256: attachmentInput.images.map((image) => stableSha256(image.data)),
         clientRequestId: input.clientUserMessageId,
       },
       providerGenerationId: context.session.runtimeInstanceId,
@@ -1260,7 +1391,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     try {
       command.markProviderWriteStarted();
       input.providerWriteLifecycle?.markRpcStarted(submission.id);
-      accepted = await driver.steerRun({ session: context.session, nativeRunId: input.expectedTurnId, content: input.content, clientRequestId: input.clientUserMessageId, traceIdentity: command.traceIdentity });
+      context.attachmentRoots = uniquePaths([...context.attachmentRoots, ...attachmentInput.allowedRoots, ...skillRoots]);
+      accepted = await driver.steerRun({
+        session: context.session,
+        nativeRunId: input.expectedTurnId,
+        content: providerContent,
+        images: attachmentInput.images,
+        workMode: context.workMode,
+        clientRequestId: input.clientUserMessageId,
+        traceIdentity: command.traceIdentity,
+      });
     } catch (error) {
       command.recordFailure(error, {
         explicitlyRejected: isPiProviderExplicitRejection(error),
@@ -1282,7 +1422,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         {
           durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
           projectTurn: () => {
-            appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt);
+            appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt, attachmentInput.attachments);
             options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: accepted.nativeRunId, resolvedAt: accepted.acceptedAt, updatedAt: accepted.acceptedAt });
           },
         },
@@ -1370,6 +1510,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const messageStageId = run.currentStageId ?? piAssistantStageId(message, event);
       const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
       const requestUsage = readPiUsage(message.usage);
+      if (!requestUsage) run.usageComplete = false;
       addUsage(run.usage, requestUsage);
       // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
       if (requestUsage) run.lastRequestUsage = { ...requestUsage };
@@ -1415,7 +1556,22 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         run.modelRequestCount += 1;
       }
       run.pendingModelRequest = null;
-      const text = messageText(message);
+      // 接口实际返回的图片沿用工具图片存储；无需按模型名称猜测生图能力。
+      const imageProjections: string[] = [];
+      for (const [index, part] of content.entries()) {
+        if (part.type !== 'image') continue;
+        if (!segment || typeof part.mimeType !== 'string' || typeof part.data !== 'string') throw piError('ZEUS_PI_IMAGE_RESULT_INVALID', '模型返回了无法保存的图片内容，不能将其当作成功的纯文字结果。');
+        const image = await options.toolResults.storeImage({
+          conversationId: run.conversationId,
+          turnId: run.turnId,
+          segmentId: segment.id,
+          toolPairId: `${messageStageId}:image:${index}`,
+          imageUrl: `data:${part.mimeType};base64,${part.data}`,
+          createdAt: event.createdAt,
+        });
+        imageProjections.push(image.projectionText);
+      }
+      const text = [messageText(message), ...imageProjections].filter(Boolean).join('\n\n');
       const hasToolCall = content.some((part) => part.type === 'toolCall' || part.type === 'tool_use');
       const isToolUseStage = stopReason === 'toolUse' || stopReason === 'tool_use' || hasToolCall;
       const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? 'Pi';
@@ -1551,7 +1707,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           providerTurnId: run.providerTurnId,
           model: run.modelId,
           usage: run.usage,
-          usageComplete: true,
+          usageComplete: run.usageComplete,
           estimate,
           occurredAt: event.createdAt,
         });
@@ -1567,7 +1723,21 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, usageSnapshot);
       }
       runs.delete(event.nativeRunId);
+      /** 与原生链一致，在轮次终态前发布确认项，避免前端提前释放实时订阅。 */
+      let createdPlan: ReturnType<ConversationPlanActionRepository['createPending']> | undefined;
+      if (!failed && !interrupted && contexts.get(run.providerThreadId)?.workMode === 'plan') {
+        const plan = options.providerItems.getLatestCompletedPlanByTurn(run.turnId);
+        if (plan) createdPlan = options.planActions.createPending({ conversationId: run.conversationId, turnId: run.turnId, planItemId: plan.id, createdAt: event.createdAt });
+      }
       await options.db.save();
+      if (createdPlan)
+        publish('conversation.plan_implementation_request.changed', run.conversationId, {
+          requestId: createdPlan.id,
+          status: createdPlan.status,
+          turnId: createdPlan.turnId,
+          planItemId: createdPlan.planItemId,
+          providerPlanItemId: options.providerItems.getById(createdPlan.planItemId)?.providerItemId,
+        });
       if (usageSnapshot) {
         options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
         publish('conversation.provider.token_usage.updated', run.conversationId, { ...usageSnapshot });
@@ -1583,6 +1753,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
+      await options.goals.settle({
+        conversationId: run.conversationId,
+        turnId: run.turnId,
+        providerTurnId: run.providerTurnId,
+        tokensUsed: run.usage.totalTokens,
+        usageComplete: run.usageComplete,
+        failed,
+        interrupted,
+        seconds: existingTurn?.startedAt ? Math.max(0, (Date.parse(event.createdAt) - Date.parse(existingTurn.startedAt)) / 1000) : 0,
+      });
       if (!failed && !interrupted) void dispatchNextQueued(run.conversationId).catch(() => undefined);
     }
   }
@@ -1713,7 +1893,55 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   async function executeToolRaw(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
     const context = contexts.get(request.session.nativeSessionId);
     if (!context) throw piError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具请求没有对应的 Zeus 会话。');
-    if (context.permissionMode === 'auto-review') throw piError('ZEUS_AUTO_REVIEW_UNAVAILABLE', '替我批准仅支持 Codex，请选择其他权限模式。');
+    if (['spawn_agent', 'followup_task', 'list_agents', 'wait_agent', 'stop_agent'].includes(request.toolName)) {
+      const run = [...runs.values()].find((candidate) => candidate.conversationId === context.conversationId);
+      if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '子代理操作没有对应的活动轮次。');
+      return { text: JSON.stringify(await options.executeSubagentTool({ conversationId: context.conversationId, turnId: run.turnId, toolCallId: request.toolCallId, tool: request.toolName, args: request.args, signal: request.signal })) };
+    }
+    if (request.toolName === 'get_goal') return { text: JSON.stringify(await options.goals.readGoal({ conversationId: context.conversationId })) };
+    if (request.toolName === 'create_goal') {
+      const previous = await options.goals.readGoal({ conversationId: context.conversationId });
+      if (previous && previous.status !== 'complete') throw piError('ZEUS_PI_GOAL_ALREADY_EXISTS', '当前目标尚未完成，不能用 create_goal 替换。请继续当前目标或由用户调整。');
+      return {
+        text: JSON.stringify(
+          await options.goals.setGoal({
+            conversationId: context.conversationId,
+            objective: stringArg(request.args.objective, '目标'),
+            ...(request.args.token_budget !== undefined ? { tokenBudget: numberArg(request.args.token_budget, 0) } : {}),
+          }),
+        ),
+      };
+    }
+    if (request.toolName === 'update_goal') {
+      const status = request.args.status;
+      if (status !== 'complete' && status !== 'blocked' && status !== 'paused') throw piError('ZEUS_PI_GOAL_STATUS_INVALID', '目标只能显式标记完成、阻塞或暂停。');
+      return { text: JSON.stringify(await options.goals.updateStatus(context.conversationId, status)) };
+    }
+    if (request.toolName === 'request_user_input') {
+      const questions = Array.isArray(request.args.questions)
+        ? request.args.questions.map((value) => {
+            const question = asRecord(value);
+            return { ...question, options: question.options ?? null, isSecret: false, isOther: Array.isArray(question.options), multiple: false };
+          })
+        : [];
+      const parsed = parseCanonicalRequestUserInputQuestions({ questions });
+      if (!parsed.ok || questions.length > 3) throw piError('ZEUS_PI_QUESTION_INVALID', parsed.ok ? '每次最多提出三个问题。' : parsed.message);
+      const response = await requestInteraction(context, request, 'request_user_input', { questions: parsed.questions });
+      if (response === false) throw piError('ZEUS_PI_TOOL_ABORTED', '提问已随本轮执行停止。');
+      return { text: JSON.stringify(response) };
+    }
+    if (request.toolName === 'request_user_input_async') {
+      const payload = { delivery: 'async', questions: request.args.questions };
+      const questions = asyncMessageQuestions(payload);
+      if (!questions.length || questions.length > 3) throw piError('ZEUS_PI_QUESTION_INVALID', '异步提问需要一到三个有效问题。');
+      const item = await persistToolMessage(context, request, 'agentMessage', questions.map((question) => question.question).join('\n'), payload);
+      return { text: JSON.stringify({ providerItemId: item.providerItemId, providerTurnId: item.providerTurnId, status: 'pending', delivery: 'async' }) };
+    }
+    if (request.toolName === 'submit_plan') {
+      if (context.workMode !== 'plan') throw piError('ZEUS_PI_PLAN_MODE_REQUIRED', '只有计划模式可以提交实施确认计划。');
+      const item = await persistToolMessage(context, request, 'plan', stringArg(request.args.plan, '正式计划'), {});
+      return { text: JSON.stringify({ providerItemId: item.providerItemId, status: 'submitted', message: '正式计划已保存。本轮结束后显示实施或继续完善入口；请勿自行开始实施。' }) };
+    }
     if (request.toolName === 'read_conversation_tool_result') {
       const page = await options.toolResults.readPage({
         conversationId: context.conversationId,
@@ -1746,8 +1974,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (nativeTool) {
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
-      if (nativeTool.namespace !== 'zeus_work' && context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
-        throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
+      if (
+        (nativeTool.namespace !== 'zeus_work' || context.workMode === 'plan') &&
+        effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only' &&
+        isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)
+      ) {
+        throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前轮次为只读或计划模式，已拒绝该工具的写入操作。');
       }
       // 与 Codex 共用原生宿主的全局开关，不按本轮输入框标签重复授权。
       const result = await zeusToolBroker!.invokePi({
@@ -1775,59 +2007,57 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         isError: !result.success,
       };
     }
-    const mutating = request.toolName === 'write' || request.toolName === 'edit' || request.toolName === 'bash';
-    if (mutating && context.permissionMode === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Pi 写入或命令。');
-    if (mutating && context.permissionMode === 'auto') {
-      const allowed = await requestApproval(context, request);
-      if (!allowed) throw piError('ZEUS_PI_TOOL_DECLINED', '用户已拒绝 Pi 工具请求。');
-    }
     if (request.toolName === 'bash') {
       const command = stringArg(request.args.command, '命令');
-      /** Pi 命令使用原 Provider 证据仓库，使审查和部署能核对实际退出结果。 */
-      const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
-      if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 命令没有对应的活动轮次。');
-      /** 开始状态先持久保存；崩溃或未知停止不会被误认为成功。 */
-      const evidence = {
-        conversationId: context.conversationId,
-        turnId: activeRun.turnId,
-        providerThreadId: request.session.nativeSessionId,
-        providerTurnId: activeRun.providerTurnId,
-        providerItemId: `pi_command:${request.toolCallId}`,
-        itemType: 'commandExecution' as const,
-        phase: 'prework' as const,
-        agentKind: 'pi' as const,
-        nativeItemId: request.toolCallId,
-        startedAt: options.now(),
+      const escalated = request.args.sandbox_permissions === 'require_escalated';
+      if (escalated && effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读或计划模式不能升级到可写执行权限。');
+      if (escalated && context.permissionMode !== 'full-access' && !(await requestApproval(context, request))) throw piError('ZEUS_PI_TOOL_DECLINED', '用户已拒绝命令权限升级。');
+      const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
+      if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '命令没有对应的活动轮次。');
+      /** 短等待只返回进程句柄，实际非零退出仍作为失败工具结果交给模型和界面。 */
+      const result = await options.processes.start(
+        { ...context, turnId: activeRun.turnId, readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots] },
+        { toolCallId: request.toolCallId, command, escalated, yieldTimeMs: numberArg(request.args.yield_time_ms, 1_000) },
+      );
+      return {
+        text: JSON.stringify(result),
+        details: { processId: result.processId, exitCode: result.exitCode },
+        isError: result.status === 'failed' || result.status === 'stopped' || result.status === 'outcome_unknown',
       };
-      options.providerItems.upsertProgress({ ...evidence, payload: { command }, textContent: command, updatedAt: evidence.startedAt });
-      await options.db.save();
-      try {
-        /** 原轮次停止信号同时传到真实命令进程。 */
-        const result = await execFileAsync('/bin/zsh', ['-lc', command], { cwd: context.cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024, signal: request.signal });
-        const output = `${result.stdout}${result.stderr}`;
-        const completedAt = options.now();
-        options.providerItems.upsertCompleted({ ...evidence, payload: { command, aggregatedOutput: output, exitCode: 0 }, textContent: output, completedAt, updatedAt: completedAt });
-        await options.db.save();
-        return { text: output.trim() || '命令执行完成。', details: { exitCode: 0 } };
-      } catch (error) {
-        /** 超时、中断及输出上限不能推断为具体退出码，明确保留未知。 */
-        const failure = asRecord(error);
-        const output = `${typeof failure.stdout === 'string' ? failure.stdout : ''}${typeof failure.stderr === 'string' ? failure.stderr : ''}`;
-        const completedAt = options.now();
-        options.providerItems.upsertCompleted({
-          ...evidence,
-          status: 'failed',
-          payload: { command, aggregatedOutput: output, exitCode: typeof failure.code === 'number' ? failure.code : null },
-          textContent: output,
-          completedAt,
-          updatedAt: completedAt,
-        });
-        await options.db.save();
-        throw error;
-      }
     }
-    const readOnlyTool = request.toolName === 'read' || request.toolName === 'grep' || request.toolName === 'find' || request.toolName === 'ls';
-    const path = safePath(context.cwd, typeof request.args.path === 'string' ? request.args.path : '.', readOnlyTool ? context.attachmentRoots : []);
+    if (request.toolName === 'process') {
+      const action = request.args.action;
+      if (action !== 'read' && action !== 'write' && action !== 'stop') throw piError('ZEUS_PI_TOOL_ARGUMENT_INVALID', '进程操作必须是 read、write 或 stop。');
+      /** 增量读取保留命令失败，显式停止本身成功时不误报停止工具失败。 */
+      const result = await options.processes.interact(context, {
+        processId: stringArg(request.args.process_id, '进程身份'),
+        action,
+        cursor: numberArg(request.args.cursor, 0),
+        text: typeof request.args.text === 'string' ? request.args.text : undefined,
+        yieldTimeMs: numberArg(request.args.yield_time_ms, 1_000),
+      });
+      return {
+        text: JSON.stringify(result),
+        details: { processId: result.processId, exitCode: result.exitCode },
+        isError: action !== 'stop' && (result.status === 'failed' || result.status === 'stopped' || result.status === 'outcome_unknown'),
+      };
+    }
+    const target = resolveConversationToolPath({
+      cwd: context.cwd,
+      path: typeof request.args.path === 'string' ? request.args.path : '.',
+      permission: context.permissionMode,
+      workMode: context.workMode,
+      write: request.toolName === 'write' || request.toolName === 'edit',
+      readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots],
+    });
+    if (target.requiresApproval && !(await requestApproval(context, request))) throw piError('ZEUS_PI_TOOL_DECLINED', '用户已拒绝访问该路径。');
+    const path = target.path;
+    const imageMime = resolvePiImageMime('image/*', path);
+    if (request.toolName === 'view_image' || (request.toolName === 'read' && imageMime)) {
+      if (!imageMime) throw piError('ZEUS_PI_IMAGE_INVALID', '文件不是可读取的图片。');
+      if (statSync(path).size > 20 * 1024 * 1024) throw piError('ZEUS_PI_IMAGE_TOO_LARGE', '图片超过 20 MiB。');
+      return { text: `图片：${path}`, contentItems: [{ type: 'image', mimeType: imageMime, data: (await readFile(path)).toString('base64') }] };
+    }
     if (request.toolName === 'read') {
       const text = await readFile(path, 'utf8');
       const offset = numberArg(request.args.offset, 0);
@@ -1857,6 +2087,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   async function executePluginTool(context: PiConversationContext, request: PiZeusToolRequest, tool: ZeusPluginDynamicTool): Promise<PiZeusToolResult> {
     if (!options.plugins) throw piError('ZEUS_PLUGIN_HOST_UNAVAILABLE', 'Plugin Host 当前不可用。');
+    if (effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only' && !tool.readOnly) throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读或计划模式仅允许明确声明只读的 MCP 工具。');
     const pre = await options.plugins.emitHook({
       event: 'PreToolUse',
       conversationId: context.conversationId,
@@ -1898,7 +2129,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         toolResult: { text: result.text, structuredContent: result.structuredContent, isError: result.isError },
       });
     }
-    return { text: post.replaceToolResult ?? result.text, isError: result.isError, details: { structuredContent: result.structuredContent, ...(result.app ? { mcpApp: result.app } : {}) } };
+    return {
+      text: post.replaceToolResult ?? result.text,
+      contentItems: [{ type: 'text', text: post.replaceToolResult ?? result.text }, ...(result.images ?? []).map((image) => ({ type: 'image' as const, ...image }))],
+      isError: result.isError,
+      details: { structuredContent: result.structuredContent, ...(result.app ? { mcpApp: result.app } : {}) },
+    };
   }
 
   function parseImageDataUrl(value: string): { mimeType: string; data: string } | null {
@@ -1957,11 +2193,69 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return repaired;
   }
 
+  /** 工具产出的结构化消息与普通 Provider 消息写入同一记录和投影。 */
+  async function persistToolMessage(context: PiConversationContext, request: PiZeusToolRequest, itemType: 'agentMessage' | 'plan', text: string, payload: Record<string, unknown>) {
+    const run = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
+    if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '工具消息没有对应的活动轮次。');
+    const timestamp = options.now();
+    const providerItemId = `pi_${itemType}_${run.providerTurnId}_${request.toolCallId}`;
+    const metadata = { ...payload, phase: 'commentary', agentKind: 'pi', modelId: run.modelId, modelSourceId: run.sourceId };
+    const item = options.providerItems.upsertCompleted({
+      conversationId: context.conversationId,
+      turnId: run.turnId,
+      providerThreadId: run.providerThreadId,
+      providerTurnId: run.providerTurnId,
+      providerItemId,
+      itemType,
+      phase: 'prework',
+      payload: metadata,
+      textContent: text,
+      status: 'completed',
+      completedAt: timestamp,
+      updatedAt: timestamp,
+      agentKind: 'pi',
+      nativeItemId: providerItemId,
+    });
+    options.conversations.appendMessage({
+      conversationId: context.conversationId,
+      role: 'assistant',
+      content: text,
+      source: 'pi_sdk',
+      metadata,
+      createdAt: timestamp,
+      providerThreadId: run.providerThreadId,
+      providerTurnId: run.providerTurnId,
+      providerItemId,
+    });
+    options.conversations.markAttentionUnread(context.conversationId, { kind: 'unread', turnId: run.providerTurnId, occurredAt: timestamp });
+    await options.db.save();
+    publish('conversation.item.completed', context.conversationId, { turnId: run.providerTurnId, itemId: providerItemId, itemType, itemPayload: metadata, status: 'completed', phase: 'commentary', textContent: text });
+    return item;
+  }
+
+  /** 审批只绑定本次操作参数；允许之后只执行原调用一次。 */
   async function requestApproval(context: PiConversationContext, request: PiZeusToolRequest): Promise<boolean> {
-    const pluginTool = request.toolName.startsWith('mcp__');
+    const pluginTool = request.toolName.startsWith('zeus_mcp_');
     const kind = request.toolName === 'bash' || pluginTool ? 'command' : 'file';
+    return readApprovalDecision(
+      await requestInteraction(context, request, kind, {
+        toolName: request.toolName,
+        args: redactArgs(request.args),
+        operationDigest: createHash('sha256')
+          .update(JSON.stringify({ tool: request.toolName, args: request.args, cwd: context.cwd, permission: context.permissionMode, workMode: context.workMode }))
+          .digest('hex'),
+        ...(kind === 'command' ? { command: pluginTool ? `MCP ${request.toolName}` : stringArg(request.args.command, '命令') } : { path: stringArg(request.args.path, '文件路径') }),
+        reason: typeof request.args.justification === 'string' ? request.args.justification : '此操作超出当前自动授权范围，需要审批。',
+        availableDecisions: ['accept', 'decline', 'cancel'],
+      }),
+    );
+  }
+
+  /** 同步问题与审批使用同一持久请求，先注册答复通道再公开问题。 */
+  async function requestInteraction(context: PiConversationContext, request: PiZeusToolRequest, kind: 'command' | 'file' | 'request_user_input', payload: Record<string, unknown>): Promise<unknown> {
     const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
-    if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 工具审批没有对应的活动轮次。');
+    if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 工具请求没有对应的活动轮次。');
+    if (request.signal?.aborted) throw piError('ZEUS_PI_TOOL_ABORTED', 'Pi 工具请求已中止。');
     const timestamp = options.now();
     const activeTurn = options.turns.getById(activeRun.turnId);
     if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'waiting', completedAt: null, updatedAt: timestamp, agentKind: 'pi', nativeRunId: activeRun.providerTurnId });
@@ -1972,40 +2266,73 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       transportGenerationId: request.session.runtimeInstanceId,
       providerRequestId: request.requestId,
       requestKind: kind,
-      payload: {
-        agentKind: 'pi',
-        toolName: request.toolName,
-        args: redactArgs(request.args),
-        ...(kind === 'command' ? { command: pluginTool ? `MCP ${request.toolName}` : stringArg(request.args.command, '命令') } : { path: stringArg(request.args.path, '文件路径') }),
-        reason: pluginTool ? 'Zeus Plugin MCP 工具按当前工具级策略需要审批。' : 'Pi 工具请求需要 Zeus 审批。',
-        availableDecisions: ['accept', 'decline', 'cancel'],
-      },
+      payload: { agentKind: 'pi', ...payload },
       status: 'pending',
       createdAt: timestamp,
     });
-    options.conversations.markAttentionUnread(context.conversationId, {
-      kind: 'unread',
-      turnId: activeRun.providerTurnId,
-      occurredAt: timestamp,
+    options.conversations.markAttentionUnread(context.conversationId, { kind: 'unread', turnId: activeRun.providerTurnId, occurredAt: timestamp });
+    let finish!: (response: unknown) => void;
+    const response = new Promise<unknown>((resolveResponse) => {
+      finish = resolveResponse;
     });
-    await options.db.save();
-    publish('conversation.request.created', context.conversationId, {
-      requestId: persisted.id,
-      requestKind: kind,
-      request: nativePendingRequestProjection(persisted),
-    });
-    return new Promise<boolean>((resolveApproval, reject) => {
-      const finish = (allowed: boolean) => {
-        request.signal?.removeEventListener('abort', abort);
-        resolveApproval(allowed);
-      };
-      const abort = () => {
-        pendingApprovals.delete(persisted.id);
-        reject(piError('ZEUS_PI_TOOL_ABORTED', 'Pi 工具请求已中止。'));
-      };
-      pendingApprovals.set(persisted.id, { resolve: finish, session: context.session, conversationId: context.conversationId });
-      request.signal?.addEventListener('abort', abort, { once: true });
-    });
+    const abort = () => finish(false);
+    pendingApprovals.set(persisted.id, { resolve: finish, session: context.session, conversationId: context.conversationId });
+    request.signal?.addEventListener('abort', abort, { once: true });
+    if (request.signal?.aborted) abort();
+    try {
+      await options.db.save();
+      publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted) });
+      if (kind !== 'request_user_input' && context.permissionMode === 'auto-review') {
+        // 审查与人工回答竞争同一持久请求；先解决者生效，迟到结果不得覆盖。
+        void (async () => {
+          let review;
+          try {
+            review = await driver.reviewPermission({
+              model: { sourceId: activeRun.sourceId, modelId: activeRun.modelId, displayName: null },
+              context: options.redactSensitiveText(
+                JSON.stringify({
+                  operation: payload,
+                  cwd: context.cwd,
+                  permissionMode: 'auto',
+                  workMode: context.workMode,
+                  userSubmission:
+                    asRecord(JSON.parse(options.submissions.getById(activeRun.submissionId)?.inputJson ?? '{}')).displayText ?? asRecord(JSON.parse(options.submissions.getById(activeRun.submissionId)?.inputJson ?? '{}')).text ?? '',
+                }),
+              ).text,
+            });
+            const usage = readPiUsage(review.usage);
+            addUsage(activeRun.usage, usage);
+            if (!usage) activeRun.usageComplete = false;
+          } catch {
+            review = { decision: 'manual', reason: '独立审查超时或不可用，已转人工处理。', tokensUsed: null };
+            activeRun.usageComplete = false;
+          }
+          if (request.signal?.aborted || options.requests.getById(persisted.id)?.status !== 'pending') return;
+          if (review.decision === 'manual') {
+            await persistToolMessage(context, request, 'agentMessage', review.reason, { approvalRequestId: persisted.id, approvalReview: review });
+            return;
+          }
+          const decision = { decision: review.decision, reviewer: 'pi', reason: review.reason, operationDigest: payload.operationDigest, tokensUsed: review.tokensUsed };
+          options.requests.resolve(persisted.id, { response: decision, resolvedAt: options.now() });
+          await options.db.save();
+          publish('conversation.request.resolved', context.conversationId, { requestId: persisted.id, requestKind: kind, response: decision });
+          finish(decision);
+        })().catch(() => {
+          // 审查记录失败保留人工请求，绝不默认放行。
+          publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted) });
+        });
+      }
+      const answered = await response;
+      if (answered === false && options.requests.getById(persisted.id)?.status === 'pending') {
+        options.requests.expire(persisted.id, { response: kind === 'request_user_input' ? { type: 'request_user_input', answers: {} } : { decision: 'cancel' }, resolvedAt: options.now() });
+        await options.db.save();
+        publish('conversation.request.resolved', context.conversationId, { requestId: persisted.id, requestKind: kind });
+      }
+      return answered;
+    } finally {
+      pendingApprovals.delete(persisted.id);
+      request.signal?.removeEventListener('abort', abort);
+    }
   }
 
   function publish(type: string, conversationId: string, extra: Record<string, unknown>): void {
@@ -2051,6 +2378,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const conversation = requirePiConversation(input.conversationId);
     if (conversation.archived) return;
     assertConversationCanBeArchived(conversation);
+    options.processes.stopOwned(conversation.id);
     const runtimeContext = conversation.nativeSessionId ? contexts.get(conversation.nativeSessionId) : undefined;
     if (runtimeContext && options.plugins) {
       input.beforeExternalWrite?.();
@@ -2118,7 +2446,74 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     publish('conversation.queue.changed', conversation.id, {});
   }
 
-  /** Pi 的队首纯文本引导沿用原提交身份，不误发到 Codex。 */
+  /** 计划确认与提交在一个事务内落库，旧卡片永远不能执行新计划。 */
+  async function respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation> {
+    const conversation = requirePiConversation(input.conversationId);
+    const request = options.planActions.getById(input.requestId);
+    if (!request || request.conversationId !== conversation.id) throw piError('ZEUS_PLAN_IMPLEMENTATION_REQUEST_NOT_FOUND', '未找到此会话的正式计划。');
+    const plan = options.providerItems.listByConversation(conversation.id).find((item) => item.id === request.planItemId);
+    if (!plan || plan.itemType !== 'plan' || plan.status !== 'completed' || !plan.textContent.trim()) throw piError('ZEUS_PLAN_IMPLEMENTATION_REQUEST_INVALID', '正式计划内容无效。');
+    if (input.attachments?.length && input.action !== 'refine') throw piError('ZEUS_INVALID_PLAN_IMPLEMENTATION_RESPONSE', '只有继续完善计划可以携带附件。');
+    const feedback = input.feedback?.trim();
+    if (input.action === 'refine' && !feedback && !input.attachments?.length) throw piError('ZEUS_PLAN_REFINEMENT_REQUIRED', '请填写修改意见或提供附件。');
+    const timestamp = options.now();
+    const identity = input.operationIdentity ?? `${request.id}:${input.action}`;
+    const nextMode = input.action === 'refine' ? 'plan' : 'default';
+    const submission = options.db.transaction(() => {
+      const created =
+        input.action === 'dismiss'
+          ? null
+          : options.submissions.createOrGet({
+              id: `conversation_submission_${identity}`,
+              conversationId: conversation.id,
+              idempotencyKey: `plan-action:${request.id}:${input.action}`,
+              requestHash: `plan-action:${request.id}:${input.action}`,
+              clientMessageId: `plan-action-client:${request.id}:${input.action}`,
+              kind: 'message',
+              requestedDelivery: 'queue',
+              status: 'queued',
+              createdAt: timestamp,
+              input: {
+                text: input.action === 'refine' ? feedback || '请根据附件修改计划。' : `请实施以下已确认计划。严格按计划执行，并在完成后报告验证结果。\n\n${plan.textContent}`,
+                ...(input.action === 'implement' ? { displayText: '是，实施此计划' } : {}),
+                ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+                origin: input.action === 'refine' ? 'refine_plan' : 'implement_plan',
+                planItemId: plan.id,
+                context: { projectId: conversation.projectId, taskId: conversation.taskId, workMode: nextMode, permissionMode: conversation.permissionMode },
+              },
+            });
+      options.planActions.resolveLatestPendingInCurrentTransaction(request.id, conversation.id, {
+        status: input.action === 'dismiss' ? 'dismissed' : input.action === 'refine' ? 'refinement_requested' : 'implemented',
+        submissionId: created?.id,
+        resolvedAt: timestamp,
+      });
+      if (created) {
+        options.conversations.updateCollaborationMode(conversation.id, nextMode);
+        options.conversations.updateNextTurnSettings(conversation.id, {
+          model: conversation.providerModel ?? conversation.modelId ?? '',
+          permissionMode: conversation.permissionMode,
+          ...options.conversations.getNextTurnSettings(conversation.id),
+          collaborationMode: nextMode,
+        });
+        const queuedIds = options.submissions.listQueueByConversation(conversation.id).map((candidate) => candidate.id);
+        options.submissions.reorderQueued(conversation.id, [created.id, ...queuedIds.filter((id) => id !== created.id)], timestamp);
+      }
+      return created;
+    });
+    if (submission) projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
+    await options.db.save();
+    publish('conversation.plan_implementation_request.changed', conversation.id, {
+      requestId: request.id,
+      status: input.action === 'dismiss' ? 'dismissed' : input.action === 'refine' ? 'refinement_requested' : 'implemented',
+      submissionId: submission?.id,
+      collaborationMode: input.action === 'dismiss' ? conversation.collaborationMode : nextMode,
+    });
+    publish('conversation.queue.changed', conversation.id, {});
+    void dispatchNextQueued(conversation.id).catch(() => undefined);
+    return { operationId: identity, conversationId: conversation.id, submissionId: submission?.id ?? '', status: submission ? 'queued' : 'responded', providerThreadId: conversation.providerThreadId, providerTurnId: null };
+  }
+
+  /** Pi 的队首引导沿用原提交身份，不误发到 Codex。 */
   async function sendQueuedNow(input: { conversationId: string; submissionId: string; providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void } }) {
     /** 同一队首、同一活动轮次和同一模型配置才允许引导。 */
     const conversation = requirePiConversation(input.conversationId);
@@ -2129,18 +2524,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     /** 当前正在运行的 Pi 轮次。 */
     const run = [...runs.values()].find((entry) => entry.conversationId === conversation.id);
     if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '当前没有可以引导的 Pi 轮次。');
-    /** 资源类输入继续进入下一轮，不能只发送文字而丢失附件。 */
+    /** 带资源输入保持原记录，任务推送布局由独立轮次处理。 */
     const persisted = asRecord(JSON.parse(submission.inputJson));
-    if (
-      persisted.taskPushLayout ||
-      persisted.skill ||
-      persisted.conversationContext ||
-      persisted.browserCommentContent ||
-      (Array.isArray(persisted.attachments) && persisted.attachments.length > 0) ||
-      (Array.isArray(persisted.browserComments) && persisted.browserComments.length > 0)
-    ) {
-      throw piError('ZEUS_PI_STEER_RESOURCES_UNSUPPORTED', 'Pi 当前轮次只支持纯文本引导，附带资源的消息请保留在队列中。');
-    }
+    if (persisted.taskPushLayout) throw piError('ZEUS_PI_STEER_RESOURCES_UNSUPPORTED', '任务推送需要独立执行轮次，已保留在队列中。');
     /** 换模型的排队消息不能插入旧模型的轮次。 */
     const snapshot = submission.executionSnapshotId ? options.execution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
     /** 当前模型的冻结配置。 */
@@ -2150,6 +2536,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!snapshot || snapshot.routeFingerprint !== currentSnapshot?.routeFingerprint) throw piError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '这条消息使用不同的执行配置，请等待下一轮发送。');
     if (!hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission)) throw piError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '消息是否送达尚未确认，请先检查处理状态。');
     return steerMessage({
+      attachments: Array.isArray(persisted.attachments) ? (persisted.attachments as NativeConversationAttachmentInput[]) : [],
+      skills: readNativeSubmissionSkills(submission),
+      browserComments: Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isRecord) : [],
+      ...(typeof persisted.browserCommentContent === 'string' ? { browserCommentContent: persisted.browserCommentContent } : {}),
+      ...(isRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
       conversation,
       submissionId: submission.id,
       content: stringArg(persisted.text, '消息内容'),
@@ -2161,6 +2552,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   return {
+    readGoal: options.goals.readGoal,
+    setGoal: async (input: { conversationId: string; objective: string }) => {
+      const goal = await options.goals.setGoal(input);
+      await options.goals.advance(input.conversationId, `set:${goal.providerUpdatedAt}`);
+      return goal;
+    },
+    pauseGoal: options.goals.pauseGoal,
+    resumeGoal: options.goals.resumeGoal,
+    clearGoal: options.goals.clearGoal,
     repairPersistedConversationIdentities,
     repairPersistedAgentMessageProjections,
     async refreshModelRuntime(): Promise<void> {
@@ -2169,14 +2569,20 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     runtimeHealth() {
       return driver.getRuntimeHealth();
     },
+    /** 启动核对之后才恢复目标推进，不能自动重放未知的旧轮次。 */
+    recoverGoals: () => options.goals.recover(),
+    /** 空闲子会话也可能有背景进程，父会话停止时必须清理。 */
+    stopOwnedProcesses: (conversationId: string) => options.processes.stopOwned(conversationId),
     async recoverRuntime() {
       return driver.recoverRuntime({ reason: 'explicit_user_action' });
     },
     startConversation,
     submitMessage,
+    dispatchNextQueued,
     queueHeldMessage,
     steerMessage,
     sendQueuedNow,
+    respondToPlanImplementationRequest,
     resumeQueue,
     archiveConversation,
     restoreArchivedConversation,
@@ -2205,14 +2611,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerGenerationId: context.session.runtimeInstanceId,
       });
       interruptedRuns.add(input.providerTurnId);
-      for (const [requestId, pending] of pendingApprovals) {
-        if (pending.conversationId !== input.conversation.id) continue;
-        pendingApprovals.delete(requestId);
-        pending.resolve(false);
-      }
+      options.processes.stopOwned(input.conversation.id);
+      await options.stopSubagents(input.conversation.id);
       try {
         command.markProviderWriteStarted();
         await driver.interruptRun({ session: context.session, nativeRunId: input.providerTurnId, traceIdentity: command.traceIdentity });
+        // 先收口已接收的输出与终态，再返回停止回执，避免图片保存晚于停止投影。
+        await eventTails.get(input.providerTurnId);
       } catch (error) {
         command.recordFailure(error, {
           explicitlyRejected: isPiProviderExplicitRejection(error),
@@ -2273,15 +2678,53 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const request = options.requests.getById(input.requestId);
       if (!request || request.status !== 'pending') throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', 'Pi 工具审批已不在等待。');
       const pending = pendingApprovals.get(request.id);
-      if (!pending) throw piError('ZEUS_PI_APPROVAL_CHANNEL_UNAVAILABLE', 'Pi 工具审批通道已断开。');
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === request.conversationId);
+      if (request.requestKind === 'request_user_input') {
+        const response = asRecord(input.response);
+        const invalid = response.type !== 'request_user_input' ? '回答类型与原问题不匹配。' : validateCanonicalRequestUserInputAnswers(JSON.parse(request.payloadJson), response.answers);
+        if (invalid) throw piError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', invalid);
+        if (!pending) {
+          // 恢复后的回答保存原问题身份并排队，不向已经失效的工具调用重放响应。
+          const conversation = requirePiConversation(request.conversationId);
+          const timestamp = options.now();
+          const submission = options.db.transaction(() => {
+            const saved = options.submissions.createOrGet({
+              id: `conversation_submission_answer_${request.id}`,
+              conversationId: conversation.id,
+              idempotencyKey: `question-answer:${request.id}`,
+              requestHash: stableSha256(JSON.stringify(input.response)),
+              clientMessageId: `question-answer:${request.id}`,
+              kind: 'message',
+              requestedDelivery: 'queue',
+              status: 'queued',
+              createdAt: timestamp,
+              input: {
+                text: `用户回答了原轮次 ${request.turnId} 的问题 ${request.id}。请按原问题理解回答，不要重新执行历史工具。\n${request.payloadJson}\n${JSON.stringify(input.response)}`,
+                sourceRequestId: request.id,
+                sourceTurnId: request.turnId,
+                context: { workMode: conversation.collaborationMode, permissionMode: conversation.permissionMode },
+              },
+            });
+            options.requests.resolve(request.id, { response: input.response, resolvedAt: timestamp });
+            return saved;
+          });
+          projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
+          await options.db.save();
+          publish('conversation.request.resolved', request.conversationId, { requestId: request.id, requestKind: request.requestKind });
+          publish('conversation.queue.changed', conversation.id, { submissionId: submission.id, reason: '原问题回答已保存；按当前会话状态继续派发。' });
+          if (!options.turns.getLatestActiveByConversation(conversation.id)) void dispatchNextQueued(conversation.id).catch(() => undefined);
+          return;
+        }
+      }
+      if (!pending) throw piError('ZEUS_PI_APPROVAL_CHANNEL_UNAVAILABLE', '原工具审批通道已断开；不能自动重放可能已执行的操作。');
+      if (!activeRun || activeRun.turnId !== request.turnId) throw piError('ZEUS_PI_QUESTION_TURN_CHANGED', '原问题所属轮次已结束，不能向其他轮次提交回答。');
       const activeTurn = activeRun ? options.turns.getById(activeRun.turnId) : undefined;
       const timestamp = options.now();
       if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'running', completedAt: null, updatedAt: timestamp, agentKind: 'pi', nativeRunId: activeRun?.providerTurnId ?? null });
       options.conversations.updateAgentRuntime(request.conversationId, { providerState: 'active', status: 'running' });
       options.requests.resolve(request.id, { response: input.response, resolvedAt: options.now() });
-      await driver.respondToInteraction({ session: pending.session, requestId: request.id, response: input.response });
       await options.db.save();
+      await driver.respondToInteraction({ session: pending.session, requestId: request.id, response: input.response });
       publish('conversation.request.resolved', request.conversationId, { requestId: request.id, requestKind: request.requestKind });
     },
     async close(): Promise<void> {
@@ -2289,6 +2732,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       for (const pending of pendingApprovals.values()) pending.resolve(false);
       pendingApprovals.clear();
       await driver.close({ mode: 'final' });
+      await Promise.all(eventTails.values());
     },
   };
 }
@@ -2463,8 +2907,9 @@ const supportedPiImageMimeExtensions: Readonly<Record<string, readonly string[]>
   'image/tiff': ['.tif', '.tiff'],
 };
 
-async function resolvePiAttachmentInput(attachments: NativeConversationAttachmentInput[], allowedAttachmentRoots: string[]): Promise<PiAttachmentResolution> {
-  const allowedRoots = [...new Set(allowedAttachmentRoots.map(existingDirectoryRealpath).filter((root): root is string => root !== null))];
+/** 初次发送、续发和插话都从同一真实工作区授权起点校验附件。 */
+async function resolvePiAttachmentInput(attachments: NativeConversationAttachmentInput[], allowedAttachmentRoots: string[], cwd: string): Promise<PiAttachmentResolution> {
+  const allowedRoots = [...new Set([cwd, ...allowedAttachmentRoots].map(existingDirectoryRealpath).filter((root): root is string => root !== null))];
   const normalizedAttachments: NativeConversationAttachmentInput[] = [];
   const images: AgentImageInput[] = [];
   const pathReferences: Array<{ name: string; path: string }> = [];
@@ -2483,7 +2928,7 @@ async function resolvePiAttachmentInput(attachments: NativeConversationAttachmen
         throw new Error('附件不在可信目录内或不是可读取资源。');
       }
     } catch {
-      throw piError('ZEUS_PI_ATTACHMENT_PATH_UNAVAILABLE', 'Pi 附件必须解析为可信目录内的文件或目录。');
+      throw Object.assign(piError('ZEUS_PI_ATTACHMENT_PATH_UNAVAILABLE', 'Pi 附件必须解析为可信目录内的文件或目录。'), { statusCode: 409 });
     }
 
     const normalizedAttachment: NativeConversationAttachmentInput = {
@@ -2492,9 +2937,11 @@ async function resolvePiAttachmentInput(attachments: NativeConversationAttachmen
       ...(attachment.authorizedPath ? { authorizedPath: canonicalPath } : {}),
     };
     normalizedAttachments.push(normalizedAttachment);
+    if (attachment.authorizedPath && !allowedRoots.includes(canonicalPath)) allowedRoots.push(canonicalPath);
 
     const imageMime = pathStat.isFile() ? resolvePiImageMime(attachment.mime, canonicalPath) : null;
     if (imageMime) {
+      if (pathStat.size > 20 * 1024 * 1024) throw piError('ZEUS_PI_IMAGE_TOO_LARGE', '图片超过 20 MiB。');
       try {
         images.push({ data: (await readFile(canonicalPath)).toString('base64'), mimeType: imageMime });
       } catch {
@@ -2520,13 +2967,6 @@ function resolvePiImageMime(mime: string, canonicalPath: string): string | null 
 function appendPiAttachmentReferences(prompt: string, pathReferences: Array<{ name: string; path: string }>): string {
   if (pathReferences.length === 0) return prompt;
   return `${prompt}\n\n附件路径（请按需读取）：\n${pathReferences.map((attachment) => `- ${attachment.name}: ${attachment.path}`).join('\n')}`;
-}
-
-function appendPiConversationContext(prompt: string, browserCommentContent: string | undefined, browserComments: Record<string, unknown>[] | undefined, conversationContext: Record<string, unknown> | undefined): string {
-  const browserContext = browserCommentContent?.trim() || (browserComments?.length ? JSON.stringify({ browserComments }) : '');
-  const readableContext = conversationContext ? serializeConversationContext(conversationContext as unknown as ConversationContextDraft).trim() : '';
-  const missingReadableContext = readableContext && !prompt.includes(readableContext) ? readableContext : '';
-  return [prompt, browserContext, missingReadableContext].filter((part) => part.trim()).join('\n\n');
 }
 
 function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {
@@ -2579,25 +3019,22 @@ function resolveSkillResourceRoot(skill: NativeConversationSkillInput): string {
 }
 
 function uniquePaths(paths: readonly string[]): string[] {
-  return paths.map((path) => existingDirectoryRealpath(path)).filter((path, index, values): path is string => Boolean(path) && values.indexOf(path) === index);
+  return [
+    ...new Set(
+      paths.flatMap((path) => {
+        try {
+          return [realpathSync(path)];
+        } catch {
+          return [];
+        }
+      }),
+    ),
+  ];
 }
 
 function isInsideRoot(path: string, root: string): boolean {
   const rel = relative(resolve(root), resolve(path));
   return rel === '' || (!rel.startsWith('..') && rel !== '..' && !isAbsolute(rel));
-}
-
-function safePath(cwd: string, value: string, attachmentRoots: readonly string[] = []): string {
-  const candidate = resolve(cwd, value);
-  const rel = relative(resolve(cwd), candidate);
-  if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return candidate;
-  try {
-    const canonicalPath = realpathSync(candidate);
-    if (attachmentRoots.some((root) => isInsideRoot(canonicalPath, root))) return canonicalPath;
-  } catch {
-    // 外部附件路径不存在时仍然拒绝，不能用未经确认的路径扩大读取范围。
-  }
-  throw piError('ZEUS_PI_PATH_OUTSIDE_WORKSPACE', 'Pi 工具不能访问当前工作区之外的路径。');
 }
 
 function isPathInsideDirectory(path: string, directory: string): boolean {

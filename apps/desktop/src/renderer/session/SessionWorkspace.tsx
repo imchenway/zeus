@@ -1795,7 +1795,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     } as const);
   const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
   const assistantLabel = selectedComposerModel?.sourceName?.trim() || ((selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'pi' ? 'Pi' : 'Codex');
-  const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
+  const goalAvailable = !legacy && (selectedComposerModel?.features?.goals.state === 'available' || (!selectedComposerModel?.features && goalCapability.supported && goalCapability.enabled));
   /** 历史会话可显式操作目标，归档、只读和不支持目标的会话仍禁止写入。 */
   const goalWritable = goalAvailable && !hardInteractionReadOnly;
   const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
@@ -3101,7 +3101,7 @@ export function NewConversationComposer(props: {
   const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
   /** 空目录和未登录的订阅目录均允许点击发送进入接入引导。 */
   const needsModelSetup = Boolean(capabilities && !hasAvailableConversationModel(capabilities));
-  const goalAvailable = Boolean(capabilities?.goals?.supported && capabilities?.goals?.enabled && selectedModel?.agentKind !== 'pi');
+  const goalAvailable = Boolean(selectedModel?.features?.goals.state === 'available' || (!selectedModel?.features && capabilities?.goals?.supported && capabilities?.goals?.enabled));
   const goalInputActive = goalInputOpen && goalAvailable;
   const goalCount = [...goalObjective.trim()].length;
   const goalObjectiveValid = goalCount > 0 && goalCount <= 4_000;
@@ -3419,7 +3419,13 @@ export function NewConversationComposer(props: {
                 <Paperclip aria-hidden="true" weight="regular" />
               </button>
             ) : null}
-            <PermissionModeControl language={props.language} value={permissionMode} supportsAutoReview={Boolean(selectedModel) && selectedModel?.agentKind !== 'pi'} disabled={submitting || !props.owner} onChange={setPermissionMode} />
+            <PermissionModeControl
+              language={props.language}
+              value={permissionMode}
+              supportsAutoReview={Boolean(selectedModel) && !['unsupported', 'needs_configuration'].includes(selectedModel?.features?.autoReview.state ?? 'unknown')}
+              disabled={submitting || !props.owner}
+              onChange={setPermissionMode}
+            />
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
             {goalAvailable ? (
               <button

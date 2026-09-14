@@ -86,6 +86,8 @@ export interface ZeusPluginService {
   resolveExplicitReferences(input: { projectId?: string | null; text: string }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
   validateExplicitReferences(input: { projectId?: string | null; references: unknown }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
   validateConversationReferences(input: { conversationId: string; references: unknown }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
+  /** 子会话继承父会话已冻结的插件，不能换成当前安装版本。 */
+  inheritConversationActivations(parentId: string, childId: string): Promise<void>;
   getOrFreezeConversationActivations(input: { conversationId: string; projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationSnapshot[]>;
 }
 
@@ -494,6 +496,19 @@ export function createZeusPluginService(options: {
     return references;
   }
 
+  /** 引用同一不可变插件内容，权限和启用情况沿用父会话快照。 */
+  async function inheritConversationActivations(parentId: string, childId: string): Promise<void> {
+    if (!options.repository.hasConversationActivationSet(parentId)) throw new Error('父会话尚未冻结插件资源。');
+    if (options.repository.hasConversationActivationSet(childId)) return;
+    const activations = hydrateActivationRecords(options.repository.listConversationActivations(parentId));
+    options.repository.freezeConversationActivations(
+      childId,
+      activations.map((snapshot) => ({ plugin: requirePlugin(snapshot.pluginId), revision: requireRevision(snapshot.pluginRevisionId), snapshot: snapshot as unknown as Record<string, unknown> })),
+      now().toISOString(),
+    );
+    await options.save();
+  }
+
   async function getOrFreezeConversationActivations(input: { conversationId: string; projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationSnapshot[]> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     if (options.repository.hasConversationActivationSet(conversationId)) return hydrateActivationRecords(options.repository.listConversationActivations(conversationId));
@@ -650,6 +665,7 @@ export function createZeusPluginService(options: {
     validateExplicitReferences,
     validateConversationReferences,
     getOrFreezeConversationActivations,
+    inheritConversationActivations,
   };
 }
 

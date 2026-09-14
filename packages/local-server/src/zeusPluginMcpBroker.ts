@@ -23,6 +23,8 @@ export interface ZeusPluginDynamicTool {
   approvalMode: PluginApprovalMode;
   appResourceUri: string | null;
   definitionSha256: string;
+  /** MCP 明确声明的只读能力；缺失时不能在只读模式执行。 */
+  readOnly?: boolean;
 }
 
 export interface ZeusPluginMcpAppDocument {
@@ -35,6 +37,8 @@ export interface ZeusPluginMcpAppDocument {
 
 export interface ZeusPluginMcpToolResult {
   text: string;
+  /** 保留 MCP 实际返回的图片，不能把 base64 当成正文送给模型。 */
+  images?: Array<{ data: string; mimeType: string }>;
   structuredContent: unknown;
   isError: boolean;
   app: ZeusPluginMcpAppDocument | null;
@@ -100,6 +104,7 @@ export function createZeusPluginMcpBroker(options: {
               label: tool.title?.trim() || `${activation.name}/${server.id}/${tool.name}`,
               description: tool.description?.trim() || `调用 ${activation.name} Plugin 的 ${tool.name} MCP 工具。`,
               inputSchema: normalizeInputSchema(tool.inputSchema),
+              readOnly: tool.annotations?.readOnlyHint === true,
               pluginId: activation.pluginId,
               pluginRevisionId: activation.pluginRevisionId,
               serverId: server.id,
@@ -166,7 +171,7 @@ export function createZeusPluginMcpBroker(options: {
       isError: result.isError === true,
       hasApp: Boolean(app),
     });
-    return { text, structuredContent: result.structuredContent, isError: result.isError === true, app };
+    return { text, images: toolResultImages(result.content), structuredContent: result.structuredContent, isError: result.isError === true, app };
   }
 
   async function invokeHook(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> {
@@ -324,14 +329,31 @@ async function readMcpAppDocument(client: Client, resourceUri: string, signal?: 
   return app;
 }
 
+/** 图片沿内容通道传递，保留其余结果原有文本和结构化信息。 */
 function toolResultText(result: { content: unknown[]; structuredContent?: unknown }): string {
   const text = result.content
+    .filter((entry) => !isRecord(entry) || entry.type !== 'image')
     .map((entry) => (isRecord(entry) && entry.type === 'text' && typeof entry.text === 'string' ? entry.text : JSON.stringify(entry)))
     .filter(Boolean)
     .join('\n');
   const output = text || (result.structuredContent === undefined ? '' : JSON.stringify(result.structuredContent));
   if (Buffer.byteLength(output, 'utf8') > maximumToolResultBytes) throw brokerError('ZEUS_PLUGIN_MCP_RESULT_TOO_LARGE', 'MCP 工具结果超过 8 MiB。');
   return output;
+}
+
+/** 在 MCP 信任边界验证图片并控制总量，后续两条链路复用受管图片存储。 */
+function toolResultImages(content: unknown[]): Array<{ data: string; mimeType: string }> {
+  const images: Array<{ data: string; mimeType: string }> = [];
+  let bytes = 0;
+  for (const entry of content) {
+    if (!isRecord(entry) || entry.type !== 'image') continue;
+    if (typeof entry.data !== 'string' || typeof entry.mimeType !== 'string' || !/^image\/[a-z0-9.+-]+$/iu.test(entry.mimeType) || !/^[a-z0-9+/]+={0,2}$/iu.test(entry.data) || entry.data.length % 4 !== 0)
+      throw brokerError('ZEUS_PLUGIN_MCP_IMAGE_INVALID', 'MCP 返回的图片格式无效。');
+    bytes += Buffer.byteLength(entry.data, 'base64');
+    if (bytes > maximumToolResultBytes) throw brokerError('ZEUS_PLUGIN_MCP_RESULT_TOO_LARGE', 'MCP 图片结果超过 8 MiB。');
+    images.push({ data: entry.data, mimeType: entry.mimeType });
+  }
+  return images;
 }
 
 function appResourceUri(tool: Tool): string | null {
@@ -360,14 +382,18 @@ function normalizeInputSchema(value: unknown): Record<string, unknown> {
 }
 
 function toolNamespace(pluginName: string, serverId: string): string {
-  return `mcp__${safeToolIdentity(pluginName)}__${safeToolIdentity(serverId)}`;
+  // app-server 保留 mcp__ 命名空间；共同工具使用 Zeus 身份，完整函数名不超过 64 字符。
+  return `zeus_mcp_${createHash('sha256')
+    .update(JSON.stringify([pluginName, serverId]))
+    .digest('hex')
+    .slice(0, 16)}`;
 }
 
 function safeToolIdentity(value: string): string {
   const normalized = value
     .replaceAll(/[^a-zA-Z0-9_-]/gu, '_')
     .replaceAll(/_+/gu, '_')
-    .slice(0, 48);
+    .slice(0, 24);
   const base = normalized || 'tool';
   return `${base}_${createHash('sha256').update(value).digest('hex').slice(0, 8)}`;
 }

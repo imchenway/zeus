@@ -1,4 +1,5 @@
 import { ConversationGoalRepository } from '@zeus/storage';
+import { effectiveToolPermission, restrictToolPermission } from './conversationToolPolicy.js';
 import { conversationCommandTypes, conversationInputSha256 } from './conversationCommandApplication.js';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
@@ -812,7 +813,12 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           resourceId: `task:${item.taskId}`,
           mutateBusinessState: () => {
             assertCurrentWorkToolTurn(options, call.conversationId, turn.id);
-            return options.planning.delegate(item.id, operationIdentity, input, policy, run.authoritySnapshot.permissionMode === 'read-only' ? 'read-only' : run.authoritySnapshot.permissionMode === 'full-access' ? 'full-access' : 'auto');
+            /** 委派同时遵守原工作授权和当前轮次上限，降低权限后不能借旧安排扩大权限。 */
+            const permission = restrictToolPermission(
+              run.authoritySnapshot.permissionMode === 'read-only' ? 'read-only' : run.authoritySnapshot.permissionMode === 'full-access' ? 'full-access' : 'auto',
+              readWorkToolPermission(options, call.conversationId, turn.clientSubmissionId),
+            );
+            return options.planning.delegate(item.id, operationIdentity, input, policy, permission === 'auto-review' ? 'auto' : permission);
           },
         }).result;
         await options.save();
@@ -865,9 +871,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
     };
     if (!submission || submission.conversationId !== call.conversationId || input.sourceRequestId !== submission.id) throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_REQUEST_SCOPE', '指派必须来自当前用户请求，不能引用历史或其他会话。');
     /** 权限取用户提交时的冻结值，不使用会话后来修改的设置扩大权限。 */
-    const snapshot = submission.executionSnapshotId ? options.conversationExecution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
-    const permissionMode =
-      snapshot?.conversationId === call.conversationId && snapshot.permissionMode === 'full-access' ? 'full-access' : snapshot?.conversationId === call.conversationId && snapshot.permissionMode === 'auto' ? 'auto' : 'read-only';
+    const permissionMode = readWorkToolPermission(options, call.conversationId, submission.id);
     const identity = sha256([call.conversationId, call.threadId, call.turnId, call.callId].join('\0'));
     const parsed = options.application.parse({
       value: commandEnvelope(workManagementCommandTypes.taskDiscussionAssign, 'task', taskId, identity, input, workManagementInputSha256(input)),
@@ -1112,7 +1116,9 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
-    if (effective.autonomyObjective && (model?.agentKind !== 'codex' || !isRecord(capability.goals) || capability.goals.enabled !== true))
+    /** 与会话共用真实功能目录，切换到 Pi 后不按品牌关闭已经接入的目标。 */
+    const selectedCapability = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((candidate) => candidate.id === model?.id);
+    if (effective.autonomyObjective && !(selectedCapability?.features ? ['available', 'unknown'].includes(selectedCapability.features.goals.state) : isRecord(capability.goals) && capability.goals.enabled === true))
       blockers.push({ code: 'ZEUS_TASK_WORK_GOAL_UNAVAILABLE', message: '该模型尚不支持自主目标，请切换支持的模型或清空此目标后执行。' });
     workspace = resolveTaskWorkWorkspaceSnapshot(selection.workspace, capability, blockers);
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
@@ -1838,6 +1844,21 @@ function assertPreviewFresh(preview: TaskWorkPreview, input: TaskWorkCreateInput
     throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '任务、员工或能力来源已变化，请重新预览后再指派。');
   }
   if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
+}
+
+/** 任务委派复用本轮执行快照，计划模式只读，缺少可核对身份时不扩大权限。 */
+function readWorkToolPermission(options: TaskWorkManagementOptions, conversationId: string, submissionId: string | null): 'read-only' | 'auto' | 'full-access' {
+  /** 提交身份由工具原轮次确定，不能引用其他会话的权限。 */
+  const submission = submissionId ? options.conversationSubmissions.getById(submissionId) : undefined;
+  /** 工作工具只读取冻结权限，不使用会话的后续草稿设置。 */
+  const snapshot = submission?.conversationId === conversationId && submission.executionSnapshotId ? options.conversationExecution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
+  if (snapshot?.conversationId !== conversationId) return 'read-only';
+  /** 工作安排只有三种目录权限，自动审查降为人工审查不会放宽授权。 */
+  const permission = effectiveToolPermission(
+    snapshot.permissionMode === 'full-access' ? 'full-access' : snapshot.permissionMode === 'auto' || snapshot.permissionMode === 'auto-review' ? 'auto' : 'read-only',
+    snapshot.collaborationMode === 'plan' ? 'plan' : 'default',
+  );
+  return permission === 'auto-review' ? 'auto' : permission;
 }
 
 /** 新写入只接纳当前进行中的原生轮次，旧轮次只允许读取已接纳回执。 */

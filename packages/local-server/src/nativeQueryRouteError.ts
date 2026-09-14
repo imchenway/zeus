@@ -18,6 +18,7 @@ export function sendNativeQueryRouteError(reply: FastifyReply, error: unknown): 
           code.includes('NOT_EDITABLE') ||
           code.includes('NOT_QUEUED') ||
           code.includes('NOT_ACTIVE') ||
+          (code.startsWith('ZEUS_ASYNC_QUESTION_') && !code.endsWith('_INVALID')) ||
           code.includes('NOT_INTERRUPTED') ||
           code.includes('IN_PROGRESS') ||
           code.includes('MISMATCH') ||

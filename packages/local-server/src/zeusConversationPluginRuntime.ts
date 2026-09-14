@@ -140,6 +140,7 @@ export function createZeusConversationPluginRuntime(options: {
     const developerInstructions = [
       ...sessionStart.systemMessages,
       ...sessionStart.additionalContext,
+      mcp.tools.length > 0 ? `当前会话已冻结以下 MCP 工具；通过执行内核的工具目录按名称读取参数后调用（Pi 使用 zeus_tool_catalog 和 zeus_tool_invoke）：\n${mcp.tools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')}` : '',
       skills.length > 0 ? `当前会话已冻结以下 Zeus Plugin Skill。可按描述自主选择，也可响应用户的 @Plugin/@Skill 显式引用：\n${skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`).join('\n')}` : '',
     ]
       .filter(Boolean)
