@@ -1,5 +1,7 @@
 /* Zeus 交互原语层最后加载。业务页面可以选择显式变体，但不能重新定义核心状态。 */
 .macos-ai-app {
+  /* 输入焦点贴合原边框，不向外叠加光圈，也不改变控件尺寸。 */
+  --zeus-field-focus: inset 0 0 0 1px var(--zeus-focus-line);
   --zeus-motion-duration-state: 120ms;
   --zeus-motion-duration-object: 180ms;
   --zeus-motion-duration-workspace: 240ms;
@@ -305,6 +307,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 .macos-ai-app :where(input, select, textarea):hover:not(:disabled):not([readonly]) {
   border-color: var(--zeus-interaction-line);
+}
+/* 页面与 body 下的弹窗共用输入焦点；复合控件继续由自身外框负责。 */
+.macos-ai-app :where(input, select, textarea):focus-visible {
+  border-color: var(--zeus-focus-line);
+  box-shadow: var(--zeus-field-focus);
+  outline: 0;
+}
+/* 错误状态保留语义色，不能被普通焦点覆盖。 */
+.macos-ai-app :is(input, select, textarea):is([aria-invalid='true'], :user-invalid):focus-visible {
+  border-color: var(--zeus-control-error-line);
+  box-shadow: inset 0 0 0 1px var(--zeus-control-error-line);
+}
+/* 强制配色会移除阴影，用内收轮廓保留键盘定位。 */
+@media (forced-colors: active) {
+  .macos-ai-app :where(input, select, textarea):focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: -2px !important;
+  }
 }
 .macos-ai-app :where(input[type='checkbox'], input[type='radio'], input[type='range']) {
   accent-color: var(--zeus-product-accent);

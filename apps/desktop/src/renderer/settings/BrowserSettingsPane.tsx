@@ -45,7 +45,7 @@ const copy = {
     clearConfirm: '将清除独立浏览器 Profile 中的登录态、站点数据、授权和批注。此操作不可撤销，确定继续吗？',
     computerTitle: 'Computer Use',
     // 全局启用后会话即可按需使用，无需逐条消息选择。
-    computerHelp: '启用并授予 macOS 辅助功能和录屏权限后，AI 可以在会话中按需操作其他应用。敏感操作会再次征求同意。',
+    computerHelp: '在此启用并完成 macOS 辅助功能和录屏授权后，AI 可在会话中操作其他应用，使用过程中无需再次授权。权限失效时，请回到此处补齐；可随时关闭或停止控制。',
     computerEnable: '启用 Computer Use',
     computerStop: '立即停止控制',
     computerAccessibility: '辅助功能',
@@ -108,7 +108,8 @@ const copy = {
     clearConfirm: 'This clears sign-in state, site data, grants, and comments from the independent browser profile. It cannot be undone. Continue?',
     computerTitle: 'Computer Use',
     // 英文同步说明全局开关生效后的会话能力。
-    computerHelp: 'After enabling this and granting macOS Accessibility and Screen Recording permissions, the AI can operate other apps as needed in conversations. Sensitive actions will ask for approval again.',
+    computerHelp:
+      'Enable this and grant macOS Accessibility and Screen Recording permissions here. The AI can then operate other apps without further authorization during use. Return here if permissions become unavailable; you can disable access or stop control at any time.',
     computerEnable: 'Enable Computer Use',
     computerStop: 'Stop control now',
     computerAccessibility: 'Accessibility',

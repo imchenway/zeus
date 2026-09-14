@@ -1,5 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { normalizeSidebarConversationFilters, sidebarConversationRunStatuses, type SidebarConversationFilters } from '@zeus/shared';
+import { normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -25,7 +25,6 @@ import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dis
 import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree, resolveConversationTreeRuntimeState, taskRunStatusFromConversationTreeState } from '../../session/ProjectConversationTree.js';
-import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
@@ -666,7 +665,7 @@ export function SidebarNav(props: {
   /** 任务状态、会话运行状态与其他会话分区展示；清除选择不属于可选值。 */
   const statusFilterOptions = [
     ...Array.from(statusLabelsById, ([id, labels]) => ({ value: `status:${id}`, label: [...labels].join(' / '), group: copy.taskStatusFilterGroup })),
-    ...sidebarConversationRunStatuses.map((status) => ({ value: `run:${status}`, label: taskAgentRunStatusLabels[props.appLanguage][status], group: copy.conversationStatusFilterGroup })),
+    ...sidebarConversationRunStatusGroups.map(({ value }) => ({ value: `run:${value}`, label: copy.conversationRunStatusGroups[value], group: copy.conversationStatusFilterGroup })),
     { value: 'project', label: copy.projectConversationsOnly, group: copy.otherConversationFilterGroup },
   ];
   /** 忽略已删除的状态；未选择状态时显示全部会话。 */
@@ -677,9 +676,11 @@ export function SidebarNav(props: {
   const hasTaskStatusFilter = activeStatusFilters.some((value) => value === 'project' || value.startsWith('status:'));
   /** 运行状态独立多选，再与任务维度取交集。 */
   const activeRunStatusFilters = activeStatusFilters.filter((value) => value.startsWith('run:'));
-  /** 直接从当前权威投影派生筛选结果，状态更新无需额外同步。 */
+  /** 从当前权威投影派生所属分组，连接、等待等细分状态更新无需额外同步。 */
   function matchesConversationRunStatus(conversation: NativeConversationChoice): boolean {
-    return activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates))}`);
+    return (
+      activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${sidebarConversationRunStatusGroup(taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates)))}`)
+    );
   }
   /** 状态筛选或同任务去重生效时，漏斗和空项目选项都反映当前筛选。 */
   const hasConversationFilter = hasStatusFilter || latestConversationOnly;

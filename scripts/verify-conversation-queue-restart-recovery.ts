@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAccountSnapshot, CodexAppServerEvent, CodexAppServerManager, CodexCapabilitiesSnapshot, CodexThreadSnapshot, CodexTurnSnapshot, CodexTurnStartInput, CodexTurnSteerInput } from '@zeus/ai-runtime';
-import { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import { conversationDispatchInputSha256 } from '../packages/local-server/src/conversationDispatchCommandApplication.js';
 import { conversationStartInputSha256 } from '../packages/local-server/src/conversationStartCommandApplication.js';
 import { createZeusDataLayout, startZeusLocalServer, type RunningZeusLocalServer } from '../packages/local-server/src/index.js';
@@ -320,12 +320,14 @@ try {
 
   /** 完整本地服务上复现引导已接纳但回显延迟的连续发送。 */
   const steering = await verifyContinuousSteering(runningServer, conversationId, restartedProvider);
+  await verifyInteractionRestart(conversationId, restartedProvider);
 
   console.log(
     JSON.stringify(
       {
         status: 'passed',
         steering,
+        unansweredCardRestart: { optionAndCustomAnswer: true, sameThreadContinuation: true, duplicateResponseSentOnce: true },
         piPrewriteRejection: true,
         immutablePayloadProtected: true,
         restartCount: 1,
@@ -474,6 +476,111 @@ async function verifyContinuousSteering(server: RunningZeusLocalServer, conversa
     };
   } finally {
     db.close();
+  }
+}
+
+/** 复现退出后的未答卡片，经公开回答入口验证同线程续接和重复提交保护。 */
+async function verifyInteractionRestart(conversationId: string, initialProvider: ReturnType<typeof createRestartProbeManager>): Promise<void> {
+  /** 每次重启更换连接实例，但保留同一模型会话与真实持久数据库。 */
+  let provider = initialProvider;
+  for (const answer of ['独立全局规则页', '放在设置首页，并支持自定义说明', '确认插件工具']) {
+    /** 插件审批在旧实例中也有内存回调，需要单独验证重启后不再依赖它。 */
+    const pluginApproval = answer === '确认插件工具';
+    /** 保存可控模型的权威历史，下一实例仍能核对原轮次。 */
+    const snapshot = await provider.manager.readThread({ threadId: providerThreadId });
+    await runningServer!.close();
+    runningServer = null;
+    /** 关闭服务后构造截图中的退出失败记录，避免并发改动运行中的数据库。 */
+    const db = await createZeusDatabase(databasePath);
+    /** 待回答记录的稳定身份随数据库重启保留。 */
+    let requestId: string;
+    try {
+      /** 使用产品仓库写入与退出动作相同的状态。 */
+      const conversations = new ConversationRepository(db);
+      /** 前一阶段的未知发送已验证完成，此处显式取消以隔离答题卡场景。 */
+      const submissions = new ConversationSubmissionRepository(db);
+      /** 原问题仍归属最近的模型轮次。 */
+      const turns = new ConversationTurnRepository(db);
+      /** 原题和选项随请求记录一起耐久保存。 */
+      const requests = new ConversationServerRequestRepository(db);
+      /** 统一记录本次退出时间。 */
+      const timestamp = new Date().toISOString();
+      for (const submission of submissions.listByConversation(conversationId)) {
+        if (['queued', 'paused', 'active', 'dispatching'].includes(submission.status)) submissions.updateStatus(submission.id, 'cancelled', { resolvedAt: timestamp, updatedAt: timestamp });
+      }
+      /** 每张问题都有独立的退出轮次，不篡改之前已经正常完成的轮次。 */
+      const turn = turns.upsert({ conversationId, providerThreadId, providerTurnId: randomUUID(), clientSubmissionId: null, status: 'interrupted', startedAt: timestamp, completedAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+      snapshot.turns.push({ id: turn.providerTurnId!, threadId: providerThreadId, status: 'interrupted', items: [], completedAt: timestamp });
+      requestId = requests.upsert({
+        conversationId,
+        turnId: turn.id,
+        itemId: `question-${answer}`,
+        transportGenerationId: 'disconnected-generation',
+        providerRequestId: `question-${answer}`,
+        requestKind: pluginApproval ? 'command' : 'request_user_input',
+        payload: pluginApproval
+          ? { threadId: providerThreadId, turnId: turn.providerTurnId, zeusPluginToolApproval: true, command: 'MCP probe.inspect', availableDecisions: ['accept', 'decline', 'cancel'] }
+          : {
+              threadId: providerThreadId,
+              turnId: turn.providerTurnId,
+              questions: [
+                {
+                  id: 'placement',
+                  header: '入口位置',
+                  question: '规则编辑入口放在哪里？',
+                  isSecret: false,
+                  isOther: true,
+                  options: [
+                    { label: '独立全局规则页', description: '直接进入规则编辑。' },
+                    { label: 'AI 连接页', description: '与连接设置放在一起。' },
+                  ],
+                },
+              ],
+            },
+        status: 'failed',
+        response: { code: 'ZEUS_FORCED_QUIT_INTERRUPTED' },
+        createdAt: timestamp,
+      }).id;
+      conversations.bindProvider(conversationId, { providerId: 'codex', providerThreadId, providerModel: 'gpt-5.6-sol', providerState: 'ready' });
+      await db.save();
+    } finally {
+      db.close();
+    }
+    provider = createRestartProbeManager({ providerThreadId, initialTurns: snapshot.turns, turnIds: [randomUUID()] });
+    runningServer = await startProbeServer(provider.manager, `question-${answer}`);
+    /** 使用与界面相同的卡片查询入口，确认空闲会话也主动恢复未答卡片。 */
+    const base = `/api/projects/${projectId}/conversations/${conversationId}`;
+    await waitFor(
+      async () => {
+        /** 恢复会异步广播新快照，最初一次读取允许仍处于检查中。 */
+        const current = await requestJson(runningServer!, `${base}/pending-requests`);
+        return current.status === 200 && (current.body.requests as JsonObject[]).some((request) => request.id === requestId && request.status === 'pending');
+      },
+      `重启后的原答题卡未恢复提交入口：${answer}`,
+      15_000,
+    ).catch(async (error) => {
+      /** 失败时只输出临时场景状态，区分恢复规则与探针准备错误。 */
+      const state = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        throw new Error(
+          `${String(error)}：${JSON.stringify({ request: state.prepare('SELECT status, response_json, turn_id FROM conversation_server_requests WHERE id = ?').get(requestId), turns: state.prepare('SELECT id, status, error_json FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 2').all(conversationId), cards: (await requestJson(runningServer!, `${base}/pending-requests`)).body })}`,
+        );
+      } finally {
+        state.close();
+      }
+    });
+    /** 与界面相同的答案格式同时覆盖预设选项和自由输入。 */
+    const response = pluginApproval ? { type: 'command', decision: 'accept' } : { type: 'userInput', answers: { placement: { answers: [answer] } } };
+    /** 同一操作身份的重复点击只能形成一次续接。 */
+    const body = commandRequest({ commandType: 'conversation.server_request.respond', scopeKind: 'approval', scopeId: requestId, operationIdentity: requestId, input: response, inputSha256: conversationDispatchInputSha256(response) });
+    /** 公开写入口必须明确接纳原答案。 */
+    const accepted = await requestJson(runningServer, `${base}/requests/${requestId}/respond`, { method: 'POST', body });
+    assertBehavior(accepted.status === 202, `恢复答题提交失败：${JSON.stringify(accepted.body)}`);
+    await requestJson(runningServer, `${base}/requests/${requestId}/respond`, { method: 'POST', body });
+    await waitFor(() => provider.startTurnInputs.length === 1, '恢复答案没有继续模型对话。', 15_000);
+    assertBehavior(provider.startTurnInputs[0]!.threadId === providerThreadId && JSON.stringify(provider.startTurnInputs[0]!.input).includes(pluginApproval ? 'probe.inspect' : answer), '续接丢失用户答案或切换了模型会话。');
+    await provider.completeTurn(0);
+    assertBehavior(provider.startTurnInputs.length === 1, '重复回答创建了多个模型轮次。');
   }
 }
 
@@ -708,7 +815,7 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   };
 }
 
-function commandRequest(input: { commandType: string; scopeKind: 'project' | 'product_conversation' | 'submission'; scopeId: string; operationIdentity: string; input: JsonObject; inputSha256: string }): JsonObject {
+function commandRequest(input: { commandType: string; scopeKind: 'project' | 'product_conversation' | 'submission' | 'approval'; scopeId: string; operationIdentity: string; input: JsonObject; inputSha256: string }): JsonObject {
   return {
     command: {
       schemaGeneration: 'zeus-command-envelope-v1',

@@ -914,12 +914,6 @@
   resize: none;
 }
 
-.session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 0;
-}
-
 .session-codex-parity-v1 .session-queued-message-editor > footer {
   align-items: center;
   display: flex;
@@ -1344,36 +1338,45 @@
   overflow-wrap: anywhere;
 }
 
+/* 目标摘要沿用输入框的宽度和两侧留白，避免分栏时独立撑满。 */
 .session-codex-parity-v1 .session-goal-rail {
-  min-width: 24px;
-  min-height: 24px;
-  border: 1px solid color-mix(in srgb, var(--session-accent, var(--zeus-brand-primary)) 24%, transparent);
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--session-accent, var(--zeus-brand-primary)) 7%, transparent);
-}
-
-.session-codex-parity-v1 .session-goal-rail {
-  width: min(100%, 760px);
-  margin: 0 auto 8px;
-  padding: 9px 12px;
-  border-radius: 12px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
+  min-inline-size: 0;
+  min-block-size: 32px;
+  margin: 0 auto 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  background: transparent;
+  display: flex;
   align-items: center;
   gap: 10px;
   text-align: left;
+  cursor: pointer;
+}
+
+.session-codex-parity-v1 .session-goal-rail:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-goal-rail:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
 }
 
 .session-goal-status-dot {
-  width: 8px;
-  height: 8px;
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: #8b91a7;
 }
 
 .session-goal-status-dot.is-active {
   background: var(--zeus-brand-primary);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
 .session-goal-status-dot.is-complete {
   background: var(--zeus-brand-primary);
@@ -1385,6 +1388,7 @@
 }
 
 .session-goal-rail-copy {
+  flex: 1;
   min-width: 0;
   display: flex;
   gap: 8px;
@@ -1394,7 +1398,7 @@
 .session-goal-rail-copy strong {
   flex: 0 0 auto;
   font-size: 12px;
-  color: var(--text-primary);
+  color: var(--zeus-product-text);
 }
 .session-goal-rail-copy span {
   overflow: hidden;
@@ -1403,9 +1407,10 @@
   font-size: 12px;
 }
 .session-goal-rail-meta {
+  flex-shrink: 0;
   font-size: 11px;
   white-space: nowrap;
-  color: var(--text-tertiary);
+  color: var(--zeus-product-muted);
 }
 
 .session-goal-portal-root {
@@ -1417,11 +1422,14 @@
 }
 
 .session-goal-panel {
-  width: min(620px, calc(100vw - 32px));
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 32px));
+  color: var(--zeus-product-text);
+  font-size: 13px;
   max-height: min(760px, calc(100vh - 40px));
   overflow: auto;
-  border-radius: 18px;
-  padding: 22px;
+  border-radius: 14px;
+  padding: 20px;
   box-shadow: 0 24px 80px rgb(8 10 18 / 28%);
 }
 
@@ -1440,19 +1448,13 @@
 }
 .session-goal-panel-header h2 {
   margin: 2px 0 0;
-  font-size: 22px;
-}
-.session-goal-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+  font-size: 18px;
 }
 .session-goal-status {
   padding: 4px 9px;
   border-radius: 999px;
   font-size: 12px;
-  background: var(--surface-muted);
+  background: var(--zeus-product-panel-muted);
 }
 .session-goal-status.is-active {
   color: var(--zeus-brand-text);
@@ -1462,10 +1464,15 @@
   color: var(--zeus-brand-text);
   background: color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
+/* 受阻与额度限制使用提示色，和运行中的品牌色区分。 */
+.session-goal-status:is(.is-blocked, .is-usageLimited, .is-budgetLimited) {
+  color: var(--zeus-product-text);
+  background: var(--zeus-warning-bg);
+}
 .session-goal-description {
   margin: 14px 0 18px;
   line-height: 1.55;
-  color: var(--text-secondary);
+  color: var(--zeus-product-muted);
 }
 
 .session-goal-objective-field {
@@ -1475,34 +1482,35 @@
   font-weight: 600;
 }
 .session-goal-objective-field textarea {
-  min-height: 150px;
+  min-height: 96px;
   resize: vertical;
   padding: 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  background: var(--surface-muted);
-  color: var(--text-primary);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-text);
   font: inherit;
+  font-size: 13px;
   font-weight: 400;
   line-height: 1.55;
 }
 .session-goal-objective-field small {
   justify-self: end;
   font-weight: 400;
-  color: var(--text-tertiary);
+  color: var(--zeus-product-muted);
 }
 
 .session-goal-metrics {
   gap: 0;
   margin: 16px 0;
   padding: 12px 0;
-  border-block: 1px solid var(--border-subtle);
+  border-block: 1px solid var(--zeus-product-line);
 }
 .session-goal-metrics div {
   min-width: 0;
   flex: 1;
   padding: 0 12px;
-  border-left: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--zeus-product-line);
 }
 .session-goal-metrics div:first-child {
   border-left: 0;
@@ -1510,12 +1518,12 @@
 }
 .session-goal-metrics dt {
   font-size: 11px;
-  color: var(--text-tertiary);
+  color: var(--zeus-product-muted);
 }
 .session-goal-metrics dd {
   margin: 4px 0 0;
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--zeus-product-text);
 }
 
 .session-goal-timeline {
@@ -1526,6 +1534,8 @@
   font-size: 12px;
 }
 .session-goal-timeline ol {
+  max-height: 168px;
+  overflow: auto;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1537,10 +1547,12 @@
   font-size: 12px;
 }
 .session-goal-timeline time {
-  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--zeus-product-muted);
 }
 .session-goal-error {
-  color: var(--danger);
+  color: var(--zeus-control-danger-text);
   font-size: 12px;
 }
 .session-goal-clear-confirm {
@@ -1559,32 +1571,23 @@
 .session-goal-clear-confirm p {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-secondary);
+  color: var(--zeus-product-muted);
 }
+/* 删除目标与普通操作分开，操作状态交给公共按钮组件。 */
 .session-goal-panel-actions {
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
 }
-.session-goal-panel-actions button,
-.session-goal-clear-confirm button {
-  min-height: 32px;
-  padding: 6px 12px;
-  border-radius: 9px;
+.session-goal-clear-action {
+  margin-inline-end: auto;
 }
-.session-goal-panel-actions .is-primary {
-  color: white;
-  background: var(--session-accent, var(--zeus-brand-primary));
-}
-.session-goal-panel-actions .is-danger-quiet,
-.session-goal-clear-confirm .is-danger {
-  color: #b43d3d;
+.session-goal-objective-field small.is-invalid {
+  color: var(--zeus-control-danger-text);
 }
 
 @media (max-width: 720px) {
-  .session-goal-rail {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
   .session-goal-rail-meta {
     display: none;
   }
@@ -3232,8 +3235,6 @@
 }
 
 .session-codex-parity-v1 .ai-workspace button:focus-visible,
-.session-codex-parity-v1 .ai-workspace input:focus-visible,
-.session-codex-parity-v1 .ai-workspace textarea:focus-visible,
 .session-codex-parity-v1 .ai-workspace a:focus-visible,
 .session-codex-parity-v1 > .session-mobile-source-backdrop:focus-visible {
   outline: 2px solid var(--session-focus-outline);
@@ -4107,12 +4108,6 @@
   min-block-size: 72px;
   padding: 4px 5px;
   resize: none;
-}
-
-.session-codex-parity-v1 .session-user-message-editor > textarea:focus-visible {
-  box-shadow: 0 0 0 2px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 0;
 }
 
 .session-codex-parity-v1 .session-user-message-editor > footer {
@@ -5483,9 +5478,10 @@
   transform: rotate(180deg);
 }
 
+/* 工具栏悬停使用品牌前景色，避免正文黑色覆盖模式状态；权限警示色由触发器变量保留。 */
 .session-codex-parity-v1 .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger[aria-expanded='true'] {
@@ -6419,7 +6415,7 @@
 
 .session-codex-parity-v1 .session-collaboration-mode:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-collaboration-mode[data-active='true'] {
@@ -6629,11 +6625,9 @@
 .session-codex-parity-v1 .session-browser-toggle:focus-visible,
 .session-codex-parity-v1 .session-quick-actions-trigger:focus-visible,
 .session-codex-parity-v1 .browser-tab-strip button:focus-visible,
-.session-codex-parity-v1 .browser-workspace button:focus-visible,
-.session-codex-parity-v1 .browser-workspace input:focus-visible {
-  box-shadow: 0 0 0 3px var(--session-focus);
-  outline: 1px solid var(--session-focus-outline);
-  outline-offset: 1px;
+.session-codex-parity-v1 .browser-workspace button:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
 }
 
 .session-codex-parity-v1 .session-browser-toggle svg {
@@ -10248,10 +10242,6 @@
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover) !important;
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-service-tier-toggle[data-active='true']:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-brand-text);
 }
 
@@ -10330,7 +10320,7 @@
 
 .session-codex-parity-v1 .session-attachment-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 /* 两个会话入口的普通图标共用尺寸；下拉箭头和发送、停止图形保留各自语义比例。 */
@@ -10358,7 +10348,7 @@
 
 .session-codex-parity-v1 .session-goal-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover) !important;
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-goal-trigger[data-active='true'] {
@@ -10543,7 +10533,7 @@
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-composer-trigger-active-bg, var(--zeus-interaction-hover));
-  color: var(--session-composer-trigger-color, var(--session-text));
+  color: var(--session-composer-trigger-color, var(--zeus-brand-text));
 }
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .session-composer-dropdown-trigger {

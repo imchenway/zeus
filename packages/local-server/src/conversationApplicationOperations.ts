@@ -51,9 +51,10 @@ import {
 } from '@zeus/storage';
 import { type FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { parseJsonObject } from './localServerPlatformSupport.js';
+import { resolveTaskReadOnlyWorkspacePath } from './conversationExecutionContextOperations.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { nativePendingRequestProjection } from './codexNativeConversationPolicy.js';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
@@ -259,6 +260,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     resolveTaskPushExecutionCapabilities,
     shouldReconnectTaskConversationRuntime,
     taskConflictAiOperations,
+    taskEnvironments,
     taskIntegrationAttempts,
     taskManagementStatusIsTerminal,
     taskConversationExecutionWorkspaceMode,
@@ -2839,11 +2841,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const projectSkill = await resolveWorkflowSkill(body.skillId, project.localPath);
-        const inheritedEnvironment = await resolveTaskPushEnvironment(project, task, { mode: 'existing', environmentId: sourceConversation.environmentId }, stableOperationId);
-        const reviewWorkspace = inheritedEnvironment.workspaces.find((workspace: ZeusTaskWorkspaceRecord) => workspace.id === sourceWorkspace.id);
-        if (!reviewWorkspace) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The exact review repository could not be restored in the source environment.');
-        const reviewCwd = reviewWorkspace.worktreePath?.trim();
-        if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
+        /** 审查直接读取原工作区，不能通过继续开发流程重置已交付状态。 */
+        const reviewWorkspace = sourceWorkspace;
+        /** 服务端复验目录和归属，避免入口快照过期后误用其他仓库。 */
+        const reviewCwd = resolveTaskReadOnlyWorkspacePath(project, task.id, reviewWorkspace, taskEnvironments.getById(sourceConversation.environmentId));
+        if (!reviewCwd) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', '原任务工作目录已回收或不可用，无法进行代码审查。');
         const prompt = taskStage ? `${taskStageHandoffText(taskStage)}\n\n${createTaskCodeReviewPrompt(task, reviewWorkspace)}` : createTaskCodeReviewPrompt(task, reviewWorkspace);
         const pluginReferences = body.pluginReferences === undefined ? [] : await resolveNewConversationPluginReferences(project.id, prompt, body.pluginReferences);
         const skill = projectSkill ? await resolveWorkflowSkill(projectSkill.id, reviewCwd) : undefined;
@@ -2868,7 +2870,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
             permissionMode,
             workMode: 'default',
-            environmentId: inheritedEnvironment.environment.id,
+            environmentId: sourceConversation.environmentId,
             workspaceId: reviewWorkspace.id,
             executionWorkspaceMode: 'worktree',
             writableRoots: [],

@@ -61,7 +61,7 @@
   :where(input, button, select, textarea) {
     font-family: inherit;
   }
-  :where(button, input, select, textarea, summary):focus-visible {
+  :where(button, summary, input[type='checkbox'], input[type='radio']):focus-visible {
     outline: 2px solid var(--zeus-product-accent);
     outline-offset: 2px;
   }
@@ -203,6 +203,28 @@
     align-content: start;
     gap: 28px;
     padding: 0;
+  }
+  /* 全局规则沿用设置页比例，文件路径换行，编辑器独立滚动。 */
+  .global-agent-settings {
+    gap: 16px;
+  }
+  .global-agent-settings-info {
+    display: grid;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .global-agent-settings-info p {
+    margin: 0;
+  }
+  .global-agent-settings-path {
+    overflow-wrap: anywhere;
+  }
+  .global-agent-settings-editor {
+    height: clamp(260px, 48vh, 640px);
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 8px;
   }
   :where(.settings-product-pane, .settings-product-section, .native-settings-pane, .codex-usage-section, .memory-scope-controls, .codex-remote-control-settings) {
     border: 0 !important;

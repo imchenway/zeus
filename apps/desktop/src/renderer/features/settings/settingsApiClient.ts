@@ -1,9 +1,14 @@
 import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
+import type { GlobalAgentSettingsMetadata, GlobalAgentSettingsSnapshot, SaveGlobalAgentSettingsInput } from '@zeus/shared';
 import type { AppShellSettings, ImportLocalSettingsRequest, ImportLocalSettingsResult, LocalSettingsExportSnapshot, UpdateAppShellSettingsRequest } from './settingsContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildSettingsCommandRequest, settingsClientCommandTypes } from './settingsCommandClient.js';
 
 export interface SettingsApiClient {
+  /** 读取当前 Zeus 的全局规则，不创建文件。 */
+  loadGlobalAgentSettings: () => Promise<GlobalAgentSettingsSnapshot>;
+  /** 使用读取基线手动保存，回执不包含正文。 */
+  saveGlobalAgentSettings: (input: SaveGlobalAgentSettingsInput) => Promise<GlobalAgentSettingsMetadata>;
   loadRuntimeSettings: () => Promise<RuntimeSettings>;
   saveRuntimeSettings: (input: RuntimeSettings) => Promise<RuntimeSettings>;
   loadAppShellSettings: () => Promise<AppShellSettings>;
@@ -16,6 +21,12 @@ export function createSettingsApiClient(transport: LocalApiTransport): SettingsA
   /** 设置页切换后仍按操作顺序写入，避免旧请求晚到覆盖新选择。 */
   let appShellSaveQueue: Promise<unknown> = Promise.resolve();
   return {
+    loadGlobalAgentSettings: () => transport.request<GlobalAgentSettingsSnapshot>('/api/settings/agents'),
+    saveGlobalAgentSettings: async (input) => {
+      /** 传输重连复用同一命令，重复请求不再次写入。 */
+      const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.agentsPut, scopeKind: 'settings', scopeId: 'agents', operationPrefix: 'global_agents', value: input });
+      return transport.request<GlobalAgentSettingsMetadata>('/api/settings/agents', jsonRequest('PUT', body));
+    },
     loadRuntimeSettings: () => transport.request<RuntimeSettings>('/api/runtime/settings'),
     saveRuntimeSettings: async (input: RuntimeSettings) => {
       const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.runtimeSettingsPut, scopeKind: 'settings', scopeId: 'runtime', operationPrefix: 'runtime_settings', value: input });

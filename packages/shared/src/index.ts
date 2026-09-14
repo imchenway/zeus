@@ -13,6 +13,7 @@ export * from './im.js';
 export * from './skillIdentity.js';
 export * from './userFacingError.js';
 export * from './networkProxy.js';
+export * from './globalAgentSettings.js';
 
 /** 项目本地仓库发现状态；完成时间只代表当前目录最近一次完整扫描。 */
 export interface ProjectRepositoryDiscovery {
@@ -156,12 +157,24 @@ export function isTaskManagementStatus(value: unknown): value is TaskManagementS
   return typeof value === 'string' && taskManagementStatusIdPattern.test(value);
 }
 
-/** 会话运行筛选的固定顺序，同时供界面选项和持久偏好校验使用。 */
-export const sidebarConversationRunStatuses = ['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'] as const;
+/** 会话筛选按用户关注阶段归组，顺序同时用于界面、实时匹配和旧偏好转换。 */
+export const sidebarConversationRunStatusGroups = [
+  // 连接、重连与排队后的执行统一视为运行中。
+  { value: 'running', statuses: ['connecting', 'reconnecting', 'running'] },
+  // 回复与授权都需要用户处理。
+  { value: 'waiting', statuses: ['waiting_user', 'waiting_approval'] },
+  // 空闲中仅表示当前未推进，列表仍保留暂停、失败与只读的具体状态。
+  { value: 'idle', statuses: ['paused', 'idle', 'failed', 'legacy_readonly'] },
+] as const;
+
+/** 接纳分组身份及旧细分状态；未知状态不参与筛选，避免损坏偏好误选空闲中。 */
+export function sidebarConversationRunStatusGroup(status: string): (typeof sidebarConversationRunStatusGroups)[number]['value'] | undefined {
+  return sidebarConversationRunStatusGroups.find((group) => group.value === status || (group.statuses as readonly string[]).includes(status))?.value;
+}
 
 /** 侧边栏漏斗偏好独立于项目任务页筛选，随本机设置保存。 */
 export interface SidebarConversationFilters {
-  /** status: 表示任务状态，run: 表示会话运行状态，project 表示无关联任务；未选择的维度不限。 */
+  /** status: 表示任务状态，run: 表示会话运行分组，project 表示无关联任务；未选择的维度不限。 */
   conversationStatusFilters: string[];
   /** 筛选生效时是否隐藏没有匹配会话的项目。 */
   hideEmptyFilteredProjects: boolean;
@@ -177,10 +190,13 @@ export function normalizeSidebarConversationFilters(value: unknown): SidebarConv
     conversationStatusFilters: Array.isArray(saved.conversationStatusFilters)
       ? [
           ...new Set(
-            saved.conversationStatusFilters.filter(
-              (filter): filter is string =>
-                typeof filter === 'string' && (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7))) || sidebarConversationRunStatuses.some((status) => filter === `run:${status}`)),
-            ),
+            saved.conversationStatusFilters.flatMap((filter): string[] => {
+              if (typeof filter !== 'string') return [];
+              if (filter === 'project' || (filter.startsWith('status:') && isTaskManagementStatus(filter.slice(7)))) return [filter];
+              /** 旧细分值与新分组值统一转换后去重，不修改任务状态及其他显示偏好。 */
+              const group = filter.startsWith('run:') ? sidebarConversationRunStatusGroup(filter.slice(4)) : undefined;
+              return group ? [`run:${group}`] : [];
+            }),
           ),
         ]
       : [],

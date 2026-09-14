@@ -8,6 +8,8 @@ export const settingsClientCommandTypes = {
   projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
+  /** 全局规则文件的手动保存。 */
+  agentsPut: 'settings.agents.put',
   settingsImport: 'settings.import',
   dataImport: 'settings.business_data.import',
 } as const;

@@ -740,7 +740,7 @@ a {
 .macos-ai-app .runtime-session-filter-grid input:focus-visible,
 .macos-ai-app .runtime-session-filter-grid select:focus-visible {
   border-color: var(--zeus-interaction-line);
-  box-shadow: var(--zeus-control-focus);
+  box-shadow: var(--zeus-field-focus);
   outline: 0;
 }
 
@@ -1708,13 +1708,6 @@ a {
 
 .macos-ai-app .skills-catalog-heading > input {
   inline-size: min(280px, 38vw);
-}
-
-.macos-ai-app .skills-catalog-heading > input:focus,
-.macos-ai-app .zeus-form-fields input:not([type='checkbox']):not([type='radio']):focus,
-.macos-ai-app .zeus-form-fields textarea:focus {
-  border-color: var(--zeus-product-accent);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--zeus-product-accent) 18%, transparent);
 }
 
 .macos-ai-app .skills-inline-error,
@@ -2832,7 +2825,7 @@ a {
   min-height: 54px;
 }
 
-.macos-ai-app :where(.task-board-column button, .task-board-card button, .task-board-card select, .task-board-settings-dialog button, .task-board-settings-dialog input, .task-board-settings-dialog select):focus-visible {
+.macos-ai-app :where(.task-board-column button, .task-board-card button, .task-board-settings-dialog button):focus-visible {
   outline: 2px solid var(--zeus-product-accent);
   outline-offset: 2px;
 }
@@ -6620,14 +6613,6 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app :where(input, select, textarea):hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
-}
-
-.macos-ai-app :where(input, select, textarea):focus-visible {
-  border-color: var(--zeus-focus-line);
-  box-shadow:
-    var(--zeus-control-focus),
-    inset 0 1px 1px oklch(18% 0.012 255 / 0.06);
-  outline: none;
 }
 
 /* 2026-06-19 ZeusTextarea macOS 固定输入框最终覆盖：全局 textarea 不再暴露浏览器拖拽手柄，所有多行输入通过内部滚动和页面自适应保持 macOS 产品感。 */
@@ -11081,12 +11066,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app :where(input, textarea, select):focus-visible {
-  border-color: var(--zeus-focus-line);
-  box-shadow: var(--zeus-control-focus);
-  outline: 0;
-}
-
 /* 2026-06-24 ZeusSelect macOS 无灰色右侧 rail 最终覆盖：所有 select 只保留单一 SF 风格 chevron，禁止再绘制会造成灰块与菜单视觉锚点漂移的右侧背景 rail。 */
 .macos-ai-app select {
   appearance: none;
@@ -11123,7 +11102,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app select:focus-visible {
   border-color: var(--zeus-select-line);
   box-shadow:
-    var(--zeus-control-focus),
+    var(--zeus-field-focus),
     inset 0 1px 1px oklch(20% 0.012 255 / 0.04);
 }
 
@@ -16617,21 +16596,53 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: minmax(0, 1fr);
 }
 
+/* 文件范围是紧凑的分段切换，字号与布局不继承正文，窄侧栏也不拆行。 */
+.macos-ai-app .task-git-delivery-diff-tabs {
+  padding: 6px 8px;
+}
+
 .macos-ai-app .task-git-delivery-diff-tabs > span {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  gap: 5px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--zeus-product-panel-muted);
 }
 
 .macos-ai-app .task-git-delivery-diff-tabs button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
+  justify-content: center;
+  min-inline-size: 0;
+  min-block-size: 26px;
+  gap: 4px;
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* 长翻译让出空间给计数；完整名称保留在按钮标题和可访问名称中。 */
+.macos-ai-app .task-git-delivery-diff-tabs button > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.macos-ai-app .task-git-delivery-diff-tabs button > small {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
 }
 
 .macos-ai-app .task-git-delivery-diff-tabs button.is-active {
@@ -17605,11 +17616,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-create-modal-close:focus-visible,
 .macos-ai-app .task-create-attachment-picker:focus-visible,
 .macos-ai-app .task-create-attachment-row button:focus-visible,
-.macos-ai-app .task-create-title-input:focus-visible,
-.macos-ai-app .task-create-third-party-input:focus-visible,
-.macos-ai-app .task-create-third-party-open-button:focus-visible,
-.macos-ai-app .task-create-description-input:focus-visible,
-.macos-ai-app .task-create-tags-input:focus-visible {
+.macos-ai-app .task-create-third-party-open-button:focus-visible {
   outline: 0;
   box-shadow: var(--zeus-control-focus);
 }
@@ -20130,12 +20137,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
 }
 
-.macos-ai-app .task-inline-edit-control:focus-visible {
-  border-color: var(--zeus-accent);
-  box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-accent) 18%, transparent);
-  outline: 0;
-}
-
 .macos-ai-app textarea.task-inline-edit-control {
   min-block-size: 104px;
   resize: vertical;
@@ -20784,7 +20785,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .project-rename-dialog-body input:focus-visible {
-  box-shadow: var(--zeus-control-focus);
+  box-shadow: var(--zeus-field-focus);
   outline: 0;
 }
 
