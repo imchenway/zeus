@@ -174,6 +174,7 @@ import { WorkManagementTaskOperations } from './workManagementTaskOperations.js'
 import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.js';
 import { registerZeusPluginRoutes } from './zeusPluginRoutes.js';
 import { imInternalCommandRequest } from './localServerPlatformSupport.js';
+import { registerGlobalAgentSettingsRoutes } from './globalAgentSettings.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -215,6 +216,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   projects: ProjectRepository;
   settings: SettingRepository;
   settingsCommands: SettingsCommandApplication;
+  /** 当前 Zeus 实际使用的全局规则目录。 */
+  codexHome?: string;
   taskBoards: TaskBoardRepository;
   taskEvents: TaskEventRepository;
   taskStages: TaskStageRepository;
@@ -3121,6 +3124,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
 
   server.get('/api/settings/app-shell', async (): Promise<AppShellSettingsSnapshot> => platformMutableState.appShellSettings);
+
+  registerGlobalAgentSettingsRoutes({
+    server,
+    codexHome: dependencies.codexHome,
+    commands: settingsCommands,
+    redactSensitiveText,
+    recordSaved: (metadata) => appendAuditLog({ actorType: 'local_api', action: 'settings.agents.updated', resourceType: 'settings', resourceId: 'agents', payload: { path: metadata.path, revision: metadata.revision } }),
+  });
 
   server.put('/api/settings/app-shell', async (request: FastifyRequest<{ Body: SettingsCommandRequest<UpdateAppShellSettingsBody> }>, reply): Promise<AppShellSettingsSnapshot | unknown> => {
     try {
