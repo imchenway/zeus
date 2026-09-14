@@ -88,7 +88,8 @@
   --zeus-control-disabled-bg: rgb(226 232 240 / 0.5);
   --zeus-control-disabled-line: rgb(148 163 184 / 0.18);
   --zeus-control-disabled-text: var(--agentdesk-text-tertiary);
-  --zeus-control-focus: 0 0 0 3px color-mix(in srgb, var(--agentdesk-accent) 20%, transparent);
+  /* 操作按钮使用紧凑中性焦点，输入框另用贴边焦点。 */
+  --zeus-control-focus: 0 0 0 2px var(--zeus-focus-line);
   --zeus-solid-surface-bg: var(--agentdesk-surface-strong);
   --zeus-solid-surface-edge: var(--agentdesk-border-strong);
   --zeus-code-editor-bg: rgb(250 251 255 / 0.9);
@@ -257,12 +258,10 @@
   color: var(--agentdesk-text-tertiary);
 }
 
-/* 输入框使用主题焦点环；按钮及内容控件的焦点反馈由各自组件负责。 */
+/* 主页面输入与弹窗共用贴边焦点，主题层不再叠加浮起阴影。 */
 .macos-ai-app.zeus-shell :where(input, select, textarea):focus-visible {
-  border-color: var(--zeus-interaction-line);
-  box-shadow:
-    var(--agentdesk-shadow-soft),
-    0 0 0 3px color-mix(in srgb, var(--agentdesk-accent) 18%, transparent);
+  border-color: var(--zeus-focus-line);
+  box-shadow: var(--zeus-field-focus);
   outline: 0;
 }
 
@@ -2331,10 +2330,6 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-product-panel);
   color: inherit;
   font: inherit;
-}
-.project-git-commit-message textarea:focus-visible {
-  outline: 2px solid var(--zeus-product-accent, var(--zeus-brand-primary));
-  outline-offset: 1px;
 }
 .project-git-commit-actions {
   display: flex;
