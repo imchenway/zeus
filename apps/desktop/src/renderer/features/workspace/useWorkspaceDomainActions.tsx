@@ -1449,12 +1449,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 归档当前会话后优先选中同一项目的另一个活跃会话。 */
   function resolveConversationAfterArchive(conversationId: string, projectId: string | null, navigationId: string): NativeConversationChoice | null {
-    const candidates = nativeConversationChoices.filter(
-      (candidate) =>
-        !candidate.archived &&
-        candidate.id !== conversationId &&
-        resolveConversationNavigationId(candidate) !== navigationId,
-    );
+    const candidates = nativeConversationChoices.filter((candidate) => !candidate.archived && candidate.id !== conversationId && resolveConversationNavigationId(candidate) !== navigationId);
     const preferredProjectId = projectId ?? activeProjectId;
     return candidates.find((candidate) => candidate.projectId === preferredProjectId) ?? candidates[0] ?? null;
   }

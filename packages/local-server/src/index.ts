@@ -3229,11 +3229,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const sessionDirectory = ensureRuntimeSessionDataDirectory(sessionId);
         // 每 100ms 每个会话最多两次追加，避免每个输出块三次同步文件系统调用和海量 chunks 小文件。
         appendFileSync(join(sessionDirectory, 'terminal.raw.log'), entries.map((entry) => entry.terminalText ?? '').join(''), 'utf8');
-        appendFileSync(
-          join(sessionDirectory, 'terminal.normalized.log'),
-          entries.map(({ log }) => `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''),
-          'utf8',
-        );
+        appendFileSync(join(sessionDirectory, 'terminal.normalized.log'), entries.map(({ log }) => `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''), 'utf8');
       } catch (error) {
         runtimeLogFileWriteErrors.push(error);
       }
