@@ -3055,15 +3055,6 @@ body:has(.macos-ai-app.zeus-shell) {
   grid-column: 1 / -1;
   min-inline-size: 0;
 }
-.macos-ai-app .session-runtime-details .session-thread-project-name {
-  color: var(--session-text-muted);
-  max-inline-size: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 20px;
-}
 
 /* 折叠箭头紧跟项目名称；尾部操作仍固定靠右，长名称可以省略。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .zeus-source-list-row[data-disclosure-placement='trailing'] {

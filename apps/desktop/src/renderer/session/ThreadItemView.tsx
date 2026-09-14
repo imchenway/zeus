@@ -884,6 +884,9 @@ function structuredMessageTokens(text: string): StructuredMessageToken[] {
   for (const match of searchableText.matchAll(pattern)) {
     const label = match[2]?.trim();
     if (!label || seen.has(label)) continue;
+    // 文件路径保留为普通正文，不能套用技能标签的高亮和禁止换行样式。
+    // ponytail: 历史标签仍由文本推断，单段路径有歧义时需保存引用位置。
+    if (label.startsWith('/') && /[/\\.]/u.test(label.slice(1))) continue;
     seen.add(label);
     tokens.push({
       label,

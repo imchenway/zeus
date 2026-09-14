@@ -535,11 +535,41 @@ function MessageLayoutQa() {
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
     const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
     if (durations[0] && answer && !(durations[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error('耗时入口没有放在最终正文之前');
+    if (parameters.has('long-path')) {
+      /** 路径须完整保留在气泡内，技能与员工标签仍能恢复。 */
+      const message = contentRef.current?.querySelector('.session-user-message-content');
+      /** 仅检查真实消息组件产出的标签，不模拟识别结果。 */
+      const labels = [...(message?.querySelectorAll('.session-user-message-token') ?? [])].map((token) => token.textContent);
+      if (!message?.textContent?.includes('782491bde91c.jsonl') || labels.join('|') !== '/review|@审查员' || message.scrollWidth > message.clientWidth + 1) throw new Error('长路径正文、标签识别或气泡宽度检查失败');
+      /** 使用真实详情节点验证内部点击保留展开、外部点击收起，最后恢复原状态。 */
+      const details = contentRef.current?.querySelector<HTMLDetailsElement>('.session-runtime-details');
+      if (details) {
+        /** 检查结束后不改变用户正在查看的展开状态。 */
+        const wasOpen = details.open;
+        try {
+          details.open = true;
+          details.querySelector('.session-runtime-copy-button')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          if (!details.open) throw new Error('详情内部点击误触发收起');
+          details.parentElement?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          if (details.open) throw new Error('详情外部点击未收起');
+        } finally {
+          details.open = wasOpen;
+        }
+      }
+    }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
-    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。', payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {}, status: 'completed' },
+    {
+      type: 'userMessage',
+      phase: 'user',
+      text: parameters.has('long-path')
+        ? '这个会话走的是 Pi：\n/Users/david/.zeus/providers/pi/sessions/2026-09-14T02-59-37-786Z_zeus_e08878f3-7135-491a-81d3-782491bde91c.jsonl\n请用 /review 和 @审查员 检查。'
+        : '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。',
+      payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {},
+      status: 'completed',
+    },
     ...(parameters.has('no-process')
       ? []
       : [

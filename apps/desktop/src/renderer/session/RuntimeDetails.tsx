@@ -1,22 +1,33 @@
 import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { formatTokenCount } from './tokenUsageFormat.js';
 
-/** 会话与智能体共用的运行事实；项目名称只作为摘要前缀。 */
+/** 会话与智能体共用的运行事实。 */
 interface RuntimeDetailsProps {
   runtime: NativeRuntimeDetailsSnapshot;
   language: SessionUiLanguage;
   scope: 'session' | 'subagent';
   mcpStartup?: Record<string, unknown> | null;
-  contextLabel?: string;
 }
 
 /** 使用原生折叠面板展示摘要及按用途分组的运行事实。 */
 export function RuntimeDetails(props: RuntimeDetailsProps) {
+  /** 原生详情节点保留自身展开状态，外部点击只负责收起。 */
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    /** 捕获阶段判断命中范围，详情内部的复制和文本选择不会触发收起。 */
+    const closeFromOutside = (event: PointerEvent): void => {
+      /** 每次读取当前节点，避免保留已经卸载的详情。 */
+      const details = detailsRef.current;
+      if (details?.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
+    };
+    window.addEventListener('pointerdown', closeFromOutside, true);
+    return () => window.removeEventListener('pointerdown', closeFromOutside, true);
+  }, []);
   const zh = props.language === 'zh-CN';
   const copy = runtimeLabels(props.language);
   const warning = runtimeValueNeedsAttention(props.mcpStartup);
@@ -29,14 +40,9 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
     props.runtime.usage.historyComplete.value;
   const tokenScopeLabel = props.scope === 'subagent' ? (zh ? '智能体累计 Token' : 'Agent tokens') : zh ? '会话累计 Token' : 'Session tokens';
   return (
-    <details className="session-runtime-details" data-language={props.language} data-severity={warning ? 'warning' : 'ready'} data-scope={props.scope} aria-label={copy.runtimeDetails}>
+    <details ref={detailsRef} className="session-runtime-details" data-language={props.language} data-severity={warning ? 'warning' : 'ready'} data-scope={props.scope} aria-label={copy.runtimeDetails}>
       <summary>
         <span className="session-runtime-summary-primary">
-          {props.contextLabel ? (
-            <small className="session-thread-project-name" title={props.contextLabel}>
-              {props.contextLabel}
-            </small>
-          ) : null}
           <RuntimeSummaryMetric label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
