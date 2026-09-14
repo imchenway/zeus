@@ -637,8 +637,15 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                 idempotencyKey: crypto.randomUUID(),
               });
             },
+          }
+        : {}),
+      // 历史浏览只延迟实时订阅，明确点击目标操作时仍须接入真实命令。
+      ...(controllerActionsAvailable
+        ? {
             onSetGoal: async (objective) => {
-              await props.client.setNativeGoal(projectId, conversationId, objective);
+              /** 只有服务端确认目标活跃，历史工作面才切回实时状态。 */
+              const result = await props.client.setNativeGoal(projectId, conversationId, objective);
+              if (result.goal?.status === 'active') setContinuedHistoryConversationId(conversationId);
               await controller.reconnect();
             },
             onPauseGoal: async () => {
@@ -647,6 +654,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
             },
             onResumeGoal: async () => {
               await props.client.resumeNativeGoal(projectId, conversationId);
+              setContinuedHistoryConversationId(conversationId);
               await controller.reconnect();
             },
             onClearGoal: async (confirmUnfinished) => {
@@ -1771,6 +1779,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
   const assistantLabel = selectedComposerModel?.sourceName?.trim() || ((selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'pi' ? 'Pi' : 'Codex');
   const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
+  /** 历史会话可显式操作目标，归档、只读和不支持目标的会话仍禁止写入。 */
+  const goalWritable = goalAvailable && !hardInteractionReadOnly;
   const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
   const subagentThreadIds = useMemo(() => [...new Set([...subagentActivity.threadIds, ...(props.subagentListSnapshot?.items.map((item) => item.id) ?? [])])].sort(), [props.subagentListSnapshot?.items, subagentActivity.threadIds]);
   const subagentSnapshotRevision = props.subagentListSnapshot?.items.map((item) => `${item.id}:${item.status}:${item.updatedAt ?? ''}`).join('|') ?? '';
@@ -2784,10 +2794,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 busy={goalBusy}
                 error={goalError}
                 onDismiss={() => setGoalPanelOpen(false)}
-                onSave={(objective) => runGoalAction(() => actions.onSetGoal?.(objective))}
-                onPause={() => runGoalAction(actions.onPauseGoal)}
-                onResume={() => runGoalAction(actions.onResumeGoal)}
-                onClear={(confirmUnfinished) => runGoalAction(() => actions.onClearGoal?.(confirmUnfinished), true)}
+                onSave={goalWritable && actions.onSetGoal ? (objective) => runGoalAction(() => actions.onSetGoal?.(objective)) : undefined}
+                onPause={goalWritable && actions.onPauseGoal ? () => runGoalAction(actions.onPauseGoal) : undefined}
+                onResume={goalWritable && actions.onResumeGoal ? () => runGoalAction(actions.onResumeGoal) : undefined}
+                onClear={goalWritable && actions.onClearGoal ? (confirmUnfinished) => runGoalAction(() => actions.onClearGoal?.(confirmUnfinished), true) : undefined}
               />
             ) : null}
           </MotionPresence>
@@ -3635,6 +3645,8 @@ function linkedFileApprovalPaths(state: NativeSessionState | null, request: Nati
 
 function sessionStateNeedsRealtime(state: NativeSessionState | null | undefined): boolean {
   if (!state) return false;
+  // 活跃目标的自动续跑也需要实时连接，不能只检查当前轮次。
+  if (state.snapshot?.goal?.status === 'active') return true;
   if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
   if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
   if (state.queue?.state.type === 'dispatching' || state.queue?.state.type === 'active' || state.queue?.state.type === 'waiting') return true;

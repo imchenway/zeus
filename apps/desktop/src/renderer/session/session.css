@@ -1340,16 +1340,17 @@
 
 /* 目标摘要沿用输入框的宽度和两侧留白，避免分栏时独立撑满。 */
 .session-codex-parity-v1 .session-goal-rail {
+  box-sizing: border-box;
   flex: 0 0 auto;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
   min-inline-size: 0;
-  min-block-size: 36px;
-  margin: 0 auto 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--session-line);
-  border-radius: 10px;
+  min-block-size: 32px;
+  margin: 0 auto 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--session-text-muted);
-  background: var(--session-control);
+  background: transparent;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1422,13 +1423,13 @@
 
 .session-goal-panel {
   box-sizing: border-box;
-  width: min(560px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   color: var(--zeus-product-text);
   font-size: 13px;
   max-height: min(760px, calc(100vh - 40px));
   overflow: auto;
-  border-radius: 18px;
-  padding: 22px;
+  border-radius: 14px;
+  padding: 20px;
   box-shadow: 0 24px 80px rgb(8 10 18 / 28%);
 }
 
@@ -1449,12 +1450,6 @@
   margin: 2px 0 0;
   font-size: 18px;
 }
-.session-goal-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--zeus-product-muted);
-}
 .session-goal-status {
   padding: 4px 9px;
   border-radius: 999px;
@@ -1469,6 +1464,11 @@
   color: var(--zeus-brand-text);
   background: color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent);
 }
+/* 受阻与额度限制使用提示色，和运行中的品牌色区分。 */
+.session-goal-status:is(.is-blocked, .is-usageLimited, .is-budgetLimited) {
+  color: var(--zeus-product-text);
+  background: var(--zeus-warning-bg);
+}
 .session-goal-description {
   margin: 14px 0 18px;
   line-height: 1.55;
@@ -1482,11 +1482,11 @@
   font-weight: 600;
 }
 .session-goal-objective-field textarea {
-  min-height: 112px;
+  min-height: 96px;
   resize: vertical;
   padding: 12px;
   border: 1px solid var(--zeus-product-line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--zeus-product-panel-muted);
   color: var(--zeus-product-text);
   font: inherit;
