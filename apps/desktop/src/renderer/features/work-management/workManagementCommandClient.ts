@@ -46,6 +46,24 @@ export const workManagementClientCommandTypes = {
   digitalEmployeeExecutionAdoptLegacy: 'work_management.digital_employee_execution.adopt_legacy',
   digitalEmployeeExecutionRetry: 'work_management.digital_employee_execution.retry',
   digitalEmployeeExecutionCancel: 'work_management.digital_employee_execution.cancel',
+  /** 保存任务阶段与团队分工。 */
+  /** 新增与处理冻结成果审查意见。 */
+  taskWorkReviewAdd: 'work_management.task_work_review.add',
+  taskWorkReviewResolve: 'work_management.task_work_review.resolve',
+  /** 明确授权范围内的子工作委派。 */
+  /** 员工经验建议及人工审查。 */
+  employeeMemoryPropose: 'work_management.employee_memory.propose',
+  employeeMemoryDecide: 'work_management.employee_memory.decide',
+  taskWorkDelegate: 'work_management.task_work.delegate',
+  taskWorkPlanSave: 'work_management.task_work_plan.save',
+  /** 启动、暂停、继续或结束后续安排。 */
+  taskWorkPlanControl: 'work_management.task_work_plan.control',
+  /** 独占领取或调整尚未执行的分工。 */
+  taskWorkItemAssign: 'work_management.task_work_item.assign',
+  /** 修改具体工作后续配置。 */
+  taskWorkSettingsUpdate: 'work_management.task_work_settings.update',
+  /** 保存项目内的团队配方。 */
+  employeeTeamRecipeSave: 'work_management.employee_team_recipe.save',
   taskWorkItemCreate: 'work_management.task_work_item.create',
   taskWorkItemRetry: 'work_management.task_work_item.retry',
   taskWorkItemCancel: 'work_management.task_work_item.cancel',

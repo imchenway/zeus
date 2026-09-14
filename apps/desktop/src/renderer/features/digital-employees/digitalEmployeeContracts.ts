@@ -1,3 +1,4 @@
+import type { EmployeeWorkSettings, EmployeeWorkOutputKind } from '@zeus/shared';
 import type { DigitalEmployeeAvatarId } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
@@ -82,6 +83,8 @@ export interface DigitalEmployeeTaskFilter {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
+  /** 新工作读取个人经验的偏好。 */
+  memoryEnabled?: boolean;
   projectId: string;
   templateId: string | null;
   enabled: boolean;
@@ -178,6 +181,8 @@ export interface DigitalEmployeeTemplateInput {
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
+  /** 原生目标能力，只在当前宿主明确支持时提供入口。 */
+  goals?: { supported: boolean; enabled: boolean; stage: string | null };
   generationId: string;
   initializedAt: string;
   models: CodexTaskPushModelCapability[];
@@ -186,6 +191,8 @@ export interface DigitalEmployeeCapabilitiesSnapshot {
 }
 
 export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
+  /** 是否读取个人经验。 */
+  memoryEnabled?: boolean;
   enabled?: boolean;
   autoClaim?: boolean;
   autonomousExploration?: boolean;
@@ -211,6 +218,8 @@ export type TaskWorkWorkspaceSnapshot =
   | { mode: 'create'; repositoryRevision: string; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
 
 export interface TaskWorkRunRecord {
+  /** 原会话权威目标状态，工作页只展示，控制复用原会话。 */
+  goal?: { objective: string; status: string } | null;
   id: string;
   projectId: string;
   taskId: string;
@@ -242,6 +251,8 @@ export interface TaskWorkRunRecord {
 }
 
 export interface TaskWorkDeliverableRecord {
+  /** 冻结证据摘要，历史无索引成果保留原文读取。 */
+  bundle?: { availableKinds: EmployeeWorkOutputKind[]; sources: Array<{ kind: 'message' | 'change_set' | 'command' | 'deployment'; id: string; sha256: string; status: string; command?: string }>; gaps: string[] };
   id: string;
   projectId: string;
   taskId: string;
@@ -265,7 +276,19 @@ export interface TaskWorkItemRecord {
   id: string;
   projectId: string;
   taskId: string;
-  employeeId: string;
+  employeeId: string | null;
+  /** 真实阶段与依赖安排。 */
+  arrangement?: {
+    stageId?: string;
+    parentWorkItemId?: string;
+    dependencyIds: string[];
+    role: string;
+    required: boolean;
+    outputKinds: EmployeeWorkOutputKind[];
+    settings: EmployeeWorkSettings;
+    blockedReason?: string;
+    cancellationRequested?: boolean;
+  };
   source: 'manual' | 'automation';
   sourceRef: string | null;
   title: string;
@@ -312,7 +335,39 @@ export interface TaskWorkConversationRequestRecord {
   expiresAt: string | null;
 }
 
+/** 任务安排只引用实际工作，不另建运行记录。 */
+export interface TaskWorkPlan {
+  /** 流程身份与任务边界。 */
+  id: string;
+  /** 所属任务。 */
+  taskId: string;
+  /** 当前工作代次。 */
+  generation: number;
+  /** 当前安排状态。 */
+  state: 'draft' | 'running' | 'paused' | 'completed' | 'cancelled';
+  /** 写入比较修订。 */
+  revision: number;
+  /** 全任务覆盖。 */
+  settings: EmployeeWorkSettings;
+  /** 有序阶段及各自分工。 */
+  stages: Array<{
+    id: string;
+    title: string;
+    description: string;
+    status: string;
+    advanceMode: 'manual' | 'auto';
+    acceptanceMode: 'manual' | 'checked';
+    /** 已保存的明确验证命令。 */
+    verificationCommands: string[];
+    settings: EmployeeWorkSettings;
+    requiredSkillIds: string[];
+    items: Omit<TaskWorkItemRecord, 'runs' | 'deliverables'>[];
+  }>;
+}
+
 export interface TaskWorkManagementProjection {
+  /** 现行团队安排；未安排时为空。 */
+  plan?: TaskWorkPlan | null;
   summary: { workItems: number; activeWorkItems: number; pendingActions: number; submittedDeliverables: number; legacyExecutions: number };
   workItems: TaskWorkItemRecord[];
   relationships: Array<Record<string, unknown>>;
@@ -324,6 +379,8 @@ export interface TaskWorkManagementProjection {
 }
 
 export interface TaskWorkPreviewSelection {
+  /** 启动原分工，不额外复制工作。 */
+  plannedWorkItemId?: string;
   employeeId: string;
   supplementalInfo?: string | null;
   supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
@@ -376,4 +433,45 @@ export interface DigitalEmployeeAutomationInput {
   actionKind: DigitalEmployeeAutomationActionKind;
   actionConfig?: Record<string, unknown>;
   nextRunAt?: string | null;
+}
+
+/** 原始审查意见绑定成果摘要，不会跟随最新会话漂移。 */
+export interface TaskWorkReviewNote {
+  /** 意见身份。 */
+  id: string;
+  /** 固定成果身份。 */
+  deliverableId: string;
+  /** 固定正文摘要。 */
+  contentSha256: string;
+  /** 文件、行号或段落定位。 */
+  anchor: string;
+  /** 问题与建议。 */
+  content: string;
+  /** 是否阻止验收。 */
+  blocking: boolean;
+  /** 当前处理状态。 */
+  status: 'open' | 'resolved';
+  /** 并发修改修订。 */
+  revision: number;
+  /** 首次提出时间。 */
+  createdAt: string;
+  /** 最后修改时间。 */
+  updatedAt: string;
+}
+
+/** 经验建议经用户审查后才进入个人经验。 */
+export interface EmployeeMemoryProposal {
+  id: string;
+  projectId: string;
+  employeeId: string;
+  taskId: string;
+  runId: string;
+  topic: string;
+  kind: 'preference' | 'stable_workflow' | 'domain_knowledge' | 'safety_boundary';
+  content: string;
+  reason: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  memoryId: string | null;
+  revision: number;
+  createdAt: string;
 }

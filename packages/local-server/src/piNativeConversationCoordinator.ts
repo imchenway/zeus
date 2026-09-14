@@ -1,3 +1,4 @@
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -126,6 +127,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   toolResults: ManagedConversationToolResultStore;
   plugins?: ZeusConversationPluginRuntime;
   browserAutomation?: BrowserAutomationPort;
+  /** 当前任务的本地编排工具。 */
+  workTools?: TaskWorkToolPort;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   compileDispatchContext?: ProviderDispatchContextCompiler;
 }
@@ -181,7 +184,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
   const pendingApprovals = new Map<string, { resolve: (allowed: boolean) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
-  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
+  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
 
   const broker: PiZeusToolBroker = {
     execute: async (request) => executeTool(request),
@@ -1739,7 +1742,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (nativeTool) {
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
-      if (context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
+      if (nativeTool.namespace !== 'zeus_work' && context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
         throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
       }
       // 与 Codex 共用原生宿主的全局开关，不按本轮输入框标签重复授权。
@@ -1776,8 +1779,48 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     if (request.toolName === 'bash') {
       const command = stringArg(request.args.command, '命令');
-      const result = await execFileAsync('/bin/zsh', ['-lc', command], { cwd: context.cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
-      return { text: `${result.stdout}${result.stderr}`.trim() || '命令执行完成。' };
+      /** Pi 命令使用原 Provider 证据仓库，使审查和部署能核对实际退出结果。 */
+      const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
+      if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 命令没有对应的活动轮次。');
+      /** 开始状态先持久保存；崩溃或未知停止不会被误认为成功。 */
+      const evidence = {
+        conversationId: context.conversationId,
+        turnId: activeRun.turnId,
+        providerThreadId: request.session.nativeSessionId,
+        providerTurnId: activeRun.providerTurnId,
+        providerItemId: `pi_command:${request.toolCallId}`,
+        itemType: 'commandExecution' as const,
+        phase: 'prework' as const,
+        agentKind: 'pi' as const,
+        nativeItemId: request.toolCallId,
+        startedAt: options.now(),
+      };
+      options.providerItems.upsertProgress({ ...evidence, payload: { command }, textContent: command, updatedAt: evidence.startedAt });
+      await options.db.save();
+      try {
+        /** 原轮次停止信号同时传到真实命令进程。 */
+        const result = await execFileAsync('/bin/zsh', ['-lc', command], { cwd: context.cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024, signal: request.signal });
+        const output = `${result.stdout}${result.stderr}`;
+        const completedAt = options.now();
+        options.providerItems.upsertCompleted({ ...evidence, payload: { command, aggregatedOutput: output, exitCode: 0 }, textContent: output, completedAt, updatedAt: completedAt });
+        await options.db.save();
+        return { text: output.trim() || '命令执行完成。', details: { exitCode: 0 } };
+      } catch (error) {
+        /** 超时、中断及输出上限不能推断为具体退出码，明确保留未知。 */
+        const failure = asRecord(error);
+        const output = `${typeof failure.stdout === 'string' ? failure.stdout : ''}${typeof failure.stderr === 'string' ? failure.stderr : ''}`;
+        const completedAt = options.now();
+        options.providerItems.upsertCompleted({
+          ...evidence,
+          status: 'failed',
+          payload: { command, aggregatedOutput: output, exitCode: typeof failure.code === 'number' ? failure.code : null },
+          textContent: output,
+          completedAt,
+          updatedAt: completedAt,
+        });
+        await options.db.save();
+        throw error;
+      }
     }
     const readOnlyTool = request.toolName === 'read' || request.toolName === 'grep' || request.toolName === 'find' || request.toolName === 'ls';
     const path = safePath(context.cwd, typeof request.args.path === 'string' ? request.args.path : '.', readOnlyTool ? context.attachmentRoots : []);

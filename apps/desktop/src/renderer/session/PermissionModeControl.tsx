@@ -126,18 +126,22 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
       />
       <MotionPresence>
         {confirmingFullAccess ? (
-          <ModalPortal rootClassName="session-permission-dialog-portal-root" backdropClassName="session-permission-dialog-backdrop" onDismiss={() => closeConfirmation()}>
+          <ModalPortal
+            rootClassName="session-permission-dialog-portal-root"
+            backdropClassName="session-permission-dialog-backdrop"
+            onDismiss={() => closeConfirmation()}
+            role="alertdialog"
+            aria-labelledby={titleId}
+            aria-describedby={`${introductionId} ${riskId}`}
+          >
             <section
               className="session-permission-dialog zeus-solid-form-surface"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              aria-describedby={`${introductionId} ${riskId}`}
               onKeyDown={(event) => {
                 if (event.key !== 'Escape') return;
                 event.stopPropagation();
                 closeConfirmation();
               }}
+              data-modal-surface="alertdialog"
             >
               <header className="session-permission-dialog-header">
                 <WarningCircle aria-hidden="true" weight="regular" />

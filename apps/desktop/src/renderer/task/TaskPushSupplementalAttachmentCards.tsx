@@ -118,8 +118,8 @@ export function TaskPushSupplementalAttachmentCards(props: {
       />
       <MotionPresence>
         {previewAttachment ? (
-          <ModalPortal rootClassName="image-preview-portal" onDismiss={closePreview}>
-            <div className="task-model-push-attachment-sheet" role="dialog" aria-modal="true" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
+          <ModalPortal rootClassName="image-preview-portal" onDismiss={closePreview} role="dialog" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
+            <div className="task-model-push-attachment-sheet" data-modal-surface="dialog">
               <header>
                 <span>
                   <strong id={`${previewId}-title`}>{previewAttachment?.name ?? (zh ? '图片预览' : 'Image preview')}</strong>

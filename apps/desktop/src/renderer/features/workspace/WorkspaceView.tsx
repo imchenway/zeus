@@ -992,37 +992,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       controlBusyProps={controlBusyProps}
                     />
                   )}
-                  <MotionPresence>
-                    {taskCreateModalOpen ? (
-                      <TaskCreateModal
-                        projects={snapshot.projects}
-                        onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
-                        open={taskCreateModalOpen}
-                        copy={taskWorkspaceCopy}
-                        form={taskCreateForm}
-                        parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
-                        error={taskCreateError}
-                        busy={creatingTaskBusy}
-                        titleInputRef={taskCreateTitleInputRef}
-                        onFormChange={updateTaskCreateForm}
-                        onTaskTypeChange={updateTaskCreateType}
-                        onPriorityChange={updateTaskCreatePriority}
-                        onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
-                        onAuthorizeFiles={authorizeTaskCreateFiles}
-                        onMaterializeResources={materializeTaskCreateResources}
-                        onReadClipboardResources={readTaskCreateClipboardResources}
-                        onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
-                        onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
-                        onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
-                        onAddAttachments={addTaskCreateAttachments}
-                        onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                        onOpenAttachment={props.onOpenTaskAttachment}
-                        onRemoveAttachment={removeTaskCreateAttachment}
-                        onClose={closeTaskCreateModal}
-                        onSubmit={(event) => void submitTaskCreateModal(event)}
-                      />
-                    ) : null}
-                  </MotionPresence>
+
                   <MotionPresence>
                     {currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId) ? (
                       <TaskDeleteRelationshipDialog
@@ -1038,9 +1008,42 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     ) : null}
                   </MotionPresence>
                 </>
-              ) : sessionDrawerTarget ? null : (
+              ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
+
+              {/* 任务详情也可从会话进入；创建表单必须与任务、会话共享显示边界。 */}
+              <MotionPresence>
+                {taskCreateModalOpen ? (
+                  <TaskCreateModal
+                    projects={snapshot.projects}
+                    onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
+                    open={taskCreateModalOpen}
+                    copy={taskWorkspaceCopy}
+                    form={taskCreateForm}
+                    parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
+                    error={taskCreateError}
+                    busy={creatingTaskBusy}
+                    titleInputRef={taskCreateTitleInputRef}
+                    onFormChange={updateTaskCreateForm}
+                    onTaskTypeChange={updateTaskCreateType}
+                    onPriorityChange={updateTaskCreatePriority}
+                    onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
+                    onAuthorizeFiles={authorizeTaskCreateFiles}
+                    onMaterializeResources={materializeTaskCreateResources}
+                    onReadClipboardResources={readTaskCreateClipboardResources}
+                    onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                    onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
+                    onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
+                    onAddAttachments={addTaskCreateAttachments}
+                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                    onOpenAttachment={props.onOpenTaskAttachment}
+                    onRemoveAttachment={removeTaskCreateAttachment}
+                    onClose={closeTaskCreateModal}
+                    onSubmit={(event) => void submitTaskCreateModal(event)}
+                  />
+                ) : null}
+              </MotionPresence>
 
               <MotionPresence>
                 {Boolean(taskModelPushTaskId) && taskModelPushEntry === 'confirmation' && !modelSetup.step && (snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null) ? (
@@ -1123,10 +1126,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </MotionPresence>
               <MotionPresence>
                 {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
-                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail}>
-                    <section className="task-detail-center-dialog" role="dialog" aria-modal="true" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                    <section className="task-detail-center-dialog" data-modal-surface="dialog">
                       <header className="task-detail-presentation-header">
-                        <strong>{taskDetailPaneTask.title}</strong>
+                        <strong>{taskWorkspaceCopy.detailPaneLabel}</strong>
                         <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
                           {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
                         </Button>

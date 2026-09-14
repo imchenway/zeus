@@ -564,6 +564,7 @@ export class TaskStageRepository {
   }
 
   updateStage(stageId: string, input: UpdateTaskStageInput): ZeusTaskWorkflowSnapshot {
+    this.assertLegacyStage(stageId);
     const stage = this.requireStage(stageId);
     if (stage.revision !== input.expectedRevision) throw revisionConflict(stage);
     if (stage.status !== 'pending' && stage.status !== 'ready') {
@@ -588,6 +589,7 @@ export class TaskStageRepository {
   }
 
   assignEmployee(stageId: string, input: AssignTaskStageEmployeeInput): ZeusTaskWorkflowSnapshot {
+    this.assertLegacyStage(stageId);
     const stage = this.requireStage(stageId);
     if (stage.revision !== input.expectedRevision) throw revisionConflict(stage);
     if (stage.status !== 'pending' && stage.status !== 'ready' && stage.status !== 'changes_requested' && stage.status !== 'failed') {
@@ -622,6 +624,8 @@ export class TaskStageRepository {
   }
 
   prepareAttempt(input: PrepareTaskStageAttemptInput): ZeusTaskStageAttemptRecord {
+    this.assertLegacyStage(input.stageId);
+
     const operationIdentity = boundedString(input.operationIdentity, 'operationIdentity', 256);
     const existing = this.getAttemptByOperation(operationIdentity);
     if (existing) {
@@ -739,6 +743,7 @@ export class TaskStageRepository {
   }
 
   createDeliverable(input: CreateTaskStageDeliverableInput): ZeusTaskWorkflowSnapshot {
+    this.assertLegacyStage(input.stageId);
     const existing = this.getDeliverableByOperation(input.operationIdentity);
     if (existing) {
       if (existing.taskId !== input.taskId || existing.stageId !== input.stageId || existing.attemptId !== input.attemptId || existing.artifactSha256 !== input.artifactRef.sha256) {
@@ -800,6 +805,7 @@ export class TaskStageRepository {
 
   acceptDeliverable(deliverableId: string, expectedStageRevision: number): ZeusTaskWorkflowSnapshot {
     const deliverable = this.requireDeliverable(deliverableId);
+    this.assertLegacyStage(deliverable.stageId);
     const stage = this.requireStage(deliverable.stageId);
     if (deliverable.status === 'accepted') return this.requireWorkflow(deliverable.taskId);
     if (stage.revision !== expectedStageRevision) throw revisionConflict(stage);
@@ -818,6 +824,7 @@ export class TaskStageRepository {
 
   requestChanges(deliverableId: string, input: { expectedStageRevision: number; reason: string; stayOnStage?: boolean }): ZeusTaskWorkflowSnapshot {
     const deliverable = this.requireDeliverable(deliverableId);
+    this.assertLegacyStage(deliverable.stageId);
     const stage = this.requireStage(deliverable.stageId);
     const reason = boundedString(input.reason, 'reason', 4_000);
     if (deliverable.status === 'changes_requested' && deliverable.decisionReason === reason) return this.requireWorkflow(deliverable.taskId);
@@ -844,6 +851,7 @@ export class TaskStageRepository {
   }
 
   skipStage(stageId: string, expectedRevision: number, reason: string): ZeusTaskWorkflowSnapshot {
+    this.assertLegacyStage(stageId);
     const stage = this.requireStage(stageId);
     if (stage.status === 'skipped') return this.requireWorkflow(stage.taskId);
     if (stage.revision !== expectedRevision) throw revisionConflict(stage);
@@ -884,6 +892,12 @@ export class TaskStageRepository {
 
   private listDeliverablesByStage(stageId: string): ZeusTaskStageDeliverableRecord[] {
     return this.db.select<TaskStageDeliverableRow>(`SELECT ${selectDeliverableFields} FROM task_stage_deliverables WHERE stage_id = ? ORDER BY version, id`, [stageId]).map(mapDeliverableRow);
+  }
+
+  /** 拒绝跨执行归属改写统一安排，历史读取仍保留。 */
+  private assertLegacyStage(stageId: string): void {
+    if (this.db.get("SELECT w.id FROM task_workflows w JOIN task_stages s ON s.workflow_id = w.id WHERE s.id = ? AND w.execution_owner = 'task_work'", [stageId]))
+      throw storeError('ZEUS_TASK_STAGE_NOT_READY', '该阶段由员工工作统一管理，请使用任务中的工作安排入口。', 409);
   }
 
   private requireWorkflow(taskId: string): ZeusTaskWorkflowSnapshot {

@@ -11875,3 +11875,17 @@
     }
   }
 }
+
+/* 接入模型是文字操作，按钮与承载槽一起按内容取宽，避免沿用图标槽造成横向溢出。 */
+.session-codex-parity-v1 .session-primary-command-slot:has(> .session-send-button.is-model-setup) {
+  inline-size: auto;
+  flex: 0 0 auto;
+}
+.session-codex-parity-v1 .session-send-button.is-model-setup {
+  inline-size: auto;
+  min-inline-size: 88px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}

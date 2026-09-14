@@ -1,3 +1,5 @@
+import { EmployeeMemoryProposals } from './EmployeeMemoryProposals.js';
+import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { CommandDefinition } from '@zeus/shared';
@@ -40,6 +42,8 @@ type ProjectPanelSection = 'employees' | 'automations' | 'executions';
 
 export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanelProps) {
   const zh = props.language === 'zh-CN';
+  /** 候选接纳后刷新当前员工经验，不覆盖配置草稿。 */
+  const [memoryRevision, setMemoryRevision] = useState<number | undefined>(undefined);
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
   const [automations, setAutomations] = useState<DigitalEmployeeAutomationRecord[]>([]);
@@ -486,6 +490,21 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                   <span>{zh ? '在此设置员工的岗位、技能、工作要求、任务选择方式和交付权限。设置只用于当前项目。' : 'Set the employee’s role, skills, instructions, task selection, and delivery permissions for this project.'}</span>
                 </div>
               )}
+              {selectedEmployeeId && props.client && employees.some((employee) => employee.id === selectedEmployeeId) ? (
+                <details className="employee-memory-section">
+                  <summary>{zh ? '经验与记忆' : 'Experience and memory'}</summary>
+                  <EmployeeMemoryProposals key={`proposals:${selectedEmployeeId}`} projectId={props.projectId} employeeId={selectedEmployeeId} client={props.client} onAccepted={() => setMemoryRevision((value) => (value ?? 0) + 1)} />
+                  <MemorySettingsPane
+                    refreshRevision={memoryRevision}
+                    key={selectedEmployeeId}
+                    client={props.client.employeeMemory}
+                    language={props.language}
+                    projects={[]}
+                    fixedScope={{ kind: 'employee', id: selectedEmployeeId }}
+                    scopeLabel={zh ? '员工个人经验' : 'Employee experience'}
+                  />
+                </details>
+              ) : null}
               {selectedEmployeeId && employeeDraftState ? (
                 <footer className="digital-employee-editor-actions">
                   <small>{zh ? '提交、推送、合入、部署、结束任务是五项独立授权。' : 'Commit, push, merge, deploy, and task completion are five independent grants.'}</small>
@@ -739,6 +758,12 @@ function EmployeeEditor(props: {
             onChange={(autoClaim) => patch({ autoClaim })}
             title={zh ? '自动从任务池创建工作项' : 'Create work items from task pool'}
             description={zh ? '只处理符合筛选条件的未完成任务。' : 'Only handles unfinished tasks matching these filters.'}
+          />
+          <CheckboxRow
+            checked={props.draft.memoryEnabled !== false}
+            onChange={(memoryEnabled) => patch({ memoryEnabled })}
+            title={zh ? '使用个人经验' : 'Use employee experience'}
+            description={zh ? '新工作读取经过确认且未过期的个人经验。关闭后经验记录仍保留。' : 'New work reads confirmed, current experience. Turning this off preserves the records.'}
           />
           <CheckboxRow
             checked={props.draft.autonomousExploration}

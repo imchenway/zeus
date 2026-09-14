@@ -1,8 +1,8 @@
 import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
-import { ConnectedSessionWorkspace, SessionWorkspace, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
@@ -204,7 +204,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     sourceWorkspaceDirty,
     taskBoardSnapshots,
     taskConversationReopenState,
-    taskDetailPaneTaskId,
     taskEvents,
     taskManagementStatusReplacements,
     taskPageViewMode,
@@ -222,12 +221,15 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     visibleTasks,
     workspaceScrollRef,
   } = state;
+  /** 讨论成员配置读取同一任务安排，避免展示员工默认却实际使用任务覆盖。 */
+  const loadTaskWorkSettings = useCallback(async (taskId: string) => (await props.commandClient?.loadTaskWorkManagement(taskId))?.plan?.settings ?? {}, [props.commandClient]);
   const newConversationDrafts = useMemo<NewConversationDraftStore>(() => new Map(), [newConversationFocusRequest]);
   const {
     chooseNativeConversationAttachments,
     effectiveTaskStatusSettingsTargetId,
     executeNewConversationProjectGit,
     openTaskConversation,
+    openTaskConversationInline,
     openTaskCreateModal,
     openTaskCopyModal,
     openTaskGitDelivery,
@@ -1678,7 +1680,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     target.addEventListener('lostpointercapture', cancelProjectSidebarResize);
   }
 
-  function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void): ReactNode {
+  function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     const taskReadOnlyGate =
       nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
         ? {
@@ -1707,7 +1709,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           initialOptimisticState={pending.session}
           initialCapabilities={pending.capabilities}
           stableConversationId={pending.navigationId}
-          quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+          embeddedInTask={embeddedInTask}
           taskManagementStatusChangeBusy={updatingTaskBusy}
           creationStatus={
             pending.status === 'failed'
@@ -1736,6 +1738,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onLoadTaskWorkSettings={loadTaskWorkSettings}
           onOpenAiSettings={(section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
@@ -1790,7 +1793,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           }
           readOnlyGate={taskReadOnlyGate}
           suppressComposer={selectedNativeConversation.readOnly}
-          quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+          embeddedInTask={embeddedInTask}
           taskManagementStatusChangeBusy={updatingTaskBusy}
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
           onStateChange={(conversationId, state) => {
@@ -1803,6 +1806,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+          onLoadTaskWorkSettings={loadTaskWorkSettings}
           onOpenAiSettings={(section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
@@ -1838,7 +1842,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
         choices={nativeSessionChoices}
         suppressComposer={Boolean(taskReadOnlyGate)}
-        quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
         taskManagementStatusChangeBusy={updatingTaskBusy}
         readOnlyGate={taskReadOnlyGate}
         autoFocusNewConversation={conversationDraftOpen}
@@ -1863,6 +1866,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
           onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
+          onLoadTaskWorkSettings: loadTaskWorkSettings,
           onOpenAiSettings: (section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           },
@@ -1894,6 +1898,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     if (!taskDetailPaneTask) return null;
     return (
       <TaskDetailPaneContent
+        key={taskDetailPaneTask.id}
         language={appShellSettings.appLanguage}
         task={taskDetailPaneTask}
         projects={snapshot.projects}
@@ -1922,6 +1927,45 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             : undefined
         }
         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
+        onManageEmployees={() => {
+          /** 任务所属项目是员工管理的唯一目标。 */
+          const project = snapshot.projects.find((candidate) => candidate.id === taskDetailPaneTask.projectId);
+          if (!project) return;
+          closeTaskDetail();
+          openProjectSection(project, 'project-settings');
+        }}
+        onSelectConversation={openTaskConversationInline}
+        activeConversationId={selectedNativeConversation?.taskId === taskDetailPaneTask.id ? selectedNativeConversation.id : null}
+        conversationWorkspace={selectedNativeConversation?.taskId === taskDetailPaneTask.id && !state.sessionDrawerTarget ? renderNativeConversationWorkspace((taskId) => setTaskDetailPaneTaskId(taskId), true) : null}
+        newConversationWorkspace={
+          props.nativeConversationClient ? (
+            <NewConversationComposer
+              key={`task-discussion-${taskDetailPaneTask.id}`}
+              docked
+              drafts={newConversationDrafts}
+              language={appShellSettings.appLanguage}
+              owner={{
+                kind: 'task',
+                projectId: taskDetailPaneTask.projectId,
+                projectName: snapshot.projects.find((project) => project.id === taskDetailPaneTask.projectId)?.name ?? '',
+                taskId: taskDetailPaneTask.id,
+                taskTitle: taskDetailPaneTask.title,
+              }}
+              task={createSessionWorkspaceTask(taskDetailPaneTask, appShellSettings, appShellSettings.appLanguage)}
+              serviceTierPreferences={[]}
+              onStartTask={startNativeConversation}
+              onLoadCapabilities={props.nativeConversationClient.loadCodexConversationCapabilities}
+              onLoadSkills={props.nativeConversationClient.loadSkills}
+              onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
+              onLoadTaskWorkSettings={loadTaskWorkSettings}
+              onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
+              onOpenComputerSettings={() => {
+                setSettingsCategory('browser');
+                handleMainNavigate('settings');
+              }}
+            />
+          ) : null
+        }
         onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
         onRetryModelPush={retryTaskModelPush}
         onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
@@ -1930,6 +1974,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         onUpdateTaskContent={updateTaskContent}
         onUpdateRelationships={updateTaskRelationships}
         onCreateChild={(taskId) => openTaskCreateModal(taskId)}
+        onOpenRelatedTask={(taskId) => void domainActions.openTaskDetailPane(taskId, state.taskDetailPresentation)}
         onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
         onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
         onAuthorizeFiles={props.onAuthorizeTaskFiles}

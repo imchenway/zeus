@@ -1072,14 +1072,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   position: absolute;
 }
 
-.zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='dialog'] {
+.zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [data-modal-surface='dialog']) {
   animation: none;
   transform: translateY(0);
   transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
   transform-origin: center center;
 }
 
-.zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='alertdialog'] {
+.zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='alertdialog'], [data-modal-surface='alertdialog']) {
   animation: none;
   transform: translateY(0);
   transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
@@ -1094,7 +1094,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .zeus-modal-portal-root.macos-ai-app[data-motion-state='closing'] .zeus-modal-backdrop {
   pointer-events: none;
 }
-.zeus-modal-portal-root.macos-ai-app[data-motion-state='closing'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog']) {
+.zeus-modal-portal-root.macos-ai-app[data-motion-state='closing'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog'], [data-modal-surface='dialog'], [data-modal-surface='alertdialog']) {
   transform: translateY(10px);
   transition-duration: var(--zeus-motion-duration-layer-exit);
 }
@@ -1102,7 +1102,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] {
     opacity: 0;
   }
-  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog']) {
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog'], [data-modal-surface='dialog'], [data-modal-surface='alertdialog']) {
     transform: translateY(10px);
   }
 }
@@ -1207,7 +1207,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
     padding: 12px;
   }
 
-  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='dialog'] {
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [data-modal-surface='dialog']) {
     inline-size: min(100%, calc(100vw - 24px));
     max-block-size: calc(100vh - 24px);
   }
@@ -1453,7 +1453,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 @media (prefers-reduced-motion: reduce) {
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'],
-  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog']) {
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog'], [data-modal-surface='dialog'], [data-modal-surface='alertdialog']) {
     transition: none !important;
     transform: none !important;
   }
@@ -1484,8 +1484,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .session-codex-parity-v1 :where(.session-queued-messages, .session-creation-status, .session-transport-failure),
   .macos-ai-app .project-source-tree-backdrop,
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop,
-  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='dialog'],
-  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='alertdialog'] {
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [data-modal-surface='dialog']),
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='alertdialog'], [data-modal-surface='alertdialog']) {
     animation: none !important;
     transform: none !important;
     will-change: auto !important;
@@ -1530,7 +1530,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 /* 图片预览复用统一模态层；内容尺寸、滚动和图像比例仍由预览面板负责。 */
-.macos-ai-app.image-preview-portal .zeus-modal-backdrop > [role='dialog'] {
+.macos-ai-app.image-preview-portal .zeus-modal-backdrop > :is([role='dialog'], [data-modal-surface='dialog']) {
   inline-size: min(1120px, calc(100vw - 32px));
   max-block-size: calc(100vh - 32px);
   border: 1px solid var(--zeus-product-line);

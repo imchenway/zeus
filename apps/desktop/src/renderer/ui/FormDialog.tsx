@@ -21,15 +21,8 @@ export function FormDialog(props: {
   /** 同页多层弹窗保持独立的可访问名称。 */
   const id = useId();
   return (
-    <ModalPortal dismissDisabled={props.busy} onDismiss={props.onClose}>
-      <form
-        className={['zeus-form-dialog zeus-solid-form-surface', props.className].filter(Boolean).join(' ')}
-        role={props.danger ? 'alertdialog' : 'dialog'}
-        aria-modal="true"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={props.description ? `${id}-description` : undefined}
-        onSubmit={props.onSubmit}
-      >
+    <ModalPortal dismissDisabled={props.busy} onDismiss={props.onClose} role={props.danger ? 'alertdialog' : 'dialog'} aria-labelledby={`${id}-title`} aria-describedby={props.description ? `${id}-description` : undefined}>
+      <form className={['zeus-form-dialog zeus-solid-form-surface', props.className].filter(Boolean).join(' ')} onSubmit={props.onSubmit} data-modal-surface={props.danger ? 'alertdialog' : 'dialog'}>
         <header>
           <h2 id={`${id}-title`}>{props.title}</h2>
           <Button className="zeus-form-dialog-close" aria-label={props.zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>

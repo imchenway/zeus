@@ -1,6 +1,8 @@
+import type { TaskWorkDeliverableBundle } from './taskWorkReviewStore.js';
 import { createHash } from 'node:crypto';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
+import type { TaskWorkArrangement } from './taskWorkPlanningStore.js';
 
 export const taskWorkSchemaMigrationId = '20260829_0001_task_work_v2';
 export const taskWorkWorkspaceBindingMigrationId = '20260831_0425_task_work_workspace_binding_v1';
@@ -60,7 +62,10 @@ export interface TaskWorkItemRecord {
   id: string;
   projectId: string;
   taskId: string;
-  employeeId: string;
+  /** 尚未领取的分工不绑定员工。 */
+  employeeId: string | null;
+  /** 阶段、依赖和后续配置使用同一份工作身份。 */
+  arrangement?: TaskWorkArrangement;
   source: 'manual' | 'automation';
   sourceRef: string | null;
   title: string;
@@ -106,6 +111,8 @@ export interface TaskWorkRunRecord {
 }
 
 export interface TaskWorkDeliverableRecord {
+  /** 本次成果中实际冻结的证据与缺口。 */
+  bundle?: TaskWorkDeliverableBundle;
   id: string;
   projectId: string;
   taskId: string;
@@ -362,13 +369,13 @@ export class TaskWorkItemRepository {
     }
     const timestamp = this.now();
     this.db.execute(
-      `INSERT INTO task_work_items (id, project_id, task_id, employee_id, source, source_ref, title, description, entrypoint_kind, status, current_run_id, revision, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
+      `INSERT INTO task_work_items (id, project_id, task_id, employee_id, source, source_ref, title, description, entrypoint_kind, status, current_run_id, revision, created_at, updated_at, completed_at, arrangement_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?)`,
       [
         identity(input.id, 'workItem.id'),
         identity(input.projectId, 'projectId'),
         identity(input.taskId, 'taskId'),
-        identity(input.employeeId, 'employeeId'),
+        input.employeeId ? identity(input.employeeId, 'employeeId') : null,
         input.source,
         input.sourceRef ?? null,
         text(input.title, 'title', 240),
@@ -378,6 +385,7 @@ export class TaskWorkItemRepository {
         input.currentRunId ?? null,
         timestamp,
         timestamp,
+        input.arrangement ? JSON.stringify(input.arrangement) : null,
       ],
     );
     return this.getById(input.id)!;
@@ -543,8 +551,8 @@ export class TaskWorkDeliverableRepository {
     const version = (this.db.get<{ maximum: number | null }>(`SELECT MAX(version) AS maximum FROM task_work_deliverables WHERE work_item_id = ?`, [identity(input.workItemId, 'workItemId')])?.maximum ?? 0) + 1;
     const timestamp = this.now();
     this.db.execute(
-      `INSERT INTO task_work_deliverables (id, project_id, task_id, work_item_id, run_id, version, status, kind, title, summary, artifact_sha256, content_sha256, source_message_id, revision, created_at, updated_at, accepted_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)`,
+      `INSERT INTO task_work_deliverables (id, project_id, task_id, work_item_id, run_id, version, status, kind, title, summary, artifact_sha256, content_sha256, source_message_id, revision, created_at, updated_at, accepted_at, bundle_json)
+       VALUES (?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?)`,
       [
         id,
         input.projectId,
@@ -560,6 +568,7 @@ export class TaskWorkDeliverableRepository {
         input.sourceMessageId ?? null,
         timestamp,
         timestamp,
+        input.bundle ? JSON.stringify(input.bundle) : null,
       ],
     );
     return this.getById(id)!;
@@ -654,7 +663,8 @@ interface TaskWorkItemRow {
   id: string;
   project_id: string;
   task_id: string;
-  employee_id: string;
+  employee_id: string | null;
+  arrangement_json?: string | null;
   source: string;
   source_ref: string | null;
   title: string;
@@ -698,6 +708,8 @@ interface TaskWorkRunRow {
   completed_at: string | null;
 }
 interface TaskWorkDeliverableRow {
+  /** 历史成果可能尚无证据索引。 */
+  bundle_json?: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -743,6 +755,7 @@ function mapWorkItem(row: TaskWorkItemRow): TaskWorkItemRecord {
     projectId: row.project_id,
     taskId: row.task_id,
     employeeId: row.employee_id,
+    ...(row.arrangement_json ? { arrangement: JSON.parse(row.arrangement_json) as TaskWorkArrangement } : {}),
     source: member(row.source, ['manual', 'automation'] as const, 'workItem.source'),
     sourceRef: row.source_ref,
     title: row.title,
@@ -792,6 +805,7 @@ function mapWorkRun(row: TaskWorkRunRow): TaskWorkRunRecord {
 
 function mapDeliverable(row: TaskWorkDeliverableRow): TaskWorkDeliverableRecord {
   return {
+    ...(row.bundle_json ? { bundle: JSON.parse(row.bundle_json) as TaskWorkDeliverableBundle } : {}),
     id: row.id,
     projectId: row.project_id,
     taskId: row.task_id,
@@ -856,7 +870,7 @@ function assertRunTransition(from: TaskWorkRunStatus, to: TaskWorkRunStatus): vo
     dispatching: ['active', 'waiting_input', 'failed', 'outcome_unknown', 'cancelled'],
     active: ['waiting_input', 'runtime_completed', 'succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     waiting_input: ['active', 'failed', 'outcome_unknown', 'cancelled'],
-    runtime_completed: ['succeeded', 'failed', 'outcome_unknown'],
+    runtime_completed: ['succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     succeeded: [],
     failed: [],
     outcome_unknown: ['succeeded', 'failed'],

@@ -365,8 +365,8 @@ export function ConversationImagePreviewDialog(props: { previewUrl: string; labe
   const zh = props.language === 'zh-CN';
 
   return (
-    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose}>
-      <div className="task-attachment-zoom-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <div className="task-attachment-zoom-sheet" data-modal-surface="dialog">
         <header className="task-attachment-zoom-header">
           <span>
             <strong id={titleId}>{props.label}</strong>

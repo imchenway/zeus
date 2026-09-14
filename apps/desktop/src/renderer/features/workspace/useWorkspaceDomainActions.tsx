@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef } from 'react';
 import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
@@ -1605,6 +1605,30 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return runAfterWorkspaceLeave(() => applyNativeConversationSelection(conversation, navigation, presentation));
   }
 
+  /** 每次任务切换或新的选择都使此前异步会话读取失效。 */
+  const inlineConversationSelection = useRef(0);
+  useEffect(
+    () => () => {
+      inlineConversationSelection.current += 1;
+    },
+    [taskDetailPaneTaskId],
+  );
+
+  /** 在任务工作区选择权威会话，保留任务页面并复用原会话控制器。 */
+  async function openTaskConversationInline(taskId: string, conversationId: string): Promise<void> {
+    /** 本轮选择身份防止较慢的旧请求覆盖用户最新目标。 */
+    const selection = ++inlineConversationSelection.current;
+    /** 从当前任务读取项目边界，不接受会话传入的跨任务目标。 */
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
+    if (!task || !props.nativeConversationClient) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '无法读取此任务的会话。' : 'The task conversation is unavailable.');
+    /** 新指派会话可能尚未出现在列表，直接读取已持久化的会话身份。 */
+    const conversation = await props.nativeConversationClient.loadNativeConversationChoice(task.projectId, conversationId);
+    if (selection !== inlineConversationSelection.current) return;
+    if (conversation.taskId !== taskId || conversation.projectId !== task.projectId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '该会话不属于当前任务。' : 'This conversation does not belong to this task.');
+    setNativeConversationChoicesByTask((current) => ({ ...current, [taskId]: upsertTaskConversationChoiceSnapshot(taskId, current[taskId], conversation) }));
+    await selectNativeConversation(conversation, 'preserve');
+  }
+
   /** 从抽屉或任务入口进入同一会话的完整页面，保留现有的实时呈现方式。 */
   async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<void> {
     /** 已打开的会话不因切换展示容器退回历史模式。 */
@@ -2951,6 +2975,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openProjectCreateDialog,
     openTaskConflictAiConversation,
     openTaskConversation,
+    openTaskConversationInline,
     openTaskConversationDrawer,
     openNativeConversationDrawer,
     openNativeConversationPage,

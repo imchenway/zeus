@@ -213,6 +213,8 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    // 直接宿主入口也必须有期限；已有调度期限不能因排队或目标检查而重新计时。
+    input = { ...input, deadlineUnixMs: input.deadlineUnixMs ?? Date.now() + 120_000 };
     if (input.namespace !== 'zeus_computer') return computerText(`ComputerHost 不支持命名空间：${String(input.namespace)}`, false);
     if (this.options.readOnlyValidation) return computerText('只读验证模式禁止启动或调用 Computer Use。', false);
     if (!this.settings.enabled) return computerText('Zeus Computer Use 尚未在设置中全局启用。', false);
@@ -352,6 +354,9 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 所有异步边界复核同一停止世代，目标检查通过不代表已撤销控制可以恢复。 */
   private assertControlAllowed(input: BrowserAutomationToolCall, generation: number): void {
+    if (input.deadlineUnixMs !== undefined && (!Number.isFinite(input.deadlineUnixMs) || Date.now() >= input.deadlineUnixMs)) {
+      throw Object.assign(new Error('ZEUS_COMPUTER_CALL_EXPIRED: 本次调用期限已结束；不得继续或重放动作，请重新观察实际结果。'), { code: 'ZEUS_COMPUTER_CALL_EXPIRED' });
+    }
     if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || this.revokedTurns.has(JSON.stringify([input.conversationId, input.turnId]))) {
       throw Object.assign(new Error('ZEUS_COMPUTER_STOPPED: 本轮桌面控制已撤销；需要用户发起新轮次，禁止自动恢复或重试动作。'), { code: 'ZEUS_COMPUTER_STOPPED' });
     }

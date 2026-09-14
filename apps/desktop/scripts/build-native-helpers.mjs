@@ -29,7 +29,8 @@ await mkdir(computerExecutableDirectory, { recursive: true });
 await compileSwift({
   source: [resolve(desktopRoot, 'native/ComputerService.swift'), resolve(desktopRoot, 'native/ComputerControlSession.swift')],
   output: computerExecutable,
-  frameworks: ['AppKit', 'ApplicationServices', 'CoreGraphics', 'ScreenCaptureKit'],
+  // 菜单不公开辅助功能子项时，使用系统图像文字识别补充实际菜单坐标。
+  frameworks: ['AppKit', 'ApplicationServices', 'CoreGraphics', 'ScreenCaptureKit', 'Vision'],
 });
 await chmod(computerExecutable, 0o755);
 const computerBundleId = packageVariant === 'release' ? 'dev.hypha.zeus.helper.computer' : 'dev.hypha.zeus.test.helper.computer';

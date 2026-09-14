@@ -38,6 +38,8 @@ interface NativeConversationDispatchLease {
   submissionId: string;
   lifecycles: Set<NativeProviderWriteLifecycle>;
   rpcStartedResourceId: string | null;
+  /** 创建线程不等于写出消息；只在内容写入开始时结束准备保护。 */
+  contentWriteStarted: boolean;
   promise?: Promise<NativeAcceptedOperation>;
 }
 
@@ -168,6 +170,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       submissionId: submission.id,
       lifecycles: new Set(),
       rpcStartedResourceId: null,
+      contentWriteStarted: false,
     };
     attachDispatchLifecycle(lease, providerWriteLifecycle);
     const promise = dispatchSubmissionWithLease(conversationInput, submission, lease, providerArchiveRecoveryAttempted, segmentLifecycle).finally(() => {
@@ -454,7 +457,10 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         },
         pluginPromptContext,
         responsesRuntime,
-        beforePortableProviderWrite: () => markDispatchRpcStarted(lease, submission.id),
+        beforePortableProviderWrite: () => {
+          lease.contentWriteStarted = true;
+          markDispatchRpcStarted(lease, submission.id);
+        },
         now,
       });
       assertSubmissionDispatchable(submission.id);
@@ -497,6 +503,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           occurredAt: now(),
         });
       providerWriteStarted = true;
+      lease.contentWriteStarted = true;
       markDispatchRpcStarted(lease, submission.id);
       const turn = await options.manager.startTurn({
         threadId: providerThreadId,
@@ -767,9 +774,9 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
   }
 
   /** 只认本宿主仍持有且尚未写出的派发，重启遗留状态不能充当活跃发送。 */
-  function isPreparingDispatch(conversationId: string): boolean {
+  function isPreparingDispatch(conversationId: string, submissionId?: string): boolean {
     const lease = dispatchLeases.get(conversationId);
-    if (!lease || lease.rpcStartedResourceId || isClosed()) return false;
+    if (!lease || lease.contentWriteStarted || isClosed() || (submissionId !== undefined && lease.submissionId !== submissionId)) return false;
     const submission = options.submissions.getById(lease.submissionId);
     return submission?.status === 'dispatching' && !submission.providerTurnId;
   }

@@ -85,8 +85,8 @@ export function GoalPanel(props: GoalPanelProps) {
   const readOnly = !props.capability.supported || !props.capability.enabled || !(props.onSave || props.onPause || props.onResume || props.onClear);
 
   return (
-    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
-      <section className="session-goal-panel zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <section className="session-goal-panel zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="session-goal-panel-header">
           <div>
             <h2 id={titleId}>{props.goal ? (zh ? '目标' : 'Goal') : zh ? '创建目标' : 'Create goal'}</h2>

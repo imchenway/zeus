@@ -91,6 +91,8 @@ export interface DigitalEmployeeTemplateRecord {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
+  /** 是否在新工作中读取经过治理的个人经验。 */
+  memoryEnabled?: boolean;
   projectId: string;
   templateId: string | null;
   enabled: boolean;
@@ -184,6 +186,8 @@ export interface CreateDigitalEmployeeTemplateInput {
 export type UpdateDigitalEmployeeTemplateInput = Partial<Omit<CreateDigitalEmployeeTemplateInput, 'id'>> & { expectedRevision: number };
 
 export interface CreateDigitalEmployeeInput extends Omit<CreateDigitalEmployeeTemplateInput, 'id'> {
+  /** 新工作是否读取员工个人经验。 */
+  memoryEnabled?: boolean;
   id?: string;
   projectId: string;
   templateId?: string | null;
@@ -673,6 +677,7 @@ export class DigitalEmployeeRepository {
         null,
       ],
     );
+    this.db.execute('UPDATE digital_employees SET memory_enabled = ? WHERE id = ?', [value.memoryEnabled === false ? 0 : 1, id]);
     return this.getById(id)!;
   }
 
@@ -749,6 +754,7 @@ export class DigitalEmployeeRepository {
       ],
     );
     assertChanged(this.db, '数字员工已被其他操作更新。');
+    this.db.execute('UPDATE digital_employees SET memory_enabled = ? WHERE id = ?', [value.memoryEnabled === false ? 0 : 1, existing.id]);
     return this.getById(existing.id)!;
   }
 
@@ -1264,6 +1270,8 @@ interface DigitalEmployeeTemplateRow {
 }
 
 interface DigitalEmployeeRow extends Omit<DigitalEmployeeTemplateRow, 'built_in'> {
+  /** 员工记忆读取偏好。 */
+  memory_enabled?: number;
   project_id: string;
   template_id: string | null;
   enabled: number;
@@ -1364,6 +1372,7 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
   oneOf(row.entrypoint_migration_state, ['ready', 'requires_selection', 'requires_configuration'] as const, 'employee.entrypointMigrationState');
   const entrypoint = mapEmployeeEntrypoint(row);
   return {
+    memoryEnabled: row.memory_enabled !== 0,
     id: row.id,
     projectId: row.project_id,
     templateId: row.template_id,
@@ -1483,6 +1492,7 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
   const deliveryGrants = normalizeDeliveryGrants(input.deliveryGrants ?? {});
   const deployCommandId = nullableIdentity(input.deployCommandId, 'deployCommandId');
   const base = {
+    memoryEnabled: input.memoryEnabled !== false,
     projectId: requiredIdentity(input.projectId, 'projectId'),
     templateId: nullableIdentity(input.templateId, 'templateId'),
     ...template,

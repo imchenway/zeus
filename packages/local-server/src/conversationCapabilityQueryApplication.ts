@@ -103,6 +103,8 @@ export interface ConversationCapabilitiesSnapshot {
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
+  /** 只公布宿主已就绪的原生目标能力。 */
+  goals?: CodexCapabilitiesSnapshot['goals'];
   generationId: string;
   initializedAt: string;
   models: ConversationCapabilityModel[];
@@ -132,6 +134,7 @@ export class ConversationCapabilityQueryApplication {
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels());
     const snapshot = {
+      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),
       models,
@@ -233,13 +236,13 @@ export class ConversationCapabilityQueryApplication {
     const requestedModel = connectionSelection.defaultModelRef ?? configuredModel;
     const preferredModel = requestedModel ? (resolveModelCapability(models, requestedModel)?.id ?? requestedModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
+      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),
       projectId: project.id,
       preferredModel,
       models,
       codexAccount,
-      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
     };
   }
 

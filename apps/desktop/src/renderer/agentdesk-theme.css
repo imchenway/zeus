@@ -3197,12 +3197,12 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent !important;
   padding: 16px !important;
 }
-/* 摘要和展开详情使用标题下方通栏，不继承项目名称或右侧工具的缩进。 */
-.macos-ai-app.zeus-shell .session-thread-subtitle-row {
+/* 会话页和任务浮层共用摘要通栏，不依赖主窗口外壳才能正确布局。 */
+.macos-ai-app .session-thread-subtitle-row {
   grid-column: 1 / -1;
   min-inline-size: 0;
 }
-.macos-ai-app.zeus-shell .session-runtime-details .session-thread-project-name {
+.macos-ai-app .session-runtime-details .session-thread-project-name {
   color: var(--session-text-muted);
   max-inline-size: 200px;
   overflow: hidden;

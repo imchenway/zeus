@@ -227,8 +227,8 @@ function renderTaskAttachmentPreviewDialog(input: {
   return (
     <MotionPresence>
       {input.previewAttachment ? (
-        <ModalPortal rootClassName="image-preview-portal" onDismiss={input.closeAttachmentPreview}>
-          <div className="task-attachment-zoom-sheet" role="dialog" aria-modal="true" aria-labelledby={input.previewTitleId} aria-describedby={input.previewDescriptionId}>
+        <ModalPortal rootClassName="image-preview-portal" onDismiss={input.closeAttachmentPreview} role="dialog" aria-labelledby={input.previewTitleId} aria-describedby={input.previewDescriptionId}>
+          <div className="task-attachment-zoom-sheet" data-modal-surface="dialog">
             <header className="task-attachment-zoom-header">
               <span>
                 <strong id={input.previewTitleId}>{input.previewAttachment?.name ?? input.copy.openPreviewLabel}</strong>

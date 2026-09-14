@@ -665,8 +665,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       ) : null}
 
       {conflictComparison ? (
-        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)}>
-          <section className="project-source-conflict-comparison" role="dialog" aria-modal="true" aria-label={zh ? '比较变更' : 'Compare changes'}>
+        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)} role="dialog" aria-label={zh ? '比较变更' : 'Compare changes'}>
+          <section className="project-source-conflict-comparison" data-modal-surface="dialog">
             <header>
               <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
               <button type="button" onClick={() => setConflictComparison(null)}>
@@ -951,15 +951,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       <MotionPresence>
         {operation ? (
-          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)}>
+          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)} role="dialog">
             <form
               className="project-source-operation-modal zeus-solid-form-surface"
-              role="dialog"
-              aria-modal="true"
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitOperation();
               }}
+              data-modal-surface="dialog"
             >
               <header>
                 <strong>{operationTitle(operation, zh)}</strong>
@@ -1000,8 +999,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       <MotionPresence>
         {pendingClosePath ? (
-          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setPendingClosePath(null)} dismissDisabled={Boolean(busyPath)}>
-            <section className="project-source-operation-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-source-close-title">
+          <ModalPortal
+            rootClassName="project-source-modal-root"
+            backdropClassName="project-source-modal-backdrop"
+            onDismiss={() => setPendingClosePath(null)}
+            dismissDisabled={Boolean(busyPath)}
+            role="dialog"
+            aria-labelledby="project-source-close-title"
+          >
+            <section className="project-source-operation-modal zeus-solid-form-surface" data-modal-surface="dialog">
               <header>
                 <strong id="project-source-close-title">{zh ? '文件尚未保存' : 'File is not saved'}</strong>
               </header>
