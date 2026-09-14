@@ -1,3 +1,4 @@
+import { FilePreviewDialog, PreviewImage } from '../code/FilePreview.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
@@ -93,20 +94,6 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
     props.onVisibleContentChange?.();
   }, [failed, previewUrl, props.onVisibleContentChange]);
 
-  if (failed) {
-    return (
-      <article className="session-resource-card session-pending-attachment-fallback" data-resource-kind="attachment" data-error="true" title={props.attachment.name}>
-        <span className="session-resource-card-icon">
-          <FileImage aria-hidden="true" weight="duotone" />
-        </span>
-        <span className="session-resource-card-copy">
-          <strong>{props.attachment.name}</strong>
-          <small>{props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable'}</small>
-        </span>
-      </article>
-    );
-  }
-
   return (
     <>
       <button
@@ -117,7 +104,11 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         title={props.attachment.name}
         onClick={() => setPreviewOpen(true)}
       >
-        {previewUrl ? (
+        {failed ? (
+          <span className="session-resource-image-placeholder" role="status">
+            {props.language === 'zh-CN' ? '缩略图不可用，点击查看文件与可用操作' : 'Thumbnail unavailable. Open file preview and actions.'}
+          </span>
+        ) : previewUrl ? (
           <img decoding="async" src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
         ) : (
           <span className="session-resource-image-placeholder" role="status">
@@ -126,7 +117,9 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
           </span>
         )}
       </button>
-      <MotionPresence>{previewOpen ? <ConversationImagePreviewDialog previewUrl={previewUrl ?? ''} label={props.attachment.name} language={props.language} loading={loading} onClose={() => setPreviewOpen(false)} /> : null}</MotionPresence>
+      <MotionPresence>
+        {previewOpen ? <FilePreviewDialog request={{ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }} zh={props.language === 'zh-CN'} onClose={() => setPreviewOpen(false)} /> : null}
+      </MotionPresence>
     </>
   );
 }
@@ -162,6 +155,7 @@ export function ConversationInlineResource(
     language: SessionUiLanguage;
   },
 ) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
@@ -173,6 +167,10 @@ export function ConversationInlineResource(
   });
 
   async function open(): Promise<void> {
+    if (props.resource.kind !== 'website') {
+      setPreviewOpen(true);
+      return;
+    }
     if (!props.onOpenResource || busy) return;
     setBusy(true);
     setError(null);
@@ -186,13 +184,30 @@ export function ConversationInlineResource(
   }
 
   return (
-    <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-      <button type="button" className="session-inline-resource" title={title} aria-label={`${props.label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
-        <ResourceIcon resource={props.resource} />
-        <span>{props.label}</span>
-        {location ? <span className="session-inline-resource-location">{location}</span> : null}
-      </button>
-    </span>
+    <>
+      <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
+        <button
+          type="button"
+          className="session-inline-resource"
+          title={title}
+          aria-label={`${props.label}${location ? ` ${location}` : ''}`}
+          aria-busy={busy || undefined}
+          data-error={Boolean(error) || undefined}
+          onClick={() => void open()}
+        >
+          <ResourceIcon resource={props.resource} />
+          <span>{props.label}</span>
+          {location ? <span className="session-inline-resource-location">{location}</span> : null}
+        </button>
+      </span>
+      {previewOpen ? (
+        <FilePreviewDialog
+          request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
+          zh={props.language === 'zh-CN'}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -341,12 +356,9 @@ function ConversationImagePreview(
       </button>
       <MotionPresence>
         {previewOpen ? (
-          <ConversationImagePreviewDialog
-            previewUrl={preview?.dataUrl ?? ''}
-            label={props.label}
-            language={props.language}
-            loading={!preview && !error && !unavailable}
-            error={error || unavailable ? status : undefined}
+          <FilePreviewDialog
+            request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
+            zh={props.language === 'zh-CN'}
             onClose={() => setPreviewOpen(false)}
           />
         ) : null}
@@ -378,7 +390,7 @@ export function ConversationImagePreviewDialog(props: { previewUrl: string; labe
         </header>
         <div className="task-attachment-zoom-stage">
           {props.previewUrl && failedPreviewUrl !== props.previewUrl ? (
-            <img decoding="async" className="task-attachment-zoom-image" src={props.previewUrl} alt={props.label} onError={() => setFailedPreviewUrl(props.previewUrl)} />
+            <PreviewImage url={props.previewUrl} name={props.label} zh={zh} onError={() => setFailedPreviewUrl(props.previewUrl)} />
           ) : props.loading ? (
             <p className="task-attachment-zoom-state" role="status" aria-live="polite">
               <span className="task-attachment-preview-spinner" aria-hidden="true" />
@@ -442,6 +454,7 @@ function ConversationResourceCard(
     language: SessionUiLanguage;
   },
 ) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const subtitle = resourceSubtitle(props.resource, props.language);
@@ -451,6 +464,10 @@ function ConversationResourceCard(
   });
 
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
+    if (props.resource.kind !== 'website' && target === defaultOpenTarget(props.resource)) {
+      setPreviewOpen(true);
+      return;
+    }
     if (!props.onOpenResource || busy) return;
     setBusy(true);
     setError(null);
@@ -464,18 +481,27 @@ function ConversationResourceCard(
   }
 
   return (
-    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-error={Boolean(error) || undefined}>
-      <button type="button" className="session-resource-card-main" aria-busy={busy || undefined} onClick={() => void open()}>
-        <span className="session-resource-card-icon">
-          <ResourceIcon resource={props.resource} />
-        </span>
-        <span className="session-resource-card-copy">
-          <strong>{props.resource.displayName}</strong>
-          <small>{subtitle}</small>
-        </span>
-      </button>
-      <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
-    </article>
+    <>
+      <article className="session-resource-card" data-resource-kind={props.resource.kind} data-error={Boolean(error) || undefined}>
+        <button type="button" className="session-resource-card-main" aria-busy={busy || undefined} onClick={() => void open()}>
+          <span className="session-resource-card-icon">
+            <ResourceIcon resource={props.resource} />
+          </span>
+          <span className="session-resource-card-copy">
+            <strong>{props.resource.displayName}</strong>
+            <small>{subtitle}</small>
+          </span>
+        </button>
+        <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
+      </article>
+      {previewOpen ? (
+        <FilePreviewDialog
+          request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
+          zh={props.language === 'zh-CN'}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 

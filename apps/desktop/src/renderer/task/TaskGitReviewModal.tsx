@@ -389,7 +389,12 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                   </small>
                 ) : null}
               </span>
-              <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />
+              <TaskGitDiffTable
+                previewRequest={activeWorkspace && props.task && selectedFile ? { kind: 'task-git', taskId: props.task.id, workspaceId: activeWorkspace.id, path: selectedFile, scope: 'working' } : undefined}
+                diff={fileDiff?.fileDiffs[0] ?? null}
+                hasSelection={Boolean(selectedFile)}
+                zh={zh}
+              />
             </section>
           </main>
 

@@ -1061,7 +1061,15 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : diffLoading ? (
                       <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p>
                     ) : (
-                      <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection zh={zh} />
+                      <TaskGitDiffTable
+                        previewRequest={
+                          selectedWorkspace && props.task ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope === 'committed' ? 'committed' : 'working' } : undefined
+                        }
+                        revision={snapshotRevision}
+                        diff={fileDiff?.fileDiffs[0] ?? null}
+                        hasSelection
+                        zh={zh}
+                      />
                     )}
                   </section>
                 </main>

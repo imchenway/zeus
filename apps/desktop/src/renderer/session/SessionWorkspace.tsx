@@ -1,3 +1,4 @@
+import { FilePreviewDialog } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -1666,6 +1667,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
+  /** 快捷资源入口与正文附件使用同一预览，显式编辑器操作继续走原入口。 */
+  const [filePreviewResource, setFilePreviewResource] = useState<ConversationResource | null>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
@@ -1811,6 +1814,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     previousBlockingInteractionCountRef.current = 0;
     composerFocusRestorationPendingRef.current = false;
     setContextWorkspace({ kind: 'none' });
+    setFilePreviewResource(null);
     setContextFullWidth(false);
     setGoalPanelOpen(false);
     setGoalBusy(false);
@@ -2128,6 +2132,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
+    if (resource.kind !== 'website' && target === 'preferred' && !location) {
+      setFilePreviewResource(resource);
+      return;
+    }
     if (!actions.onOpenResource) throw new Error('conversation_resource_open_unavailable');
     const conversationId = workspaceIdentityRef.current;
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -2416,6 +2424,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
       }}
     >
+      {filePreviewResource ? (
+        <FilePreviewDialog
+          request={{ kind: 'resource', projectId: filePreviewResource.projectId, conversationId: filePreviewResource.conversationId, resourceId: filePreviewResource.id }}
+          zh={props.language === 'zh-CN'}
+          onClose={() => setFilePreviewResource(null)}
+        />
+      ) : null}
       {displayedHeader ? (
         <header
           className="session-thread-header"

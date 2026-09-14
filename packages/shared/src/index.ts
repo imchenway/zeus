@@ -1,3 +1,5 @@
+/** 所有文件入口共用预览类型与格式策略。 */
+export * from './filePreview.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';

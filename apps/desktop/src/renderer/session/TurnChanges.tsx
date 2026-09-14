@@ -1,3 +1,4 @@
+import { FilePreview } from '../code/FilePreview.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -22,7 +23,6 @@ import {
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
-import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskGitDiffTable } from '../task/TaskGitDiffTable.js';
 import type { TaskGitFileDiff } from './sessionTypes.js';
@@ -174,14 +174,8 @@ export function TurnDiffWorkspace(props: {
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
   const action = availableAction(changeSet);
   const activeFile = changeSet.files.find((file) => file.id === activeFileId) ?? changeSet.files[0] ?? null;
-  /** 审核默认显示差异；只有 Markdown 文件才提供当前全文预览。 */
-  const [viewMode, setViewMode] = useState<'diff' | 'preview'>('diff');
-  /** 文件类型按当前状态的路径判断；已删除文件仍可进入预览查看不可用原因。 */
-  const markdownFile = /\.(?:md|markdown|mdx)$/iu.test((changeSet.state === 'undone' ? activeFile?.oldPath : activeFile?.newPath) ?? activeFile?.oldPath ?? activeFile?.newPath ?? '');
-  /** 普通文件与没有读取能力的页面始终展示原始差异。 */
-  const renderedMarkdown = markdownFile && Boolean(props.onLoadPreview) && viewMode === 'preview';
   /** 将本轮补丁转换为交付页共用的双栏数据，避免重复维护布局与高亮。 */
-  const diff = useMemo(() => (renderedMarkdown ? null : turnFileDiff(activeFile)), [activeFile, renderedMarkdown]);
+  const diff = useMemo(() => turnFileDiff(activeFile), [activeFile]);
   const activePath = activeFile ? commentPath(activeFile) : null;
   const comments = useMemo(() => (props.comments ?? []).filter((comment) => comment.position.path === activePath), [props.comments, activePath]);
   /** 只为实际评论和当前草稿登记位置，不遍历代码行。 */
@@ -397,34 +391,22 @@ export function TurnDiffWorkspace(props: {
                 <strong title={displayPath(activeFile)}>{displayPath(activeFile)}</strong>
                 <span>
                   <small>{localizedChangeType(activeFile, props.language)}</small>
-                  {markdownFile && props.onLoadPreview ? (
-                    <>
-                      <button type="button" className="session-turn-diff-open-file" aria-pressed={!renderedMarkdown} onClick={() => setViewMode('diff')}>
-                        {zh ? '差异' : 'Diff'}
-                      </button>
-                      <button type="button" className="session-turn-diff-open-file" aria-pressed={renderedMarkdown} onClick={() => setViewMode('preview')}>
-                        {zh ? '预览' : 'Preview'}
-                      </button>
-                    </>
-                  ) : null}
                   {props.onOpenFile ? (
                     <button type="button" className="session-turn-diff-open-file" onClick={() => void openFile(activeFile)}>
                       <FileCode aria-hidden="true" />
-                      <span>{zh ? '打开文件' : 'Open file'}</span>
+                      <span>{zh ? '打开当前文件' : 'Open current file'}</span>
                     </button>
                   ) : null}
                 </span>
               </header>
-              {renderedMarkdown && props.onLoadPreview ? (
-                busy || ['capturing', 'undoing', 'reapplying'].includes(changeSet.state) ? (
-                  <p className="session-turn-diff-empty" role="status">
-                    {zh ? '正在更新文件，完成后显示预览…' : 'Updating file. Preview will load when finished…'}
-                  </p>
-                ) : (
-                  <TurnChangeMarkdownPreview key={`${changeSet.id}:${activeFile.id}:${changeSet.state}:${changeSet.updatedAt}`} language={props.language} loadPreview={() => props.onLoadPreview!(changeSet, activeFile)} />
-                )
+              {busy || ['capturing', 'undoing', 'reapplying'].includes(changeSet.state) ? (
+                <p role="status">{zh ? '正在更新文件，完成后显示预览…' : 'Updating file…'}</p>
               ) : (
-                <>
+                <FilePreview
+                  request={{ kind: 'turn', projectId: changeSet.projectId, conversationId: changeSet.conversationId, turnId: changeSet.turnId, changeSetId: changeSet.id, fileId: activeFile.id }}
+                  revision={changeSet.updatedAt}
+                  zh={zh}
+                >
                   {changeSet.contentProjection === 'summary' ? (
                     <p className="session-turn-diff-empty" role="status">
                       {props.loading
@@ -465,7 +447,7 @@ export function TurnDiffWorkspace(props: {
                       />
                     </div>
                   )}
-                </>
+                </FilePreview>
               )}
             </>
           ) : (
@@ -474,71 +456,6 @@ export function TurnDiffWorkspace(props: {
         </section>
       </div>
     </section>
-  );
-}
-
-/** 按所选文件和变更状态独立加载，切走后丢弃旧结果，失败可重试。 */
-function TurnChangeMarkdownPreview(props: {
-  /** 沿用会话界面语言。 */
-  language: SessionUiLanguage;
-  /** 只读取文件，不打开外部应用或切换审核工作区。 */
-  loadPreview: () => Promise<ConversationResourcePreview>;
-}) {
-  /** 使用现有中英文界面文案。 */
-  const zh = props.language === 'zh-CN';
-  /** 保存已读取的文本；空文件同样属于成功结果。 */
-  const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'source' }> | null>(null);
-  /** 保存真实读取错误，交给既有错误展示组件解释。 */
-  const [error, setError] = useState<unknown>(null);
-  /** 只有显式重试才增加读取次数。 */
-  const [attempt, setAttempt] = useState(0);
-  /** 回调身份变化不重复读取；组件的键负责文件与变更状态隔离。 */
-  const loadPreviewRef = useRef(props.loadPreview);
-  loadPreviewRef.current = props.loadPreview;
-
-  useEffect(() => {
-    /** 卸载或重试后不再应用之前的异步结果。 */
-    let active = true;
-    setPreview(null);
-    setError(null);
-    void (async () => {
-      try {
-        /** 文件读取接口也支持图片，Markdown 预览只接受文本。 */
-        const result = await loadPreviewRef.current();
-        if (result.kind !== 'source') throw new Error(zh ? '此文件无法作为 Markdown 文本预览。' : 'This file cannot be previewed as Markdown text.');
-        if (active) setPreview(result);
-      } catch (loadError) {
-        if (active) setError(loadError);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [attempt, zh]);
-
-  return (
-    <>
-      <p className="session-turn-diff-truncated" role="status">
-        {zh ? '当前文件内容；本轮增删请查看“差异”。' : 'Current file content. See Diff for this turn’s changes.'}
-        {preview?.truncated ? (zh ? ' 预览已截断。' : ' Preview truncated.') : null}
-      </p>
-      {error ? (
-        <div className="session-turn-diff-empty" role="alert">
-          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          <button type="button" className="session-turn-diff-open-file" onClick={() => setAttempt((value) => value + 1)}>
-            {zh ? '重试预览' : 'Retry preview'}
-          </button>
-        </div>
-      ) : preview ? (
-        <div className="session-source-markdown-scroll" aria-label={zh ? 'Markdown 预览' : 'Markdown preview'}>
-          {preview.content ? <ConversationMarkdown text={preview.content} streamId={`turn-preview:${preview.resource.id}`} phase="final" language={props.language} /> : <p role="status">{zh ? '文件内容为空。' : 'This file is empty.'}</p>}
-        </div>
-      ) : (
-        <p className="session-turn-diff-empty" role="status">
-          {zh ? '正在加载 Markdown 预览…' : 'Loading Markdown preview…'}
-        </p>
-      )}
-    </>
   );
 }
 

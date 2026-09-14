@@ -1,3 +1,4 @@
+import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
@@ -22,6 +23,8 @@ import {
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
   getTaskBranchFileDiff,
+  getTaskBranchComparison,
+  getGitFilePreviewSources,
   getTaskWorkspaceFileDiff,
   type GitDiffSummary,
   type GitPatchExport,
@@ -1582,7 +1585,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return Object.assign(new Error(message), { code, statusCode });
   }
 
-  function resolveTurnChangeFileOpenGrant(params: TurnChangeFileOpenParams): ConversationFileOpenGrant {
+  /** 历史预览和当前文件打开共用会话、轮次及文件归属校验。 */
+  function resolveTurnChangeFileRecord(params: TurnChangeFileOpenParams) {
     const conversation = conversations.getById(params.conversationId);
     if (!conversation || conversation.projectId !== params.projectId) {
       throw turnChangeFileOpenError('ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found.', 404);
@@ -1600,6 +1604,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     if (changeSet.state === 'capturing' || changeSet.state === 'undoing' || changeSet.state === 'reapplying') {
       throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_TRANSITIONING', 'The changed file is currently being updated. Try again after the operation finishes.', 409);
     }
+    return { conversation, turn, changeSet, file };
+  }
+
+  function resolveTurnChangeFileOpenGrant(params: TurnChangeFileOpenParams): ConversationFileOpenGrant {
+    const { conversation, turn, changeSet, file } = resolveTurnChangeFileRecord(params);
     const currentPath = changeSet.state === 'undone' ? file.oldPath : file.newPath;
     if (!currentPath) {
       throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_PRESENT', 'The changed file does not exist in the current workspace state.', 409);
@@ -2032,6 +2041,57 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       }
     },
   );
+
+  /** 主进程专用的只读授权解析；客户端不提供绝对路径或任意快照位置。 */
+  server.post('/api/file-preview/intent', async (request: FastifyRequest<{ Body: FilePreviewRequest }>, reply) => {
+    try {
+      /** 运行时检查仍然必须存在，类型声明不能替代边界验证。 */
+      const input = request.body;
+      if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
+      for (const [key, value] of Object.entries(input)) {
+        if (typeof value !== 'string' || value.length > 4096 || value.includes('\0')) throw new Error(`文件预览参数无效：${key}`);
+      }
+      /** 各来源只返回已登记身份对应的读取授权。 */
+      let intent: FilePreviewIntent;
+      if (input.kind === 'source') {
+        const project = projects.getById(input.projectId);
+        if (!project?.localPath || typeof input.path !== 'string') throw new Error('项目文件不可用。');
+        intent = { sides: [{ name: input.path, label: '当前文件', root: project.localPath, path: resolve(project.localPath, input.path) }] };
+      } else if (input.kind === 'task-git') {
+        if (!['working', 'committed'].includes(input.scope)) throw new Error('交付预览范围无效。');
+        const resolved = resolveTaskWorkspaceRequest(input.taskId, input.workspaceId);
+        if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+        const workspace = resolved.workspace;
+        const root = input.scope === 'committed' ? workspace.repositoryPath || resolved.project.localPath : workspace.worktreePath;
+        if (!root) throw new Error('任务工作区已不可用。');
+        const comparison = input.scope === 'committed' ? await getTaskBranchComparison(root, workspace.sourceBranch, workspace.branchName, workspace.sourceHeadSha) : null;
+        intent = { sides: await getGitFilePreviewSources(root, { path: input.path, ...(comparison ? { revisions: [comparison.mergeBaseSha, comparison.taskHeadSha] } : {}) }) };
+      } else if (input.kind === 'resource') {
+        const record = conversationResources.getById(input.resourceId);
+        if (!record || record.projectId !== input.projectId || record.conversationId !== input.conversationId) throw new Error('会话资源不属于当前会话。');
+        const grant = toConversationResourceOpenIntent(record);
+        if (grant.kind === 'website') throw new Error('网站不是文件预览资源。');
+        intent = { sides: [{ name: String(grant.display.displayName || basename(String(grant.target.absolutePath))), label: '会话文件', root: String(grant.authority.allowedRoot || ''), path: String(grant.target.absolutePath || '') }] };
+      } else if (input.kind === 'turn') {
+        const { file } = resolveTurnChangeFileRecord(input);
+        intent = {
+          sides: (['pre', 'post'] as const).map((phase) => {
+            const path = phase === 'pre' ? file.preBlobRef : file.postBlobRef;
+            const exists = phase === 'pre' ? file.preExists : file.postExists;
+            const hash = phase === 'pre' ? file.preHash : file.postHash;
+            return {
+              name: (phase === 'pre' ? file.oldPath : file.newPath) || file.newPath || file.oldPath || '文件',
+              label: phase === 'pre' ? '变更前 · 轮次快照' : '变更后 · 轮次快照',
+              ...(exists && path && hash ? { path, root: join(dataLayout.turnChangeSets, input.changeSetId, 'blobs'), sha256: hash } : { reason: exists ? '此轮次没有保存可用的历史文件内容。' : '此版本中不存在该文件。' }),
+            };
+          }),
+        };
+      } else throw new Error('不支持的文件预览来源。');
+      return intent;
+    } catch (error) {
+      return reply.code(409).send({ message: error instanceof Error ? error.message : '文件预览授权失败。' });
+    }
+  });
 
   server.get('/api/tasks/:taskId/integrations', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
     const task = tasks.getById(request.params.taskId);

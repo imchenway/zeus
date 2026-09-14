@@ -1060,6 +1060,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <div className="project-git-browser-content">
           {tab === 'log' ? (
             <GitLogSurface
+              projectId={props.project.id}
               zh={zh}
               repositories={repositories}
               commits={allCommits.filter(({ repository }) => repository.id === selectedRepository?.id)}
@@ -1089,6 +1090,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             />
           ) : tab === 'changes' ? (
             <LocalChangesSurface
+              previewRevision={snapshot?.refreshedAt}
+              projectId={props.project.id}
               subtree={subtree}
               onClearSubtree={() => setSubtree(null)}
               zh={zh}
@@ -1129,6 +1132,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             />
           ) : tab === 'stash' ? (
             <StashSurface
+              projectId={props.project.id}
               zh={zh}
               repository={selectedRepository}
               stash={activeStash}
@@ -1766,6 +1770,8 @@ function readUpdateStrategy(projectId: string): ProjectGitUpdateStrategy {
 }
 
 function GitLogSurface(props: {
+  /** 仓库预览所属项目。 */
+  projectId: string;
   zh: boolean;
   historyLoading: boolean;
   historyError: string;
@@ -1976,7 +1982,11 @@ function GitLogSurface(props: {
             </section>
             <GitPaneSeparator name="inspector" label={props.zh ? '调整详情与差异宽度' : 'Resize details and diff'} initial={35} min={20} max={65} />
             <GitPaneSeparator name="details" label={props.zh ? '调整文件与提交详情高度' : 'Resize files and commit details'} axis="y" initial={55} min={20} max={80} />
-            <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null} zh={props.zh} />
+            <SideBySideDiff
+              previewRequest={props.selectedRepository ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash } : undefined}
+              diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null}
+              zh={props.zh}
+            />
           </>
         ) : (
           <p className="project-git-empty-copy">{props.zh ? '选择一个提交查看文件与差异。' : 'Select a commit to inspect files and diff.'}</p>
@@ -2285,6 +2295,10 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
 }
 
 function LocalChangesSurface(props: {
+  /** 刷新时即使二进制补丁相同，也重新读取当前文件。 */
+  previewRevision?: string;
+  /** 仓库预览所属项目。 */
+  projectId: string;
   subtree: { repositoryId: string; path: string } | null;
   onClearSubtree: () => void;
   zh: boolean;
@@ -2493,6 +2507,8 @@ function LocalChangesSurface(props: {
           </div>
         ) : (
           <SideBySideDiff
+            previewRequest={repository && props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage } : undefined}
+            revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
             partitionHunks
@@ -2753,6 +2769,8 @@ function buildChangeTree(paths: string[]): ChangeTreeNode {
 }
 
 function StashSurface(props: {
+  /** 仓库预览所属项目。 */
+  projectId: string;
   zh: boolean;
   repository: ProjectGitRepositoryWorkbenchItem | null;
   stash: ProjectGitRepositoryWorkbenchItem['snapshot']['stashes'][number] | null;
@@ -2814,7 +2832,12 @@ function StashSurface(props: {
             <CommitFileDirectoryTree files={props.detail.files} selectedPath={props.selectedFilePath} onSelect={props.onSelectFile} onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })} />
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
-          <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null} zh={props.zh} title={props.selectedFilePath} />
+          <SideBySideDiff
+            previewRequest={{ kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref }}
+            diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
+            zh={props.zh}
+            title={props.selectedFilePath}
+          />
         </div>
       ) : (
         <p className="project-git-empty-copy">{props.zh ? '无法读取该贮藏的文件差异。' : 'The files and diff for this stash could not be loaded.'}</p>

@@ -1,3 +1,4 @@
+import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
 import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type {
@@ -141,6 +142,12 @@ declare global {
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
+      /** 跨入口共用的受授权文件预览。 */
+      loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;
+      /** 页面关闭和选择变化时撤销短期资源。 */
+      releaseFilePreview: (ids: string[]) => Promise<void>;
+      /** 用户主动请求系统查看或导出当前预览版本。 */
+      actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => Promise<void>;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
       saveProjectSourceFile: (input: SaveProjectSourceFileInput) => Promise<ProjectSourceDocument>;
       createProjectSourceEntry: (input: CreateProjectSourceEntryInput) => Promise<ProjectSourceEntry>;

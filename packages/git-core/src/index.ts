@@ -2990,3 +2990,82 @@ function splitLines(value: string): string[] {
 function splitNullRecords(value: string): string[] {
   return value.split('\0').filter(Boolean);
 }
+
+/** 按差异语义解析可预览的两端；仅返回文件授权和固定对象，不读取二进制到补丁中。 */
+export async function getGitFilePreviewSources(
+  cwd: string,
+  input: {
+    /** 仓库相对路径。 */
+    path: string;
+    /** 工作区、索引或提交比较范围。 */
+    stage?: 'combined' | 'staged' | 'unstaged';
+    /** 历史提交或贮藏。 */
+    commitHash?: string;
+    /** 指定比较基线。 */
+    comparisonRef?: string;
+    /** 比较右侧是否使用工作区。 */
+    comparisonMode?: 'current' | 'working-tree';
+    /** 已确认的任务分支两端。 */
+    revisions?: [string, string];
+  },
+): Promise<Array<{ name: string; label: string; root?: string; path?: string; blob?: string; reason?: string }>> {
+  /** 路径沿用工作区校验，Git 管理目录不作为用户文件开放。 */
+  const path = requireSafeWorkspacePath(input.path);
+  if (path.split('/').includes('.git')) throw new Error('不能预览 Git 管理目录。');
+  /** 将引用固定为提交，空仓库允许没有 HEAD。 */
+  const head = await readGitStdout(cwd, ['rev-parse', '--verify', 'HEAD']);
+  /** 两端分别为提交、索引或工作区；null 表示不存在。 */
+  let before: string | null = head || null;
+  let after = 'worktree';
+  /** 贮藏第三父提交保存未跟踪文件，独立于普通提交树。 */
+  let untrackedTree: string | null = null;
+  if (input.revisions) {
+    before = await resolveCommit(cwd, input.revisions[0]);
+    after = await resolveCommit(cwd, input.revisions[1]);
+  } else if (input.commitHash) {
+    after = await resolveCommit(cwd, input.commitHash);
+    before = (await readGitStdout(cwd, ['rev-parse', '--verify', `${after}^1`])) || null;
+    if (/^stash@\{\d+\}$/u.test(input.commitHash)) untrackedTree = (await readGitStdout(cwd, ['rev-parse', '--verify', `${after}^3`])) || null;
+  } else if (input.comparisonRef) {
+    before = await resolveCommit(cwd, input.comparisonRef);
+    after = input.comparisonMode === 'working-tree' ? 'worktree' : head;
+  } else if (input.stage === 'staged') after = 'index';
+  else if (input.stage === 'unstaged') before = 'index';
+  /** 名称状态用于还原重命名前路径，不需要加载任何文件正文。 */
+  const args =
+    after === 'index'
+      ? ['diff', '--cached', ...(before ? [before] : [])]
+      : after === 'worktree'
+        ? ['diff', ...(before && before !== 'index' ? [before] : [])]
+        : before
+          ? ['diff', before, after]
+          : ['diff-tree', '--root', '--no-commit-id', '-r', after];
+  /** 禁止外部差异驱动，路径记录使用零字节分隔。 */
+  const entries = (await runGit(cwd, [...args, '--no-ext-diff', '--find-renames', '--name-status', '-z', '--'])).stdout.split('\0');
+  /** 默认同名读取；新增和删除由对象或文件的存在性判定。 */
+  let oldPath = path;
+  let newPath = path;
+  for (let index = 0; index < entries.length - 1; ) {
+    /** 重命名和复制记录包含两个路径。 */
+    const status = entries[index++];
+    const left = entries[index++];
+    const right = /^[RC]/u.test(status) ? entries[index++] : left;
+    if (left === path || right === path) {
+      oldPath = left;
+      newPath = right;
+      break;
+    }
+  }
+  /** 使用 Git 树记录获取对象，拒绝符号链接和子模块作为普通文件解码。 */
+  async function side(revision: string | null, name: string, prefix: string, fallback?: string | null) {
+    const label = `${prefix} · ${revision === 'worktree' ? '工作区' : revision === 'index' ? '暂存区' : (revision?.slice(0, 12) ?? '不存在')}`;
+    if (!revision) return { name, label, reason: '此版本中不存在该文件。' };
+    if (revision === 'worktree') return { name, label, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)) };
+    const output = revision === 'index' ? (await runGit(cwd, ['ls-files', '--stage', '-z', '--', `:(literal)${name}`])).stdout : (await runGit(cwd, ['ls-tree', '-z', revision, '--', `:(literal)${name}`])).stdout;
+    const entry = output.split('\0').find((item) => item.slice(item.indexOf('\t') + 1) === name);
+    const match = entry?.match(/^(100[0-7]{3}) (?:blob )?([a-f0-9]{40,64})(?: 0)?\t/u);
+    if (!match && !entry && fallback) return side(fallback, name, prefix);
+    return match ? { name, label, root: cwd, blob: match[2] } : { name, label, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
+  }
+  return Promise.all([side(before, oldPath, '变更前'), side(after, newPath, '变更后', untrackedTree)]);
+}

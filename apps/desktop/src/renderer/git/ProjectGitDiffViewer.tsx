@@ -1,3 +1,5 @@
+import { FilePreview, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import type { FilePreviewRequest } from '@zeus/shared';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -13,6 +15,10 @@ import '../ui/primitives.css';
 type DiffViewMode = 'side-by-side' | 'unified';
 
 interface SideBySideDiffProps {
+  /** 准确的仓库与比较范围。 */
+  previewRequest?: FilePreviewRequest;
+  /** 外部快照刷新时释放旧内容。 */
+  revision?: string | number;
   diff: GitDiffSummary | null;
   zh: boolean;
   title?: string;
@@ -69,8 +75,8 @@ export function ProjectGitDiffWindow(props: {
       .then((next) => {
         if (cancelled) return;
         setDiff(next);
-        const requested = next.fileDiffs.find((file) => file.newPath === props.filePath || file.oldPath === props.filePath);
-        setSelectedPath(requested ? props.filePath : next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || '');
+        // 明确选择的非文本或未跟踪文件即使没有补丁，也必须保留其身份。
+        setSelectedPath(props.filePath || next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || '');
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason);
@@ -85,7 +91,24 @@ export function ProjectGitDiffWindow(props: {
   }, [selectedPath, title]);
 
   const selectedDiff = useMemo(() => (diff && selectedPath ? selectFileDiff(diff, selectedPath) : diff), [diff, selectedPath]);
-  const viewer = selectedDiff ? <SideBySideDiff diff={selectedDiff} zh={zh} title={selectedPath || title} fill /> : null;
+  const viewer = selectedDiff ? (
+    <SideBySideDiff
+      previewRequest={{
+        kind: 'project-git',
+        projectId: props.projectId,
+        repositoryId: props.repositoryId,
+        path: selectedPath,
+        stage: props.stage,
+        commitHash: props.commitHash,
+        comparisonRef: props.comparisonRef,
+        comparisonMode: props.comparisonMode,
+      }}
+      diff={selectedDiff}
+      zh={zh}
+      title={selectedPath || title}
+      fill
+    />
+  ) : null;
 
   return (
     <main className="macos-ai-app project-git-diff-window" aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
@@ -100,6 +123,12 @@ export function ProjectGitDiffWindow(props: {
                 </small>
               </header>
               <div>
+                {props.filePath && !diff.fileDiffs.some((file) => file.newPath === props.filePath || file.oldPath === props.filePath) ? (
+                  <button type="button" className={props.filePath === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.filePath)}>
+                    <File aria-hidden="true" />
+                    <span>{props.filePath}</span>
+                  </button>
+                ) : null}
                 {diff.fileDiffs.map((file) => {
                   const path = file.newPath || file.oldPath;
                   return (
@@ -125,12 +154,12 @@ export function ProjectGitDiffWindow(props: {
   );
 }
 
-export function SideBySideDiff(props: SideBySideDiffProps) {
+function TextSideBySideDiff(props: SideBySideDiffProps) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
   if (file.hunks.length === 0) {
-    return <p className="project-git-empty-copy">{props.zh ? '此文件没有可显示的文本差异，可能是二进制文件或仅包含文件元数据变化。' : 'This file has no displayable text diff. It may be binary or contain metadata-only changes.'}</p>;
+    return <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>;
   }
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
@@ -241,4 +270,15 @@ function formatHunkRange(start: number, lines: number, zh: boolean): string {
 /** 独立差异窗口只把选中文件交给代码视图。 */
 function selectFileDiff(diff: GitDiffSummary, path: string): GitDiffSummary {
   return { ...diff, fileDiffs: diff.fileDiffs.filter((file) => file.newPath === path || file.oldPath === path) };
+}
+
+/** 仓库各入口共用媒体预览，文本保留原来的区块操作。 */
+export function SideBySideDiff(props: SideBySideDiffProps) {
+  return props.previewRequest ? (
+    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh}>
+      {props.diff?.fileDiffs.length ? <TextSideBySideDiff {...props} /> : null}
+    </FilePreview>
+  ) : (
+    <TextSideBySideDiff {...props} />
+  );
 }
