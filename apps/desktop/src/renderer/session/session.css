@@ -5483,9 +5483,10 @@
   transform: rotate(180deg);
 }
 
+/* 工具栏悬停使用品牌前景色，避免正文黑色覆盖模式状态；权限警示色由触发器变量保留。 */
 .session-codex-parity-v1 .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger[aria-expanded='true'] {
@@ -6419,7 +6420,7 @@
 
 .session-codex-parity-v1 .session-collaboration-mode:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-collaboration-mode[data-active='true'] {
@@ -10248,10 +10249,6 @@
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover) !important;
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-service-tier-toggle[data-active='true']:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-brand-text);
 }
 
@@ -10330,7 +10327,7 @@
 
 .session-codex-parity-v1 .session-attachment-button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 /* 两个会话入口的普通图标共用尺寸；下拉箭头和发送、停止图形保留各自语义比例。 */
@@ -10358,7 +10355,7 @@
 
 .session-codex-parity-v1 .session-goal-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover) !important;
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
 }
 
 .session-codex-parity-v1 .session-goal-trigger[data-active='true'] {
@@ -10543,7 +10540,7 @@
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-composer-trigger-active-bg, var(--zeus-interaction-hover));
-  color: var(--session-composer-trigger-color, var(--session-text));
+  color: var(--session-composer-trigger-color, var(--zeus-brand-text));
 }
 
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-open='true'] > .session-composer-dropdown-trigger {
