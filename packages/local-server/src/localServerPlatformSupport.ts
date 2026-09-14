@@ -1,3 +1,4 @@
+import { userInfo } from 'node:os';
 import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { type CommandEnvelope, commandEnvelopeSchemaGeneration } from '@zeus/shared';
 import type { FastifyReply } from 'fastify';
@@ -59,8 +60,14 @@ export function normalizeHeaderValue(value: string | string[] | undefined): stri
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Runtime 只能启动已登记的 AI CLI adapter 命令，避免本地 API 退化成任意 shell 执行入口。 */
-export function resolveRegisteredRuntimeAdapter(command: string): AiCliAdapterDescriptor | null {
+/** 读取用户配置或系统登记的 shell；前端展示与启动校验使用同一来源。 */
+export function resolveInteractiveRuntimeShell(shell: { path: string | null; login: boolean }): { command: string; args: string[] } {
+  return { command: shell.path || process.env.SHELL?.trim() || userInfo().shell || '/bin/sh', args: shell.login ? ['-l', '-i'] : ['-i'] };
+}
+
+/** Runtime 只允许已登记命令，交互终端额外接纳服务端解析的准确 shell 路径。 */
+export function resolveRegisteredRuntimeAdapter(command: string, shellCommand?: string): AiCliAdapterDescriptor | null {
+  if (shellCommand && command === shellCommand) return listAiCliAdapters().find((adapter) => adapter.id === 'generic') ?? null;
   const trimmed = command.trim();
   if (trimmed !== command || trimmed.length === 0 || trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('\0')) return null;
   return listAiCliAdapters().find((adapter) => adapter.command === trimmed) ?? null;

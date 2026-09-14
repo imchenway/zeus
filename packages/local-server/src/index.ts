@@ -373,6 +373,8 @@ export interface RuntimeStatusSnapshot {
   terminal: {
     provider: 'node-pty' | 'child_process';
     pty: { available: boolean; reason: string };
+    /** 当前设置与本机账户共同确定交互 shell，供终端直接启动。 */
+    shell: { command: string; args: string[] };
   };
 }
 
@@ -1266,7 +1268,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const runtimeLogFileWriteErrors: unknown[] = [];
   let runtimeLogFileFlushTimer: ReturnType<typeof setTimeout> | undefined;
   const optionalNodePty = createOptionalNodePtyRuntimeSpawn();
-  const runtimeTerminalStatus: RuntimeStatusSnapshot['terminal'] = {
+  const runtimeTerminalStatus: Omit<RuntimeStatusSnapshot['terminal'], 'shell'> = {
     provider: optionalNodePty.spawn ? 'node-pty' : 'child_process',
     pty: {
       available: optionalNodePty.available,

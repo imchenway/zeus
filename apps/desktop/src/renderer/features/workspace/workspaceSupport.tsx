@@ -117,8 +117,8 @@ export type SessionDrawerTarget =
   | Readonly<{ projectId: string; taskId: string; conversationId?: undefined; navigationId?: undefined; status: 'empty' }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
-export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'terminal' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
+export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 export type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 export type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };

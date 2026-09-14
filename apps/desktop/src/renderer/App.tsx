@@ -116,4 +116,4 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
