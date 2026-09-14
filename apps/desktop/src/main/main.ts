@@ -1,3 +1,5 @@
+import { registerFilePreview } from './filePreview.js';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
@@ -2495,10 +2497,12 @@ end try`,
 
 async function loadSavedTaskAttachmentPreview(path: string): Promise<{ previewUrl: string; mimeType: string } | null> {
   if (typeof path !== 'string' || !isInsideTaskAttachmentDirectory(path)) return null;
-  const mimeType = inferTaskClipboardAttachmentMimeType(path);
+  const mimeType = filePreviewMime(path);
   if (!mimeType.startsWith('image/')) return null;
-  const data = await readFile(path);
-  const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
+  const canonical = await realpath(path);
+  if (!isInsideTaskAttachmentDirectory(canonical) || (await stat(canonical)).size > filePreviewLimits.image) return null;
+  const data = await readFile(canonical);
+  const previewUrl = data.length && filePreviewKind(mimeType) === 'image' ? `data:${mimeType};base64,${data.toString('base64')}` : undefined;
   if (previewUrl) return { previewUrl, mimeType };
   try {
     const convertedImage = nativeImage.createFromPath(path);
@@ -2762,6 +2766,33 @@ async function initializeApplication(): Promise<void> {
     installReadOnlyValidationIpcFence(ipcMain, readOnlyValidationDescriptor);
     traceApplicationStartup('read_only_validation_verified');
   }
+  registerFilePreview({
+    temporaryRoot: join(app.getPath('userData'), 'cache', 'file-previews', String(process.pid)),
+    requireWindow: (event) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || window.isDestroyed() || !isTrustedZeusRendererWindow(window) || event.senderFrame !== event.sender.mainFrame) throw new Error('文件预览请求来自不受信窗口。');
+      return window;
+    },
+    resolve: async (input) => {
+      if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
+      if (input.kind === 'project-git') {
+        if (!projectGitWorkbench) throw new Error('Git 文件服务尚未就绪。');
+        return projectGitWorkbench.loadFilePreview(input);
+      }
+      if (input.kind === 'attachment') {
+        const granted = await conversationInputResources?.resolve(input);
+        const path = granted || (typeof input.localPath === 'string' && isInsideTaskAttachmentDirectory(input.localPath) ? input.localPath : null);
+        if (!path) throw new Error('附件授权无效或文件已经移除。');
+        return { sides: [{ name: basename(path), label: '附件', path, root: granted ? dirname(path) : taskAttachmentDirectory() }] };
+      }
+      if (!localServerRuntime) throw new Error('文件服务尚未就绪。');
+      const config = await localServerRuntime.refreshConfig();
+      const response = await fetch(`${config.baseUrl}/api/file-preview/intent`, { method: 'POST', headers: { authorization: `Bearer ${config.apiToken}`, 'content-type': 'application/json' }, body: JSON.stringify(input) });
+      const payload = (await response.json()) as FilePreviewIntent & { message?: string };
+      if (!response.ok || !Array.isArray(payload.sides)) throw new Error(payload.message || '无法读取文件预览授权。');
+      return payload;
+    },
+  });
   setupIpc();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();

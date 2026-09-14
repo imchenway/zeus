@@ -1,3 +1,4 @@
+import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { withProjectGitAuthentication } from './projectGitAuthentication.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -7,6 +8,7 @@ import {
   discoverGitRepositories,
   executeProjectGitAction,
   getProjectGitCommitDetail,
+  getGitFilePreviewSources,
   getProjectGitHistory,
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
@@ -112,6 +114,17 @@ export class ProjectGitWorkbenchService {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!ref.trim()) throw projectGitError('ZEUS_GIT_REF_REQUIRED', '必须选择一个比较分支。');
     return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode);
+  }
+
+  /** 桌面仓库身份由自身发现服务校验，不与宿主数据库的登记 ID 混用。 */
+  async loadFilePreview(input: Extract<FilePreviewRequest, { kind: 'project-git' }>): Promise<FilePreviewIntent> {
+    for (const value of Object.values(input)) {
+      if (value !== undefined && (typeof value !== 'string' || value.length > 4096 || value.includes('\0'))) throw new Error('Git 预览参数无效。');
+    }
+    if (input.stage && !['combined', 'staged', 'unstaged'].includes(input.stage)) throw new Error('Git 预览范围无效。');
+    if (input.comparisonMode && !['current', 'working-tree'].includes(input.comparisonMode)) throw new Error('Git 比较范围无效。');
+    const resolved = await this.resolveRepository(input.projectId, input.repositoryId);
+    return { sides: await getGitFilePreviewSources(resolved.repository.localPath, input) };
   }
 
   /** 实际命令由底层执行器逐条回传，历史记录不根据动作名称反推参数。 */

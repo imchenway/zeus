@@ -75,7 +75,7 @@ export interface ConversationSourcePreview {
 export interface ConversationImagePreview {
   kind: 'image';
   resource: ConversationFileResource | ConversationAttachmentResource;
-  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/bmp' | 'image/x-icon';
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/bmp' | 'image/x-icon' | 'image/svg+xml';
   dataUrl: string;
   byteLength: number;
 }
