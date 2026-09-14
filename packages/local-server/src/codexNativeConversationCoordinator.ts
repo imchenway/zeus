@@ -2925,6 +2925,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     failedTurnResults,
     hasExactProviderUserMessage,
     isSteeringSubmission,
+    /** 后台历史核对与派发入口共用同一条消息的写前保护。 */
+    isPreparingDispatch: (conversationId, submissionId) => isPreparingDispatch(conversationId, submissionId),
     markConversationRecoveryRequired,
     markSubmissionRecoveryRequired,
     now,

@@ -106,6 +106,9 @@ export interface CodexProviderHistoryProjectionDependencies {
 
   isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean;
 
+  /** 只保护当前宿主持有且尚未写出用户消息的派发。 */
+  isPreparingDispatch(conversationId: string, submissionId: string): boolean;
+
   markConversationRecoveryRequired(conversationId: string, error: unknown): boolean;
 
   markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void;
@@ -780,7 +783,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         providerThreadPath: snapshotPath,
       });
     }
+    // 线程状态通知也会核对历史；空闲历史没有正在准备的消息是正常现象，不能暂停它。
+    // 前面的旧轮次投影可能已把会话设为空闲，这里按仍有效的发送占用恢复准备状态。
     const submissions = options.submissions.listByConversation(conversation.id);
+    /** 必须匹配实际发送占用，不能保护重启残留或另一条消息。 */
+    const preparing = submissions.find((submission) => dependencies.isPreparingDispatch(conversation.id, submission.id));
+    if (preparing && snapshotConfirmsIdleProviderThread(snapshot)) {
+      runStates.set(conversation.id, { type: 'dispatching', submissionId: preparing.id });
+      return;
+    }
     const pendingSteering = submissions.filter((submission) => isSteeringSubmission(submission) && (submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required')));
     const inFlight = submissions.filter(
       (submission) =>
