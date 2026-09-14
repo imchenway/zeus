@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { currentDatabasePerformanceTraceId, type CommandDeliveryReceiptRecord, type CommandDeliveryRepository, type ZeusDatabase } from '@zeus/storage';
 
 export type CodexProviderCommandOperation = 'thread_start' | 'thread_archive' | 'thread_unarchive' | 'thread_compact' | 'turn_start' | 'turn_steer' | 'turn_interrupt' | 'goal_set' | 'goal_clear' | 'server_request_response';
@@ -241,7 +241,7 @@ function requiredIdentity(value: unknown, field: string): string {
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
-  if (error instanceof Error) return { code: readErrorCode(error), name: error.name, message: error.message };
+  if (error instanceof Error) return { code: readErrorCode(error), name: error.name, ...userFacingErrorCause(error) };
   return { code: null, name: typeof error, message: String(error) };
 }
 

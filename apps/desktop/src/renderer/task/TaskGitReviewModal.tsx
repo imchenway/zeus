@@ -298,8 +298,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const canReclaimUnchanged = props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && activeReview?.clean === true && activeReview.headSha === activeWorkspace?.sourceHeadSha;
 
   return (
-    <ModalPortal rootClassName="task-git-review-portal-root" backdropClassName="task-git-review-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
-      <section className="task-git-review-modal" role="dialog" aria-modal="true" aria-labelledby="task-git-review-title">
+    <ModalPortal rootClassName="task-git-review-portal-root" backdropClassName="task-git-review-backdrop" dismissDisabled={busy} onDismiss={props.onClose} role="dialog" aria-labelledby="task-git-review-title">
+      <section className="task-git-review-modal" data-modal-surface="dialog">
         <header className="task-git-review-header">
           <span>
             <strong id="task-git-review-title">
@@ -389,7 +389,12 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                   </small>
                 ) : null}
               </span>
-              <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />
+              <TaskGitDiffTable
+                previewRequest={activeWorkspace && props.task && selectedFile ? { kind: 'task-git', taskId: props.task.id, workspaceId: activeWorkspace.id, path: selectedFile, scope: 'working' } : undefined}
+                diff={fileDiff?.fileDiffs[0] ?? null}
+                hasSelection={Boolean(selectedFile)}
+                zh={zh}
+              />
             </section>
           </main>
 

@@ -26,6 +26,8 @@ export interface UpdateRuntimeSettingsBody {
   adapterDefaultArgs?: Record<string, unknown>;
   adapterCliPaths?: Record<string, unknown>;
   terminalEnv?: Record<string, unknown>;
+  /** 只接受普通命令文本，不接受终端控制字符。 */
+  terminalStartupCommand?: unknown;
   shell?: {
     path?: unknown;
     login?: unknown;
@@ -463,6 +465,7 @@ export const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
   adapterCliPaths: {},
   terminalEnv: {},
   shell: { path: null, login: false },
+  terminalStartupCommand: '',
   executionTimeoutSeconds: 3600,
   logRetentionDays: 30,
   autoConfirmationPolicy: 'never',
@@ -481,6 +484,7 @@ export function normalizeRuntimeSettings(value: RuntimeSettingsSnapshot | undefi
     adapterDefaultArgs: normalizeRuntimeAdapterDefaultArgs(value.adapterDefaultArgs) ?? {},
     adapterCliPaths: normalizeRuntimeAdapterCliPaths(value.adapterCliPaths) ?? {},
     terminalEnv: normalizeRuntimeTerminalEnv(value.terminalEnv) ?? {},
+    terminalStartupCommand: normalizeTerminalStartupCommand(value.terminalStartupCommand) ?? '',
     shell: normalizeRuntimeShellSettings(value.shell) ?? defaultRuntimeSettings.shell,
     executionTimeoutSeconds: normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds) ?? defaultRuntimeSettings.executionTimeoutSeconds,
     logRetentionDays: normalizeRuntimeLogRetentionDays(value.logRetentionDays) ?? defaultRuntimeSettings.logRetentionDays,
@@ -494,11 +498,13 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
   const adapterDefaultArgs = normalizeRuntimeAdapterDefaultArgs(value.adapterDefaultArgs);
   const adapterCliPaths = normalizeRuntimeAdapterCliPaths(value.adapterCliPaths);
   const terminalEnv = normalizeRuntimeTerminalEnv(value.terminalEnv);
+  /** 导入与设置保存共用命令文本校验。 */
+  const terminalStartupCommand = normalizeTerminalStartupCommand(value.terminalStartupCommand);
   const shell = normalizeRuntimeShellSettings(value.shell);
   const executionTimeoutSeconds = normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds);
   const logRetentionDays = normalizeRuntimeLogRetentionDays(value.logRetentionDays);
   const autoConfirmationPolicy = normalizeRuntimeAutoConfirmationPolicy(value.autoConfirmationPolicy);
-  if (!adapterModels || !adapterDefaultArgs || !adapterCliPaths || !terminalEnv || !shell || executionTimeoutSeconds === null || logRetentionDays === null || autoConfirmationPolicy === null) {
+  if (!adapterModels || !adapterDefaultArgs || !adapterCliPaths || !terminalEnv || terminalStartupCommand === null || !shell || executionTimeoutSeconds === null || logRetentionDays === null || autoConfirmationPolicy === null) {
     return null;
   }
   // 设置快照导入只恢复安全的本机偏好；Generic shell 不能被导入为默认 adapter，避免绕过显式确认。
@@ -508,6 +514,7 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
     adapterDefaultArgs,
     adapterCliPaths,
     terminalEnv,
+    terminalStartupCommand,
     shell,
     executionTimeoutSeconds,
     logRetentionDays,
@@ -752,6 +759,13 @@ export function normalizeRuntimeTerminalEnv(value: unknown): RuntimeSettingsSnap
     env[rawKey] = valueText;
   }
   return env;
+}
+
+/** 保留命令缩进与多行内容，统一换行并拒绝终端控制序列。 */
+export function normalizeTerminalStartupCommand(value: unknown): string | null {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || value.length > 4_000 || hasControlCharacter(value.replace(/[\t\r\n]/gu, ''))) return null;
+  return value.trim() ? value.replace(/\r\n?/gu, '\n').trimEnd() : '';
 }
 
 export function normalizeRuntimeShellSettings(value: unknown): RuntimeSettingsSnapshot['shell'] | null {

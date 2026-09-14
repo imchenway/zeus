@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { CodexAppServerManager, CodexThreadGoal } from '@zeus/ai-runtime';
-import type { ConversationGoalEventKind, ConversationGoalRepository, ZeusConversationGoalRecord } from '@zeus/storage';
+import type { ConversationGoalEventKind, ConversationGoalRepository, ConversationRuntimeRepository, ZeusConversationGoalRecord } from '@zeus/storage';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 
 interface CodexGoalApplicationOptions {
   manager: Pick<CodexAppServerManager, 'clearThreadGoal' | 'generationForThread' | 'readThreadGoal' | 'setThreadGoal'>;
   goals: ConversationGoalRepository;
+  /** 交接中的读取不得清除尚待接管的目标。 */
+  goalControls?: ConversationRuntimeRepository;
   providerCommands: CodexProviderCommandApplicationService;
   prepareConversation(conversationId: string): Promise<{ threadId: string }>;
   projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string): ZeusConversationGoalRecord;
@@ -31,6 +33,10 @@ export async function ensureInitialCodexGoal(input: {
   conversationId: string;
   providerThreadId: string;
   objective: string;
+  /** 新目标默认运行，已存在目标交接时保留用户状态。 */
+  status?: CodexThreadGoal['status'];
+  /** 交接只把真实剩余预算授予新的原生线程。 */
+  tokenBudget?: number | null;
   goals: ConversationGoalRepository;
   manager: Pick<CodexAppServerManager, 'readThreadGoal' | 'setThreadGoal'>;
   markProviderWriteStarted(): void;
@@ -39,15 +45,16 @@ export async function ensureInitialCodexGoal(input: {
   persist(): Promise<void>;
 }): Promise<void> {
   const local = input.goals.get(input.conversationId);
-  if (local?.providerThreadId === input.providerThreadId && local.objective === input.objective && local.status === 'active') return;
+  const status = input.status ?? 'active';
+  if (local?.providerThreadId === input.providerThreadId && local.objective === input.objective && local.status === status && (input.tokenBudget === undefined || local.tokenBudget === input.tokenBudget)) return;
   const providerGoal = await input.manager.readThreadGoal({ threadId: input.providerThreadId });
-  if (providerGoal?.objective === input.objective && providerGoal.status === 'active') input.project(providerGoal);
+  if (providerGoal?.objective === input.objective && providerGoal.status === status && (input.tokenBudget === undefined || providerGoal.tokenBudget === input.tokenBudget)) input.project(providerGoal);
   else {
     input.markProviderWriteStarted();
     input.project(
       await input.execute({
         objective: input.objective,
-        invoke: (traceIdentity) => input.manager.setThreadGoal({ threadId: input.providerThreadId, objective: input.objective, status: 'active', traceIdentity }),
+        invoke: (traceIdentity) => input.manager.setThreadGoal({ threadId: input.providerThreadId, objective: input.objective, status, ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}), traceIdentity }),
         recoverAccepted: async (nativeSessionId) => {
           const recovered = await input.manager.readThreadGoal({ threadId: nativeSessionId });
           if (!recovered) throw goalError('ZEUS_CODEX_GOAL_RECOVERY_MISSING', 'Codex 已接纳目标命令，但只读对账未找到目标。');
@@ -112,6 +119,7 @@ export function createCodexGoalApplication(options: CodexGoalApplicationOptions)
   }
 
   async function readGoal(input: { conversationId: string }) {
+    if (options.goalControls?.getGoalControl(input.conversationId)?.source === 'handoff') return options.goals.get(input.conversationId) ?? null;
     const { threadId } = await options.prepareConversation(input.conversationId);
     const goal = await options.manager.readThreadGoal({ threadId });
     if (!goal) {
@@ -129,16 +137,23 @@ export function createCodexGoalApplication(options: CodexGoalApplicationOptions)
   }
 
   async function resumeGoal(input: { conversationId: string }) {
+    // 切链后的原生余额可能为 null，恢复仍须遵守 Zeus 保留的总预算与真实用量。
+    const current = options.goals.get(input.conversationId);
+    const control = options.goalControls?.getGoalControl(input.conversationId);
+    if (current?.tokenBudget !== null && current) {
+      if (control && !control.usageComplete) return updateStatus(input.conversationId, 'usageLimited');
+      if (current.tokensUsed >= current.tokenBudget) return updateStatus(input.conversationId, 'budgetLimited');
+    }
     return updateStatus(input.conversationId, 'active');
   }
 
-  async function updateStatus(conversationId: string, status: 'active' | 'paused') {
+  async function updateStatus(conversationId: string, status: 'active' | 'paused' | 'usageLimited' | 'budgetLimited') {
     const { threadId } = await options.prepareConversation(conversationId);
     const goal = await execute({
       operation: 'goal_set',
       conversationId,
       threadId,
-      commandKey: `goal-${status === 'active' ? 'resume' : 'pause'}:${options.goals.get(conversationId)?.providerUpdatedAt ?? 'none'}`,
+      commandKey: `goal-${status}:${options.goals.get(conversationId)?.providerUpdatedAt ?? 'none'}`,
       requestIdentity: { status },
       invoke: (traceIdentity) => options.manager.setThreadGoal({ threadId, status, traceIdentity }),
     });

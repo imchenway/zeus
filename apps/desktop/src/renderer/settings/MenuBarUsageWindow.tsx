@@ -200,9 +200,10 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     nextTab.focus();
   };
   const selectedProvider = snapshot?.providers.find((provider) => provider.providerId === selection) ?? null;
-  const updatedAt = selectedProvider?.updatedAt ?? snapshot?.updatedAt;
+  // 顶部时间表示本次用量读取完成时间，供应源数据的新鲜度仍由卡片单独提示。
+  const updatedAt = snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
-  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : text.refreshed) : loading ? text.loading : error ? text.failed : text.loading;
+  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, error ? text.stale : text.refreshed) : loading ? text.loading : error ? text.failed : text.loading;
 
   return (
     <main className="menu-bar-usage-root" data-appearance={surfaceSettings.appearance} lang={surfaceSettings.language} aria-label={surfaceSettings.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
@@ -212,16 +213,16 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <span className="menu-bar-usage-mark" aria-hidden="true">
               Z
             </span>
-            <span>
-              <strong>Zeus</strong>
-              <small className="menu-bar-usage-freshness" data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite">
-                {freshness}
-              </small>
-            </span>
+            <strong>Zeus</strong>
           </span>
-          <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
-            {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
-          </button>
+          <span className="menu-bar-usage-refresh-status">
+            <small className="menu-bar-usage-freshness" data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite" title={freshness}>
+              {freshness}
+            </small>
+            <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
+              {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
+            </button>
+          </span>
         </header>
 
         <nav className="menu-bar-usage-tabs" role="tablist" aria-label={text.allProviders}>
@@ -525,12 +526,9 @@ function RefreshIcon() {
   );
 }
 
+/** 细圆环在固定按钮内匀速旋转，避免翻转沙漏带来的视觉跳动。 */
 function RefreshPendingIcon() {
-  return (
-    <svg className="menu-bar-usage-hourglass" viewBox="0 0 256 256" aria-hidden="true">
-      <path d="M211.31 196.69A16 16 0 0 1 200 224H56a16 16 0 0 1-11.32-27.31L116.43 128 44.82 59.44a1.59 1.59 0 0 0-.13-.13A16 16 0 0 1 56 32h144a16 16 0 0 1 11.32 27.31 1.59 1.59 0 0 0-.13.13L139.57 128l71.61 68.56a1.59 1.59 0 0 0 .13.13Z" />
-    </svg>
-  );
+  return <span className="menu-bar-usage-spinner" aria-hidden="true" />;
 }
 
 function findMostUrgentWindow(windows: CodexOfficialRateWindow[]): CodexOfficialRateWindow | undefined {
@@ -597,10 +595,11 @@ function formatPercent(value: number | null, language: Language, unavailable = '
   return value === null ? unavailable : new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, value));
 }
 
+/** 美元使用简短货币符号，保留小额费用精度。 */
 function formatCost(provider: UsageProviderSummary, language: Language, unavailable: string): string {
   const value = provider.sevenDayLocal.apiEquivalentUsd;
   if (value === null || !provider.sevenDayLocal.priceCoverage) return unavailable;
-  return `~${new Intl.NumberFormat(language, { style: 'currency', currency: 'USD', minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(value)}`;
+  return `~${new Intl.NumberFormat(language, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(value)}`;
 }
 
 function formatReset(timestamp: number, language: Language, prefix: string): string {

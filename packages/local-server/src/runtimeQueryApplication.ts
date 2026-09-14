@@ -9,6 +9,8 @@ export interface RuntimeSettingsSnapshot {
   adapterDefaultArgs: Partial<Record<AiCliAdapterDescriptor['id'], string[]>>;
   adapterCliPaths: Partial<Record<AiCliAdapterDescriptor['id'], string>>;
   terminalEnv: Record<string, string>;
+  /** 每个新交互终端输入一次，空字符串表示不执行。 */
+  terminalStartupCommand: string;
   shell: {
     path: string | null;
     login: boolean;

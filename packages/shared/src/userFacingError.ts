@@ -30,6 +30,22 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 
 /** 跨页面、原生窗口和通知共用的原因目录。每组只合并具有相同产品含义的错误。 */
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
+  // 工作安排表单复用后端明确的校验原因，用户可按提示修正草稿。
+  [['请选择实际需要的成果类型。'], ['请为每份分工至少选择一种成果类型，再保存安排。', 'Select at least one output type for each assignment before saving the plan.']],
+  [['请安排 1 到 12 个阶段。'], ['请安排 1 到 12 个阶段。', 'Create between 1 and 12 stages.']],
+  [['每个阶段需要 1 到 24 份明确分工。'], ['每个阶段需要 1 到 24 份明确分工。', 'Each stage needs between 1 and 24 assignments.']],
+  [['每个阶段至少需要一份必要分工。'], ['每个阶段至少需要一份必要分工。', 'Each stage needs at least one required assignment.']],
+  [['请填写阶段名称。'], ['请填写阶段名称。', 'Enter a stage name.']],
+  [['请填写分工目标。'], ['请填写分工目标。', 'Enter an assignment objective.']],
+  [['请填写工作边界与完成标准。'], ['请填写工作边界与完成标准。', 'Enter the work scope and completion criteria.']],
+  [['阶段推进方式无效。'], ['请重新选择阶段通过后的动作。', 'Select the action to take after the stage passes again.']],
+  [['成果接纳方式无效。'], ['请重新选择成果接纳方式。', 'Select the output acceptance method again.']],
+  [['分工内容无效。'], ['分工内容无法读取，请重新检查工作安排。', 'The assignment could not be read. Review the work plan.']],
+  // 自动接纳的输入校验必须说明补齐方式，不把可纠正的表单错误显示为未知故障。
+  [
+    ['自动接纳需要至少一条明确的验证命令。', '验证命令不能为空。'],
+    ['请至少填写一条验证命令，并移除空白行，再保存安排。', 'Enter at least one verification command and remove blank lines before saving the plan.'],
+  ],
   [
     ['ZEUS_CONVERSATION_READ_FAILED', 'ZEUS_CONVERSATION_SNAPSHOT_V2_READ_FAILED', 'Snapshot V2 首屏身份、结构代次或事件水位不一致。'],
     ['会话内容暂时无法刷新', 'Conversation content could not be refreshed right now.', 'retry'],
@@ -222,6 +238,63 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['共享目录重复或互相包含，请移除重复项或重叠的目录。', 'Shared folders are duplicated or contain one another. Remove duplicate or overlapping entries.'],
   ],
   [['ZEUS_GIT_COMMIT_REQUIRED'], ['请先选择要查看的提交。', 'Select a commit to view.']],
+  // Git 已知状态分别说明处理方式；超时和通用失败均先核对结果，不建议直接重做。
+  [['ZEUS_GIT_AUTH_REQUIRED'], ['当前账号无法访问这个代码仓库。请检查仓库账号是否已登录，以及是否有访问权限。', 'The current account cannot access this repository. Check that the repository account is signed in and has access.']],
+  [['ZEUS_GIT_BUSY'], ['这个代码仓库正在处理另一项操作，请等待完成后再继续。', 'Another action is running in this repository. Wait for it to finish before continuing.']],
+  [
+    ['ZEUS_GIT_TIMEOUT'],
+    [
+      '等待代码仓库响应超时，暂时无法确认操作结果。请刷新并核对仓库状态；如果刚才在推送，也请检查远端是否已收到改动。',
+      'The repository did not respond in time, so the action result is unconfirmed. Refresh and check its state. If you were pushing, also check whether the remote received the changes.',
+      'check',
+    ],
+  ],
+  [
+    ['ZEUS_GIT_HOST_UNVERIFIED'],
+    [
+      '无法确认代码仓库服务器的身份，连接已停止。请向仓库管理员核实服务器信息，再更新本机保存的服务器记录。',
+      'The repository server identity could not be verified, so the connection stopped. Confirm its identity with the repository administrator before updating the saved server record.',
+    ],
+  ],
+  [
+    ['ZEUS_GIT_ACTION_FAILED', 'ZEUS_GIT_COMMAND_FAILED'],
+    ['代码仓库操作遇到问题。请先刷新并核对仓库状态，具体原因可查看错误详情。', 'The repository action encountered a problem. Refresh and check the repository state first, then see the error details for the cause.', 'check'],
+  ],
+  // 这些是业务入口给出的完整校验文案，不能被跨进程包装降级为未知原因。
+  [
+    ['请选择实际项目目录，不能在文件系统根目录发现仓库。'],
+    ['所选范围是整个磁盘，无法作为项目扫描。请选择实际存放项目的文件夹。', 'The selected location covers the entire filesystem and cannot be scanned as a project. Select the folder that contains your project.'],
+  ],
+  [['源码文件不存在。'], ['找不到要打开的源码文件，它可能已被移动或删除。请刷新文件列表，确认文件位置。', 'The source file could not be found. It may have been moved or deleted. Refresh the file list and check its location.']],
+  [['源码必须位于项目根目录内。'], ['这个文件不在当前项目内，无法从此入口打开。请切换到对应项目。', 'This file is outside the current project and cannot be opened here. Switch to its project.']],
+  [
+    ['预览授权已失效。', '文件已变化，请刷新预览。', '读取期间文件发生变化，请刷新。'],
+    ['文件预览已过期，或文件内容已经变化。请刷新预览或重新打开文件。', 'The preview expired or the file changed. Refresh the preview or reopen the file.'],
+  ],
+  [['文件超出授权目录。'], ['这个文件不在允许预览的文件夹内。请从对应项目或附件重新打开。', 'This file is outside the folder allowed for this preview. Reopen it from its project or attachment.']],
+  [['目标不是普通文件。'], ['所选内容不是可预览的普通文件。请选择文件，或使用系统打开。', 'The selected item is not a regular file that can be previewed. Select a file or open it with the system.']],
+  // 文件预览自身的明确提示也支持语言切换，沿用现有系统预览和刷新入口。
+  [
+    ['当前环境没有文件预览服务。', 'File preview service is unavailable.'],
+    ['当前环境没有文件预览服务。', 'File preview service is unavailable.'],
+  ],
+  [
+    ['附件无法打开。', 'Could not open attachment.'],
+    ['附件无法打开，请确认附件仍然存在且可以访问。', 'The attachment could not be opened. Check that it still exists and is accessible.'],
+  ],
+  [['当前系统不支持快速预览，请选择打开文件。'], ['当前系统不支持快速预览，请选择“打开文件”。', 'Quick Look is unavailable on this system. Select Open instead.']],
+  [
+    ['PDF 阅读器加载失败，请使用系统预览。', 'PDF viewer failed. Try Quick Look.'],
+    ['PDF 阅读器加载失败，请使用系统预览。', 'The PDF viewer could not load. Try Quick Look.'],
+  ],
+  [
+    ['音频无法解码，请使用系统预览。', 'Audio could not be decoded.'],
+    ['无法播放这段音频，请使用系统预览。', 'This audio could not be played. Try Quick Look.'],
+  ],
+  [
+    ['视频无法解码，请使用系统预览。', 'Video could not be decoded.'],
+    ['无法播放这段视频，请使用系统预览。', 'This video could not be played. Try Quick Look.'],
+  ],
   // 中止后的写入不会自动撤销，具体暂存位置等恢复信息保留在详情中。
   [
     ['ZEUS_GIT_CANCELLED'],
@@ -803,7 +876,19 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_COMPUTER_APP_NOT_RUNNING'], ['目标应用没有运行。请先打开应用，再让 AI 继续操作。', 'The target app is not running. Open it before asking the AI to continue.']],
   [
     ['ZEUS_COMPUTER_ACCESSIBILITY_PERMISSION_REQUIRED'],
-    ['尚未授予 Zeus 辅助功能权限。请在 macOS“系统设置 → 隐私与安全性 → 辅助功能”中允许访问。', 'Zeus has not been granted Accessibility permission. Allow it in macOS System Settings → Privacy & Security → Accessibility.', 'settings'],
+    [
+      '尚未授予 Zeus 辅助功能权限。请前往 Zeus 系统设置的 Computer Use 完成授权；本次操作不会自动重试。',
+      'Accessibility permission is missing. Complete authorization in Zeus Computer Use settings; this action will not retry automatically.',
+      'settings',
+    ],
+  ],
+  [
+    ['ZEUS_COMPUTER_SCREEN_CAPTURE_PERMISSION_REQUIRED'],
+    [
+      '尚未授予 Zeus 录屏权限。请前往 Zeus 系统设置的 Computer Use 完成授权；本次操作不会自动重试。',
+      'Screen Recording permission is missing. Complete authorization in Zeus Computer Use settings; this action will not retry automatically.',
+      'settings',
+    ],
   ],
   [['ZEUS_COMPUTER_SCREEN_LOCKED'], ['电脑已锁定或当前桌面不可用，AI 暂时不能操作应用。解锁并返回桌面后再继续。', 'The computer is locked or the desktop is unavailable. Unlock it and return to the desktop before continuing.']],
   [['ZEUS_COMPUTER_ELEMENT_STALE'], ['目标应用的内容已变化。需要重新读取页面后才能操作。', 'The target app’s content has changed. It must be read again before the action can continue.']],
@@ -906,8 +991,16 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['尚未确认 AI 上次的处理是否已经结束，暂时不能继续。', 'Zeus has not confirmed that the AI’s previous work has ended, so it cannot continue yet.', 'check'],
   ],
   [
-    ['ZEUS_CODEX_PERMISSION_GRANT_EXCEEDS_POLICY', 'ZEUS_PERMISSION_DENIED', 'EACCES', 'EPERM'],
+    ['ZEUS_CODEX_PERMISSION_GRANT_EXCEEDS_POLICY', 'ZEUS_PERMISSION_DENIED'],
     ['当前没有执行此操作所需的权限。请检查相关文件或应用的访问权限。', 'This action needs access that has not been granted. Check the relevant file or app permissions.', 'settings'],
+  ],
+  // 系统权限限制不能通过 Zeus 设置解除，具体受限位置保留在错误详情中。
+  [
+    ['EACCES', 'EPERM'],
+    [
+      '系统拒绝了 Zeus 的访问请求，当前操作无法完成。请检查所选文件或文件夹的位置及访问权限，具体位置可查看错误详情。',
+      'The system denied Zeus access, so this action could not be completed. Check the selected file or folder location and its access permissions. See the error details for the affected location.',
+    ],
   ],
   [
     ['ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED', 'ZEUS_BROWSER_SENSITIVE_ACTION_DECLINED'],
@@ -925,7 +1018,14 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_NATIVE_WORKTREE_UNAVAILABLE', 'ZEUS_TASK_WORKSPACE_UNAVAILABLE'],
     ['本次任务使用的工作目录无法访问。请检查目录是否存在，以及 Zeus 是否有访问权限。', 'The task’s working folder cannot be accessed. Check that it exists and that Zeus has permission to access it.', 'settings'],
   ],
-  [['ENOENT'], ['需要的文件或程序不存在。请检查所选路径是否正确。', 'A required file or program could not be found. Check the selected path.', 'settings']],
+  [
+    ['ENOENT'],
+    [
+      '找不到需要的文件或程序。请确认文件是否已移动或删除；如果选择了程序，请确认它已安装且位置正确。',
+      'A required file or program could not be found. Check whether the file was moved or deleted. If you selected a program, check that it is installed and its location is correct.',
+    ],
+  ],
+  [['EROFS'], ['所选位置只允许读取，无法保存改动。请选择可以写入的文件夹后再保存。', 'The selected location is read-only, so changes could not be saved. Choose a writable folder and save again.']],
   [['ENOSPC'], ['磁盘可用空间不足，无法完成此操作。请释放空间后再继续。', 'There is not enough disk space to complete this action. Free up space before continuing.']],
   [['ECONNREFUSED'], ['目标服务拒绝了连接。请确认服务已启动，并检查连接地址。', 'The destination service refused the connection. Check that it is running and that the address is correct.', 'settings']],
   [
@@ -941,6 +1041,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
 function isLikelyErrorCode(value: string): boolean {
   const candidate = value.trim();
   return /^[A-Z][A-Z0-9_.:-]{1,127}$/u.test(candidate) || explanations.some(([codes]) => codes.includes(candidate));
+}
+
+/** 只拆除 Zeus 跨进程调用的固定前缀，不根据任意错误正文猜测原因。 */
+function unwrapZeusErrorMessage(message: string): string {
+  return message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '');
 }
 
 /** 只返回允许跨界面传递的诊断字段；限制深度避免循环对象和无界错误链。 */
@@ -963,7 +1068,7 @@ export function userFacingErrorCause(error: unknown, depth = 0): UserFacingError
                 ? value.additionalDetails.filter((item): item is string => typeof item === 'string').join('\n')
                 : '';
   // Electron 会在 message 外包裹固定 IPC 前缀，仅拆解 Zeus 自身通道的这一格式。
-  const codeMessage = message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '');
+  const codeMessage = unwrapZeusErrorMessage(message);
   const code = typeof value.code === 'string' ? value.code : errorField && isLikelyErrorCode(errorField) ? errorField : /^([A-Z][A-Z0-9_]+)(?::|$)/u.exec(codeMessage)?.[1];
   // 仅保留诊断对象的有界标量字段，避免跨界面携带凭据对象或大块业务数据。
   const detailFields =
@@ -1049,13 +1154,18 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   const readFailure = chain.find((item) => item.code === 'ZEUS_CONVERSATION_READ_FAILED' || item.code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED');
   // 只改变解释优先级，不改变下方对发送结果未知的保护。
   const explanationChain = readFailure ? [readFailure] : [...chain].reverse();
-  const match = explanationChain.flatMap((item) => explanations.filter(([codes]) => codes.includes(item.message) || (item.code && codes.includes(item.code))))[0]?.[1] ?? translated;
+  const match =
+    explanationChain.flatMap((item) => {
+      /** 完整业务文案去除传输前缀后精确匹配，原始消息仍留在详情中。 */
+      const message = unwrapZeusErrorMessage(item.message);
+      return explanations.filter(([codes]) => codes.includes(message) || (item.code && codes.includes(item.code)));
+    })[0]?.[1] ?? translated;
   const details = chain
     .map((item) => [[item.code, item.message].filter(Boolean).join(': '), item.details].filter(Boolean).join('\n'))
     .filter(Boolean)
     .join('\n');
   const zh = language === 'zh-CN';
-  const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$/u.test(item.code ?? ''));
+  const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$|^ZEUS_GIT_TIMEOUT$/u.test(item.code ?? ''));
   return {
     message: match?.[zh ? 0 : 1] ?? describeUncataloguedError(chain, language),
     details: translated && !root.code && !root.cause && !root.details ? '' : details,

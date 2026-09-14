@@ -2,7 +2,9 @@ import {
   assistantMessageMetadata,
   asyncMessageQuestions,
   classifyAssistantMessage,
+  conversationProcessProviderItemId,
   conversationNavigationExcerpt,
+  conversationQuestionNavigationExcerpt,
   type ConversationNavigationEntry,
   type ConversationNavigationSnapshot,
   type AssistantMessageMetadata,
@@ -698,6 +700,7 @@ export class ConversationSnapshotV2Repository {
       assistant_phase: string | null;
       assistant_metadata_json: string | null;
       formal_plan: number;
+      question_answer_json: string | null;
     }>(
       `SELECT conversation_model_history.id, conversation_model_history.sequence,
         conversation_model_history.turn_id, turn.provider_turn_id, turn.status,
@@ -707,6 +710,7 @@ export class ConversationSnapshotV2Repository {
         ${modelHistoryAssistantPhaseSql} AS assistant_phase,
         ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
         ${modelHistoryFormalPlanSql} AS formal_plan,
+        ${modelHistoryQuestionAnswerSql} AS question_answer_json,
         substr(CASE WHEN json_valid(content_json) THEN COALESCE(
           NULLIF(json_extract(content_json, '$.displayText'), ''),
           NULLIF(json_extract(content_json, '$.text'), ''),
@@ -721,7 +725,6 @@ export class ConversationSnapshotV2Repository {
         AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
         -- 来源记录也用于普通答复；沿用正文分类，只排除可读思考摘要。
         AND (conversation_model_history.role = 'user' OR ${modelHistoryReasoningSummarySql} = 0 OR ${modelHistoryAssistantPhaseSql} = 'plan')
-        AND ${modelHistoryQuestionAnswerSql} IS NULL
       ORDER BY conversation_model_history.sequence`,
       [conversationId],
     );
@@ -738,6 +741,10 @@ export class ConversationSnapshotV2Repository {
         if (text.trim() && (final || (row.formal_plan === 1 && !answers.get(row.turn_id)?.final))) answers.set(row.turn_id, { text: conversationNavigationExcerpt(text, 320), final });
         continue;
       }
+      /** 异步答案复用历史正文补齐原题的读取路径。 */
+      const questionAnswer = row.question_answer_json ? this.questionAnswer(conversationId, row.question_answer_json) : null;
+      /** 已回答卡片预览展示用户选择，不以助手最终答复覆盖。 */
+      const questionExcerpt = questionAnswer ? conversationQuestionNavigationExcerpt({ questions: questionAnswer.questions }, { answers: questionAnswer.answers }) : null;
       /** 客户端身份能连接发送前后两份投影，缺失时使用模型身份或历史身份。 */
       const identity = row.client_user_message_id ? `client:${row.client_user_message_id}` : row.provider_item_id ? `provider:${row.provider_item_id}` : `history:${row.id}`;
       if (!entries.has(identity))
@@ -749,12 +756,46 @@ export class ConversationSnapshotV2Repository {
           providerItemId: row.provider_item_id,
           sequence: row.sequence,
           occurredAt: row.confirmed_at,
-          prompt: conversationNavigationExcerpt(text, 160),
-          response: '',
+          prompt: questionExcerpt ? redactSensitivePreview(questionExcerpt.prompt).text : conversationNavigationExcerpt(text, 160),
+          response: questionExcerpt ? redactSensitivePreview(questionExcerpt.response).text : '',
           status: row.status,
         });
     }
-    return { conversationId, throughEventSeq, entries: [...entries.values()].map((entry) => ({ ...entry, response: answers.get(entry.turnId)?.text ?? '' })) };
+    /** 普通发言保持模型历史顺序，答题卡保留自己的答案摘录。 */
+    const directory = [...entries.values()].map((entry) => ({ ...entry, response: entry.response || answers.get(entry.turnId)?.text || '' }));
+    /** 同步询问独立存储，必须进入完整目录而不能只依赖已加载正文。 */
+    const requests = this.db.select<{ id: string; turn_id: string; provider_turn_id: string | null; payload_json: string; response_json: string; contains_secret: number; occurred_at: string }>(
+      `SELECT request.id, request.turn_id, turn.provider_turn_id, request.payload_json, request.response_json, request.contains_secret,
+              COALESCE(request.resolved_at, request.created_at) AS occurred_at
+         FROM conversation_server_requests AS request
+         JOIN conversation_turns AS turn ON turn.id = request.turn_id AND turn.conversation_id = request.conversation_id
+        WHERE request.conversation_id = ? AND request.status = 'resolved'
+          AND request.request_kind = 'request_user_input' AND request.response_json IS NOT NULL
+        ORDER BY occurred_at, request.id`,
+      [conversationId],
+    );
+    for (const request of requests) {
+      /** 与正文共享规范题目和脱敏答案口径，整张卡只建立一个身份。 */
+      const excerpt = conversationQuestionNavigationExcerpt(parseJsonRecordOrNull(request.payload_json), parseJsonRecordOrNull(request.response_json), request.contains_secret === 1);
+      if (!excerpt) continue;
+      /** 同步卡片没有模型消息序号，按答案提交时间插入并保持模型消息原顺序。
+       * ponytail: 插入为 O(卡片数 × 目录数)，目录达到万级卡片时改为双游标合并。 */
+      const index = directory.findIndex((entry) => entry.occurredAt > request.occurred_at);
+      directory.splice(index < 0 ? directory.length : index, 0, {
+        id: `request:${request.id}`,
+        requestId: request.id,
+        turnId: request.turn_id,
+        providerTurnId: request.provider_turn_id,
+        clientUserMessageId: null,
+        providerItemId: null,
+        sequence: 1,
+        occurredAt: request.occurred_at,
+        prompt: redactSensitivePreview(excerpt.prompt).text,
+        response: redactSensitivePreview(excerpt.response).text,
+        status: 'resolved',
+      });
+    }
+    return { conversationId, throughEventSeq, entries: directory };
   }
 
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
@@ -1123,14 +1164,23 @@ export class ConversationSnapshotV2Repository {
       protocol_family: string | null;
       stage_id: string | null;
     }>(
-      `SELECT id, process_sequence, turn_id, segment_id, kind, status, substr(title, 1, 512) AS title,
+      `SELECT id, process_sequence, turn_id, segment_id, kind, CASE WHEN json_extract(detail_json, '$.payload.isError') = 1 THEN 'failed' ELSE status END AS status, substr(title, 1, 512) AS title,
               source_event_id, started_at, completed_at,
               ${processProtocolFamilySql} AS protocol_family,
               ${processStageIdSql} AS stage_id,
               substr(detail_json, 1, ?) AS detail_preview,
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
               length(detail_json) AS detail_characters,
-              CASE WHEN kind = 'waiting' THEN detail_json ELSE NULL END AS presentation_json
+              CASE WHEN kind = 'waiting' THEN detail_json
+                   WHEN json_extract(detail_json, '$.provider') = 'pi' AND kind IN ('tool', 'command') THEN
+                     json_object('provider', 'pi', 'payload', json_object(
+                       'toolName', substr(COALESCE(json_extract(detail_json, '$.payload.toolName'), json_extract(detail_json, '$.block.name')), 1, 256),
+                       'args', json_object(
+                         'command', substr(COALESCE(json_extract(detail_json, '$.payload.args.command'), json_extract(detail_json, '$.block.arguments.command'), json_extract(detail_json, '$.block.input.command')), 1, 4000),
+                         'path', substr(COALESCE(json_extract(detail_json, '$.payload.args.path'), json_extract(detail_json, '$.block.arguments.path'), json_extract(detail_json, '$.block.input.path')), 1, 2000),
+                         'pattern', substr(COALESCE(json_extract(detail_json, '$.payload.args.pattern'), json_extract(detail_json, '$.block.arguments.pattern'), json_extract(detail_json, '$.block.input.pattern')), 1, 1000)
+                       )))
+                   ELSE NULL END AS presentation_json
          FROM conversation_process_items
         WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}
           AND process_sequence > ? AND process_sequence <= ?
@@ -1138,7 +1188,7 @@ export class ConversationSnapshotV2Repository {
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, turnId, ...(kind ? [kind] : []), context.afterSequence, context.throughSequence, context.entryLimit + 1],
     );
-    const pairIds = rows.map((row) => toolPairIdFromSourceEvent(row.source_event_id));
+    const pairIds = rows.map((row) => conversationProcessProviderItemId(row.source_event_id));
     const toolResults = this.toolResultsByPair(context.conversationId, pairIds);
     const items = rows.map((row, index) => {
       const mutable = row.status === 'in_progress';
@@ -1157,7 +1207,8 @@ export class ConversationSnapshotV2Repository {
         sourceEventId: row.source_event_id,
         startedAt: row.started_at,
         completedAt: row.completed_at,
-        presentation: recoveredRequestUserInputPresentation(row.presentation_json),
+        // 工具元数据单独有界读取，预览截断也不丢类型、参数和目标；敏感文本沿用同一脱敏规则。
+        presentation: row.kind === 'waiting' ? recoveredRequestUserInputPresentation(row.presentation_json) : parseJsonRecordOrNull(row.presentation_json ? redactSensitivePreview(row.presentation_json).text : null),
         detail: boundedProjection(
           row.detail_preview,
           row.detail_bytes,
@@ -2657,15 +2708,6 @@ function parseJsonRecordOrNull(value: string | null): Record<string, unknown> | 
   } catch {
     return null;
   }
-}
-
-function toolPairIdFromSourceEvent(sourceEventId: string | null): string | null {
-  if (!sourceEventId) return null;
-  for (const pattern of [/^codex:item:(.+)$/u, /^pi:block:(.+)$/u, /^pi:(?:tool_execution|tool_call|toolcall):(.+)$/u]) {
-    const match = sourceEventId.match(pattern);
-    if (match?.[1]) return match[1];
-  }
-  return null;
 }
 
 function redactSensitivePreview(value: string): { text: string; redacted: boolean } {

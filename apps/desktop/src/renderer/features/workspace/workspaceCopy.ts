@@ -121,6 +121,15 @@ export const languageCopy = {
       taskStatusFilterGroup: '任务状态',
       /** 会话状态仅表达运行情况，不混入未读提示。 */
       conversationStatusFilterGroup: '会话状态',
+      /** 三项筛选只归并选择，列表仍展示具体运行状态。 */
+      conversationRunStatusGroups: {
+        /** 含连接、重连和排队。 */
+        running: '运行中',
+        /** 等待用户回复或授权。 */
+        waiting: '待处理',
+        /** 含暂停、等待新指令、失败和旧会话只读。 */
+        idle: '空闲中',
+      },
       otherConversationFilterGroup: '其他会话',
       allConversations: '全部会话',
       projectConversationsOnly: '无关联任务',
@@ -849,11 +858,13 @@ export const languageCopy = {
         general: '通用',
         usage: '用量',
         memory: '长期记忆',
+        agents: '全局规则',
         tasks: '任务列表',
         employees: '数字员工',
         runtime: 'AI 连接',
         models: '模型供应商',
         browser: '内置浏览器',
+        terminal: '终端',
         telegram: 'Telegram',
         zentao: '第三方接入',
         security: '安全与钥匙串',
@@ -1325,6 +1336,15 @@ export const languageCopy = {
       taskStatusFilterGroup: 'Task status',
       /** 英文会话状态分组与中文保持相同语义。 */
       conversationStatusFilterGroup: 'Conversation status',
+      /** 英文筛选与中文共用相同分组身份。 */
+      conversationRunStatusGroups: {
+        /** 含连接、重连和排队。 */
+        running: 'Running',
+        /** 等待用户回复或授权。 */
+        waiting: 'Needs attention',
+        /** 含暂停、等待新指令、失败和旧会话只读。 */
+        idle: 'Idle',
+      },
       otherConversationFilterGroup: 'Other conversations',
       allConversations: 'All conversations',
       projectConversationsOnly: 'No linked task',
@@ -2053,11 +2073,13 @@ export const languageCopy = {
         general: 'General',
         usage: 'Usage',
         memory: 'Long-term memory',
+        agents: 'Global rules',
         tasks: 'Task list',
         employees: 'Digital employees',
         runtime: 'AI connections',
         models: 'Model providers',
         browser: 'Built-in browser',
+        terminal: 'Terminal',
         telegram: 'Telegram',
         zentao: 'Third-party integrations',
         security: 'Security & Keychain',

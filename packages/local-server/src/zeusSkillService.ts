@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { homedir } from 'node:os';
 import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope } from '@zeus/ai-runtime';
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +34,8 @@ export interface ZeusSkillCatalog {
 
 export interface ZeusSkillService {
   list(input: { cwd: string; forceReload?: boolean }): Promise<ZeusSkillCatalog>;
+  /** 普通 Skill 每轮复制到受管产物目录，元数据和参考文件一起冻结。 */
+  freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog>;
   install(input: { cwd: string; source: ZeusSkillInstallSource }): Promise<{ skill: ZeusSkillDescriptor; installedAt: string }>;
   remove(input: { cwd: string; skillId: string }): Promise<{ removed: true; skillId: string; name: string }>;
   resolve(input: { cwd: string; skillId: string }): Promise<{ id: string; name: string; description: string; path: string }>;
@@ -63,14 +66,27 @@ export class ZeusSkillServiceError extends Error {
 
 const CodexSkillServiceError = ZeusSkillServiceError;
 
-export function createZeusSkillService(options: { skillsRoot: string; manager: Pick<CodexAppServerManager, 'listSkills'>; ensureReady(): Promise<void>; now?: () => Date }): ZeusSkillService {
+export function createZeusSkillService(options: { skillsRoot: string; snapshotRoot?: string; manager: Pick<CodexAppServerManager, 'listSkills'>; ensureReady(): Promise<void>; now?: () => Date }): ZeusSkillService {
   const skillsRoot = requireAbsolutePath(options.skillsRoot, 'Zeus Skill Root');
   const skillProfileRoot = dirname(skillsRoot);
   const now = options.now ?? (() => new Date());
 
   async function list(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<ZeusSkillCatalog> {
     const cwd = await requireDirectory(input.cwd, 'Skill 工作目录');
-    const installed = await discoverZeusInstalledSkills(skillsRoot);
+    /** 普通目录由 Zeus 本地发现，订阅服务只补充原生元数据。 */
+    const roots = new Map<string, CodexSkillScope>([
+      [skillsRoot, 'user'],
+      [join(skillsRoot, '.system'), 'system'],
+      [join(homedir(), '.agents', 'skills'), 'user'],
+    ]);
+    for (let directory = cwd; ; directory = dirname(directory)) {
+      roots.set(join(directory, '.agents', 'skills'), 'repo');
+      roots.set(join(directory, '.codex', 'skills'), 'repo');
+      if (directory === homedir() || dirname(directory) === directory || (await pathExists(join(directory, '.git')))) break;
+    }
+    /** 各来源独立报告损坏条目，不让一个 Skill 隐藏整个目录。 */
+    const catalogs = await Promise.all([...roots].map(([root, scope]) => discoverZeusInstalledSkills(root, scope)));
+    const installed = { skills: catalogs.flatMap((catalog) => catalog.skills), errors: catalogs.flatMap((catalog) => catalog.errors) };
     let providerSkills: CodexSkillMetadata[] = [];
     let providerErrors: Array<Record<string, unknown>> = [];
     try {
@@ -156,7 +172,43 @@ export function createZeusSkillService(options: { skillsRoot: string; manager: P
     return { id: skill.id, name: skill.name, description: skill.description, path: skill.path };
   }
 
-  return { list, install, remove, resolve: resolveSkill };
+  /** 同一提交复用已冻结的目录，新提交重新读取本地来源，不移动用户文件。 */
+  async function freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog> {
+    const root = options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources');
+    const target = join(root, createHash('sha256').update(input.identity).digest('hex'));
+    const manifest = join(target, 'catalog.json');
+    try {
+      return JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) throw error;
+    }
+    const catalog = await list({ cwd: input.cwd });
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const staging = await mkdtemp(join(root, '.prepare-'));
+    try {
+      const skills: ZeusSkillDescriptor[] = [];
+      for (const skill of catalog.skills) {
+        const name = createHash('sha256').update(skill.id).digest('hex').slice(0, 24);
+        const destination = join(staging, name);
+        await inspectSkillSource(dirname(skill.path));
+        await cp(dirname(skill.path), destination, { recursive: true, dereference: false, errorOnExist: true });
+        const metadata = await inspectSkillSource(destination);
+        skills.push({ ...skill, ...metadata, path: join(target, name, 'SKILL.md'), removable: false });
+      }
+      const frozen = { ...catalog, skills };
+      await writeFile(join(staging, 'catalog.json'), JSON.stringify(frozen), { mode: 0o600 });
+      try {
+        await rename(staging, target);
+      } catch (error) {
+        if (!isNodeError(error, 'EEXIST') && !isNodeError(error, 'ENOTEMPTY')) throw error;
+      }
+      return JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+  }
+
+  return { list, freeze, install, remove, resolve: resolveSkill };
 }
 
 async function materializeSource(source: ZeusSkillInstallSource, stagingRoot: string): Promise<string> {
@@ -237,7 +289,8 @@ async function inspectSkillSource(sourceDirectory: string): Promise<{ name: stri
   return { name, description };
 }
 
-async function discoverZeusInstalledSkills(skillsRoot: string): Promise<{ skills: CodexSkillMetadata[]; errors: Array<Record<string, unknown>> }> {
+/** 复用同一元数据解析与来源检查，发现指定作用域下的本地 Skill。 */
+async function discoverZeusInstalledSkills(skillsRoot: string, scope: CodexSkillScope = 'user'): Promise<{ skills: CodexSkillMetadata[]; errors: Array<Record<string, unknown>> }> {
   const skills: CodexSkillMetadata[] = [];
   const errors: Array<Record<string, unknown>> = [];
   let entries;
@@ -256,7 +309,7 @@ async function discoverZeusInstalledSkills(skillsRoot: string): Promise<{ skills
         name: inspection.name,
         description: inspection.description,
         path: join(directory, 'SKILL.md'),
-        scope: 'user',
+        scope,
         enabled: true,
       });
     } catch (error) {

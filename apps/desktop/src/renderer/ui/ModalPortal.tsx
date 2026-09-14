@@ -6,6 +6,14 @@ import { useModalFocus } from './useModalFocus.js';
 
 /** 弹窗共用遮罩、焦点和关闭规则。 */
 export interface ModalPortalProps {
+  /** 模态身份与下拉弹层共享门户根，避免选项落在可访问范围外。 */
+  role: 'dialog' | 'alertdialog';
+  /** 弹窗名称，可直接提供或引用标题。 */
+  'aria-label'?: string;
+  /** 可见标题节点的标识。 */
+  'aria-labelledby'?: string;
+  /** 补充说明节点的标识。 */
+  'aria-describedby'?: string;
   rootClassName?: string;
   backdropClassName?: string;
   dismissDisabled?: boolean;
@@ -42,6 +50,11 @@ export function ModalPortal(props: ModalPortalProps) {
   const modalSurface = (
     <div
       ref={rootRef}
+      role={props.role}
+      aria-modal="true"
+      aria-label={props['aria-label']}
+      aria-labelledby={props['aria-labelledby']}
+      aria-describedby={props['aria-describedby']}
       className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')}
       data-zeus-primitive="modal"
       data-motion-state={open ? 'open' : 'closing'}

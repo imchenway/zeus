@@ -1,3 +1,8 @@
+import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
+import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
+import { EmployeeMemoryProposalRepository } from '@zeus/storage';
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
+import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
 import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
 import {
@@ -19,6 +24,8 @@ import {
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
   getTaskBranchFileDiff,
+  getTaskBranchComparison,
+  getGitFilePreviewSources,
   getTaskWorkspaceFileDiff,
   type GitDiffSummary,
   type GitPatchExport,
@@ -176,6 +183,7 @@ import { WorkManagementTaskOperations } from './workManagementTaskOperations.js'
 import { registerWorkspaceGitCommandRoutes } from './workspaceGitCommandRoutes.js';
 import { registerZeusPluginRoutes } from './zeusPluginRoutes.js';
 import { imInternalCommandRequest } from './localServerPlatformSupport.js';
+import { registerGlobalAgentSettingsRoutes } from './globalAgentSettings.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -217,6 +225,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   projects: ProjectRepository;
   settings: SettingRepository;
   settingsCommands: SettingsCommandApplication;
+  /** 当前 Zeus 实际使用的全局规则目录。 */
+  codexHome?: string;
   taskBoards: TaskBoardRepository;
   taskEvents: TaskEventRepository;
   taskStages: TaskStageRepository;
@@ -230,6 +240,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
 
 export async function registerLocalServerPlatformRoutes(dependencies: LocalServerPlatformRouteDependencies): Promise<{
   close(): Promise<void>;
+  /** 原生工作工具由已注册的工作管理器处理。 */
+  workTools: TaskWorkToolPort;
   recover(): void;
   projectGitQueries: ProjectGitQueryApplication;
   conversationCapabilityQueries: ConversationCapabilityQueryApplication;
@@ -238,6 +250,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const {
     server,
     zeusLocalServerHost,
+    listConversationSubagents,
+    stopConversationSubagents,
+    conversationRuntime,
     archiveNativeConversation,
     buildRuntimeProcessEnv,
     commandDeliveries,
@@ -773,11 +788,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   const codexSubagentQueries = new CodexSubagentQueryApplication({
     conversations,
+    owned: { relations: conversationRuntime, turns: conversationTurns, execution: conversationExecution, list: listConversationSubagents },
     providerItems: conversationProviderItems,
     provider: {
       getState: () => codexAppServerManager.getState(),
       listThreads: (input) => codexAppServerManager.listThreads(input),
       readThread: (input) => codexAppServerManager.readThread(input),
+      /** 子线程详情沿用与恢复相同的元信息和内容分页。 */
+      listThreadTurns: (input) => codexAppServerManager.listThreadTurns(input),
+      listThreadItems: (input) => codexAppServerManager.listThreadItems(input),
     },
     runtime: createCodexSubagentRuntimeReader({ providerHistoryRoot: join(dataLayout.codexHome, 'sessions') }),
     now,
@@ -1168,7 +1187,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     tasks,
     conversations,
     goals: conversationGoals,
-    codex: codexNativeCoordinator,
+    codex: {
+      ...codexNativeCoordinator,
+      readGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal(input),
+      setGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).setGoal(input),
+      pauseGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).pauseGoal(input),
+      resumeGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).resumeGoal(input),
+      clearGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).clearGoal(input),
+    },
     archiveNativeConversation,
     restoreNativeConversation,
     isConversationIdle: (conversation) => inferNativeConversationSnapshotState(conversation).type === 'idle',
@@ -1261,6 +1287,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
           return toNativeInterruptAcceptance(operationIdentity, params.turnId, updatedConversation, submission);
         }
+        await stopConversationSubagents(conversation.id);
         const operation =
           conversation.agentKind === 'pi'
             ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
@@ -1283,7 +1310,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       planImplementationRespond: async ({ params, action, feedback, attachments, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await codexNativeCoordinator.respondToPlanImplementationRequest({
+        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
           conversationId: conversation.id,
           requestId: params.requestId,
           action,
@@ -1416,7 +1443,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
     if (readOnlyValidation) {
       return {
-        goal: conversation.agentKind === 'codex' ? (conversationGoals.get(conversation.id) ?? null) : null,
+        goal: conversationGoals.get(conversation.id) ?? null,
         timeline: conversationGoals.listEvents(conversation.id),
         capability: { supported: false, enabled: false, stage: null, reason: 'unverified' as const },
         projection: {
@@ -1427,7 +1454,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
     }
     try {
-      const goal = conversation.agentKind === 'codex' ? await codexNativeCoordinator.readGoal({ conversationId: conversation.id }) : null;
+      const goal = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal({ conversationId: conversation.id });
       return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
@@ -1576,7 +1603,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return Object.assign(new Error(message), { code, statusCode });
   }
 
-  function resolveTurnChangeFileOpenGrant(params: TurnChangeFileOpenParams): ConversationFileOpenGrant {
+  /** 历史预览和当前文件打开共用会话、轮次及文件归属校验。 */
+  function resolveTurnChangeFileRecord(params: TurnChangeFileOpenParams) {
     const conversation = conversations.getById(params.conversationId);
     if (!conversation || conversation.projectId !== params.projectId) {
       throw turnChangeFileOpenError('ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found.', 404);
@@ -1594,6 +1622,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     if (changeSet.state === 'capturing' || changeSet.state === 'undoing' || changeSet.state === 'reapplying') {
       throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_TRANSITIONING', 'The changed file is currently being updated. Try again after the operation finishes.', 409);
     }
+    return { conversation, turn, changeSet, file };
+  }
+
+  function resolveTurnChangeFileOpenGrant(params: TurnChangeFileOpenParams): ConversationFileOpenGrant {
+    const { conversation, turn, changeSet, file } = resolveTurnChangeFileRecord(params);
     const currentPath = changeSet.state === 'undone' ? file.oldPath : file.newPath;
     if (!currentPath) {
       throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_PRESENT', 'The changed file does not exist in the current workspace state.', 409);
@@ -2026,6 +2059,57 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       }
     },
   );
+
+  /** 主进程专用的只读授权解析；客户端不提供绝对路径或任意快照位置。 */
+  server.post('/api/file-preview/intent', async (request: FastifyRequest<{ Body: FilePreviewRequest }>, reply) => {
+    try {
+      /** 运行时检查仍然必须存在，类型声明不能替代边界验证。 */
+      const input = request.body;
+      if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
+      for (const [key, value] of Object.entries(input)) {
+        if (typeof value !== 'string' || value.length > 4096 || value.includes('\0')) throw new Error(`文件预览参数无效：${key}`);
+      }
+      /** 各来源只返回已登记身份对应的读取授权。 */
+      let intent: FilePreviewIntent;
+      if (input.kind === 'source') {
+        const project = projects.getById(input.projectId);
+        if (!project?.localPath || typeof input.path !== 'string') throw new Error('项目文件不可用。');
+        intent = { sides: [{ name: input.path, label: '当前文件', root: project.localPath, path: resolve(project.localPath, input.path) }] };
+      } else if (input.kind === 'task-git') {
+        if (!['working', 'committed'].includes(input.scope)) throw new Error('交付预览范围无效。');
+        const resolved = resolveTaskWorkspaceRequest(input.taskId, input.workspaceId);
+        if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+        const workspace = resolved.workspace;
+        const root = input.scope === 'committed' ? workspace.repositoryPath || resolved.project.localPath : workspace.worktreePath;
+        if (!root) throw new Error('任务工作区已不可用。');
+        const comparison = input.scope === 'committed' ? await getTaskBranchComparison(root, workspace.sourceBranch, workspace.branchName, workspace.sourceHeadSha) : null;
+        intent = { sides: await getGitFilePreviewSources(root, { path: input.path, ...(comparison ? { revisions: [comparison.mergeBaseSha, comparison.taskHeadSha] } : {}) }) };
+      } else if (input.kind === 'resource') {
+        const record = conversationResources.getById(input.resourceId);
+        if (!record || record.projectId !== input.projectId || record.conversationId !== input.conversationId) throw new Error('会话资源不属于当前会话。');
+        const grant = toConversationResourceOpenIntent(record);
+        if (grant.kind === 'website') throw new Error('网站不是文件预览资源。');
+        intent = { sides: [{ name: String(grant.display.displayName || basename(String(grant.target.absolutePath))), label: '会话文件', root: String(grant.authority.allowedRoot || ''), path: String(grant.target.absolutePath || '') }] };
+      } else if (input.kind === 'turn') {
+        const { file } = resolveTurnChangeFileRecord(input);
+        intent = {
+          sides: (['pre', 'post'] as const).map((phase) => {
+            const path = phase === 'pre' ? file.preBlobRef : file.postBlobRef;
+            const exists = phase === 'pre' ? file.preExists : file.postExists;
+            const hash = phase === 'pre' ? file.preHash : file.postHash;
+            return {
+              name: (phase === 'pre' ? file.oldPath : file.newPath) || file.newPath || file.oldPath || '文件',
+              label: phase === 'pre' ? '变更前 · 轮次快照' : '变更后 · 轮次快照',
+              ...(exists && path && hash ? { path, root: join(dataLayout.turnChangeSets, input.changeSetId, 'blobs'), sha256: hash } : { reason: exists ? '此轮次没有保存可用的历史文件内容。' : '此版本中不存在该文件。' }),
+            };
+          }),
+        };
+      } else throw new Error('不支持的文件预览来源。');
+      return intent;
+    } catch (error) {
+      return reply.code(409).send({ message: error instanceof Error ? error.message : '文件预览授权失败。' });
+    }
+  });
 
   server.get('/api/tasks/:taskId/integrations', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
     const task = tasks.getById(request.params.taskId);
@@ -2576,7 +2660,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           destinationId: 'conversation-plan-implementation',
           resourceId: requestId,
           externalOperationId: `plan-implementation-response:${requestId}`,
-          invoke: () => codexNativeCoordinator.respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
+          invoke: () =>
+            (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
           isExplicitRejection: isExplicitConversationStartRejection,
         });
         const accepted = conversationPlanActions.getById(requestId);
@@ -2843,6 +2928,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     employees: digitalEmployees,
     legacyExecutions: digitalEmployeeExecutions,
     items: taskWorkItems,
+    conversationGoals,
+    memoryProposals: new EmployeeMemoryProposalRepository(db, () => now().toISOString()),
+    planning: new TaskWorkPlanningRepository(db, () => now().toISOString()),
+    reviews: new TaskWorkReviewRepository(db, () => now().toISOString()),
+    deployments: new TaskWorkDeploymentRepository(db, () => now().toISOString()),
+    memory: longTermMemories,
+    turnChanges: turnChangeSets,
+    providerItems: conversationProviderItems,
     runs: taskWorkRuns,
     deliverables: taskWorkDeliverables,
     decisions: taskWorkDecisions,
@@ -3157,6 +3250,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get('/api/settings/app-shell', async (): Promise<AppShellSettingsSnapshot> => platformMutableState.appShellSettings);
 
+  registerGlobalAgentSettingsRoutes({
+    server,
+    codexHome: dependencies.codexHome,
+    commands: settingsCommands,
+    redactSensitiveText,
+    recordSaved: (metadata) => appendAuditLog({ actorType: 'local_api', action: 'settings.agents.updated', resourceType: 'settings', resourceId: 'agents', payload: { path: metadata.path, revision: metadata.revision } }),
+  });
+
   server.put('/api/settings/app-shell', async (request: FastifyRequest<{ Body: SettingsCommandRequest<UpdateAppShellSettingsBody> }>, reply): Promise<AppShellSettingsSnapshot | unknown> => {
     try {
       const parsed = settingsCommands.parse<UpdateAppShellSettingsBody>({
@@ -3418,9 +3519,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     runtimeSessions,
     projects,
     tasks,
-    resolveRegisteredRuntimeAdapter,
+    resolveRegisteredRuntimeAdapter: (command) => resolveRegisteredRuntimeAdapter(command, resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell).command),
     resolveExistingRuntimeSessionAdapter,
     readProjectAllowsShell: (projectId) => readProjectConfig(projectId).security.allowShell,
+    readTerminalStartupCommand: () => platformMutableState.runtimeSettings.terminalStartupCommand,
     buildRuntimeProcessEnv,
     resolveTaskDefaultManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
     stopPersistedOrphanRuntimeSession,
@@ -3466,7 +3568,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     async (): Promise<RuntimeStatusSnapshot> => ({
       aiCli: toPassiveRuntimeStatus(platformMutableState.runtimeSettings),
       telegram: getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
-      terminal: runtimeTerminalStatus,
+      terminal: {
+        ...runtimeTerminalStatus,
+        /** 用户显式配置优先，图形界面没有 SHELL 时使用系统账户登记值。 */
+        shell: resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell),
+      },
     }),
   );
 
@@ -3723,6 +3829,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   };
   return {
     close: closeLocalServerResources,
+    workTools: {
+      invoke: (input) => {
+        if (!taskWorkManagement) throw new Error('工作服务已停止。');
+        return taskWorkManagement.workTools.invoke(input);
+      },
+    },
     recover: () => {
       if (!readOnlyValidation) {
         workManagementTaskEffects.recover();

@@ -1,3 +1,4 @@
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { parseJsonObject } from './localServerPlatformSupport.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
@@ -17,6 +18,7 @@ import {
   modelRef,
   piRuntimeWorkerProtocolVersion,
   readCodexProviderRuntimeHealth,
+  readCodexTurnItems,
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
@@ -54,6 +56,7 @@ import {
   ConversationProviderSyncCheckpointRepository,
   ConversationRepository,
   ConversationResourceRepository,
+  ConversationRuntimeRepository,
   ConversationServerRequestRepository,
   ConversationSnapshotV2Repository,
   ConversationSubmissionRepository,
@@ -128,7 +131,7 @@ import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchC
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
 import { normalizeConversationResources } from './conversationResources.js';
-import { readNativeSubmissionSkill } from './nativeConversationSubmissionInputs.js';
+import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { ConversationSyncProtocol } from './conversationSyncProtocol.js';
 import { type ConversationRealtimeSocket } from './conversationSyncRoutes.js';
 import { classifyConversationEventDurability, conversationEventFlowBudgets, ConversationEventFlowControl } from './eventFlowControl.js';
@@ -149,13 +152,15 @@ import { migrateMisplacedCodexThreadRollouts } from './misplacedCodexThreadMigra
 import { createModelConnectionService } from './modelConnectionService.js';
 import { LocalApiPerformanceCollector } from './performanceObservability.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { createConversationToolProcesses } from './conversationToolProcesses.js';
+import { createPiGoalApplication } from './piGoalApplication.js';
 import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
 import { registerProviderRuntimeControlApi } from './providerRuntimeControlApi.js';
 import { ProviderRuntimeRecoveryApplicationService } from './providerRuntimeRecoveryService.js';
 import { createReadOnlyValidationPiCoordinator } from './readOnlyValidationPiCoordinator.js';
 import { applyRuntimeLogRetention, markRuntimeLogRetentionCommitted, type RuntimeLogRetentionResult, sanitizeRuntimeFileName } from './runtimeLogRetention.js';
 import { isSafeRuntimeProcessId } from './runtimeProcessIdentity.js';
-import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
+import { type RuntimeSettingsSnapshot, toAiRuntimeSession } from './runtimeQueryApplication.js';
 import { RuntimeEphemeralCapabilityService, RuntimeSessionCommandApplication } from './runtimeSessionCommandApplication.js';
 import { SettingsCommandApplication } from './settingsCommandApplication.js';
 import { ensurePiGlobalAgentProjection, migrateRuntimeDirectory, prepareTaskAttachmentRoot, repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
@@ -371,6 +376,8 @@ export interface RuntimeStatusSnapshot {
   terminal: {
     provider: 'node-pty' | 'child_process';
     pty: { available: boolean; reason: string };
+    /** 当前设置与本机账户共同确定交互 shell，供终端直接启动。 */
+    shell: { command: string; args: string[] };
   };
 }
 
@@ -735,6 +742,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const executionHostHandoffs = new ExecutionHostHandoffRepository(db);
   const executionHostWork = new ExecutionHostWorkRepository(db);
   const conversationPlanActions = new ConversationPlanActionRepository(db);
+  /** 仅保存执行归属与控制权，不复制会话、目标或进程记录。 */
+  const conversationRuntime = new ConversationRuntimeRepository(db);
   const conversationProviderSyncCheckpoints = new ConversationProviderSyncCheckpointRepository(db);
   const providerEventReceipts = new ProviderEventReceiptRepository(db);
   const commandDeliveries = new CommandDeliveryRepository(db);
@@ -745,6 +754,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationDispatchCommands = new ConversationDispatchCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
   const conversationStartCommands = new ConversationStartCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
   const conversationQueueCoreMutations = new ConversationQueueCoreMutationApplication({
+    commandDeliveries,
     submissions: conversationSubmissions,
     execution: conversationExecution,
     requests: conversationRequests,
@@ -774,6 +784,36 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     portableContexts,
     commandDeliveries,
     now: () => now().toISOString(),
+    assertDispatchAllowed: (conversationId, leasedConversationIds) => {
+      const relation = conversationRuntime.getSubagent(conversationId);
+      if (!relation) return;
+      const activeChildren = conversationRuntime
+        .listSubagents(relation.rootId)
+        .filter((child) => child.conversationId !== conversationId && (leasedConversationIds.includes(child.conversationId) || conversationTurns.getLatestActiveByConversation(child.conversationId)));
+      if (activeChildren.length >= 4) throw Object.assign(new Error('整棵会话树最多同时运行四个子代理；本次输入保留在队列，等待已有子任务结束后继续。'), { code: 'ZEUS_SUBAGENT_CONCURRENCY_LIMIT' });
+    },
+    beforeRouteSwitch: async ({ conversationId, nativeSessionId, runtimeKind }) => {
+      const goal = conversationGoals.get(conversationId);
+      const previous = conversationRuntime.getGoalControl(conversationId);
+      if (!goal || previous?.source === 'handoff' || !nativeSessionId) return;
+      if (runtimeKind === 'codex' && goal.status === 'active') await codexNativeCoordinator.pauseGoalForHandoff({ conversationId, threadId: nativeSessionId });
+      // 已排队的旧控制器续跑不能在新模型接管后重新切回旧路由。
+      for (const submission of conversationSubmissions.listQueueByConversation(conversationId)) {
+        if (submission.idempotencyKey.startsWith('goal-continuation-') && submission.status === 'queued' && !submission.providerTurnId)
+          conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
+      }
+      // Pi 不拥有独立的 Provider 续跑循环，改变归属立即阻止下一次目标提交。
+      conversationRuntime.setGoalControl({
+        ...previous,
+        conversationId,
+        source: 'handoff',
+        nativeSessionId,
+        resumeAfterSwitch: goal.status === 'active',
+        usageComplete: previous?.usageComplete ?? true,
+        accountedTurnId: previous?.accountedTurnId ?? null,
+      });
+      await db.save();
+    },
   });
   let dispatchUnifiedConversationQueueHead: ((conversationId: string) => Promise<void>) | null = null;
   let dispatchQueuedExpertRound: ((submissionId: string) => Promise<void>) | null = null;
@@ -986,7 +1026,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
       }
     : createMacOSKeychainStore({ service: options.keychainService });
-  let submitPluginHookContinuation: ((input: { conversationId: string; sourceTurnId: string | null; prompt: string }) => Promise<void>) | null = null;
+  let submitPluginHookContinuation: ((input: { conversationId: string; sourceTurnId: string | null; prompt: string; source?: 'goal' }) => Promise<void>) | null = null;
   const dangerouslyBypassPluginHookTrust = process.argv.includes('--dangerously-bypass-plugin-hook-trust');
   const zeusPluginService = readOnlyValidation
     ? undefined
@@ -1192,6 +1232,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const piAgentDirectory = readOnlyValidation ? dataLayout.piConfig : migrateRuntimeDirectory(join(dataLayout.root, 'pi-agent'), dataLayout.piConfig);
   const piSessionDirectory = readOnlyValidation ? dataLayout.piSessions : migrateRuntimeDirectory(join(dataLayout.root, 'pi-sessions'), dataLayout.piSessions);
   if (!readOnlyValidation) ensurePiGlobalAgentProjection(options.codexHome ?? dataLayout.codexHome, piAgentDirectory);
+  /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */
+  let taskWorkTools: TaskWorkToolPort | null = null;
+  /** 未完成初始化或停止时禁止工具绕开工作服务。 */
+  const nativeWorkTools: TaskWorkToolPort = {
+    invoke: (input) => {
+      if (!taskWorkTools) throw new Error('工作服务尚未就绪。');
+      return taskWorkTools.invoke(input);
+    },
+  };
   const piNativeCoordinator = readOnlyValidation
     ? createReadOnlyValidationPiCoordinator(() => now().toISOString())
     : createPiNativeConversationCoordinator({
@@ -1204,9 +1253,45 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         providerItems: conversationProviderItems,
         submissions: conversationSubmissions,
         requests: conversationRequests,
+        planActions: conversationPlanActions,
+        executeSubagentTool: (input) => conversationOperations.executeSubagentTool(input),
+        stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
+        goals: createPiGoalApplication({
+          db,
+          goals: conversationGoals,
+          controls: conversationRuntime,
+          conversations,
+          submissions: conversationSubmissions,
+          turns: conversationTurns,
+          requests: conversationRequests,
+          plans: conversationPlanActions,
+          items: conversationProviderItems,
+          enqueue: (input) => {
+            if (!submitPluginHookContinuation) throw new Error('目标续跑的提交队列尚未就绪。');
+            return submitPluginHookContinuation(input);
+          },
+          publish: (conversationId) =>
+            publishNativeConversationEvent('conversation.goal.updated', {
+              conversationId,
+              goal: conversationGoals.get(conversationId),
+              timeline: conversationGoals.listEvents(conversationId),
+              usageComplete: conversationRuntime.getGoalControl(conversationId)?.usageComplete ?? false,
+            }),
+          now: () => now().toISOString(),
+        }),
         modelConnections,
         usageLedger: codexUsageLedger,
         agentDirectory: piAgentDirectory,
+        loadSkills: loadConversationSkills,
+        processes: createConversationToolProcesses({
+          runtime: () => aiRuntimeManager,
+          bindings: conversationRuntime,
+          sessions: runtimeSessions,
+          events: terminalEvents,
+          save: () => db.save(),
+          scratchRoot: join(runtimeSessionDirectory, 'command-scratch'),
+          environment: () => buildRuntimeProcessEnv(),
+        }),
         sessionDirectory: piSessionDirectory,
         now: () => now().toISOString(),
         publish: publishNativeConversationEvent,
@@ -1215,6 +1300,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         toolResults: conversationToolResults,
         plugins: zeusConversationPluginRuntime,
         browserAutomation: options.browserAutomation,
+        workTools: nativeWorkTools,
         auditNativeTool: async (event) => {
           auditLogs.append({
             actorType: 'zeus_native_tool',
@@ -1253,7 +1339,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const runtimeLogFileWriteErrors: unknown[] = [];
   let runtimeLogFileFlushTimer: ReturnType<typeof setTimeout> | undefined;
   const optionalNodePty = createOptionalNodePtyRuntimeSpawn();
-  const runtimeTerminalStatus: RuntimeStatusSnapshot['terminal'] = {
+  const runtimeTerminalStatus: Omit<RuntimeStatusSnapshot['terminal'], 'shell'> = {
     provider: optionalNodePty.spawn ? 'node-pty' : 'child_process',
     pty: {
       available: optionalNodePty.available,
@@ -1394,6 +1480,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   const generatedImageRoot = codexHome ? join(codexHome, 'generated_images') : undefined;
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
+    conversationExperts,
     conversationSubmissions,
     conversations,
     db,
@@ -1558,11 +1645,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const zeusSkillService = codexHome
     ? createZeusSkillService({
         skillsRoot: join(codexHome, 'skills'),
+        snapshotRoot: join(dataLayout.artifactsDirectory, 'skill-resources'),
         manager: codexAppServerManager,
         ensureReady: ensureSkillProviderCatalogReady,
         now,
       })
     : undefined;
+  /** 子代理复用父轮次已经冻结的普通 Skill；恢复和换链不会读取更新后的源文件。 */
+  async function loadConversationSkills(cwd: string, identity: string) {
+    const submission = conversationSubmissions.getById(identity);
+    const relation = submission ? conversationRuntime.getSubagent(submission.conversationId) : undefined;
+    const inherited = relation ? (JSON.parse(relation.contextJson) as Record<string, unknown>) : {};
+    const sourceIdentity = typeof inherited.resourceSnapshotIdentity === 'string' ? inherited.resourceSnapshotIdentity : identity;
+    return (await zeusSkillService?.freeze({ cwd, identity: sourceIdentity }))?.skills ?? [];
+  }
   resolveCodexDispatchModelBudget = (modelId, providerGenerationId) => {
     if (!providerGenerationId) return null;
     const capabilities = codexAppServerManager.capabilitiesForGeneration(providerGenerationId);
@@ -1654,7 +1750,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   };
   if (!readOnlyValidation) {
     scheduleOfficialUsageRefresh();
-    usageRefreshTimer = setInterval(scheduleOfficialUsageRefresh, 60_000);
+    // 收起菜单栏后沿用后台调度，每十分钟更新一次，避免每分钟请求官方用量。
+    usageRefreshTimer = setInterval(scheduleOfficialUsageRefresh, 10 * 60_000);
     usageRefreshTimer.unref?.();
   }
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
@@ -1674,6 +1771,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       requests: conversationRequests,
       planActions: conversationPlanActions,
       goals: conversationGoals,
+      goalControls: conversationRuntime,
       receipts: providerEventReceipts,
       syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
@@ -1684,6 +1782,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       eventFlow: conversationEventFlow,
       resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
+      workTools: nativeWorkTools,
       plugins: zeusConversationPluginRuntime,
       auditNativeTool: async (event) => {
         auditLogs.append({
@@ -1706,6 +1805,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (modelSourceId && modelSourceId !== 'codex') return;
         requireCodexDispatchModelBudget(modelId, providerGenerationId);
       },
+      loadSkills: loadConversationSkills,
       compileDispatchContext: compileProviderDispatchContext,
       broadcast: publishNativeConversationEvent,
       now: () => now().toISOString(),
@@ -1745,7 +1845,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (dispatch) queueMicrotask(() => void dispatch(head.id));
       return;
     }
-    if (!head.executionSnapshotId) return;
+    if (!head.executionSnapshotId) {
+      // Pi 内部问题答复与计划输入仍沿用原队列身份，由原执行入口恢复。
+      if (conversation.agentKind === 'pi') await piNativeCoordinator.dispatchNextQueued(conversationId);
+      return;
+    }
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
     if (!frozen) {
       conversationSubmissions.updateStatus(head.id, 'paused', { pausedReason: 'recovery_required', updatedAt: now().toISOString() });
@@ -1766,7 +1870,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const browserComments = Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isNativeApiRecord) : [];
       const browserCommentContent = typeof persisted.browserCommentContent === 'string' ? persisted.browserCommentContent : undefined;
       const conversationContext = isNativeApiRecord(persisted.conversationContext) ? persisted.conversationContext : undefined;
-      const skill = readNativeSubmissionSkill(head);
+      const skills = readNativeSubmissionSkills(head);
       const workspaceIdentity = isNativeApiRecord(JSON.parse(frozen.workspaceIdentityJson)) ? (JSON.parse(frozen.workspaceIdentityJson) as Record<string, unknown>) : {};
       const project = projects.getById(conversation.projectId);
       if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
@@ -1841,6 +1945,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
             permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',
+            workMode: frozen.collaborationMode as 'default' | 'plan',
             idempotencyKey: head.idempotencyKey,
             clientUserMessageId: head.clientMessageId,
             attachments,
@@ -1848,7 +1953,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
-            ...(skill ? { skill } : {}),
+            skills,
             segmentLifecycle: lifecycle,
           });
         } else {
@@ -1858,6 +1963,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             content,
             model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
+            permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',
+            workMode: frozen.collaborationMode as 'default' | 'plan',
             idempotencyKey: head.idempotencyKey,
             clientUserMessageId: head.clientMessageId,
             attachments,
@@ -1865,7 +1972,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             browserComments,
             ...(browserCommentContent ? { browserCommentContent } : {}),
             ...(conversationContext ? { conversationContext } : {}),
-            ...(skill ? { skill } : {}),
+            skills,
             segmentLifecycle: lifecycle,
           });
         }
@@ -1879,6 +1986,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     } catch (error) {
       const failureAt = now().toISOString();
       const currentHead = conversationSubmissions.getById(head.id);
+      // 并发额度在任何 Provider 写入前拒绝；保留原输入，其他子任务结束后唤醒。
+      if (error instanceof Error && 'code' in error && error.code === 'ZEUS_SUBAGENT_CONCURRENCY_LIMIT' && currentHead && !currentHead.providerTurnId) {
+        conversationSubmissions.updateStatus(head.id, 'queued', { pausedReason: null, error: { code: error.code, message: error.message }, updatedAt: failureAt });
+        await db.save();
+        return;
+      }
       // 生命周期已经区分“写入前失败”和“接受结果未知”时，不得再用通用恢复原因覆盖证据边界。
       if (!currentHead || currentHead.status === 'queued' || currentHead.status === 'dispatching') {
         conversationSubmissions.updateStatus(head.id, 'paused', {
@@ -1928,8 +2041,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const submission = conversationSubmissions.getById(operation.submissionId);
       if (!segment || !submission || segment.runtimeKind !== 'codex' || !segment.nativeSessionId) continue;
       try {
-        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'full' });
-        const matched = page.data.find((turn) => providerTurnClientMessageId(turn) === submission.clientMessageId);
+        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' });
+        /** 逐轮读取完整条目以核对原消息身份，命中后停止下载其余历史。 */
+        let matched: (typeof page.data)[number] | undefined;
+        for (const turn of page.data) {
+          turn.items = await readCodexTurnItems(codexAppServerManager, { threadId: segment.nativeSessionId, turnId: turn.id });
+          if (providerTurnClientMessageId(turn) !== submission.clientMessageId) continue;
+          matched = turn;
+          break;
+        }
         if (!matched) {
           conversationExecution.recordRecoveryEvent({
             conversationId: operation.conversationId,
@@ -2548,6 +2668,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (shouldRequestConversationQueueDispatch(mappedType, payload) && typeof payload.conversationId === 'string' && dispatchUnifiedConversationQueueHead) {
       const conversationId = payload.conversationId;
       queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
+      const relation = conversationRuntime.getSubagent(conversationId);
+      if (relation && mappedType === 'conversation.turn.completed') {
+        for (const child of conversationRuntime.listSubagents(relation.rootId)) {
+          if (child.conversationId !== conversationId) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(child.conversationId).catch(() => undefined));
+        }
+      }
     }
     const durability = classifyConversationEventDurability(mappedType);
     if (durability !== 'coalescible_process') flushPendingNativeDeltaEvents();
@@ -2855,10 +2981,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     shouldReconnectTaskConversationRuntime,
     reconnectNonCodexLegacyConversationRuntime,
   } = supportOperations;
-  if (executionHostDispatchMayResume) await recoverPersistedRuntimeSessions();
+  if (executionHostDispatchMayResume) {
+    await recoverPersistedRuntimeSessions();
+    // 恢复后的进程事实同步到原命令卡，不能让失联命令一直显示运行中。
+    for (const session of runtimeSessions.list()) {
+      if (session.status === 'lost' || session.status === 'orphan_detected') persistConversationCommandEvidence(toAiRuntimeSession(session));
+    }
+    await db.save();
+  }
   traceStartup('runtime_sessions_ready');
 
   conversationOperations = createConversationApplicationOperations({
+    conversationGoals,
     aiRuntimeManager,
     artifactStore,
     appendAuditLog,
@@ -2874,6 +3008,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     conversationChoiceQueries,
     conversationExecution,
     conversationExperts,
+    conversationRuntime,
     conversationExecutionCoordinator,
     conversationPlanActions,
     conversationProviderItems,
@@ -3033,6 +3168,49 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     failTaskIntegrationAiPreparation,
     scheduleTaskIntegrationAiFinalization,
   } = gitIntegrationOperations;
+  /** 受管命令按原轮次保存真实退出证据，短等待结束不能被记为命令成功。 */
+  function persistConversationCommandEvidence(session: AiRuntimeSession): void {
+    /** 仅投影模型创建的进程，用户终端继续使用自己的运行记录。 */
+    const binding = conversationRuntime.getProcess(session.id);
+    /** 后台进程可能跨轮次结束，证据始终归属创建它的原轮次。 */
+    const turn = binding ? conversationTurns.getById(binding.turnId) : null;
+    if (!binding || !turn?.providerThreadId || !turn.providerTurnId) return;
+    /** 命令正文来自受管执行参数，不把沙箱启动器作为用户命令。 */
+    const command = redactSensitiveText(session.args.at(-1) ?? '').text;
+    /** 全量输出继续保存在受管日志，证据仓库仅保留有界摘要。 */
+    const output = redactSensitiveText(
+      runtimeSessions
+        .listRecentLogs(session.id, 128, 64 * 1024)
+        .filter((entry) => entry.stream !== 'system')
+        .map((entry) => entry.text)
+        .join(''),
+    ).text;
+    /** 稳定进程身份防止轮询或后续输入重复创建命令证据。 */
+    const evidence = {
+      conversationId: binding.conversationId,
+      turnId: binding.turnId,
+      providerThreadId: turn.providerThreadId,
+      providerTurnId: turn.providerTurnId,
+      providerItemId: `pi_command:${session.id}`,
+      itemType: 'commandExecution' as const,
+      phase: 'prework' as const,
+      agentKind: 'pi' as const,
+      nativeItemId: session.id,
+      startedAt: session.startedAt,
+      updatedAt: session.endedAt ?? session.startedAt,
+      payload: {
+        command,
+        processId: session.id,
+        aggregatedOutput: output,
+        exitCode: session.exitCode ?? null,
+        ...(session.status === 'lost' || session.status === 'orphan_detected' ? { error: { code: 'ZEUS_COMMAND_OUTCOME_UNKNOWN', message: '宿主重启后无法确认原命令结果；保留日志，不自动重放。' } } : {}),
+      },
+      textContent: output || command,
+    };
+    if (session.status === 'running') conversationProviderItems.upsertProgress(evidence);
+    else conversationProviderItems.upsertCompleted({ ...evidence, status: session.status === 'exited' && session.exitCode === 0 ? 'completed' : 'failed', completedAt: session.endedAt ?? now().toISOString() });
+  }
+
   function persistRuntimeSession(session: AiRuntimeSession): void {
     const existing = runtimeSessions.getById(session.id);
     if (existing) {
@@ -3055,6 +3233,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         startedAt: session.startedAt,
       });
     }
+    persistConversationCommandEvidence(session);
     if (session.status === 'exited' || session.status === 'failed' || session.status === 'stopped') {
       persistRuntimeConversationSummary(session.id);
       markRuntimeSessionConversationsInactive(session);
@@ -3242,6 +3421,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     server,
     // 计划修改与普通消息共用附件授权校验。
     normalizeNativeConversationAttachments: conversationOperations.normalizeNativeConversationAttachments,
+    listConversationSubagents: conversationOperations.listConversationSubagents,
+    stopConversationSubagents: conversationOperations.stopConversationSubagents,
+    conversationRuntime,
     zeusLocalServerHost,
     archiveNativeConversation,
     buildRuntimeProcessEnv,
@@ -3276,6 +3458,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
     codexConfigImportService,
+    codexHome,
     zeusSkillDefaultCwd: codexHome ?? dataLayout.codexHome,
     zeusSkillService,
     zeusPluginService,
@@ -3465,6 +3648,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     unsubscribeCodexModels();
     await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
   };
+  taskWorkTools = platformRoutes.workTools;
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;
@@ -3529,10 +3713,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (!readOnlyValidation) conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
   if (!readOnlyValidation) await db.save();
   if (!readOnlyValidation && executionHostDispatchMayResume) {
+    await piNativeCoordinator.recoverGoals();
     const queuedConversationIds = new Set(
       conversationSubmissions
         .listRecoverable()
-        .filter((submission) => submission.status === 'queued' && Boolean(submission.executionSnapshotId))
+        .filter((submission) => submission.status === 'queued')
         .map((submission) => submission.conversationId),
     );
     for (const conversationId of queuedConversationIds) {

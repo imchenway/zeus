@@ -1,8 +1,11 @@
+import { registerFilePreview } from './filePreview.js';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
-import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync, readFileSync } from 'node:fs';
+import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -79,6 +82,10 @@ import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
 import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 
+/** 读取真实资源包属性，避免 Electron 将 asar 虚拟目录的缓存当成磁盘事实。 */
+const resourceFileSystem = createRequire(import.meta.url)('original-fs') as typeof import('node:fs');
+/** 启动时固定资源包身份，运行期间禁止混用替换后的网页与旧进程。 */
+const startupResourceIdentity = app.isPackaged ? readPackagedResourceIdentity() : null;
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
@@ -591,7 +598,22 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 }
 
+/** 文件被原地覆盖、替换或删除都视为资源变化，不只比较应用版本号。 */
+function readPackagedResourceIdentity(): string | null {
+  try {
+    /** 原始文件属性不经过 Electron 的 asar 虚拟文件系统。 */
+    const info = resourceFileSystem.statSync(join(process.resourcesPath, 'app.asar'));
+    return JSON.stringify([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]);
+  } catch {
+    return null;
+  }
+}
+
+/** 各类窗口在创建前统一核对资源，避免把新包的二进制片段读成网页。 */
 function rendererEntryUrl(surface?: 'menu-bar-usage' | 'task-git-delivery' | 'project-git-diff', parameters?: Record<string, string>): string {
+  if (app.isPackaged && (!startupResourceIdentity || readPackagedResourceIdentity() !== startupResourceIdentity)) {
+    throw new Error(nativeText('应用文件已更新或暂时不可用。请重新启动 Zeus 后再打开窗口。', 'Application files have changed or are unavailable. Restart Zeus before opening this window.'));
+  }
   const url = new URL(process.env.ZEUS_DEV_SERVER_URL ?? pathToFileURL(join(desktopRoot(), 'dist/renderer/index.html')).toString());
   if (surface) url.searchParams.set('surface', surface);
   for (const [key, value] of Object.entries(parameters ?? {})) url.searchParams.set(key, value);
@@ -610,6 +632,16 @@ async function openProjectGitDiffWindow(
     comparisonMode?: 'current' | 'working-tree';
   },
 ): Promise<{ opened: true }> {
+  /** 先核对资源再创建窗口，失败时不留下空窗口或改写窗口记忆。 */
+  const rendererUrl = rendererEntryUrl('project-git-diff', {
+    projectId: input.projectId,
+    repositoryId: input.repositoryId,
+    filePath: input.filePath,
+    stage: input.stage,
+    ...(input.commitHash ? { commitHash: input.commitHash } : {}),
+    ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
+    ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
+  });
   const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
   const width = Math.min(workArea.width, Math.max(900, Math.round(workArea.width * 0.84)));
   const height = Math.min(workArea.height, Math.max(620, Math.round(workArea.height * 0.82)));
@@ -640,15 +672,6 @@ async function openProjectGitDiffWindow(
   window.on('closed', () => {
     projectGitDiffWindows.delete(window);
     appCloseLayerActivityByWindow.delete(window.id);
-  });
-  const rendererUrl = rendererEntryUrl('project-git-diff', {
-    projectId: input.projectId,
-    repositoryId: input.repositoryId,
-    filePath: input.filePath,
-    stage: input.stage,
-    ...(input.commitHash ? { commitHash: input.commitHash } : {}),
-    ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
-    ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
   });
   configureWindowSecurity(window, rendererUrl);
   window.once('ready-to-show', () => {
@@ -708,6 +731,8 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     return { opened: true, reused: true, taskId };
   }
 
+  /** 新建窗口前核对资源，已有窗口仍可唤回并保存工作。 */
+  const rendererUrl = rendererEntryUrl('task-git-delivery', { taskId });
   /** 首次打开时的默认边界，历史偏好由共用入口覆盖。 */
   const defaultBounds = initialTaskGitDeliveryWindowBounds(parent);
   /** 每类窗口分别记忆，任务之间共用交付窗口偏好。 */
@@ -748,7 +773,6 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     reveal(() => revealTaskGitDeliveryWindow(window));
     window.webContents.send('zeus:task-git-delivery:current-context', currentTaskGitDeliveryContext);
   });
-  const rendererUrl = rendererEntryUrl('task-git-delivery', { taskId });
   configureWindowSecurity(window, rendererUrl);
   try {
     await window.loadURL(rendererUrl);
@@ -767,6 +791,8 @@ async function createWindow(): Promise<void> {
     return;
   }
 
+  /** 资源校验必须先于原生窗口创建和偏好恢复。 */
+  const rendererUrl = rendererEntryUrl();
   const persistedWindowState = readPersistedMainWindowState(mainWindowStatePath());
   const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
   traceApplicationStartup('window_state_ready');
@@ -859,11 +885,10 @@ async function createWindow(): Promise<void> {
     if (mainWindow === window) mainWindow = [...windows].at(-1);
     if (
       windows.size === 0 &&
-      (isTestDistribution() ||
-        shouldQuitWhenAllWindowsClosed({
-          platform: process.platform,
-          backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
-        }))
+      shouldQuitWhenAllWindowsClosed({
+        platform: process.platform,
+        backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
+      })
     ) {
       menuBarUsageWindow?.destroy();
     }
@@ -889,7 +914,6 @@ async function createWindow(): Promise<void> {
   };
 
   window.once('ready-to-show', revealMainWindowOnce);
-  const rendererUrl = rendererEntryUrl();
   configureWindowSecurity(window, rendererUrl);
   traceApplicationStartup('renderer_load_started');
   if (process.env.ZEUS_DEV_SERVER_URL) {
@@ -2085,14 +2109,7 @@ function setupIpc(): void {
       projectRoot: resolveMainProjectRoot(),
       source,
       // 只检查文件存在性，不读取内容；打开动作交由 macOS 默认编辑器或文件关联处理。
-      fileExists: async (filePath) => {
-        try {
-          await access(filePath);
-          return true;
-        } catch {
-          return false;
-        }
-      },
+      checkAccess: access,
       openPath: (filePath) => shell.openPath(filePath),
     }),
   );
@@ -2220,6 +2237,8 @@ function positionMenuBarUsageWindow(window: BrowserWindow, placement: MenuBarUsa
 
 async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) return menuBarUsageWindow;
+  /** 菜单栏浮窗与工作窗口使用相同的资源校验。 */
+  const rendererUrl = rendererEntryUrl('menu-bar-usage');
   const window = new BrowserWindow({
     ...menuBarUsageWindowSize,
     title: appShellSettings.appLanguage === 'zh-CN' ? `${desktopDisplayName()} 用量` : `${desktopDisplayName()} Usage`,
@@ -2258,7 +2277,6 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (isMainFrame && errorCode !== -3) console.warn(`Zeus 菜单栏用量浮窗加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
   });
-  const rendererUrl = rendererEntryUrl('menu-bar-usage');
   configureWindowSecurity(window, rendererUrl);
   try {
     await window.loadURL(rendererUrl);
@@ -2303,13 +2321,11 @@ function setupTray(): void {
   if (!tray) {
     /** 菜单栏专用透明图案保留当前品牌造型。 */
     const trayIconPath = join(desktopRoot(), 'assets/trayTemplate.png');
-    /** 解码后先检查资源，避免无效图片进入系统菜单栏。 */
-    const trayIcon = nativeImage.createFromBuffer(readFileSync(trayIconPath));
+    /** 按路径同时加载 18×18 原图和 36×36 的 @2x 副本，让系统按屏幕密度选择清晰资源。 */
+    const trayIcon = nativeImage.createFromPath(trayIconPath);
     if (trayIcon.isEmpty()) throw new Error(`Zeus tray icon is empty: ${trayIconPath}`);
-    /** 固定为 18×18 逻辑像素，避免替换成大图时按原始尺寸撑开菜单栏。 */
-    const menuBarIcon = trayIcon.resize({ width: 18, height: 18, quality: 'best' });
-    menuBarIcon.setTemplateImage(true);
-    tray = new Tray(menuBarIcon);
+    trayIcon.setTemplateImage(true);
+    tray = new Tray(trayIcon);
     tray.setToolTip(desktopDisplayName());
     tray.setIgnoreDoubleClickEvents(true);
   }
@@ -2488,10 +2504,12 @@ end try`,
 
 async function loadSavedTaskAttachmentPreview(path: string): Promise<{ previewUrl: string; mimeType: string } | null> {
   if (typeof path !== 'string' || !isInsideTaskAttachmentDirectory(path)) return null;
-  const mimeType = inferTaskClipboardAttachmentMimeType(path);
+  const mimeType = filePreviewMime(path);
   if (!mimeType.startsWith('image/')) return null;
-  const data = await readFile(path);
-  const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
+  const canonical = await realpath(path);
+  if (!isInsideTaskAttachmentDirectory(canonical) || (await stat(canonical)).size > filePreviewLimits.image) return null;
+  const data = await readFile(canonical);
+  const previewUrl = data.length && filePreviewKind(mimeType) === 'image' ? `data:${mimeType};base64,${data.toString('base64')}` : undefined;
   if (previewUrl) return { previewUrl, mimeType };
   try {
     const convertedImage = nativeImage.createFromPath(path);
@@ -2756,6 +2774,33 @@ async function initializeApplication(): Promise<void> {
     installReadOnlyValidationIpcFence(ipcMain, readOnlyValidationDescriptor);
     traceApplicationStartup('read_only_validation_verified');
   }
+  registerFilePreview({
+    temporaryRoot: join(app.getPath('userData'), 'cache', 'file-previews', String(process.pid)),
+    requireWindow: (event) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || window.isDestroyed() || !isTrustedZeusRendererWindow(window) || event.senderFrame !== event.sender.mainFrame) throw new Error('文件预览请求来自不受信窗口。');
+      return window;
+    },
+    resolve: async (input) => {
+      if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
+      if (input.kind === 'project-git') {
+        if (!projectGitWorkbench) throw new Error('Git 文件服务尚未就绪。');
+        return projectGitWorkbench.loadFilePreview(input);
+      }
+      if (input.kind === 'attachment') {
+        const granted = await conversationInputResources?.resolve(input);
+        const path = granted || (typeof input.localPath === 'string' && isInsideTaskAttachmentDirectory(input.localPath) ? input.localPath : null);
+        if (!path) throw new Error('附件授权无效或文件已经移除。');
+        return { sides: [{ name: basename(path), label: '附件', path, root: granted ? dirname(path) : taskAttachmentDirectory() }] };
+      }
+      if (!localServerRuntime) throw new Error('文件服务尚未就绪。');
+      const config = await localServerRuntime.refreshConfig();
+      const response = await fetch(`${config.baseUrl}/api/file-preview/intent`, { method: 'POST', headers: { authorization: `Bearer ${config.apiToken}`, 'content-type': 'application/json' }, body: JSON.stringify(input) });
+      const payload = (await response.json()) as FilePreviewIntent & { message?: string };
+      if (!response.ok || !Array.isArray(payload.sides)) throw new Error(payload.message || '无法读取文件预览授权。');
+      return payload;
+    },
+  });
   setupIpc();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();
@@ -2825,7 +2870,6 @@ async function initializeApplication(): Promise<void> {
     browserHost.registerIpc();
     await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
-      language: () => appShellSettings.appLanguage,
       statePath: dataLayout.computerState,
       artifactRoot: dataLayout.computerArtifacts,
       helperExecutable: computerServiceExecutablePath(),
@@ -3120,7 +3164,7 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       return cancelRequestedRestart();
     }
   }
-  const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
+  const mayContinueInBackground = appShellSettings.backgroundModeEnabled;
   const options = {
     type: 'warning' as const,
     title: nativeText('仍有工作正在运行', 'Work is still running'),

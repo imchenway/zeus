@@ -55,7 +55,7 @@ export interface ContextFragment {
   reviewAfter?: string;
   externalStateEffect?: boolean;
   confirmationLevel?: 'observed' | 'confirmed' | 'explicit';
-  memoryKind?: 'preference' | 'safety_boundary' | 'stable_workflow';
+  memoryKind?: 'preference' | 'safety_boundary' | 'stable_workflow' | 'domain_knowledge';
   sourceTruncationReason?: ContextSourceTruncationReason;
 }
 

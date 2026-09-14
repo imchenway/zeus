@@ -3,6 +3,7 @@ import { presentModelOptions } from '../src/renderer/modelOptionPresentation.js'
 import { ComposerDropdown } from '../src/renderer/session/ComposerDropdown.js';
 import { ZeusSelect } from '../src/renderer/ZeusSelect.js';
 import { Button } from '../src/renderer/ui/Button.js';
+import { GoalPanel } from '../src/renderer/session/GoalPanel.js';
 
 /** 固定目录包含同名模型、长名称、不可用项；仅供本机预览，不连接模型服务。 */
 const models = [
@@ -14,6 +15,10 @@ const models = [
 
 /** 复用真实选择器和全部生产样式，独立偏好不会写入正式应用数据。 */
 export function ModelSelectQa() {
+  /** 用真实弹窗检查自动聚焦与门户样式，目标仅保存在预览状态中。 */
+  const [goalOpen, setGoalOpen] = useState(false);
+  /** 复现任务截图中的目标内容，不触发模型执行。 */
+  const [objective, setObjective] = useState('真机验收这份功能清单，并截图关键界面截图发我，下拉框的样式，按钮的样式，布局的错误换行等，也都是要验收的');
   /** 预览主题不修改产品设置。 */
   const [dark, setDark] = useState(false);
   /** 中英文共用同一份置顶身份。 */
@@ -69,7 +74,13 @@ export function ModelSelectQa() {
           <p>真实组件预览 · 图钉只调整排序 · 刷新保留置顶</p>
         </div>
         <nav>
-          <Button size="compact" onClick={() => setDark(!dark)}>
+          <Button
+            size="compact"
+            onClick={() => {
+              document.documentElement.dataset.zeusTheme = dark ? 'light' : 'dark';
+              setDark(!dark);
+            }}
+          >
             {dark ? '浅色' : '深色'}
           </Button>
           <Button size="compact" onClick={() => setEnglish(!english)}>
@@ -78,9 +89,12 @@ export function ModelSelectQa() {
           <Button size="compact" onClick={() => setSubset(!subset)}>
             {subset ? '全部供应商' : '仅 APIKey'}
           </Button>
+          <Button size="compact" onClick={() => setGoalOpen(true)}>
+            目标弹窗
+          </Button>
         </nav>
       </header>
-      <section className="qa-error-layout-heading" style={{ justifyContent: 'flex-start', alignItems: 'flex-start', minHeight: 450 }}>
+      <section className="qa-error-layout-heading" style={{ justifyContent: 'flex-start', alignItems: 'flex-start', minHeight: 180 }}>
         <div>
           <p>会话输入</p>
           <ComposerDropdown
@@ -113,6 +127,45 @@ export function ModelSelectQa() {
           <p data-secondary-model={secondary}>当前选择：{secondary}</p>
         </div>
       </section>
+      <section className="zeus-form-fields" aria-label="表单焦点预览">
+        <label>
+          普通输入
+          <input defaultValue="使用 Tab 检查焦点" />
+        </label>
+        <label>
+          多行输入
+          <textarea defaultValue="检查贴边提示与文字换行。" />
+        </label>
+        <label>
+          原生下拉
+          <select defaultValue="local">
+            <option value="local">本地工作区</option>
+            <option value="remote">远程工作区</option>
+          </select>
+        </label>
+        <label>
+          错误输入
+          <input aria-invalid="true" defaultValue="无效内容" />
+        </label>
+        <label>
+          禁用输入
+          <input disabled defaultValue="不可编辑" />
+        </label>
+      </section>
+      <GoalPanel
+        open={goalOpen}
+        language="zh-CN"
+        goal={null}
+        timeline={[]}
+        capability={{ supported: true, enabled: true, stage: 'stable', reason: 'available' }}
+        initialObjective={objective}
+        draftOnly
+        onDismiss={() => setGoalOpen(false)}
+        onSave={(value) => {
+          setObjective(value);
+          setGoalOpen(false);
+        }}
+      />
       <p role="status">{check}</p>
     </main>
   );

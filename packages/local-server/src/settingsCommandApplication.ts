@@ -11,6 +11,8 @@ export const settingsCommandTypes = {
   projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
   appShellSettingsPut: 'settings.app_shell.put',
+  /** 全局规则文件的手动保存。 */
+  agentsPut: 'settings.agents.put',
   settingsImport: 'settings.import',
   dataImport: 'settings.business_data.import',
 } as const;
@@ -53,7 +55,7 @@ interface ReplayedExternal {
 
 export const settingsCommandRoutePolicy = {
   coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/projects/:projectId/model-service-tier-preference', 'PUT /api/settings/app-shell'],
-  externalOperations: ['PUT /api/projects/:projectId/database/secret', 'DELETE /api/projects/:projectId/database/secret', 'PUT /api/runtime/settings', 'POST /api/settings/import', 'POST /api/data/import'],
+  externalOperations: ['PUT /api/projects/:projectId/database/secret', 'DELETE /api/projects/:projectId/database/secret', 'PUT /api/runtime/settings', 'PUT /api/settings/agents', 'POST /api/settings/import', 'POST /api/data/import'],
   importBodyBudgets: { settingsBytes: 1024 * 1024, businessDataBytes: 32 * 1024 * 1024 },
   runtimeRetentionFact: 'runtime.settings.logRetentionDays',
   runtimeRetentionDerivedOperation: 'rebuildable_runtime_log_retention',

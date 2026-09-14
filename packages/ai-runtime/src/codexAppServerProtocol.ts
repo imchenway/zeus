@@ -19,7 +19,11 @@ export type CodexWireServerRequest = {
 
 export type CodexWireMessage = CodexWireResponse | CodexWireNotification | CodexWireServerRequest;
 
-export type CodexDecodedFrame = { type: 'message'; message: CodexWireMessage } | { type: 'protocol_error'; error: { code: 'MALFORMED_JSON' | 'FRAME_TOO_LARGE' | 'INVALID_MESSAGE'; detail: string } };
+/** 传输帧独立于界面预览和事件队列预算，与 WebSocket 的默认帧上限一致。 */
+export const codexMaximumFrameBytes = 100 * 1024 * 1024;
+
+/** 解码失败只携带结构诊断，不保留可能包含凭据或消息正文的原始帧。 */
+export type CodexDecodedFrame = { type: 'message'; message: CodexWireMessage } | { type: 'protocol_error'; error: { code: 'MALFORMED_JSON' | 'FRAME_TOO_LARGE' | 'INVALID_MESSAGE'; detail: string; byteLength: number } };
 
 export type ExternalAgentConfigMigrationItemType = 'AGENTS_MD' | 'CONFIG' | 'SKILLS' | 'PLUGINS' | 'MCP_SERVER_CONFIG' | 'SUBAGENTS' | 'HOOKS' | 'COMMANDS' | 'SESSIONS' | (string & {});
 
@@ -44,8 +48,8 @@ export interface ExternalAgentConfigMigrationItem {
 export interface ExternalAgentConfigDetectParams {
   includeHome?: boolean;
   cwds?: string[] | null;
-    source?: string | null;
-    migrationSource?: string | null;
+  source?: string | null;
+  migrationSource?: string | null;
 }
 
 export interface ExternalAgentConfigDetectResponse {
@@ -55,7 +59,7 @@ export interface ExternalAgentConfigDetectResponse {
 export interface ExternalAgentConfigImportParams {
   migrationItems: ExternalAgentConfigMigrationItem[];
   source?: string | null;
-    migrationSource?: string | null;
+  migrationSource?: string | null;
 }
 
 export interface ExternalAgentConfigImportResponse {
@@ -141,51 +145,62 @@ export function parseExternalAgentConfigImportHistoriesResponse(value: unknown):
   };
 }
 
+/** 按换行消费完整帧；跨块内容只在帧结束时合并一次。 */
 export class CodexJsonLineDecoder {
-  private static readonly maxPendingBytes = 4 * 1024 * 1024;
-  private pending = Buffer.alloc(0);
+  /** 未结束帧的独立分块，避免持有同一大输入块中的其他完整帧。 */
+  private pending: Buffer[] = [];
+  /** 累计原始字节数，中文跨块时仍按字节限制内存。 */
+  private pendingBytes = 0;
+  /** 超限后只丢弃当前帧，下一行仍可正常解码。 */
   private discardingOversizedFrame = false;
 
+  /** 读取每个分块一次，坏帧不吞掉同一输入块中的后续合法帧。 */
   push(chunk: Buffer): CodexDecodedFrame[] {
-    let nextChunk = chunk;
-    if (this.discardingOversizedFrame) {
-      const lf = nextChunk.indexOf(0x0a);
-      if (lf < 0) return [];
-      this.discardingOversizedFrame = false;
-      nextChunk = nextChunk.subarray(lf + 1);
-    }
-    this.pending = Buffer.concat([this.pending, nextChunk]);
+    /** 本次读取产出的完整消息和诊断。 */
     const frames: CodexDecodedFrame[] = [];
-    for (let lf = this.pending.indexOf(0x0a); lf >= 0; lf = this.pending.indexOf(0x0a)) {
-      let line = this.pending.subarray(0, lf);
-      this.pending = this.pending.subarray(lf + 1);
-      if (line[line.length - 1] === 0x0d) line = line.subarray(0, -1);
-      if (line.length === 0) continue;
-      if (line.length > CodexJsonLineDecoder.maxPendingBytes) {
-        frames.push({ type: 'protocol_error', error: { code: 'FRAME_TOO_LARGE', detail: `${line.length} bytes` } });
+    for (let offset = 0; offset < chunk.length; ) {
+      /** 在当前分块中寻找帧边界，无换行时只保存剩余片段。 */
+      const lf = chunk.indexOf(0x0a, offset);
+      /** 同一帧的本次片段。 */
+      const part = chunk.subarray(offset, lf < 0 ? chunk.length : lf);
+      offset = lf < 0 ? chunk.length : lf + 1;
+      if (this.discardingOversizedFrame) {
+        if (lf >= 0) this.discardingOversizedFrame = false;
         continue;
       }
+      this.pendingBytes += part.length;
+      if (this.pendingBytes > codexMaximumFrameBytes) {
+        frames.push({ type: 'protocol_error', error: { code: 'FRAME_TOO_LARGE', detail: 'frame exceeded transport limit', byteLength: this.pendingBytes } });
+        this.pending = [];
+        this.pendingBytes = 0;
+        this.discardingOversizedFrame = lf < 0;
+        continue;
+      }
+      if (lf < 0) {
+        this.pending.push(Buffer.from(part));
+        continue;
+      }
+      /** 完整帧无需复制；只有跨分块帧才一次性合并。 */
+      let line = this.pending.length ? Buffer.concat([...this.pending, part], this.pendingBytes) : part;
+      this.pending = [];
+      this.pendingBytes = 0;
+      if (line[line.length - 1] === 0x0d) line = line.subarray(0, -1);
+      if (line.length === 0) continue;
       try {
+        /** 字节帧完整后才解码 UTF-8，避免拆坏中文字符。 */
         const message = parseWireMessage(JSON.parse(line.toString('utf8')));
         if (message) frames.push({ type: 'message', message });
-        else frames.push({ type: 'protocol_error', error: { code: 'INVALID_MESSAGE', detail: 'invalid wire message' } });
+        else frames.push({ type: 'protocol_error', error: { code: 'INVALID_MESSAGE', detail: 'invalid wire message', byteLength: line.length } });
       } catch {
         frames.push({
           type: 'protocol_error',
           error: {
             code: 'MALFORMED_JSON',
             detail: 'invalid JSON',
+            byteLength: line.length,
           },
         });
       }
-    }
-    if (this.pending.length > CodexJsonLineDecoder.maxPendingBytes) {
-      frames.push({
-        type: 'protocol_error',
-        error: { code: 'FRAME_TOO_LARGE', detail: `${this.pending.length} pending bytes` },
-      });
-      this.pending = Buffer.alloc(0);
-      this.discardingOversizedFrame = true;
     }
     return frames;
   }
@@ -195,13 +210,12 @@ function parseWireMessage(value: unknown): CodexWireMessage | null {
   if (!isRecord(value)) return null;
   const hasId = Object.hasOwn(value, 'id');
   const hasMethod = Object.hasOwn(value, 'method');
-  const hasParams = Object.hasOwn(value, 'params');
   const hasResult = Object.hasOwn(value, 'result');
   const hasError = Object.hasOwn(value, 'error');
   if (hasId && !isWireId(value.id)) return null;
 
   if (hasMethod) {
-    if (typeof value.method !== 'string' || value.method.length === 0 || !hasParams || hasResult || hasError) return null;
+    if (typeof value.method !== 'string' || value.method.length === 0 || hasResult || hasError) return null;
     return hasId ? { id: value.id as CodexWireId, method: value.method, params: value.params } : { method: value.method, params: value.params };
   }
 

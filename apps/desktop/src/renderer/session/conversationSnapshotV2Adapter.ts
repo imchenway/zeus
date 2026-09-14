@@ -1,4 +1,4 @@
-import { classifyAssistantMessage } from '@zeus/shared';
+import { classifyAssistantMessage, conversationProcessPresentation } from '@zeus/shared';
 import type {
   NativeConversationActiveItemV2,
   NativeConversationChoice,
@@ -269,13 +269,18 @@ export function mergeConversationContentV2(snapshot: NativeConversationSnapshot,
     matched = true;
     const content = parseProjection(text, false);
     const processDetail = item.payload.v2ContentKind === 'process_detail';
+    // 全文恢复后再次使用共享转换，短预览不能永久覆盖完整命令和结果。
+    const presentation = processDetail ? conversationProcessPresentation(String(item.payload.processKind), content) : null;
     // 思考全文没有可读内容时保持为空，不能重新沿用预览阶段的通用标题。
     const fallback = item.type === 'reasoning' ? '' : processDetail ? item.text : text;
     return {
       ...item,
+      ...(presentation ? { type: presentation.type } : {}),
       text: projectionText(content, fallback, false),
       payload: {
         ...item.payload,
+        ...presentation?.payload,
+        ...(item.payload.toolResult ? { toolResult: item.payload.toolResult } : {}),
         ...(processDetail ? { detail: content } : { content }),
         ...(processDetail ? {} : historicalUserPresentation(content, item.type === 'userMessage')),
         v2ContentTruncated: false,
@@ -301,6 +306,9 @@ export function resumeCachedConversationSnapshot(snapshot: NativeConversationSna
     v2Paging: {
       ...snapshot.v2Paging,
       history: { ...history, loading: false, error: null },
+      // 重新接管后，旧请求不会再回写 loading；完整页面和游标继续保留。
+      historyByTurn: Object.fromEntries(Object.entries(snapshot.v2Paging.historyByTurn ?? {}).map(([id, page]) => [id, { ...page, loading: false }])),
+      processByTurn: Object.fromEntries(Object.entries(snapshot.v2Paging.processByTurn).map(([id, page]) => [id, { ...page, loading: false }])),
     },
   };
 }
@@ -321,8 +329,16 @@ export function reconcileConversationHistoryCache(previous: NativeConversationSn
   return {
     snapshot: {
       ...next,
+      // 有界首屏没有重新返回旧页面，并不表示页面被删除；分页正文与进度一起保留，活动首屏由新快照接管。
+      items: mergeItemsByProviderIdentity(
+        previous.items.filter((item) => item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail'),
+        next.items,
+      ),
+      turns: [...new Map([...previous.turns, ...next.turns].map((turn) => [turn.id, turn])).values()],
       v2Paging: {
         ...next.v2Paging,
+        historyByTurn: { ...previous.v2Paging.historyByTurn, ...next.v2Paging.historyByTurn },
+        processByTurn: { ...previous.v2Paging.processByTurn, ...next.v2Paging.processByTurn },
         history: {
           ...fresh,
           nextCursor: cached.nextCursor,
@@ -440,8 +456,24 @@ function mergeItemsByProviderIdentity(current: readonly NativeItemSnapshot[], in
     const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : byId.get(item.id);
     if (previous && previous.payload.v2ContentKind === 'process_detail' && item.payload.v2ContentKind !== 'process_detail') return;
     if (previous && previous.id !== item.id) byId.delete(previous.id);
-    byId.set(item.id, item);
-    if (item.providerItemId) byProviderItemId.set(item.providerItemId, item);
+    // Pi 旧记录把调用和结果分开保存；同一身份归并时同时保留参数和最终结果。
+    const pendingCommand = previous?.payload.command && previous.payload.v2ContentTruncated === true && !item.payload.command;
+    // 旧结果单独存储时仍保留调用正文句柄，展开长命令才能读取完整参数。
+    const merged =
+      previous?.payload.provider === 'pi' && item.payload.provider === 'pi'
+        ? {
+            ...item,
+            startedAt: previous.startedAt,
+            payload: {
+              ...previous.payload,
+              ...item.payload,
+              toolResult: item.payload.toolResult ?? previous.payload.toolResult,
+              ...(pendingCommand ? { v2ContentHandle: previous.payload.v2ContentHandle, v2ContentTruncated: true, v2ContentBytes: previous.payload.v2ContentBytes } : {}),
+            },
+          }
+        : item;
+    byId.set(item.id, merged);
+    if (item.providerItemId) byProviderItemId.set(item.providerItemId, merged);
   };
   for (const item of current) add(item);
   for (const item of incoming) add(item);
@@ -594,19 +626,10 @@ function historicalUserPresentation(content: unknown, userMessage: boolean): Rec
 
 function processItems(items: NativeConversationProcessV2Item[], providerTurnByLocalId: ReadonlyMap<string, string>): NativeItemSnapshot[] {
   return items.map((item) => {
-    const detail = item.kind === 'waiting' && item.presentation ? item.presentation : parseProjection(item.detail.preview, item.detail.truncated);
-    const type =
-      item.kind === 'reasoning'
-        ? 'reasoning'
-        : item.kind === 'command'
-          ? 'commandExecution'
-          : item.kind === 'context_compaction'
-            ? 'contextCompaction'
-            : item.kind === 'waiting'
-              ? 'requestUserInput'
-              : item.kind === 'warning'
-                ? 'error'
-                : 'dynamicToolCall';
+    const detail = parseProjection(item.detail.preview, item.detail.truncated);
+    // 分页元数据独立于正文预览，长命令或结果截断时仍保留活动类型和目标。
+    const presentation = conversationProcessPresentation(item.kind, { ...item.presentation, ...recordValue(detail), ...(item.sourceEventId?.startsWith('pi:') ? { provider: 'pi' } : {}) });
+    const type = presentation.type;
     const text = processProjectionText(item, detail);
     return {
       id: item.id,
@@ -619,13 +642,15 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
       stageId: item.stageId ?? null,
       text,
       payload: {
-        ...processPresentationPayload(item, detail, text),
+        ...presentation.payload,
+        ...(item.kind === 'command' && presentation.payload.command === undefined ? { command: text } : {}),
         protocolFamily: item.protocolFamily ?? null,
         stageId: item.stageId ?? null,
-        ...(item.kind === 'reasoning' && item.protocolFamily === 'anthropic_messages' ? { reasoningPresentation: 'details_collapsed' } : {}),
+        // 旧 Pi 记录同样保留思考正文；稳定来源身份不受预览截断影响，也不会把 Codex 状态摘要改成持久正文。
+        ...(item.kind === 'reasoning' && (item.sourceEventId?.startsWith('pi:block:') || item.protocolFamily === 'anthropic_messages') ? { reasoningPresentation: 'process_text' } : {}),
         processKind: item.kind,
         title: item.title,
-        toolResult: item.toolResult,
+        toolResult: item.toolResult ?? presentation.payload.toolResult,
         v2ContentKind: 'process_detail',
         v2Sequence: item.sequence,
         v2ContentHandle: item.detail.contentHandle,
@@ -648,54 +673,6 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
  */
 function providerTurnIdentityMap(turns: readonly NativeTurnSnapshot[]): ReadonlyMap<string, string> {
   return new Map(turns.map((turn) => [turn.id, turn.providerTurnId ?? turn.id]));
-}
-
-function processPresentationPayload(item: NativeConversationProcessV2Item, detail: unknown, text: string): Record<string, unknown> {
-  const detailRecord = recordValue(detail);
-  const source = recordValue(detailRecord?.payload) ?? recordValue(detailRecord?.block) ?? detailRecord;
-  const presentation: Record<string, unknown> = {};
-  if (source) {
-    for (const key of [
-      'type',
-      'command',
-      'cwd',
-      'aggregatedOutput',
-      'output',
-      'stdout',
-      'stderr',
-      'name',
-      'toolName',
-      'arguments',
-      'args',
-      'query',
-      'status',
-      'error',
-      'summary',
-      'content',
-      'presentation',
-      'commandActions',
-      'requestType',
-      'recovery',
-      'submissionAuthority',
-      'providerThreadId',
-      'providerTurnId',
-      'providerItemId',
-      'callId',
-      'questions',
-      'outcome',
-      'answers',
-      'resolutionReason',
-    ] as const) {
-      if (source[key] !== undefined) presentation[key] = source[key];
-    }
-  }
-  if (detailRecord) {
-    for (const key of ['provider', 'itemType', 'eventType', 'protocolFamily', 'stageId', 'reasoningPresentation'] as const) {
-      if (detailRecord[key] !== undefined) presentation[key] = detailRecord[key];
-    }
-  }
-  if (item.kind === 'command' && presentation.command === undefined) presentation.command = text;
-  return presentation;
 }
 
 function startsWithToolCallProjection(preview: string): boolean {

@@ -3,9 +3,11 @@ export interface BrowserAutomationToolCall {
   threadId: string;
   turnId: string;
   callId: string;
-  namespace?: 'zeus_browser' | 'zeus_computer';
+  namespace?: 'zeus_browser' | 'zeus_computer' | 'zeus_work';
   tool: string;
   arguments: Record<string, unknown>;
+  /** 调度端指定的调用截止时间，跨进程传递，不接受模型参数延长。 */
+  deadlineUnixMs?: number;
 }
 
 export type BrowserAutomationContentItem = { type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string };

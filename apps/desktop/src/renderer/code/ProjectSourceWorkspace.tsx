@@ -1,3 +1,5 @@
+import { FilePreview } from './FilePreview.js';
+import type { FilePreviewRequest } from '@zeus/shared';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
@@ -25,7 +27,7 @@ const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ defa
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
 
-function SourceChanges(props: { projectId: string; zh: boolean; onConflict(path: string): void; onOpen(path: string, diff: GitDiffSummary, staged: boolean): void }) {
+function SourceChanges(props: { projectId: string; zh: boolean; onConflict(path: string): void; onOpen(path: string, diff: GitDiffSummary, staged: boolean, repositoryId: string, repositoryPath: string): void }) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -100,6 +102,8 @@ function SourceChanges(props: { projectId: string; zh: boolean; onConflict(path:
                         [repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'),
                         { ...source, fileDiffs: source.fileDiffs.filter((entry) => entry.newPath === file.path || entry.oldPath === file.path), files: [file.path] },
                         staged,
+                        repository.id,
+                        file.path,
                       );
                     }}
                   >
@@ -167,7 +171,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
-  const [changePreview, setChangePreview] = useState<{ projectId: string; path: string; diff: GitDiffSummary; staged: boolean } | null>(null);
+  const [changePreview, setChangePreview] = useState<{ projectId: string; path: string; diff: GitDiffSummary; staged: boolean; request: FilePreviewRequest } | null>(null);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
   const [sourceShare, setSourceShare] = useState(55);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
@@ -179,7 +183,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [loadingTree, setLoadingTree] = useState(true);
   const [busyPath, setBusyPath] = useState<string | null>(null);
   /** 只记录解码失败的内容版本；图片在磁盘更新后可自动重新预览。 */
-  const [failedImageRevision, setFailedImageRevision] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
@@ -665,8 +668,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       ) : null}
 
       {conflictComparison ? (
-        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)}>
-          <section className="project-source-conflict-comparison" role="dialog" aria-modal="true" aria-label={zh ? '比较变更' : 'Compare changes'}>
+        <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)} role="dialog" aria-label={zh ? '比较变更' : 'Compare changes'}>
+          <section className="project-source-conflict-comparison" data-modal-surface="dialog">
             <header>
               <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
               <button type="button" onClick={() => setConflictComparison(null)}>
@@ -750,7 +753,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               setSourceShare((value) => (event.key === 'Home' ? 55 : Math.max(15, Math.min(85, value + (event.key === 'ArrowUp' ? -5 : 5)))));
             }}
           />
-          <SourceChanges projectId={props.project.id} zh={zh} onConflict={(path) => void openFile(path)} onOpen={(path, diff, staged) => setChangePreview({ projectId: props.project.id, path, diff, staged })} />
+          <SourceChanges
+            projectId={props.project.id}
+            zh={zh}
+            onConflict={(path) => void openFile(path)}
+            onOpen={(path, diff, staged, repositoryId, repositoryPath) =>
+              setChangePreview({ projectId: props.project.id, path, diff, staged, request: { kind: 'project-git', projectId: props.project.id, repositoryId, path: repositoryPath, stage: staged ? 'staged' : 'unstaged' } })
+            }
+          />
         </aside>
         <div
           className="project-source-tree-resizer"
@@ -814,11 +824,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   {zh ? '关闭对比' : 'Close diff'}
                 </button>
               </header>
-              {changePreview.diff.fileDiffs.length ? (
-                <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
-              ) : (
-                <p>{zh ? '当前快照没有此文件的文本差异，请刷新更改；二进制文件不支持文本对比。' : 'No text diff in this snapshot. Refresh changes; binary files cannot be compared as text.'}</p>
-              )}
+              <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
             </section>
           ) : activeTab ? (
             <>
@@ -827,30 +833,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <span key={`${part}-${index}`}>{part}</span>
                 ))}
               </nav>
-              {activeTab.document.imagePreviewUrl && failedImageRevision !== activeTab.document.revision.sha256 ? (
-                <section className="project-source-image-preview" aria-label={zh ? '图片预览' : 'Image preview'}>
-                  <img
-                    key={`${activeTab.document.relativePath}:${activeTab.document.revision.sha256}`}
-                    src={activeTab.document.imagePreviewUrl}
-                    alt={activeTab.document.name}
-                    decoding="async"
-                    onError={() => setFailedImageRevision(activeTab.document.revision.sha256)}
-                  />
-                </section>
-              ) : !activeTab.document.editable ? (
-                <section className="project-source-readonly" aria-label={zh ? '文件不可编辑' : 'File is read-only'}>
-                  <strong>{activeTab.document.imagePreviewUrl ? (zh ? '无法预览此图片' : 'Unable to preview this image') : zh ? '此文件只能查看或在外部应用中打开' : 'This file is view-only in Zeus'}</strong>
-                  <p>{activeTab.document.imagePreviewUrl ? (zh ? '图片可能已损坏，或当前格式无法解码。' : 'The image may be damaged or cannot be decoded.') : readOnlyReason(activeTab.document, zh)}</p>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      if (bridge?.openProjectSourceExternally) void bridge.openProjectSourceExternally({ projectId: props.project.id, relativePath: activeTab.document.relativePath }).catch(setError);
-                      else props.onOpenExternal?.(activeTab.document.relativePath);
-                    }}
-                  >
-                    {zh ? '在外部应用中打开' : 'Open externally'}
-                  </Button>
-                </section>
+              {!activeTab.document.editable ? (
+                <FilePreview request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }} revision={activeTab.document.revision.sha256} zh={zh} />
               ) : (
                 <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
                   <CodeEditor
@@ -951,15 +935,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       <MotionPresence>
         {operation ? (
-          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)}>
+          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)} role="dialog">
             <form
               className="project-source-operation-modal zeus-solid-form-surface"
-              role="dialog"
-              aria-modal="true"
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitOperation();
               }}
+              data-modal-surface="dialog"
             >
               <header>
                 <strong>{operationTitle(operation, zh)}</strong>
@@ -1000,8 +983,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       <MotionPresence>
         {pendingClosePath ? (
-          <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setPendingClosePath(null)} dismissDisabled={Boolean(busyPath)}>
-            <section className="project-source-operation-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-source-close-title">
+          <ModalPortal
+            rootClassName="project-source-modal-root"
+            backdropClassName="project-source-modal-backdrop"
+            onDismiss={() => setPendingClosePath(null)}
+            dismissDisabled={Boolean(busyPath)}
+            role="dialog"
+            aria-labelledby="project-source-close-title"
+          >
+            <section className="project-source-operation-modal zeus-solid-form-surface" data-modal-surface="dialog">
               <header>
                 <strong id="project-source-close-title">{zh ? '文件尚未保存' : 'File is not saved'}</strong>
               </header>
@@ -1166,17 +1156,4 @@ function operationTitle(operation: NonNullable<FileOperation>, zh: boolean): str
     ? { 'create-file': '新建文件', 'create-directory': '新建目录', rename: '重命名', move: '移动文件或目录', delete: '确认移入废纸篓', 'save-as': '另存为' }
     : { 'create-file': 'New file', 'create-directory': 'New folder', rename: 'Rename', move: 'Move file or folder', delete: 'Move to Trash', 'save-as': 'Save as' };
   return titles[operation.kind];
-}
-
-function readOnlyReason(document: ProjectSourceDocument, zh: boolean): string {
-  const reasons = zh
-    ? { binary: '检测到二进制内容。', invalid_encoding: '文件不是有效的 UTF-8 文本。', too_large: '文件超过页内读取上限，请在外部应用中打开。', symlink: '符号链接文件在 Zeus 中保持只读。', not_regular_file: '目标不是普通文件。' }
-    : {
-        binary: 'Binary content was detected.',
-        invalid_encoding: 'The file is not valid UTF-8 text.',
-        too_large: 'The file exceeds the inline viewing limit. Open it externally.',
-        symlink: 'Symlink files remain read-only in Zeus.',
-        not_regular_file: 'The target is not a regular file.',
-      };
-  return document.readOnlyReason ? reasons[document.readOnlyReason] : zh ? '文件不可编辑。' : 'The file is not editable.';
 }

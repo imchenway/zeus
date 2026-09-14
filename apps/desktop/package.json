@@ -1,6 +1,6 @@
 {
   "name": "@zeus/desktop",
-  "version": "0.3.123",
+  "version": "0.3.124",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
@@ -15,6 +15,8 @@
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
+    "ag-grid-community": "36.1.0",
+    "ag-grid-react": "36.1.0",
     "markstream-react": "2.0.6",
     "qrcode": "1.5.4"
   },

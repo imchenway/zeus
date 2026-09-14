@@ -7,6 +7,8 @@ import { useMotionPresence } from '../ui/useMotionPresence.js';
 export interface TranscriptNavigationEntry extends ConversationNavigationEntry {
   /** 与虚拟列表共享的稳定身份。 */
   rowKey: string;
+  /** 折叠过程内的卡片由父行参与虚拟列表定位。 */
+  parentRowKey?: string;
   /** 真实用户消息是否已经进入正文投影。 */
   loaded: boolean;
 }
@@ -30,7 +32,12 @@ export function mergeNavigationEntries(history: readonly ConversationNavigationE
       .map((identity) => byIdentity.get(identity))
       .find(Boolean);
     for (const identity of [...navigationIdentities(entry), ...(current ? navigationIdentities(current) : [])]) matched.add(identity);
-    return { ...entry, rowKey: navigationRowKey(entry), loaded: Boolean(current), ...(current ? { prompt: current.prompt || entry.prompt, response: current.response || entry.response, status: current.status } : {}) };
+    return {
+      ...entry,
+      rowKey: navigationRowKey(entry),
+      loaded: Boolean(current),
+      ...(current ? { prompt: current.prompt || entry.prompt, response: current.response || entry.response, status: current.status, parentRowKey: current.parentRowKey } : {}),
+    };
   });
   for (const entry of live) {
     if (navigationIdentities(entry).some((identity) => matched.has(identity))) continue;
@@ -68,6 +75,7 @@ export function useConversationNavigation(input: { scopeKey: string | null; refr
             !entry ||
             typeof entry.id !== 'string' ||
             !entry.id ||
+            (entry.requestId !== undefined && (typeof entry.requestId !== 'string' || !entry.requestId)) ||
             typeof entry.turnId !== 'string' ||
             !entry.turnId ||
             typeof entry.prompt !== 'string' ||
@@ -250,7 +258,7 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
           data-navigation-row-key={entry.rowKey}
           data-preview={heldKey === entry.rowKey || undefined}
           aria-current={props.activeRowKey === entry.rowKey ? 'true' : undefined}
-          aria-label={`${zh ? '跳到发言：' : 'Jump to message: '}${entry.prompt}`}
+          aria-label={`${zh ? '跳到：' : 'Jump to: '}${entry.prompt}`}
           tabIndex={entry.rowKey === (props.activeRowKey ?? props.entries[0]?.rowKey) ? 0 : -1}
           onPointerEnter={() => show(entry.rowKey)}
           onFocus={(event) => {
@@ -276,7 +284,7 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
       <nav
         ref={railRef}
         className="session-navigation-rail"
-        aria-label={zh ? '全部用户发言' : 'All user messages'}
+        aria-label={zh ? '会话导航' : 'Conversation navigation'}
         onPointerEnter={() => {
           cancelClose();
           setCardHovered(false);

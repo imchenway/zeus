@@ -340,7 +340,7 @@ export async function readExecutionHostLockObservation(userDataPath: string): Pr
  * JSON lock 只承担可诊断身份；即使路径被删除或替换，也不能释放这个租约。进程崩溃时 SQLite/OS
  * 会自动释放锁，因此不需要任何存在 TOCTOU 风险的“判断陈旧后 unlink”流程。
  */
-export function acquireExecutionHostKernelLease(userDataPath: string, dataRootIdentity: ZeusDataRootHostIdentity): ExecutionHostKernelLease {
+export function acquireExecutionHostKernelLease(userDataPath: string, dataRootIdentity: ZeusDataRootHostIdentity, purpose: 'host' | 'probe' = 'host'): ExecutionHostKernelLease {
   verifyZeusDataRootHostIdentity({ rootPath: userDataPath, expected: dataRootIdentity });
   const directory = executionHostDirectory(userDataPath);
   if (existsSync(directory)) assertSecureLeasePath(directory, 'directory');
@@ -355,7 +355,9 @@ export function acquireExecutionHostKernelLease(userDataPath: string, dataRootId
   try {
     chmodSync(path, 0o600);
     assertSecureLeasePath(path, 'file');
-    database.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
+    // 状态探针会短暂持锁；真正启动者允许其释放，探针自身仍须立即返回。
+    // 已运行宿主持续持有内核锁，等待超时后仍拒绝第二个宿主，绝不抢占。
+    database.exec(`PRAGMA busy_timeout = ${purpose === 'host' ? 1000 : 0}; BEGIN EXCLUSIVE`);
     acquired = true;
     const state: InternalExecutionHostKernelLease[typeof executionHostKernelLeaseCapability] = {
       active: true,
@@ -390,7 +392,7 @@ export function acquireExecutionHostKernelLease(userDataPath: string, dataRootId
 /** 只探测内核租约，不读取或修改业务数据库，也不删除任何发现文件。 */
 export function inspectExecutionHostKernelLease(userDataPath: string, dataRootIdentity: ZeusDataRootHostIdentity): ExecutionHostKernelLeaseState {
   try {
-    const lease = acquireExecutionHostKernelLease(userDataPath, dataRootIdentity);
+    const lease = acquireExecutionHostKernelLease(userDataPath, dataRootIdentity, 'probe');
     lease.close();
     return 'available';
   } catch (error) {

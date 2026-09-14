@@ -9,7 +9,8 @@ export interface SourceLocation {
 export interface OpenSourceLocationOptions {
   projectRoot: string;
   source: SourceLocation;
-  fileExists: (filePath: string) => Promise<boolean>;
+  /** 检查可访问性，保留系统错误以区分文件缺失和权限不足。 */
+  checkAccess: (filePath: string) => Promise<void>;
   openPath: (filePath: string) => Promise<string>;
 }
 
@@ -28,8 +29,12 @@ export async function openSourceLocation(options: OpenSourceLocationOptions): Pr
   if (relativePath.startsWith('..') || relativePath === '' || relativePath.includes('\0')) {
     throw new Error('源码必须位于项目根目录内。');
   }
-  if (!(await options.fileExists(filePath))) {
-    throw new Error('源码文件不存在。');
+  try {
+    await options.checkAccess(filePath);
+  } catch (error) {
+    // 只有路径不存在才报告文件缺失，其余错误保留真实原因。
+    if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) throw new Error('源码文件不存在。');
+    throw error;
   }
   const openError = await options.openPath(filePath);
   if (openError) {

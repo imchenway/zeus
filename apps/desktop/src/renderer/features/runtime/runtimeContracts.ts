@@ -14,6 +14,8 @@ export interface RuntimeSettings {
   adapterDefaultArgs: Partial<Record<AiRuntimeAdapterDescriptor['id'], string[]>>;
   adapterCliPaths: Partial<Record<AiRuntimeAdapterDescriptor['id'], string>>;
   terminalEnv: Record<string, string>;
+  /** 每个新交互终端输入一次，空字符串表示不执行。 */
+  terminalStartupCommand: string;
   shell: {
     path: string | null;
     login: boolean;
@@ -60,6 +62,8 @@ export interface RuntimeStatusSnapshot {
   terminal?: {
     provider: 'node-pty' | 'child_process';
     pty: { available: boolean; reason: string };
+    /** 服务端按当前设置及系统账户解析的交互 shell。 */
+    shell?: { command: string; args: string[] };
   };
 }
 

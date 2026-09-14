@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
-import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
+import { asyncMessageQuestions, conversationQuestionNavigationExcerpt, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
-import type { NativeGoalSnapshot } from '../src/renderer/session/sessionTypes.js';
+import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
+import { ConnectedSessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
+import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
@@ -515,6 +517,32 @@ function MessageLayoutQa() {
     if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
     setLinkResult('运行检查通过：历史链接和实时链接均可点击，未登记及同名不同网址的链接不可打开');
   }
+  /** 手动检查真实批注入口在布局通知后仍可点击，选区取消后正常关闭。 */
+  async function checkSelectionToolbar(): Promise<void> {
+    /** 使用当前预览的真实正文，不创建替代组件。 */
+    const paragraph = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown p');
+    /** 浏览器原生选区驱动生产入口。 */
+    const selection = window.getSelection();
+    if (!paragraph || !selection) throw new Error('批注检查失败：正文尚未就绪');
+    /** 等待选区事件与 React 提交完成，不改变生产帧调度。 */
+    const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    /** 选中首段，覆盖鼠标抬起后的入口生成。 */
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    await settle();
+    window.dispatchEvent(new Event('resize'));
+    paragraph.closest('.session-transcript')?.dispatchEvent(new Event('scroll'));
+    await settle();
+    if (!document.querySelector('.session-selection-toolbar:popover-open[data-motion-state="open"]:not([inert])')) throw new Error('批注检查失败：布局通知误关闭入口');
+    selection.removeAllRanges();
+    window.dispatchEvent(new Event('resize'));
+    await settle();
+    if (document.querySelector('.session-selection-toolbar[data-motion-state="open"]')) throw new Error('批注检查失败：取消选区后入口未关闭');
+    setLinkResult('运行检查通过：布局通知保留批注入口，取消选区后正常关闭');
+  }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
   function openResource(resource: ConversationResource): void {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
@@ -533,11 +561,41 @@ function MessageLayoutQa() {
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
     const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
     if (durations[0] && answer && !(durations[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error('耗时入口没有放在最终正文之前');
+    if (parameters.has('long-path')) {
+      /** 路径须完整保留在气泡内，技能与员工标签仍能恢复。 */
+      const message = contentRef.current?.querySelector('.session-user-message-content');
+      /** 仅检查真实消息组件产出的标签，不模拟识别结果。 */
+      const labels = [...(message?.querySelectorAll('.session-user-message-token') ?? [])].map((token) => token.textContent);
+      if (!message?.textContent?.includes('782491bde91c.jsonl') || labels.join('|') !== '/review|@审查员' || message.scrollWidth > message.clientWidth + 1) throw new Error('长路径正文、标签识别或气泡宽度检查失败');
+      /** 使用真实详情节点验证内部点击保留展开、外部点击收起，最后恢复原状态。 */
+      const details = contentRef.current?.querySelector<HTMLDetailsElement>('.session-runtime-details');
+      if (details) {
+        /** 检查结束后不改变用户正在查看的展开状态。 */
+        const wasOpen = details.open;
+        try {
+          details.open = true;
+          details.querySelector('.session-runtime-copy-button')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          if (!details.open) throw new Error('详情内部点击误触发收起');
+          details.parentElement?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          if (details.open) throw new Error('详情外部点击未收起');
+        } finally {
+          details.open = wasOpen;
+        }
+      }
+    }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
-    { type: 'userMessage', phase: 'user', text: '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。', payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {}, status: 'completed' },
+    {
+      type: 'userMessage',
+      phase: 'user',
+      text: parameters.has('long-path')
+        ? '这个会话走的是 Pi：\n/Users/david/.zeus/providers/pi/sessions/2026-09-14T02-59-37-786Z_zeus_e08878f3-7135-491a-81d3-782491bde91c.jsonl\n请用 /review 和 @审查员 检查。'
+        : '请检查浏览器中的会话布局。\n保留主智能体下发的完整指令。',
+      payload: subagent ? { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } } : {},
+      status: 'completed',
+    },
     ...(parameters.has('no-process')
       ? []
       : [
@@ -625,6 +683,7 @@ function MessageLayoutQa() {
           <Button onClick={checkLayout}>检查耗时入口</Button>
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
+          {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查批注入口</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
@@ -1799,6 +1858,27 @@ function NavigationQa() {
   const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
   /** 模拟先取得历史目录、随后模型确认编号的任务推送恢复。 */
   const taskHistory = parameters.has('task-history');
+  /** 同一目录混合普通发言、同步答题卡和异步答题卡。 */
+  const questionHistory = parameters.has('question-history');
+  /** 一张卡含两道题，核对聚合数量及预览答案。 */
+  const questionPayload = useMemo(
+    () => ({
+      questions: ['首批运行节点按哪一组落地？', '代码节点允许用户执行到什么程度？'].map((question, index) => ({
+        id: `question-${index}`,
+        header: '方案选择',
+        question,
+        isSecret: false,
+        isOther: true,
+        options: [
+          { label: '完整常见节点', description: '' },
+          { label: '受限 JavaScript', description: '' },
+        ],
+      })),
+    }),
+    [],
+  );
+  /** 规范答案沿用真实请求响应结构。 */
+  const questionResponse = useMemo(() => ({ answers: { 'question-0': { answers: ['完整常见节点'] }, 'question-1': { answers: ['受限 JavaScript'] } } }), []);
   /** 任务正文沿用发送时的布局快照，两条相同文字的独立发送仍分别保留。 */
   const taskLayout = useMemo(
     () =>
@@ -1850,8 +1930,11 @@ function NavigationQa() {
           : ['任务说明直接收起来了吗？', '请保留完整的任务说明。', '鼠标移出后应该回到原来的阅读位置。', '预览里只显示发言和答复。'][index % 4]!,
         response: '任务说明已保留，可以继续阅读完整内容。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。',
         status: 'completed',
+        ...(questionHistory && index > 0
+          ? { ...conversationQuestionNavigationExcerpt(questionPayload, questionResponse), ...(index % 2 ? { id: `request:request-${index}`, requestId: `request-${index}`, clientUserMessageId: null, providerItemId: null } : {}) }
+          : {}),
       })),
-    [count, taskHistory],
+    [count, taskHistory, questionHistory, questionPayload, questionResponse],
   );
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
@@ -1881,7 +1964,7 @@ function NavigationQa() {
       .flatMap((index) => {
         /** 超出当前目录的旧验收项不会进入新场景。 */
         const entry = entries[index];
-        if (!entry) return [];
+        if (!entry || entry.requestId) return [];
         return ['user', 'assistant'].map((role) => ({
           key: `${role}-${index}`,
           conversationId: 'qa-navigation',
@@ -1894,7 +1977,13 @@ function NavigationQa() {
           phase: role === 'user' ? 'user' : 'final_answer',
           status: 'completed',
           text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
-          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1), ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}) },
+          payload: {
+            v2Sequence: entry.sequence + (role === 'user' ? 0 : 1),
+            ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}),
+            ...(questionHistory && index > 0 && role === 'user'
+              ? { questionAnswer: { providerTurnId: entry.turnId, providerItemId: `question-source-${index}`, questions: questionPayload.questions, answers: questionResponse.answers } }
+              : {}),
+          },
           resources: [],
           updatedAt: entry.occurredAt,
         }));
@@ -1905,6 +1994,27 @@ function NavigationQa() {
       transportState: 'ready',
       conversationState: 'idle',
       transcriptRevision: revision,
+      pendingRequests: entries.flatMap((entry, index) =>
+        entry.requestId && loaded.has(index)
+          ? [
+              {
+                id: entry.requestId,
+                conversationId: 'qa-navigation',
+                turnId: entry.turnId,
+                itemId: null,
+                generationId: 'qa-generation',
+                type: 'userInput',
+                status: 'resolved',
+                payload: questionPayload,
+                response: questionResponse,
+                containsSecret: false,
+                expiresAt: null,
+                createdAt: entry.occurredAt,
+                resolvedAt: entry.occurredAt,
+              },
+            ]
+          : [],
+      ),
       items: Object.fromEntries(items.map((item) => [item.key, item])),
       itemOrder: items.map((item) => item.key),
       turnsByProviderId: Object.fromEntries(
@@ -1915,7 +2025,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, revision, count, taskHistory, taskLayout]);
+  }, [loaded, entries, revision, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse]);
 
   /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
   function recordFrames() {
@@ -2003,6 +2113,8 @@ function NavigationQa() {
           解除故障
         </Button>
         <Button onClick={recordFrames}>记录帧耗时</Button>
+        <a href="?navigation&count=1">单条发言</a>
+        <a href="?navigation&count=3&question-history">答题卡导航</a>
         <a href="?navigation&count=7">短历史</a>
         <a href="?navigation&count=1000">长历史</a>
         <a href="?navigation&count=8&directory-failure">目录故障</a>
@@ -2027,6 +2139,14 @@ function NavigationQa() {
                   renderedRows: rows?.length,
                   loadedTurns: loaded.size,
                   railHeight: surface.current?.querySelector('.session-navigation-rail')?.getBoundingClientRect().height,
+                  ...(questionHistory
+                    ? {
+                        questionHistoryCheck:
+                          ticks?.length === count && surface.current?.querySelectorAll('.session-answered-request').length === count - 1 && !surface.current?.querySelector('.session-navigation-placeholder')
+                            ? '通过'
+                            : '失败：卡片数量或定位异常',
+                      }
+                    : {}),
                   ...(taskHistory
                     ? {
                         taskHistoryCheck:
@@ -2083,6 +2203,7 @@ function GoalQa() {
   useEffect(() => {
     document.documentElement.dataset.zeusTheme = dark ? 'dark' : 'light';
   }, [dark]);
+  if (parameters.has('history')) return <GoalHistoryQa initialGoal={goal} />;
   return (
     <main className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'} qa-error-layout`}>
       <header className="qa-error-layout-heading">
@@ -2091,6 +2212,7 @@ function GoalQa() {
           <a href="?goal">宽屏</a>
           <a href="?goal&narrow">窄分栏</a>
           <a href="?goal&dark">深色</a>
+          <a href="?goal&history">历史会话操作</a>
         </nav>
       </header>
       <div style={{ width: parameters.has('narrow') ? 420 : '100%', maxWidth: '100%', margin: '40px auto', display: 'flex', flexDirection: 'column' }}>
@@ -2106,6 +2228,8 @@ function GoalQa() {
           goalAvailable
           goal={goal}
           onOpenGoal={() => setOpen(true)}
+          permissionMode="read-only"
+          collaborationMode="default"
         />
       </div>
       <GoalPanel
@@ -2134,6 +2258,156 @@ function GoalQa() {
         onResume={() => setGoal({ ...goal, status: 'active' })}
         onClear={() => setOpen(false)}
       />
+    </main>
+  );
+}
+
+/** 通过真实工作面和命令客户端复验历史目标操作；只替换传输边界，不连接真实 Provider。 */
+function GoalHistoryQa(props: { initialGoal: NativeGoalSnapshot }) {
+  /** 页面显示实际发出的目标命令，避免只改演示状态就判定成功。 */
+  const [commands, setCommands] = useState<string[]>([]);
+  /** 显示存活订阅，确认自动续跑的轮次间隔不会断开。 */
+  const [connections, setConnections] = useState(0);
+  /** 固定会话身份与传输响应，重绘不重建会话控制器。 */
+  const fixture = useMemo(() => {
+    /** 查询参数覆盖只读与服务端拒绝。 */
+    const parameters = new URLSearchParams(window.location.search);
+    /** 操作前保持受阻状态，直接覆盖用户截图中的入口。 */
+    let goal: NativeGoalSnapshot | null = { ...props.initialGoal, status: 'blocked' };
+    /** 演示会话提供完整权限和归属，真实工作面自行判断是否可继续。 */
+    const conversation: NativeConversationChoice = {
+      id: 'qa',
+      projectId: 'qa-project',
+      taskId: null,
+      title: '历史目标恢复检查',
+      summary: null,
+      status: 'ready',
+      stage: 'completed',
+      stageUpdatedAt: '2026-09-14T01:00:00Z',
+      transportKind: 'codex_native',
+      providerId: 'codex',
+      providerThreadId: 'qa',
+      providerModel: null,
+      providerState: 'idle',
+      createdAt: '2026-09-14T01:00:00Z',
+      updatedAt: '2026-09-14T01:00:00Z',
+      archived: parameters.has('archived'),
+      hasUnreadAttention: false,
+      attentionKind: 'none',
+      attentionRevision: 0,
+      attentionTurnId: null,
+      attentionUpdatedAt: null,
+      pendingRequestKind: null,
+      resumable: true,
+      readOnly: parameters.has('readonly'),
+      agent: { kind: 'codex', transport: 'app_server', supportStatus: 'verified', capabilitySnapshotId: null },
+    };
+    /** 会话首屏沿用生产协议，由真实适配器处理。 */
+    const readable: NativeConversationReadableSnapshot = {
+      snapshot: {
+        schemaVersion: 2,
+        structureGeneration: '2026-09-03-conversation-stage-identity',
+        conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+        throughEventSeq: 0,
+        eventStreamGeneration: null,
+        conversation: { ...conversation, titleRedacted: false, providerState: 'idle', providerSettings: null, nextTurnSettings: null, agentKind: 'codex' },
+        openSegment: null,
+        activeTurn: null,
+        recentClosedTurns: [],
+        sessionMetrics: null,
+        collections: { timeline: { throughSequence: 0 }, modelHistory: { throughSequence: 0 }, process: { throughSequence: 0 }, resources: { available: false } },
+        limits: { closedTurnLimit: 10, byteLimit: 10000, returnedTurnCount: 0, responseBytes: 0 },
+      },
+      history: {
+        schemaVersion: 2,
+        structureGeneration: '2026-09-03-conversation-stage-identity',
+        conversationId: 'qa',
+        kind: 'model_history',
+        throughEventSeq: 0,
+        throughSequence: 0,
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+        limits: { entryLimit: 10, byteLimit: 10000, returnedItems: 0, responseBytes: 0 },
+      },
+    };
+    /** 未覆盖的网络操作直接报错，防止演示页面隐式连接真实服务。 */
+    const unsupported = (): never => {
+      throw new Error('此验收场景不支持该操作');
+    };
+    /** 客户端仍构造真实命令信封，传输边界记录次数并返回目标快照。 */
+    const client = createConversationApiClient({
+      protocol: 'zeus-local-api-v1',
+      async request<T>(path: string, init?: RequestInit): Promise<T> {
+        /** 只模拟目标命令的接纳或拒绝，不替换工作面回调。 */
+        if (path.includes('/goal') && init?.method) {
+          /** 校验点击确实经过命令客户端并形成可送达请求。 */
+          const body = JSON.parse(String(init.body));
+          if (body.command?.scope?.id !== 'qa' || !body.command?.idempotencyKey) throw new Error('目标命令身份缺失');
+          setCommands((current) => [...current, body.command.commandType]);
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          if (parameters.has('reject')) throw new Error('演示：继续执行失败，请稍后重试');
+          if (init.method === 'DELETE') goal = null;
+          else if (goal) goal = { ...goal, status: path.endsWith('/pause') ? 'paused' : path.endsWith('/resume') ? 'active' : goal.status, objective: body.input.objective ?? goal.objective };
+        }
+        /** 每次刷新回读同一份目标状态。 */
+        const response = path.includes('/goal')
+          ? { goal, timeline: [], capability: { supported: true, enabled: true, stage: 'stable', reason: 'available' } }
+          : path.endsWith('/readable-snapshot')
+            ? readable
+            : path.endsWith('/choice')
+              ? conversation
+              : path.endsWith('/queue-state')
+                ? { state: { type: 'idle' }, submissions: [] }
+                : path.endsWith('/pending-requests')
+                  ? { conversationId: 'qa', requests: [], planImplementationRequests: [] }
+                  : path.endsWith('/navigation')
+                    ? { conversationId: 'qa', throughEventSeq: 0, entries: [] }
+                    : path.includes('/events')
+                      ? {
+                          conversationId: 'qa',
+                          conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+                          events: [],
+                          baseSequence: null,
+                          throughEventSeq: 0,
+                          nextCursor: 0,
+                          hasMore: false,
+                          requestedBeforeBaseline: false,
+                          syncStreamGeneration: 'zeus-conversation-sync-v2',
+                        }
+                      : unsupported();
+        return response as T;
+      },
+      requestBlob: unsupported,
+      requestStream: unsupported,
+      connectEvents: () => {
+        setConnections((current) => current + 1);
+        /** 每个连接只计一次关闭，便于检查重连和释放。 */
+        let closed = false;
+        /** 空闲演示连接仅供控制器订阅生命周期，不产生模型事件。 */
+        const socket = Object.assign(new EventTarget(), {
+          readyState: WebSocket.OPEN,
+          close() {
+            if (closed) return;
+            closed = true;
+            setConnections((current) => current - 1);
+          },
+        });
+        return socket as WebSocket;
+      },
+    });
+    return { client, conversation };
+  }, [props.initialGoal]);
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 theme-light" style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div role="status" style={{ padding: '8px 16px', fontSize: 12 }}>
+        实际目标请求：{commands.length} {commands.join(' → ')}；实时订阅：{connections}
+      </div>
+      <nav aria-label="目标验收场景" style={{ padding: '0 16px 8px', fontSize: 12 }}>
+        <a href="?goal&history">历史会话</a> <a href="?goal&history&readonly">只读</a> <a href="?goal&history&archived">归档</a> <a href="?goal&history&reject">请求失败</a> <a href="?goal">样式</a>
+      </nav>
+      <ConnectedSessionWorkspace language="zh-CN" client={fixture.client} conversation={fixture.conversation} task={null} owner={{ kind: 'project', projectId: 'qa-project', projectName: '目标验收' }} historyOnly />
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }

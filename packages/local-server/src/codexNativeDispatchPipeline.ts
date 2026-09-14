@@ -1,3 +1,4 @@
+import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { ensureInitialCodexGoal } from './codexGoalApplication.js';
@@ -38,6 +39,8 @@ interface NativeConversationDispatchLease {
   submissionId: string;
   lifecycles: Set<NativeProviderWriteLifecycle>;
   rpcStartedResourceId: string | null;
+  /** 创建线程不等于写出消息；只在内容写入开始时结束准备保护。 */
+  contentWriteStarted: boolean;
   promise?: Promise<NativeAcceptedOperation>;
 }
 
@@ -168,6 +171,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       submissionId: submission.id,
       lifecycles: new Set(),
       rpcStartedResourceId: null,
+      contentWriteStarted: false,
     };
     attachDispatchLifecycle(lease, providerWriteLifecycle);
     const promise = dispatchSubmissionWithLease(conversationInput, submission, lease, providerArchiveRecoveryAttempted, segmentLifecycle).finally(() => {
@@ -409,7 +413,18 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           providerGenerationId: commandProviderGenerationId,
         });
       }
-      const providerInput = submissionProviderInput(submission, context);
+      const skillCatalog = (await options.loadSkills?.(context.projectLocalPath, submission.id)) ?? [];
+      const providerInput = submissionProviderInput(submission, context).map((item) => {
+        if (item.type !== 'skill') return item;
+        const selected = readNativeSubmissionSkills(submission).find((skill) => skill.path === item.path && skill.name === item.name);
+        const frozen = skillCatalog.find((skill) => skill.id === selected?.id);
+        return frozen ? { ...item, path: frozen.path } : item;
+      });
+      if (skillCatalog.length)
+        providerInput.push({
+          type: 'text',
+          text: `本轮普通 Skill 已冻结；自动选择和显式选择均读取以下路径，参考文件和脚本相对于同一目录解析：\n${JSON.stringify(skillCatalog.map(({ id, name, description, path }) => ({ id, name, description, path })))}`,
+        });
       const pluginPromptContext = await options.plugins?.beforeUserPrompt({
         conversationId: conversation.id,
         prompt: providerInput,
@@ -454,20 +469,48 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         },
         pluginPromptContext,
         responsesRuntime,
-        beforePortableProviderWrite: () => markDispatchRpcStarted(lease, submission.id),
+        beforePortableProviderWrite: () => {
+          lease.contentWriteStarted = true;
+          markDispatchRpcStarted(lease, submission.id);
+        },
         now,
       });
       assertSubmissionDispatchable(submission.id);
       const compiledDispatchContext = preparedContext.compiled;
       const pluginCompactContext = preparedContext.pluginCompactContext;
       if (compiledDispatchContext) assertCallerDoesNotOverrideCompiledContext(context.additionalContext);
-      const initialGoalObjective = submissionGoalObjective(submission);
+      const goalControl = options.goalControls?.getGoalControl(conversation.id);
+      const transferredGoal = goalControl?.source === 'handoff' ? options.goals.get(conversation.id) : undefined;
+      const initialGoalObjective = submissionGoalObjective(submission) ?? transferredGoal?.objective;
+      const remainingBudget = transferredGoal?.tokenBudget === null || transferredGoal === undefined ? undefined : Math.max(0, transferredGoal.tokenBudget - transferredGoal.tokensUsed);
+      // 原生接口只接受正预算；零余额使用暂停状态，真实总预算仍由 Zeus 账本保存。
+      const nativeTokenBudget = remainingBudget === 0 ? null : (remainingBudget ?? null);
+      const initialGoalStatus =
+        transferredGoal?.tokenBudget !== null && transferredGoal && !goalControl?.usageComplete
+          ? 'usageLimited'
+          : remainingBudget === 0
+            ? 'budgetLimited'
+            : transferredGoal && !goalControl?.resumeAfterSwitch
+              ? transferredGoal.status
+              : 'active';
+      if (transferredGoal && goalControl) {
+        options.goalControls?.setGoalControl({
+          ...goalControl,
+          nativeSessionId: providerThreadId,
+          nativeTokensOffset: transferredGoal.tokensUsed,
+          nativeTimeOffset: transferredGoal.timeUsedSeconds,
+          totalTokenBudget: transferredGoal.tokenBudget,
+        });
+        await persist();
+      }
       if (initialGoalObjective) {
         const goalConversationId = conversation.id;
         await ensureInitialCodexGoal({
           conversationId: goalConversationId,
           providerThreadId,
           objective: initialGoalObjective,
+          status: initialGoalStatus,
+          ...(transferredGoal ? { tokenBudget: nativeTokenBudget } : {}),
           goals: options.goals,
           manager: options.manager,
           markProviderWriteStarted: () => markDispatchRpcStarted(lease, submission.id),
@@ -477,13 +520,17 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
               conversationId: goalConversationId,
               threadId: providerThreadId,
               commandKey: `initial-goal:${submission.id}`,
-              requestIdentity: { objective, status: 'active' },
+              requestIdentity: { objective, status: initialGoalStatus, tokenBudget: nativeTokenBudget },
               invoke,
               recoverAccepted,
             }),
           project: (goal) => projectGoal(goalConversationId, goal, null, now()),
           persist,
         });
+        if (goalControl?.source === 'handoff') {
+          options.goalControls?.setGoalControl({ ...(options.goalControls.getGoalControl(conversation.id) ?? goalControl), source: 'codex', nativeSessionId: providerThreadId, resumeAfterSwitch: false });
+          await persist();
+        }
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       assertSubmissionDispatchable(submission.id);
@@ -497,6 +544,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           occurredAt: now(),
         });
       providerWriteStarted = true;
+      lease.contentWriteStarted = true;
       markDispatchRpcStarted(lease, submission.id);
       const turn = await options.manager.startTurn({
         threadId: providerThreadId,
@@ -767,9 +815,9 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
   }
 
   /** 只认本宿主仍持有且尚未写出的派发，重启遗留状态不能充当活跃发送。 */
-  function isPreparingDispatch(conversationId: string): boolean {
+  function isPreparingDispatch(conversationId: string, submissionId?: string): boolean {
     const lease = dispatchLeases.get(conversationId);
-    if (!lease || lease.rpcStartedResourceId || isClosed()) return false;
+    if (!lease || lease.contentWriteStarted || isClosed() || (submissionId !== undefined && lease.submissionId !== submissionId)) return false;
     const submission = options.submissions.getById(lease.submissionId);
     return submission?.status === 'dispatching' && !submission.providerTurnId;
   }

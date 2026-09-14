@@ -1,10 +1,10 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import type { CodexThreadListInput, CodexThreadSnapshot, CodexThreadsPage, CodexTransportState } from '@zeus/ai-runtime';
-import type { ConversationProviderItemRepository, ConversationRepository, ZeusConversationRecord } from '@zeus/storage';
+import { readCodexTurnItems, type CodexAppServerManager, type CodexThreadListInput, type CodexThreadSnapshot, type CodexThreadsPage, type CodexTransportState } from '@zeus/ai-runtime';
+import type { ConversationProviderItemRepository, ConversationRepository, ConversationRuntimeRepository, ConversationTurnRepository, ConversationExecutionRepository, ZeusConversationRecord } from '@zeus/storage';
 import { readSubagentInputMessage, type CodexSubagentRuntimeReadPort, type SubagentInputMessage, type SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 
-export interface CodexSubagentProviderReadPort {
+export interface CodexSubagentProviderReadPort extends Pick<CodexAppServerManager, 'listThreadTurns' | 'listThreadItems'> {
   /** 只观察既有 transport；查询路径禁止调用 ensureReady。 */
   getState(): CodexTransportState;
   /** 只读取 Provider 已有线程状态，不得创建/恢复线程。 */
@@ -17,6 +17,13 @@ interface CodexSubagentQueryPorts {
   providerItems: Pick<ConversationProviderItemRepository, 'listByConversation'>;
   provider: CodexSubagentProviderReadPort;
   runtime: CodexSubagentRuntimeReadPort;
+  /** Zeus 持久子会话与原生子线程共同投影到现有面板。 */
+  owned?: {
+    relations: ConversationRuntimeRepository;
+    turns: ConversationTurnRepository;
+    execution: ConversationExecutionRepository;
+    list(conversationId: string): ConversationSubagentSummary[];
+  };
   now(): Date;
 }
 
@@ -35,19 +42,48 @@ export class CodexSubagentQueryApplication {
   constructor(private readonly ports: CodexSubagentQueryPorts) {}
 
   async list(projectId: string, conversationId: string): Promise<ConversationSubagentsSnapshot> {
-    return this.load(this.requireCodexConversation(projectId, conversationId));
+    const conversation = this.ports.conversations.getById(conversationId);
+    if (!conversation || conversation.projectId !== projectId) throw queryError('ZEUS_CONVERSATION_NOT_FOUND', '会话不存在。', 404);
+    const owned = this.ports.owned?.list(conversation.id) ?? [];
+    if (conversation.agentKind === 'pi') return { conversationId, parentThreadId: conversation.id, items: owned };
+    const native = await this.load(this.requireCodexConversation(projectId, conversationId));
+    return { ...native, items: [...native.items, ...owned] };
   }
 
   async read(projectId: string, conversationId: string, threadId: string): Promise<ConversationSubagentThreadSnapshot> {
+    const parent = this.ports.conversations.getById(conversationId);
+    if (!parent || parent.projectId !== projectId) throw queryError('ZEUS_CONVERSATION_NOT_FOUND', '会话不存在。', 404);
+    const owned = this.ports.owned?.list(conversationId).find((item) => item.id === threadId);
+    if (owned) return this.readOwned(parent, owned);
     const conversation = this.requireCodexConversation(projectId, conversationId);
     const activity = this.readActivity(conversation.id);
     const snapshot = await this.load(conversation, activity);
     const agent = snapshot.items.find((item) => item.id === threadId);
     if (!agent) throw queryError('ZEUS_CODEX_SUBAGENT_NOT_FOUND', 'Subagent thread not found.', 404);
     this.assertProviderReady();
-    const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: true });
+    const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: false });
     if (thread.id !== agent.id) throw queryError('ZEUS_CODEX_SUBAGENT_IDENTITY_MISMATCH', '返回的子线程身份与请求不一致。', 409);
+    /** 先读取轮次元信息，继承的父线程正文不进入详情读取。 */
+    const metadata: Record<string, unknown>[] = [];
+    /** 原生游标只用于当前线程，重复时中止读取。 */
+    const seenCursors = new Set<string>();
+    /** 保留升序分页，使原有首轮指令和所属边界判断保持稳定。 */
+    let cursor: string | null = null;
+    do {
+      /** 沿用历史恢复的 2,000 轮预算，超出时明确失败，不截断为完整详情。 */
+      const page = await this.ports.provider.listThreadTurns({ threadId: agent.id, cursor, limit: 100, sortDirection: 'asc', itemsView: 'notLoaded' });
+      metadata.push(...page.data);
+      cursor = page.nextCursor;
+      if (cursor) {
+        if (seenCursors.has(cursor) || metadata.length >= 2_000) throw queryError('ZEUS_NATIVE_SYNC_CURSOR_INVALID', '子线程历史未能在分页预算内完整读取。', 409);
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+    thread.turns = metadata;
     const history = ownedThreadHistory(thread);
+    for (const turn of history.turns) {
+      turn.items = await readCodexTurnItems(this.ports.provider, { threadId: agent.id, turnId: String(turn.id) });
+    }
     const { runtime, inputMessages } = await this.ports.runtime.read({ thread, ownedTurns: history.turns });
     /** 原生输入已存在时不再单独插入任务摘要；仅保留确实可读的首发指令缺口。 */
     const instruction = taskInstruction(thread, agent.id, activity);
@@ -79,6 +115,86 @@ export class CodexSubagentQueryApplication {
       historyBoundary: history.boundary,
       runtime,
       turns,
+    };
+  }
+
+  /** 子会话直接读取 Zeus 原记录，不启动 Provider 或按回复文字猜测状态。 */
+  private readOwned(parent: ZeusConversationRecord, agent: ConversationSubagentSummary): ConversationSubagentThreadSnapshot {
+    const ports = this.ports.owned!;
+    const child = this.ports.conversations.getById(agent.id)!;
+    const relation = ports.relations.getSubagent(agent.id)!;
+    const context = JSON.parse(relation.contextJson) as Record<string, unknown>;
+    const records = ports.turns.listByConversation(agent.id);
+    const items = this.ports.providerItems.listByConversation(agent.id);
+    const snapshot = ports.execution.snapshot(agent.id);
+    const unavailable = { state: 'unavailable' as const, reason: '此项没有可确认的子会话数据。' };
+    const fact = <T>(value: T | null | undefined): { state: 'available'; value: T } | typeof unavailable => (value === null || value === undefined ? unavailable : { state: 'available', value });
+    const latest = snapshot.executionSnapshots.at(-1);
+    const runtime: SubagentRuntimeDetails = {
+      model: fact(child.modelId),
+      effort: fact(latest?.effort),
+      serviceTier: fact(latest?.serviceTier),
+      usage: {
+        serviceTier: fact(latest?.serviceTier),
+        totalTokens: fact(snapshot.usage.conversationTotal.totalTokens),
+        inputTokens: fact(snapshot.usage.conversationTotal.inputTokens),
+        outputTokens: fact(snapshot.usage.conversationTotal.outputTokens),
+        reasoningOutputTokens: fact(snapshot.usage.conversationTotal.reasoningOutputTokens),
+        contextTokens: unavailable,
+        contextWindow: unavailable,
+        cacheHitRate: unavailable,
+        apiEquivalentUsd: unavailable,
+        priceCoverage: unavailable,
+        pricingCatalogDate: unavailable,
+        pricingSourceUrls: unavailable,
+        historyComplete: unavailable,
+      },
+      performance: { latestOutputTokensPerSecond: unavailable, latestFirstVisibleResponseMs: unavailable, cumulativeProcessedDurationMs: unavailable },
+      activity: {
+        turnCount: fact(records.length),
+        modelRequestCount: unavailable,
+        toolOrCommandCount: fact(snapshot.process.filter((item) => item.kind === 'tool' || item.kind === 'command').length),
+        retryCount: fact(snapshot.process.filter((item) => item.kind === 'retry').length),
+        failedTurnCount: fact(records.filter((turn) => turn.status === 'failed').length),
+      },
+      changeSummary: unavailable,
+      environment: { cwd: unavailable, branch: unavailable, nativeSessionId: fact(child.nativeSessionId), nativeSessionPath: fact(child.nativeSessionPath) },
+    };
+    return {
+      conversationId: parent.id,
+      parentThreadId: parent.id,
+      agent,
+      runtime,
+      taskInstruction: availablePrompt(String(context.instruction ?? ''), 'collaboration_prompt'),
+      inheritedContext: availablePrompt(JSON.stringify(context.history ?? []), 'collaboration_prompt'),
+      historyBoundary: { state: 'confirmed', createdAt: child.createdAt, ownedTurnCount: records.length, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
+      turns: records.map((turn) => ({
+        id: turn.providerTurnId ?? turn.id,
+        status: turn.status,
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        items: [
+          ...child.messages
+            .filter((message) => message.role === 'user' && message.providerTurnId === turn.providerTurnId)
+            .map((message) => subagentInputItem({ id: message.id, turnId: turn.providerTurnId ?? turn.id, sender: parent.id, fromParent: true, timestamp: message.createdAt, contentState: 'available', text: message.content })),
+          ...items
+            .filter((item) => item.turnId === turn.id)
+            .map((item) => ({
+              id: item.id,
+              turnId: turn.providerTurnId ?? turn.id,
+              providerItemId: item.providerItemId,
+              type: item.itemType,
+              status: item.status === 'failed' ? ('failed' as const) : item.status === 'completed' ? ('completed' as const) : ('in_progress' as const),
+              phase: item.phase === 'final_answer' ? ('final_answer' as const) : ('prework' as const),
+              text: item.textContent,
+              payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
+              resources: [] as never[],
+              startedAt: item.startedAt,
+              completedAt: item.completedAt,
+              updatedAt: item.updatedAt,
+            })),
+        ],
+      })),
     };
   }
 

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from './terminalOutput.js';
-import { buildTaskPushPrompt, type TaskPushPromptInput } from '@zeus/shared';
+import { buildTaskPushPrompt, isInteractiveShellSession, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
@@ -660,6 +660,13 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
 
   function appendProcessOutput(sessionId: string, stream: 'stdout' | 'stderr', value: unknown): void {
     if (closed) return;
+    const session = sessions.get(sessionId);
+    // 交互终端必须保留光标、颜色和其它控制码，供 xterm 正确渲染。
+    if (session && isInteractiveShellSession(session)) {
+      const text = value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value);
+      if (text) appendLog(sessionId, stream, text, text);
+      return;
+    }
     const terminalText = decodeProcessChunk(value);
     if (!terminalText) return;
     let pending = pendingProcessOutputs.get(sessionId);
@@ -680,7 +687,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     pending.timer.unref?.();
   }
 
-  /** 将同一渲染帧内的 PTY 小块合并，保留 stdout/stderr 顺序并降低 SQLite、SSE 与 xterm 压力。 */
+  /** 将同一渲染帧内的非交互进程小块合并，保留 stdout/stderr 顺序并降低 SQLite、SSE 压力。 */
   function flushProcessOutput(sessionId: string): void {
     const pending = pendingProcessOutputs.get(sessionId);
     if (!pending) return;
@@ -1221,6 +1228,7 @@ async function waitForRuntimeCompletions(completions: readonly Promise<void>[], 
   }
 }
 
+/** 没有 PTY 时仍保留标准输入通道，供同一个受管命令继续交互。 */
 function spawnWithNodeChildProcess(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
   const useProcessGroup = process.platform !== 'win32';
   const child = nodeSpawn(command, args, {
@@ -1237,8 +1245,16 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
       if (event === 'stderr') child.stderr?.on('data', callback);
       if (event === 'exit') child.on('exit', callback);
       if (event === 'close') child.on('close', callback);
-      if (event === 'error') child.on('error', callback);
+      if (event === 'error') {
+        child.on('error', callback);
+        child.stdin?.on('error', callback);
+      }
       return this;
+    },
+    /** 输入错误由同一 Runtime 错误通道记录，不重启原命令。 */
+    write(input) {
+      if (!child.stdin?.writable || child.stdin.destroyed) throw new Error('命令的输入通道已关闭。');
+      child.stdin.write(input);
     },
     kill(signal) {
       if (useProcessGroup && child.pid) {

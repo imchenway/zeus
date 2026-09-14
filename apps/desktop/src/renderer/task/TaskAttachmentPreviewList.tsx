@@ -1,5 +1,4 @@
-import { ModalPortal } from '../ui/ModalPortal.js';
-import { MotionPresence } from '../ui/MotionPresence.js';
+import { FilePreviewDialog } from '../code/FilePreview.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
@@ -142,11 +141,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
     setPreviewAttachment(attachment);
   }
 
-  function openFileAttachment(path: string): void {
-    if (props.disabled) return;
-    void props.onOpenAttachment?.(path);
-  }
-
   function closeAttachmentPreview(): void {
     setPreviewAttachment(null);
   }
@@ -190,8 +184,7 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         onActivate={(resource, trigger) => {
           const attachment = attachmentsByPath.get(resource.id);
           if (!attachment) return;
-          if (attachment.kind === 'image') openAttachmentPreview(attachment, trigger);
-          else openFileAttachment(attachment.path);
+          openAttachmentPreview(attachment, trigger);
         }}
       />
       {renderTaskAttachmentPreviewDialog({
@@ -224,50 +217,5 @@ function renderTaskAttachmentPreviewDialog(input: {
   markPreviewFailed: (path: string, failure?: TaskAttachmentPreviewFailure) => void;
   retryAttachmentPreview: (path: string) => void;
 }) {
-  return (
-    <MotionPresence>
-      {input.previewAttachment ? (
-        <ModalPortal rootClassName="image-preview-portal" onDismiss={input.closeAttachmentPreview}>
-          <div className="task-attachment-zoom-sheet" role="dialog" aria-modal="true" aria-labelledby={input.previewTitleId} aria-describedby={input.previewDescriptionId}>
-            <header className="task-attachment-zoom-header">
-              <span>
-                <strong id={input.previewTitleId}>{input.previewAttachment?.name ?? input.copy.openPreviewLabel}</strong>
-                <small id={input.previewDescriptionId}>{input.previewAttachment?.path ?? input.copy.localPathLabel}</small>
-              </span>
-              <button type="button" className="task-attachment-zoom-close" onClick={input.closeAttachmentPreview} aria-label={input.copy.closePreviewLabel}>
-                ×
-              </button>
-            </header>
-            <div className="task-attachment-zoom-stage">
-              {input.previewAttachment && !input.previewFailure && input.previewSrc ? (
-                <img className="task-attachment-zoom-image" src={input.previewSrc} alt={input.previewAttachment.name} onError={() => input.markPreviewFailed(input.previewAttachment!.path)} />
-              ) : input.previewAttachment && input.previewLoading ? (
-                <p className="task-attachment-zoom-state" role="status" aria-live="polite">
-                  <span className="task-attachment-preview-spinner" aria-hidden="true" />
-                  {input.copy.previewLoading}
-                </p>
-              ) : (
-                <div className="task-attachment-zoom-state">
-                  <p className="task-attachment-zoom-fallback" role="alert">
-                    {input.previewFailure === 'read_failed' ? input.copy.previewLoadFailed : input.copy.previewUnavailable}
-                  </p>
-                  {input.previewAttachment ? (
-                    <button type="button" className="task-attachment-preview-retry" onClick={() => input.retryAttachmentPreview(input.previewAttachment!.path)}>
-                      {input.copy.retryPreviewLabel}
-                    </button>
-                  ) : null}
-                </div>
-              )}
-            </div>
-            {input.previewAttachment ? (
-              <p className="task-attachment-zoom-path">
-                <strong>{input.copy.localPathLabel}</strong>
-                <span>{input.previewAttachment.path}</span>
-              </p>
-            ) : null}
-          </div>
-        </ModalPortal>
-      ) : null}
-    </MotionPresence>
-  );
+  return input.previewAttachment ? <FilePreviewDialog request={{ kind: 'attachment', localPath: input.previewAttachment.path }} zh={input.copy.imageLabel.toLowerCase() !== 'image'} onClose={input.closeAttachmentPreview} /> : null;
 }

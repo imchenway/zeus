@@ -615,6 +615,7 @@ function resolveConversationWorkspace(workspaces: TaskWorkspacesSnapshot | null,
   );
 }
 
+/** 审查以原目录是否保留为准，已交付工作区仍可读取。 */
 function resolveCodeReviewUnavailableReason(input: {
   zh: boolean;
   taskId: string | null | undefined;
@@ -629,7 +630,8 @@ function resolveCodeReviewUnavailableReason(input: {
     return input.zh ? '此对话没有任务开始时的代码记录。请从拥有独立工作目录的任务对话启动审查' : 'This conversation has no record of the code when the task started. Start the review from a task conversation with its own working folder';
   }
   if (input.workspaceState === 'idle' || input.workspaceState === 'loading') return input.zh ? '正在检查代码审查的工作目录…' : 'Checking the working folder for the code review…';
-  if (!input.workspace || input.workspace.state !== 'ready') return input.zh ? '此任务的工作目录不可用' : 'This task’s working folder is unavailable';
+  if (input.workspaceState === 'error') return input.zh ? '读取工作目录失败，请重新打开面板重试' : 'Failed to load the working folder. Reopen this panel to retry';
+  if (!input.workspace || !['ready', 'merged'].includes(input.workspace.state) || !input.workspace.worktreePath) return input.zh ? '此任务的工作目录已回收或不可用' : 'This task’s working folder has been reclaimed or is unavailable';
   return null;
 }
 

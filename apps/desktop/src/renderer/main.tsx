@@ -401,6 +401,7 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
           comparisonRef={parameters.get('comparisonRef') ?? undefined}
           comparisonMode={parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current'}
           language={appShellSettings.appLanguage}
+          appearance={appShellSettings.appearance}
         />
         <RendererBootstrapReady />
       </RendererErrorBoundary>
@@ -599,12 +600,13 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
     placeItems: 'center',
     padding: '32px',
     boxSizing: 'border-box',
-    background: '#f7f7f8',
-    color: '#202124',
+    // 迁移早于应用设置加载，颜色继承首屏的系统或明确主题。
+    background: 'light-dark(#f7f8fa, #17191d)',
+    color: 'light-dark(#202124, #ebedf0)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   const panel = document.createElement('section');
-  Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '1px solid #dedfe3', borderRadius: '18px', background: '#fff', boxSizing: 'border-box' });
+  Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '0', borderRadius: '18px', background: 'transparent', boxSizing: 'border-box' });
   const title = document.createElement('h1');
   const migrationFailed = status.phase === 'failed' || status.phase === 'promoted_but_validation_failed';
   if (migrationFailed) {
@@ -616,7 +618,7 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
   detail.textContent = zh ? '正在准备和检查你的对话记录。完成后会自动打开 Zeus，请保持应用开启。' : 'Preparing and checking your conversation history. Zeus will open automatically when ready. Keep the app open.';
-  Object.assign(detail.style, { margin: '0', color: '#5f6368', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  Object.assign(detail.style, { margin: '0', color: 'light-dark(#5f6368, #a7acb4)', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
   panel.append(title);
   panel.append(detail);
   shell.append(panel);

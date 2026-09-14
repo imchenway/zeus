@@ -192,8 +192,8 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   }
 
   return (
-    <ModalPortal rootClassName="session-code-review-portal-root" dismissDisabled={busy} onDismiss={close}>
-      <form className="session-code-review-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="session-code-review-title" onSubmit={(event) => void submit(event)}>
+    <ModalPortal rootClassName="session-code-review-portal-root" dismissDisabled={busy} onDismiss={close} role="dialog" aria-labelledby="session-code-review-title">
+      <form className="session-code-review-modal zeus-solid-form-surface" onSubmit={(event) => void submit(event)} data-modal-surface="dialog">
         <header>
           <span>
             <strong id="session-code-review-title">{zh ? '开始代码审查' : 'Start code review'}</strong>

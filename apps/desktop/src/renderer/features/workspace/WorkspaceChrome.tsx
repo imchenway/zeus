@@ -1,5 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { normalizeSidebarConversationFilters, sidebarConversationRunStatuses, type SidebarConversationFilters } from '@zeus/shared';
+import { normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -25,7 +25,6 @@ import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dis
 import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree, resolveConversationTreeRuntimeState, taskRunStatusFromConversationTreeState } from '../../session/ProjectConversationTree.js';
-import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
@@ -134,8 +133,16 @@ export function ProjectCreateDialog(props: {
   const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
 
   return (
-    <ModalPortal rootClassName="project-create-dialog-portal-root" backdropClassName="project-create-dialog-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
-      <form className="project-create-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="project-create-dialog-title" aria-describedby={describedBy} onSubmit={props.onSubmit}>
+    <ModalPortal
+      rootClassName="project-create-dialog-portal-root"
+      backdropClassName="project-create-dialog-backdrop"
+      dismissDisabled={interactionBusy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="project-create-dialog-title"
+      aria-describedby={describedBy}
+    >
+      <form className="project-create-dialog zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="project-create-dialog-header">
           <strong id="project-create-dialog-title">{props.copy.createDialogTitle}</strong>
           <button type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
@@ -220,19 +227,24 @@ export function ProjectRenameDialog(props: {
 
   const describedBy = props.error ? 'project-rename-dialog-help project-rename-error' : 'project-rename-dialog-help';
   const surface = (
-    <ModalPortal rootClassName="project-rename-dialog-portal-root" backdropClassName="project-rename-dialog-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+    <ModalPortal
+      rootClassName="project-rename-dialog-portal-root"
+      backdropClassName="project-rename-dialog-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="project-rename-dialog-title"
+      aria-describedby={describedBy}
+    >
       <form
         className="project-rename-dialog zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-rename-dialog-title"
-        aria-describedby={describedBy}
         onSubmit={props.onSubmit}
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || props.busy) return;
           event.stopPropagation();
           props.onClose();
         }}
+        data-modal-surface="dialog"
       >
         <header className="project-rename-dialog-header">
           <span>
@@ -294,8 +306,6 @@ export function ProjectWorkspaceModeToolbar(props: {
   const zh = props.language === 'zh-CN';
   /** 当前会话入口的固定名称不再随 Option 键切换。 */
   const conversationLabel = zh ? '当前会话' : 'Current conversation';
-  /** 未选中会话时解释入口不可用的原因。 */
-  const conversationTitle = props.currentConversationAvailable ? conversationLabel : zh ? '先从侧栏选择一段会话' : 'Select a conversation in the sidebar first';
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
@@ -357,19 +367,21 @@ export function ProjectWorkspaceModeToolbar(props: {
           );
         })}
       </nav>
-      <button
-        type="button"
-        className="project-workspace-current-conversation"
-        aria-label={conversationLabel}
-        aria-haspopup="dialog"
-        aria-expanded={props.currentConversationOpen}
-        title={conversationTitle}
-        disabled={!props.currentConversationAvailable}
-        onClick={props.onOpenCurrentConversation}
-      >
-        <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
-        <span>{conversationLabel}</span>
-      </button>
+      {/* 没有当前会话时不展示无效操作；选中会话后沿用同一个共享抽屉入口。 */}
+      {props.currentConversationAvailable ? (
+        <button
+          type="button"
+          className="project-workspace-current-conversation"
+          aria-label={conversationLabel}
+          aria-haspopup="dialog"
+          aria-expanded={props.currentConversationOpen}
+          title={conversationLabel}
+          onClick={props.onOpenCurrentConversation}
+        >
+          <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
+          <span>{conversationLabel}</span>
+        </button>
+      ) : null}
     </header>
   );
 }
@@ -653,7 +665,7 @@ export function SidebarNav(props: {
   /** 任务状态、会话运行状态与其他会话分区展示；清除选择不属于可选值。 */
   const statusFilterOptions = [
     ...Array.from(statusLabelsById, ([id, labels]) => ({ value: `status:${id}`, label: [...labels].join(' / '), group: copy.taskStatusFilterGroup })),
-    ...sidebarConversationRunStatuses.map((status) => ({ value: `run:${status}`, label: taskAgentRunStatusLabels[props.appLanguage][status], group: copy.conversationStatusFilterGroup })),
+    ...sidebarConversationRunStatusGroups.map(({ value }) => ({ value: `run:${value}`, label: copy.conversationRunStatusGroups[value], group: copy.conversationStatusFilterGroup })),
     { value: 'project', label: copy.projectConversationsOnly, group: copy.otherConversationFilterGroup },
   ];
   /** 忽略已删除的状态；未选择状态时显示全部会话。 */
@@ -664,9 +676,11 @@ export function SidebarNav(props: {
   const hasTaskStatusFilter = activeStatusFilters.some((value) => value === 'project' || value.startsWith('status:'));
   /** 运行状态独立多选，再与任务维度取交集。 */
   const activeRunStatusFilters = activeStatusFilters.filter((value) => value.startsWith('run:'));
-  /** 直接从当前权威投影派生筛选结果，状态更新无需额外同步。 */
+  /** 从当前权威投影派生所属分组，连接、等待等细分状态更新无需额外同步。 */
   function matchesConversationRunStatus(conversation: NativeConversationChoice): boolean {
-    return activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates))}`);
+    return (
+      activeRunStatusFilters.length === 0 || activeRunStatusFilters.includes(`run:${sidebarConversationRunStatusGroup(taskRunStatusFromConversationTreeState(resolveConversationTreeRuntimeState(conversation, props.conversationStates)))}`)
+    );
   }
   /** 状态筛选或同任务去重生效时，漏斗和空项目选项都反映当前筛选。 */
   const hasConversationFilter = hasStatusFilter || latestConversationOnly;
@@ -1362,6 +1376,8 @@ export function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): R
     adapterDefaultArgs: {},
     adapterCliPaths: {},
     terminalEnv: {},
+    /** 未设置时不向新终端发送命令。 */
+    terminalStartupCommand: '',
     shell: { path: null, login: false },
     executionTimeoutSeconds: 3600,
     logRetentionDays: 30,

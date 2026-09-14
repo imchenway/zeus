@@ -28,12 +28,20 @@ interface MemoryDraft {
   externalStateConfirmed: boolean;
 }
 
-export function MemorySettingsPane(props: { client: MemoryApiClient; language: MemoryLanguage; projects: readonly MemorySettingsProject[]; initialProjectId?: string | null }) {
+export function MemorySettingsPane(props: {
+  client: MemoryApiClient;
+  language: MemoryLanguage;
+  projects: readonly MemorySettingsProject[];
+  initialProjectId?: string | null;
+  fixedScope?: MemoryScope;
+  scopeLabel?: string;
+  refreshRevision?: number;
+}) {
   const zh = props.language === 'zh-CN';
   const [scopeKind, setScopeKind] = useState<MemoryScope['kind']>('global');
   const [projectId, setProjectId] = useState(() => props.initialProjectId ?? props.projects[0]?.id ?? '');
-  const scope = useMemo<MemoryScope>(() => (scopeKind === 'global' ? { kind: 'global', id: '*' } : { kind: 'project', id: projectId }), [projectId, scopeKind]);
-  const controller = useMemoryFeatureController({ client: props.client, scope });
+  const scope = useMemo<MemoryScope>(() => props.fixedScope ?? (scopeKind === 'global' ? { kind: 'global', id: '*' } : { kind: 'project', id: projectId }), [projectId, scopeKind, props.fixedScope]);
+  const controller = useMemoryFeatureController({ client: props.client, scope, refreshRevision: props.refreshRevision });
   const [editor, setEditor] = useState<{ mode: 'create' } | { mode: 'supersede'; record: MemoryRecord } | null>(null);
   const [draft, setDraft] = useState<MemoryDraft>(() => emptyDraft());
   const [tombstoneTarget, setTombstoneTarget] = useState<MemoryRecord | null>(null);
@@ -97,48 +105,50 @@ export function MemorySettingsPane(props: { client: MemoryApiClient; language: M
     <section className="memory-settings-pane" aria-label={zh ? '长期记忆管理' : 'Long-term memory management'}>
       <header className="memory-settings-header">
         <span>
-          <h2>{zh ? '长期记忆' : 'Long-term memory'}</h2>
-          <p>{zh ? '只管理稳定偏好、安全边界和工作流。不会从会话自动抽取任务事实或运行结果。' : 'Only stable preferences, safety boundaries, and workflows are managed. Conversations are never mined automatically.'}</p>
+          <h2>{props.scopeLabel ?? (zh ? '长期记忆' : 'Long-term memory')}</h2>
+          <p>{zh ? '保存可复用的知识、偏好和工作方法。每条经验保留来源与复核时间，可修正或停用；不会把整个会话当作记忆。' : 'Keep reusable knowledge, preferences, and workflows with sources, review dates, correction and deactivation.'}</p>
         </span>
         <div className="settings-heading-actions">
           <SettingsSaveStatus status={busy ? 'saving' : formError ? 'failed' : saved ? 'saved' : 'idle'} language={props.language} />
-          <Button onClick={openCreate} disabled={busy || (scopeKind === 'project' && !projectId)}>
+          <Button onClick={openCreate} disabled={busy || (!props.fixedScope && scopeKind === 'project' && !projectId)}>
             {zh ? '新增记忆' : 'Add memory'}
           </Button>
         </div>
       </header>
 
-      <div className="memory-scope-controls" role="group" aria-label={zh ? '记忆范围' : 'Memory scope'}>
-        <button type="button" aria-pressed={scopeKind === 'global'} onClick={() => setScopeKind('global')}>
-          {zh ? '全局' : 'Global'}
-        </button>
-        <button type="button" aria-pressed={scopeKind === 'project'} disabled={props.projects.length === 0} onClick={() => setScopeKind('project')}>
-          {zh ? '项目' : 'Project'}
-        </button>
-        {scopeKind === 'project' ? (
-          <ZeusSelect
-            size="regular"
-            className="memory-project-select"
-            ariaLabel={zh ? '选择记忆项目' : 'Choose memory project'}
-            value={projectId}
-            onChange={setProjectId}
-            options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
-          />
-        ) : null}
-        <button type="button" onClick={() => void controller.reload()} disabled={controller.snapshot.phase === 'loading'}>
-          {zh ? '刷新' : 'Refresh'}
-        </button>
-      </div>
+      {!props.fixedScope ? (
+        <div className="memory-scope-controls" role="group" aria-label={zh ? '记忆范围' : 'Memory scope'}>
+          <button type="button" aria-pressed={scopeKind === 'global'} onClick={() => setScopeKind('global')}>
+            {zh ? '全局' : 'Global'}
+          </button>
+          <button type="button" aria-pressed={scopeKind === 'project'} disabled={props.projects.length === 0} onClick={() => setScopeKind('project')}>
+            {zh ? '项目' : 'Project'}
+          </button>
+          {scopeKind === 'project' ? (
+            <ZeusSelect
+              size="regular"
+              className="memory-project-select"
+              ariaLabel={zh ? '选择记忆项目' : 'Choose memory project'}
+              value={projectId}
+              onChange={setProjectId}
+              options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+            />
+          ) : null}
+          <button type="button" onClick={() => void controller.reload()} disabled={controller.snapshot.phase === 'loading'}>
+            {zh ? '刷新' : 'Refresh'}
+          </button>
+        </div>
+      ) : null}
 
       <MotionPresence>
         {editor ? (
-          <ModalPortal rootClassName="zeus-shell settings-editor-portal" dismissDisabled={busy} onDismiss={() => setEditor(null)}>
+          <ModalPortal rootClassName="zeus-shell settings-editor-portal" dismissDisabled={busy} onDismiss={() => setEditor(null)} role="dialog" aria-labelledby="memory-editor-title">
             <div className="settings-reference-shell">
-              <section className="settings-editor-dialog settings-content-column" role="dialog" aria-modal="true" aria-labelledby="memory-editor-title">
+              <section className="settings-editor-dialog settings-content-column" data-modal-surface="dialog">
                 <header className="settings-page-heading">
                   <span>
                     <h2 id="memory-editor-title">{editor.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '修正记忆' : 'Correct memory'}</h2>
-                    <p>{scope.kind === 'global' ? (zh ? '全局记忆' : 'Global memory') : props.projects.find((project) => project.id === scope.id)?.name}</p>
+                    <p>{props.scopeLabel ?? (scope.kind === 'global' ? (zh ? '全局记忆' : 'Global memory') : props.projects.find((project) => project.id === scope.id)?.name)}</p>
                   </span>
                 </header>
                 <MemoryEditor
@@ -266,6 +276,7 @@ const memoryValueLabels: Record<string, [string, string]> = {
   preference: ['偏好', 'Preference'],
   safety_boundary: ['安全边界', 'Safety boundary'],
   stable_workflow: ['固定工作流程', 'Stable workflow'],
+  domain_knowledge: ['领域知识与经验', 'Domain knowledge'],
   advisory: ['仅提供建议', 'Advice only'],
   external_state: ['指导文件或应用操作', 'Guide file or app actions'],
   user_explicit: ['用户明确输入', 'Explicit user input'],
@@ -287,7 +298,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
   return (
     <fieldset disabled={props.busy} className="memory-editor" aria-label={props.mode === 'create' ? (zh ? '新增长期记忆' : 'Add long-term memory') : zh ? '修正长期记忆' : 'Correct long-term memory'}>
       <label>
-        <span>{zh ? '记忆标识' : 'Memory identifier'}</span>
+        <span>{zh ? '记忆主题' : 'Memory topic'}</span>
         <input value={props.lockedKey ?? props.draft.memoryKey} disabled={props.lockedKey !== null} maxLength={160} onChange={(event) => patch({ memoryKey: event.currentTarget.value })} />
       </label>
       <label>
@@ -297,7 +308,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
           ariaLabel={zh ? '记忆类型' : 'Memory kind'}
           value={props.draft.candidateKind}
           onChange={(candidateKind) => patch({ candidateKind: candidateKind as MemoryKind })}
-          options={['preference', 'safety_boundary', 'stable_workflow'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
+          options={['preference', 'safety_boundary', 'stable_workflow', 'domain_knowledge'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
         />
       </label>
       <label className="memory-editor-content">

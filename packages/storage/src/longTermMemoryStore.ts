@@ -3,12 +3,12 @@ import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 
 export const longTermMemorySchemaMigrationId = '20260821_0501_long_term_memory_governance';
 
-export const acceptedLongTermMemoryKinds = ['preference', 'safety_boundary', 'stable_workflow'] as const;
+export const acceptedLongTermMemoryKinds = ['preference', 'safety_boundary', 'stable_workflow', 'domain_knowledge'] as const;
 export const rejectedLongTermMemoryCandidateKinds = ['task_fact', 'one_off_result', 'runtime_evidence'] as const;
 export type LongTermMemoryKind = (typeof acceptedLongTermMemoryKinds)[number];
 export type RejectedLongTermMemoryCandidateKind = (typeof rejectedLongTermMemoryCandidateKinds)[number];
 export type LongTermMemoryCandidateKind = LongTermMemoryKind | RejectedLongTermMemoryCandidateKind;
-export type LongTermMemoryScopeKind = 'global' | 'project';
+export type LongTermMemoryScopeKind = 'global' | 'project' | 'employee';
 export type LongTermMemoryEffect = 'advisory' | 'external_state';
 export type LongTermMemoryConfirmationLevel = 'observed' | 'confirmed' | 'explicit';
 export type LongTermMemorySourceKind = 'user_explicit' | 'project_instruction' | 'repeated_confirmation' | 'manual_import';
@@ -195,6 +195,7 @@ export class LongTermMemoryRepository {
     const candidateKind = validCandidateKind(input.candidateKind);
     if (!isAcceptedKind(candidateKind)) return { accepted: false, reason: candidateKind };
     const prepared = prepareCandidate(input, candidateKind);
+    if (prepared.scope.kind === 'employee' && !this.db.get('SELECT id FROM digital_employees WHERE id = ? AND deleted_at IS NULL', [prepared.scope.id])) throw invalidArgument('员工记忆必须属于现有员工。', { employeeId: prepared.scope.id });
     return this.db.transaction(() => {
       const existingId = this.getById(prepared.id);
       if (existingId) {
@@ -273,13 +274,18 @@ export class LongTermMemoryRepository {
     };
   }
 
-  resolveForContext(input: { projectId?: string | null; asOf: string; minimumConfidence?: number }): LongTermMemoryResolution {
+  resolveForContext(input: { projectId?: string | null; employeeId?: string | null; asOf: string; minimumConfidence?: number }): LongTermMemoryResolution {
     const asOf = validTimestamp(input.asOf, 'asOf');
     const minimumConfidence = input.minimumConfidence ?? 0;
     if (!Number.isFinite(minimumConfidence) || minimumConfidence < 0 || minimumConfidence > 1) throw invalidArgument('minimumConfidence 必须位于 0 到 1。', { minimumConfidence });
     const projectId = input.projectId === undefined || input.projectId === null ? null : requiredIdentity(input.projectId, 'projectId');
+    /** 员工经验只能进入该员工所属项目的执行上下文。 */
+    const employeeId = input.employeeId && projectId && this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [input.employeeId, projectId]) ? input.employeeId : null;
     const rows = projectId
-      ? this.db.select<LongTermMemoryRow>(`${selectMemoryColumns} WHERE (scope_kind = 'global' AND scope_id = '*') OR (scope_kind = 'project' AND scope_id = ?) ORDER BY updated_at DESC, id DESC`, [projectId])
+      ? this.db.select<LongTermMemoryRow>(
+          `${selectMemoryColumns} WHERE (scope_kind = 'global' AND scope_id = '*') OR (scope_kind = 'project' AND scope_id = ?) OR (scope_kind = 'employee' AND scope_id = ?) ORDER BY updated_at DESC, id DESC`,
+          [projectId, employeeId],
+        )
       : this.db.select<LongTermMemoryRow>(`${selectMemoryColumns} WHERE scope_kind = 'global' AND scope_id = '*' ORDER BY updated_at DESC, id DESC`);
     const records = rows.map(mapMemory);
     const supersededIds = new Set(records.flatMap((record) => (record.supersedesId ? [record.supersedesId] : [])));
@@ -297,7 +303,9 @@ export class LongTermMemoryRepository {
     const reviewRequired: LongTermMemoryRecord[] = [];
     for (const memoryKey of [...byKey.keys()].sort()) {
       const candidates = byKey.get(memoryKey)!;
-      const scoped = projectId ? candidates.filter((record) => record.scope.kind === 'project') : [];
+      /** 员工同名经验优先于项目默认，保留被覆盖的来源供审计。 */
+      const personal = employeeId ? candidates.filter((record) => record.scope.kind === 'employee') : [];
+      const scoped = personal.length ? personal : projectId ? candidates.filter((record) => record.scope.kind === 'project') : [];
       const eligibleScope = scoped.length > 0 ? scoped : candidates.filter((record) => record.scope.kind === 'global');
       for (const shadowed of candidates.filter((record) => !eligibleScope.includes(record))) excluded.push({ record: shadowed, reason: 'scope_shadowed' });
       const winner = eligibleScope[0];
@@ -436,7 +444,7 @@ function mapMemory(row: LongTermMemoryRow): LongTermMemoryRecord {
 }
 
 function compareResolvedMemory(left: LongTermMemoryRecord, right: LongTermMemoryRecord): number {
-  const kindPriority: Record<LongTermMemoryKind, number> = { safety_boundary: 0, stable_workflow: 1, preference: 2 };
+  const kindPriority: Record<LongTermMemoryKind, number> = { safety_boundary: 0, stable_workflow: 1, preference: 2, domain_knowledge: 3 };
   return kindPriority[left.kind] - kindPriority[right.kind] || left.memoryKey.localeCompare(right.memoryKey) || right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
 }
 
@@ -461,12 +469,12 @@ function sameRecord(left: LongTermMemoryRecord, right: LongTermMemoryRecord): bo
 }
 
 function normalizeScope(scope: LongTermMemoryScope): LongTermMemoryScope {
-  if (!scope || (scope.kind !== 'global' && scope.kind !== 'project')) throw invalidArgument('scope.kind 必须是 global 或 project。', { field: 'scope.kind' });
+  if (!scope || (scope.kind !== 'global' && scope.kind !== 'project' && scope.kind !== 'employee')) throw invalidArgument('scope.kind 必须是 global、project 或 employee。', { field: 'scope.kind' });
   if (scope.kind === 'global') {
     if (scope.id !== '*') throw invalidArgument('global scope 的 id 必须固定为 *。', { field: 'scope.id' });
     return { kind: 'global', id: '*' };
   }
-  return { kind: 'project', id: requiredIdentity(scope.id, 'scope.id') };
+  return { kind: scope.kind, id: requiredIdentity(scope.id, 'scope.id') };
 }
 
 function isAcceptedKind(value: LongTermMemoryCandidateKind): value is LongTermMemoryKind {
@@ -497,7 +505,7 @@ function validSourceKind(value: LongTermMemorySourceKind): LongTermMemorySourceK
 
 function validMemoryKey(value: string): string {
   const key = boundedText(value, 'memoryKey', 1, 160);
-  if (!/^[a-z][a-z0-9_.:-]*$/u.test(key)) throw invalidArgument('memoryKey 必须是稳定的小写标识符。', { field: 'memoryKey' });
+  if (/[\r\n\t]/u.test(key)) throw invalidArgument('记忆主题需要使用单行文字。', { field: 'memoryKey' });
   return key;
 }
 

@@ -1,5 +1,7 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
+import { GlobalAgentSettingsPane } from '../../settings/GlobalAgentSettingsPane.js';
+import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import type { SidebarConversationFilters } from '@zeus/shared';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -32,6 +34,7 @@ import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/Ta
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { ZentaoImportModal } from '../../task/ZentaoSyncModal.js';
 import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
+import { TerminalSettingsPane } from '../../settings/TerminalSettingsPane.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
 import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
@@ -194,6 +197,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     projectPanel,
     projectSidebarResizing,
     projectSourceWorkspaceRef,
+    globalAgentSettingsRef,
+    globalAgentSettingsDirty,
+    setGlobalAgentSettingsDirty,
+    requestWorkspaceLeaveRef,
     projectedRuntimeLogOutput,
     props,
     releaseStatus,
@@ -528,7 +535,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.coding,
-      items: [['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon]],
+      items: [
+        ['agents', settingsWorkspaceCopy.categories.agents, FileTextIcon],
+        ['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon],
+        ['terminal', settingsWorkspaceCopy.categories.terminal, TerminalIcon],
+      ],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.maintenance,
@@ -541,7 +552,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const visibleSettingsGroups = settingsGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter(([id, label]) => `${group.group} ${label} ${id}`.toLocaleLowerCase().includes(normalizedSettingsQuery)),
+      items: group.items.filter(([id, label]) => `${group.group} ${label} ${id} ${id === 'agents' ? 'AGENTS.md 全局规则 global rules' : ''}`.toLocaleLowerCase().includes(normalizedSettingsQuery)),
     }))
     .filter((group) => group.items.length > 0);
   const visibleSettingsItems = visibleSettingsGroups.flatMap((group) => group.items);
@@ -651,10 +662,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         {sourceWorkspaceLeaveDialogOpen ? (
           <TaskTableLayoutDecisionDialog
             open={sourceWorkspaceLeaveDialogOpen}
-            title={appShellSettings.appLanguage === 'zh-CN' ? '代码修改尚未保存' : 'Code changes have not been saved'}
-            description={
-              appShellSettings.appLanguage === 'zh-CN' ? '离开后，未保存的代码修改会丢失。请保存全部文件、放弃修改，或取消离开。' : 'Unsaved code changes will be lost when you leave. Save all files, discard changes, or stay on this page.'
-            }
+            title={appShellSettings.appLanguage === 'zh-CN' ? (globalAgentSettingsDirty ? '全局规则尚未保存' : '代码修改尚未保存') : 'Changes have not been saved'}
+            description={appShellSettings.appLanguage === 'zh-CN' ? '未保存的修改会丢失。请保存、放弃修改，或取消本次操作。' : 'Unsaved changes will be lost. Save, discard changes, or cancel this action.'}
             busy={sourceWorkspaceSaveBusy}
             actions={[
               { id: 'cancel-source-leave', label: appShellSettings.appLanguage === 'zh-CN' ? '取消' : 'Cancel', onClick: cancelSourceWorkspaceLeave },
@@ -666,7 +675,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               },
               {
                 id: 'save-source-leave',
-                label: appShellSettings.appLanguage === 'zh-CN' ? '保存全部' : 'Save all',
+                label: appShellSettings.appLanguage === 'zh-CN' ? (globalAgentSettingsDirty ? '保存' : '保存全部') : globalAgentSettingsDirty ? 'Save' : 'Save all',
                 variant: 'primary',
                 onClick: () => void saveSourceWorkspaceAndLeave(),
               },
@@ -1000,37 +1009,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       controlBusyProps={controlBusyProps}
                     />
                   )}
-                  <MotionPresence>
-                    {taskCreateModalOpen ? (
-                      <TaskCreateModal
-                        projects={snapshot.projects}
-                        onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
-                        open={taskCreateModalOpen}
-                        copy={taskWorkspaceCopy}
-                        form={taskCreateForm}
-                        parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
-                        error={taskCreateError}
-                        busy={creatingTaskBusy}
-                        titleInputRef={taskCreateTitleInputRef}
-                        onFormChange={updateTaskCreateForm}
-                        onTaskTypeChange={updateTaskCreateType}
-                        onPriorityChange={updateTaskCreatePriority}
-                        onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
-                        onAuthorizeFiles={authorizeTaskCreateFiles}
-                        onMaterializeResources={materializeTaskCreateResources}
-                        onReadClipboardResources={readTaskCreateClipboardResources}
-                        onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
-                        onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
-                        onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
-                        onAddAttachments={addTaskCreateAttachments}
-                        onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                        onOpenAttachment={props.onOpenTaskAttachment}
-                        onRemoveAttachment={removeTaskCreateAttachment}
-                        onClose={closeTaskCreateModal}
-                        onSubmit={(event) => void submitTaskCreateModal(event)}
-                      />
-                    ) : null}
-                  </MotionPresence>
+
                   <MotionPresence>
                     {currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId) ? (
                       <TaskDeleteRelationshipDialog
@@ -1056,9 +1035,42 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onClose={() => setZentaoImportOpen(false)}
                   />
                 </>
-              ) : sessionDrawerTarget ? null : (
+              ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
+
+              {/* 任务详情也可从会话进入；创建表单必须与任务、会话共享显示边界。 */}
+              <MotionPresence>
+                {taskCreateModalOpen ? (
+                  <TaskCreateModal
+                    projects={snapshot.projects}
+                    onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
+                    open={taskCreateModalOpen}
+                    copy={taskWorkspaceCopy}
+                    form={taskCreateForm}
+                    parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
+                    error={taskCreateError}
+                    busy={creatingTaskBusy}
+                    titleInputRef={taskCreateTitleInputRef}
+                    onFormChange={updateTaskCreateForm}
+                    onTaskTypeChange={updateTaskCreateType}
+                    onPriorityChange={updateTaskCreatePriority}
+                    onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
+                    onAuthorizeFiles={authorizeTaskCreateFiles}
+                    onMaterializeResources={materializeTaskCreateResources}
+                    onReadClipboardResources={readTaskCreateClipboardResources}
+                    onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                    onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
+                    onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
+                    onAddAttachments={addTaskCreateAttachments}
+                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                    onOpenAttachment={props.onOpenTaskAttachment}
+                    onRemoveAttachment={removeTaskCreateAttachment}
+                    onClose={closeTaskCreateModal}
+                    onSubmit={(event) => void submitTaskCreateModal(event)}
+                  />
+                ) : null}
+              </MotionPresence>
 
               <MotionPresence>
                 {Boolean(taskModelPushTaskId) && taskModelPushEntry === 'confirmation' && !modelSetup.step && (snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null) ? (
@@ -1141,10 +1153,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </MotionPresence>
               <MotionPresence>
                 {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
-                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail}>
-                    <section className="task-detail-center-dialog" role="dialog" aria-modal="true" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                    <section className="task-detail-center-dialog" data-modal-surface="dialog">
                       <header className="task-detail-presentation-header">
-                        <strong>{taskDetailPaneTask.title}</strong>
+                        <strong>{taskWorkspaceCopy.detailPaneLabel}</strong>
                         <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
                           {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
                         </Button>
@@ -1597,6 +1609,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   setSessionDrawerTarget(undefined);
                   void openTaskDetailPane(taskId);
                 })
+              ) : sessionDrawerTarget.status === 'empty' ? (
+                <section className="task-conversation-drawer-loading" role="status">
+                  <p>{appShellSettings.appLanguage === 'zh-CN' ? '此任务尚未创建会话。' : 'This task has no conversation yet.'}</p>
+                </section>
               ) : sessionDrawerTarget.status === 'error' ? (
                 <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
                   <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
@@ -1691,6 +1707,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             <section key={settingsCategory} id={settingsPanelId} role="tabpanel" tabIndex={0} className="settings-detail-pane" aria-labelledby={`${settingsPanelId}-${settingsCategory}`}>
               <div className="settings-content-column">
                 {settingsCategory === 'general' ? <GeneralSettingsPane value={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onChange={setAppShellSettings} /> : null}
+                {settingsCategory === 'agents' ? (
+                  <GlobalAgentSettingsPane
+                    ref={globalAgentSettingsRef}
+                    language={appShellSettings.appLanguage}
+                    client={props.nativeConversationClient?.settings ?? null}
+                    onDirtyChange={setGlobalAgentSettingsDirty}
+                    onRequestLeave={(leave) => requestWorkspaceLeaveRef.current(leave)}
+                  />
+                ) : null}
                 {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
                 {settingsCategory === 'memory' && props.nativeConversationClient ? (
                   <MemorySettingsPane
@@ -1839,6 +1864,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     />
                   </section>
                 ) : null}
+                {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'models' ? (
                   <>

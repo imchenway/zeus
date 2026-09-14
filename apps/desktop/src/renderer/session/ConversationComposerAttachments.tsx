@@ -1,9 +1,8 @@
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
-import { ConversationImagePreviewDialog } from './ConversationResources.js';
+import { FilePreviewDialog } from '../code/FilePreview.js';
 
 export interface ConversationComposerAttachmentsProps {
   attachments: NativeConversationAttachment[];
@@ -20,53 +19,12 @@ export interface ConversationComposerAttachmentsProps {
 export function ConversationComposerAttachments(props: ConversationComposerAttachmentsProps) {
   /** 所有输入入口共用图片预览，调用者仍可提供自己的打开行为。 */
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
-  /** 预览读取失败只影响当前弹窗，不阻止草稿继续编辑。 */
-  const [previewUrl, setPreviewUrl] = useState('');
-  /** 空地址与读取中分开表达，避免失败后一直显示加载。 */
-  const [previewLoading, setPreviewLoading] = useState(false);
-  /** 非图片沿用宿主的受信资源打开接口。 */
-  const [openError, setOpenError] = useState<unknown>(null);
-  useApplicationErrorDialog(openError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
-
-  useEffect(() => {
-    if (!previewAttachment) return;
-    /** 切换图片或关闭后丢弃迟到结果。 */
-    let active = true;
-    setPreviewUrl('');
-    setPreviewLoading(true);
-    void loadAttachmentPreview(previewAttachment)
-      .then((preview) => {
-        if (active) setPreviewUrl(preview?.previewUrl ?? '');
-      })
-      .catch(() => {
-        if (active) setPreviewUrl('');
-      })
-      .finally(() => {
-        if (active) setPreviewLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [previewAttachment]);
-
-  /** 图片就地放大，其余文件交给系统已关联的应用；不拼接任意文件地址。 */
-  async function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): Promise<void> {
+  /** 所有格式就地预览，显式调用者的激活行为仍受保留。 */
+  function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): void {
     if (props.onActivate) return props.onActivate(attachment, trigger);
-    setOpenError(null);
-    if (attachmentKind(attachment) === 'image') {
-      setPreviewUrl('');
-      setPreviewLoading(true);
-      setPreviewAttachment(attachment);
-      return;
-    }
-    try {
-      /** 宿主继续复验本地路径与上传引用的授权。 */
-      const result = await window.zeus?.openConversationInputResource(attachmentResource(attachment));
-      if (!result?.opened) setOpenError(props.language === 'zh-CN' ? '无法打开这个附件，请确认原资源仍然可用。' : 'The attachment could not be opened. Confirm that the original resource is still available.');
-    } catch (error) {
-      setOpenError(error);
-    }
+    setPreviewAttachment(attachment);
   }
+
   const resources = props.attachments.map(toPendingResource);
   const byId = new Map(props.attachments.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
   return (
@@ -102,18 +60,7 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
             : undefined
         }
       />
-      <MotionPresence>
-        {previewAttachment ? (
-          <ConversationImagePreviewDialog
-            key={conversationAttachmentIdentity(previewAttachment)}
-            previewUrl={previewUrl}
-            label={previewAttachment.name}
-            language={props.language}
-            loading={previewLoading}
-            onClose={() => setPreviewAttachment(null)}
-          />
-        ) : null}
-      </MotionPresence>
+      <MotionPresence>{previewAttachment ? <FilePreviewDialog request={{ kind: 'attachment', ...attachmentResource(previewAttachment) }} zh={props.language === 'zh-CN'} onClose={() => setPreviewAttachment(null)} /> : null}</MotionPresence>
     </>
   );
 }

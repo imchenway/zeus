@@ -7,6 +7,8 @@ import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useR
 export interface ZeusSelectOption<T extends string> {
   value: T;
   label: string;
+  /** 身份类选项可提供头像，名称仍作为搜索与无障碍标签。 */
+  icon?: ReactNode;
   color?: string;
   disabled?: boolean;
   group?: string;
@@ -560,6 +562,11 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                       onClick={() => selectOption(option.value)}
                       onKeyDown={(event) => handleOptionKeyDown(event, option)}
                     >
+                      {option.icon ? (
+                        <span className="zeus-select-option-icon" aria-hidden="true">
+                          {option.icon}
+                        </span>
+                      ) : null}
                       {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
                       <span className="zeus-select-option-label">
                         {option.label}

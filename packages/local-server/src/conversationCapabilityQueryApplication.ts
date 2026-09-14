@@ -1,6 +1,7 @@
+import type { ConversationFeatureCatalog, ConversationFeatureAvailability } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
+import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
@@ -88,6 +89,8 @@ export interface ConversationCapabilityModel {
   runtimeAdapter?: unknown;
   protocolFamily?: unknown;
   authenticationScheme?: unknown;
+  /** 同一界面按接入能力显示入口，不按供应商品牌判断。 */
+  features?: ConversationFeatureCatalog;
 }
 
 export interface ConversationCapabilitiesSnapshot {
@@ -103,6 +106,8 @@ export interface ConversationCapabilitiesSnapshot {
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
+  /** 只公布宿主已就绪的原生目标能力。 */
+  goals?: CodexCapabilitiesSnapshot['goals'];
   generationId: string;
   initializedAt: string;
   models: ConversationCapabilityModel[];
@@ -132,6 +137,7 @@ export class ConversationCapabilityQueryApplication {
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels());
     const snapshot = {
+      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),
       models,
@@ -233,13 +239,13 @@ export class ConversationCapabilityQueryApplication {
     const requestedModel = connectionSelection.defaultModelRef ?? configuredModel;
     const preferredModel = requestedModel ? (resolveModelCapability(models, requestedModel)?.id ?? requestedModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
+      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),
       projectId: project.id,
       preferredModel,
       models,
       codexAccount,
-      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
     };
   }
 
@@ -408,7 +414,47 @@ function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSna
     supports1MContext: model.supports1MContext,
     contextWindow: model.contextWindow,
   }));
-  return [...codexModels, ...connectionModels];
+  const piTools = new Set(readPiBuiltinToolCatalog().map((tool) => tool.name));
+  return [...codexModels, ...connectionModels].map((model) => ({ ...model, features: conversationFeatureCatalog(model, piTools, codexCapabilities) }));
+}
+
+/** 执行内核、模型接口和会话工具分别提供事实，不能把看图能力当成生图能力。 */
+function conversationFeatureCatalog(model: ConversationCapabilityModel, piTools: Set<string>, native: CodexCapabilitiesSnapshot | null): ConversationFeatureCatalog {
+  const available = (reason: string): ConversationFeatureAvailability => ({ state: 'available', reason });
+  const unknown = (reason: string): ConversationFeatureAvailability => ({ state: 'unknown', reason });
+  const unavailable = (reason: string): ConversationFeatureAvailability => ({ state: 'unsupported', reason });
+  const nativeKernel = model.runtimeAdapter !== 'pi_sdk' && model.agentKind === 'codex';
+  const tools = (name: string): ConversationFeatureAvailability =>
+    model.tools === 'unsupported'
+      ? unavailable('当前模型接口明确不支持工具调用。')
+      : nativeKernel
+        ? unknown('app-server 未逐项报告本轮工具目录；实际可用性还取决于工作模式，允许正常尝试。')
+        : piTools.has(name)
+          ? available('已注册 Zeus 共用工具。')
+          : unknown('当前执行内核尚未报告该工具，允许正常尝试。');
+  const external = unknown('以本轮已启用的 MCP 和实际工具目录为准；调用时返回具体配置或接口错误。');
+  const result: ConversationFeatureCatalog = {
+    skills: tools('read'),
+    imageInput:
+      model.imageInput === 'unsupported'
+        ? unavailable('模型接口明确不支持图片输入，发送时保留图片并返回错误。')
+        : model.imageInput === 'supported'
+          ? available('模型接口已声明支持图片输入。')
+          : unknown('模型接口尚未确认图片输入能力，允许正常尝试。'),
+    imageGeneration: { ...external, reason: '按模型接口或 MCP 实际返回的图片开放使用，不按模型名称或看图能力推断。' },
+    questions: tools('request_user_input'),
+    plan: tools('submit_plan'),
+    processes: tools('process'),
+    steering: available('使用共用提交身份、队列和安全插话位置。'),
+    goals: nativeKernel ? (native?.goals.supported && native.goals.enabled ? available('原生目标控制已启用。') : unavailable('当前 app-server 未启用原生目标控制。')) : tools('create_goal'),
+    subagents: tools('spawn_agent'),
+    autoReview: nativeKernel ? unknown('原生接口支持请求独立审批审查；是否启用以实际调用回报为准，允许正常尝试。') : tools('bash'),
+    mcp: external,
+    search: { ...external, reason: '搜索通过当前已启用 MCP 提供；未注册搜索服务时明确报告。' },
+    browser: unknown('以本轮 Zeus 浏览器工具注册和浏览器状态为准。'),
+  };
+  if (!model.available) for (const key of Object.keys(result) as Array<keyof ConversationFeatureCatalog>) result[key] = { state: 'needs_configuration', reason: model.availabilityReason };
+  return result;
 }
 
 function createTaskRuntimePrompt(task: ZeusTaskRecord): string {
