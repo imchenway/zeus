@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from './terminalOutput.js';
-import { buildTaskPushPrompt, type TaskPushPromptInput } from '@zeus/shared';
+import { buildTaskPushPrompt, isInteractiveShellSession, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
@@ -647,7 +647,9 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
 
   function appendProcessOutput(sessionId: string, stream: 'stdout' | 'stderr', value: unknown): void {
     if (closed) return;
-    const text = normalizeProcessChunk(value);
+    /** 交互终端保留光标与颜色控制码；后续统一脱敏和持久化仍由 appendLog 承担。 */
+    const session = sessions.get(sessionId);
+    const text = session && isInteractiveShellSession(session) ? (value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value)) : normalizeProcessChunk(value);
     appendLog(sessionId, stream, text);
   }
 

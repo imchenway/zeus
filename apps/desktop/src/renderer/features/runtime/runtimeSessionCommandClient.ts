@@ -52,11 +52,22 @@ interface RuntimeEphemeralLease {
 export class RuntimeEphemeralCapabilityClient {
   private readonly leases = new Map<string, RuntimeEphemeralLease>();
   private readonly clientId = stableRuntimeRendererClientId();
+  /** 输入与缩放共享租约序号；跨组件重连时也必须等前一笔请求完成。 */
+  private readonly pending = new Map<string, Promise<unknown>>();
 
   constructor(private readonly transport: LocalApiTransport) {}
 
   send<TInput extends object, TResult>(sessionId: string, kind: 'input' | 'resize', input: TInput): Promise<TResult> {
-    return this.sendOnce<TInput, TResult>(sessionId, kind, input, true);
+    /** 前笔失败不重放；新操作重新读取服务端租约，按实际状态继续。 */
+    const previous = this.pending.get(sessionId) ?? Promise.resolve();
+    const request = previous.catch(() => undefined).then(() => this.sendOnce<TInput, TResult>(sessionId, kind, input, true));
+    this.pending.set(sessionId, request);
+    /** 只清理当前尾项，避免前笔完成时删除后续队列。 */
+    const release = () => {
+      if (this.pending.get(sessionId) === request) this.pending.delete(sessionId);
+    };
+    void request.then(release, release);
+    return request;
   }
 
   private async sendOnce<TInput extends object, TResult>(sessionId: string, kind: 'input' | 'resize', input: TInput, mayRenew: boolean): Promise<TResult> {
