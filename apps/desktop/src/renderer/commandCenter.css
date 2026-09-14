@@ -1,3 +1,18 @@
+/* 命令正文和终端占用各自空间，停靠面板不遮挡页面与导航。 */
+.command-center-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 门户沿用工作区布局，不生成全屏弹层。 */
+.command-center-terminal-host {
+  display: contents;
+}
+
 .command-center {
   color: var(--zeus-control-text);
   display: flex;
@@ -14,7 +29,7 @@
   min-height: 0;
 }
 
-.settings-content-column > .command-center {
+.settings-content-column > .command-center-workspace > .command-center {
   padding: 0 0 48px;
 }
 
@@ -60,6 +75,128 @@
 
 .command-center-live {
   min-height: 20px;
+}
+
+/* 命令页工具栏只保留开关。 */
+.command-center-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 底部停靠复用浏览器分屏的空间关系，工具栏保持单行。 */
+.project-terminal {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-top: 1px solid var(--zeus-control-border);
+  background: var(--zeus-product-panel);
+}
+
+/* 分隔线支持指针拖动与上下方向键。 */
+.project-terminal-resizer {
+  position: absolute;
+  inset: -3px 0 auto;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 1;
+}
+
+.project-terminal-resizer:hover,
+.project-terminal-resizer:focus-visible {
+  background: var(--zeus-control-focus);
+  outline: none;
+}
+
+.project-terminal-toolbar {
+  align-items: center;
+  display: flex;
+  flex: none;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.project-terminal-toolbar > strong {
+  flex: none;
+}
+
+.project-terminal-toolbar > code {
+  color: var(--zeus-control-muted-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-terminal .project-terminal-toolbar select {
+  background: transparent;
+  border: 0;
+  color: var(--zeus-control-text);
+  width: auto;
+  max-width: 170px;
+  padding: 3px;
+  font-size: inherit;
+}
+
+.project-terminal-toolbar > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--zeus-control-muted-text);
+}
+
+.project-terminal-toolbar > button:hover {
+  color: var(--zeus-control-text);
+  background: var(--zeus-control-bg-hover);
+}
+
+.project-terminal-toolbar > button:focus-visible,
+.project-terminal-toolbar > select:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: 1px;
+}
+
+.project-terminal-toolbar > button:disabled {
+  opacity: 0.4;
+}
+
+.project-terminal-toolbar svg {
+  width: 16px;
+  height: 16px;
+}
+
+.project-terminal > p {
+  margin: 4px 10px;
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+}
+
+/* 固定背景与 xterm 一致，边框留白不参与字符尺寸测量。 */
+.project-terminal-screen {
+  background: #0f172a;
+  border: 6px solid #0f172a;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.project-terminal-screen .xterm {
+  height: 100%;
 }
 
 .command-center-error,

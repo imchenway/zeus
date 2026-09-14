@@ -31,6 +31,7 @@ import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
 import { useApplicationErrorDialog } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
+import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js';
 
 export interface CommandCenterPanelProps {
   mode: 'global' | 'project';
@@ -242,6 +243,8 @@ async function writeCommandRunClipboard(content: string): Promise<boolean> {
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const zh = props.language === 'zh-CN';
+  /** 与浏览器工作区一样，将终端停靠到滚动正文之外。 */
+  const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
   const [runs, setRuns] = useState<CommandRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -661,149 +664,161 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? `${props.project?.name ?? '项目'}命令` : `${props.project?.name ?? 'Project'} commands`;
 
   return (
-    <section className="command-center" aria-labelledby="command-center-title">
-      <header className="command-center-header">
-        <span>
-          <h2 id="command-center-title">{heading}</h2>
-          <p>
-            {props.mode === 'global'
-              ? zh
-                ? '内置微信上传、预览和真机调试，也可添加自己的脚本。在项目命令中运行。'
-                : 'Built-in WeChat upload, preview and device debugging. Add your own scripts and run commands from a project.'
-              : zh
-                ? '全局命令只读展示；项目命令可在这里维护和执行。'
-                : 'Global commands are read-only here; project commands can be maintained and run.'}
-          </p>
-        </span>
-        <Button variant="primary" onClick={openCreate} disabled={!canMaintain || busy}>
-          <Plus aria-hidden="true" />
-          {zh ? '新建命令' : 'New command'}
-        </Button>
-      </header>
+    <div className="command-center-workspace">
+      <section className="command-center" aria-labelledby="command-center-title">
+        <header className="command-center-header">
+          <span>
+            <h2 id="command-center-title">{heading}</h2>
+            <p>
+              {props.mode === 'global'
+                ? zh
+                  ? '内置微信上传、预览和真机调试，也可添加自己的脚本。在项目命令中运行。'
+                  : 'Built-in WeChat upload, preview and device debugging. Add your own scripts and run commands from a project.'
+                : zh
+                  ? '全局命令只读展示；项目命令可在这里维护和执行。'
+                  : 'Global commands are read-only here; project commands can be maintained and run.'}
+            </p>
+          </span>
+          <div className="command-center-header-actions">
+            {props.mode === 'project' && props.project ? <ProjectTerminalPanel dockHost={terminalHost} key={props.project.id} project={props.project} client={props.client} language={props.language} /> : null}
+            <Button variant="primary" onClick={openCreate} disabled={!canMaintain || busy}>
+              <Plus aria-hidden="true" />
+              {zh ? '新建命令' : 'New command'}
+            </Button>
+          </div>
+        </header>
 
-      <div className="command-center-live" role="status" aria-live="polite">
-        {notice ? <span>{notice}</span> : null}
-      </div>
+        <div className="command-center-live" role="status" aria-live="polite">
+          {notice ? <span>{notice}</span> : null}
+        </div>
 
-      <section className="command-definition-list" aria-label={zh ? '命令定义列表' : 'Command definitions'}>
-        {loading ? (
-          <p className="command-center-empty">{zh ? '正在加载命令…' : 'Loading commands…'}</p>
-        ) : commands.length === 0 ? (
-          <p className="command-center-empty">{zh ? '尚未配置命令。' : 'No commands configured.'}</p>
-        ) : (
-          commands.map((command) => {
-            const editable = props.mode === 'global' ? command.scope === 'global' : command.scope === 'project';
-            return (
-              <article className="command-definition-row" key={command.id} data-enabled={command.enabled ? 'true' : 'false'}>
-                <span className="command-definition-leading" aria-hidden="true">
-                  {command.scope === 'global' ? <Globe /> : <span>⌘</span>}
-                </span>
-                <span className="command-definition-copy">
-                  <span className="command-definition-title">
-                    <strong>{command.title}</strong>
-                    <code>{command.name}</code>
-                    <small>{command.scope === 'global' ? (zh ? '全局' : 'Global') : zh ? '项目' : 'Project'}</small>
+        <section className="command-definition-list" aria-label={zh ? '命令定义列表' : 'Command definitions'}>
+          {loading ? (
+            <p className="command-center-empty">{zh ? '正在加载命令…' : 'Loading commands…'}</p>
+          ) : commands.length === 0 ? (
+            <p className="command-center-empty">{zh ? '尚未配置命令。' : 'No commands configured.'}</p>
+          ) : (
+            commands.map((command) => {
+              const editable = props.mode === 'global' ? command.scope === 'global' : command.scope === 'project';
+              return (
+                <article className="command-definition-row" key={command.id} data-enabled={command.enabled ? 'true' : 'false'}>
+                  <span className="command-definition-leading" aria-hidden="true">
+                    {command.scope === 'global' ? <Globe /> : <span>⌘</span>}
                   </span>
-                  <span>{command.description || command.command}</span>
-                  <small>
-                    {command.aliases.length > 0 ? `${zh ? '别名' : 'Aliases'}: ${command.aliases.join(', ')} · ` : ''}
-                    {command.timeoutSeconds}s · {command.telegramEnabled ? 'Telegram on' : 'Telegram off'} · {command.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '已停用' : 'Disabled'}
-                  </small>
-                </span>
-                <span className="command-definition-actions">
-                  {props.mode === 'project' ? (
-                    <>
-                      <Button size="compact" onClick={() => void openRunHistory(command)} disabled={!props.project || busy} aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`} title={zh ? '执行历史' : 'Run history'}>
-                        <ClockCounterClockwise aria-hidden="true" />
-                      </Button>
-                      <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy}>
-                        <Play aria-hidden="true" />
-                        {zh ? '运行' : 'Run'}
-                      </Button>
-                    </>
-                  ) : null}
-                  {editable ? (
-                    <>
-                      <Button size="compact" onClick={() => openEdit(command)} disabled={busy} aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}>
-                        <PencilSimple aria-hidden="true" />
-                      </Button>
-                      <Button
-                        size="compact"
-                        variant={pendingDeleteId === command.id ? 'danger' : 'secondary'}
-                        onClick={() => void removeCommand(command)}
-                        disabled={busy}
-                        aria-label={`${pendingDeleteId === command.id ? (zh ? '确认删除' : 'Confirm delete') : zh ? '删除' : 'Delete'} ${command.title}`}
-                      >
-                        <Trash aria-hidden="true" />
-                        {pendingDeleteId === command.id ? (zh ? '确认' : 'Confirm') : null}
-                      </Button>
-                    </>
-                  ) : null}
-                </span>
-              </article>
-            );
-          })
-        )}
+                  <span className="command-definition-copy">
+                    <span className="command-definition-title">
+                      <strong>{command.title}</strong>
+                      <code>{command.name}</code>
+                      <small>{command.scope === 'global' ? (zh ? '全局' : 'Global') : zh ? '项目' : 'Project'}</small>
+                    </span>
+                    <span>{command.description || command.command}</span>
+                    <small>
+                      {command.aliases.length > 0 ? `${zh ? '别名' : 'Aliases'}: ${command.aliases.join(', ')} · ` : ''}
+                      {command.timeoutSeconds}s · {command.telegramEnabled ? 'Telegram on' : 'Telegram off'} · {command.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '已停用' : 'Disabled'}
+                    </small>
+                  </span>
+                  <span className="command-definition-actions">
+                    {props.mode === 'project' ? (
+                      <>
+                        <Button
+                          size="compact"
+                          onClick={() => void openRunHistory(command)}
+                          disabled={!props.project || busy}
+                          aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`}
+                          title={zh ? '执行历史' : 'Run history'}
+                        >
+                          <ClockCounterClockwise aria-hidden="true" />
+                        </Button>
+                        <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy}>
+                          <Play aria-hidden="true" />
+                          {zh ? '运行' : 'Run'}
+                        </Button>
+                      </>
+                    ) : null}
+                    {editable ? (
+                      <>
+                        <Button size="compact" onClick={() => openEdit(command)} disabled={busy} aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}>
+                          <PencilSimple aria-hidden="true" />
+                        </Button>
+                        <Button
+                          size="compact"
+                          variant={pendingDeleteId === command.id ? 'danger' : 'secondary'}
+                          onClick={() => void removeCommand(command)}
+                          disabled={busy}
+                          aria-label={`${pendingDeleteId === command.id ? (zh ? '确认删除' : 'Confirm delete') : zh ? '删除' : 'Delete'} ${command.title}`}
+                        >
+                          <Trash aria-hidden="true" />
+                          {pendingDeleteId === command.id ? (zh ? '确认' : 'Confirm') : null}
+                        </Button>
+                      </>
+                    ) : null}
+                  </span>
+                </article>
+              );
+            })
+          )}
+        </section>
+
+        <MotionPresence>
+          {editing ? (
+            <CommandDefinitionModal
+              draft={draft}
+              busy={busy}
+              language={props.language}
+              title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
+              onChange={setDraft}
+              onClose={() => setEditing(null)}
+              onSubmit={(event) => void saveDefinition(event)}
+            />
+          ) : null}
+        </MotionPresence>
+
+        <MotionPresence>
+          {permissionRequest && props.project ? (
+            <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
+          ) : null}
+        </MotionPresence>
+
+        <MotionPresence>
+          {runningCommand && props.project ? (
+            <CommandRunModal
+              command={runningCommand}
+              project={props.project}
+              values={runParameters}
+              busy={busy}
+              language={props.language}
+              onValuesChange={setRunParameters}
+              onClose={() => setRunningCommand(null)}
+              onSubmit={(event) => void submitRun(event)}
+            />
+          ) : null}
+        </MotionPresence>
+
+        <MotionPresence>
+          {historyCommand && props.project ? (
+            <CommandRunHistoryModal
+              command={historyCommand}
+              project={props.project}
+              runs={historyRuns}
+              activeRunCount={activeHistoryRuns.length}
+              selectedRunId={selectedRunId}
+              runDetail={runDetail}
+              syncState={runSyncState}
+              projectedRunLogContent={projectedRunLogContent}
+              artifactPreviewUrls={artifactPreviewUrls}
+              client={props.client}
+              busy={busy}
+              language={props.language}
+              onClose={closeRunHistory}
+              onSelectRun={selectHistoryRun}
+              onStopRun={(run) => void stopRun(run)}
+              onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
+            />
+          ) : null}
+        </MotionPresence>
       </section>
-
-      <MotionPresence>
-        {editing ? (
-          <CommandDefinitionModal
-            draft={draft}
-            busy={busy}
-            language={props.language}
-            title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
-            onChange={setDraft}
-            onClose={() => setEditing(null)}
-            onSubmit={(event) => void saveDefinition(event)}
-          />
-        ) : null}
-      </MotionPresence>
-
-      <MotionPresence>
-        {permissionRequest && props.project ? (
-          <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
-        ) : null}
-      </MotionPresence>
-
-      <MotionPresence>
-        {runningCommand && props.project ? (
-          <CommandRunModal
-            command={runningCommand}
-            project={props.project}
-            values={runParameters}
-            busy={busy}
-            language={props.language}
-            onValuesChange={setRunParameters}
-            onClose={() => setRunningCommand(null)}
-            onSubmit={(event) => void submitRun(event)}
-          />
-        ) : null}
-      </MotionPresence>
-
-      <MotionPresence>
-        {historyCommand && props.project ? (
-          <CommandRunHistoryModal
-            command={historyCommand}
-            project={props.project}
-            runs={historyRuns}
-            activeRunCount={activeHistoryRuns.length}
-            selectedRunId={selectedRunId}
-            runDetail={runDetail}
-            syncState={runSyncState}
-            projectedRunLogContent={projectedRunLogContent}
-            artifactPreviewUrls={artifactPreviewUrls}
-            client={props.client}
-            busy={busy}
-            language={props.language}
-            onClose={closeRunHistory}
-            onSelectRun={selectHistoryRun}
-            onStopRun={(run) => void stopRun(run)}
-            onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
-          />
-        ) : null}
-      </MotionPresence>
-    </section>
+      <div className="command-center-terminal-host" ref={setTerminalHost} />
+    </div>
   );
 }
 
