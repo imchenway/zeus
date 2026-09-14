@@ -1693,7 +1693,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const composerReadOnly = hardInteractionReadOnly || Boolean(props.historyOnly && !historyComposerWritable);
   const transcriptInteractionsEnabled = !interactionReadOnly;
   const contextDraftWritable = !composerReadOnly && Boolean(actions.onContextDraftChange);
-  // 历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
+  // 文件变更审核、历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
   const transcriptReadActionsEnabled = true;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
@@ -2618,7 +2618,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onLoadV2Content={transcriptReadActionsEnabled ? actions.onLoadV2Content : undefined}
                     onLoadV2ToolResult={transcriptReadActionsEnabled ? actions.onLoadV2ToolResult : undefined}
                     onReviewTurnChanges={
-                      transcriptInteractionsEnabled
+                      transcriptReadActionsEnabled
                         ? (changeSet, fileId) => {
                             contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                             setContextFullWidth(false);
