@@ -2000,7 +2000,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             : undefined
         }
         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
-        onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
         onRetryModelPush={retryTaskModelPush}
         onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
         onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
@@ -2008,7 +2007,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         onUpdateTaskContent={updateTaskContent}
         onUpdateRelationships={updateTaskRelationships}
         onCreateChild={(taskId) => openTaskCreateModal(taskId)}
-        onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
         onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
         onAuthorizeFiles={props.onAuthorizeTaskFiles}
         onMaterializeResources={props.onMaterializeTaskResources}

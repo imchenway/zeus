@@ -790,11 +790,7 @@ function terminalSnapshotNeedsLiveRedraw(snapshot: AiRuntimeTerminalSnapshot): b
   return snapshot.logs.some((log) => log.stream !== 'system' && (log.text.includes(synchronizedOutputSequence) || log.text.includes('\u001b[?1049h') || log.text.includes('\u001b[?1047h')));
 }
 
-function requestLiveTerminalRedraw(
-  terminal: import('@xterm/xterm').Terminal,
-  io: { resize(size: { cols: number; rows: number }): void },
-  disposed: () => boolean,
-): number | null {
+function requestLiveTerminalRedraw(terminal: import('@xterm/xterm').Terminal, io: { resize(size: { cols: number; rows: number }): void }, disposed: () => boolean): number | null {
   const cols = terminal.cols;
   const rows = terminal.rows;
   if (cols <= 1 || rows <= 2) {
