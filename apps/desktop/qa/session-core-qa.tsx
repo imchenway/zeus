@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
-import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
+import { asyncMessageQuestions, conversationQuestionNavigationExcerpt, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
@@ -1858,6 +1858,27 @@ function NavigationQa() {
   const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
   /** 模拟先取得历史目录、随后模型确认编号的任务推送恢复。 */
   const taskHistory = parameters.has('task-history');
+  /** 同一目录混合普通发言、同步答题卡和异步答题卡。 */
+  const questionHistory = parameters.has('question-history');
+  /** 一张卡含两道题，核对聚合数量及预览答案。 */
+  const questionPayload = useMemo(
+    () => ({
+      questions: ['首批运行节点按哪一组落地？', '代码节点允许用户执行到什么程度？'].map((question, index) => ({
+        id: `question-${index}`,
+        header: '方案选择',
+        question,
+        isSecret: false,
+        isOther: true,
+        options: [
+          { label: '完整常见节点', description: '' },
+          { label: '受限 JavaScript', description: '' },
+        ],
+      })),
+    }),
+    [],
+  );
+  /** 规范答案沿用真实请求响应结构。 */
+  const questionResponse = useMemo(() => ({ answers: { 'question-0': { answers: ['完整常见节点'] }, 'question-1': { answers: ['受限 JavaScript'] } } }), []);
   /** 任务正文沿用发送时的布局快照，两条相同文字的独立发送仍分别保留。 */
   const taskLayout = useMemo(
     () =>
@@ -1909,8 +1930,11 @@ function NavigationQa() {
           : ['任务说明直接收起来了吗？', '请保留完整的任务说明。', '鼠标移出后应该回到原来的阅读位置。', '预览里只显示发言和答复。'][index % 4]!,
         response: '任务说明已保留，可以继续阅读完整内容。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。',
         status: 'completed',
+        ...(questionHistory && index > 0
+          ? { ...conversationQuestionNavigationExcerpt(questionPayload, questionResponse), ...(index % 2 ? { id: `request:request-${index}`, requestId: `request-${index}`, clientUserMessageId: null, providerItemId: null } : {}) }
+          : {}),
       })),
-    [count, taskHistory],
+    [count, taskHistory, questionHistory, questionPayload, questionResponse],
   );
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
@@ -1940,7 +1964,7 @@ function NavigationQa() {
       .flatMap((index) => {
         /** 超出当前目录的旧验收项不会进入新场景。 */
         const entry = entries[index];
-        if (!entry) return [];
+        if (!entry || entry.requestId) return [];
         return ['user', 'assistant'].map((role) => ({
           key: `${role}-${index}`,
           conversationId: 'qa-navigation',
@@ -1953,7 +1977,13 @@ function NavigationQa() {
           phase: role === 'user' ? 'user' : 'final_answer',
           status: 'completed',
           text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
-          payload: { v2Sequence: entry.sequence + (role === 'user' ? 0 : 1), ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}) },
+          payload: {
+            v2Sequence: entry.sequence + (role === 'user' ? 0 : 1),
+            ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}),
+            ...(questionHistory && index > 0 && role === 'user'
+              ? { questionAnswer: { providerTurnId: entry.turnId, providerItemId: `question-source-${index}`, questions: questionPayload.questions, answers: questionResponse.answers } }
+              : {}),
+          },
           resources: [],
           updatedAt: entry.occurredAt,
         }));
@@ -1964,6 +1994,27 @@ function NavigationQa() {
       transportState: 'ready',
       conversationState: 'idle',
       transcriptRevision: revision,
+      pendingRequests: entries.flatMap((entry, index) =>
+        entry.requestId && loaded.has(index)
+          ? [
+              {
+                id: entry.requestId,
+                conversationId: 'qa-navigation',
+                turnId: entry.turnId,
+                itemId: null,
+                generationId: 'qa-generation',
+                type: 'userInput',
+                status: 'resolved',
+                payload: questionPayload,
+                response: questionResponse,
+                containsSecret: false,
+                expiresAt: null,
+                createdAt: entry.occurredAt,
+                resolvedAt: entry.occurredAt,
+              },
+            ]
+          : [],
+      ),
       items: Object.fromEntries(items.map((item) => [item.key, item])),
       itemOrder: items.map((item) => item.key),
       turnsByProviderId: Object.fromEntries(
@@ -1974,7 +2025,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, revision, count, taskHistory, taskLayout]);
+  }, [loaded, entries, revision, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse]);
 
   /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
   function recordFrames() {
@@ -2062,6 +2113,8 @@ function NavigationQa() {
           解除故障
         </Button>
         <Button onClick={recordFrames}>记录帧耗时</Button>
+        <a href="?navigation&count=1">单条发言</a>
+        <a href="?navigation&count=3&question-history">答题卡导航</a>
         <a href="?navigation&count=7">短历史</a>
         <a href="?navigation&count=1000">长历史</a>
         <a href="?navigation&count=8&directory-failure">目录故障</a>
@@ -2086,6 +2139,14 @@ function NavigationQa() {
                   renderedRows: rows?.length,
                   loadedTurns: loaded.size,
                   railHeight: surface.current?.querySelector('.session-navigation-rail')?.getBoundingClientRect().height,
+                  ...(questionHistory
+                    ? {
+                        questionHistoryCheck:
+                          ticks?.length === count && surface.current?.querySelectorAll('.session-answered-request').length === count - 1 && !surface.current?.querySelector('.session-navigation-placeholder')
+                            ? '通过'
+                            : '失败：卡片数量或定位异常',
+                      }
+                    : {}),
                   ...(taskHistory
                     ? {
                         taskHistoryCheck:
