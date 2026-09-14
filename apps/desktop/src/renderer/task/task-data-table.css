@@ -1,0 +1,138 @@
+/* 任务表格独占剩余高度，滚动完全交给虚拟视口。 */
+.macos-ai-app .task-table-workbench:has(.task-data-table) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.task-data-table {
+  flex: 1 1 0;
+  min-height: 160px;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 单元格呈现连续表面，不复用原任务行的卡片样式。 */
+.task-data-table .ag-cell-wrapper,
+.task-data-table .ag-cell-value {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.task-data-table .ag-cell-value > *,
+.task-data-table .zeus-select {
+  max-width: 100%;
+}
+
+/* 所有只读与可编辑胶囊共用尺寸和表面，颜色继续表达各自状态。 */
+.macos-ai-app .task-data-table :is(.task-status-chip, .task-status-select > .zeus-select-trigger) {
+  box-sizing: border-box;
+  block-size: 26px;
+  min-block-size: 26px;
+  max-block-size: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--task-status-tone-line);
+  border-radius: 999px;
+  background: var(--task-status-tone-bg);
+  color: var(--task-status-tone-text);
+  box-shadow: none;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.macos-ai-app .task-data-table :is(.task-status-chip strong, .task-status-select .zeus-select-value) {
+  font: inherit;
+}
+
+/* 只在键盘导航时提示焦点，鼠标点击不留下整格描边。 */
+.task-data-table .ag-cell:focus-visible {
+  outline: 1px solid var(--zeus-product-muted);
+  outline-offset: -2px;
+}
+
+.macos-ai-app .task-data-table .task-status-select > .zeus-select-trigger:focus-visible {
+  outline: 1px solid var(--zeus-product-muted);
+  outline-offset: 2px;
+}
+
+.task-data-table .task-status-select {
+  min-width: 0;
+  width: 100%;
+}
+
+.task-data-table .task-data-table-selected {
+  background: color-mix(in srgb, var(--zeus-product-text) 5%, var(--zeus-card-background));
+}
+
+.task-data-table-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  padding: 0;
+}
+
+.task-data-table-sort > span:first-child,
+.task-data-table-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-data-table-sort:focus-visible {
+  outline: 2px solid var(--zeus-accent);
+  outline-offset: -2px;
+}
+
+.task-data-table-text small {
+  color: var(--zeus-product-muted);
+  font-size: inherit;
+}
+
+.task-data-table-priority {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  gap: 4px;
+}
+
+/* 冲突操作在已有弹层中显示，不挤高虚拟行。 */
+.task-data-table-priority-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+}
+
+.task-data-table-priority-feedback > span {
+  flex-basis: 100%;
+}
+
+/* 空态与恢复操作以可见视口居中，不随隐藏列的总宽度偏移。 */
+.task-data-table-overlay {
+  position: absolute;
+  inset: 32px 0 0;
+  display: grid;
+  place-items: center;
+  background: var(--zeus-card-background);
+}
+
+.task-data-table-overlay > section {
+  max-width: 100%;
+}

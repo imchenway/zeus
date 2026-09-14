@@ -1746,7 +1746,15 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 任务状态先定位所属会话，再交给统一抽屉入口。 */
-  async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
+  async function openTaskConversationDrawer(taskId: string, conversationId?: string): Promise<void> {
+    /** 未启动任务也打开所属任务的抽屉，不创建虚构会话或触发 AI。 */
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
+    if (!task || task.projectId !== activeProjectId) return;
+    if (!conversationId) {
+      setConversationDrawer(undefined);
+      setSessionDrawerTarget({ projectId: task.projectId, taskId, status: 'empty' });
+      return;
+    }
     /** 列表投影包含归档会话的稳定导航身份。 */
     const conversation = projectedTaskConversationChoices[taskId]?.find((candidate) => candidate.id === conversationId || resolveConversationNavigationId(candidate) === conversationId);
     if (!conversation) {

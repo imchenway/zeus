@@ -936,7 +936,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     void preloadCodexConversationCapabilities(props.nativeConversationClient, activeProjectId).catch(() => undefined);
   }, [activeProjectId, props.nativeConversationClient]);
   /** 项目和导航身份都一致时才展示正文，普通项目会话也可打开。 */
-  const sessionDrawerReady = Boolean(sessionDrawerTarget && selectedNativeConversation?.projectId === sessionDrawerTarget.projectId && resolveConversationNavigationId(selectedNativeConversation) === sessionDrawerTarget.navigationId);
+  const sessionDrawerReady = Boolean(
+    sessionDrawerTarget &&
+    sessionDrawerTarget.status !== 'empty' &&
+    selectedNativeConversation?.projectId === sessionDrawerTarget.projectId &&
+    resolveConversationNavigationId(selectedNativeConversation) === sessionDrawerTarget.navigationId,
+  );
   useEffect(() => {
     if (!selectedNativeConversation?.taskId) return;
     const taskId = selectedNativeConversation.taskId;

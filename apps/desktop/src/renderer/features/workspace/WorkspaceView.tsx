@@ -1582,6 +1582,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   setSessionDrawerTarget(undefined);
                   void openTaskDetailPane(taskId);
                 })
+              ) : sessionDrawerTarget.status === 'empty' ? (
+                <section className="task-conversation-drawer-loading" role="status">
+                  <p>{appShellSettings.appLanguage === 'zh-CN' ? '此任务尚未创建会话。' : 'This task has no conversation yet.'}</p>
+                </section>
               ) : sessionDrawerTarget.status === 'error' ? (
                 <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
                   <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
