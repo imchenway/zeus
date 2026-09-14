@@ -26,6 +26,8 @@ import {
 } from '@zeus/ai-runtime';
 import {
   buildTaskPushInputParts,
+  conversationProcessPresentation,
+  conversationProcessProviderItemId,
   calculateCacheHitRate,
   type CodexUsageEstimate,
   type ConversationContextDraft,
@@ -229,12 +231,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   function publishPiProcessItems(run: PiRunContext, processItems: ReturnType<TurnProcessProjector['projectPiEvent']>): void {
     for (const processItem of processItems) {
       const detail = asRecord(JSON.parse(processItem.detailJson));
+      // 与历史回看使用同一转换，实时事件不再另造工具字段和类型。
+      const presentation = conversationProcessPresentation(processItem.kind, detail);
       publish(processItem.status === 'in_progress' ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
         turnId: run.providerTurnId,
-        itemId: processItem.id,
-        itemType:
-          processItem.kind === 'reasoning' ? 'reasoning' : processItem.kind === 'command' ? 'commandExecution' : processItem.kind === 'context_compaction' ? 'contextCompaction' : processItem.kind === 'warning' ? 'error' : 'dynamicToolCall',
+        itemId: conversationProcessProviderItemId(processItem.sourceEventId) ?? processItem.id,
+        itemType: presentation.type,
         itemPayload: {
+          ...presentation.payload,
           processKind: processItem.kind,
           title: processItem.title,
           detail,

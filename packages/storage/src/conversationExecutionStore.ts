@@ -1245,7 +1245,7 @@ export class ConversationExecutionRepository {
     startedAt: string;
     completedAt?: string | null;
   }): ConversationProcessItemRecord {
-    const existing = input.sourceEventId ? this.db.get<ProcessItemRow>(`SELECT * FROM conversation_process_items WHERE segment_id = ? AND source_event_id = ?`, [input.segmentId, input.sourceEventId]) : undefined;
+    const existing = input.sourceEventId ? this.processItemBySourceEventId(input.segmentId, input.sourceEventId) : undefined;
     if (existing) {
       this.db.execute(
         `UPDATE conversation_process_items
@@ -1265,6 +1265,12 @@ export class ConversationExecutionRepository {
       [id, input.conversationId, input.turnId, input.segmentId, processSequence, input.kind, input.status, input.title, JSON.stringify(input.detail), input.sourceEventId ?? null, input.startedAt, input.completedAt ?? null],
     );
     return this.processItemById(id)!;
+  }
+
+  /** 按运行分段和调用身份恢复过程，供后续结果补齐同一条调用。 */
+  processItemBySourceEventId(segmentId: string, sourceEventId: string): ConversationProcessItemRecord | undefined {
+    const row = this.db.get<ProcessItemRow>(`SELECT * FROM conversation_process_items WHERE segment_id = ? AND source_event_id = ?`, [segmentId, sourceEventId]);
+    return row ? mapProcessItem(row) : undefined;
   }
 
   /** 同一工具调用只保存首个完整结果；后续完成通知复用其不可变句柄。 */

@@ -4562,41 +4562,6 @@
   white-space: break-spaces;
 }
 
-/* 协议投影确认的模型思考属于处理过程详情，默认收起并保留原生键盘语义。 */
-.session-codex-parity-v1 .session-reasoning-detail {
-  color: var(--session-text-muted);
-  font-size: 13px;
-  margin: 0;
-}
-
-.session-codex-parity-v1 .session-reasoning-detail > summary {
-  cursor: pointer;
-  font-weight: 590;
-  line-height: 1.5;
-  padding: 4px 8px;
-}
-
-.session-codex-parity-v1 .session-reasoning-detail > summary:hover:not(:disabled):not([aria-disabled='true']) {
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-reasoning-detail > summary:focus-visible {
-  border-radius: 7px;
-  outline: 2px solid var(--session-focus-outline);
-  outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-reasoning-detail-content {
-  border-inline-start: 0;
-  color: var(--session-text-muted);
-  line-height: 1.65;
-  margin: 6px 0 2px 6px;
-  max-inline-size: 100%;
-  overflow-wrap: anywhere;
-  padding: 2px 12px;
-  white-space: pre-wrap;
-}
-
 .session-codex-parity-v1 .session-activity-group > details > summary {
   list-style: none;
 }
@@ -10039,9 +10004,10 @@
   font-size: var(--session-readable-font-size);
 }
 
+/* 过程正文与 app-server 阶段说明共用正文行距。 */
 .session-codex-parity-v1 .session-commentary-flow .session-markdown {
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.58;
 }
 
 /* Provider 的过程说明可能仍以 agentMessage 投影；过程容器是最终的展示语义，不能按 assistant 角色套用答复样式。 */

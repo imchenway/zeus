@@ -25,7 +25,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningDetail, SessionReasoningSummary, SessionSweepText } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary, SessionSweepText } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -1664,6 +1664,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
         onLoadToolResult={options.props.onLoadV2ToolResult}
+        onLoadContent={options.props.onLoadV2Content}
       />
     );
   }
@@ -1679,10 +1680,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       </TranscriptV2ContentBoundary>
     );
   }
-  if (normalizeItemType(row.item.type) === 'reasoning') {
-    if (isReasoningDetailItem(row.item)) {
-      return <SessionReasoningDetail item={row.item} language={options.props.language} onLoadContent={options.props.onLoadV2Content} />;
-    }
+  // 持久思考正文沿用下面的共享过程消息；只有短暂运行摘要使用专门的状态行。
+  if (normalizeItemType(row.item.type) === 'reasoning' && !isReasoningProcessText(row.item)) {
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
         <SessionReasoningSummary
@@ -1752,7 +1751,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
 
 function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; onLoadContent?: (handle: string) => Promise<void>; children: ReactNode }): ReactNode {
   const handle = typeof props.item.payload.v2ContentHandle === 'string' && props.item.payload.v2ContentHandle ? props.item.payload.v2ContentHandle : null;
-  const truncated = props.item.payload.v2ContentKind === 'model_history' && props.item.payload.v2ContentTruncated === true;
+  // 轮次过程展开后，思考正文和普通阶段说明共用全文加载，不再要求第二次展开。
+  const truncated = (props.item.payload.v2ContentKind === 'model_history' || isReasoningProcessText(props.item)) && props.item.payload.v2ContentTruncated === true;
   const canLoad = Boolean(handle && props.onLoadContent);
   const attemptedHandleRef = useRef<string | null>(null);
 
@@ -2227,9 +2227,9 @@ function itemStageId(item: NativeSessionItemBuffer): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-/** Anthropic thinking 被投影为同阶段可按需展开的详情，而不是正文或状态摘要。 */
-function isReasoningDetailItem(item: NativeSessionItemBuffer): boolean {
-  return item.payload.reasoningPresentation === 'details_collapsed' || recordValue(item.payload.detail)?.reasoningPresentation === 'details_collapsed';
+/** 新旧记录中的持久思考正文统一作为阶段说明；旧折叠标记不再决定显示样式。 */
+function isReasoningProcessText(item: NativeSessionItemBuffer): boolean {
+  return normalizeItemType(item.type) === 'reasoning' && [item.payload.reasoningPresentation, recordValue(item.payload.detail)?.reasoningPresentation].some((value) => value === 'process_text' || value === 'details_collapsed');
 }
 
 export function projectTranscriptRows(
@@ -2300,7 +2300,7 @@ export function projectTranscriptRows(
   const emittedActivityStages = new Set<string>();
   const activeReasoningItem =
     effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
-      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item) && latestReasoningSummaryText(item).length > 0)
+      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item) && latestReasoningSummaryText(item).length > 0)
       : undefined;
 
   for (let index = 0; index < timeline.length; index += 1) {
@@ -2314,8 +2314,8 @@ export function projectTranscriptRows(
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
-        // Provider 的状态型 reasoning 仍只显示活动轮最新一条；显式思考详情属于阶段过程，默认收起但不能丢弃。
-        if (normalizeItemType(item.type) === 'reasoning' && !isReasoningDetailItem(item)) continue;
+        // 状态摘要只显示活动轮最新一条；持久思考正文进入同一轮次的过程消息，不额外套折叠层。
+        if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) continue;
         if (!isOperationalActivityItem(item)) {
           rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item, questionAnswer: questionAnswers.get(item.key) });
         } else {

@@ -550,6 +550,7 @@ export * from './portableConversationContext.js';
 export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';
 export * from './assistantMessage.js';
+export * from './conversationProcessPresentation.js';
 export * from './sourceLanguage.js';
 export * from './thirdPartyTask.js';
 
