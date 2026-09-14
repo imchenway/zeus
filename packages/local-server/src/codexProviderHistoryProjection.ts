@@ -107,14 +107,11 @@ export interface CodexProviderHistoryProjectionDependencies {
   isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean;
 
   /** 只保护当前宿主持有且尚未写出用户消息的派发。 */
-  isPreparingDispatch(conversationId: string, submissionId: string): boolean;
+  isPreparingDispatch(conversationId: string, submissionId?: string): boolean;
 
   markConversationRecoveryRequired(conversationId: string, error: unknown): boolean;
 
   markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void;
-  /** 本宿主仍持有的写入前派发不属于断线未知结果。 */
-  isPreparingDispatch?(conversationId: string): boolean;
-
   failUnsentSubmissionsBeforeProviderDispatch(conversationId: string): void;
 
   persistProviderUserMessage(
@@ -885,7 +882,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       return;
     }
     for (const submission of inFlight) {
-      if (!submission.providerTurnId && dependencies.isPreparingDispatch?.(conversation.id)) continue;
+      if (!submission.providerTurnId && dependencies.isPreparingDispatch(conversation.id)) continue;
       const currentSubmission = options.submissions.getById(submission.id);
       if (
         !currentSubmission ||

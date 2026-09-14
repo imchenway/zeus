@@ -2957,7 +2957,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     isPreparingDispatch: (conversationId, submissionId) => isPreparingDispatch(conversationId, submissionId),
     markConversationRecoveryRequired,
     markSubmissionRecoveryRequired,
-    isPreparingDispatch: (conversationId) => isPreparingDispatch(conversationId),
     now,
     options,
     failUnsentSubmissionsBeforeProviderDispatch,
