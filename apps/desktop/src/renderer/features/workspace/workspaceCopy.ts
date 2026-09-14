@@ -121,6 +121,15 @@ export const languageCopy = {
       taskStatusFilterGroup: '任务状态',
       /** 会话状态仅表达运行情况，不混入未读提示。 */
       conversationStatusFilterGroup: '会话状态',
+      /** 三项筛选只归并选择，列表仍展示具体运行状态。 */
+      conversationRunStatusGroups: {
+        /** 含连接、重连和排队。 */
+        running: '运行中',
+        /** 等待用户回复或授权。 */
+        waiting: '待处理',
+        /** 含暂停、等待新指令、失败和旧会话只读。 */
+        idle: '空闲中',
+      },
       otherConversationFilterGroup: '其他会话',
       allConversations: '全部会话',
       projectConversationsOnly: '无关联任务',
@@ -1319,6 +1328,15 @@ export const languageCopy = {
       taskStatusFilterGroup: 'Task status',
       /** 英文会话状态分组与中文保持相同语义。 */
       conversationStatusFilterGroup: 'Conversation status',
+      /** 英文筛选与中文共用相同分组身份。 */
+      conversationRunStatusGroups: {
+        /** 含连接、重连和排队。 */
+        running: 'Running',
+        /** 等待用户回复或授权。 */
+        waiting: 'Needs attention',
+        /** 含暂停、等待新指令、失败和旧会话只读。 */
+        idle: 'Idle',
+      },
       otherConversationFilterGroup: 'Other conversations',
       allConversations: 'All conversations',
       projectConversationsOnly: 'No linked task',
