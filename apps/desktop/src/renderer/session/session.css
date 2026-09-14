@@ -3619,7 +3619,8 @@
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary {
-  /* 悬停反馈止于摘要内容，不把标题下方整行染色。 */
+  /* 摘要保持透明底色，键盘焦点沿用独立的可见提示。 */
+  --zeus-interaction-hover: transparent;
   inline-size: fit-content;
   max-inline-size: 100%;
   box-sizing: border-box;
@@ -3836,7 +3837,7 @@
 }
 
 .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body > div {
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   grid-template-columns: 100px minmax(0, 1fr);
 }
@@ -3850,7 +3851,8 @@
 }
 
 .session-codex-parity-v1 .session-runtime-code-value {
-  align-items: start;
+  /* 单行或换行路径均与复制按钮按整行高度居中。 */
+  align-items: center;
   display: flex;
   gap: 6px;
   min-inline-size: 0;
