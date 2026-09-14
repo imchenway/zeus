@@ -443,6 +443,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     previousNavigationEntriesRef.current = next;
     return next;
   }, [navigation.snapshot, liveNavigationEntries]);
+  /** 至少两次用户发言才需要刻度导航，单轮会话保留原生滚动入口。 */
+  const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 1);
   /** 只有接入目录的主会话添加历史占位，其他调用方沿用原列表。 */
   const turnRows = useMemo(() => (props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows), [baseTurnRows, navigationEntries, props.onLoadNavigation]);
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
@@ -1126,7 +1128,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       <output className="session-sr-only session-transcript-announcement" aria-live="polite" aria-atomic="true">
         {completedAnnouncement ? <span key={completedAnnouncement.key}>{completedAnnouncement.text}</span> : null}
       </output>
-      <div ref={shellRef} className="session-transcript-shell" data-navigation-ready={Boolean(navigation.snapshot && !navigation.error && navigationEntries.length) || undefined}>
+      <div ref={shellRef} className="session-transcript-shell" data-navigation-ready={(showNavigation && !navigation.error) || undefined}>
         <section
           ref={containerRef}
           className="session-transcript"
@@ -1229,9 +1231,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
-        {props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 0 ? (
-          <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} />
-        ) : null}
+        {showNavigation ? <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} /> : null}
         {props.onLoadNavigation && (navigation.error || navigationReadError || (!navigation.snapshot && navigation.loading)) ? (
           <div className="session-navigation-status" role="status">
             <span>{navigationReadError?.message ?? navigation.error ?? (props.language === 'zh-CN' ? '正在读取完整历史目录…' : 'Loading all messages…')}</span>
