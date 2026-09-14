@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useId, useState, type ReactNode } from 'react';
-import { detectSourceLanguage, type FilePreviewItem, type FilePreviewRequest } from '@zeus/shared';
+import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './filePreview.css';
 
 /** 文本编辑器仅在真正查看文本时加载。 */
@@ -33,7 +34,7 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
-  const [error, setError] = useState('');
+  const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** 用户主动刷新次数。 */
   const [attempt, setAttempt] = useState(0);
   /** 当前选择的版本侧。 */
@@ -61,7 +62,7 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
         else void bridge.releaseFilePreview(ids).catch(() => undefined);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(userFacingErrorCause(cause));
       });
     return () => {
       active = false;
@@ -84,7 +85,7 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
     try {
       if (!(await window.zeus?.openConversationInputResource(attachment))?.opened) throw new Error(props.zh ? '附件无法打开。' : 'Could not open attachment.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(userFacingErrorCause(cause));
     }
   }
   return (
@@ -119,7 +120,9 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
       {showDiff ? (
         props.children
       ) : error ? (
-        <p role="alert">{error}</p>
+        <p role="alert">
+          <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
+        </p>
       ) : !items ? (
         <p role="status">{props.zh ? '正在读取文件…' : 'Loading file…'}</p>
       ) : (
@@ -187,7 +190,7 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
   /** 用户选择的源码展示状态。 */
   const [source, setSource] = useState(false);
   /** 本次操作的可见错误。 */
-  const [error, setError] = useState('');
+  const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** Markdown 使用已有受限阅读组件。 */
   const markdown = /\.(md|markdown)$/iu.test(item.name);
   /** 用户动作只发送资源令牌，主进程再次检查所属窗口与文件身份。 */
@@ -196,7 +199,7 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
     try {
       await window.zeus?.actOnFilePreview(item.id, value);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(userFacingErrorCause(cause));
     }
   }
   return (
@@ -228,7 +231,11 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
           </button>
         </div>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p role="alert">
+          <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       {item.reason ? <p role="status">{item.reason}</p> : item.id && item.byteLength === 0 ? <p role="status">{props.zh ? '此版本是空文件。' : 'This version is an empty file.'}</p> : null}
       {(item.kind === 'text' || source) && item.content !== undefined ? (
         <Suspense fallback={<p role="status">{props.zh ? '正在打开文本…' : 'Opening text…'}</p>}>

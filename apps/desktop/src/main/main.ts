@@ -2095,14 +2095,7 @@ function setupIpc(): void {
       projectRoot: resolveMainProjectRoot(),
       source,
       // 只检查文件存在性，不读取内容；打开动作交由 macOS 默认编辑器或文件关联处理。
-      fileExists: async (filePath) => {
-        try {
-          await access(filePath);
-          return true;
-        } catch {
-          return false;
-        }
-      },
+      checkAccess: access,
       openPath: (filePath) => shell.openPath(filePath),
     }),
   );
