@@ -1,10 +1,11 @@
+import { conversationProcessPresentation } from '../packages/shared/src/conversationProcessPresentation.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import { createZeusDatabase, ProjectRepository, ConversationRepository, ConversationSnapshotV2Repository } from '../packages/storage/src/index.js';
 import { registerConversationSnapshotV2Api } from '../packages/local-server/src/conversationSnapshotV2Api.js';
-import { mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
+import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
 import { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } from '../apps/desktop/src/renderer/features/workspace/workspaceSupport.js';
@@ -17,11 +18,74 @@ import type {
   NativeConversationSnapshot,
   NativeConversationSnapshotV2Page,
   NativeConversationModelHistoryV2Item,
+  NativeConversationProcessV2Item,
   NativeSessionState,
   NativeQueuedSubmission,
   NativeQueueSnapshot,
   NativeSessionItemBuffer,
 } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+
+// 通过历史分页投影检查各协议的 Pi 思考；截断预览也必须保留入口。
+for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthropic_messages']) {
+  for (const truncated of [false, true]) {
+    /** 旧记录没有详情标记，正文截断时也无法依赖 JSON 内部的 Provider 字段。 */
+    const processItem = {
+      id: 'thinking',
+      turnId: 'turn',
+      kind: 'reasoning',
+      status: 'completed',
+      protocolFamily,
+      sourceEventId: 'pi:block:104:0',
+      stageId: 'stage',
+      title: '思考摘要',
+      startedAt: '2026-09-14T03:00:00Z',
+      completedAt: '2026-09-14T03:00:01Z',
+      detail: { preview: truncated ? '{"block":{"thinking":"已确认性能瓶颈' : JSON.stringify({ block: { type: 'thinking', thinking: '已确认性能瓶颈' } }), truncated },
+    } as NativeConversationProcessV2Item;
+    /** 过程页沿用正式入口，不启动模型或读写正式会话。 */
+    const snapshot = { id: 'thinking-probe', items: [], turns: [], snapshotV2: { structureGeneration: 1 }, v2Paging: {} } as unknown as NativeConversationSnapshot;
+    /** 同轮保留 Codex 状态摘要，防止修复时把所有 reasoning 都改成详情。 */
+    const page = {
+      schemaVersion: 2,
+      conversationId: snapshot.id,
+      structureGeneration: 1,
+      kind: 'process',
+      items: [processItem, { ...processItem, id: 'codex-summary', protocolFamily: 'openai_responses', sourceEventId: 'codex:item:summary' }],
+    } as NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>;
+    /** 真实分页必须保留详情身份和可读文字；界面展开交互由浏览器另行检查。 */
+    const items = mergeConversationProcessV2(snapshot, 'turn', page).items;
+    assertProbe(
+      items.some((item) => item.id === 'thinking' && item.payload.reasoningPresentation === 'process_text' && item.text.includes('已确认性能瓶颈')) &&
+        items.some((item) => item.id === 'codex-summary' && item.payload.reasoningPresentation === undefined),
+      'Pi 各协议的完整或截断思考必须可回看，且不能混入 Codex 状态摘要。',
+    );
+  }
+}
+
+/** 工具定义跨模型共用标准活动类型；未知工具和状态说明不得误分类。 */
+for (const [name, expected] of [
+  ['bash', 'commandExecution'],
+  ['read', 'commandExecution'],
+  ['ls', 'commandExecution'],
+  ['grep', 'commandExecution'],
+  ['find', 'commandExecution'],
+  ['write', 'fileChange'],
+  ['edit', 'fileChange'],
+  ['plugin_tool', 'dynamicToolCall'],
+]) {
+  /** 同一条调用的声明与完成结果共同生成共享展示字段。 */
+  const presentation = conversationProcessPresentation('tool', {
+    provider: 'pi',
+    block: { name, arguments: { command: 'pwd', path: 'src/index.ts', pattern: 'export' } },
+    payload: { toolName: name, result: { content: [{ type: 'text', text: '完成' }] } },
+  });
+  assertProbe(presentation.type === expected && presentation.payload.toolName === name && presentation.payload.output === '完成', 'Pi 工具声明和结果必须统一为既有活动组件使用的类型和字段。');
+  if (name === 'bash') assertProbe(presentation.payload.command === 'pwd', '工具结束后不能丢失原始命令。');
+}
+assertProbe(
+  conversationProcessPresentation('waiting', { provider: 'pi' }).type === 'commentary' && conversationProcessPresentation('retry', { provider: 'pi' }).type === 'commentary',
+  'Pi 等待和重试只显示状态说明，不伪装工具或可回答问题。',
+);
 
 /** 已有消息的任务会话仍保留首发工作面的导航身份；入口可能只持有真实身份。 */
 const linkedConversation = { id: 'linked-conversation', navigationId: 'task-push:linked-operation', projectId: 'linked-project' } as NativeConversationChoice;

@@ -2,6 +2,7 @@ import {
   assistantMessageMetadata,
   asyncMessageQuestions,
   classifyAssistantMessage,
+  conversationProcessProviderItemId,
   conversationNavigationExcerpt,
   type ConversationNavigationEntry,
   type ConversationNavigationSnapshot,
@@ -1123,14 +1124,23 @@ export class ConversationSnapshotV2Repository {
       protocol_family: string | null;
       stage_id: string | null;
     }>(
-      `SELECT id, process_sequence, turn_id, segment_id, kind, status, substr(title, 1, 512) AS title,
+      `SELECT id, process_sequence, turn_id, segment_id, kind, CASE WHEN json_extract(detail_json, '$.payload.isError') = 1 THEN 'failed' ELSE status END AS status, substr(title, 1, 512) AS title,
               source_event_id, started_at, completed_at,
               ${processProtocolFamilySql} AS protocol_family,
               ${processStageIdSql} AS stage_id,
               substr(detail_json, 1, ?) AS detail_preview,
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
               length(detail_json) AS detail_characters,
-              CASE WHEN kind = 'waiting' THEN detail_json ELSE NULL END AS presentation_json
+              CASE WHEN kind = 'waiting' THEN detail_json
+                   WHEN json_extract(detail_json, '$.provider') = 'pi' AND kind IN ('tool', 'command') THEN
+                     json_object('provider', 'pi', 'payload', json_object(
+                       'toolName', substr(COALESCE(json_extract(detail_json, '$.payload.toolName'), json_extract(detail_json, '$.block.name')), 1, 256),
+                       'args', json_object(
+                         'command', substr(COALESCE(json_extract(detail_json, '$.payload.args.command'), json_extract(detail_json, '$.block.arguments.command'), json_extract(detail_json, '$.block.input.command')), 1, 4000),
+                         'path', substr(COALESCE(json_extract(detail_json, '$.payload.args.path'), json_extract(detail_json, '$.block.arguments.path'), json_extract(detail_json, '$.block.input.path')), 1, 2000),
+                         'pattern', substr(COALESCE(json_extract(detail_json, '$.payload.args.pattern'), json_extract(detail_json, '$.block.arguments.pattern'), json_extract(detail_json, '$.block.input.pattern')), 1, 1000)
+                       )))
+                   ELSE NULL END AS presentation_json
          FROM conversation_process_items
         WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}
           AND process_sequence > ? AND process_sequence <= ?
@@ -1138,7 +1148,7 @@ export class ConversationSnapshotV2Repository {
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, turnId, ...(kind ? [kind] : []), context.afterSequence, context.throughSequence, context.entryLimit + 1],
     );
-    const pairIds = rows.map((row) => toolPairIdFromSourceEvent(row.source_event_id));
+    const pairIds = rows.map((row) => conversationProcessProviderItemId(row.source_event_id));
     const toolResults = this.toolResultsByPair(context.conversationId, pairIds);
     const items = rows.map((row, index) => {
       const mutable = row.status === 'in_progress';
@@ -1157,7 +1167,8 @@ export class ConversationSnapshotV2Repository {
         sourceEventId: row.source_event_id,
         startedAt: row.started_at,
         completedAt: row.completed_at,
-        presentation: recoveredRequestUserInputPresentation(row.presentation_json),
+        // 工具元数据单独有界读取，预览截断也不丢类型、参数和目标；敏感文本沿用同一脱敏规则。
+        presentation: row.kind === 'waiting' ? recoveredRequestUserInputPresentation(row.presentation_json) : parseJsonRecordOrNull(row.presentation_json ? redactSensitivePreview(row.presentation_json).text : null),
         detail: boundedProjection(
           row.detail_preview,
           row.detail_bytes,
@@ -2657,15 +2668,6 @@ function parseJsonRecordOrNull(value: string | null): Record<string, unknown> | 
   } catch {
     return null;
   }
-}
-
-function toolPairIdFromSourceEvent(sourceEventId: string | null): string | null {
-  if (!sourceEventId) return null;
-  for (const pattern of [/^codex:item:(.+)$/u, /^pi:block:(.+)$/u, /^pi:(?:tool_execution|tool_call|toolcall):(.+)$/u]) {
-    const match = sourceEventId.match(pattern);
-    if (match?.[1]) return match[1];
-  }
-  return null;
 }
 
 function redactSensitivePreview(value: string): { text: string; redacted: boolean } {
