@@ -95,24 +95,33 @@ export class TurnProcessProjector {
         if (!failureText && type !== 'thinking' && type !== 'reasoning' && type !== 'toolCall' && type !== 'tool_use') continue;
         const kind: ConversationProcessKind = failureText ? 'warning' : type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
         const sourceId = typeof block.id === 'string' ? block.id : `${event.sequence}:${index}`;
+        /** 工具声明和执行进度使用同一个身份，声明本身不代表执行完成。 */
+        const sourceEventId = kind === 'tool' ? `pi:tool_execution:${sourceId}` : `pi:block:${sourceId}`;
+        /** 重放旧的声明时不能回退已完成调用的结果。 */
+        const existing = kind === 'tool' ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
+        if (existing) {
+          records.push(existing);
+          continue;
+        }
         records.push(
           this.execution.appendProcessItem({
             conversationId: identity.conversationId,
             turnId: identity.turnId,
             segmentId: identity.segment.id,
             kind,
-            status: failureText ? 'failed' : 'completed',
+            status: failureText ? 'failed' : kind === 'tool' ? 'in_progress' : 'completed',
             title: failureText ? (message.stopReason === 'aborted' ? '运行已中止' : '运行错误') : processTitle(kind, type),
             detail: {
               provider: 'pi',
               protocolFamily: identity.protocolFamily,
               stageId: identity.stageId,
-              ...(identity.protocolFamily === 'anthropic_messages' && type === 'thinking' ? { reasoningPresentation: 'details_collapsed' } : {}),
+              // Pi 各协议返回的思考正文都属于可回看的过程正文，不能只保留 Anthropic。
+              ...(kind === 'reasoning' ? { reasoningPresentation: 'process_text' } : {}),
               block,
             },
-            sourceEventId: `pi:block:${sourceId}`,
+            sourceEventId,
             startedAt: event.createdAt,
-            completedAt: event.createdAt,
+            completedAt: kind === 'tool' ? null : event.createdAt,
           }),
         );
       }
@@ -121,8 +130,16 @@ export class TurnProcessProjector {
     const mapped = piEventKind(event.type);
     if (!mapped) return [];
     const sourceId = typeof payload.toolCallId === 'string' ? payload.toolCallId : typeof payload.attempt === 'number' ? String(payload.attempt) : String(event.sequence);
+    /** 调用、进度和结果共用调用身份；其他状态保留各自事件身份。 */
+    const sourceEventId = mapped === 'tool' ? `pi:tool_execution:${sourceId}` : `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`;
+    /** 完成通知通常不带参数，从同一条持久化调用保留原始参数和阶段。 */
+    const previous = mapped === 'tool' ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
+    /** 终态不被迟到的 started 或 update 回退。 */
+    if (previous && previous.status !== 'in_progress') return [previous];
+    /** 只合并同一调用的事件内容，不读取其他轮次。 */
+    const previousDetail = previous ? asRecord(JSON.parse(previous.detailJson)) : {};
     const ending = /(_end|_settled|_complete|_completed)$/.test(event.type);
-    const failed = event.type === 'runtime_error' || payload.error !== undefined;
+    const failed = event.type === 'runtime_error' || payload.error !== undefined || payload.isError === true;
     return [
       this.execution.appendProcessItem({
         conversationId: identity.conversationId,
@@ -131,8 +148,8 @@ export class TurnProcessProjector {
         kind: mapped,
         status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
         title: processTitle(mapped, event.type),
-        detail: { provider: 'pi', protocolFamily: identity.protocolFamily, stageId: identity.stageId, eventType: event.type, payload },
-        sourceEventId: `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`,
+        detail: { ...previousDetail, provider: 'pi', protocolFamily: identity.protocolFamily, stageId: previousDetail.stageId ?? identity.stageId, eventType: event.type, payload: { ...asRecord(previousDetail.payload), ...payload } },
+        sourceEventId,
         startedAt: event.createdAt,
         completedAt: failed || ending ? event.createdAt : null,
       }),
