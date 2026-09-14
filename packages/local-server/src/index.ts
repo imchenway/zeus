@@ -100,7 +100,7 @@ import { type TaskStatus } from './taskCore.js';
 import { type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, appendFileSync, existsSync, constants as fsConstants, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { accessSync, appendFileSync, closeSync, existsSync, constants as fsConstants, mkdirSync, openSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { BrowserAutomationPort } from './browserAutomation.js';
@@ -1249,7 +1249,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const runtimePersistenceErrors: unknown[] = [];
   let runtimePersistenceSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let runtimePersistenceSavePending = false;
-  const runtimeLogFileBatches = new Map<string, AiRuntimeLogEntry[]>();
+  const runtimeLogFileBatches = new Map<string, Array<{ log: AiRuntimeLogEntry; terminalText?: string }>>();
   const runtimeLogFileWriteErrors: unknown[] = [];
   let runtimeLogFileFlushTimer: ReturnType<typeof setTimeout> | undefined;
   const optionalNodePty = createOptionalNodePtyRuntimeSpawn();
@@ -3075,13 +3075,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     scheduleRuntimePersistenceSave(session.status !== 'running');
   }
 
-  function persistRuntimeLog(log: AiRuntimeLogEntry): void {
+  function persistRuntimeLog(log: AiRuntimeLogEntry, terminalText?: string): void {
     const persisted = runtimeSessions.appendLog(log);
     // 相同日志 ID 的重复回调不得再次写文件、广播、镜像或触发通知。
     if (!persisted.inserted) return;
-    const rawChunkPath = queueRuntimeSessionLogFileWrite(log);
+    const rawChunkPath = queueRuntimeSessionLogFileWrite(log, terminalText);
     terminalEvents.setRawChunkPathByRuntimeLogId(log.id, rawChunkPath);
-    publishRuntimeLogEvent(log);
+    publishRuntimeLogEvent(log, terminalText);
     commandCenter.handleRuntimeLog(log);
     void notifyTelegramCommandRunLog(log);
     void notifyTelegramRuntimeProgressSummary(log);
@@ -3137,6 +3137,41 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return sessionDirectory;
   }
 
+  function readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean } {
+    // 查询前先落下尚在 100ms 合并窗口内的块，避免快照标记已读后遗漏最后一帧。
+    flushRuntimeLogFileWrites();
+    const path = join(runtimeSessionDataDirectory(sessionId), 'terminal.raw.log');
+    if (!existsSync(path)) return { text: '', truncated: false };
+    const size = statSync(path).size;
+    if (size <= 0) return { text: '', truncated: false };
+    const boundedMaxBytes = Math.min(4 * 1024 * 1024, Math.max(1, Math.trunc(maxBytes)));
+    const overlapBytes = Math.min(4 * 1024, Math.max(0, size - boundedMaxBytes));
+    const fileOffset = Math.max(0, size - boundedMaxBytes - overlapBytes);
+    const buffer = Buffer.allocUnsafe(size - fileOffset);
+    const descriptor = openSync(path, 'r');
+    let bytesRead = 0;
+    try {
+      while (bytesRead < buffer.length) {
+        const count = readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, fileOffset + bytesRead);
+        if (count <= 0) break;
+        bytesRead += count;
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+    const content = buffer.subarray(0, bytesRead);
+    let start = Math.max(0, content.length - boundedMaxBytes);
+    while (start < content.length && (content[start]! & 0xc0) === 0x80) start += 1;
+    if (fileOffset + start > 0) {
+      // 截断点可能落在 ANSI 参数中间；优先从下一条完整控制序列或下一行开始。
+      const escapeIndex = content.indexOf(0x1b, start);
+      const newlineIndex = content.indexOf(0x0a, start);
+      if (escapeIndex >= 0 && escapeIndex - start <= overlapBytes && (newlineIndex < 0 || escapeIndex <= newlineIndex)) start = escapeIndex;
+      else if (newlineIndex >= 0 && newlineIndex - start <= overlapBytes) start = newlineIndex + 1;
+    }
+    return { text: content.subarray(start).toString('utf8'), truncated: fileOffset + start > 0 };
+  }
+
   function writeRuntimeSessionMetadata(session: AiRuntimeSession): void {
     const sessionDirectory = ensureRuntimeSessionDataDirectory(session.id);
     // metadata.json 只记录真实会话元数据，便于脱离 SQLite 时仍能人工定位终端日志来源。
@@ -3162,10 +3197,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     );
   }
 
-  function queueRuntimeSessionLogFileWrite(log: AiRuntimeLogEntry): string {
+  function queueRuntimeSessionLogFileWrite(log: AiRuntimeLogEntry, terminalText?: string): string {
     const sessionDirectory = ensureRuntimeSessionDataDirectory(log.sessionId);
     const batch = runtimeLogFileBatches.get(log.sessionId) ?? [];
-    batch.push(log);
+    batch.push({ log, terminalText });
     runtimeLogFileBatches.set(log.sessionId, batch);
     if (!runtimeLogFileFlushTimer) {
       runtimeLogFileFlushTimer = setTimeout(() => {
@@ -3179,8 +3214,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }, 100);
       runtimeLogFileFlushTimer.unref?.();
     }
-    // 终端事件直接指向规范化日志，避免每个 stdout chunk 再制造一个小文件。
-    return join(sessionDirectory, 'terminal.normalized.log');
+    // 每个事件只记录共享追加文件路径，避免为高频 PTY chunk 制造海量小文件。
+    return join(sessionDirectory, terminalText === undefined ? 'terminal.normalized.log' : 'terminal.raw.log');
   }
 
   function flushRuntimeLogFileWrites(): void {
@@ -3188,13 +3223,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     runtimeLogFileFlushTimer = undefined;
     const pending = [...runtimeLogFileBatches];
     runtimeLogFileBatches.clear();
-    for (const [sessionId, logs] of pending) {
-      if (logs.length === 0) continue;
+    for (const [sessionId, entries] of pending) {
+      if (entries.length === 0) continue;
       try {
         const sessionDirectory = ensureRuntimeSessionDataDirectory(sessionId);
         // 每 100ms 每个会话最多两次追加，避免每个输出块三次同步文件系统调用和海量 chunks 小文件。
-        appendFileSync(join(sessionDirectory, 'terminal.raw.log'), logs.map((log) => `${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''), 'utf8');
-        appendFileSync(join(sessionDirectory, 'terminal.normalized.log'), logs.map((log) => `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''), 'utf8');
+        appendFileSync(join(sessionDirectory, 'terminal.raw.log'), entries.map((entry) => entry.terminalText ?? '').join(''), 'utf8');
+        appendFileSync(
+          join(sessionDirectory, 'terminal.normalized.log'),
+          entries.map(({ log }) => `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''),
+          'utf8',
+        );
       } catch (error) {
         runtimeLogFileWriteErrors.push(error);
       }
@@ -3222,6 +3261,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskEvents,
     taskStatusEventTitle,
     terminalEvents,
+    readRuntimeTerminalTail,
     activateCurrentCodexConfiguration,
     aiRuntimeManager,
     apiPerformance,

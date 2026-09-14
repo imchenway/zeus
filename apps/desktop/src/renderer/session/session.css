@@ -2134,6 +2134,375 @@
   }
 }
 
+/* 会话终端复用 Runtime PTY；面板只负责可恢复的标签、尺寸与交互呈现。 */
+.session-codex-parity-v1 .session-terminal-panel {
+  background: var(--session-canvas);
+  border-block-start: 1px solid var(--session-line);
+  block-size: var(--session-terminal-height, 284px);
+  color: var(--session-text);
+  display: flex;
+  flex: 0 0 var(--session-terminal-height, 284px);
+  flex-direction: column;
+  inline-size: 100%;
+  max-block-size: 66%;
+  min-block-size: 160px;
+  min-inline-size: 0;
+  position: relative;
+  z-index: 12;
+}
+
+.session-codex-parity-v1 .session-terminal-panel[hidden] {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-terminal-panel button {
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.session-codex-parity-v1 .session-terminal-panel button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.session-codex-parity-v1 .session-terminal-panel button:focus-visible,
+.session-codex-parity-v1 .session-terminal-resizer:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 0;
+}
+
+.session-codex-parity-v1 .session-terminal-resizer {
+  block-size: 9px;
+  cursor: row-resize;
+  inset-block-start: -5px;
+  inset-inline: 0;
+  position: absolute;
+  touch-action: none;
+  z-index: 2;
+}
+
+.session-codex-parity-v1 .session-terminal-resizer::after {
+  background: transparent;
+  block-size: 2px;
+  content: '';
+  inset: 3px 42% auto;
+  position: absolute;
+  transition: background 120ms ease;
+}
+
+.session-codex-parity-v1 .session-terminal-resizer:hover::after,
+.session-codex-parity-v1 .session-terminal-resizer:focus-visible::after,
+.session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] .session-terminal-resizer::after {
+  background: var(--session-divider-active);
+}
+
+.session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] {
+  user-select: none;
+}
+
+.session-codex-parity-v1 .session-terminal-header {
+  align-items: stretch;
+  background: var(--session-control);
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 38px;
+  justify-content: space-between;
+  min-inline-size: 0;
+  padding-inline-end: 5px;
+}
+
+.session-codex-parity-v1 .session-terminal-tabs {
+  align-items: stretch;
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.session-codex-parity-v1 .session-terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-terminal-tab-shell {
+  align-items: center;
+  border-inline-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 1 184px;
+  min-inline-size: 104px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-terminal-tab-shell[data-active='true'] {
+  background: var(--session-canvas);
+  box-shadow: inset 0 2px 0 var(--session-focus-outline);
+}
+
+.session-codex-parity-v1 .session-terminal-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 7px;
+  grid-template-columns: 15px minmax(0, 1fr) 7px;
+  min-block-size: 37px;
+  min-inline-size: 0;
+  padding: 0 5px 0 10px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-terminal-tab > svg {
+  block-size: 15px;
+  color: var(--session-text-muted);
+  inline-size: 15px;
+}
+
+.session-codex-parity-v1 .session-terminal-tab > span {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-terminal-tab > i {
+  background: var(--session-text-muted);
+  block-size: 6px;
+  border-radius: 999px;
+  inline-size: 6px;
+}
+
+.session-codex-parity-v1 .session-terminal-tab > i[data-status='running'] {
+  background: var(--session-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-success) 13%, transparent);
+}
+
+.session-codex-parity-v1 .session-terminal-tab > i:is([data-status='failed'], [data-status='lost']) {
+  background: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-terminal-tab-close,
+.session-codex-parity-v1 .session-terminal-new,
+.session-codex-parity-v1 .session-terminal-panel-close,
+.session-codex-parity-v1 .session-terminal-error > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-terminal-tab-close {
+  block-size: 24px;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  margin-inline-end: 4px;
+  opacity: 0;
+}
+
+.session-codex-parity-v1 .session-terminal-tab-shell:hover .session-terminal-tab-close,
+.session-codex-parity-v1 .session-terminal-tab-shell[data-active='true'] .session-terminal-tab-close,
+.session-codex-parity-v1 .session-terminal-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-terminal-new,
+.session-codex-parity-v1 .session-terminal-panel-close {
+  align-self: center;
+  block-size: 28px;
+  flex: 0 0 28px;
+  inline-size: 28px;
+  margin: 0 3px;
+}
+
+.session-codex-parity-v1 :is(.session-terminal-tab-close, .session-terminal-new, .session-terminal-panel-close, .session-terminal-error > button):hover:not(:disabled) {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 :is(.session-terminal-tab-close, .session-terminal-new, .session-terminal-panel-close) svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.session-codex-parity-v1 .session-terminal-error,
+.session-codex-parity-v1 .session-terminal-close-confirmation {
+  align-items: center;
+  background: color-mix(in srgb, var(--session-danger) 7%, var(--session-canvas));
+  border-block-end: 1px solid color-mix(in srgb, var(--session-danger) 26%, var(--session-line-soft));
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-block-size: 38px;
+  padding: 5px 10px;
+}
+
+.session-codex-parity-v1 .session-terminal-error {
+  color: var(--session-danger);
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-terminal-error > span {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-terminal-error > button {
+  block-size: 24px;
+  flex: 0 0 24px;
+  inline-size: 24px;
+}
+
+.session-codex-parity-v1 .session-terminal-error > svg,
+.session-codex-parity-v1 .session-terminal-close-confirmation > svg {
+  block-size: 16px;
+  flex: 0 0 16px;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation > span {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation strong {
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation > button,
+.session-codex-parity-v1 .session-terminal-empty-state > button {
+  align-items: center;
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  justify-content: center;
+  min-block-size: 28px;
+  padding-inline: 9px;
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation > button:hover:not(:disabled),
+.session-codex-parity-v1 .session-terminal-empty-state > button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-terminal-close-confirmation > button.danger {
+  border-color: color-mix(in srgb, var(--session-danger) 45%, var(--session-line));
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-terminal-body {
+  background: var(--session-canvas);
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-terminal-viewport {
+  block-size: 100%;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding: 8px 10px 6px;
+}
+
+.session-codex-parity-v1 .session-terminal-viewport > .xterm {
+  block-size: 100%;
+}
+
+.session-codex-parity-v1 .session-terminal-viewport .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.session-codex-parity-v1 .session-terminal-empty-state {
+  align-content: center;
+  justify-items: center;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 7px;
+  min-block-size: 0;
+  padding: 20px;
+  text-align: center;
+}
+
+.session-codex-parity-v1 .session-terminal-empty-state > svg {
+  block-size: 22px;
+  color: var(--session-text-muted);
+  inline-size: 22px;
+}
+
+.session-codex-parity-v1 .session-terminal-empty-state > strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-terminal-empty-state > p {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  max-inline-size: 480px;
+}
+
+.session-codex-parity-v1 .session-terminal-spinner {
+  animation: session-terminal-spin 800ms linear infinite;
+}
+
+@keyframes session-terminal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  .session-codex-parity-v1 .session-terminal-tab-shell {
+    flex-basis: 144px;
+  }
+
+  .session-codex-parity-v1 .session-terminal-close-confirmation {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  }
+
+  .session-codex-parity-v1 .session-terminal-close-confirmation small {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 .session-terminal-tab-shell[data-active='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .session-codex-parity-v1 .session-terminal-tab > i {
+    forced-color-adjust: none;
+  }
+}
+
 /* ZEUS-0367：会话 Markdown 由 markstream-react 增量挂载，外层会话视口继续负责虚拟化。 */
 .session-codex-parity-v1 .session-conversation-markdown > .markstream-react.markdown-renderer {
   color: inherit;

@@ -5,6 +5,7 @@ import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
+import { TerminalIcon as Terminal } from '@phosphor-icons/react/dist/csr/Terminal';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserConversationSnapshot, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
@@ -85,6 +86,7 @@ import { modelSetupRequestedEvent, reportApplicationError, useApplicationErrorDi
 import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
+import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -312,6 +314,8 @@ export interface ConnectedSessionWorkspaceProps {
   conversation: NativeConversationChoice;
   task: SessionWorkspaceTask | null;
   owner: SessionConversationOwner;
+  projectPath?: string;
+  terminalClient?: SessionTerminalClient;
   choices?: NativeConversationChoice[];
   onChooseAttachments?: () => Promise<NativeConversationAttachment[]>;
   onStateChange?: (conversationId: string, state: NativeSessionState) => void;
@@ -712,6 +716,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       conversation={displayedConversation}
       task={props.task}
       owner={props.owner}
+      projectPath={props.projectPath}
+      terminalClient={props.terminalClient}
       choices={props.choices}
       capabilities={capabilities}
       suppressComposer={props.suppressComposer || Boolean(props.readOnlyGate)}
@@ -1418,6 +1424,8 @@ export interface SessionWorkspaceProps {
   conversation: NativeConversationChoice | null;
   task: SessionWorkspaceTask | null;
   owner?: SessionConversationOwner;
+  projectPath?: string;
+  terminalClient?: SessionTerminalClient;
   tasks?: SessionWorkspaceTask[];
   projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   choices?: NativeConversationChoice[];
@@ -1639,6 +1647,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const escapeController = useRef(createSessionEscapeController()).current;
   const interruptResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
+  const terminalReturnFocusRef = useRef<HTMLElement | null>(null);
   const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
@@ -1655,6 +1664,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
   const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalMounted, setTerminalMounted] = useState(false);
+  const [terminalFocusRequest, setTerminalFocusRequest] = useState(0);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
@@ -1680,6 +1692,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
+  // 终端只依赖稳定的项目与会话身份；会话快照重水合期间短暂为空不能关闭仍存活的 PTY 面板。
+  const terminalAvailable = Boolean(props.terminalClient && props.conversation && props.projectPath && !legacy);
+  const closeSessionTerminal = useCallback((): void => {
+    setTerminalOpen(false);
+    const returnFocus = terminalReturnFocusRef.current;
+    terminalReturnFocusRef.current = null;
+    if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
+  }, []);
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.conversation?.resumable !== false && (props.state?.snapshot ? effectiveProviderState !== 'closed' : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
   // 列表和已水合快照可能跨一个归档操作短暂错代；任一权威来源声明归档都必须 fail-closed。
@@ -1793,6 +1813,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setGoalError(null);
     setBrowserResizing(false);
     setQuickActionsPopoverOpen(false);
+    setTerminalOpen(false);
+    setTerminalMounted(false);
     browserResizeActiveRef.current = false;
   }, [escapeController, props.conversation?.id]);
 
@@ -1888,6 +1910,25 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }, [legacy]);
 
   useEffect(() => {
+    if (!terminalAvailable) return;
+    const handleShortcut = (event: KeyboardEvent): void => {
+      if (event.repeat || !isSessionTerminalShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (terminalOpen) {
+        closeSessionTerminal();
+        return;
+      }
+      terminalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setTerminalMounted(true);
+      setTerminalOpen(true);
+      setTerminalFocusRequest((current) => current + 1);
+    };
+    window.addEventListener('keydown', handleShortcut, { capture: true });
+    return () => window.removeEventListener('keydown', handleShortcut, { capture: true });
+  }, [closeSessionTerminal, terminalAvailable, terminalOpen]);
+
+  useEffect(() => {
     if (contextWorkspace.kind === 'none') {
       window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     }
@@ -1979,7 +2020,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       eventTarget: event.target,
       composerTextarea: composerRef.current?.contains(event.target instanceof Node ? event.target : null) ? event.target : null,
       repeat: event.repeat,
-      openLayers: pendingRequests.length > 0 ? ['approval'] : [],
+      openLayers: [...(pendingRequests.length > 0 ? (['approval'] as const) : []), ...(terminalOpen ? (['terminal'] as const) : [])],
       responding: active,
       activeTurnId: state?.activeTurnId ?? null,
       startedTurnId: state?.startedTurnId ?? null,
@@ -1995,6 +2036,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           ...current,
           [requestId]: props.language === 'zh-CN' ? '请先允许、拒绝或回答当前问题。按 Escape 不会停止正在等待回答的处理。' : 'Approve, decline, or answer the current request first. Escape does not stop work that is waiting for a response.',
         }));
+      return;
+    }
+    if (result.action === 'close_terminal') {
+      closeSessionTerminal();
       return;
     }
     if (result.action === 'confirm_interrupt') {
@@ -2447,6 +2492,27 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <GlobeSimple aria-hidden="true" weight="regular" />
                 </button>
               ) : null}
+              {terminalAvailable ? (
+                <button
+                  type="button"
+                  className={`session-browser-toggle session-terminal-toggle ${terminalOpen ? 'selected' : ''}`}
+                  aria-pressed={terminalOpen}
+                  aria-label={props.language === 'zh-CN' ? '会话终端' : 'Conversation terminal'}
+                  title={props.language === 'zh-CN' ? '会话终端（⌃`）' : 'Conversation terminal (Ctrl+`)'}
+                  onClick={(event) => {
+                    if (terminalOpen) {
+                      closeSessionTerminal();
+                      return;
+                    }
+                    terminalReturnFocusRef.current = event.currentTarget;
+                    setTerminalMounted(true);
+                    setTerminalOpen(true);
+                    setTerminalFocusRequest((current) => current + 1);
+                  }}
+                >
+                  <Terminal aria-hidden="true" weight="regular" />
+                </button>
+              ) : null}
               {!legacy && props.conversation && props.state ? (
                 <SessionQuickActionsCard
                   language={props.language}
@@ -2773,6 +2839,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               </div>
             </div>
           </div>
+          {terminalMounted && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
+            <SessionTerminalPanel
+              client={props.terminalClient}
+              language={props.language}
+              visible={terminalOpen}
+              projectId={props.conversation.projectId}
+              projectName={owner?.projectName ?? props.conversation.projectId}
+              projectPath={props.projectPath}
+              taskId={props.task?.id ?? props.conversation.taskId ?? undefined}
+              cwd={props.state?.snapshot?.executionContext?.cwd}
+              focusRequest={terminalFocusRequest}
+              onClose={closeSessionTerminal}
+            />
+          ) : null}
           <MotionPresence>
             {goalPanelOpen ? (
               <GoalPanel

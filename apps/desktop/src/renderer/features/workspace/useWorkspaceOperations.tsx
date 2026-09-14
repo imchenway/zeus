@@ -3,6 +3,7 @@ import { useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, 
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
+import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
@@ -221,6 +222,85 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     workspaceScrollRef,
   } = state;
   const newConversationDrafts = useMemo<NewConversationDraftStore>(() => new Map(), [newConversationFocusRequest]);
+  const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
+    const {
+      onConfirmRuntimeOperation,
+      onCreateRuntimeConfirmation,
+      onLoadProjectConfig,
+      onLoadRuntimeSessions,
+      onLoadRuntimeStatus,
+      onLoadRuntimeTerminalSnapshot,
+      onResizeRuntimeSession,
+      onSaveProjectConfig,
+      onSendRuntimeInput,
+      onStartRuntimeSession,
+      onStopRuntimeSession,
+      onSubscribeRealtimeEvents,
+    } = props;
+    if (
+      !onConfirmRuntimeOperation ||
+      !onCreateRuntimeConfirmation ||
+      !onLoadProjectConfig ||
+      !onLoadRuntimeSessions ||
+      !onLoadRuntimeStatus ||
+      !onLoadRuntimeTerminalSnapshot ||
+      !onResizeRuntimeSession ||
+      !onSendRuntimeInput ||
+      !onStartRuntimeSession ||
+      !onStopRuntimeSession
+    ) {
+      return undefined;
+    }
+    return {
+      loadRuntimeStatus: onLoadRuntimeStatus,
+      loadRuntimeSessions: onLoadRuntimeSessions,
+      loadRuntimeTerminalSnapshot: onLoadRuntimeTerminalSnapshot,
+      createRuntimeConfirmation: onCreateRuntimeConfirmation,
+      confirmRuntimeOperation: onConfirmRuntimeOperation,
+      startRuntimeSession: onStartRuntimeSession,
+      stopRuntimeSession: onStopRuntimeSession,
+      sendRuntimeInput: onSendRuntimeInput,
+      resizeRuntimeSession: onResizeRuntimeSession,
+      loadProjectConfig: onLoadProjectConfig,
+      subscribeRealtimeEvents: onSubscribeRealtimeEvents,
+      ...(onSaveProjectConfig
+        ? {
+            enableProjectShell: async (projectId: string) => {
+              const config = await onLoadProjectConfig(projectId);
+              const saved = await onSaveProjectConfig(projectId, {
+                defaultModel: config.defaultModel,
+                defaultWorkMode: config.defaultWorkMode,
+                language: config.language,
+                dependencies: config.dependencies,
+                database: config.database,
+                telegram: config.telegram,
+                security: { ...config.security, allowShell: true },
+              });
+              const normalized = normalizeProjectConfig(saved, projectId);
+              if (!normalized) throw new Error('项目 Shell 权限保存后未返回有效配置。');
+              setProjectConfig(normalized);
+              setProjectConfigForm(toProjectConfigForm(normalized));
+              return normalized;
+            },
+          }
+        : {}),
+    };
+  }, [
+    props.onConfirmRuntimeOperation,
+    props.onCreateRuntimeConfirmation,
+    props.onLoadProjectConfig,
+    props.onLoadRuntimeSessions,
+    props.onLoadRuntimeStatus,
+    props.onLoadRuntimeTerminalSnapshot,
+    props.onResizeRuntimeSession,
+    props.onSaveProjectConfig,
+    props.onSendRuntimeInput,
+    props.onStartRuntimeSession,
+    props.onStopRuntimeSession,
+    props.onSubscribeRealtimeEvents,
+    setProjectConfig,
+    setProjectConfigForm,
+  ]);
   const {
     chooseNativeConversationAttachments,
     effectiveTaskStatusSettingsTargetId,
@@ -1764,6 +1844,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           historyOnly={selectedNativeConversationPresentation === 'history'}
           task={nativeSessionTask}
           owner={nativeSessionOwner}
+          projectPath={snapshot.projects.find((project) => project.id === selectedNativeConversation.projectId)?.localPath}
+          terminalClient={sessionTerminalClient}
           choices={nativeSessionChoices}
           initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
           initialOptimisticState={selectedTaskModelPushOptimisticState}

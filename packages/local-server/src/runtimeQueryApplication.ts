@@ -1,5 +1,5 @@
 import type { AiCliAdapterDescriptor, AiCliAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeTerminalSnapshot } from '@zeus/ai-runtime';
-import type { RuntimeLogStream, RuntimeSessionRepository, TerminalEventRepository, ZeusRuntimeLogRecord, ZeusRuntimeSessionRecord } from '@zeus/storage';
+import type { RuntimeLogStream, RuntimeSessionRepository, TerminalEventRepository, ZeusRuntimeLogRecord, ZeusRuntimeSessionRecord, ZeusTerminalEventRecord } from '@zeus/storage';
 
 export type RuntimeAutoConfirmationPolicy = 'never' | 'low_risk_only';
 
@@ -53,7 +53,8 @@ export interface LiveRuntimeReadPort {
 
 interface RuntimeQueryPorts {
   runtimeSessions: Pick<RuntimeSessionRepository, 'list' | 'getById' | 'searchLogs' | 'listRecentLogs'>;
-  terminalEvents: Pick<TerminalEventRepository, 'listBySessionPage'>;
+  terminalEvents: Pick<TerminalEventRepository, 'listBySessionPage' | 'listRecentBySession'>;
+  readTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
   liveRuntime: LiveRuntimeReadPort;
   adapters: RuntimeAdapterReadEffectPort;
   readSettings(): RuntimeSettingsSnapshot;
@@ -135,14 +136,48 @@ export class RuntimeQueryApplication {
 
   readTerminal(sessionId: string): AiRuntimeTerminalSnapshot {
     const session = this.requireSession(sessionId);
-    const rendererTail = this.readRendererTail(session.id);
+    const tailLimit = 1_000;
+    const page = this.ports.terminalEvents.listRecentBySession(session.id, tailLimit);
+    const byteBudget = 4 * 1024 * 1024;
+    const rawTail = this.ports.readTerminalTail(session.id, byteBudget);
+    if (rawTail.text) {
+      const capturedAt = this.ports.now().toISOString();
+      return {
+        sessionId: session.id,
+        status: session.status,
+        command: [session.command, ...session.args].join(' '),
+        cwd: session.cwd,
+        logs: [
+          {
+            id: `${session.id}-terminal-raw-tail-${page.total}`,
+            sessionId: session.id,
+            stream: 'stdout',
+            text: rawTail.text,
+            createdAt: page.items.at(-1)?.createdAt ?? capturedAt,
+          },
+          // 空正文事件仅用于让 SSE 水合阶段按真实日志 ID 去重。
+          ...page.items.map((event) => toTerminalReplayLog(event, false)),
+        ],
+        logsTruncated: rawTail.truncated,
+        capturedAt,
+      };
+    }
+    const kept: ZeusTerminalEventRecord[] = [];
+    let keptBytes = 0;
+    for (let index = page.items.length - 1; index >= 0; index -= 1) {
+      const item = page.items[index]!;
+      const bytes = Buffer.byteLength(item.content);
+      if (kept.length > 0 && keptBytes + bytes > byteBudget) break;
+      kept.unshift(item);
+      keptBytes += bytes;
+    }
     return {
       sessionId: session.id,
       status: session.status,
       command: [session.command, ...session.args].join(' '),
       cwd: session.cwd,
-      logs: rendererTail.logs,
-      logsTruncated: rendererTail.truncated,
+      logs: kept.map((event) => toTerminalReplayLog(event)),
+      logsTruncated: page.total > kept.length,
       capturedAt: this.ports.now().toISOString(),
     };
   }
@@ -215,6 +250,17 @@ export class RuntimeQueryApplication {
       ],
     };
   }
+}
+
+function toTerminalReplayLog(event: ZeusTerminalEventRecord, includeContent = true): AiRuntimeLogEntry {
+  const prefix = 'terminal_event_';
+  return {
+    id: event.id.startsWith(prefix) ? event.id.slice(prefix.length) : event.id,
+    sessionId: event.sessionId,
+    stream: event.eventType === 'system' || event.eventType === 'stderr' ? event.eventType : 'stdout',
+    text: includeContent ? event.content : '',
+    createdAt: event.createdAt,
+  };
 }
 
 export function toAiRuntimeSessionOrUndefined(record: ZeusRuntimeSessionRecord | undefined): AiRuntimeSession | undefined {

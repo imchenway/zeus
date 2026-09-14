@@ -222,6 +222,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   tasks: TaskRepository;
   telegramCommands: TelegramCommandApplication;
   terminalEvents: TerminalEventRepository;
+  readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
   workManagementCommands: WorkManagementCommandApplication;
 };
 
@@ -249,6 +250,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     taskEvents,
     taskStatusEventTitle,
     terminalEvents,
+    readRuntimeTerminalTail,
     activateCurrentCodexConfiguration,
     aiRuntimeManager,
     apiPerformance,
@@ -730,6 +732,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const runtimeQueries = new RuntimeQueryApplication({
     runtimeSessions,
     terminalEvents,
+    readTerminalTail: readRuntimeTerminalTail,
     liveRuntime: {
       listSessions: () => aiRuntimeManager.listSessions(),
       getSession: (sessionId) => aiRuntimeManager.getSession(sessionId),
