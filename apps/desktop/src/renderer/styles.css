@@ -1,14 +1,16 @@
 @import './ui/brand.css';
 
 :root {
-  color: oklch(22% 0.003 255);
-  background: oklch(99.7% 0.001 255);
+  /* 设置尚未加载时随系统，避免启动阶段固定显示白底。 */
+  color-scheme: light dark;
+  color: light-dark(#202124, #ebedf0);
+  background: light-dark(#f7f8fa, #17191d);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
 
-/* 自动化与扩展管理使用同一中性页面和单层目录表面。 */
+/* 自动化与扩展管理使用平铺分组列表，靠标题和留白表达层次。 */
 .macos-ai-app .automations-workspace {
   box-sizing: border-box;
   display: grid;
@@ -118,17 +120,13 @@
 
 .macos-ai-app .automations-layout {
   min-inline-size: 0;
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 16px;
-  background: var(--zeus-product-panel);
-  box-shadow: var(--zeus-card-shadow-soft);
+  background: transparent;
   overflow: hidden;
 }
 
 .macos-ai-app .automation-row,
 .macos-ai-app .automation-inbox-row {
   min-inline-size: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
 }
 
 .macos-ai-app .automation-row:last-child,
@@ -270,7 +268,6 @@
   margin: 0;
   padding: 0 0 16px;
   border: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
 }
 
 .macos-ai-app .automation-form-section legend {
@@ -541,7 +538,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-product-panel-muted);
 }
@@ -609,7 +606,7 @@
   gap: 10px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--zeus-product-line-soft);
+  border-top: 0;
 }
 
 .task-workflow-deliverable-preview pre {
@@ -656,7 +653,7 @@ body {
   max-inline-size: 100vw;
   min-block-size: 100vh;
   min-inline-size: 0;
-  background: oklch(99.7% 0.001 255);
+  background: light-dark(#f7f8fa, #17191d);
   overflow: hidden;
 }
 
@@ -683,7 +680,7 @@ a {
 }
 
 .macos-ai-app .zeus-sidebar {
-  border-right: 1px solid oklch(89.8% 0.002 255);
+  border-right: 0;
   background: oklch(97.4% 0.001 255);
   padding: 22px 16px;
 }
@@ -718,7 +715,7 @@ a {
 
 .macos-ai-app .runtime-session-filter-grid {
   align-items: end;
-  border: 1px solid oklch(89% 0.012 270);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 13px;
   background: oklch(97.4% 0.007 265);
   display: grid;
@@ -729,7 +726,7 @@ a {
 
 .macos-ai-app .runtime-session-filter-grid input,
 .macos-ai-app .runtime-session-filter-grid select {
-  border: 1px solid oklch(86% 0.014 270);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 8px;
   background: oklch(99% 0.004 265);
   color: oklch(28% 0.025 268);
@@ -791,7 +788,7 @@ a {
 }
 
 .macos-ai-app .git-review-workbench {
-  border: 1px solid oklch(87% 0.014 270);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 14px;
   background: oklch(97.2% 0.01 268);
   display: grid;
@@ -808,7 +805,7 @@ a {
 
 .macos-ai-app .git-hunk-decision {
   align-items: center;
-  border: 1px solid oklch(89% 0.012 270);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 11px;
   background: oklch(99% 0.004 265);
   display: grid;
@@ -888,7 +885,7 @@ a {
 
 .macos-ai-app .git-review-workbench {
   background: oklch(97.4% 0.005 268 / 0.82);
-  border: 1px solid oklch(84.5% 0.011 270);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 12px;
   box-shadow: none;
 }
@@ -909,7 +906,7 @@ a {
 .macos-ai-app .git-hunk-decision {
   background: transparent;
   border: 0;
-  border-bottom: 1px solid oklch(88% 0.01 270);
+  border-bottom: 0;
   border-radius: 0;
   padding: 10px 4px;
 }
@@ -992,7 +989,7 @@ a {
   min-inline-size: 0;
   max-inline-size: 100%;
   overflow-x: auto;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   scrollbar-width: thin;
 }
 
@@ -1063,9 +1060,9 @@ a {
   gap: 1px;
   margin: 0;
   overflow: hidden;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 12px;
-  background: var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel);
 }
 
 .macos-ai-app .codex-usage-metric-grid > div {
@@ -1172,7 +1169,7 @@ a {
   gap: 14px;
   min-inline-size: 0;
   padding: 16px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 16px;
   background: color-mix(in srgb, var(--zeus-product-panel) 88%, var(--zeus-product-canvas));
 }
@@ -1476,7 +1473,7 @@ a {
 
 .macos-ai-app .codex-usage-table-wrap :where(th, td) {
   padding: 8px 10px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   text-align: end;
   white-space: nowrap;
 }
@@ -1613,13 +1610,12 @@ a {
   inline-size: 15px;
 }
 
+/* 默认技能平铺为三列设置，不作为独立卡片。 */
 .macos-ai-app .skills-workflow-defaults {
-  background: color-mix(in oklab, var(--zeus-product-panel-muted) 82%, transparent);
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 16px;
+  background: transparent;
   display: grid;
   gap: 15px;
-  padding: 19px 20px 20px;
+  padding: 0 0 12px;
 }
 
 .macos-ai-app .skills-section-heading {
@@ -1655,7 +1651,6 @@ a {
 }
 
 .macos-ai-app .skills-workflow-default-row {
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
   display: grid;
   gap: 12px;
   min-inline-size: 0;
@@ -1731,7 +1726,6 @@ a {
 }
 
 .macos-ai-app .skills-empty-state {
-  border-block: 1px solid var(--zeus-product-line-soft);
   color: var(--zeus-product-muted);
   font-size: 13px;
   padding: 30px 4px;
@@ -1754,7 +1748,6 @@ a {
 
 .macos-ai-app .skills-scope-group > header {
   align-items: center;
-  border-block-end: 1px solid var(--zeus-product-line);
   display: flex;
   gap: 8px;
   min-block-size: 33px;
@@ -1779,7 +1772,6 @@ a {
 
 .macos-ai-app .skill-list-item {
   align-items: center;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
   display: grid;
   gap: 14px;
   grid-template-columns: 38px minmax(0, 1fr) auto;
@@ -1875,7 +1867,6 @@ a {
 
 .macos-ai-app .extension-plugin-row,
 .macos-ai-app .extension-marketplace-source {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
   min-inline-size: 0;
 }
 
@@ -1988,7 +1979,6 @@ a {
 }
 
 .macos-ai-app .extension-component-section {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
   padding-block-start: 12px;
 }
 
@@ -2011,7 +2001,6 @@ a {
 }
 
 .macos-ai-app .extension-marketplace-source > div {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
   padding: 4px 0 8px;
 }
 
@@ -2285,7 +2274,7 @@ a {
   .macos-ai-app .skills-workflow-default-row,
   .macos-ai-app .skills-workflow-default-row:first-child,
   .macos-ai-app .skills-workflow-default-row:last-child {
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
     border-inline-start: 0;
     padding: 13px 0;
   }
@@ -2360,7 +2349,7 @@ a {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
   color: var(--zeus-control-muted-text);
   font-size: 12px;
 }
@@ -2477,7 +2466,7 @@ a {
   align-items: center;
   gap: 3px;
   padding: 6px 7px;
-  border-block-end: 1px solid color-mix(in oklab, var(--task-board-group-color) 20%, var(--zeus-control-border));
+  border-block-end: 0;
   border-radius: 9px 9px 0 0;
   background: color-mix(in oklab, var(--task-board-group-color) 8%, var(--zeus-product-panel));
 }
@@ -2568,7 +2557,7 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
   color: var(--zeus-control-muted-text);
   background: color-mix(in oklab, var(--zeus-product-panel) 92%, transparent);
   font-size: 12px;
@@ -2853,7 +2842,7 @@ a {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-settings-dialog > header > div {
@@ -2878,7 +2867,7 @@ a {
 
 .macos-ai-app .task-board-settings-dialog > footer {
   justify-content: flex-end;
-  border-block-start: 1px solid var(--zeus-control-border);
+  border-block-start: 0;
   border-block-end: 0;
 }
 
@@ -3059,7 +3048,7 @@ a {
 .project-workspace-mode-toolbar {
   align-items: center;
   background: var(--zeus-toolbar-bg, var(--zeus-product-panel));
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   flex: 0 0 44px;
   gap: 18px;
@@ -3282,7 +3271,7 @@ a {
 .project-git-toolbar {
   align-items: center;
   background: var(--zeus-toolbar-bg, var(--zeus-product-panel));
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   flex: 0 0 44px;
   justify-content: space-between;
@@ -3384,7 +3373,7 @@ a {
 }
 .project-git-branch-search {
   align-items: center;
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   gap: 8px;
   padding: 10px 12px;
@@ -3417,7 +3406,7 @@ a {
 }
 .project-git-branch-actions,
 .project-git-branch-repository {
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   padding: 4px 0 7px;
 }
 .project-git-branch-repository:last-child {
@@ -3530,7 +3519,7 @@ a {
 .project-git-tabs {
   align-items: end;
   background: var(--zeus-product-panel);
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   flex: 0 0 39px;
   gap: 2px;
@@ -3655,11 +3644,11 @@ a {
   overflow: auto;
 }
 .project-git-repository-rail {
-  border-right: 1px solid var(--zeus-product-line);
+  border-right: 0;
   padding: 8px;
 }
 .project-git-inspector {
-  border-left: 1px solid var(--zeus-product-line);
+  border-left: 0;
 }
 .project-git-list-header {
   align-items: center;
@@ -3735,7 +3724,7 @@ a {
   align-items: center;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
   color: inherit;
   display: grid;
   font: inherit;
@@ -3793,7 +3782,7 @@ a {
   font-size: 10px;
 }
 .project-git-commit-detail {
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -3810,7 +3799,7 @@ a {
   margin: 0;
 }
 .project-git-changed-files {
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   padding: 8px;
 }
 .project-git-changed-files header {
@@ -3894,7 +3883,7 @@ a {
 }
 .project-git-diff-preview > header {
   align-items: center;
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   font-size: 11px;
   gap: 8px;
@@ -3966,14 +3955,14 @@ a {
   overflow: auto;
 }
 .project-git-change-tree {
-  border-right: 1px solid var(--zeus-product-line);
+  border-right: 0;
   padding: 8px;
 }
 .project-git-change-diff {
   display: flex;
 }
 .project-git-commit-rail {
-  border-left: 1px solid var(--zeus-product-line);
+  border-left: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -4051,7 +4040,7 @@ a {
 .project-git-stash-toolbar {
   align-items: center;
   background: var(--zeus-product-panel);
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   flex: 0 0 auto;
   gap: 12px;
@@ -4116,7 +4105,7 @@ a {
 }
 .project-git-console-surface article {
   align-items: start;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
   display: flex;
   gap: 8px;
   padding: 10px;
@@ -4253,7 +4242,7 @@ a {
   overflow: hidden;
 }
 .project-git-branch-dialog-body > aside {
-  border-right: 1px solid var(--zeus-product-line);
+  border-right: 0;
   overflow: auto;
   padding: 8px;
 }
@@ -4298,7 +4287,7 @@ a {
 }
 .project-git-branch-dialog-body article {
   align-items: center;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
   display: flex;
   min-height: 36px;
 }
@@ -4323,7 +4312,7 @@ a {
 .project-git-commit-dialog main > span,
 .project-git-push-dialog main > section {
   align-items: center;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
   display: flex;
   gap: 8px;
   min-height: 38px;
@@ -4368,7 +4357,7 @@ a {
   padding: 12px;
   display: grid;
   gap: 10px;
-  border: 1px solid var(--zeus-product-line);
+  border: 0;
   border-radius: 8px;
 }
 .project-git-sync-dialog .project-git-sync-fields {
@@ -4421,7 +4410,7 @@ a {
 }
 .project-git-sync-table :is(th, td) {
   padding: 8px;
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
   text-align: start;
 }
 .project-git-sync-table th[scope='row'] {
@@ -4451,7 +4440,7 @@ a {
   }
 }
 .project-git-push-options {
-  border-top: 1px solid var(--zeus-product-line);
+  border-top: 0;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -4562,7 +4551,7 @@ a {
 }
 .project-git-update-repositories > span {
   align-items: center;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
   display: grid;
   gap: 3px 8px;
   grid-template-columns: 18px minmax(120px, 0.7fr) minmax(150px, 1fr) auto auto;
@@ -5009,7 +4998,7 @@ a {
 .project-git-commit-rail {
   align-items: center;
   border-left: 0;
-  border-top: 1px solid var(--zeus-product-line);
+  border-top: 0;
   display: grid;
   gap: 12px;
   grid-area: commit;
@@ -5133,7 +5122,7 @@ a {
 }
 .project-git-diff-side-head {
   background: var(--zeus-product-panel-muted);
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: grid;
   flex: 0 0 30px;
   grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
@@ -5149,7 +5138,7 @@ a {
   white-space: nowrap;
 }
 .project-git-diff-side-head span + span {
-  border-left: 1px solid var(--zeus-product-line);
+  border-left: 0;
   grid-column: 3;
 }
 .project-git-diff-hunks {
@@ -5167,15 +5156,15 @@ a {
 }
 .project-git-diff-hunk {
   background: var(--zeus-product-panel);
-  border-bottom: 1px solid var(--zeus-product-line);
-  border-top: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
+  border-top: 0;
   flex: 0 0 auto;
   min-width: 0;
 }
 .project-git-diff-hunk-header {
   align-items: center;
   background: var(--zeus-product-panel-muted);
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: flex;
   gap: 12px;
   justify-content: space-between;
@@ -5245,8 +5234,11 @@ body[data-surface='project-git-diff'] {
 body[data-surface='project-git-diff'] #root {
   height: 100vh;
 }
-.project-git-diff-window {
-  background: var(--zeus-product-panel);
+body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-window {
+  /* 独立差异窗口共用主题，不采用主窗口的侧栏双列结构。 */
+  display: block;
+  /* 独立窗口没有主工作区底层，必须覆盖壳层透明材质。 */
+  background: var(--zeus-page-background) !important;
   color: var(--zeus-product-text);
   height: 100vh;
   padding-top: 42px;
@@ -5264,14 +5256,14 @@ body[data-surface='project-git-diff'] #root {
   min-height: 0;
 }
 .project-git-diff-window-files {
-  border-right: 1px solid var(--zeus-product-line);
+  border-right: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
 }
 .project-git-diff-window-files > header {
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 0;
   display: grid;
   gap: 2px;
   min-height: 48px;
@@ -5682,7 +5674,7 @@ body[data-surface='project-git-diff'] #root {
   gap: 10px;
   margin: 0;
   padding: 7px 12px 6px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .model-route-controls label,
@@ -5740,7 +5732,7 @@ body[data-surface='project-git-diff'] #root {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
-  border-block: 1px solid var(--zeus-product-line-soft);
+  border-block: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -5753,7 +5745,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .model-capability-summary > div + div {
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  border-inline-start: 0;
 }
 
 .macos-ai-app .model-capability-summary dt {
@@ -5939,7 +5931,7 @@ body[data-surface='project-git-diff'] #root {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-block-size: 0;
   min-inline-size: 0;
-  border: 1px solid var(--zeus-product-line);
+  border: 0;
   border-radius: 9px;
   background: var(--zeus-product-panel);
   overflow: hidden;
@@ -5952,7 +5944,7 @@ body[data-surface='project-git-diff'] #root {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
 }
 
 .macos-ai-app .project-model-settings-body {
@@ -5979,7 +5971,7 @@ body[data-surface='project-git-diff'] #root {
   box-sizing: border-box;
   min-block-size: 42px;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
   cursor: pointer;
 }
 
@@ -6055,7 +6047,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .project-model-catalog > .settings-pagination {
   flex-wrap: wrap;
   padding: 8px 12px;
-  border-block-start: 1px solid var(--zeus-product-line);
+  border-block-start: 0;
 }
 
 .macos-ai-app .project-model-settings-footer {
@@ -6064,7 +6056,7 @@ body[data-surface='project-git-diff'] #root {
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
   padding-block-start: 10px;
-  border-block-start: 1px solid var(--zeus-product-line);
+  border-block-start: 0;
 }
 
 .macos-ai-app .project-model-default-field {
@@ -6132,7 +6124,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .git-review-workbench {
   background: transparent;
   border: 0;
-  border-block-start: 1px solid oklch(84.5% 0.011 270);
+  border-block-start: 0;
   border-radius: 0;
   box-shadow: none;
 }
@@ -6147,7 +6139,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .git-hunk-decision {
   background: transparent;
   border: 0;
-  border-bottom: 1px solid oklch(88% 0.01 270);
+  border-bottom: 0;
   border-radius: 0;
   box-shadow: none;
 }
@@ -6266,7 +6258,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .settings-section-nav {
   align-items: center;
   align-self: center;
-  border-block-end: 1px solid oklch(91% 0.003 255);
+  border-block-end: 0;
   display: flex;
   flex: 0 0 auto;
   gap: 4px;
@@ -6295,7 +6287,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .integration-state-row {
-  border-block-end: 1px solid oklch(92% 0.003 255);
+  border-block-end: 0;
   color: oklch(49% 0.012 255);
   font-size: 12px;
   margin-block-end: 14px;
@@ -6309,7 +6301,7 @@ body[data-surface='project-git-diff'] #root {
 
 /* 2026-06-18 全局设置产品 pane 最终覆盖：全局设置内容只作为当前设置对象的产品 pane，不再命名为表单或堆叠壳层。 */
 .macos-ai-app .settings-product-pane {
-  border-block-start: 1px solid oklch(92% 0.003 255);
+  border-block-start: 0;
   display: grid;
   gap: 12px;
   max-inline-size: 980px;
@@ -6362,7 +6354,7 @@ body[data-surface='project-git-diff'] #root {
   align-items: end;
   background: transparent;
   border: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   border-radius: 0;
   box-shadow: none;
   display: grid;
@@ -6397,7 +6389,7 @@ body[data-surface='project-git-diff'] #root {
   }
 
   .macos-ai-app .settings-section-nav {
-    border-block-end: 1px solid var(--zeus-product-line);
+    border-block-end: 0;
     border-inline-end: 0;
     max-block-size: 34vh;
   }
@@ -6529,7 +6521,7 @@ body[data-surface='project-git-diff'] #root {
   --zeus-drawer-content-bg: var(--zeus-product-canvas);
   /* Runtime 日志语义色使用低饱和 token，保证错误、命令和 AI 回复可识别但不刺眼。 */
   --zeus-log-line-bg: oklch(98.1% 0.001 255);
-  --zeus-log-line-border: oklch(89.6% 0.001 255);
+  --zeus-log-line-border: var(--zeus-product-line);
   --zeus-log-line-text: var(--zeus-product-text);
   --zeus-log-error-bg: oklch(96.6% 0.022 28);
   --zeus-log-error-line: oklch(82% 0.05 28);
@@ -6861,7 +6853,7 @@ body[data-surface='project-git-diff'] #root {
   gap: 18px;
   justify-content: space-between;
   padding-block-end: 14px;
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
 }
 
 .macos-ai-app .project-settings-page-title {
@@ -7131,7 +7123,7 @@ body[data-surface='project-git-diff'] #root {
   align-items: center;
   background: transparent;
   border: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   border-radius: 0;
   box-shadow: none;
   color: var(--zeus-product-text);
@@ -7247,7 +7239,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .task-archive-heading {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   color: var(--zeus-product-muted);
   font-size: 12px;
 }
@@ -7259,7 +7251,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .task-archive-row {
   background: transparent;
   border: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   border-radius: 0;
   box-shadow: none;
   color: var(--zeus-product-text);
@@ -7390,7 +7382,7 @@ body[data-surface='project-git-diff'] #root {
   /* prettier-ignore */
   .workspace-drawer-portal-root.macos-ai-app .conversation-drawer-shell .runtime-workbench > :where(.drawer-header-row, .runtime-status-row-list, .runtime-adapter-list, .runtime-generic-shell-row-list, .runtime-session-list, .runtime-log-workbench) {
     background: var(--zeus-product-panel);
-    border: 1px solid var(--zeus-product-line-soft);
+    border: 0;
     border-radius: 12px;
     padding: 10px;
   }
@@ -7685,7 +7677,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .git-diff-drawer-workbench > :where(.drawer-header-row, .git-worktree-state-row, .git-file-change-list, .git-file-review-workbench, .git-risk-row-list, .git-confirmation-row-list, small) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
   padding: 10px 12px;
 }
@@ -7760,7 +7752,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .git-hunk-review-row {
   align-items: start;
   background: transparent;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-inline: 0;
   border-radius: 0;
   display: grid;
@@ -7823,7 +7815,7 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app .git-risk-row-list > :where(strong, .git-risk-input-row),
 .macos-ai-app .git-confirmation-row-list > :where(.git-risk-input-row, .git-confirmation-state-row, .git-confirmation-rejected-row, .git-confirmation-command-rail, button) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
   min-block-size: 42px;
   padding: 10px 12px;
@@ -7940,7 +7932,7 @@ body[data-surface='project-git-diff'] #root {
 /* 2026-06-17 Runtime 抽屉最终覆盖：运行状态、Adapter、会话、日志和 Generic shell 确认统一成连续审查行。 */
 .macos-ai-app .runtime-workbench {
   background: var(--zeus-product-panel);
-  border: 1px solid var(--zeus-product-line);
+  border: 0;
   border-radius: 12px;
   box-shadow: none;
   display: grid;
@@ -7949,7 +7941,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .runtime-workbench > :where(.drawer-header-row, .runtime-status-row-list, .runtime-adapter-list, .runtime-generic-shell-row-list, .runtime-session-list, .runtime-log-workbench) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
   padding: 10px 12px;
 }
@@ -7988,7 +7980,7 @@ body[data-surface='project-git-diff'] #root {
 /* 2026-06-17 Runtime 状态行去 evidence-row 最终覆盖：AI CLI 与终端能力状态使用 Runtime 专属行，避免旧证据卡片在抽屉内复活。 */
 .macos-ai-app .runtime-status-row-list > .runtime-capability-state-row {
   align-items: center;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(0, 1.6fr);
@@ -8029,7 +8021,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .runtime-session-row {
   align-items: start;
   background: transparent;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-inline: 0;
   border-radius: 0;
   display: grid;
@@ -8058,7 +8050,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .runtime-session-empty-row {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   color: var(--zeus-product-muted);
   font-size: 12px;
   min-block-size: 42px;
@@ -8110,7 +8102,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .runtime-session-filter-row {
   align-items: center;
   background: transparent;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-inline: 0;
   border-radius: 0;
   display: grid;
@@ -8159,7 +8151,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .runtime-session-live-controls {
   align-items: center;
   background: var(--zeus-product-panel-muted);
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 9px;
   display: grid;
   gap: 8px;
@@ -8372,7 +8364,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .runtime-log-workbench > :where(.runtime-log-toolbar, .runtime-log-search-control-row, .runtime-log-state-row, .runtime-log-stream) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
   padding: 10px 12px;
 }
@@ -8521,7 +8513,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .task-template-workbench > :where(.drawer-header-row, .task-template-list) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
   padding: 10px 12px;
 }
@@ -8540,7 +8532,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .task-template-empty-row {
   align-items: center;
   background: transparent;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -8640,7 +8632,7 @@ body[data-surface='project-git-diff'] #root {
 .macos-ai-app .settings-archived-conversation-state {
   align-items: center;
   background: var(--zeus-settings-action-meta-bg, var(--zeus-product-panel));
-  border: 1px solid var(--zeus-product-line);
+  border: 0;
   border-radius: 8px;
   display: grid;
   gap: 10px;
@@ -8909,7 +8901,7 @@ body[data-surface='project-git-diff'] #root {
 /* 2026-06-18 高风险确认列表最终覆盖：Git 与 Runtime 高风险区使用专属 risk-list 命名，不再保留通用危险区壳层。 */
 .macos-ai-app .git-confirmation-risk-row {
   align-items: center;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   column-gap: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 380px) auto;
@@ -8989,7 +8981,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .conversation-change-workbench > :where(.drawer-header-row, .conversation-change-empty-row, .conversation-change-file-list) {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   margin: 0;
 }
 
@@ -9013,7 +9005,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .conversation-change-file-row {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .conversation-change-file-row:first-child {
@@ -9068,7 +9060,7 @@ body[data-surface='project-git-diff'] #root {
 
 .macos-ai-app .project-archive-header {
   background: var(--zeus-product-panel-muted);
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
@@ -9079,7 +9071,7 @@ body[data-surface='project-git-diff'] #root {
 }
 
 .macos-ai-app .project-archive-row {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
@@ -9604,7 +9596,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .git-confirmation-command-rail,
 .macos-ai-app .runtime-generic-shell-command-rail {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   padding-block-start: 10px;
 }
 
@@ -9795,7 +9787,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   --zeus-drawer-content-bg: var(--zeus-solid-surface-bg);
   /* 2026-06-18 Runtime 日志语义 token 最终覆盖：错误、命令和 AI 回复必须共用低噪音日志色板。 */
   --zeus-log-line-bg: oklch(98.1% 0.001 255);
-  --zeus-log-line-border: oklch(89.6% 0.001 255);
+  --zeus-log-line-border: var(--zeus-product-line);
   --zeus-log-line-text: var(--zeus-product-text);
   --zeus-log-error-bg: oklch(96.6% 0.022 28);
   --zeus-log-error-line: oklch(82% 0.05 28);
@@ -9999,7 +9991,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app .pane-toolbar,
 .macos-ai-app .drawer-header-row,
 .macos-ai-app .integration-state-row {
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
   min-block-size: 40px;
 }
 
@@ -10785,7 +10777,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .browser-settings-row {
-  border-block-end: 1px solid var(--zeus-product-line);
+  border-block-end: 0;
 }
 
 .macos-ai-app .browser-settings-row .native-control-slot {
@@ -11288,9 +11280,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .zeus-select-popover::before {
+  /* 箭头沿用弹层边界色，深色主题不出现亮色接缝。 */
   background: var(--zeus-select-popover-bg);
-  border-block-start: 1px solid oklch(84% 0.001 255 / 0.9);
-  border-inline-start: 1px solid oklch(84% 0.001 255 / 0.9);
+  border-block-start: 1px solid var(--zeus-select-line);
+  border-inline-start: 1px solid var(--zeus-select-line);
   block-size: 8px;
   content: '';
   inline-size: 8px;
@@ -12329,7 +12322,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
   .macos-ai-app :where(.ai-sidebar) {
     block-size: auto;
-    border-block-end: 1px solid var(--zeus-product-line);
+    border-block-end: 0;
     border-inline-end: 0;
     height: auto;
     max-block-size: min(42vh, 320px);
@@ -12747,7 +12740,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
   .macos-ai-app.zeus-shell.ai-native-shell .project-first-sidebar {
     block-size: auto;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
     border-inline-end: 0;
     max-block-size: 42vh;
     min-block-size: 0;
@@ -12764,7 +12757,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   .macos-ai-app.zeus-shell.ai-native-shell.session-codex-parity-v1 .session-list-pane {
     background: var(--session-sidebar);
     block-size: 100vh;
-    border-inline-end: 1px solid var(--session-line);
+    border-inline-end: 0;
     box-shadow: 12px 0 36px rgb(0 0 0 / 0.18);
     inline-size: min(86vw, 320px);
     inset: 0 auto 0 0;
@@ -13680,7 +13673,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app .task-table-bulk-action-bar {
   align-items: center;
   background: color-mix(in oklch, var(--zeus-product-panel-muted) 72%, transparent);
-  border-block: 1px solid var(--zeus-product-line-soft);
+  border-block: 0;
   color: var(--zeus-product-text);
   display: grid;
   gap: 8px;
@@ -13812,7 +13805,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-detail-block,
 .macos-ai-app .task-detail-action-group {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 8px;
   padding-block-start: 12px;
@@ -13900,7 +13893,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-detail-pane-header.task-detail-summary-row {
   align-items: start;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -13949,7 +13942,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-detail-summary-grid {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   display: grid;
   gap: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -13966,7 +13959,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-detail-summary-grid .task-detail-summary-row {
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
   display: grid;
   gap: 3px;
   grid-template-columns: minmax(0, 1fr);
@@ -13994,7 +13987,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-detail-block {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   display: grid;
   gap: 9px;
   padding-block: 15px;
@@ -14035,7 +14028,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-detail-event-row {
   align-items: baseline;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -14064,7 +14057,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-detail-action-row {
   align-items: center;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -14131,7 +14124,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 
   .macos-ai-app .task-detail-summary-grid .task-detail-summary-row {
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
     border-inline-end: 0;
     padding-inline: 0;
   }
@@ -14435,7 +14428,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-table-field-settings-heading {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   display: grid;
   gap: 2px;
   padding: 10px 12px 9px;
@@ -14466,7 +14459,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-table-field-settings-footer {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   padding: 6px;
 }
@@ -14726,7 +14719,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-empty-state-outcome-grid {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 0;
   grid-area: outcomes;
@@ -14746,7 +14739,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-empty-state-outcome-grid > span:not(:last-child) {
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
 }
 
 .macos-ai-app .task-empty-state-outcome-grid strong {
@@ -14784,7 +14777,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
   .macos-ai-app .task-empty-state-outcome-grid > span {
     border-inline-end: 0;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
     padding: 9px 0;
   }
 
@@ -14949,7 +14942,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   align-content: start;
   gap: 10px;
   padding-inline: var(--zeus-solid-surface-edge);
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  border-inline-start: 0;
   overflow-wrap: anywhere;
 }
 
@@ -15188,7 +15181,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   gap: 0;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-control-bg);
   list-style: none;
@@ -15203,7 +15196,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-model-push-existing-repositories li + li {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-model-push-existing-repositories code,
@@ -15252,7 +15245,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: grid;
   gap: 8px;
   padding: 11px 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-control-bg);
 }
@@ -15288,7 +15281,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   gap: 10px;
   margin: 0;
   padding: 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 12px;
 }
 
@@ -15324,7 +15317,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1.28fr);
   gap: 20px;
   padding: 18px 0;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
 }
 
 .workspace-drawer-portal-root.macos-ai-app .project-workspace-config-body,
@@ -15430,7 +15423,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .task-model-push-attachment-sheet > header > span {
@@ -15502,7 +15495,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-model-push-parent-context {
   padding: 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 12px;
   background: var(--zeus-product-panel-muted);
 }
@@ -15515,7 +15508,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app .task-model-push-context-empty {
   margin: 0;
   padding: 10px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-control-bg);
   color: var(--zeus-product-muted);
@@ -15527,7 +15520,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   min-inline-size: 0;
   margin: 0;
   padding: 10px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-control-bg);
 }
@@ -15605,7 +15598,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-push-layout {
   padding: 10px 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-product-panel-muted);
 }
@@ -15619,7 +15612,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-push-layout-block + .task-push-layout-block {
   padding-block-start: 12px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-push-layout-block > header {
@@ -15716,7 +15709,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   justify-content: space-between;
   gap: 12px;
   padding-block: 4px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 .macos-ai-app .task-model-push-error {
   margin: 0;
@@ -15770,7 +15763,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-git-review-header {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-git-review-header > span,
@@ -15798,7 +15791,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   min-block-size: 0;
   display: grid;
   grid-template-columns: 230px minmax(0, 1fr) 250px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-git-review-workspaces,
@@ -15813,7 +15806,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: grid;
   align-content: start;
   gap: 6px;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
 }
 
 .macos-ai-app .task-git-review-workspaces > strong {
@@ -15827,7 +15820,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: grid;
   gap: 4px;
   padding-block: 5px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-git-workspace-branch-group:first-of-type {
@@ -15945,7 +15938,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-git-review-changes {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-git-review-pane-title {
@@ -15954,7 +15947,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-solid-surface-bg);
 }
 
@@ -16019,7 +16012,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: grid;
   align-content: start;
   gap: 18px;
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  border-inline-start: 0;
 }
 
 .macos-ai-app .task-git-review-options dl,
@@ -16049,7 +16042,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: grid;
   gap: 5px;
   padding: 10px 16px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   color: var(--zeus-product-muted);
   font-size: 12px;
 }
@@ -16074,7 +16067,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   align-items: center;
   gap: 10px;
   padding: 9px 16px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: color-mix(in srgb, var(--zeus-danger-text) 7%, var(--zeus-product-panel));
 }
 
@@ -16110,7 +16103,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   max-block-size: 160px;
   overflow: auto;
   padding: 9px 16px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   background: var(--zeus-product-panel);
 }
 
@@ -16253,7 +16246,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   justify-content: space-between;
   gap: 16px;
   padding: 14px 20px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel);
   font-size: 13px;
 }
@@ -16288,7 +16281,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -16325,7 +16318,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -16339,7 +16332,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: grid;
   gap: 5px;
   padding-block: 7px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-git-delivery-branch:first-child {
@@ -16565,7 +16558,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-git-delivery-action-step {
   padding-block-end: 22px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-git-delivery-action-step:last-child {
@@ -16779,7 +16772,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-merge-header {
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-git-merge-header > span {
@@ -16886,7 +16879,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-merge-status:not(:empty) {
   grid-row: 2;
   display: grid;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -16900,7 +16893,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-git-merge-footer {
   grid-row: 4;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-git-conflict-layout {
@@ -16952,7 +16945,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 8px;
   margin: 8px 0 0;
   padding: 14px 16px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-product-panel-muted);
   text-align: start;
@@ -16982,7 +16975,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   align-content: start;
   gap: 2px;
   padding: 0 8px 10px;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -16994,7 +16987,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 3px;
   margin-inline: -8px;
   padding: 12px 12px 10px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -17066,7 +17059,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 48px;
   box-sizing: border-box;
   padding: 7px 10px 7px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel);
 }
 
@@ -17093,7 +17086,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-conflict-feedback {
   margin: 0;
   padding: 5px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
   color: var(--zeus-product-muted);
   font-size: 11px;
@@ -17134,7 +17127,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-conflict-navigation button + small,
 .macos-ai-app .task-git-conflict-navigation small + button,
 .macos-ai-app .task-git-conflict-view-switch button + button {
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  border-inline-start: 0;
 }
 
 .macos-ai-app .task-git-conflict-navigation button:hover:not(:disabled):not([aria-disabled='true']),
@@ -17228,14 +17221,14 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 50px;
   padding: 7px 2px;
   border: 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   border-radius: 0;
   background: transparent;
   cursor: pointer;
 }
 
 .macos-ai-app .task-git-conflict-ai-permission label:first-of-type {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-git-conflict-ai-permission label.is-selected {
@@ -17301,7 +17294,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-conflict-resolved {
   margin: 0;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: color-mix(in oklab, color-mix(in srgb, var(--zeus-brand-primary) 8%, var(--zeus-product-panel)) 62%, var(--zeus-product-panel));
   color: var(--zeus-status-success-text);
   font-size: 12px;
@@ -17327,12 +17320,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   margin: 0;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
 }
 
 .macos-ai-app .task-git-conflict-columns strong {
   padding: 7px 10px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
   font-size: 12px;
 }
@@ -17410,7 +17403,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   .macos-ai-app .task-git-delivery-actions {
     grid-column: 1 / -1;
     display: flex;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
 
   .macos-ai-app .task-git-delivery-actions > * {
@@ -18110,7 +18103,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 12px;
   min-inline-size: 0;
   padding: 12px 14px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -18216,7 +18209,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 4px;
   margin: 0;
   padding: 10px 14px 12px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   background: var(--zeus-product-panel-muted);
 }
 
@@ -18720,7 +18713,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-list-loading-state {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 8px;
   min-block-size: 118px;
@@ -18766,7 +18759,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   align-items: center;
   background: transparent;
   border: 0;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-radius: 0;
   display: grid;
   gap: 12px;
@@ -19008,7 +19001,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-enum-order-editor {
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   min-inline-size: 0;
   overflow: hidden;
@@ -19117,7 +19110,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-status-config-list {
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   display: grid;
   list-style: none;
@@ -19306,7 +19299,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .legacy-import-settings {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 14px;
   margin-block-start: 24px;
@@ -19336,13 +19329,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .legacy-import-history li {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   justify-content: flex-start;
   padding-block: 10px;
 }
 
 .macos-ai-app .legacy-import-command-row {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   padding-block-start: 12px;
 }
 
@@ -19423,15 +19416,15 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   -webkit-app-region: no-drag;
 }
 
+/* 静止时以页面底色填满调宽轨道，避免透明缝隙透出系统亮色；交互时显示提示。 */
 .macos-ai-app .project-sidebar-resizer::after {
-  background: var(--zeus-product-line);
+  background: var(--zeus-page-background);
   content: '';
   inline-size: 1px;
   inset-block: 0;
   inset-inline-start: 50%;
   pointer-events: none;
   position: absolute;
-  transform: translateX(-50%);
 }
 
 .macos-ai-app .project-sidebar-resizer:hover:not(:disabled):not([aria-disabled='true'])::after,
@@ -19504,11 +19497,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-detail-sidebar {
   background: var(--zeus-product-panel);
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
   padding: 8px 22px 24px;
 }
 
-/* 概览用连续正文和细分隔线组织内容，不再在空协作区下重复堆叠。 */
+/* 概览用连续正文与分组间距组织内容，不再在空协作区下重复堆叠。 */
 .macos-ai-app .task-detail-overview {
   display: grid;
   padding: 0;
@@ -19574,7 +19567,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-detail-pane-header.task-detail-summary-row {
   align-items: center;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   flex-shrink: 0;
   margin-inline: 0;
   padding: 18px 24px 22px;
@@ -19901,7 +19894,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   justify-content: space-between;
   gap: 12px;
   padding: 9px 10px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-detail-delivery-list li:last-child {
@@ -20061,7 +20054,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 /* 只有创建会话有反馈时才占一行，操作入口不再占据底部空间。 */
 .macos-ai-app .task-detail-feedback-rail {
   background: var(--zeus-drawer-action-bg, var(--zeus-product-panel));
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   display: flex;
   flex-shrink: 0;
   flex-wrap: wrap;
@@ -20130,7 +20123,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-wrap: wrap;
   gap: 12px 24px;
   padding: 0 24px 18px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 .macos-ai-app .task-detail-arrangement > .task-detail-summary-row {
   display: flex;
@@ -20173,7 +20166,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-shrink: 0;
 }
 .macos-ai-app .task-detail-properties {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   padding-block: 18px;
 }
 .macos-ai-app .task-detail-properties > summary {
@@ -20212,7 +20205,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   .macos-ai-app .task-detail-sidebar {
     border-inline-end: 0;
     border-inline-start: 0;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
     padding: 20px 24px;
   }
 
@@ -20778,6 +20771,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .zeus-select-popover::before {
+  /* 箭头沿用弹层边界色，深色主题不出现亮色接缝。 */
   border-block-start-color: var(--zeus-select-line);
   border-inline-start-color: var(--zeus-select-line);
 }
@@ -20927,7 +20921,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   text-transform: none;
 }
 .macos-ai-app.zeus-shell .zeus-select-portal-root[data-control-size='compact'] .project-conversation-filter-popover .zeus-select-option-group:not(:first-child) {
-  border-block-start: 1px solid var(--zeus-card-border);
+  border-block-start: 0;
   margin: 6px 8px 0;
   padding: 10px 0 5px;
 }
@@ -20960,7 +20954,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-color: var(--zeus-product-accent);
 }
 .macos-ai-app .project-conversation-filter-popover .zeus-select-footer {
-  border-block-start: 1px solid var(--zeus-card-border);
+  border-block-start: 0;
   display: grid;
   gap: 4px;
   margin: 6px 8px 0;
@@ -21374,7 +21368,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .release-update-dialog-host {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   gap: 4px;
   padding-block-start: 12px;
@@ -21455,7 +21449,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   align-items: center;
   gap: 12px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   background: var(--zeus-product-panel);
   -webkit-app-region: no-drag;
 }
@@ -21504,7 +21498,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   box-shadow: none;
 }
 .project-code-mode-toolbar nav button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: 1px;
 }
 
@@ -21580,7 +21574,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   --task-board-column-width: 272px;
   position: relative;
   min-block-size: 0;
-  border-block-start: 1px solid var(--zeus-product-line-soft, var(--zeus-control-border));
+  border-block-start: 0;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 42%, var(--zeus-product-panel));
 }
 
@@ -21597,7 +21591,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   flex: 0 0 auto;
   gap: 10px;
   padding: 4px 14px;
-  border-block-end: 1px solid var(--zeus-product-line-soft, var(--zeus-control-border));
+  border-block-end: 0;
   background: var(--zeus-product-panel);
   font-size: 11px;
 }
@@ -21743,7 +21737,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .task-board-lane:not(:last-child) {
-  border-block-end: 1px solid var(--zeus-product-line-soft, var(--zeus-control-border));
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-subgroup-heading {
@@ -21778,7 +21772,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   min-block-size: 30px;
   flex: 0 0 auto;
   padding: 5px 10px;
-  border-block-start: 1px solid var(--zeus-product-line-soft, var(--zeus-control-border));
+  border-block-start: 0;
   background: color-mix(in oklab, var(--zeus-product-panel) 88%, transparent);
   font-size: 10px;
 }
@@ -21985,7 +21979,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-table-workbench:has(> .task-board-workbench) > .task-table-primary-toolbar {
   min-block-size: 70px;
   padding: 8px 12px;
-  border-block-end: 1px solid var(--zeus-toolbar-line, var(--zeus-product-line));
+  border-block-end: 0;
   background: var(--zeus-toolbar-bg, var(--zeus-product-panel));
 }
 
@@ -22062,7 +22056,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   align-items: center;
   gap: 8px;
   padding: 3px 12px;
-  border-block-end: 1px solid var(--zeus-product-line-soft, var(--zeus-control-border));
+  border-block-end: 0;
   color: var(--zeus-control-text);
   background: var(--zeus-product-panel-muted);
   font-size: 12px;
@@ -22162,7 +22156,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   block-size: 100%;
   max-block-size: none;
   border: 0;
-  border-inline-end: 1px solid var(--zeus-native-row-separator, var(--zeus-product-line));
+  border-inline-end: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -22434,7 +22428,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-board-settings-content legend {
   inline-size: 100%;
   padding: 11px 0 6px;
-  border-block-end: 1px solid var(--zeus-native-row-separator, var(--zeus-product-line));
+  border-block-end: 0;
   color: var(--zeus-control-text);
   font-size: 12px;
   font-weight: 650;
@@ -22452,7 +22446,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   align-items: center;
   gap: 12px;
   padding: 3px 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
   color: var(--zeus-control-muted-text);
   font-size: 12px;
 }
@@ -22475,7 +22469,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-board-setting-check {
   min-block-size: 34px;
   padding: 3px 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-setting-check input[type='checkbox'] {
@@ -22490,7 +22484,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .task-board-property-visibility > div {
   min-block-size: 34px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-property-visibility button,
@@ -22526,13 +22520,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-board-sort-rule {
   min-block-size: 34px;
   padding-block: 3px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-color-rule {
   gap: 8px;
   padding: 8px 0;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-board-color-rule > button {
@@ -22718,7 +22712,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   flex-basis: 100%;
   min-width: 0;
   padding: 18px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 12px;
 }
 /* 程序状态和版本在窄窗口中允许自然换行。 */
@@ -22747,13 +22741,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   display: grid;
   gap: 10px;
   padding-top: 16px;
-  border-top: 1px solid var(--zeus-product-line-soft);
+  border-top: 0;
 }
 /* 命令展示不继承全局代码块的额外宽度和空白。 */
 .macos-ai-app .model-setup-installation-command pre {
   margin: 0;
   padding: 12px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 8px;
 }
 /* 路径编辑只在用户展开后显示，并保持标签与输入框相邻。 */
@@ -22803,7 +22797,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .model-setup-account {
   margin-bottom: 28px;
   padding-bottom: 22px;
-  border-bottom: 1px solid var(--zeus-product-line-soft);
+  border-bottom: 0;
 }
 .macos-ai-app .model-setup-dialog [hidden] {
   display: none;
@@ -22903,7 +22897,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   margin: 0;
   padding: 12px 14px;
   background: var(--zeus-product-panel-muted);
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.65;
@@ -22918,7 +22912,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 /* 展开后优先级与父任务并排，标签单独一行。 */
 .macos-ai-app .task-create-options {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
@@ -22993,7 +22987,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .task-model-push-workspace {
     padding-block-start: 20px;
     border-inline-start: 0;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
 }
 

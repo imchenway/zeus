@@ -73,7 +73,7 @@
 
 .command-definition-list {
   background: var(--zeus-product-panel);
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 14px;
   flex-shrink: 0;
   overflow: hidden;
@@ -89,7 +89,7 @@
 }
 
 .command-definition-row + .command-definition-row {
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
 }
 
 .command-definition-row[data-enabled='false'] {
@@ -147,7 +147,7 @@
 }
 
 .command-run-list {
-  border-right: 1px solid var(--zeus-control-border);
+  border-right: 0;
   list-style: none;
   margin: 0;
   max-height: 480px;
@@ -160,7 +160,7 @@
   appearance: none;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   color: inherit;
   cursor: pointer;
   display: flex;
@@ -181,7 +181,7 @@
 }
 
 .command-run-list > li > button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
 }
 
@@ -288,7 +288,7 @@
 
 .command-run-log-toolbar {
   align-items: center;
-  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+  border-bottom: 0;
   display: flex;
   justify-content: space-between;
   min-height: 40px;
@@ -473,7 +473,7 @@
 }
 
 .command-modal-header {
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   padding-block: 18px 14px;
 }
 
@@ -512,7 +512,7 @@
 }
 
 .command-modal-header > button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: 2px;
 }
 
@@ -534,7 +534,7 @@
 }
 
 .command-modal-footer {
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   justify-content: flex-end;
   padding-block: 14px 18px;
 }
@@ -587,7 +587,7 @@
 
 .command-editor-switches,
 .command-parameter-row {
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
   padding: 12px;
 }
@@ -660,7 +660,7 @@
 
 .command-permission-body li {
   background: var(--zeus-product-panel-muted);
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -703,7 +703,7 @@
   }
 
   .command-run-list {
-    border-bottom: 1px solid var(--zeus-control-border);
+    border-bottom: 0;
     border-right: 0;
     max-height: 220px;
   }

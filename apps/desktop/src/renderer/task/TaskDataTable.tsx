@@ -61,8 +61,12 @@ const taskTableTheme = themeQuartz.withParams({
   cellHorizontalPadding: 10,
   wrapperBorder: false,
   wrapperBorderRadius: 0,
-  rowBorder: true,
+  // 连续表面以留白和悬停区分行，表头也不额外画线。
+  rowBorder: false,
+  headerRowBorder: false,
   columnBorder: false,
+  // 调宽提示只在悬停、聚焦或拖动期间显示。
+  headerColumnResizeHandleColor: 'var(--zeus-control-accent)',
 });
 
 /** 编辑状态位于表格上层，虚拟行卸载不丢失待保存值和冲突事实。 */

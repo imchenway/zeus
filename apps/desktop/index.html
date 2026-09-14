@@ -17,9 +17,20 @@
         margin: 0;
       }
 
+      /* 首屏未加载设置时跟随系统；已有主题标记时沿用明确选择。 */
+      :root {
+        color-scheme: light dark;
+      }
+      :root[data-zeus-theme='light'] {
+        color-scheme: light;
+      }
+      :root[data-zeus-theme='dark'] {
+        color-scheme: dark;
+      }
+
       body {
         overflow: hidden;
-        background: #f7f7f8;
+        background: light-dark(#f7f8fa, #17191d);
       }
 
       .zeus-startup-loader {

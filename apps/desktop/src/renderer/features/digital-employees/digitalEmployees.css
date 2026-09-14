@@ -44,13 +44,14 @@
 .macos-ai-app .digital-employee-feedback {
   margin: 12px 0 0;
   padding: 8px 10px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 8px;
   font-size: 12px;
 }
 
 .macos-ai-app .digital-employee-feedback.is-error {
-  border-color: color-mix(in oklab, var(--zeus-danger, #d14b55) 42%, var(--zeus-control-border));
+  /* 普通反馈不描边，错误状态继续保留原来的红色提示。 */
+  border: 1px solid color-mix(in oklab, var(--zeus-danger, #d14b55) 42%, var(--zeus-control-border));
   color: var(--zeus-danger, #b73542);
   background: color-mix(in oklab, var(--zeus-danger, #d14b55) 7%, transparent);
 }
@@ -61,7 +62,7 @@
   grid-template-columns: minmax(220px, 0.36fr) minmax(360px, 0.64fr);
   margin-top: 18px;
   overflow: hidden;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 11px;
   background: var(--zeus-product-panel);
 }
@@ -75,7 +76,7 @@
 .macos-ai-app .digital-employee-list-pane {
   min-width: 0;
   overflow: auto;
-  border-inline-end: 1px solid var(--zeus-control-border);
+  border-inline-end: 0;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 64%, transparent);
 }
 
@@ -88,7 +89,7 @@
   gap: 9px;
   padding: 11px 10px;
   border: 0;
-  border-block-end: 1px solid color-mix(in oklab, var(--zeus-control-border) 72%, transparent);
+  border-block-end: 0;
   border-radius: 0;
   color: inherit;
   background: transparent;
@@ -250,7 +251,7 @@
   justify-content: space-between;
   gap: 14px;
   padding: 11px 14px;
-  border-block-start: 1px solid var(--zeus-control-border);
+  border-block-start: 0;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 62%, transparent);
 }
 
@@ -263,7 +264,7 @@
 .macos-ai-app .project-digital-employees {
   margin: 0 18px 20px;
   padding-top: 18px;
-  border-block-start: 1px solid var(--zeus-control-border);
+  border-block-start: 0;
 }
 
 .macos-ai-app .workspace-view-project-settings .project-digital-employees {
@@ -309,7 +310,7 @@
   gap: 12px;
   margin-bottom: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
   background: var(--zeus-product-panel);
 }
@@ -337,7 +338,7 @@
   display: grid;
   gap: 12px;
   padding-block-end: 19px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app .digital-employee-form-section:last-child {
@@ -443,7 +444,7 @@
 .macos-ai-app .digital-employee-automation-list,
 .macos-ai-app .digital-employee-execution-list {
   min-width: 0;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-product-panel);
 }
@@ -482,7 +483,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app .digital-employee-automation-row:last-child {
@@ -513,7 +514,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app .digital-employee-execution-row {
@@ -523,7 +524,7 @@
   align-items: center;
   gap: 10px;
   padding: 11px 12px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
   font-size: 12px;
 }
 
@@ -624,7 +625,7 @@
 }
 
 .macos-ai-app .task-digital-employee-history {
-  border-block-start: 1px solid var(--zeus-control-border);
+  border-block-start: 0;
   padding-top: 9px;
 }
 
@@ -648,7 +649,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 7px 0;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
   font-size: 11px;
 }
 
@@ -907,7 +908,7 @@
   .macos-ai-app .digital-employee-list-pane {
     max-height: 260px;
     border-inline-end: 0;
-    border-block-end: 1px solid var(--zeus-control-border);
+    border-block-end: 0;
   }
 
   .macos-ai-app .digital-employee-assignment-strip,
@@ -974,7 +975,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 0 18px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
   background: var(--zeus-drawer-content-bg, var(--zeus-product-panel));
 }
 
@@ -1088,7 +1089,7 @@
   gap: 12px 26px;
   margin: 0;
   padding-block-end: 18px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-work-overview > div {
@@ -1112,7 +1113,7 @@
 /* 待办是唯一需要强调的区域，整行可打开原始请求或原确认弹窗。 */
 .macos-ai-app .task-work-inbox {
   padding: 14px 16px 4px;
-  border: 1px solid var(--zeus-product-line-soft);
+  border: 0;
   border-radius: 10px;
   background: var(--zeus-product-panel-muted);
 }
@@ -1136,7 +1137,7 @@
   gap: 12px;
   padding: 12px 4px;
   border: 0;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-radius: 0;
   background: transparent;
   color: inherit;
@@ -1226,7 +1227,7 @@
   align-items: start;
   gap: 14px;
   padding: 18px 0;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
 }
 
 .macos-ai-app .task-work-entry-icon {
@@ -1324,7 +1325,7 @@
   place-items: center;
   gap: 8px;
   padding: 36px 20px;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   color: var(--zeus-control-muted-text);
   font: inherit;
   text-align: center;
@@ -1349,7 +1350,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   padding: 11px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
   background: var(--zeus-product-panel);
   color: inherit;
@@ -1390,7 +1391,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px 16px;
   padding: 14px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
 }
 
@@ -1452,7 +1453,7 @@
   justify-content: space-between;
   gap: 14px;
   padding: 14px 18px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app .task-work-run-dialog > header > span {
@@ -1482,7 +1483,7 @@
 
 .macos-ai-app .task-work-run-body .digital-employee-agent-config {
   padding: 14px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 10px;
 }
 
@@ -1526,7 +1527,7 @@
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
 }
 
@@ -1559,7 +1560,7 @@
   max-height: calc(100dvh - 40px);
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  border-inline-start: 1px solid var(--zeus-control-border);
+  border-inline-start: 0;
   background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
   box-shadow: -18px 0 56px rgb(8 10 18 / 20%);
 }
@@ -1571,7 +1572,7 @@
   justify-content: space-between;
   gap: 14px;
   padding: 18px 20px;
-  border-block-end: 1px solid var(--zeus-control-border);
+  border-block-end: 0;
 }
 
 .macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > footer {
@@ -1649,7 +1650,7 @@
   display: grid;
   gap: 10px;
   padding: 14px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
   background: color-mix(in oklab, var(--zeus-product-panel-muted) 72%, transparent);
 }
@@ -1683,7 +1684,7 @@
   gap: 10px;
   margin: 0;
   padding: 14px;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
   border-radius: 9px;
 }
 
@@ -1870,7 +1871,7 @@
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 .macos-ai-app .task-conversation-selector > .zeus-select {
   min-inline-size: 0;
@@ -1935,7 +1936,7 @@
   flex-shrink: 0;
   gap: 16px;
   padding: 16px 22px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 .macos-ai-app .task-deliverable-reader > header > span {
   display: grid;
@@ -1950,7 +1951,7 @@
 }
 .macos-ai-app .task-deliverable-reader > footer {
   justify-content: flex-end;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   border-block-end: 0;
 }
 .macos-ai-app .task-deliverable-reader-body {
@@ -1966,7 +1967,7 @@
   align-items: center;
   gap: 12px;
   padding: 12px 22px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 .macos-ai-app .task-deliverable-reader-body.is-comparing {
   display: grid;
@@ -1984,7 +1985,7 @@
   min-inline-size: 0;
 }
 .macos-ai-app .is-comparing > section + section {
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  border-inline-start: 0;
 }
 .macos-ai-app .is-comparing h3 {
   font-size: 13px;
@@ -2001,7 +2002,7 @@
   }
   .macos-ai-app .is-comparing > section + section {
     border-inline-start: 0;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
 }
 @container task-detail (max-width: 860px) {
@@ -2049,7 +2050,7 @@
   align-items: center;
   gap: 14px;
   padding-block-end: 18px;
-  border-block-end: 1px solid var(--zeus-product-line-soft);
+  border-block-end: 0;
 }
 .macos-ai-app .task-work-run-person .digital-employee-avatar {
   inline-size: 44px;
@@ -2069,7 +2070,7 @@
   color: var(--zeus-product-muted);
 }
 .macos-ai-app .task-work-config-details {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
+  border-block-start: 0;
   padding-block: 16px;
 }
 .macos-ai-app .task-work-config-details > summary {
@@ -2178,7 +2179,7 @@
 .macos-ai-app .task-plan-stage {
   min-inline-size: 0;
   padding: 20px 0;
-  border-block-start: 1px solid var(--zeus-control-border);
+  border-block-start: 0;
 }
 .macos-ai-app .task-plan-stage > header {
   align-items: flex-start;
@@ -2350,7 +2351,7 @@
   bottom: -28px;
   margin: 20px 0 0;
   padding: 14px 2px;
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   background: var(--zeus-product-panel);
   z-index: 1;
 }
@@ -2392,7 +2393,7 @@
 
 /* 审查意见按原成果连续排列，问题定位与处理结果同时可见。 */
 .macos-ai-app .task-work-review {
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   margin-top: 24px;
   padding-top: 18px;
   font-size: 13px;
@@ -2419,7 +2420,7 @@
 }
 .macos-ai-app .task-work-review li {
   padding: 12px 0;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
 }
 .macos-ai-app .task-work-review li p {
   white-space: pre-wrap;
@@ -2459,7 +2460,7 @@
 .macos-ai-app .employee-memory-section {
   margin: 18px 0;
   padding-top: 16px;
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
 }
 .macos-ai-app .employee-memory-section > summary {
   cursor: pointer;
@@ -2485,7 +2486,7 @@
 /* 委派范围是明确成员选择，预算只约束此轮拆分。 */
 .task-plan-delegation {
   border: 0;
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   padding: 12px 0 0;
   margin: 12px 0;
 }
@@ -2514,7 +2515,7 @@
 
 /* 成员参数留在输入区的折叠摘要中，不与正文抢占空间。 */
 .expert-round-settings {
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   padding: 8px 2px;
   font-size: 12px;
 }
@@ -2585,7 +2586,7 @@
   width: 100%;
   padding: 10px 20px;
   border: 0;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -2604,7 +2605,7 @@
 /* 候选经验与已确认经验分段呈现，表单始终对应一条建议。 */
 .employee-memory-proposals {
   padding: 12px 0 20px;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
 }
 .employee-memory-proposals > header {
   display: flex;
@@ -2617,7 +2618,7 @@
   line-height: 1.6;
 }
 .employee-memory-proposal {
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   padding: 12px 0;
 }
 .employee-memory-proposal summary {
