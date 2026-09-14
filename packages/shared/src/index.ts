@@ -599,6 +599,116 @@ export type ZentaoTaskExtract =
   | { kind: 'unsupported'; sourceUrl: string }
   | { kind: 'failed'; sourceUrl: string; reason: string; cause?: 'credential_missing' | 'auth_failed' | 'network' };
 
+/** 禅道任务与缺陷导入范围只覆盖任务与缺陷；需求详情仍可通过链接导入。 */
+export type ZentaoRemoteKind = Extract<ZentaoLinkKind, 'task' | 'bug'>;
+
+export interface ZentaoRemoteProjectSummary {
+  id: string;
+  name: string;
+  status?: string;
+}
+
+export interface ZentaoRemoteExecutionSummary {
+  id: string;
+  projectId: string;
+  name: string;
+  status?: string;
+}
+
+export interface ZentaoRemoteProductSummary {
+  id: string;
+  name: string;
+  status?: string;
+}
+
+export interface ZentaoRemoteItemSummary {
+  kind: ZentaoRemoteKind;
+  objectId: string;
+  title: string;
+  status: string;
+  priority: string;
+  sourceUrl: string;
+  projectId?: string;
+  projectName?: string;
+  executionId?: string;
+  executionName?: string;
+  productId?: string;
+  productName?: string;
+  updatedAt?: string;
+}
+
+export interface ZentaoRemoteItemDetail extends ZentaoRemoteItemSummary {
+  description: string;
+  currentState: string;
+  reproductionSteps: string;
+  expectedOutcome: string;
+  estStarted?: string;
+  deadline?: string;
+  remoteType?: string;
+}
+
+export interface ZentaoRemoteListResult {
+  items: ZentaoRemoteItemSummary[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+/** 写入远端前由界面明确选择目标空间，并在二次确认后提交。 */
+export interface ZentaoTaskSyncRequest {
+  taskId: string;
+  expectedUpdatedAt: string;
+  kind: ZentaoRemoteKind;
+  projectId: string;
+  executionId?: string;
+  productId?: string;
+  estStarted?: string;
+  deadline?: string;
+  remoteType?: string;
+}
+
+export interface ZentaoTaskSyncLink {
+  instanceId: string;
+  kind: ZentaoRemoteKind;
+  objectId: string;
+  sourceUrl: string;
+  projectId?: string;
+  executionId?: string;
+  productId?: string;
+  remoteTitle?: string;
+  remoteUpdatedAt?: string;
+  lastSyncedAt: string;
+}
+
+/** 任务来源上下文允许保留其他来源字段；这里只读取受控的禅道关联。 */
+export function parseZentaoTaskSyncLink(value: unknown): ZentaoTaskSyncLink | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const instanceId = typeof candidate.instanceId === 'string' ? candidate.instanceId.trim() : '';
+  const kind = candidate.kind === 'task' || candidate.kind === 'bug' ? candidate.kind : null;
+  const objectId = typeof candidate.objectId === 'string' ? candidate.objectId.trim() : '';
+  const sourceUrl = typeof candidate.sourceUrl === 'string' ? candidate.sourceUrl.trim() : '';
+  const lastSyncedAt = typeof candidate.lastSyncedAt === 'string' ? candidate.lastSyncedAt.trim() : '';
+  if (!instanceId || !kind || !/^\d+$/u.test(objectId) || !sourceUrl || !lastSyncedAt) return null;
+  return {
+    instanceId,
+    kind,
+    objectId,
+    sourceUrl,
+    projectId: stringOrUndefined(candidate.projectId),
+    executionId: stringOrUndefined(candidate.executionId),
+    productId: stringOrUndefined(candidate.productId),
+    remoteTitle: stringOrUndefined(candidate.remoteTitle),
+    remoteUpdatedAt: stringOrUndefined(candidate.remoteUpdatedAt),
+    lastSyncedAt,
+  };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 /** 禅道实例元数据；host 保存 origin（协议+主机+端口），basePath 为子目录路径，根目录部署时为空字符串。 */
 export interface ZentaoInstanceRecord {
   id: string;

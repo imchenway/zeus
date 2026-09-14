@@ -2341,8 +2341,7 @@
   inline-size: 15px;
 }
 
-.session-codex-parity-v1 .session-terminal-error,
-.session-codex-parity-v1 .session-terminal-close-confirmation {
+.session-codex-parity-v1 .session-terminal-error {
   align-items: center;
   background: color-mix(in srgb, var(--session-danger) 7%, var(--session-canvas));
   border-block-end: 1px solid color-mix(in srgb, var(--session-danger) 26%, var(--session-line-soft));
@@ -2372,33 +2371,12 @@
   inline-size: 24px;
 }
 
-.session-codex-parity-v1 .session-terminal-error > svg,
-.session-codex-parity-v1 .session-terminal-close-confirmation > svg {
+.session-codex-parity-v1 .session-terminal-error > svg {
   block-size: 16px;
   flex: 0 0 16px;
   inline-size: 16px;
 }
 
-.session-codex-parity-v1 .session-terminal-close-confirmation > span {
-  display: grid;
-  flex: 1 1 auto;
-  gap: 1px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-terminal-close-confirmation strong {
-  font-size: 12px;
-}
-
-.session-codex-parity-v1 .session-terminal-close-confirmation small {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-terminal-close-confirmation > button,
 .session-codex-parity-v1 .session-terminal-empty-state > button {
   align-items: center;
   background: var(--session-control);
@@ -2412,14 +2390,8 @@
   padding-inline: 9px;
 }
 
-.session-codex-parity-v1 .session-terminal-close-confirmation > button:hover:not(:disabled),
 .session-codex-parity-v1 .session-terminal-empty-state > button:hover:not(:disabled) {
   background: var(--session-control-hover);
-}
-
-.session-codex-parity-v1 .session-terminal-close-confirmation > button.danger {
-  border-color: color-mix(in srgb, var(--session-danger) 45%, var(--session-line));
-  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-terminal-body {
@@ -2494,15 +2466,6 @@
     flex-basis: 144px;
   }
 
-  .session-codex-parity-v1 .session-terminal-close-confirmation {
-    align-items: stretch;
-    display: grid;
-    grid-template-columns: 16px minmax(0, 1fr) auto auto;
-  }
-
-  .session-codex-parity-v1 .session-terminal-close-confirmation small {
-    display: none;
-  }
 }
 
 @media (forced-colors: active) {

@@ -22745,7 +22745,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   touch-action: none;
 }
 
-/* 2026-09-14 任务列表操作列：三个单任务入口固定在横向滚动视口右侧，不再占用详情抽屉底部。 */
+/* 2026-09-14 任务列表操作列：四个单任务入口固定在横向滚动视口右侧，不再占用详情抽屉底部。 */
 .macos-ai-app :where(.task-table-header, .task-table-row) .task-table-cell.task-table-action-cell {
   align-items: center;
   background: var(--zeus-product-canvas);
@@ -22782,22 +22782,56 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app .task-table-row-actions {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 0.9fr);
-  inline-size: 100%;
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  inline-size: auto;
 }
 
 .macos-ai-app .task-table-row-actions .task-table-row-action {
-  font-size: 11px;
-  inline-size: 100%;
-  min-block-size: 26px;
-  overflow: hidden;
-  padding-inline: 8px;
-  text-overflow: ellipsis;
+  block-size: 28px;
+  border-radius: 7px;
+  flex: 0 0 28px;
+  font-size: 0;
+  inline-size: 28px;
+  min-block-size: 28px;
+  min-inline-size: 28px;
+  padding: 0;
+}
+
+.macos-ai-app .task-table-row-actions .task-table-row-action > svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.macos-ai-app .task-table-row-actions .task-table-row-action[data-loading='true']::after {
+  display: none;
+}
+
+.macos-ai-app .task-table-row-action-spinner {
+  animation: task-table-row-action-spin 720ms linear infinite;
+  block-size: 15px;
+  display: inline-flex;
+  inline-size: 15px;
+}
+
+.macos-ai-app .task-table-row-action-spinner > svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+@keyframes task-table-row-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 760px) {
+  .macos-ai-app .task-table-row .task-table-action-cell::before {
+    content: none;
+  }
+
   .macos-ai-app .task-table-row .task-table-cell.task-table-action-cell {
     background: transparent;
     box-shadow: none;
@@ -22808,5 +22842,309 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
   .macos-ai-app .task-table-row .task-table-action-cell .task-table-row-actions {
     grid-column: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .task-table-row-action-spinner {
+    animation: none;
+  }
+}
+
+/* 禅道导入入口与任务创建操作保持在任务工作面的同一操作层。 */
+.macos-ai-app .task-table-create-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.macos-ai-app .task-table-zentao-button {
+  background: color-mix(in oklch, var(--zeus-product-accent) 12%, var(--zeus-product-panel));
+  border-color: color-mix(in oklch, var(--zeus-product-accent) 36%, var(--zeus-product-line));
+  color: var(--zeus-product-accent);
+}
+
+.macos-ai-app .zentao-sync-modal {
+  display: flex;
+  flex-direction: column;
+  inline-size: min(760px, calc(100vw - 32px));
+  max-block-size: min(720px, calc(100vh - 32px));
+  overflow: hidden;
+}
+
+.macos-ai-app .zentao-sync-modal-header,
+.macos-ai-app .zentao-sync-modal-footer {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 18px 22px;
+}
+
+.macos-ai-app .zentao-sync-modal-header {
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .zentao-sync-modal-header strong {
+  display: block;
+  font-size: 18px;
+}
+
+.macos-ai-app .zentao-sync-modal-header p,
+.macos-ai-app .zentao-sync-help,
+.macos-ai-app .zentao-sync-warning {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 6px 0 0;
+}
+
+.macos-ai-app .zentao-sync-modal-close {
+  flex: 0 0 30px;
+  font-size: 18px;
+  min-block-size: 30px;
+  padding: 0;
+}
+
+.macos-ai-app .zentao-sync-modal-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 18px 22px;
+}
+
+.macos-ai-app .zentao-sync-toolbar {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.macos-ai-app .zentao-sync-import-toolbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.macos-ai-app .zentao-sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .zentao-sync-field > span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .zentao-sync-field :where(select, input) {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  color: var(--zeus-product-text);
+  min-block-size: 32px;
+  min-inline-size: 0;
+  padding: 0 9px;
+}
+
+/* 禅道同步弹窗的原生 select 只保留一个下拉提示；避免禁用加载态叠加重复背景箭头。 */
+.macos-ai-app .zentao-sync-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--zeus-select-caret-icon);
+  background-position: right 9px center;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+  padding-inline-end: 30px;
+}
+
+.macos-ai-app .zentao-sync-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.macos-ai-app .zentao-sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.macos-ai-app .zentao-sync-group > h3 {
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  margin: 0;
+}
+
+.macos-ai-app .zentao-sync-group-empty {
+  background: var(--zeus-product-panel-muted);
+  border-radius: 8px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.macos-ai-app .zentao-sync-list,
+.macos-ai-app .zentao-sync-selected-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.macos-ai-app .zentao-sync-item {
+  align-items: center;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.macos-ai-app .zentao-sync-item:hover {
+  background: var(--zeus-source-list-hover);
+}
+
+.macos-ai-app .zentao-sync-item.is-imported {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.macos-ai-app .zentao-sync-item-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .zentao-sync-item-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .zentao-sync-item-main small,
+.macos-ai-app .zentao-sync-item-state,
+.macos-ai-app .zentao-sync-pagination,
+.macos-ai-app .zentao-sync-task-preview span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.macos-ai-app .zentao-sync-pagination,
+.macos-ai-app .zentao-sync-modal-footer > span:last-child {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.macos-ai-app .zentao-sync-modal-footer {
+  align-items: center;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .zentao-sync-modal-footer > span:last-child {
+  justify-content: flex-end;
+}
+
+.macos-ai-app .zentao-sync-error,
+.macos-ai-app .zentao-sync-success,
+.macos-ai-app .zentao-sync-empty,
+.macos-ai-app .zentao-sync-loading {
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.macos-ai-app .zentao-sync-error {
+  background: color-mix(in srgb, var(--zeus-status-danger-bg) 72%, transparent);
+  color: var(--zeus-status-danger-text);
+}
+
+.macos-ai-app .zentao-sync-success {
+  background: color-mix(in srgb, var(--zeus-status-success-bg) 72%, transparent);
+  color: var(--zeus-status-success-text);
+}
+
+.macos-ai-app .zentao-sync-empty,
+.macos-ai-app .zentao-sync-loading {
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-muted);
+  text-align: center;
+}
+
+.macos-ai-app .zentao-sync-task-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-block-end: 4px;
+}
+
+.macos-ai-app .zentao-sync-confirm h3 {
+  margin: 0;
+}
+
+.macos-ai-app .zentao-sync-plan {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.macos-ai-app .zentao-sync-plan > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.macos-ai-app .zentao-sync-plan dt {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .zentao-sync-plan dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .zentao-sync-selected-list span {
+  background: var(--zeus-product-panel-muted);
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 7px 9px;
+}
+
+@media (max-width: 680px) {
+  .macos-ai-app .task-table-create-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
+  }
+
+  .macos-ai-app .task-table-create-actions .task-table-new-task-button {
+    flex: 1 1 0;
+  }
+
+  .macos-ai-app .zentao-sync-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .zentao-sync-modal-header,
+  .macos-ai-app .zentao-sync-modal-footer {
+    padding-inline: 16px;
   }
 }

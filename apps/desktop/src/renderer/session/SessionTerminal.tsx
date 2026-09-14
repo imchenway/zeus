@@ -73,18 +73,13 @@ const terminalCopy = {
     closePanel: '隐藏终端',
     closeTab: '关闭终端标签',
     loading: '正在连接终端服务…',
-    start: '新建终端',
+    starting: '正在启动终端…',
     allowAndStart: '允许 Shell 并新建终端',
     permissionTitle: '此项目尚未允许 Shell',
     permissionBody: '启用后，你在这里输入的命令会直接在当前项目目录中运行。',
-    emptyTitle: '项目终端已就绪',
-    emptyBody: '新终端会使用当前会话的工作目录，并在隐藏面板后继续运行。',
     unavailableTitle: '交互式终端不可用',
     retry: '重试',
-    stopTitle: '终止正在运行的终端？',
-    stopBody: '关闭此标签会终止其中正在运行的进程。隐藏整个面板不会终止终端。',
     cancel: '取消',
-    stopAndClose: '终止并关闭',
     running: '运行中',
     stopped: '已停止',
     exited: '已退出',
@@ -103,18 +98,13 @@ const terminalCopy = {
     closePanel: 'Hide terminal',
     closeTab: 'Close terminal tab',
     loading: 'Connecting to the terminal service…',
-    start: 'New terminal',
+    starting: 'Starting terminal…',
     allowAndStart: 'Allow Shell and create terminal',
     permissionTitle: 'Shell is not enabled for this project',
     permissionBody: 'Once enabled, commands entered here run directly in the current project folder.',
-    emptyTitle: 'Project terminal is ready',
-    emptyBody: 'New terminals use this conversation’s working folder and keep running when the panel is hidden.',
     unavailableTitle: 'Interactive terminal unavailable',
     retry: 'Retry',
-    stopTitle: 'Stop the running terminal?',
-    stopBody: 'Closing this tab stops its running process. Hiding the panel does not stop the terminal.',
     cancel: 'Cancel',
-    stopAndClose: 'Stop and close',
     running: 'Running',
     stopped: 'Stopped',
     exited: 'Exited',
@@ -135,7 +125,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
-  const [pendingCloseSessionId, setPendingCloseSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [height, setHeight] = useState(readStoredTerminalHeight);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -144,6 +133,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const mountedRef = useRef(true);
   const loadRevisionRef = useRef(0);
   const startInFlightRef = useRef(false);
+  const autoStartAttemptRef = useRef<string | null>(null);
   const closeInFlightRef = useRef(false);
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? null, [activeSessionId, sessions]);
   const preferredCwd = useMemo(() => resolveTerminalCwd(props.projectPath, props.cwd), [props.cwd, props.projectPath]);
@@ -231,8 +221,8 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     activeSurfaceRef.current = surface;
   }, []);
 
-  async function startTerminal(): Promise<void> {
-    if (starting || startInFlightRef.current || phase.kind !== 'ready') return;
+  const startTerminal = useCallback(async (): Promise<void> => {
+    if (startInFlightRef.current || phase.kind !== 'ready') return;
     startInFlightRef.current = true;
     setStarting(true);
     setError(null);
@@ -269,26 +259,31 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       startInFlightRef.current = false;
       if (mountedRef.current) setStarting(false);
     }
-  }
+  }, [copy.permissionUnavailable, copy.startupFailed, phase, preferredCwd, props.client, props.language, props.projectId, props.projectName, props.taskId]);
+
+  useEffect(() => {
+    if (!props.visible || phase.kind !== 'ready' || !phase.shellAllowed || sessions.length > 0 || startInFlightRef.current) return;
+    if (autoStartAttemptRef.current === props.projectId) return;
+    autoStartAttemptRef.current = props.projectId;
+    void startTerminal();
+  }, [phase, props.projectId, props.visible, sessions.length, startTerminal]);
 
   function requestCloseSession(session: AiRuntimeSession): void {
-    if (terminalSessionIsLive(session.status)) {
-      setPendingCloseSessionId(session.id);
+    if (!terminalSessionIsLive(session.status)) {
+      removeSessionTab(session.id);
       return;
     }
-    removeSessionTab(session.id);
+    void closeSession(session.id);
   }
 
-  async function confirmCloseSession(): Promise<void> {
-    const sessionId = pendingCloseSessionId;
-    if (!sessionId || closingSessionId || closeInFlightRef.current) return;
+  async function closeSession(sessionId: string): Promise<void> {
+    if (closingSessionId || closeInFlightRef.current) return;
     closeInFlightRef.current = true;
     setClosingSessionId(sessionId);
     setError(null);
     try {
       await props.client.stopRuntimeSession(sessionId);
       if (mountedRef.current) {
-        setPendingCloseSessionId(null);
         removeSessionTab(sessionId);
       }
     } catch (closeError) {
@@ -301,10 +296,14 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
 
   function removeSessionTab(sessionId: string): void {
     const index = sessions.findIndex((session) => session.id === sessionId);
+    if (index < 0) return;
     const next = sessions.filter((session) => session.id !== sessionId);
     setSessions(next);
     setActiveSessionId((current) => (current === sessionId ? (next[Math.min(Math.max(index, 0), Math.max(next.length - 1, 0))]?.id ?? null) : current));
-    setPendingCloseSessionId((current) => (current === sessionId ? null : current));
+    if (next.length === 0) {
+      autoStartAttemptRef.current = null;
+      props.onClose();
+    }
   }
 
   function updateSessionStatus(sessionId: string, status: AiRuntimeSessionStatus): void {
@@ -326,7 +325,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     }
   }
 
-  const pendingCloseSession = sessions.find((session) => session.id === pendingCloseSessionId) ?? null;
   const panelStyle = { '--session-terminal-height': `${height}px` } as CSSProperties;
 
   return (
@@ -392,7 +390,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
                   title={session.cwd}
                   className="session-terminal-tab"
                   onClick={() => {
-                    setPendingCloseSessionId(null);
                     setActiveSessionId(session.id);
                   }}
                   onKeyDown={(event) => {
@@ -401,7 +398,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
                     const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? sessions.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + sessions.length) % sessions.length;
                     const nextSession = sessions[nextIndex];
                     if (!nextSession) return;
-                    setPendingCloseSessionId(null);
                     setActiveSessionId(nextSession.id);
                     const tabs = event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('.session-terminal-tab');
                     requestAnimationFrame(() => tabs?.[nextIndex]?.focus());
@@ -411,8 +407,8 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
                   <span>{terminalTabTitle(session, sessions, index)}</span>
                   <i data-status={session.status} aria-label={terminalStatusLabel(session.status, copy)} title={terminalStatusLabel(session.status, copy)} />
                 </button>
-                <button type="button" className="session-terminal-tab-close" aria-label={`${copy.closeTab}: ${terminalTabTitle(session, sessions, index)}`} title={copy.closeTab} onClick={() => requestCloseSession(session)}>
-                  <X aria-hidden="true" />
+                <button type="button" className="session-terminal-tab-close" aria-label={`${copy.closeTab}: ${terminalTabTitle(session, sessions, index)}`} title={copy.closeTab} disabled={closingSessionId === session.id} onClick={() => requestCloseSession(session)}>
+                  {closingSessionId === session.id ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <X aria-hidden="true" />}
                 </button>
               </div>
             );
@@ -438,22 +434,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} aria-label={copy.cancel}>
             <X aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
-      {pendingCloseSession ? (
-        <div className="session-terminal-close-confirmation" role="alertdialog" aria-labelledby="session-terminal-stop-title" aria-describedby="session-terminal-stop-body">
-          <WarningCircle aria-hidden="true" />
-          <span>
-            <strong id="session-terminal-stop-title">{copy.stopTitle}</strong>
-            <small id="session-terminal-stop-body">{copy.stopBody}</small>
-          </span>
-          <button type="button" onClick={() => setPendingCloseSessionId(null)} disabled={Boolean(closingSessionId)}>
-            {copy.cancel}
-          </button>
-          <button type="button" className="danger" onClick={() => void confirmCloseSession()} disabled={Boolean(closingSessionId)}>
-            {closingSessionId ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : null}
-            {copy.stopAndClose}
           </button>
         </div>
       ) : null}
@@ -493,15 +473,28 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             onStatusChange={(status) => updateSessionStatus(activeSession.id, status)}
             onError={setError}
           />
+        ) : phase.shellAllowed ? (
+          <TerminalEmptyState
+            icon={error ? <WarningCircle aria-hidden="true" /> : <CircleNotch className="session-terminal-spinner" aria-hidden="true" />}
+            title={error ? copy.startupFailed : copy.starting}
+            detail={error ?? undefined}
+            action={
+              error ? (
+                <button type="button" onClick={() => void startTerminal()} disabled={starting}>
+                  {copy.retry}
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
           <TerminalEmptyState
             icon={<TerminalGlyph aria-hidden="true" />}
-            title={phase.shellAllowed ? copy.emptyTitle : copy.permissionTitle}
-            detail={phase.shellAllowed ? copy.emptyBody : copy.permissionBody}
+            title={copy.permissionTitle}
+            detail={copy.permissionBody}
             action={
               <button type="button" onClick={() => void startTerminal()} disabled={starting} autoFocus>
                 {starting ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <Plus aria-hidden="true" />}
-                {phase.shellAllowed ? copy.start : copy.allowAndStart}
+                {copy.allowAndStart}
               </button>
             }
           />
