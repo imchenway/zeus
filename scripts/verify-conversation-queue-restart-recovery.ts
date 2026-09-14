@@ -290,6 +290,13 @@ try {
     }
     restartedProvider.loseNextReceipt(echoOrder);
     inspectPreparingDispatch = async () => {
+      /** 上一轮的空闲通知在下一条准备期间到达，覆盖后台线程状态核对入口。 */
+      const readsBeforeStatus = restartedProvider.readThreadCalls;
+      await restartedProvider.publishThreadStatus();
+      await waitFor(() => restartedProvider.readThreadCalls > readsBeforeStatus, '线程状态通知没有触发后台历史核对。');
+      /** 页面必须仍显示正在发送，不能被没有用户回显的旧历史改成暂停。 */
+      const afterStatus = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+      assertBehavior(isRecord(afterStatus.body.state) && afterStatus.body.state.type === 'dispatching', `线程状态通知误暂停准备中的消息：${JSON.stringify(afterStatus.body)}`);
       /** 页面刷新通过既有只读核对命令，不直接改写探针数据。 */
       const input = { intent: 'check' };
       /** 检查期间保留真实 dispatching 状态，而不是改成恢复或伪造模型接纳。 */
@@ -300,7 +307,13 @@ try {
       assertBehavior(result.status === 202 && isRecord(result.body.state) && result.body.state.type === 'dispatching', `准备发送被历史核对暂停：${JSON.stringify(result)}`);
     };
     await restartedProvider.completeTurn(activeIndex);
-    await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 2, '上一轮结束后没有发送队首补充。');
+    try {
+      await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 2, '上一轮结束后没有发送队首补充。');
+    } catch (error) {
+      /** 准备回调的错误由真实服务持久化；派发超时时带回该证据，避免掩盖暂停原因。 */
+      const queue = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+      throw new Error(`${String(error)} 队列状态：${JSON.stringify(queue.body)}`);
+    }
     if (echoOrder === 'after') {
       await waitFor(async () => {
         /** 错误回执已落库后才投递用户回显。 */
@@ -340,6 +353,7 @@ try {
         lostReceiptEchoOrders: ['before', 'after'],
         queuedFollowupsSentOnce: true,
         preparingDispatchSurvivesHistoryCheck: true,
+        preparingDispatchSurvivesThreadStatusNotification: true,
         threeIdenticalQueuedMessagesWithAttachment: true,
         quotaFailureCanContinue: true,
         temporaryDatabaseCleanup: 'finally',
@@ -620,6 +634,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   loseNextReceipt(order: 'before' | 'after'): void;
   /** 投递带有原客户端身份的模型回显。 */
   publishUserMessage(index: number): Promise<void>;
+  /** 从原生订阅入口投递线程状态，覆盖独立的后台核对路径。 */
+  publishThreadStatus(): Promise<void>;
   /** 结束活动轮以唤醒下一条消息。 */
   completeTurn(index: number): Promise<void>;
   /** 控制真实服务收到的失败终态通知，不调用付费模型。 */
@@ -807,6 +823,10 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       lostReceiptOrder = order;
     },
     publishUserMessage,
+    /** 状态通知走真实事件订阅和延迟核对，不直接改写提交。 */
+    async publishThreadStatus() {
+      await emit('thread/status/changed', { threadId: input.providerThreadId, status: threadSnapshot().status });
+    },
     completeTurn,
     /** 失败与回显共用递增序号，避免后续事件被当作重复通知。 */
     async failLatestTurn() {
