@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
-import { computerActionApprovalDetail, computerActionApprovalReason, type ComputerActionTarget } from './computerActionApproval.js';
+import { assertComputerActionInputAllowed, type ComputerActionTarget } from './computerActionTarget.js';
 
 interface ComputerServiceResponse {
   id: string;
@@ -48,8 +48,6 @@ interface ComputerServiceProgress {
 type ComputerPermissionKind = 'accessibility' | 'screen_capture';
 
 interface CreateComputerHostOptions {
-  /** 原生确认使用应用当前语言，尚未加载时默认中文。 */
-  language?: () => 'zh-CN' | 'en-US';
   statePath: string;
   artifactRoot: string;
   helperExecutable: string;
@@ -79,7 +77,7 @@ export class ComputerHost implements BrowserAutomationPort {
   private stdoutBuffer = '';
   private stderrBuffer = '';
   private readonly pending = new Map<string, PendingServiceRequest>();
-  /** 只保留补全元素身份所需的观察世代；审批始终读取实时控件。 */
+  /** 只保留补全元素身份所需的观察世代；目标检查始终读取实时控件。 */
   private readonly latestSnapshots = new Map<string, number>();
   private serviceRecovery: Promise<void> | null = null;
   private serviceRecoveryFailure: Error | null = null;
@@ -88,11 +86,10 @@ export class ComputerHost implements BrowserAutomationPort {
   private settings: ZeusComputerSettings;
   private ipcRegistered = false;
   private closed = false;
-  private permissionPromptAttemptedForChild = false;
   /** 当前控制者在任何异步操作之前占位，避免并发轮次抢占。 */
   // ponytail: 每个宿主只允许一个桌面控制者；确有并行需求时再按应用划分。
   private controlOwner: ComputerControlOwner | null = null;
-  /** 停止世代使等待审批、排队和启动中的请求一并失效。 */
+  /** 停止世代使目标检查、排队和启动中的请求一并失效。 */
   private controlGeneration = 0;
   /** 已撤销的轮次不允许自动恢复；随本宿主退出释放。 */
   private readonly revokedTurns = new Set<string>();
@@ -102,8 +99,6 @@ export class ComputerHost implements BrowserAutomationPort {
   private serviceStartup: Promise<void> | null = null;
   /** 仅缓存当前控制者的最后一张缩略图，结束时同步清空。 */
   private controlPreview: ZeusComputerPreview | null = null;
-  /** 用户停止或关闭能力时同步关闭本轮尚未回答的确认框。 */
-  private actionApproval: AbortController | null = null;
   /** 串行工具在接管期间挂起；恢复、停止或服务退出都唤醒同一等待者。 */
   private userControlWaiter: (() => void) | null = null;
 
@@ -253,16 +248,16 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.ensureService();
       this.assertControlAllowed(input, generation);
       await this.refreshServiceStatus();
-      await this.requestMissingPermissionsForTool(input);
+      this.assertToolPermissions(input);
       this.assertControlAllowed(input, generation);
       if (input.tool !== 'list_apps' && this.controlPreview?.paused) {
         await this.waitForUserControl(input, generation);
         return this.userControlContinuation('当前请求尚未执行。');
       }
       const serviceArguments = this.prepareServiceArguments(input);
-      await this.ensureSensitiveActionApproval(input, serviceArguments, generation);
+      await this.prepareActionTarget(input, serviceArguments, generation);
       this.assertControlAllowed(input, generation);
-      // 读取时限从审批结束后计算，用户确认耗时不挤占动作后的观察预算。
+      // 读取时限从目标检查结束后计算，准备耗时不挤占动作后的观察预算。
       if (input.tool === 'get_app_state' || serviceArguments.wait_for !== undefined) serviceArguments._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
       // 动作一旦发出就不能继续使用旧索引；只有实际回读成功才能恢复缓存。
       if (!['get_app_state', 'list_apps'].includes(input.tool)) this.latestSnapshots.clear();
@@ -275,7 +270,7 @@ export class ComputerHost implements BrowserAutomationPort {
         return this.userControlContinuation(input.tool === 'get_app_state' ? '观察期间发生用户接管，旧观察已作废。' : '动作已经返回，可能已执行；不得重放，必须重新观察实际结果。');
       }
       if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result);
-      // 先记住动作回读的观察世代，再裁剪模型投影；审批始终读取实时控件。
+      // 先记住动作回读的观察世代，再裁剪模型投影；目标检查始终读取实时控件。
       const { textValue, image } = await this.projectResult(result, input.arguments.full_output === true);
       if (isRecord(textValue)) {
         textValue.diagnostics = {
@@ -355,7 +350,7 @@ export class ComputerHost implements BrowserAutomationPort {
     if (this.controlOwner?.input.conversationId === input.conversationId && this.controlOwner.input.turnId === input.turnId) await this.stop('turn_ended');
   }
 
-  /** 所有异步边界复核同一停止世代，审批通过不代表已撤销控制可以恢复。 */
+  /** 所有异步边界复核同一停止世代，目标检查通过不代表已撤销控制可以恢复。 */
   private assertControlAllowed(input: BrowserAutomationToolCall, generation: number): void {
     if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || this.revokedTurns.has(JSON.stringify([input.conversationId, input.turnId]))) {
       throw Object.assign(new Error('ZEUS_COMPUTER_STOPPED: 本轮桌面控制已撤销；需要用户发起新轮次，禁止自动恢复或重试动作。'), { code: 'ZEUS_COMPUTER_STOPPED' });
@@ -364,8 +359,6 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 先撤销所有排队和在途请求，再释放原生资源。 */
   private revokeControl(): void {
-    this.actionApproval?.abort();
-    this.actionApproval = null;
     this.controlGeneration += 1;
     if (this.controlOwner) this.revokedTurns.add(JSON.stringify([this.controlOwner.input.conversationId, this.controlOwner.input.turnId]));
     this.controlOwner = null;
@@ -418,7 +411,6 @@ export class ComputerHost implements BrowserAutomationPort {
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
     this.lastServiceProgress = null;
-    this.permissionPromptAttemptedForChild = false;
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.consumeStdout(child, chunk));
     child.stderr.setEncoding('utf8');
@@ -441,7 +433,6 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   private async requestPermissions(input: { accessibility: boolean; screenCapture: boolean }): Promise<ZeusComputerSettings> {
-    if (input.accessibility || input.screenCapture) this.permissionPromptAttemptedForChild = true;
     const status = asRecord(await this.callService('request_permissions', input));
     this.settings = {
       ...this.settings,
@@ -453,12 +444,15 @@ export class ComputerHost implements BrowserAutomationPort {
     return this.getSettings();
   }
 
-  private async requestMissingPermissionsForTool(input: BrowserAutomationToolCall): Promise<void> {
-    if (input.tool === 'list_apps' || this.permissionPromptAttemptedForChild) return;
-    const needsAccessibility = !this.settings.accessibilityTrusted;
-    const needsScreenCapture = !this.settings.screenCaptureAvailable;
-    if (!needsAccessibility && !needsScreenCapture) return;
-    await this.requestPermissions({ accessibility: needsAccessibility, screenCapture: needsScreenCapture });
+  /** 使用期间只检查权限；申请入口仅保留在系统设置操作中。 */
+  private assertToolPermissions(input: BrowserAutomationToolCall): void {
+    if (input.tool === 'list_apps') return;
+    if (!this.settings.accessibilityTrusted) {
+      throw Object.assign(new Error('请前往 Zeus 系统设置的 Computer Use 完成 macOS 辅助功能与录屏授权；本次操作尚未执行，不会自动申请或重试。'), { code: 'ZEUS_COMPUTER_ACCESSIBILITY_PERMISSION_REQUIRED' });
+    }
+    if (!this.settings.screenCaptureAvailable) {
+      throw Object.assign(new Error('请前往 Zeus 系统设置的 Computer Use 完成 macOS 录屏授权；本次操作尚未执行，不会自动申请或重试。'), { code: 'ZEUS_COMPUTER_SCREEN_CAPTURE_PERMISSION_REQUIRED' });
+    }
   }
 
   private callService(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -602,7 +596,6 @@ export class ComputerHost implements BrowserAutomationPort {
     child.stderr.removeAllListeners();
     child.stdin.destroy();
     this.child = null;
-    this.permissionPromptAttemptedForChild = false;
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
     for (const [id, pending] of this.pending) {
@@ -690,46 +683,17 @@ export class ComputerHost implements BrowserAutomationPort {
     };
   }
 
-  /** Codex 与 Pi 共用一次目标检查；普通编辑沿用全局授权，最终动作只批准当前真实目标。 */
-  private async ensureSensitiveActionApproval(input: BrowserAutomationToolCall, serviceArguments: Record<string, unknown>, generation: number): Promise<void> {
+  /** Codex 与 Pi 共用全局授权，执行前仍绑定真实目标并检查安全输入。 */
+  private async prepareActionTarget(input: BrowserAutomationToolCall, serviceArguments: Record<string, unknown>, generation: number): Promise<void> {
     if (!['click', 'drag', 'paste', 'perform_secondary_action', 'press_key', 'set_value', 'type_text'].includes(input.tool)) return;
     /** 控件及凭据均来自实际原生窗口，不由调用者声明。 */
     const target = await this.describeServiceTarget(input.tool, serviceArguments);
     this.assertControlAllowed(input, generation);
+    assertComputerActionInputAllowed(input.tool, serviceArguments, target);
     serviceArguments._action_token = target.token;
-    /** 一次确认的语言保持一致。 */
-    const english = this.options.language?.() === 'en-US';
-    /** 普通编辑不创建任何额外确认。 */
-    const reason = computerActionApprovalReason(input.tool, serviceArguments, target, english);
-    if (!reason) return;
-    /** 确认归属于当前 Zeus 窗口，目标应用无法代为操作该弹窗。 */
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    /** 一次性取消信号跟随控制生命周期。 */
-    const controller = new AbortController();
-    this.actionApproval = controller;
-    /** 默认拒绝，具体应用与动作在说明中展示。 */
-    const options: Electron.MessageBoxOptions = {
-      type: 'warning',
-      buttons: english ? ['Allow once', 'Decline'] : ['允许一次', '拒绝'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
-      signal: controller.signal,
-      title: english ? 'Allow this computer action?' : '允许这次电脑操作？',
-      message: english ? 'Allow this computer action?' : '允许这次电脑操作？',
-      detail: `${computerActionApprovalDetail(input.tool, serviceArguments, target, english)}\n\n${reason}`,
-    };
-    try {
-      /** 只接受明确的本次批准；停止信号优先于稍晚到达的按钮结果。 */
-      const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-      if (controller.signal.aborted) throw Object.assign(new Error('本轮桌面控制已停止，动作尚未执行。'), { code: 'ZEUS_COMPUTER_STOPPED' });
-      if (result.response !== 0) throw Object.assign(new Error('用户已拒绝敏感 Computer Use 操作。'), { code: 'ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED' });
-    } finally {
-      if (this.actionApproval === controller) this.actionApproval = null;
-    }
   }
 
-  /** 原生检查同时签发一次性凭据；执行前再次核对应用、窗口、焦点、内容及动作参数。 */
+  /** 原生服务描述本次真实目标并签发一次性校验凭据。 */
   private async describeServiceTarget(tool: string, serviceArguments: Record<string, unknown>): Promise<ComputerActionTarget> {
     /** 来自隔离原生服务的响应仍需验证必要目标字段。 */
     const result = asRecord(await this.callService('describe_target', { ...serviceArguments, _action_tool: tool }));
@@ -751,7 +715,7 @@ export class ComputerHost implements BrowserAutomationPort {
     };
   }
 
-  /** 内部身份与审批凭据只由宿主写入，模型参数不能伪造。 */
+  /** 内部身份与目标校验凭据只由宿主写入，模型参数不能伪造。 */
   private prepareServiceArguments(input: BrowserAutomationToolCall): Record<string, unknown> {
     const args: Record<string, unknown> = { ...Object.fromEntries(Object.entries(input.arguments).filter(([key]) => !key.startsWith('_'))), _control_session_id: this.controlOwner?.id };
     const app = typeof args.app === 'string' ? args.app : '';
