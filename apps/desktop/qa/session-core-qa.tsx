@@ -3,6 +3,8 @@ import { ModelSelectQa } from './model-select-qa.js';
 import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
+import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
+import type { NativeGoalSnapshot } from '../src/renderer/session/sessionTypes.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
@@ -35,6 +37,7 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  { query: 'goal', title: '目标状态与继续执行', summary: '生产组件的目标详情和输入框对齐检查。', answer: '', activities: [] },
   { query: 'navigation', title: '完整历史刻度', summary: '生产时间线的长历史定位与动效记录。', answer: '', activities: [] },
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
   { query: 'conversation-visibility', title: '进行中会话展示', summary: '进行中的会话不受普通会话数量限制。', answer: '', activities: [] },
@@ -108,6 +111,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   useEffect(() => {
     window.zeus?.reportRendererBootstrapReady?.();
   }, []);
+  if (props.scene.query === 'goal') return <GoalQa />;
   if (props.scene.query === 'navigation') return <NavigationQa />;
   if (props.scene.query === 'conversation-visibility') return <ConversationVisibilityQa />;
 
@@ -2047,6 +2051,89 @@ function NavigationQa() {
       <div ref={surface} className="ai-workspace" style={{ width: narrow ? 360 : '100%', maxWidth: '100%', flex: 1, minHeight: 0, display: 'flex' }}>
         <ConversationTranscript state={state} language="zh-CN" transcriptHydrated onLoadNavigation={loadNavigation} onLoadNavigationTurn={loadTurn} />
       </div>
+    </main>
+  );
+}
+
+/** 使用生产组件验证目标暂停、继续和编辑；演示数据不连接真实 Provider。 */
+function GoalQa() {
+  /** 查询参数覆盖窄分栏和深色模式。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 深色同步到门户实际读取的根节点属性。 */
+  const dark = parameters.has('dark');
+  /** 演示目标保持与服务端快照相同的结构。 */
+  const [goal, setGoal] = useState<NativeGoalSnapshot>({
+    conversationId: 'qa',
+    providerThreadId: 'qa',
+    objective: '真机验收这份功能清单，并截图关键界面发我，下拉框的样式、按钮的样式、布局的错误换行等等，也都要验收。',
+    status: 'active',
+    tokenBudget: null,
+    tokensUsed: 3459697,
+    timeUsedSeconds: 35760,
+    providerCreatedAt: 0,
+    providerUpdatedAt: 0,
+    updatedAt: '2026-09-14T01:00:00Z',
+  });
+  /** 弹窗显示由摘要入口控制。 */
+  const [open, setOpen] = useState(false);
+  /** 真实输入框的可编辑草稿。 */
+  const [state, setState] = useState(createInitialSessionState);
+  /** 标准编辑器焦点接口。 */
+  const composerRef = useRef<ComposerInputHandle | null>(null);
+  useEffect(() => {
+    document.documentElement.dataset.zeusTheme = dark ? 'dark' : 'light';
+  }, [dark]);
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'} qa-error-layout`}>
+      <header className="qa-error-layout-heading">
+        <h1>目标状态与继续执行</h1>
+        <nav>
+          <a href="?goal">宽屏</a>
+          <a href="?goal&narrow">窄分栏</a>
+          <a href="?goal&dark">深色</a>
+        </nav>
+      </header>
+      <div style={{ width: parameters.has('narrow') ? 420 : '100%', maxWidth: '100%', margin: '40px auto', display: 'flex', flexDirection: 'column' }}>
+        <GoalRail goal={goal} language="zh-CN" onOpen={() => setOpen(true)} />
+        <ConversationComposer
+          textareaRef={composerRef}
+          state={state}
+          language="zh-CN"
+          inputBlocked={false}
+          onDraftChange={(draft) => setState({ ...state, draft })}
+          onSubmit={() => {}}
+          onInterrupt={() => {}}
+          goalAvailable
+          goal={goal}
+          onOpenGoal={() => setOpen(true)}
+        />
+      </div>
+      <GoalPanel
+        open={open}
+        language="zh-CN"
+        goal={goal}
+        timeline={[
+          {
+            id: 'created',
+            conversationId: 'qa',
+            providerThreadId: 'qa',
+            providerTurnId: null,
+            kind: 'created',
+            objective: goal.objective,
+            status: 'active',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            occurredAt: '2026-09-13T01:57:00Z',
+          },
+        ]}
+        capability={{ supported: true, enabled: true, stage: 'stable', reason: 'available' }}
+        onDismiss={() => setOpen(false)}
+        onSave={(objective) => setGoal({ ...goal, objective })}
+        onPause={() => setGoal({ ...goal, status: 'paused' })}
+        onResume={() => setGoal({ ...goal, status: 'active' })}
+        onClear={() => setOpen(false)}
+      />
     </main>
   );
 }
