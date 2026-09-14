@@ -29,13 +29,18 @@ const sensitiveActionPattern = /\b(buy|purchase|pay|checkout|order|submit|send|p
 /** 保留安全输入保护；中文字段名称同样按完整文本识别。 */
 const secureFieldPattern = /\b(password|passcode|otp|one.?time|verification|cvv|cvc|card|iban|routing|account|ssn|secret|token)\b|身份证|密码|验证码|卡号|账户|密钥/iu;
 
-/** 普通文本编辑不因控件名字包含“发送”等文字而被当作最终提交。 */
+/** 系统定义的展示与导航动作；不按目标文案猜测动作，不接受任意 AXScroll 前缀。 */
+const navigationActions = new Set(['AXScrollToVisible', 'AXScrollUpByPage', 'AXScrollDownByPage', 'AXScrollLeftByPage', 'AXScrollRightByPage', 'AXShowMenu', 'AXRaise', 'AXShowAlternateUI', 'AXShowDefaultUI', 'AXCancel']);
+
+/** 先按系统动作区分导航、编辑与激活，再对可能提交的操作识别目标文案。 */
 export function computerActionApprovalReason(tool: string, args: Record<string, unknown>, target: ComputerActionTarget, english: boolean): string | null {
-  /** 当前控件的真实描述，仅用于风险识别。 */
-  const descriptor = `${target.role} ${target.subrole} ${target.title} ${target.description} ${target.identifier}`;
+  /** 有可见名称时不混入 submit-help 等内部标识；无名称的图标按钮仍保留标识作为风险线索。 */
+  const descriptor = [target.title, target.description].filter((value) => value.trim()).join(' ') || target.identifier;
+  /** 安全字段仍检查全部原生信息，所有输入路径共用相同保护。 */
+  const secureInput = target.secure || secureFieldPattern.test(`${target.role} ${target.subrole} ${descriptor} ${target.identifier}`);
   /** 文字写入共用安全字段和可编辑性检查。 */
   const textInput = ['set_value', 'type_text', 'paste'].includes(tool);
-  if (textInput && (target.secure || secureFieldPattern.test(descriptor))) {
+  if (textInput && secureInput) {
     throw Object.assign(new Error('Zeus 不读取或填写密码、验证码及其他安全文本字段。'), { code: 'ZEUS_COMPUTER_SECURE_FIELD_BLOCKED' });
   }
   if (textInput && target.editable) return null;
@@ -48,16 +53,24 @@ export function computerActionApprovalReason(tool: string, args: Record<string, 
       .filter(Boolean);
     /** 最后一个片段是实际按键。 */
     const key = parts.at(-1);
-    /** 组合键不能直接继承普通删字的批准。 */
-    const modifiers = parts.slice(0, -1);
+    /** 与原生修饰键别名及重复标志语义一致，避免同一个快捷键得到不同判定。 */
+    const modifiers = [...new Set(parts.slice(0, -1).map((part) => (/^(meta|super|cmd|command)$/u.test(part) ? 'command' : /^(alt|option)$/u.test(part) ? 'option' : /^(ctrl|control)$/u.test(part) ? 'control' : part)))].sort();
+    /** 规范化组合便于识别普通导航和编辑快捷键。 */
+    const chord = modifiers.join('+');
     // 导航键不激活当前控件；即使焦点在“发送”按钮上也不应重复确认。
     if (modifiers.every((part) => part === 'shift') && /^(tab|escape|left|right|up|down|arrowleft|arrowright|arrowup|arrowdown|home|end|pageup|pagedown)$/u.test(key ?? '')) return null;
+    if (chord === 'command' && /^[afg]$/u.test(key ?? '')) return null;
+    if (chord === 'command+shift' && key === 'g') return null;
+    if (target.editable && modifiers.every((part) => ['command', 'option', 'shift'].includes(part)) && /^(left|right|up|down|arrowleft|arrowright|arrowup|arrowdown|home|end|pageup|pagedown)$/u.test(key ?? '')) return null;
+    // 保护实际安全输入目标；“确认账户”等按钮文案不能把激活动作误判成输入密码。
+    if (target.secure || (target.editable && secureInput)) throw Object.assign(new Error('Zeus 不读取或填写密码、验证码及其他安全文本字段。'), { code: 'ZEUS_COMPUTER_SECURE_FIELD_BLOCKED' });
+    if (chord === 'command' && key === 'c') return null;
     if (key === 'delete' || key === 'backspace') {
       if (target.editable && modifiers.length === 0) return null;
       return english ? 'This key is not a plain text deletion. It may delete an object or trigger an application shortcut.' : '这次按键不属于普通文本删字，可能删除对象或触发应用快捷操作。';
     }
     if (key === 'enter' || key === 'return') {
-      if (modifiers.length === 0 && ['AXLink', 'AXDisclosureTriangle'].includes(target.role) && !sensitiveActionPattern.test(descriptor)) return null;
+      if (modifiers.length === 0 && (target.role === 'AXDisclosureTriangle' || (target.role === 'AXLink' && !sensitiveActionPattern.test(descriptor)))) return null;
       // ponytail: 通用辅助功能无法证明回车只会换行；换行走已有 type_text，实际按键保留提交确认。
       if (target.editable)
         return english ? 'Enter in this field may submit or send its contents. For a line break, the agent should insert newline text instead.' : '在这个输入框按回车可能提交或发送内容。如果只是换行，AI 应直接插入换行文字。';
@@ -66,18 +79,21 @@ export function computerActionApprovalReason(tool: string, args: Record<string, 
     // 仅确认普通按键与常见编辑快捷键；其他组合键可能触发应用级发送等操作。
     if (target.editable) {
       if (modifiers.every((part) => part === 'shift')) return null;
-      /** 统一 Command 别名，只有常见编辑操作与撤销重做直接执行。 */
-      const editingModifiers = modifiers
-        .map((part) => (/^(meta|super|cmd|command)$/u.test(part) ? 'command' : part))
-        .sort()
-        .join('+');
-      if ((editingModifiers === 'command' && /^[acvxz]$/u.test(key ?? '')) || (editingModifiers === 'command+shift' && key === 'z')) return null;
-      return english ? 'This shortcut is not recognized as ordinary text editing. It may trigger an application action.' : '无法确认这个组合键仅用于普通文本编辑，它可能触发应用快捷操作。';
+      if ((chord === 'command' && /^[vxz]$/u.test(key ?? '')) || (chord === 'command+shift' && key === 'z')) return null;
     }
+    return english ? 'This key is not recognized as navigation or ordinary text editing. It may trigger an application action.' : '这个按键不属于已识别的导航或普通文本编辑，可能触发应用操作。';
   }
-  if (tool === 'click' && target.editable) return null;
-  if (tool === 'perform_secondary_action' && args.action === 'AXShowMenu') return null;
-  if (tool === 'perform_secondary_action' && ['AXDelete', 'AXConfirm'].includes(String(args.action))) return english ? 'This accessibility action deletes or confirms the selected object.' : '这个控件操作会删除或确认选中的对象。';
+  if (tool === 'click' && (args.mouse_button === 'right' || target.editable || ['AXScrollBar', 'AXDisclosureTriangle'].includes(target.role))) return null;
+  if (tool === 'drag' && target.role === 'AXScrollBar') return null;
+  if (tool === 'perform_secondary_action') {
+    /** 精确动作来自原生控件公开的操作；未知动作不能继承导航授权。 */
+    const action = String(args.action ?? '');
+    if (navigationActions.has(action)) return null;
+    if (target.role === 'AXScrollBar' && ['AXIncrement', 'AXDecrement'].includes(action)) return null;
+    if (action === 'AXPress' && (target.editable || target.role === 'AXDisclosureTriangle')) return null;
+    if (['AXDelete', 'AXConfirm'].includes(action)) return english ? 'This accessibility action deletes or confirms the selected object.' : '这个控件操作会删除或确认选中的对象。';
+    if (!['AXPress', 'AXPick'].includes(action)) return english ? 'This control action is not recognized as navigation or ordinary editing.' : '这个控件操作不属于已识别的导航或普通编辑。';
+  }
   if (sensitiveActionPattern.test(descriptor)) return english ? 'This control may send information, submit changes, or perform a consequential action.' : '这个控件可能发送信息、提交修改或执行有实际影响的操作。';
   if (textInput) return english ? 'The target does not expose an editable text field. Input may trigger an application action.' : '目标没有公开可编辑文本框，输入可能触发应用操作。';
   return null;

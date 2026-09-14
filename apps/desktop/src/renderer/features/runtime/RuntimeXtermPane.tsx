@@ -11,7 +11,7 @@ export function RuntimeXtermPane(props: { logs: AiRuntimeLogEntry[]; enabled: bo
     let terminal: import('@xterm/xterm').Terminal | undefined;
     void import('@xterm/xterm').then(({ Terminal }) => {
       if (disposed || !terminalRef.current) return;
-      // xterm 只负责渲染已采集的真实 Runtime 日志；输入、resize、Ctrl-C 仍走后端审计 API。
+      // xterm 只负责渲染已采集的真实 Runtime 日志；输入、resize、Ctrl-C 仍走后端受控 API。
       terminal = new Terminal({
         convertEol: true,
         cursorBlink: false,

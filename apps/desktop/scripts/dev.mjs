@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { access, chmod, readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import process from 'node:process';
 import console from 'node:console';
@@ -26,6 +27,18 @@ const env = { ...configured, ...process.env };
 delete env.ZEUS_RELEASE_BUILD;
 delete env.ZEUS_PACKAGE_VARIANT;
 env.ZEUS_USER_DATA_DIR ||= resolve(root, `.tmp/electron-${mode}-data`);
+
+async function ensureNodePtySpawnHelperExecutable() {
+  if (process.platform !== 'darwin') return;
+  const helperPath = resolve(root, 'packages/ai-runtime/node_modules/node-pty/prebuilds', `darwin-${process.arch}`, 'spawn-helper');
+  try {
+    await access(helperPath, fsConstants.X_OK);
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    // node-pty 的预编译辅助程序必须可执行；部分依赖缓存会丢失 tarball 中的执行位。
+    await chmod(helperPath, 0o755);
+  }
+}
 
 let child;
 let server;
@@ -56,6 +69,7 @@ function run(command, args, environment) {
 }
 
 try {
+  await ensureNodePtySpawnHelperExecutable();
   // 首次准备主进程、preload 和本地辅助程序；后续前端编辑不再执行构建。
   const code = await run('pnpm', ['build'], env);
   if (code !== 0 || stopping) {

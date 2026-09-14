@@ -17,7 +17,7 @@ export interface UserFacingErrorCause {
 export interface UserFacingErrorDescription {
   /** 用户能理解的实际原因。 */
   message: string;
-  /** 可展开的脱敏原始说明。 */
+  /** 写入诊断日志的脱敏错误链；不能代替界面中的实际原因。 */
   details: string;
   /** 上次操作尚无确定结果，场景只能核对，不能据此再次发送。 */
   outcomeUnconfirmed: boolean;
@@ -990,6 +990,25 @@ export function redactUserFacingErrorDetails(value: string): string {
     .slice(0, 2000);
 }
 
+/** 去掉 Electron IPC 的固定包装，只保留适合直接显示的一行具体原因。 */
+function visibleFallbackMessage(item: UserFacingErrorCause): string {
+  const withoutTransportPrefix = item.message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '');
+  const withoutCodePrefix = item.code && withoutTransportPrefix.startsWith(`${item.code}:`) ? withoutTransportPrefix.slice(item.code.length + 1) : withoutTransportPrefix;
+  return withoutCodePrefix.replace(/\s+/gu, ' ').trim().slice(0, 600);
+}
+
+/** 未收录的错误也必须显示已有的具体原因，不能把原始消息只藏在详情中。 */
+function describeUncataloguedError(chain: readonly UserFacingErrorCause[], language: UserFacingErrorLanguage): string {
+  const candidates = [...chain].reverse().map((item) => ({ item, message: visibleFallbackMessage(item) }));
+  const specific = candidates.find(({ item, message }) => message && message !== item.code && !/^(?:error|unknown error|未知错误)[.!。]?$/iu.test(message));
+  if (specific) return specific.message;
+  const available = candidates.find(({ message }) => Boolean(message));
+  if (available) return available.message;
+  const code = candidates.find(({ item }) => Boolean(item.code))?.item.code;
+  if (code) return language === 'zh-CN' ? `操作失败（错误代码：${code}）。` : `The action failed (error code: ${code}).`;
+  return language === 'zh-CN' ? '发生了未知错误。' : 'An unknown error occurred.';
+}
+
 /** 优先解释读取失败或归档尚未完成，其余错误使用最内层已知原因。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
@@ -1009,7 +1028,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   const zh = language === 'zh-CN';
   const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$/u.test(item.code ?? ''));
   return {
-    message: match?.[zh ? 0 : 1] ?? (zh ? 'Zeus 尚未识别这次错误的具体原因。请查看错误详情。' : 'Zeus has not identified the cause of this error. See the error details.'),
+    message: match?.[zh ? 0 : 1] ?? describeUncataloguedError(chain, language),
     details: translated && !root.code && !root.cause && !root.details ? '' : details,
     outcomeUnconfirmed: unknownOutcome,
     action: unknownOutcome && (!match?.[2] || match[2] === 'retry') ? 'check' : (match?.[2] ?? null),

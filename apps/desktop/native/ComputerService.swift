@@ -487,9 +487,15 @@ private final class ComputerService {
             throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "无法确认目标控件；请重新读取目标窗口，动作尚未执行。")
         }
         try requireElementWindow(target, target: window)
-        let described = describeElement(target, index: 0, depth: 0, includeValue: false, includeActions: false, includeChildren: false)
+        // 辅助动作必须由真实控件公开；动作列表同时进入执行前的目标变化校验。
+        let described = describeElement(target, index: 0, depth: 0, includeValue: false, includeActions: method == "perform_secondary_action", includeChildren: false)
         guard var summary = described.summary else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_TARGET_UNAVAILABLE", message: "无法读取目标控件信息；请重新观察，动作尚未执行。")
+        }
+        if method == "perform_secondary_action" {
+            guard let action = params["action"] as? String, (summary["actions"] as? [String])?.contains(action) == true else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_SECONDARY_ACTION_INVALID", message: "只能执行当前控件实际公开的辅助功能动作；请重新观察目标。")
+            }
         }
         var valueSettable = DarwinBoolean(false)
         var selectedTextSettable = DarwinBoolean(false)
