@@ -239,6 +239,13 @@ export interface TaskWorkspaceCopy {
   runtimeSessionColumnTitle: string;
   rawIdColumnTitle: string;
   createdFromColumnTitle: string;
+  actionsColumnTitle: string;
+  pushNewConversation: string;
+  taskActionChecking: string;
+  taskActionRetry: string;
+  taskActionCodeDelivery: string;
+  taskActionDelete: string;
+  taskActionTerminalHelp: string;
   fieldSettings: string;
   fieldSettingsAria: string;
   fieldSettingsHelp: string;
@@ -265,6 +272,7 @@ export interface TaskWorkspaceCopy {
 
 export type TaskWorkspaceBulkActionStatus = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type TaskWorkspaceListState = 'ready' | 'loading' | 'error';
+export type TaskWorkspaceModelPushEntry = { taskId: string; status: 'checking' | 'error'; error?: string | null };
 
 export interface TaskWorkspaceProps {
   projectName?: string;
@@ -295,6 +303,8 @@ export interface TaskWorkspaceProps {
   bulkActionBusy?: boolean;
   statusChangeBusy?: boolean;
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
+  modelPushEntry?: TaskWorkspaceModelPushEntry;
+  taskActionBusy?: boolean;
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
   pageViewMode: TaskPageViewMode;
@@ -308,6 +318,9 @@ export interface TaskWorkspaceProps {
   onSaveTaskTableLayout?: () => void;
   onCreateTask: () => void;
   onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
+  onPushTaskToNewConversation: (taskId: string) => void;
+  onOpenTaskCodeDelivery: (taskId: string) => void;
+  onDeleteTask: (taskId: string) => void;
   onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
   onPageViewModeChange: (viewMode: TaskPageViewMode) => void;
   onReloadTaskBoard?: () => void;
@@ -397,6 +410,49 @@ function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mix
   );
 }
 
+/** 单任务高频入口固定在列表行内；容器截断点击冒泡，避免操作时同时打开详情。 */
+function TaskRowActions(props: {
+  task: TaskRecord;
+  copy: TaskWorkspaceCopy;
+  terminal: boolean;
+  busy: boolean;
+  modelPushEntry?: TaskWorkspaceModelPushEntry;
+  onPushTaskToNewConversation: (taskId: string) => void;
+  onOpenTaskCodeDelivery: (taskId: string) => void;
+  onDeleteTask: (taskId: string) => void;
+}) {
+  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
+  const activePushEntry = props.modelPushEntry?.taskId === props.task.id ? props.modelPushEntry : undefined;
+  const pushChecking = activePushEntry?.status === 'checking';
+  const pushLabel = pushChecking ? props.copy.taskActionChecking : activePushEntry?.status === 'error' ? props.copy.taskActionRetry : props.copy.pushNewConversation;
+  const actionLabel = (label: string) => (isEnglishCopy ? `${label}: ${props.task.title}` : `${label}：${props.task.title}`);
+
+  return (
+    <span className="task-table-cell task-table-action-cell" role="gridcell" data-column-label={props.copy.actionsColumnTitle} onClick={(event) => event.stopPropagation()}>
+      <span className="task-table-row-actions">
+        <Button
+          variant="primary"
+          size="compact"
+          className="task-table-row-action task-table-row-action-push"
+          aria-label={actionLabel(pushLabel)}
+          title={props.terminal ? props.copy.taskActionTerminalHelp : (activePushEntry?.error ?? undefined)}
+          busy={pushChecking}
+          disabled={props.busy || props.terminal}
+          onClick={() => props.onPushTaskToNewConversation(props.task.id)}
+        >
+          {pushLabel}
+        </Button>
+        <Button variant="secondary" size="compact" className="task-table-row-action" aria-label={actionLabel(props.copy.taskActionCodeDelivery)} disabled={props.busy} onClick={() => props.onOpenTaskCodeDelivery(props.task.id)}>
+          {props.copy.taskActionCodeDelivery}
+        </Button>
+        <Button variant="danger" size="compact" className="task-table-row-action" aria-label={actionLabel(props.copy.taskActionDelete)} disabled={props.busy} onClick={() => props.onDeleteTask(props.task.id)}>
+          {props.copy.taskActionDelete}
+        </Button>
+      </span>
+    </span>
+  );
+}
+
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [boardSettingsSection, setBoardSettingsSection] = useState<TaskBoardSettingsSection | null>(null);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
@@ -478,14 +534,16 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const boardBranchStatuses = useMemo(() => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskBranchStatus(props.taskConversations?.[task.id] ?? [])])), [props.taskConversations, props.tasks]);
   const enteringTaskIds = useNewItemMotionIds(props.tasks.map((task) => task.id));
   // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
-  // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
-  // interaction thesis: checkbox 只负责选择，行内容负责打开详情，执行反馈通过 aria-live 告知而不打断表格浏览。
+  // content plan: 顶部仍只服务筛选与新建；单任务高频操作固定在最右列，详情在右侧悬浮抽屉中展开。
+  // interaction thesis: checkbox 只负责选择，行内容负责打开详情，操作列截断冒泡并始终留在横向滚动视口内。
   const renderedVisibleColumns = model.visibleColumns;
+  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
+  const taskTableActionColumnWidth = isEnglishCopy ? 352 : 280;
   const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, model.columnPreferences)).join(' ');
-  const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32);
-  // 动态列由模型偏好决定，并和选择列一起写入单一 CSS 变量，header/row 共用同一条轨道。
+  const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32 + taskTableActionColumnWidth);
+  // 动态字段和不可隐藏的选择、操作列共用同一条轨道，header/row 不会因横向滚动发生错位。
   const taskTableGridStyle = {
-    '--task-table-grid-template': `minmax(32px, 32px) ${taskTableContentGridTemplate}`,
+    '--task-table-grid-template': `minmax(32px, 32px) ${taskTableContentGridTemplate} minmax(${taskTableActionColumnWidth}px, ${taskTableActionColumnWidth}px)`,
     gridTemplateColumns: 'var(--task-table-grid-template)',
     minWidth: `max(100%, ${Math.round(taskTableContentWidth)}px)`,
   } as CSSProperties & Record<'--task-table-grid-template', string>;
@@ -505,7 +563,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     .filter(Boolean)
     .join(' ');
   const statusSegmentOptions: TaskStatusFilter[] = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []), ...bulkStatusOptions].slice(0, 5);
-  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const showTaskStatusLine = taskListLoading || taskListError;
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
   const statusLineHelp = taskListLoading ? props.copy.taskListLoadingHelp : props.copy.taskListErrorHelp;
@@ -1020,6 +1077,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       </span>
                     );
                   })}
+                  <span className="task-table-cell task-table-action-cell" role="columnheader">
+                    {props.copy.actionsColumnTitle}
+                  </span>
                 </div>
               ) : null}
               <span className="sr-only" role="status" aria-live="polite">
@@ -1179,6 +1239,16 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                           </span>
                         );
                       })}
+                      <TaskRowActions
+                        task={task}
+                        copy={props.copy}
+                        terminal={managementStatus === props.completedStatusId || managementStatus === props.cancelledStatusId}
+                        busy={Boolean(props.taskActionBusy)}
+                        modelPushEntry={props.modelPushEntry}
+                        onPushTaskToNewConversation={props.onPushTaskToNewConversation}
+                        onOpenTaskCodeDelivery={props.onOpenTaskCodeDelivery}
+                        onDeleteTask={props.onDeleteTask}
+                      />
                     </div>
                   );
                 })

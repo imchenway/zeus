@@ -3433,3 +3433,28 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-stage-panel .project-git-change-file-row {
   gap: 6px;
 }
+
+/* 任务表格的固定操作列使用与行一致的不透明表面，横向滚动时不会透出下方字段。 */
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-header .task-table-cell.task-table-action-cell,
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row .task-table-cell.task-table-action-cell {
+  background: var(--zeus-card-background) !important;
+  box-shadow:
+    -1px 0 0 var(--zeus-card-border),
+    -14px 0 20px -20px var(--zeus-product-shadow, black) !important;
+}
+
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row.selected .task-table-action-cell {
+  background: color-mix(in srgb, var(--agentdesk-accent) 12%, var(--zeus-card-background)) !important;
+}
+
+.macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row:not(.selected):where(:hover, :focus-visible) .task-table-action-cell {
+  background: color-mix(in srgb, var(--agentdesk-accent) 4%, var(--zeus-card-background)) !important;
+}
+
+@media (max-width: 760px) {
+  .macos-ai-app.zeus-shell .workspace-view-project-tasks .task-table-row .task-table-cell.task-table-action-cell {
+    background: transparent !important;
+    box-shadow: none !important;
+    position: static;
+  }
+}
