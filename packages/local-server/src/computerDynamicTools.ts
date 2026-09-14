@@ -122,7 +122,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'perform_secondary_action',
-          description: 'Open the semantic secondary action or context menu for the target.',
+          description: 'Perform an exact accessibility action exposed by the current target. Navigation, scrolling, and opening menus use existing Computer Use authorization. Confirming, deleting, or unknown actions may require approval.',
           deferLoading: true,
           inputSchema: objectSchema({ ...elementTargetProperties, action: { type: 'string', description: 'Exact accessibility action exposed by get_app_state.' } }, ['app', 'element_index', 'action']),
         },
