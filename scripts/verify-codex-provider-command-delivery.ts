@@ -6,6 +6,8 @@ import { CodexProviderCommandApplicationService } from '../packages/local-server
 import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from '../packages/local-server/src/codexInteractionRecoveryApplication.js';
 import { createCodexExternalRequestAnswerRecovery } from '../packages/local-server/src/codexExternalRequestAnswerRecovery.js';
 import { CommandDeliveryRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ProjectRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { CodexJsonLineDecoder, codexMaximumFrameBytes } from '../packages/ai-runtime/src/codexAppServerProtocol.js';
+import { readCodexTurnItems } from '../packages/ai-runtime/src/codexAppServerManager.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-codex-provider-command-'));
 const database = await createZeusDatabase(join(probeRoot, 'probe.db'));
@@ -16,6 +18,7 @@ const service = new CodexProviderCommandApplicationService(database, repository,
 const providerTraceIdentity = '44444444-4444-4444-8444-444444444444';
 
 try {
+  await probeProtocolAndPaging();
   database.execute(`CREATE TABLE probe_projection (id TEXT PRIMARY KEY, state TEXT NOT NULL)`);
 
   await service.executeSession({
@@ -259,6 +262,7 @@ try {
     JSON.stringify(
       {
         status: 'passed',
+        protocolAndPaging: 'passed',
         session: { destination: session.attempt.destinationKind, generation: session.receipt.providerGenerationId, nativeSessionId: session.receipt.nativeSessionId, nativeTurnId: session.receipt.nativeTurnId },
         turn: { destination: accepted.attempt.destinationKind, nativeSessionId: accepted.receipt.nativeSessionId, nativeTurnId: accepted.receipt.nativeTurnId },
         unknown: { outcome: unknown.receipt.outcome, replay: unknownReplay, providerCalls: unknownProviderCalls, attempts: unknown.snapshot.attempts.length },
@@ -292,6 +296,60 @@ try {
 } finally {
   await database.close();
   await rm(probeRoot, { recursive: true, force: true });
+}
+
+/** 正常大帧和原生正文分页不得被误判成未知写入，真正损坏仍需明确诊断。 */
+async function probeProtocolAndPaging(): Promise<void> {
+  /** 大于旧限制的合法回包，保留一次完整解析后的请求身份。 */
+  const largeFrame = Buffer.from(`${JSON.stringify({ id: 'large-history', result: '中'.repeat(2 * 1024 * 1024) })}\n`);
+  /** 用管道常见分块大小回放，检查 UTF-8 跨块和一次合并路径。 */
+  const decoder = new CodexJsonLineDecoder();
+  for (let offset = 0; offset < largeFrame.length; offset += 65537) {
+    /** 只有最后一块才能产生完整消息。 */
+    const frames = decoder.push(largeFrame.subarray(offset, offset + 65537));
+    assertBehavior(
+      offset + 65537 < largeFrame.length ? frames.length === 0 : frames.length === 1 && frames[0]?.type === 'message' && 'id' in frames[0].message && frames[0].message.id === 'large-history',
+      '中文大帧的分块读取丢失内容或请求身份。',
+    );
+  }
+  /** 无参数通知是原生协议允许的正常形式。 */
+  const notifications = decoder.push(Buffer.from('{"method":"initialized"}\r\n{"id":2,"method":"empty/request"}\n'));
+  assertBehavior(notifications.length === 2 && notifications.every((frame) => frame.type === 'message'), '无参数通知或请求不能被判为协议损坏。');
+  /** 损坏 JSON 与结构错误保留字节诊断，下一帧继续可读。 */
+  const damaged = decoder.push(Buffer.from('broken\n{"id":true,"result":1}\n{"id":3,"result":true}\n'));
+  assertBehavior(
+    damaged[0]?.type === 'protocol_error' &&
+      damaged[0].error.code === 'MALFORMED_JSON' &&
+      damaged[0].error.byteLength === 6 &&
+      damaged[1]?.type === 'protocol_error' &&
+      damaged[1].error.code === 'INVALID_MESSAGE' &&
+      damaged[2]?.type === 'message',
+    '损坏帧必须明确失败且不能吞掉后续合法帧。',
+  );
+  /** 真正超过硬上限的未结束帧只报错一次，并丢弃到换行处。 */
+  const oversized = decoder.push(Buffer.alloc(codexMaximumFrameBytes + 1, 0x61));
+  assertBehavior(oversized.length === 1 && oversized[0]?.type === 'protocol_error' && oversized[0].error.code === 'FRAME_TOO_LARGE', '传输硬上限失效。');
+  assertBehavior(decoder.push(Buffer.from('discarded\n{"id":4,"result":null}\n'))[0]?.type === 'message', '超限帧结束后必须恢复解码。');
+  /** 33 个条目强制经过两页，逐条保留原生身份和正文。 */
+  const source = Array.from({ length: 33 }, (_, index) => ({ id: `item-${index}`, type: 'agentMessage', text: `正文 ${index}` }));
+  /** 页面请求次数证明调用方使用了每页 32 条的原生接口。 */
+  let calls = 0;
+  const items = await readCodexTurnItems(
+    {
+      listThreadItems: async ({ turnId, cursor, limit, sortDirection }) => {
+        assertBehavior(limit === 32 && sortDirection === 'asc', '正文恢复没有使用约定的原生分页。');
+        calls += 1;
+        const offset = Number(cursor ?? 0);
+        return { data: source.slice(offset, offset + limit).map((item) => ({ turnId, item })), nextCursor: offset + limit < source.length ? String(offset + limit) : null };
+      },
+    },
+    { threadId: 'thread', turnId: 'turn' },
+  );
+  assertBehavior(calls === 2 && JSON.stringify(items) === JSON.stringify(source), '分页恢复丢失正文或改变了条目顺序。');
+  assertBehavior(
+    (await captureAsyncCode(() => readCodexTurnItems({ listThreadItems: async () => ({ data: [], nextCursor: 'same' }) }, { threadId: 'thread', turnId: 'turn' }))) === 'ZEUS_NATIVE_SYNC_CURSOR_INVALID',
+    '重复游标必须中止，不能把部分内容当完整正文。',
+  );
 }
 
 async function executeTurn(scopeId: string, commandKey: string, invoke: () => Promise<void>, isExplicitRejection?: (error: unknown) => boolean): Promise<void> {

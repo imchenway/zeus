@@ -1208,6 +1208,25 @@
   white-space: normal;
 }
 
+/* 错误摘要与详情保持同一行；完整长文继续通过已有详情入口读取。 */
+.session-codex-parity-v1 .session-message-delivery-error {
+  align-items: baseline;
+  display: flex;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-message-delivery-error > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-message-delivery-error > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-message-delivery-actions {
   display: flex;
   flex-wrap: wrap;
@@ -11835,8 +11854,8 @@
   font-size: 12px;
 }
 .session-codex-parity-v1 .session-navigation-placeholder {
-  min-height: 100px;
-  padding: 12px 0;
+  /* 保留可观察的读取锚点，后台补读不制造多条空白消息。 */
+  min-height: 1px;
   color: var(--session-text-muted);
   font-size: 13px;
 }

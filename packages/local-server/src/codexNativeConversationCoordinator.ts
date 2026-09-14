@@ -1706,6 +1706,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   const queueCoreMutations = new ConversationQueueCoreMutationApplication({
+    commandDeliveries: options.commandDeliveries,
     submissions: options.submissions,
     execution: options.execution,
     requests: options.requests,

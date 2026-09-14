@@ -560,11 +560,6 @@ export function SessionTurnProcessDisclosure(props: {
       <Collapsible id={inline ? undefined : bodyId} open={open}>
         <div className="session-turn-process-body">
           {props.children}
-          {props.loading ? (
-            <p className="session-v2-page-status" role="status">
-              {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
-            </p>
-          ) : null}
           {props.error ? (
             <p className="session-v2-page-error" role="alert">
               <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />

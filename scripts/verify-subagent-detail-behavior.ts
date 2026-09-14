@@ -220,7 +220,11 @@ async function queryThread(thread: CodexThreadSnapshot) {
     provider: {
       getState: () => readyState,
       listThreads: async () => ({ data: [thread], nextCursor: null }),
-      readThread: async () => thread,
+      /** 原生线程读取只返回元信息，继承的父线程正文不得被整体下载。 */
+      readThread: async () => ({ ...thread, turns: [] }),
+      /** 用独立正文分页检查子线程所属边界。 */
+      listThreadTurns: async () => ({ data: (thread.turns ?? []).map((turn) => ({ ...turn, items: [] })), nextCursor: null }),
+      listThreadItems: async ({ turnId }) => ({ data: (thread.turns?.find((turn) => turn.id === turnId)?.items ?? []).map((item) => ({ turnId, item })), nextCursor: null }),
     },
     runtime: createCodexSubagentRuntimeReader({ providerHistoryRoot: historyRoot }),
     now: () => new Date('2026-08-23T00:00:00.000Z'),

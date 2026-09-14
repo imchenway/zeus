@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type ZeusDatabase } from '@zeus/storage';
 import { createCommandValidation } from './commandApplicationPrimitives.js';
 
@@ -253,7 +253,7 @@ function isCommandDeliveryError(error: unknown): error is CommandDeliveryStoreEr
 function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? error.code : null;
-    return { code, name: error.name, message: error.message, dispatchDisposition: 'dispatchDisposition' in error ? error.dispatchDisposition : null };
+    return { ...userFacingErrorCause(error), code, name: error.name, dispatchDisposition: 'dispatchDisposition' in error ? error.dispatchDisposition : null };
   }
   return { code: null, name: typeof error, message: String(error), dispatchDisposition: null };
 }

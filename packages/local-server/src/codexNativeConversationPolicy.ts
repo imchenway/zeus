@@ -1161,7 +1161,7 @@ export function submissionErrorSnapshot(errorJson: string | null): NativeSubmiss
     return {
       code,
       message,
-      ...(parsed.cause ? { cause: userFacingErrorCause(parsed.cause) } : {}),
+      ...(parsed.details ? { cause: userFacingErrorCause(parsed) } : parsed.cause ? { cause: userFacingErrorCause(parsed.cause) } : {}),
       recoveryRequired: parsed.recoveryRequired === true || code.includes('RECOVERY') || code.includes('WORKTREE_UNAVAILABLE'),
     };
   } catch {

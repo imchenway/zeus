@@ -20,6 +20,7 @@ import type {
   NativeSessionState,
   NativeQueuedSubmission,
   NativeQueueSnapshot,
+  NativeSessionItemBuffer,
 } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 
 /** 已有消息的任务会话仍保留首发工作面的导航身份；入口可能只持有真实身份。 */
@@ -52,6 +53,38 @@ assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, waitReason: 'c
 assertProbe(isSubmissionWaitingInQueue({ ...dispatchPendingQueue, waitReason: 'plan_confirmation' }, dispatchPendingSubmission), '等待计划确认的队首不能隐藏。');
 assertProbe(isSubmissionWaitingInQueue(dispatchPendingQueue, { ...dispatchPendingSubmission, status: 'paused', pausedReason: 'user_confirmation' }), '已暂停消息必须保留后续处理入口。');
 assertProbe(!isSubmissionWaitingInQueue(dispatchPendingQueue, { ...dispatchPendingSubmission, providerTurnId: 'accepted-turn' }), '模型已接手的消息不得重新出现排队操作。');
+
+/** 错误回执未确认时，后发消息必须仍在原消息之后。 */
+const failedMessage = { key: 'first', type: 'userMessage', optimistic: true, clientUserMessageId: 'first', payload: { submissionId: 'first-submission' }, timelineAt: '2026-09-14T04:00:00Z' } as NativeSessionItemBuffer;
+/** 尚无队列回执的后发消息，正是旧排序缺口。 */
+const newMessage = { ...failedMessage, key: 'second', clientUserMessageId: 'second', payload: {}, timelineAt: '2026-09-14T04:01:00Z' };
+/** 引导已送入当前轮次，即使原生回显未到，也必须先于之后的提问和回答。 */
+const steering = { ...failedMessage, status: 'steering', payload: { delivery: 'steer_now' } };
+/** 答题记录保持原问题之后的展示顺序。 */
+const question = { ...newMessage, key: 'question', type: 'agentMessage', optimistic: false };
+const answer = { ...steering, key: 'answer', timelineAt: '2026-09-14T04:02:00Z' };
+assertProbe(
+  orderTranscriptItemsWithQueue([steering, question, answer], null)
+    .map((item) => item.key)
+    .join(',') === 'first,question,answer',
+  '已接纳的引导消息不得被推到问答之后。',
+);
+/** 已确认历史即使更新时间更晚，也必须保持已有相对顺序。 */
+const confirmedHistory = [
+  { ...failedMessage, key: 'history-first', optimistic: false },
+  { ...newMessage, key: 'history-second', optimistic: false },
+];
+for (const status of ['paused', 'failed']) {
+  /** 两种发送结果都保留原提交的队列位置。 */
+  const queue = { ...dispatchPendingQueue, submissions: [{ ...dispatchPendingSubmission, id: 'first-submission', clientUserMessageId: 'first', status, pausedReason: status === 'paused' ? 'outcome_unknown' : null }] };
+  assertProbe(
+    orderTranscriptItemsWithQueue([...confirmedHistory, failedMessage, newMessage], queue)
+      .map((item) => item.key)
+      .join(',') === 'history-first,history-second,first,second',
+    '本地回执未到达时，失败消息和后发消息不得倒序。',
+  );
+}
+assertProbe(orderTranscriptItemsWithQueue([confirmedHistory[1]!, confirmedHistory[0]!], null)[0]!.key === 'history-second', '排序补队列不能再次按时间改排持久历史。');
 
 const rowCount = 100_000;
 const rowKeys = Array.from({ length: rowCount }, (_, index) => `row-${index}`);

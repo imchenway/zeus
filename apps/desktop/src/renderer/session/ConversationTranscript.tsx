@@ -1,7 +1,7 @@
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
 import { classifyAssistantMessage, conversationNavigationExcerpt, type ConversationNavigationSnapshot, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
-import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
+import { userFacingErrorCause } from '@zeus/shared';
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
@@ -1353,10 +1353,8 @@ function V2AutoPageSentinel(props: { loading: boolean; error: string | null | un
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [props.error, props.loading, props.onLoad]);
-  const loadingLabel = props.language === 'zh-CN' ? '正在补齐处理过程…' : 'Loading process…';
   return (
-    <span ref={sentinelRef} className="session-v2-auto-page" role={props.error ? 'alert' : props.loading ? 'status' : undefined}>
-      {props.loading ? loadingLabel : null}
+    <span ref={sentinelRef} className="session-v2-auto-page" role={props.error ? 'alert' : undefined}>
       {props.error ? <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </span>
   );
@@ -1602,14 +1600,10 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
         if (!entries.some((entry) => entry.isIntersecting)) return;
         observer.disconnect();
         setStatus({ loading: true, error: null });
-        void props.onLoad!(props.entry.turnId)
-          .then(() => {
-            // 正常结果由真实行接管；仍留在占位时只报告展示未完成，不把请求成功等同于正文可见。
-            if (!cancelled) setStatus({ loading: false, error: props.language === 'zh-CN' ? '正文暂未显示，请重试。' : 'Message not displayed yet. Please retry.' });
-          })
-          .catch((error: unknown) => {
-            if (!cancelled) setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
-          });
+        // 正文合并后由真实行接管；请求完成先于 React 提交，不能在这段间隙制造一次错误闪烁。
+        void props.onLoad!(props.entry.turnId).catch((error: unknown) => {
+          if (!cancelled) setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
+        });
       },
       { root: ref.current.closest('.session-transcript'), rootMargin: '200px 0px' },
     );
@@ -1621,7 +1615,7 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
   }, [props.entry.turnId, props.onLoad, props.language, attempt]);
   return (
     <section ref={ref} className="session-navigation-placeholder" aria-busy={status.loading}>
-      <span role="status">{status.error ?? (props.language === 'zh-CN' ? '正在读取正文…' : 'Loading message…')}</span>
+      {status.error ? <span role="alert">{status.error}</span> : null}
       {status.error ? (
         <button type="button" onClick={() => setAttempt((current) => current + 1)}>
           {props.language === 'zh-CN' ? '重试' : 'Retry'}
@@ -1836,7 +1830,7 @@ function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage;
   );
 }
 
-/** 消息受阻时解释原因，并只提供当前状态已有的操作。 */
+/** 错误区只说明原因和提供详情，不追加恢复或重试操作行。 */
 export function MessageDeliveryOutcomeFeedback(props: {
   item: NativeSessionItemBuffer;
   submissionId?: string;
@@ -1851,11 +1845,8 @@ export function MessageDeliveryOutcomeFeedback(props: {
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
-  const [busyAction, setBusyAction] = useState<'recover' | 'reconnect' | 'retry' | 'cancel' | null>(null);
-  const [actionError, setActionError] = useState<unknown>(null);
   const pausedReason = props.item.payload.pausedReason;
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
-  const localAcceptanceFailure = Boolean(props.item.optimistic && !props.submissionId && props.clientUserMessageId);
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
       <ConversationNotice deliveryState="interaction-recovery-pending" role="status" label={props.language === 'zh-CN' ? '正在恢复对话' : 'Restoring conversation'}>
@@ -1876,95 +1867,9 @@ export function MessageDeliveryOutcomeFeedback(props: {
   if (!deliveryError || (!failed && !unconfirmed)) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
 
-  const providerStopRecoveryFailed = pausedReason === 'recovery_required' && deliveryError.code === 'ZEUS_PROVIDER_STOP_RECOVERY_REQUIRED';
-  const recoveredUnsent = pausedReason === 'recovered_unsent' && deliveryError.code === 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED';
-  const modelWindowUnavailable = deliveryError.code === 'ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE';
-  const genericQueueRecoveryRequired = pausedReason === 'recovery_required' && !interactionResponseRecovery && !providerStopRecoveryFailed && !modelWindowUnavailable;
-  /** 解决入口取决于已知原因；不能用通用恢复按钮覆盖登录或配置问题。 */
-  const explanation = describeUserFacingError(deliveryError, props.language);
-  const submissionId = props.submissionId ?? (typeof props.item.payload.submissionId === 'string' ? props.item.payload.submissionId : props.item.localItemId);
-  const runAction = (action: 'recover' | 'reconnect' | 'retry' | 'cancel', operation: (() => void | Promise<void>) | undefined) => {
-    if (!operation || busyAction) return;
-    setActionError(null);
-    setBusyAction(action);
-    void Promise.resolve()
-      .then(operation)
-      .catch(setActionError)
-      .finally(() => setBusyAction(null));
-  };
-
   return (
     <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
-      <VisibleApplicationError error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-      <div className="session-message-delivery-actions">
-        {(explanation.action === 'sign_in' || explanation.action === 'model_settings' || explanation.action === 'choose_model') && props.onOpenAiSettings ? (
-          <button type="button" disabled={busyAction !== null} onClick={() => props.onOpenAiSettings?.(explanation.action === 'sign_in' ? 'runtime' : 'models')}>
-            {explanation.action === 'sign_in' ? (props.language === 'zh-CN' ? '前往登录' : 'Go to sign in') : props.language === 'zh-CN' ? '检查模型设置' : 'Check model settings'}
-          </button>
-        ) : null}
-        {localAcceptanceFailure ? (
-          <>
-            {(unconfirmed || (deliveryError.retryable && explanation.action === 'retry')) && props.onRetryPendingSend ? (
-              <button
-                type="button"
-                disabled={busyAction !== null || !props.clientUserMessageId}
-                onClick={() => runAction('retry', props.clientUserMessageId ? () => props.onRetryPendingSend?.(props.clientUserMessageId!, unconfirmed ? 'check' : 'continue') : undefined)}
-              >
-                {busyAction === 'retry'
-                  ? props.language === 'zh-CN'
-                    ? '正在检查…'
-                    : 'Checking…'
-                  : unconfirmed
-                    ? props.language === 'zh-CN'
-                      ? '检查处理状态'
-                      : 'Check processing status'
-                    : props.language === 'zh-CN'
-                      ? '重新发送'
-                      : 'Send again'}
-              </button>
-            ) : null}
-            {failed && props.onCancelPendingSend ? (
-              <button type="button" disabled={busyAction !== null || !props.clientUserMessageId} onClick={() => runAction('cancel', props.clientUserMessageId ? () => props.onCancelPendingSend?.(props.clientUserMessageId!) : undefined)}>
-                {props.language === 'zh-CN' ? '取消这条消息' : 'Discard this message'}
-              </button>
-            ) : null}
-          </>
-        ) : pausedReason === 'outcome_unknown' ||
-          interactionResponseRecovery ||
-          providerStopRecoveryFailed ||
-          (genericQueueRecoveryRequired && (explanation.outcomeUnconfirmed || explanation.action === 'check' || explanation.action === 'retry')) ? (
-          <>
-            {props.onRecoverQueue ? (
-              <button type="button" disabled={busyAction !== null} onClick={() => runAction('recover', props.onRecoverQueue)}>
-                {busyAction === 'recover' ? (props.language === 'zh-CN' ? '正在检查…' : 'Checking…') : props.language === 'zh-CN' ? '检查处理状态' : 'Check processing status'}
-              </button>
-            ) : null}
-            {(interactionResponseRecovery || providerStopRecoveryFailed) && props.onCancelQueuedSubmission ? (
-              <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
-                {props.language === 'zh-CN' ? '取消继续处理' : 'Cancel continuation'}
-              </button>
-            ) : null}
-          </>
-        ) : recoveredUnsent ? (
-          <>
-            {props.onRetryQueuedSubmission ? (
-              <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('retry', submissionId ? () => props.onRetryQueuedSubmission?.(submissionId) : undefined)}>
-                {props.language === 'zh-CN' ? '发送这条消息' : 'Send this message'}
-              </button>
-            ) : null}
-            {props.onCancelQueuedSubmission ? (
-              <button type="button" disabled={busyAction !== null || !submissionId} onClick={() => runAction('cancel', submissionId ? () => props.onCancelQueuedSubmission?.(submissionId) : undefined)}>
-                {props.language === 'zh-CN' ? '取消消息' : 'Cancel message'}
-              </button>
-            ) : null}
-          </>
-        ) : modelWindowUnavailable && props.onReconnectCodex ? (
-          <button type="button" disabled={busyAction !== null} onClick={() => runAction('reconnect', props.onReconnectCodex)}>
-            {props.language === 'zh-CN' ? '重新连接 Codex' : 'Reconnect Codex'}
-          </button>
-        ) : null}
-      </div>
-      {actionError ? <VisibleApplicationError error={actionError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
+      <VisibleApplicationError className="session-message-delivery-error" error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
     </ConversationNotice>
   );
 }

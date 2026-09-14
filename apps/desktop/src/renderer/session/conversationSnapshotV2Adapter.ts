@@ -301,6 +301,9 @@ export function resumeCachedConversationSnapshot(snapshot: NativeConversationSna
     v2Paging: {
       ...snapshot.v2Paging,
       history: { ...history, loading: false, error: null },
+      // 重新接管后，旧请求不会再回写 loading；完整页面和游标继续保留。
+      historyByTurn: Object.fromEntries(Object.entries(snapshot.v2Paging.historyByTurn ?? {}).map(([id, page]) => [id, { ...page, loading: false }])),
+      processByTurn: Object.fromEntries(Object.entries(snapshot.v2Paging.processByTurn).map(([id, page]) => [id, { ...page, loading: false }])),
     },
   };
 }
@@ -321,8 +324,16 @@ export function reconcileConversationHistoryCache(previous: NativeConversationSn
   return {
     snapshot: {
       ...next,
+      // 有界首屏没有重新返回旧页面，并不表示页面被删除；分页正文与进度一起保留，活动首屏由新快照接管。
+      items: mergeItemsByProviderIdentity(
+        previous.items.filter((item) => item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail'),
+        next.items,
+      ),
+      turns: [...new Map([...previous.turns, ...next.turns].map((turn) => [turn.id, turn])).values()],
       v2Paging: {
         ...next.v2Paging,
+        historyByTurn: { ...previous.v2Paging.historyByTurn, ...next.v2Paging.historyByTurn },
+        processByTurn: { ...previous.v2Paging.processByTurn, ...next.v2Paging.processByTurn },
         history: {
           ...fresh,
           nextCursor: cached.nextCursor,

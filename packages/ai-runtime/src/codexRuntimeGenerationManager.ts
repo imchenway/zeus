@@ -727,6 +727,10 @@ export function createCodexRuntimeGenerationManager(
     async listThreadTurns(input) {
       return routeThread(input.threadId).manager.listThreadTurns(input);
     },
+    /** 正文分页始终交给该线程所属实例，不能读取另一连接的同名线程。 */
+    async listThreadItems(input) {
+      return routeThread(input.threadId).manager.listThreadItems(input);
+    },
     async listSkills(input) {
       return requireActiveEntry().manager.listSkills(input);
     },

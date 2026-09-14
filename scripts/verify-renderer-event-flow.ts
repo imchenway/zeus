@@ -1,7 +1,7 @@
 import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
-import { adaptConversationSnapshotV2, mergeConversationProcessV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
+import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
-import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 
 const projectId = 'renderer-event-flow-project';
@@ -226,6 +226,7 @@ function createHarness(
   });
   return {
     controller,
+    client,
     emit(event: NativeRealtimeEventEnvelope) {
       if (!eventSink) throw new Error('Verifier socket is not connected.');
       eventSink(event);
@@ -238,6 +239,84 @@ function createHarness(
     sentMessages,
     persistedDraft: () => storedDraft,
   };
+}
+
+/** 反复收到有界首屏时，已读正文和分页状态不得被反复清空。 */
+function verifyStableHydrationPages() {
+  /** 首屏省略更早的已读过程项。 */
+  const fresh = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 模拟已读取的完整过程正文，与既有接口的条目结构一致。 */
+  const item = {
+    id: 'loaded-process',
+    providerItemId: 'loaded-process',
+    turnId: 'turn',
+    type: 'commandExecution',
+    status: 'completed',
+    text: '已读完整正文',
+    phase: 'prework',
+    payload: { v2ContentKind: 'process_detail' },
+    resources: [],
+    startedAt: occurredAt,
+    updatedAt: occurredAt,
+  };
+  /** 已完成页的游标和内容必须一起保存。 */
+  const page = { loaded: true, loading: false, nextCursor: null, hasMore: false, error: null };
+  /** 只在当前会话内构造缓存，不读取真实用户数据。 */
+  const cached = { ...fresh, items: [item], v2Paging: { ...fresh.v2Paging!, historyByTurn: { turn: page }, processByTurn: { turn: page } } };
+  /** 通过实际状态归并入口重放多次刷新，而不是只检查工具函数返回值。 */
+  let state = sessionReducer(createInitialSessionState(), { type: 'snapshot_hydrated', snapshot: cached });
+  const order = state.itemOrder.join(',');
+  for (let index = 0; index < 20; index += 1) {
+    state = sessionReducer(state, { type: 'snapshot_hydrated', snapshot: fresh });
+    assert(state.itemOrder.join(',') === order && state.snapshot?.items[0]?.text === item.text, '补读不能清空或替换已显示正文。');
+    assert(state.snapshot?.v2Paging?.processByTurn.turn?.loaded === true && state.snapshot?.v2Paging?.historyByTurn?.turn?.loaded === true, '补读不能清空已完成的分页进度。');
+  }
+  /** 重连只释放已经失效的请求标记，保留已完成进度。 */
+  const resumed = resumeCachedConversationSnapshot({ ...cached, v2Paging: { ...cached.v2Paging, processByTurn: { turn: { ...page, loading: true } } } });
+  assert(resumed.v2Paging?.processByTurn.turn?.loading === false && resumed.v2Paging.processByTurn.turn.loaded, '重连不能保留旧请求的忙碌状态。');
+  return { refreshes: 20, stableItemIdentity: true, retainedPages: true };
+}
+
+/** 用户重试只在核对未送达后重发，重复点击共用一次操作。 */
+async function verifyQueuedRetryReconciliation() {
+  /** 复用现有真实控制器和快照，单独控制恢复结果。 */
+  const harness = createHarness(undefined, 0, false);
+  /** 三种结果共享同一提交身份，避免按消息正文猜测。 */
+  const submission = { id: 'retry-submission', clientUserMessageId: 'retry-client', content: '重试验收', position: 1, status: 'failed' as const, pausedReason: null };
+  /** 初始失败尚未核对，不能直接调用发送。 */
+  let recovered: NativeQueueSnapshot = { ...queue, submissions: [submission] };
+  /** 记录核对和真实重试次数。 */
+  let checks = 0;
+  let retries = 0;
+  harness.client.recoverNativeQueue = async () => {
+    checks += 1;
+    return recovered;
+  };
+  harness.client.retryNativeQueuedSubmission = async () => {
+    retries += 1;
+    return queue;
+  };
+  try {
+    await Promise.all([harness.controller.retryQueuedSubmission(submission.id), harness.controller.retryQueuedSubmission(submission.id)]);
+    assert(checks === 1 && retries === 1, '重复点击必须只核对和重试一次。');
+    assert(harness.connectedAfterSequences.length === 1, '空闲会话重试后必须恢复实时连接，接收正文和后续进展。');
+    assert(!Object.values(harness.controller.getState().items).some((item) => item.payload.submissionId === submission.id), '替换成功后不得遗留旧失败气泡。');
+    recovered = { ...queue, submissions: [{ ...submission, status: 'paused', pausedReason: 'outcome_unknown' }] };
+    /** 仍未知必须保留错误，不得调用重试接口。 */
+    const unknown = await harness.controller.retryQueuedSubmission(submission.id).then(
+      () => null,
+      (error: Error) => error,
+    );
+    assert(unknown?.message.includes('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN') === true && retries === 1, '未知结果不得再次发送。');
+    recovered = { ...queue, submissions: [{ ...submission, providerTurnId: 'accepted-turn' }] };
+    /** 已送达分支仍须独立补齐权威正文。 */
+    const readsBeforeAccepted = harness.snapshotReads();
+    await harness.controller.retryQueuedSubmission(submission.id);
+    assert(retries === 1 && harness.snapshotReads() === readsBeforeAccepted + 1, '已送达必须恢复正文，不能重发。');
+    return { checks, retries, acceptedRestored: true, unknownPreserved: true };
+  } finally {
+    harness.controller.dispose();
+  }
 }
 
 async function verifyIdleHistoryDoesNotSubscribe() {
@@ -1076,25 +1155,33 @@ async function verifyTurnChangeReviewHydration() {
 
 /** 审阅专项可独立运行，避免无关历史探针的既有失败遮蔽结果。 */
 const turnChangeReview = await verifyTurnChangeReviewHydration();
+/** 重试专项可单独核验，不受其他既有投影断言影响。 */
+const queuedRetryReconciliation = await verifyQueuedRetryReconciliation();
+/** 补读与答题刷新共用同一稳定性核验。 */
+const stableHydrationPages = verifyStableHydrationPages();
 /** 默认仍执行既有全量入口；专项参数只缩小本地验收范围。 */
-const result = process.argv.includes('--change-review-only')
-  ? { turnChangeReview }
-  : {
-      turnChangeReview,
-      budget: sessionRealtimeBufferBudget,
-      truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
-      internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
-      processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
-      queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
-      snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
-      pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
-      idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
-      restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
-      activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
-      idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
-      renderDeltaOverflow: await verifyRenderDeltaOverflow(),
-      syncGapByteOverflow: await verifyGapByteOverflow(),
-      contiguousGapReplay: await verifyContiguousGapReplay(),
-    };
+const result =
+  process.argv.includes('--queue-retry-only') || process.argv.includes('--session-recovery-only')
+    ? { queuedRetryReconciliation, stableHydrationPages }
+    : process.argv.includes('--change-review-only')
+      ? { turnChangeReview }
+      : {
+          turnChangeReview,
+          budget: sessionRealtimeBufferBudget,
+          truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
+          internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
+          processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
+          queuedSubmissionThreadTransition: verifyQueuedSubmissionCanChangeNativeThread(),
+          snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
+          pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
+          idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
+          restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
+          queuedRetryReconciliation,
+          activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
+          idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
+          renderDeltaOverflow: await verifyRenderDeltaOverflow(),
+          syncGapByteOverflow: await verifyGapByteOverflow(),
+          contiguousGapReplay: await verifyContiguousGapReplay(),
+        };
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
