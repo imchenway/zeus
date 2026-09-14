@@ -803,7 +803,19 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_COMPUTER_APP_NOT_RUNNING'], ['目标应用没有运行。请先打开应用，再让 AI 继续操作。', 'The target app is not running. Open it before asking the AI to continue.']],
   [
     ['ZEUS_COMPUTER_ACCESSIBILITY_PERMISSION_REQUIRED'],
-    ['尚未授予 Zeus 辅助功能权限。请在 macOS“系统设置 → 隐私与安全性 → 辅助功能”中允许访问。', 'Zeus has not been granted Accessibility permission. Allow it in macOS System Settings → Privacy & Security → Accessibility.', 'settings'],
+    [
+      '尚未授予 Zeus 辅助功能权限。请前往 Zeus 系统设置的 Computer Use 完成授权；本次操作不会自动重试。',
+      'Accessibility permission is missing. Complete authorization in Zeus Computer Use settings; this action will not retry automatically.',
+      'settings',
+    ],
+  ],
+  [
+    ['ZEUS_COMPUTER_SCREEN_CAPTURE_PERMISSION_REQUIRED'],
+    [
+      '尚未授予 Zeus 录屏权限。请前往 Zeus 系统设置的 Computer Use 完成授权；本次操作不会自动重试。',
+      'Screen Recording permission is missing. Complete authorization in Zeus Computer Use settings; this action will not retry automatically.',
+      'settings',
+    ],
   ],
   [['ZEUS_COMPUTER_SCREEN_LOCKED'], ['电脑已锁定或当前桌面不可用，AI 暂时不能操作应用。解锁并返回桌面后再继续。', 'The computer is locked or the desktop is unavailable. Unlock it and return to the desktop before continuing.']],
   [['ZEUS_COMPUTER_ELEMENT_STALE'], ['目标应用的内容已变化。需要重新读取页面后才能操作。', 'The target app’s content has changed. It must be read again before the action can continue.']],

@@ -2831,7 +2831,6 @@ async function initializeApplication(): Promise<void> {
     browserHost.registerIpc();
     await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
-      language: () => appShellSettings.appLanguage,
       statePath: dataLayout.computerState,
       artifactRoot: dataLayout.computerArtifacts,
       helperExecutable: computerServiceExecutablePath(),
