@@ -1668,7 +1668,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   };
   if (!readOnlyValidation) {
     scheduleOfficialUsageRefresh();
-    usageRefreshTimer = setInterval(scheduleOfficialUsageRefresh, 60_000);
+    // 收起菜单栏后沿用后台调度，每十分钟更新一次，避免每分钟请求官方用量。
+    usageRefreshTimer = setInterval(scheduleOfficialUsageRefresh, 10 * 60_000);
     usageRefreshTimer.unref?.();
   }
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;

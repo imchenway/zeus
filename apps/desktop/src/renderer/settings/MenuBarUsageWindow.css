@@ -99,17 +99,12 @@ body:has(.menu-bar-usage-root),
   min-inline-size: 0;
 }
 
-.menu-bar-usage-identity > span:last-child {
-  display: grid;
-  min-inline-size: 0;
-}
-
 .menu-bar-usage-identity strong {
   font-size: 14px;
   font-weight: 730;
 }
 
-.menu-bar-usage-identity small {
+.menu-bar-usage-freshness {
   overflow: hidden;
   color: var(--usage-muted);
   font-size: 10px;
@@ -132,8 +127,19 @@ body:has(.menu-bar-usage-root),
   font-style: italic;
 }
 
+/* 时间与刷新按钮作为一组，长文案省略但保留完整悬浮提示。 */
+.menu-bar-usage-refresh-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-inline-size: 0;
+  margin-inline-start: 12px;
+}
+
 .menu-bar-usage-freshness {
-  max-inline-size: 220px;
+  min-inline-size: 0;
+  text-align: end;
 }
 
 .menu-bar-usage-refresh {
@@ -739,16 +745,9 @@ body:has(.menu-bar-usage-root),
   }
 }
 
-@keyframes menu-bar-usage-hourglass {
-  0%,
-  42% {
-    transform: rotate(0deg);
-  }
-  50%,
-  92% {
-    transform: rotate(180deg);
-  }
-  100% {
+/* 仅旋转圆环，按钮背景和点击区域保持固定。 */
+@keyframes menu-bar-usage-spin {
+  to {
     transform: rotate(360deg);
   }
 }
@@ -909,14 +908,15 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-.menu-bar-usage-refresh .menu-bar-usage-hourglass {
-  fill: currentcolor;
-  stroke: none;
-}
-
-.menu-bar-usage-refresh[aria-busy='true'] .menu-bar-usage-hourglass {
-  animation: menu-bar-usage-hourglass 1.2s ease-in-out infinite;
-  transform-origin: center;
+/* 使用品牌色细圆环，沿用全局减少动态效果设置。 */
+.menu-bar-usage-spinner {
+  inline-size: 14px;
+  block-size: 14px;
+  border: 1.5px solid var(--usage-accent-soft);
+  border-block-start-color: var(--zeus-brand-text);
+  border-inline-end-color: var(--zeus-brand-text);
+  border-radius: 50%;
+  animation: menu-bar-usage-spin 800ms linear infinite;
 }
 
 .menu-bar-usage-tabs button {

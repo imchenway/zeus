@@ -18,13 +18,15 @@ export interface UsageOverviewService {
 export function createUsageOverviewService(options: CreateUsageOverviewServiceOptions): UsageOverviewService {
   const now = options.now ?? (() => new Date());
 
+  /** 主动读取时更新官方用量；运行时不可用时由现有服务返回缓存及过期状态。 */
   async function read(): Promise<UsageOverviewSnapshot> {
+    /** 官方读取复用现有运行时与请求去重，不会为统计启动新的外部进程。 */
+    const official = await options.codexUsage.refreshOfficialUsage();
     const readAt = now();
     const allRows = options.ledger.list();
     const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
-    const official = options.codexUsage.readCachedOfficialUsage();
     const groups = groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId));
     if (official.state === 'available' && !groups.some(([providerId]) => providerId === 'codex')) groups.unshift(['codex', []]);
     const providers = groups
@@ -70,11 +72,8 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     return {
       providers,
       providerCoverage: 'all-recorded',
-      updatedAt:
-        providers
-          .map((provider) => provider.updatedAt)
-          .sort()
-          .at(-1) ?? readAt.toISOString(),
+      // 汇总时间记录本次读取，供应源更新时间继续保留原始含义。
+      updatedAt: readAt.toISOString(),
     };
   }
 
