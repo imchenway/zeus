@@ -684,9 +684,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(emptyConversationContextDraft) });
   }
 
-  async function applyAuthoritativeQueue(queue: NativeQueueSnapshot): Promise<void> {
+  /** 统一收敛队列和已确认替换的本地消息投影。 */
+  async function applyAuthoritativeQueue(queue: NativeQueueSnapshot, replacedSubmissionId?: string): Promise<void> {
     const projectedQueue = queueWithPendingSteering(queue);
+    // 替换成功才移除原提交的本地气泡；编辑、改路由与重试共用已有移除逻辑。
+    if (replacedSubmissionId) dispatch({ type: 'queued_submission_deleted', submissionId: replacedSubmissionId, queue: projectedQueue });
     dispatch({ type: 'queue_hydrated', queue: projectedQueue });
+    // 空闲历史没有实时连接；替换后补齐正文并接收后续进展，读取失败不改判已成功的替换。
+    if (replacedSubmissionId) await ensureRealtimeConnection().catch(() => undefined);
   }
 
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
@@ -1656,6 +1661,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function hydrate(reconnecting: boolean, realtimeMode: 'auto' | 'required' = 'auto'): Promise<void> {
     if (disposed) return;
     flushRenderDeltas();
+    // 连接代次更换会取消旧分页请求，保留已显示内容并释放旧请求的读取标记。
+    if (state.snapshot?.snapshotV2) dispatchV2Snapshot(resumeCachedConversationSnapshot(state.snapshot));
     const token = ++connectionToken;
     socketLifecycle?.markInactive();
     socket?.close();
@@ -2787,21 +2794,37 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:edit:${submissionId}:${JSON.stringify(content)}`,
         () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content),
-        (queue) => applyAuthoritativeQueue(queue),
+        (queue) => applyAuthoritativeQueue(queue, submissionId),
       );
     },
     retryQueuedSubmission(submissionId) {
       return runOperation(
         `queue:retry:${submissionId}`,
-        () => options.client.retryNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
-        (queue) => applyAuthoritativeQueue(queue),
+        async () => {
+          /** 每次重试先取得真实状态，原消息可能在报错后已经被接收。 */
+          const queue = await options.client.recoverNativeQueue(options.projectId, options.conversationId, 'check');
+          await applyAuthoritativeQueue(queue);
+          /** 仅核对当前被点击的提交，不能借重试恢复其他失败消息。 */
+          const submission = queue.submissions.find((entry) => entry.id === submissionId);
+          if (submission?.pausedReason === 'outcome_unknown') throw new Error('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN: 仍无法确认这条消息是否送达，已保留原消息，请稍后重试核对。');
+          if (!submission || submission.providerTurnId || !['paused', 'failed'].includes(submission.status)) {
+            await applyAuthoritativeSnapshot(await loadConversationForHydration());
+            return state.queue ?? queue;
+          }
+          // 服务端在同一事务内再次核对未发送证据和队首身份，防止检查后的竞态。
+          /** 服务端已建立替代提交，旧失败气泡应与旧提交一起退出待发区。 */
+          const replacementQueue = await options.client.retryNativeQueuedSubmission(options.projectId, options.conversationId, submissionId);
+          await applyAuthoritativeQueue(replacementQueue, submissionId);
+          return replacementQueue;
+        },
+        () => undefined,
       );
     },
     rerouteQueuedSubmission(submissionId, settings) {
       return runOperation(
         `queue:reroute:${submissionId}:${JSON.stringify(settings)}`,
         () => options.client.rerouteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, settings),
-        (queue) => applyAuthoritativeQueue(queue),
+        (queue) => applyAuthoritativeQueue(queue, submissionId),
       );
     },
     deleteQueuedSubmission(submissionId) {

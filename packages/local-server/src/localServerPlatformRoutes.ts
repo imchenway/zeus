@@ -773,6 +773,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       getState: () => codexAppServerManager.getState(),
       listThreads: (input) => codexAppServerManager.listThreads(input),
       readThread: (input) => codexAppServerManager.readThread(input),
+      /** 子线程详情沿用与恢复相同的元信息和内容分页。 */
+      listThreadTurns: (input) => codexAppServerManager.listThreadTurns(input),
+      listThreadItems: (input) => codexAppServerManager.listThreadItems(input),
     },
     runtime: createCodexSubagentRuntimeReader({ providerHistoryRoot: join(dataLayout.codexHome, 'sessions') }),
     now,

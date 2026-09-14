@@ -612,7 +612,16 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       readThreadCalls += 1;
       return threadSnapshot();
     },
-    listThreadTurns: async () => ({ data: [...turns].reverse(), nextCursor: null }),
+    /** 元信息分页不允许正文回退到整段读取。 */
+    listThreadTurns: async () => ({ data: [...turns].reverse().map((turn) => ({ ...turn, items: [] })), nextCursor: null }),
+    /** 正文只能通过原生条目分页读取，探针模拟原生升序游标。 */
+    listThreadItems: async ({ turnId, cursor, limit }: { turnId: string; cursor?: string | null; limit?: number }) => {
+      /** 当前轮次的真实探针内容，不跨轮次借用。 */
+      const items = turns.find((turn) => turn.id === turnId)?.items ?? [];
+      /** 游标表示已读取位置，页面结束后必须返回空游标。 */
+      const offset = Number(cursor ?? 0);
+      return { data: items.slice(offset, offset + (limit ?? 32)).map((item) => ({ turnId, item })), nextCursor: offset + (limit ?? 32) < items.length ? String(offset + (limit ?? 32)) : null };
+    },
     listThreads: async () => ({ data: [threadSnapshot()], nextCursor: null }),
     listSkills: async ({ cwds }: { cwds?: string[] }) => (cwds ?? []).map((cwd) => ({ cwd, skills: [], errors: [] })),
     startTurn: async (turnInput: CodexTurnStartInput) => {

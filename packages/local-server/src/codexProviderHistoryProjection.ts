@@ -1,5 +1,5 @@
 import { assistantMessageMetadata } from '@zeus/shared';
-import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
+import { readCodexTurnItems, type CodexThreadSnapshot, type CodexTurnSnapshot } from '@zeus/ai-runtime';
 import type { ConversationResource } from '@zeus/shared';
 import {
   type ConversationTurnStatus,
@@ -264,7 +264,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         ...(cursor ? { cursor } : {}),
         limit: 100,
         sortDirection: 'desc',
-        itemsView: 'full',
+        itemsView: 'notLoaded',
         ...input,
       });
       pageCount += 1;
@@ -347,7 +347,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       throw coordinatorError('ZEUS_NATIVE_HISTORY_CONTENT_UNAVAILABLE', '原生会话中找不到待补齐的历史轮次，无法恢复完整正文；已保留现有记录。');
     }
 
-    const eligibleDescending = turnsDescending.filter((turn, index) => !checkpointBoundaryTurnId || index <= checkpointIndex || repairTurnIds.has(turn.id));
+    const eligibleDescending = turnsDescending.filter((turn, index) => !checkpointBoundaryTurnId || index <= checkpointIndex || repairTurnIds.has(turn.id) || classifySnapshotTurn(turn) === 'active');
     const localTurns = new Map(
       options.turns
         .listByConversation(conversation.id)
@@ -358,6 +358,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       const existingTurn = localTurns.get(providerTurn.id);
       // 终态基线只定义历史边界；仍在执行的基线必须投影，否则首次对账会再次把目标自主 turn 误判为空闲。
       if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn && classifySnapshotTurn(providerTurn) !== 'active') continue;
+      /** 已确认且状态未变的边界轮次无需反复下载正文。 */
+      const classification = classifySnapshotTurn(providerTurn);
+      if (!existingTurn || classification === 'active' || existingTurn.status !== classification || repairTurnIds.has(providerTurn.id)) {
+        providerTurn.items = await readCodexTurnItems(options.manager, { threadId: providerThreadId, turnId: providerTurn.id, ...input });
+      }
       const projected = await projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
       localTurns.set(providerTurn.id, projected);
     }

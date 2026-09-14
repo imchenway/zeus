@@ -1,10 +1,10 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import type { CodexThreadListInput, CodexThreadSnapshot, CodexThreadsPage, CodexTransportState } from '@zeus/ai-runtime';
+import { readCodexTurnItems, type CodexAppServerManager, type CodexThreadListInput, type CodexThreadSnapshot, type CodexThreadsPage, type CodexTransportState } from '@zeus/ai-runtime';
 import type { ConversationProviderItemRepository, ConversationRepository, ZeusConversationRecord } from '@zeus/storage';
 import { readSubagentInputMessage, type CodexSubagentRuntimeReadPort, type SubagentInputMessage, type SubagentRuntimeDetails } from './codexSubagentRuntimeProjection.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 
-export interface CodexSubagentProviderReadPort {
+export interface CodexSubagentProviderReadPort extends Pick<CodexAppServerManager, 'listThreadTurns' | 'listThreadItems'> {
   /** 只观察既有 transport；查询路径禁止调用 ensureReady。 */
   getState(): CodexTransportState;
   /** 只读取 Provider 已有线程状态，不得创建/恢复线程。 */
@@ -45,9 +45,29 @@ export class CodexSubagentQueryApplication {
     const agent = snapshot.items.find((item) => item.id === threadId);
     if (!agent) throw queryError('ZEUS_CODEX_SUBAGENT_NOT_FOUND', 'Subagent thread not found.', 404);
     this.assertProviderReady();
-    const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: true });
+    const thread = await this.ports.provider.readThread({ threadId: agent.id, includeTurns: false });
     if (thread.id !== agent.id) throw queryError('ZEUS_CODEX_SUBAGENT_IDENTITY_MISMATCH', '返回的子线程身份与请求不一致。', 409);
+    /** 先读取轮次元信息，继承的父线程正文不进入详情读取。 */
+    const metadata: Record<string, unknown>[] = [];
+    /** 原生游标只用于当前线程，重复时中止读取。 */
+    const seenCursors = new Set<string>();
+    /** 保留升序分页，使原有首轮指令和所属边界判断保持稳定。 */
+    let cursor: string | null = null;
+    do {
+      /** 沿用历史恢复的 2,000 轮预算，超出时明确失败，不截断为完整详情。 */
+      const page = await this.ports.provider.listThreadTurns({ threadId: agent.id, cursor, limit: 100, sortDirection: 'asc', itemsView: 'notLoaded' });
+      metadata.push(...page.data);
+      cursor = page.nextCursor;
+      if (cursor) {
+        if (seenCursors.has(cursor) || metadata.length >= 2_000) throw queryError('ZEUS_NATIVE_SYNC_CURSOR_INVALID', '子线程历史未能在分页预算内完整读取。', 409);
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+    thread.turns = metadata;
     const history = ownedThreadHistory(thread);
+    for (const turn of history.turns) {
+      turn.items = await readCodexTurnItems(this.ports.provider, { threadId: agent.id, turnId: String(turn.id) });
+    }
     const { runtime, inputMessages } = await this.ports.runtime.read({ thread, ownedTurns: history.turns });
     /** 原生输入已存在时不再单独插入任务摘要；仅保留确实可读的首发指令缺口。 */
     const instruction = taskInstruction(thread, agent.id, activity);

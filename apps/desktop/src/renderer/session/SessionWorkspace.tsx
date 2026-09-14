@@ -794,7 +794,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onEditQueuedSubmission: async (submissionId, content) => {
       await input.controller.editQueuedSubmission(submissionId, content);
     },
-    onRetryQueuedSubmission: (submissionId) => settle(input.controller.retryQueuedSubmission(submissionId)),
+    // 重试失败必须回到原消息旁，不能吞掉拒绝原因或重复弹出全局错误。
+    onRetryQueuedSubmission: async (submissionId) => {
+      await input.controller.retryQueuedSubmission(submissionId);
+    },
     // 本地未接受消息的重试/取消必须把拒绝原因返回给气泡，不能像全局状态操作一样静默吞掉。
     onRetryPendingSend: async (clientUserMessageId, intent) => {
       await input.controller.retryPendingSend(clientUserMessageId, intent);

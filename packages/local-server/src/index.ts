@@ -17,6 +17,7 @@ import {
   modelRef,
   piRuntimeWorkerProtocolVersion,
   readCodexProviderRuntimeHealth,
+  readCodexTurnItems,
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
@@ -745,6 +746,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationDispatchCommands = new ConversationDispatchCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
   const conversationStartCommands = new ConversationStartCommandApplication({ db, deliveries: commandDeliveries, artifacts: artifactStore, redactSensitiveText, now: () => new Date() });
   const conversationQueueCoreMutations = new ConversationQueueCoreMutationApplication({
+    commandDeliveries,
     submissions: conversationSubmissions,
     execution: conversationExecution,
     requests: conversationRequests,
@@ -1926,8 +1928,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const submission = conversationSubmissions.getById(operation.submissionId);
       if (!segment || !submission || segment.runtimeKind !== 'codex' || !segment.nativeSessionId) continue;
       try {
-        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'full' });
-        const matched = page.data.find((turn) => providerTurnClientMessageId(turn) === submission.clientMessageId);
+        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' });
+        /** 逐轮读取完整条目以核对原消息身份，命中后停止下载其余历史。 */
+        let matched: (typeof page.data)[number] | undefined;
+        for (const turn of page.data) {
+          turn.items = await readCodexTurnItems(codexAppServerManager, { threadId: segment.nativeSessionId, turnId: turn.id });
+          if (providerTurnClientMessageId(turn) !== submission.clientMessageId) continue;
+          matched = turn;
+          break;
+        }
         if (!matched) {
           conversationExecution.recordRecoveryEvent({
             conversationId: operation.conversationId,
