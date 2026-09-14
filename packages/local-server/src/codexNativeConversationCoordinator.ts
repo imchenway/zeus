@@ -2152,7 +2152,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const providerRequestId = JSON.parse(request.providerRequestIdJson) as string | number;
     const response = input.response;
     const payload = parseJsonRecord(request.payloadJson);
-    const pluginToolResponse = await pluginToolApprovals.tryRespond(request, response);
+    // 重启后的插件确认复用持久续接流程；只有原连接仍有效时才调用内存中的审批回调。
+    const pluginToolResponse = options.manager.hasGeneration(request.transportGenerationId) ? await pluginToolApprovals.tryRespond(request, response) : null;
     if (pluginToolResponse) return pluginToolResponse;
     let wireResponse = { ...response, generationId: request.transportGenerationId, requestId: providerRequestId } as CodexServerRequestResponse;
     const grantSessionFileEdits = request.requestKind === 'file' && response.type === 'file' && response.decision === 'acceptForSession';
@@ -2628,7 +2629,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const automaticRecoveryConversationIds = new Set(
       options.conversations
         .listNativeBoundRecords('codex')
-        .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
+        .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting' || interactionRecovery.hasRecoverableInteraction(conversation.id))
         .map((conversation) => conversation.id),
     );
     for (const submission of options.submissions.listRecoverable()) {
@@ -2854,7 +2855,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       // 已归档 Provider 会话只能由用户显式恢复，启动恢复不得触碰其线程。
       if (conversation.archived || conversation.providerState === 'archived') continue;
       try {
-        interactionRecovery.recoverStaleInteractionRequests(conversation.id, generationId);
+        await interactionRecovery.recoverStaleInteractionRequests(conversation.id, generationId);
+        assertOpen();
+        if (readyGenerationId() !== generationId) return;
         await ensureConversationExecutionContext(conversation.id, 'reconcile');
         assertOpen();
         if (readyGenerationId() !== generationId) return;
@@ -3026,6 +3029,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     projectedProviderThreadSnapshot,
     providerStopRecovery,
     readyGenerationId,
+    recoverExternalRequestAnswer: externalAnswerRecovery.recover,
     reconcileConversationSnapshot,
     rejectTurnResultWaiters,
     resolveTurnResult,

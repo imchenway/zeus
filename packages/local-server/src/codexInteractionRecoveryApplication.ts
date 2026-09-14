@@ -3,6 +3,7 @@ import type { ZeusConversationServerRequestRecord, ZeusConversationSubmissionRec
 import type { CreateCodexNativeConversationCoordinatorOptions, NativeConversationRunState, NativeTurnCommandExecutor, NativeTurnResult, NativeTurnResultWaiter, WaitForNativeTurnResultInput } from './codexNativeConversationContracts.js';
 import { coordinatorError, failedTurnErrorFromRecord, parseJsonRecord, requireString, serializeError } from './codexNativeConversationPolicy.js';
 import { createCodexProviderStopRecoveryApplication, providerStopPendingError } from './codexProviderStopRecoveryApplication.js';
+import type { CodexExternalRequestAnswerRecovery } from './codexExternalRequestAnswerRecovery.js';
 
 interface CodexInteractionRecoveryDependencies {
   options: CreateCodexNativeConversationCoordinatorOptions;
@@ -11,6 +12,8 @@ interface CodexInteractionRecoveryDependencies {
   failedTurnResults: Map<string, Error & { code: string }>;
   turnResultWaiters: Map<string, NativeTurnResultWaiter[]>;
   providerStopRecovery: ReturnType<typeof createCodexProviderStopRecoveryApplication>;
+  /** 恢复前核对已落盘的真实答案，避免重新询问已在其他客户端回答的问题。 */
+  recoverExternalRequestAnswer: CodexExternalRequestAnswerRecovery['recover'];
 
   now(): string;
 
@@ -49,10 +52,13 @@ interface CodexInteractionRecoveryDependencies {
   resolveTurnResult(result: NativeTurnResult): void;
 }
 
-export function isRetiredGenerationFailure(request: ZeusConversationServerRequestRecord): boolean {
+/** 只恢复连接切换或退出造成的失败，不重开用户已拒绝、取消或正常结束的请求。 */
+function isDisconnectedInteractionFailure(request: ZeusConversationServerRequestRecord): boolean {
   if (request.status !== 'failed' || !request.responseJson) return false;
   try {
-    return parseJsonRecord(request.responseJson).error === 'ZEUS_CODEX_REQUEST_GENERATION_STALE';
+    /** 退出与旧连接事件使用相同的错误编号，但保存字段可能不同。 */
+    const failure = parseJsonRecord(request.responseJson);
+    return ['ZEUS_CODEX_REQUEST_GENERATION_STALE', 'ZEUS_FORCED_QUIT_INTERRUPTED', 'ZEUS_CODEX_FINAL_QUIT_OUTCOME_UNCONFIRMED'].includes(String(failure.code ?? failure.error));
   } catch {
     return false;
   }
@@ -83,6 +89,7 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
     projectedProviderThreadSnapshot,
     providerStopRecovery,
     readyGenerationId,
+    recoverExternalRequestAnswer,
     reconcileConversationSnapshot,
     rejectTurnResultWaiters,
     resolveTurnResult,
@@ -91,30 +98,48 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
   } = dependencies;
   const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
-    const timestamp = now();
+  /** 启动调度与恢复操作共用筛选，不因会话已回到空闲状态而遗漏未答卡片。 */
+  function recoverableInteractionRequests(conversationId: string): ZeusConversationServerRequestRecord[] {
+    /** 只在原会话绑定的线程中核对答案和最后一个待处理请求。 */
+    const conversation = options.conversations.getRecordById(conversationId);
+    if (!conversation?.providerThreadId || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed') return [];
+    /** 请求列表按创建顺序排列，失败历史只有最后一项允许重新恢复。 */
     const requests = options.requests.listByConversation(conversationId) as ZeusConversationServerRequestRecord[];
+    /** 后续请求已经出现时，不复活更早的失败请求。 */
     const latestRequest = requests.at(-1);
-    for (const request of requests) {
-      if (options.manager.hasGeneration(request.transportGenerationId)) continue;
-      // request_user_input 的提交权限严格绑定产生它的 app-server 世代。旧世代请求即使曾被
-      // 标成恢复检查点，也只能由 rollout 补成只读历史；只有当前世代重放出的真实请求
-      // 才能重新提供提交入口，避免中止或完成后的会话仍显示可交互问题通道。
-      if (request.requestKind === 'request_user_input' && (request.status === 'pending' || isInteractionRecoveryCheckpointRequest(request) || isRetiredGenerationFailure(request))) {
-        options.requests.fail(request.id, {
-          error: {
-            error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
-            recoveryRequired: false,
-            sourceGenerationId: request.transportGenerationId,
-            currentGenerationId,
-          },
-          resolvedAt: timestamp,
-        });
-        continue;
+    // 普通已完成会话不加载轮次和正文；只有未决交互需要参与启动恢复。
+    if (!latestRequest || (!requests.some((request) => request.status === 'pending') && !isDisconnectedInteractionFailure(latestRequest))) return [];
+    /** 后续轮次或正常完成说明旧问题已被取代。 */
+    const latestTurn = options.turns
+      .listByConversation(conversationId)
+      .filter((turn) => turn.providerThreadId === conversation.providerThreadId)
+      .at(-1);
+    return requests.filter((request) => {
+      if (options.manager.hasGeneration(request.transportGenerationId)) return false;
+      /** 失败请求需同时属于最新请求与未正常完成的最新轮次。 */
+      const recoverableFailure = request.id === latestRequest?.id && request.turnId === latestTurn?.id && latestTurn?.status !== 'completed' && isDisconnectedInteractionFailure(request);
+      return request.status === 'pending' || recoverableFailure;
+    });
+  }
+
+  /** 所有持久交互共用显式续接入口；旧连接编号始终不能重新作为实时请求发送。 */
+  async function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): Promise<void> {
+    /** 同一批恢复使用相同时间，保持请求与恢复标记一致。 */
+    const timestamp = now();
+    /** 只读取原会话绑定的模型历史。 */
+    const conversation = options.conversations.getById(conversationId);
+    if (!conversation?.providerThreadId) return;
+    for (const request of recoverableInteractionRequests(conversationId)) {
+      if (request.requestKind === 'request_user_input') {
+        /** 已回答的真实记录优先；退出写入的中止提示不等于用户回答。 */
+        const recovered = await recoverExternalRequestAnswer(conversation, request, timestamp);
+        if (isClosed() || readyGenerationId() !== currentGenerationId) return;
+        if (recovered.recovery.status === 'found') continue;
+        /** 读取历史期间若收到用户回复或取消，以最新持久状态为准。 */
+        const currentRequest = options.requests.getById(request.id);
+        if (currentRequest?.status !== request.status || currentRequest.responseJson !== request.responseJson) continue;
       }
       if (isInteractionRecoveryCheckpointRequest(request)) continue;
-      const recoverableFailure = request.id === latestRequest?.id && isRetiredGenerationFailure(request);
-      if (request.status !== 'pending' && !recoverableFailure) continue;
       options.requests.restorePendingAfterTransportRecovery(request.id, {
         recoveryReason: 'app_server_generation_changed',
         sourceGenerationId: request.transportGenerationId,
@@ -439,6 +464,8 @@ export function createCodexInteractionRecoveryApplication(dependencies: CodexInt
 
   return {
     close,
+    /** 未答卡片主动参与启动恢复，无需等界面周期同步或用户先发一条消息。 */
+    hasRecoverableInteraction: (conversationId: string) => recoverableInteractionRequests(conversationId).length > 0,
     failInvalidInteractionAuthority,
     markInterruptedTurnProviderStopPending,
     reconcileInterruptedTurnUntilSettled,

@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { finalizeCodexPendingInteractionsForShutdown } from '../packages/local-server/src/codexFinalShutdownApplication.js';
 import { CodexProviderCommandApplicationService } from '../packages/local-server/src/codexProviderCommandApplication.js';
+import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from '../packages/local-server/src/codexInteractionRecoveryApplication.js';
+import { createCodexExternalRequestAnswerRecovery } from '../packages/local-server/src/codexExternalRequestAnswerRecovery.js';
 import { CommandDeliveryRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ProjectRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-codex-provider-command-'));
@@ -163,7 +165,7 @@ try {
     transportGenerationId: 'generation-final-quit',
     providerRequestId: 'request-final-quit',
     requestKind: 'request_user_input',
-    payload: { questions: [] },
+    payload: { questions: [{ id: 'placement', header: '入口位置', question: '规则入口放在哪里？', isSecret: false, isOther: true, options: [{ label: '全局规则页', description: '直接进入规则编辑。' }] }] },
     status: 'pending',
     createdAt: shutdownTimestamp,
   });
@@ -202,6 +204,55 @@ try {
   assertBehavior(finalConversation?.providerState === 'paused', 'Provider 终态未知的 conversation 必须离开 waiting 并进入 paused。');
   assertBehavior(finalEvidence.providerOutcomeUnconfirmed === true && finalEvidence.recoveryRequired === true, 'final_quit 必须保留 Provider 结果未知与显式恢复证据。');
 
+  /** 在现有退出探针中接着恢复真实持久记录，不连接外部模型。 */
+  const answerRecovery = createCodexExternalRequestAnswerRecovery({ conversations, turns, requests, now, persist: () => database.save(), broadcast: () => undefined, enqueueBarrier: (work) => work(), isClosed: () => false });
+  /** 此探针只调用恢复持久请求入口，其余运行依赖不参与本次检查。 */
+  const recovery = createCodexInteractionRecoveryApplication({
+    options: { conversations, turns, requests, manager: { hasGeneration: () => false } },
+    now,
+    isClosed: () => false,
+    readyGenerationId: () => 'generation-restarted',
+    recoverExternalRequestAnswer: answerRecovery.recover,
+  } as unknown as Parameters<typeof createCodexInteractionRecoveryApplication>[0]);
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(shutdownRequest.id)?.status === 'pending' && isInteractionRecoveryCheckpointRequest(requests.getById(shutdownRequest.id)!), '退出后的未答问题必须恢复为显式续接卡片。');
+  assertBehavior(requests.getById(shutdownRequest.id)?.payloadJson === shutdownRequest.payloadJson, '恢复不能改写原问题、选项或自定义回答能力。');
+  requests.resolve(shutdownRequest.id, { response: { type: 'request_user_input', answers: {} }, resolvedAt: now() });
+
+  /** 明确排列请求创建时间，恢复判断不依赖随机编号排序。 */
+  let recoveredInteractionCount = 0;
+  for (const kind of ['request_user_input', 'command', 'file', 'permissions', 'mcp'] as const) {
+    for (const error of ['ZEUS_CODEX_REQUEST_GENERATION_STALE', 'ZEUS_FORCED_QUIT_INTERRUPTED', 'ZEUS_CODEX_FINAL_QUIT_OUTCOME_UNCONFIRMED']) {
+      /** 各类卡片使用独立请求身份，逐一确认三种连接退出原因。 */
+      const request = requests.upsert({
+        conversationId: conversation.id,
+        turnId: shutdownTurn.id,
+        transportGenerationId: 'generation-final-quit',
+        providerRequestId: `${kind}:${error}`,
+        requestKind: kind,
+        payload: JSON.parse(shutdownRequest.payloadJson),
+        status: 'failed',
+        response: { error },
+        createdAt: new Date(Date.UTC(2026, 7, 21, 13, 0, recoveredInteractionCount++)).toISOString(),
+      });
+      await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+      assertBehavior(requests.getById(request.id)?.status === 'pending' && isInteractionRecoveryCheckpointRequest(requests.getById(request.id)!), `${kind} 未恢复 ${error} 的卡片。`);
+      requests.resolve(request.id, { response: { probe: true }, resolvedAt: now() });
+    }
+  }
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(shutdownRequest.id)?.status === 'resolved', '已回答的卡片不能在再次恢复时重新打开。');
+  /** 使用最新记录检查非连接错误和正常完成，避免被“旧请求”规则提前过滤。 */
+  const latestRecoveryRequest = requests.listByConversation(conversation.id).at(-1)!;
+  requests.fail(latestRecoveryRequest.id, { error: { code: 'ZEUS_CODEX_PERMISSION_SCHEMA_UNSUPPORTED' }, resolvedAt: now() });
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(latestRecoveryRequest.id)?.status === 'failed', '校验失败的请求不能被当作断线问题恢复。');
+  requests.fail(latestRecoveryRequest.id, { error: { code: 'ZEUS_CODEX_REQUEST_GENERATION_STALE' }, resolvedAt: now() });
+  turns.upsert({ ...shutdownTurn, status: 'completed', completedAt: now(), updatedAt: now() });
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(latestRecoveryRequest.id)?.status === 'failed', '已正常完成轮次的旧问题不能重新打开。');
+  answerRecovery.close();
+
   const quickCheck = database.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check;
   assertBehavior(quickCheck === 'ok', `临时数据库 quick_check 失败：${quickCheck ?? 'missing'}`);
   console.log(
@@ -231,6 +282,7 @@ try {
           },
         },
         quickCheck,
+        disconnectedInteractions: { kinds: 5, failureReasons: 3, answeredAndTerminalPreserved: true },
         providerTraceIdentity,
       },
       null,
