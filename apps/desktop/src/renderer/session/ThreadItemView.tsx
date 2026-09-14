@@ -1,12 +1,11 @@
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
+import { MessageCheckIcon, MessageCopyIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import {
@@ -1225,6 +1224,7 @@ function CommandExecutionItem(props: { item: NativeSessionItemBuffer; language: 
   );
 }
 
+/** 消息和命令共用复制按钮及柔化图标，保留复制成功反馈。 */
 function CopyIconButton(props: { label: string; copiedLabel: string; text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -1241,7 +1241,7 @@ function CopyIconButton(props: { label: string; copiedLabel: string; text: strin
       data-copied={copied || undefined}
       onClick={async () => setCopied(await copyText(props.text))}
     >
-      {copied ? <MessageCheckIcon /> : <Copy aria-hidden="true" weight="regular" />}
+      {copied ? <MessageCheckIcon /> : <MessageCopyIcon />}
     </button>
   );
 }
