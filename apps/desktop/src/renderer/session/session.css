@@ -8734,6 +8734,10 @@
 }
 
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > textarea {
+  /* 按实际内容撑高并与行尾按钮居中，长答案限制高度后滚动。 */
+  align-self: center;
+  field-sizing: content;
+  max-block-size: max(30px, 24vh);
   grid-column: 1;
   grid-row: 1;
 }
