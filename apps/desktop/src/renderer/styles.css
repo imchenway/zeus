@@ -850,11 +850,12 @@ a {
   border-color: oklch(36% 0.028 270);
   color: oklch(91% 0.014 270);
 }
-.macos-ai-app.zeus-shell.theme-dark p:not(.session-codex-parity-v1 *),
-.macos-ai-app.zeus-shell.theme-dark span:not(.session-codex-parity-v1 *),
-.macos-ai-app.zeus-shell.theme-dark small:not(.session-codex-parity-v1 *),
-.macos-ai-app.zeus-shell.theme-dark em:not(.session-codex-parity-v1 *),
-.macos-ai-app.zeus-shell.theme-dark label:not(.session-codex-parity-v1 *) {
+/* 会话与终端自行管理文字颜色，通用正文色不能覆盖终端的 ANSI 配色。 */
+.macos-ai-app.zeus-shell.theme-dark p:not(.session-codex-parity-v1 *, .xterm *),
+.macos-ai-app.zeus-shell.theme-dark span:not(.session-codex-parity-v1 *, .xterm *),
+.macos-ai-app.zeus-shell.theme-dark small:not(.session-codex-parity-v1 *, .xterm *),
+.macos-ai-app.zeus-shell.theme-dark em:not(.session-codex-parity-v1 *, .xterm *),
+.macos-ai-app.zeus-shell.theme-dark label:not(.session-codex-parity-v1 *, .xterm *) {
   color: oklch(77% 0.016 270);
 }
 

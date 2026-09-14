@@ -33,6 +33,7 @@ import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/Tas
 import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
+import { TerminalSettingsPane } from '../../settings/TerminalSettingsPane.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
 import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
@@ -532,6 +533,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       items: [
         ['agents', settingsWorkspaceCopy.categories.agents, FileTextIcon],
         ['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon],
+        ['terminal', settingsWorkspaceCopy.categories.terminal, TerminalIcon],
       ],
     },
     {
@@ -1833,6 +1835,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     />
                   </section>
                 ) : null}
+                {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'models' ? (
                   <>

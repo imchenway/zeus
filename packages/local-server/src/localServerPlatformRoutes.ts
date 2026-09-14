@@ -1,3 +1,4 @@
+import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -3470,9 +3471,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     runtimeSessions,
     projects,
     tasks,
-    resolveRegisteredRuntimeAdapter,
+    resolveRegisteredRuntimeAdapter: (command) => resolveRegisteredRuntimeAdapter(command, resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell).command),
     resolveExistingRuntimeSessionAdapter,
     readProjectAllowsShell: (projectId) => readProjectConfig(projectId).security.allowShell,
+    readTerminalStartupCommand: () => platformMutableState.runtimeSettings.terminalStartupCommand,
     buildRuntimeProcessEnv,
     resolveTaskDefaultManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
     stopPersistedOrphanRuntimeSession,
@@ -3518,7 +3520,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     async (): Promise<RuntimeStatusSnapshot> => ({
       aiCli: toPassiveRuntimeStatus(platformMutableState.runtimeSettings),
       telegram: getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
-      terminal: runtimeTerminalStatus,
+      terminal: {
+        ...runtimeTerminalStatus,
+        /** 用户显式配置优先，图形界面没有 SHELL 时使用系统账户登记值。 */
+        shell: resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell),
+      },
     }),
   );
 

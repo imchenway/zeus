@@ -1376,6 +1376,8 @@ export function normalizeRuntimeSettings(settings?: Partial<RuntimeSettings>): R
     adapterDefaultArgs: {},
     adapterCliPaths: {},
     terminalEnv: {},
+    /** 未设置时不向新终端发送命令。 */
+    terminalStartupCommand: '',
     shell: { path: null, login: false },
     executionTimeoutSeconds: 3600,
     logRetentionDays: 30,
