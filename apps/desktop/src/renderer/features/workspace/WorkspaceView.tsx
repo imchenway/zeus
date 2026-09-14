@@ -30,6 +30,7 @@ import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
 import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
 import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
+import { ZentaoImportModal } from '../../task/ZentaoSyncModal.js';
 import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
 import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
@@ -141,6 +142,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   /** 一次编辑一个字段，新增字段无需继续拉长页面。 */
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
+  const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
   const { state, domainActions, operations } = input;
   const {
     actionState,
@@ -175,6 +177,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     loadingRuntimeBusy,
     loadingTemplatesBusy,
     localizedGenericShellRisk,
+    mergeTaskRecord,
     nativeConversationGroups,
     nativeConversationRuntimeStates,
     nativeConversationStatusSyncState,
@@ -971,6 +974,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
                       onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
                       onCreateTask={() => openTaskCreateModal()}
+                      onOpenZentaoImport={() => setZentaoImportOpen(true)}
                       onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
                       onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
                       onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
@@ -1041,6 +1045,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       />
                     ) : null}
                   </MotionPresence>
+                  <ZentaoImportModal
+                    open={zentaoImportOpen}
+                    language={appShellSettings.appLanguage}
+                    client={props.commandClient}
+                    projectId={activeProjectId}
+                    projectName={selectedProject?.name}
+                    existingTasks={snapshot.tasks}
+                    onImported={mergeTaskRecord}
+                    onClose={() => setZentaoImportOpen(false)}
+                  />
                 </>
               ) : sessionDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))

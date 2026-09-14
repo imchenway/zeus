@@ -452,6 +452,17 @@ function applyDevelopmentVisualIdentity(): void {
   dock.setIcon(icon);
 }
 
+/** 只要主进程仍在运行，macOS 就保持 Zeus 为普通应用并保留 Dock 图标。 */
+function ensureMacOSDockIconVisible(): void {
+  if (process.platform !== 'darwin' || !app.isReady()) return;
+  app.setActivationPolicy('regular');
+  const dock = app.dock;
+  if (!dock) return;
+  void dock.show().catch((error: unknown) => {
+    console.error('Zeus 无法保持 macOS Dock 图标可见。', error);
+  });
+}
+
 function nativeUpdateProgressHelperPath(): string {
   const root = desktopRoot();
   if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusUpdateProgress');
@@ -531,15 +542,7 @@ function revealMainWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   // macOS 直接启动、open 启动和 Codex Run 启动都必须把真实主窗口带到前台；
   // 菜单栏入口还必须重新声明普通应用身份并恢复 Dock 图标，不能只显示窗口。
-  if (process.platform === 'darwin') {
-    app.setActivationPolicy('regular');
-    const dock = app.dock;
-    if (dock) {
-      void dock.show().catch((error: unknown) => {
-        console.error('Zeus 恢复主窗口时无法显示 macOS Dock 图标。', error);
-      });
-    }
-  }
+  ensureMacOSDockIconVisible();
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
@@ -2746,6 +2749,7 @@ async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
   traceApplicationStartup('electron_ready');
+  ensureMacOSDockIconVisible();
   applyDevelopmentVisualIdentity();
   if (readOnlyValidationDescriptor) {
     await verifyDesktopReadOnlyValidationDescriptor(readOnlyValidationDescriptor);
@@ -3301,18 +3305,28 @@ app.on(
 
 app.on('window-all-closed', () => {
   // 测试身份关闭最后一个窗口即结束验收，避免不同 worktree 的测试包长期残留在 Dock 和后台进程中。
-  if (
+  const shouldQuit =
     isTestDistribution() ||
     shouldQuitWhenAllWindowsClosed({
       platform: process.platform,
       backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
-    })
-  )
+    });
+  if (shouldQuit) {
     app.quit();
+    return;
+  }
+  // 后台模式保留 Main/Core 进程；即使最后一个窗口关闭，也不能让仍在运行的应用从 Dock 消失。
+  ensureMacOSDockIconVisible();
 });
 
 app.on('activate', () => {
+  ensureMacOSDockIconVisible();
   void requestMainWindow();
+});
+
+// 切到其他应用后仍保持 regular activation policy，避免后台运行时 Dock 图标被系统隐藏。
+app.on('did-resign-active', () => {
+  ensureMacOSDockIconVisible();
 });
 
 /** Main、内置浏览器和系统网络会话在业务界面开放前使用宿主的同一份代理。 */

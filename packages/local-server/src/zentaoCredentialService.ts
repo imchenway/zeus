@@ -19,6 +19,10 @@ export interface ZentaoCredentialService {
   /** 仅供用户主动查看单个已配置实例，列表始终只返回存在状态。 */
   revealPassword(id: string): Promise<string | null>;
   verify(id: string): Promise<ZentaoInstanceVerifyResult>;
+  /** 仅供本机禅道同步服务使用；密码和令牌不会离开此服务。 */
+  request(id: string, input: { path: string; method?: 'GET' | 'POST' | 'PUT'; body?: Record<string, unknown> }): Promise<{ status: number; payload: unknown }>;
+  /** 读取当前账号“我的地盘”列表；禅道此接口使用 Web 会话 Cookie。 */
+  requestMyWork(id: string, kind: 'task' | 'bug'): Promise<{ status: number; payload: unknown }>;
 }
 
 /** 禅道实例元数据进 SQLite settings，密码只进 SecretStore。 */
@@ -117,6 +121,94 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     }
   }
 
+  async function readResponsePayload(response: Response): Promise<unknown> {
+    const contentLength = Number(response.headers.get('content-length') ?? '0');
+    if (Number.isFinite(contentLength) && contentLength > 4 * 1024 * 1024) throw serviceError('ZEUS_ZENTAO_RESPONSE_TOO_LARGE', '禅道响应超过安全大小限制。', 502);
+    const text = await response.text();
+    if (text.length > 4 * 1024 * 1024) throw serviceError('ZEUS_ZENTAO_RESPONSE_TOO_LARGE', '禅道响应超过安全大小限制。', 502);
+    if (!text.trim()) return null;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return { message: text.slice(0, 512) };
+    }
+  }
+
+  type ZentaoCredentialResponse = { status: number; payload: unknown };
+
+  async function withToken(id: string, send: (instance: ZentaoInstanceRecord, token: string) => Promise<ZentaoCredentialResponse>): Promise<ZentaoCredentialResponse> {
+    const instance = await requireInstance(id);
+    if (!instance.account) throw serviceError('ZEUS_ZENTAO_ACCOUNT_MISSING', '请先为禅道实例配置账号。', 400);
+    const password = await options.secretStore.getSecret(zentaoSecretAccount(id));
+    if (!password) throw serviceError('ZEUS_ZENTAO_PASSWORD_MISSING', '请先为禅道实例保存密码。', 401);
+    const exchange = await exchangeToken(instance, instance.account, password);
+    if (!('token' in exchange)) throw serviceError(`ZEUS_ZENTAO_${exchange.code.toUpperCase()}`, exchange.message, exchange.code === 'auth_failed' ? 401 : 502);
+
+    let result = await send(instance, exchange.token);
+    if (result.status === 401 || result.status === 403) {
+      const refreshed = await exchangeToken(instance, instance.account, password);
+      if (!('token' in refreshed)) throw serviceError('ZEUS_ZENTAO_AUTH_FAILED', refreshed.message, 401);
+      result = await send(instance, refreshed.token);
+    }
+    return result;
+  }
+
+  async function request(id: string, input: { path: string; method?: 'GET' | 'POST' | 'PUT'; body?: Record<string, unknown> }): Promise<ZentaoCredentialResponse> {
+    if (!input.path.startsWith('/') || input.path.includes('://')) throw serviceError('ZEUS_ZENTAO_PATH_INVALID', '禅道接口路径无效。', 400);
+    return withToken(id, async (instance, token) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), zentaoVerifyTimeoutMs * 2);
+      try {
+        const response = await fetcher(`${zentaoInstanceApiBase(instance)}${input.path}`, {
+          method: input.method ?? 'GET',
+          headers: {
+            Accept: 'application/json',
+            // 禅道 RESTful API v1 约定使用 Token 头；Authorization Bearer 会导致业务接口返回 401。
+            Token: token,
+            ...(input.body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(input.body ? { body: JSON.stringify(input.body) } : {}),
+          signal: controller.signal,
+        });
+        return { status: response.status, payload: await readResponsePayload(response) };
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw serviceError('ZEUS_ZENTAO_TIMEOUT', '连接禅道实例超时，请检查地址与网络。', 504);
+        if (error && typeof error === 'object' && 'statusCode' in error) throw error;
+        throw serviceError('ZEUS_ZENTAO_NETWORK_FAILED', '无法连接禅道实例，请检查地址与网络。', 502);
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
+  async function requestMyWork(id: string, kind: 'task' | 'bug'): Promise<ZentaoCredentialResponse> {
+    return withToken(id, async (instance, token) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), zentaoVerifyTimeoutMs * 2);
+      try {
+        const workPath = kind === 'task' ? '/my-work-task.json' : '/my-work-bug-assignedTo--id_desc.json';
+        const response = await fetcher(`${instance.host}${instance.basePath}${workPath}`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            Token: token,
+            'User-Agent': 'Mozilla/5.0',
+            'X-Requested-With': 'XMLHttpRequest',
+            Cookie: `zentaosid=${token}; lang=zh-cn; vision=rnd`,
+          },
+          signal: controller.signal,
+        });
+        return { status: response.status, payload: await readResponsePayload(response) };
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw serviceError('ZEUS_ZENTAO_TIMEOUT', '连接禅道实例超时，请检查地址与网络。', 504);
+        if (error && typeof error === 'object' && 'statusCode' in error) throw error;
+        throw serviceError('ZEUS_ZENTAO_NETWORK_FAILED', '无法连接禅道实例，请检查地址与网络。', 502);
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
   return {
     async list() {
       return hydrate();
@@ -161,6 +253,8 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
       if ('token' in exchange) return { ok: true, code: 'verified', checkedAt, message: '登录验证通过。' };
       return { ok: false, code: exchange.code, checkedAt, message: exchange.message, cause: exchange.cause };
     },
+    request,
+    requestMyWork,
   };
 }
 

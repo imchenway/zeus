@@ -1,5 +1,10 @@
 import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
+import { GitPullRequestIcon as GitPullRequest } from '@phosphor-icons/react/dist/csr/GitPullRequest';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { isTaskPriority, type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   AiRuntimeSession,
@@ -317,6 +322,7 @@ export interface TaskWorkspaceProps {
   onTaskTableColumnsChange: (value: TaskTableColumnPreferences) => void;
   onSaveTaskTableLayout?: () => void;
   onCreateTask: () => void;
+  onOpenZentaoImport?: () => void;
   onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
   onPushTaskToNewConversation: (taskId: string) => void;
   onOpenTaskCodeDelivery: (taskId: string) => void;
@@ -424,8 +430,10 @@ function TaskRowActions(props: {
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const activePushEntry = props.modelPushEntry?.taskId === props.task.id ? props.modelPushEntry : undefined;
   const pushChecking = activePushEntry?.status === 'checking';
+  const pushRetrying = activePushEntry?.status === 'error';
   const pushLabel = pushChecking ? props.copy.taskActionChecking : activePushEntry?.status === 'error' ? props.copy.taskActionRetry : props.copy.pushNewConversation;
   const actionLabel = (label: string) => (isEnglishCopy ? `${label}: ${props.task.title}` : `${label}：${props.task.title}`);
+  const pushTitle = props.terminal ? actionLabel(props.copy.taskActionTerminalHelp) : `${actionLabel(pushLabel)}${activePushEntry?.error ? ` · ${activePushEntry.error}` : ''}`;
 
   return (
     <span className="task-table-cell task-table-action-cell" role="gridcell" data-column-label={props.copy.actionsColumnTitle} onClick={(event) => event.stopPropagation()}>
@@ -435,18 +443,42 @@ function TaskRowActions(props: {
           size="compact"
           className="task-table-row-action task-table-row-action-push"
           aria-label={actionLabel(pushLabel)}
-          title={props.terminal ? props.copy.taskActionTerminalHelp : (activePushEntry?.error ?? undefined)}
+          title={pushTitle}
           busy={pushChecking}
           disabled={props.busy || props.terminal}
           onClick={() => props.onPushTaskToNewConversation(props.task.id)}
         >
-          {pushLabel}
+          {pushChecking ? (
+            <span className="task-table-row-action-spinner" aria-hidden="true">
+              <CircleNotch weight="regular" />
+            </span>
+          ) : pushRetrying ? (
+            <ArrowsClockwise aria-hidden="true" weight="regular" />
+          ) : (
+            <ChatCircleDots aria-hidden="true" weight="regular" />
+          )}
         </Button>
-        <Button variant="secondary" size="compact" className="task-table-row-action" aria-label={actionLabel(props.copy.taskActionCodeDelivery)} disabled={props.busy} onClick={() => props.onOpenTaskCodeDelivery(props.task.id)}>
-          {props.copy.taskActionCodeDelivery}
+        <Button
+          variant="secondary"
+          size="compact"
+          className="task-table-row-action"
+          aria-label={actionLabel(props.copy.taskActionCodeDelivery)}
+          title={actionLabel(props.copy.taskActionCodeDelivery)}
+          disabled={props.busy}
+          onClick={() => props.onOpenTaskCodeDelivery(props.task.id)}
+        >
+          <GitPullRequest aria-hidden="true" weight="regular" />
         </Button>
-        <Button variant="danger" size="compact" className="task-table-row-action" aria-label={actionLabel(props.copy.taskActionDelete)} disabled={props.busy} onClick={() => props.onDeleteTask(props.task.id)}>
-          {props.copy.taskActionDelete}
+        <Button
+          variant="danger"
+          size="compact"
+          className="task-table-row-action"
+          aria-label={actionLabel(props.copy.taskActionDelete)}
+          title={actionLabel(props.copy.taskActionDelete)}
+          disabled={props.busy}
+          onClick={() => props.onDeleteTask(props.task.id)}
+        >
+          <Trash aria-hidden="true" weight="regular" />
         </Button>
       </span>
     </span>
@@ -538,7 +570,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   // interaction thesis: checkbox 只负责选择，行内容负责打开详情，操作列截断冒泡并始终留在横向滚动视口内。
   const renderedVisibleColumns = model.visibleColumns;
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
-  const taskTableActionColumnWidth = isEnglishCopy ? 352 : 280;
+  const taskTableActionColumnWidth = 160;
   const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, model.columnPreferences)).join(' ');
   const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32 + taskTableActionColumnWidth);
   // 动态字段和不可隐藏的选择、操作列共用同一条轨道，header/row 不会因横向滚动发生错位。
@@ -879,9 +911,16 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </>
             ) : null}
           </div>
-          <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
-            {props.copy.newTask}
-          </button>
+          <span className="task-table-create-actions">
+            {props.onOpenZentaoImport ? (
+              <button className="task-table-new-task-button task-table-zentao-button" type="button" onClick={props.onOpenZentaoImport} disabled={!props.activeProjectId || props.creatingTaskBusy}>
+                {isEnglishCopy ? 'Import ZenTao' : '从禅道导入'}
+              </button>
+            ) : null}
+            <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
+              {props.copy.newTask}
+            </button>
+          </span>
         </section>
         {props.pageViewMode === 'board' ? (
           <Suspense

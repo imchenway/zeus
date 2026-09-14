@@ -1,4 +1,13 @@
-import type { UserFacingErrorCause } from '@zeus/shared';
+import type { UserFacingErrorCause, ZentaoRemoteItemSummary } from '@zeus/shared';
+import type { TaskRecord } from '../tasks/taskContracts.js';
+
+export type { ZentaoRemoteExecutionSummary, ZentaoRemoteItemDetail, ZentaoRemoteItemSummary, ZentaoRemoteListResult, ZentaoRemoteProductSummary, ZentaoRemoteProjectSummary, ZentaoTaskSyncRequest } from '@zeus/shared';
+
+export interface ZentaoTaskSyncResult {
+  mode: 'created' | 'updated';
+  task: TaskRecord;
+  remote: ZentaoRemoteItemSummary;
+}
 
 export interface SecretPresence {
   configured: boolean;

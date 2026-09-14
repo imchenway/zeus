@@ -6,6 +6,7 @@ Zeus 是一款 AI 研发工作台，将项目与任务管理、Coding Agent 会�
 
 - 管理项目、任务和 Coding Agent 会话。
 - 在创建任务中粘贴 GitHub Issue、Jira 工作项或禅道详情链接，读取标题和正文后确认创建；受限内容通过 Zeus 登录，GitHub 与 Jira 附件保留为来源链接。
+- 任务列表可读取当前禅道账号负责的任务和缺陷，确认后导入 Zeus。
 - 浏览和编辑项目源码，搜索文件与代码内容。
 - 接入 Codex、Claude、Gemini 等 Coding Agent，并保存执行日志。
 - 会话底部内置可调整高度的项目终端，支持多标签和进程续接；按 Control（⌃）+ 反引号键展示或隐藏，隐藏面板不会终止进程。

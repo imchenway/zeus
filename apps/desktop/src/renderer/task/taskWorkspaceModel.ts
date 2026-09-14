@@ -515,7 +515,7 @@ function buildBulkDeleteEligibility(tasks: TaskRecord[]): TaskBulkDeleteEligibil
 export function formatTaskSource(task: TaskRecord, labels?: TaskSourceLabels): string {
   const context = parseTaskSourceContext(task.sourceContextJson);
   const contextType = typeof context.type === 'string' ? normalizeSourceType(context.type) : undefined;
-  const sourceType = normalizeSourceType(task.createdFrom) ?? contextType;
+  const sourceType = contextType === 'zentao' ? contextType : (normalizeSourceType(task.createdFrom) ?? contextType);
   const mapped = sourceType ? formatTaskSourceType(sourceType, labels) : undefined;
   if (mapped) return mapped;
   if (contextType) return contextType;
@@ -765,6 +765,7 @@ function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string 
     runtime_session: '运行会话',
     template: '任务模板',
     graph_question: '图谱问答',
+    zentao: '禅道',
     manual: '手动创建',
     user: '手动创建',
   };

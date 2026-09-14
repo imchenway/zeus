@@ -114,6 +114,8 @@ import type {
   TelegramSecuritySettingsSnapshot,
 } from './index.js';
 import { registerIntegrationCommandRoutes } from './integrationCommandRoutes.js';
+import { registerZentaoSyncRoutes } from './zentaoSyncRoutes.js';
+import { createZentaoSyncService } from './zentaoSyncService.js';
 import { registerImConnectionRoutes } from './imConnectionRoutes.js';
 import { ImTelegramService, stableIdentity } from './imTelegramService.js';
 import {
@@ -3104,6 +3106,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       telegramBotToken: getSecretPresenceLabel(await readTelegramToken()),
       externalApiKey: getSecretPresenceLabel(await secretStore.getSecret('external.apiKey')),
     }),
+    appendAuditLog,
+    redactSensitiveText,
+  });
+
+  registerZentaoSyncRoutes({
+    server,
+    application: integrationCommands,
+    service: createZentaoSyncService({ credentials: zentaoCredentials, now: () => now().toISOString() }),
+    tasks,
+    recordTaskEvent,
     appendAuditLog,
     redactSensitiveText,
   });
