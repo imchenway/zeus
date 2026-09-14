@@ -1,5 +1,18 @@
-import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult } from '@zeus/shared';
-import type { ModelConnectionDiagnostic, ModelConnectionRecord, ProjectModelSelection, SaveModelConnectionRequest, SecuritySecretsSnapshot, SelectablePiModel } from './integrationContracts.js';
+import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult, ZentaoRemoteKind, ZentaoTaskSyncRequest } from '@zeus/shared';
+import type {
+  ModelConnectionDiagnostic,
+  ModelConnectionRecord,
+  ProjectModelSelection,
+  SaveModelConnectionRequest,
+  SecuritySecretsSnapshot,
+  SelectablePiModel,
+  ZentaoRemoteExecutionSummary,
+  ZentaoRemoteItemDetail,
+  ZentaoRemoteListResult,
+  ZentaoRemoteProductSummary,
+  ZentaoRemoteProjectSummary,
+  ZentaoTaskSyncResult,
+} from './integrationContracts.js';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildIntegrationCommandRequest, integrationClientCommandTypes } from './integrationCommandClient.js';
 
@@ -19,6 +32,13 @@ export interface IntegrationApiClient {
   /** 用户主动查看当前实例密码；不得用于列表加载或预取。 */
   revealZentaoInstancePassword: (instanceId: string) => Promise<{ password: string | null }>;
   verifyZentaoInstance: (instanceId: string) => Promise<ZentaoInstanceVerifyResult>;
+  loadZentaoProjects: (instanceId: string) => Promise<ZentaoRemoteProjectSummary[]>;
+  loadZentaoExecutions: (instanceId: string, projectId: string) => Promise<ZentaoRemoteExecutionSummary[]>;
+  loadZentaoProducts: (instanceId: string) => Promise<ZentaoRemoteProductSummary[]>;
+  loadZentaoItems: (instanceId: string, input: { kind: ZentaoRemoteKind; projectId: string; executionId?: string; productId?: string; query?: string; offset?: number; limit?: number }) => Promise<ZentaoRemoteListResult>;
+  loadZentaoMyItems: (instanceId: string, input: { kind?: ZentaoRemoteKind; query?: string; offset?: number; limit?: number }) => Promise<ZentaoRemoteListResult>;
+  loadZentaoItem: (instanceId: string, kind: ZentaoRemoteKind, objectId: string) => Promise<ZentaoRemoteItemDetail>;
+  syncTaskToZentao: (instanceId: string, input: ZentaoTaskSyncRequest) => Promise<ZentaoTaskSyncResult>;
   loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
   loadProjectModelSelection: (projectId: string) => Promise<ProjectModelSelection>;
   saveProjectModelSelection: (projectId: string, input: ProjectModelSelection) => Promise<ProjectModelSelection>;
@@ -115,6 +135,28 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     clearZentaoInstancePassword: (instanceId) =>
       zentaoCommand(instanceId, integrationClientCommandTypes.zentaoInstancePasswordClear, 'password_clear', 'DELETE', '/password', {}) as ReturnType<IntegrationApiClient['clearZentaoInstancePassword']>,
     verifyZentaoInstance: (instanceId) => zentaoCommand(instanceId, integrationClientCommandTypes.zentaoInstanceVerify, 'verify', 'POST', '/verify', {}) as ReturnType<IntegrationApiClient['verifyZentaoInstance']>,
+    loadZentaoProjects: async (instanceId) => (await transport.request<{ items: ZentaoRemoteProjectSummary[] }>(`${zentaoInstancePath(instanceId)}/projects`)).items,
+    loadZentaoExecutions: async (instanceId, projectId) => (await transport.request<{ items: ZentaoRemoteExecutionSummary[] }>(`${zentaoInstancePath(instanceId)}/projects/${encodeURIComponent(projectId)}/executions`)).items,
+    loadZentaoProducts: async (instanceId) => (await transport.request<{ items: ZentaoRemoteProductSummary[] }>(`${zentaoInstancePath(instanceId)}/products`)).items,
+    loadZentaoItems: (instanceId, input) => {
+      const query = new URLSearchParams({ kind: input.kind, projectId: input.projectId });
+      if (input.executionId) query.set('executionId', input.executionId);
+      if (input.productId) query.set('productId', input.productId);
+      if (input.query?.trim()) query.set('query', input.query.trim());
+      if (input.offset !== undefined) query.set('offset', String(input.offset));
+      if (input.limit !== undefined) query.set('limit', String(input.limit));
+      return transport.request<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/items?${query.toString()}`);
+    },
+    loadZentaoMyItems: (instanceId, input) => {
+      const query = new URLSearchParams();
+      if (input.kind) query.set('kind', input.kind);
+      if (input.query?.trim()) query.set('query', input.query.trim());
+      if (input.offset !== undefined) query.set('offset', String(input.offset));
+      if (input.limit !== undefined) query.set('limit', String(input.limit));
+      return transport.request<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/my-items?${query.toString()}`);
+    },
+    loadZentaoItem: (instanceId, kind, objectId) => transport.request(`${zentaoInstancePath(instanceId)}/items/${encodeURIComponent(kind)}/${encodeURIComponent(objectId)}`),
+    syncTaskToZentao: (instanceId, input) => zentaoCommand(instanceId, integrationClientCommandTypes.zentaoTaskSync, 'task_sync', 'POST', '/sync-task', input) as ReturnType<IntegrationApiClient['syncTaskToZentao']>,
     loadSelectablePiModels: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadSelectablePiModels']>> }>('/api/models/catalog')).items,
     loadProjectModelSelection: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/model-selection`),
     saveProjectModelSelection: async (projectId, input) => {

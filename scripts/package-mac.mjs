@@ -104,7 +104,7 @@ function run(command, args, options = {}) {
 function buildMacNativeDependencyEnv(baseEnv = process.env) {
   if (process.platform !== 'darwin') return baseEnv;
   try {
-    const sdkPath = execFileSync('xcrun', ['--show-sdk-path'], {
+    const sdkPath = execFileSync('xcrun', ['--sdk', 'macosx', '--show-sdk-path'], {
       encoding: 'utf8',
     }).trim();
     const cxxIncludePath = join(sdkPath, 'usr', 'include', 'c++', 'v1');
