@@ -386,8 +386,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 消息同时保留错误身份，读取入口与结构化命令入口显示相同原因。 */
 function projectGitError(code: string, message: string, details?: string): Error & { code: string; details?: string } {
-  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
+  return Object.assign(new Error(message.startsWith(`${code}:`) ? message : `${code}: ${message}`), { code, ...(details ? { details } : {}) });
 }
 
 // 通过 Git 自身识别子模块关系；子树来自标准 git-subtree 提交标记。

@@ -1631,10 +1631,11 @@ body:has(.macos-ai-app.zeus-shell) {
   display: none;
 }
 
-/* 应用标题位于侧栏窗口按钮下方，工作区导航从内容左边缘开始。 */
+/* 应用标题与下方导航图标的可见左缘对齐，保持同一列起点。 */
 .macos-ai-app.zeus-shell .project-sidebar-brand {
   display: flex;
   align-items: center;
+  padding-inline-start: 6px;
   min-block-size: 32px;
   margin-block-end: 4px;
   font-size: 16px;

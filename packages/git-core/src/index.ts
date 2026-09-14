@@ -476,7 +476,9 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
         if (depth === maxDepth) return [];
         return entries.filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !skippedDirectories.has(entry.name)).map((entry) => join(directoryPath, entry.name));
       } catch (error) {
-        throw new Error(`无法完整读取项目目录 ${directoryPath}：${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        /** 权限错误码放在消息开头，跨进程丢失错误属性后仍能显示明确原因。 */
+        const permissionCode = error instanceof Error && 'code' in error && (error.code === 'EACCES' || error.code === 'EPERM') ? `${error.code}: ` : '';
+        throw new Error(`${permissionCode}无法完整读取项目目录 ${directoryPath}：${error instanceof Error ? error.message : String(error)}`, { cause: error });
       }
     });
     currentLevel = nested.flat();
@@ -2088,8 +2090,9 @@ export function redactGitOutput(message: string): string {
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+)\b/gu, '[已隐藏]');
 }
 
+/** 消息保留错误身份，确保只传递消息的跨进程入口仍能解释原因。 */
 function gitCoreError(code: string, message: string, details?: string): Error & { code: string; details?: string } {
-  return Object.assign(new Error(redactGitOutput(message)), { code, ...(details ? { details: redactGitOutput(details) } : {}) });
+  return Object.assign(new Error(redactGitOutput(message.startsWith(`${code}:`) ? message : `${code}: ${message}`)), { code, ...(details ? { details: redactGitOutput(details) } : {}) });
 }
 
 /** 只读获取 Git 状态，不执行提交、回退、合并等高风险写操作。 */
