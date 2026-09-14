@@ -12948,66 +12948,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-block-size: 44px;
 }
 
-.macos-ai-app .task-table-header,
-.macos-ai-app .task-table-row {
-  align-items: center;
-  border-block-end: 0;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(260px, 1.55fr) minmax(104px, 0.5fr) minmax(140px, 0.72fr) minmax(160px, 0.78fr) minmax(120px, 0.55fr);
-  min-inline-size: 860px;
-}
-
-.macos-ai-app .task-table-header {
-  background: transparent;
-  border-block-end: 0;
-  color: var(--zeus-product-muted);
-  font-size: 10px;
-  font-weight: 680;
-  letter-spacing: 0.04em;
-  min-block-size: 32px;
-  padding: 0 12px;
-  position: sticky;
-  text-transform: uppercase;
-  top: 0;
-  z-index: 1;
-}
-
-.macos-ai-app .task-table-row {
-  background: transparent;
-  border: 0;
-  border-block-end: 0;
-  border-radius: 0;
-  color: var(--zeus-product-text);
-  inline-size: 100%;
-  min-block-size: 48px;
-  padding: 6px 12px;
-  text-align: start;
-  transition:
-    background-color 160ms var(--zeus-motion-ease-out),
-    color 160ms var(--zeus-motion-ease-out),
-    box-shadow 160ms var(--zeus-motion-ease-out);
-}
-
-/* 2026-06-24 任务行选中态去蓝框最终覆盖：任务行只用低噪音灰底表达 hover、键盘焦点和选中态，不再用蓝色描边把整行框成卡片。 */
-/* 2026-06-24 任务行 hover 与默认选中解耦最终覆盖：首屏不固定第一行灰底，鼠标所在行使用更明确的浅灰 hover。 */
-.macos-ai-app .task-table-row:not(.selected):hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .task-table-row:not(.selected):focus-visible {
-  background: var(--zeus-source-list-hover);
-  box-shadow: inset 0 0 0 1px var(--zeus-task-row-focus-line);
-}
-
-.macos-ai-app .task-table-row.selected {
-  background: var(--zeus-source-list-selected);
-  box-shadow: none;
-}
-
-.macos-ai-app .task-table-row.selected:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .task-table-row.selected:focus-visible {
-  background: color-mix(in oklch, var(--zeus-source-list-selected) 88%, var(--zeus-source-list-hover));
-  box-shadow: none;
-}
-
 .macos-ai-app .task-table-cell {
   min-inline-size: 0;
   overflow: hidden;
@@ -13447,43 +13387,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   font-size: 11px;
 }
 
-.macos-ai-app .task-table-row {
-  cursor: pointer;
-  min-block-size: 52px;
-}
-
-.macos-ai-app .task-table-row:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--zeus-task-row-focus-line);
-  outline: 0;
-}
-
 /* 2026-06-27 任务表格选择列与轨道对齐最终覆盖：选择列与动态字段列合并为同一个 CSS 变量，表头和每一行不再各自硬编码列轨道。 */
 /* 表头和数据行必须使用相同的 border-box 总宽度；否则数据行的 100% 内容宽度再叠加水平 padding，会让 fr 轨道从左到右逐列漂移。 */
 .macos-ai-app .task-table-workbench {
   grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.macos-ai-app .task-table-header,
-.macos-ai-app .task-table-row {
-  box-sizing: border-box;
-  gap: 8px;
-  grid-template-columns: var(--task-table-grid-template);
-  inline-size: 100%;
-}
-
-.macos-ai-app .task-table-row {
-  cursor: pointer;
-}
-
-.macos-ai-app .task-table-row-status-control,
-.macos-ai-app .task-table-row-status-control .zeus-select,
-.macos-ai-app .task-table-row-status-control .zeus-select-trigger {
-  inline-size: 100%;
-  min-inline-size: 0;
-}
-
-.macos-ai-app .task-table-row-status-control .zeus-select-trigger {
-  justify-content: space-between;
 }
 
 /* 全局会话状态连接断开时保留最后已知投影，同时明确告知用户正在恢复权威快照。 */
@@ -14624,18 +14531,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .task-table-field-reset {
   min-block-size: 30px;
-}
-
-/* 2026-07-02 任务表格密度与更新时间列返修最终覆盖：更新时间只保留格式化主文本，行高回到 macOS 列表密度，同时保留 44px 命中区。 */
-.macos-ai-app .task-table-row {
-  cursor: pointer;
-  min-block-size: 44px;
-  padding: 3px 12px;
-}
-
-.macos-ai-app .task-table-header {
-  min-block-size: 28px;
-  padding: 0 12px;
 }
 
 .macos-ai-app .task-table-cell {
@@ -18707,49 +18602,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-weight: 680;
 }
 
-/* 2026-07-21 任务表格跨分辨率语义对齐最终覆盖：表头与数据共享列轨道和语义锚点，状态不再继承旧列表的右对齐。 */
-.macos-ai-app .task-table-header {
-  /* 深色主题禁止让 transparent 参与 OKLCH 色相插值，否则中性灰会在 Chromium 中偏成暖红色。 */
-  background: color-mix(in srgb, var(--zeus-product-panel-muted) 72%, var(--zeus-product-canvas));
-  border-block-end: 1px solid var(--zeus-product-line-soft);
-  color: color-mix(in oklch, var(--zeus-product-text) 84%, var(--zeus-product-muted));
-  font-size: 11px;
-  font-weight: 680;
-  letter-spacing: 0.01em;
-  min-block-size: 32px;
-  text-transform: none;
-}
-
-.macos-ai-app :where(.task-table-header, .task-table-row) .task-table-cell:not(.task-table-select-cell) {
-  align-content: center;
-  align-items: center;
-  display: grid;
-  min-inline-size: 0;
-}
-
-.macos-ai-app :where(.task-table-header, .task-table-row) .task-table-align-start {
-  justify-items: start;
-  text-align: start;
-}
-
-.macos-ai-app :where(.task-table-header, .task-table-row) .task-table-align-end {
-  justify-items: end;
-  text-align: end;
-}
-
-/* 两个时间列的短标题在列内居中；长时间值继续右对齐，保留纵向数字扫描基线。 */
-.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) {
-  justify-items: center;
-  text-align: center;
-}
-
 .macos-ai-app :where(.task-table-updatedAt-cell, .task-table-createdAt-cell) {
   font-variant-numeric: tabular-nums;
-}
-
-.macos-ai-app .task-table-header .task-table-cell:not(.task-table-select-cell) {
-  line-height: 14px;
-  white-space: nowrap;
 }
 
 .macos-ai-app .task-table-workbench > .task-list-workbench.task-list-protagonist:not(.task-list-empty) {
@@ -18991,210 +18845,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inline-size: 100%;
 }
 
-/* 任务列表的排序、换序、列宽分别使用独立命中区，避免把单击排序与拖动手势绑在同一表头上。 */
-.macos-ai-app .task-table-header .task-table-interactive-header {
-  align-items: stretch;
-  display: flex;
-  gap: 0;
-  justify-items: stretch;
-  /* 分隔线跨出列边缘，保留完整拖动命中区；标题按钮内部仍自行截断文字。 */
-  overflow: visible;
-  padding: 0;
-  position: relative;
-}
-
 .macos-ai-app .task-table-field-option {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.macos-ai-app .task-table-column-drag-handle,
-.macos-ai-app .task-table-column-sort-button {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font: inherit;
-  min-block-size: 28px;
-}
-
-.macos-ai-app .task-table-column-drag-handle {
-  align-items: center;
-  color: var(--zeus-product-subtle);
-  cursor: grab;
-  display: inline-flex;
-  font-size: 9px;
-  inline-size: 24px;
-  inset-block: 2px;
-  inset-inline-end: 4px;
-  justify-content: center;
-  letter-spacing: -2px;
-  opacity: 0;
-  padding: 0;
-  pointer-events: none;
-  position: absolute;
-  transition:
-    color 120ms ease,
-    opacity 120ms ease;
-  z-index: 2;
-}
-
-.macos-ai-app .task-table-align-end .task-table-column-drag-handle {
-  inset-inline-end: auto;
-  inset-inline-start: 0;
-}
-
-.macos-ai-app .task-table-column-drag-handle:active:not(:disabled) {
-  cursor: grabbing;
-}
-
-.macos-ai-app .task-table-column-drag-handle[aria-pressed='true'],
-.macos-ai-app .task-table-interactive-header.dragging {
-  background: color-mix(in oklch, var(--zeus-product-accent) 10%, transparent);
-  color: var(--zeus-brand-text);
-}
-
-.macos-ai-app .task-table-interactive-header.dragging {
-  opacity: 0.62;
-}
-
-.macos-ai-app .task-table-interactive-header:hover:not(:disabled):not([aria-disabled='true']) .task-table-column-drag-handle,
-.macos-ai-app .task-table-interactive-header:focus-within .task-table-column-drag-handle,
-.macos-ai-app .task-table-column-drag-handle[aria-pressed='true'],
-.macos-ai-app .task-table-interactive-header.dragging .task-table-column-drag-handle {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.macos-ai-app .task-table-interactive-header.drop-before::before,
-.macos-ai-app .task-table-interactive-header.drop-after::before {
-  background: var(--zeus-product-accent);
-  border-radius: 999px;
-  box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-product-accent) 14%, transparent);
-  content: '';
-  inline-size: 2px;
-  inset-block: 3px;
-  position: absolute;
-  z-index: 5;
-}
-
-.macos-ai-app .task-table-interactive-header.drop-before::before {
-  inset-inline-start: -1px;
-}
-
-.macos-ai-app .task-table-interactive-header.drop-after::before {
-  inset-inline-end: -1px;
-}
-
-.macos-ai-app .task-table-column-sort-button {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  flex: 1 1 auto;
-  gap: 5px;
-  justify-content: flex-start;
-  min-inline-size: 0;
-  overflow: hidden;
-  padding: 0 32px 0 0;
-  text-align: start;
-}
-
-.macos-ai-app .task-table-column-sort-button:active:not(:disabled) {
-  cursor: grabbing;
-}
-
-.macos-ai-app .task-table-align-end .task-table-column-sort-button {
-  justify-content: flex-end;
-  padding: 0 0 0 32px;
-  text-align: end;
-}
-
-/* 时间列标题使用对称网格：标题固定居中，排序箭头出现时只占用左侧镜像槽。 */
-.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  justify-content: stretch;
-  padding: 0 32px;
-  text-align: center;
-}
-
-.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-button > span:first-child {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-indicator {
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: end;
-}
-
-.macos-ai-app .task-table-column-sort-button > span:first-child {
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.macos-ai-app .task-table-column-sort-indicator {
-  color: var(--zeus-product-subtle);
-  flex: 0 0 auto;
-  font-size: 10px;
-}
-
-.macos-ai-app .task-table-align-end .task-table-column-sort-indicator {
-  order: -1;
-}
-
-.macos-ai-app [aria-sort='ascending'] .task-table-column-sort-indicator,
-.macos-ai-app [aria-sort='descending'] .task-table-column-sort-indicator {
-  color: var(--zeus-brand-text);
-}
-
-.macos-ai-app .task-table-column-drag-handle:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .task-table-column-sort-button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in oklch, var(--zeus-source-list-hover) 78%, transparent);
-  color: var(--zeus-product-text);
-}
-
-.macos-ai-app .task-table-column-drag-handle:focus-visible,
-.macos-ai-app .task-table-column-sort-button:focus-visible,
-.macos-ai-app .task-table-column-resize-handle:focus-visible {
-  box-shadow: var(--zeus-control-focus);
-  outline: 0;
-  z-index: 2;
-}
-
-.macos-ai-app .task-table-column-resize-handle {
-  cursor: col-resize;
-  inset-block: 3px;
-  inset-inline-end: -6px;
-  inline-size: 12px;
-  position: absolute;
-  touch-action: none;
-  z-index: 3;
-}
-
-.macos-ai-app .task-table-column-resize-handle::after {
-  background: var(--zeus-product-line);
-  content: '';
-  inline-size: 1px;
-  inset-block: 4px;
-  inset-inline-start: 5px;
-  opacity: 0.58;
-  position: absolute;
-  transition:
-    background 120ms ease,
-    opacity 120ms ease;
-}
-
-.macos-ai-app .task-table-interactive-header:hover:not(:disabled):not([aria-disabled='true']) .task-table-column-resize-handle::after,
-.macos-ai-app .task-table-interactive-header:focus-within .task-table-column-resize-handle::after,
-.macos-ai-app .task-table-column-resize-handle:hover:not(:disabled):not([aria-disabled='true'])::after,
-.macos-ai-app .task-table-column-resize-handle:focus-visible::after,
-.macos-ai-app .task-table-column-resize-handle:active:not(:disabled)::after {
-  background: var(--zeus-product-accent);
-  inline-size: 2px;
-  opacity: 1;
 }
 
 .macos-ai-app .task-table-view-save-pill {
@@ -19342,10 +18994,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .macos-ai-app .task-table-column-drag-handle,
-  .macos-ai-app .task-table-column-resize-handle::after {
-    transition: none;
-  }
 }
 
 .macos-ai-app .task-enum-order-grid {
@@ -19637,54 +19285,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
   .macos-ai-app .task-table-status-segment {
     flex: 1 1 0;
-  }
-
-  .macos-ai-app .task-table-header {
-    display: none;
-  }
-
-  .macos-ai-app .task-table-row {
-    align-items: start;
-    border: 1px solid var(--zeus-product-line-soft);
-    border-radius: 12px;
-    cursor: pointer;
-    display: grid;
-    gap: 6px 10px;
-    grid-template-columns: 24px minmax(0, 1fr);
-    min-inline-size: 0;
-    padding: 10px;
-  }
-
-  .macos-ai-app .task-table-row .task-table-select-cell {
-    grid-row: 1 / span 2;
-  }
-
-  .macos-ai-app .task-table-row .task-table-cell:not(.task-table-select-cell) {
-    display: grid;
-    grid-column: 2;
-    grid-template-columns: minmax(82px, 0.36fr) minmax(0, 1fr);
-    justify-items: stretch;
-    text-align: start;
-  }
-
-  .macos-ai-app .task-table-row .task-table-cell:not(.task-table-select-cell)::before {
-    color: var(--zeus-product-muted);
-    content: attr(data-column-label);
-    font-size: 10px;
-    font-weight: 650;
-    grid-column: 1;
-    grid-row: 1 / span 2;
-    line-height: 14px;
-  }
-
-  .macos-ai-app .task-table-row .task-table-cell:not(.task-table-select-cell) > * {
-    grid-column: 2;
-    min-inline-size: 0;
-  }
-
-  .macos-ai-app .task-table-row .task-table-source-cell,
-  .macos-ai-app .task-table-row .task-table-updatedAt-cell {
-    display: none;
   }
 }
 
@@ -23420,14 +23020,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .model-setup-dialog {
     animation: none;
   }
-}
-
-/* 调宽期间持续显示品牌色分隔线，不随鼠标离开命中区而消失。 */
-.macos-ai-app .task-table-column-resize-handle[data-dragging='true']::after {
-  background: var(--zeus-product-accent);
-}
-.macos-ai-app .task-table-column-resize-handle {
-  touch-action: none;
 }
 
 /* 长任务说明提供明确保存与取消，键盘焦点留在同一编辑区时不抢先提交。 */

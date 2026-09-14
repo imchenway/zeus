@@ -114,6 +114,7 @@ export type SessionDrawerTarget =
       navigationId: string;
       status: 'opening' | 'error';
     }>
+  | Readonly<{ projectId: string; taskId: string; conversationId?: undefined; navigationId?: undefined; status: 'empty' }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
 export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
