@@ -105,6 +105,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     projectSidebarPreferredWidth,
     projectSidebarViewportWidth,
     projectSourceWorkspaceRef,
+    globalAgentSettingsRef,
+    globalAgentSettingsDirty,
     props,
     recordNativeConversationRuntimeState,
     requestWorkspaceLeaveRef,
@@ -794,12 +796,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       if (kind !== 'close' || pendingKind !== 'close') cancel?.();
       return;
     }
-    if (!sourceWorkspaceDirty && !taskTableLayoutDirty) {
+    if (!sourceWorkspaceDirty && !globalAgentSettingsDirty && !taskTableLayoutDirty) {
       leave();
       return;
     }
     pendingWorkspaceLeaveKindRef.current = kind;
-    if (sourceWorkspaceDirty) {
+    if (sourceWorkspaceDirty || globalAgentSettingsDirty) {
       pendingSourceWorkspaceLeaveRef.current = () => requestTaskTableLayoutLeave(leave, cancel);
       pendingSourceWorkspaceLeaveCancelRef.current = cancel ?? null;
       setSourceWorkspaceLeaveDialogOpen(true);
@@ -820,6 +822,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
 
   function discardSourceWorkspaceAndLeave(): void {
     projectSourceWorkspaceRef.current?.discardAll();
+    globalAgentSettingsRef.current?.discard();
     setSourceWorkspaceLeaveDialogOpen(false);
     const leave = pendingSourceWorkspaceLeaveRef.current;
     pendingSourceWorkspaceLeaveRef.current = null;
@@ -830,7 +833,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   async function saveSourceWorkspaceAndLeave(): Promise<void> {
     setSourceWorkspaceSaveBusy(true);
     try {
-      if (!(await projectSourceWorkspaceRef.current?.saveAll())) return;
+      if (sourceWorkspaceDirty && !(await projectSourceWorkspaceRef.current?.saveAll())) return;
+      if (globalAgentSettingsDirty && !(await globalAgentSettingsRef.current?.save())) return;
       setSourceWorkspaceLeaveDialogOpen(false);
       const leave = pendingSourceWorkspaceLeaveRef.current;
       pendingSourceWorkspaceLeaveRef.current = null;

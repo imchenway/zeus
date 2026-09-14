@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
 import { projectTerminalOutput } from '@zeus/shared';
 import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig } from '@zeus/shared';
 import { type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain } from '../../appShellBridge.js';
@@ -136,6 +137,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [visitedCodeWorkspaceModes, setVisitedCodeWorkspaceModes] = useState<Set<ProjectCodeWorkspaceMode>>(() => new Set(typeof window !== 'undefined' && window.location.hash === '#project-commands' ? ['source', 'commands'] : ['source']));
   const projectSourceWorkspaceRef = useRef<ProjectSourceWorkspaceHandle | null>(null);
   const [sourceWorkspaceDirty, setSourceWorkspaceDirty] = useState(false);
+  /** 全局规则草稿复用工作区离开确认。 */
+  const globalAgentSettingsRef = useRef<GlobalAgentSettingsHandle | null>(null);
+  /** 同时用于设置切换和原生窗口关闭保护。 */
+  const [globalAgentSettingsDirty, setGlobalAgentSettingsDirty] = useState(false);
   const workspaceScrollRef = useRef<HTMLElement | null>(null);
   const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot>(() => props.snapshot ?? createEmptyDashboardSnapshot());
   const { snapshot: projectQuery, replace: replaceProjectQuery } = useProjectFeatureController({ client: props.nativeConversationClient?.projects ?? null, initialItems: dashboardSnapshot.projects });
@@ -749,7 +754,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       cancelled = true;
     };
   }, [activeNavTarget, settingsCategory, props.onLoadReleaseStatus, props.onLoadReleaseUpdateStatus, props.initialReleaseStatus, props.initialReleaseUpdateStatus, releaseLoadRevision]);
-  const setSettingsCategory = props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory;
+  /** 所有设置页切换先处理未保存草稿。 */
+  const setSettingsCategory = (category: SettingsCategory): void => {
+    if (category === settingsCategory) return;
+    requestWorkspaceLeaveRef.current(() => (props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory)(category));
+  };
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
@@ -791,10 +800,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     if (bridge?.setUnsavedChangeState) {
       bridge.setUnsavedChangeState('task-table-layout', taskTableLayoutDirty);
       bridge.setUnsavedChangeState('project-source', sourceWorkspaceDirty);
+      bridge.setUnsavedChangeState('global-agents', globalAgentSettingsDirty);
     } else {
-      bridge?.notifyTaskTableLayoutDirty?.(taskTableLayoutDirty || sourceWorkspaceDirty);
+      bridge?.notifyTaskTableLayoutDirty?.(taskTableLayoutDirty || sourceWorkspaceDirty || globalAgentSettingsDirty);
     }
-  }, [sourceWorkspaceDirty, taskTableLayoutDirty]);
+  }, [sourceWorkspaceDirty, taskTableLayoutDirty, globalAgentSettingsDirty]);
   const activeProjectIdRef = useRef<string | undefined>(activeProjectId);
   const taskModelPushNavigationRef = useRef<TaskModelPushNavigationTarget>({
     projectId: activeProjectId,
@@ -1370,6 +1380,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     projectSidebarResizing,
     projectSidebarViewportWidth,
     projectSourceWorkspaceRef,
+    globalAgentSettingsRef,
+    globalAgentSettingsDirty,
+    setGlobalAgentSettingsDirty,
     projectTaskModelPushManagementStatus,
     projectWorkspaceConfigStatus,
     projectedRuntimeLogOutput,

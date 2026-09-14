@@ -75,6 +75,8 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 ## 开发与验证
 
+系统设置中的“全局规则”可读取和手动编辑 Zeus 的 AGENTS.md；页面显示实际文件路径。保存后新会话读取更新的规则，已有会话可能仍使用原规则。项目专属规则请保留在各自仓库中。
+
 使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。
 
 - `pnpm dev`：首次构建运行依赖后启动 Electron + Vite；React/CSS 修改热更新，不生成安装包。主进程、preload 和共享后端包修改后需重启命令。退出开发窗口或按 Ctrl+C 会关闭本次开发服务，不影响已安装应用。

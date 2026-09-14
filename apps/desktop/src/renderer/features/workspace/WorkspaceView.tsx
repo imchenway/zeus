@@ -1,5 +1,7 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
+import { GlobalAgentSettingsPane } from '../../settings/GlobalAgentSettingsPane.js';
+import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import type { SidebarConversationFilters } from '@zeus/shared';
 import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -191,6 +193,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     projectPanel,
     projectSidebarResizing,
     projectSourceWorkspaceRef,
+    globalAgentSettingsRef,
+    globalAgentSettingsDirty,
+    setGlobalAgentSettingsDirty,
+    requestWorkspaceLeaveRef,
     projectedRuntimeLogOutput,
     props,
     releaseStatus,
@@ -523,7 +529,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.coding,
-      items: [['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon]],
+      items: [
+        ['agents', settingsWorkspaceCopy.categories.agents, FileTextIcon],
+        ['commands', settingsWorkspaceCopy.categories.commands, TerminalIcon],
+      ],
     },
     {
       group: settingsWorkspaceCopy.sectionGroups.maintenance,
@@ -536,7 +545,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const visibleSettingsGroups = settingsGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter(([id, label]) => `${group.group} ${label} ${id}`.toLocaleLowerCase().includes(normalizedSettingsQuery)),
+      items: group.items.filter(([id, label]) => `${group.group} ${label} ${id} ${id === 'agents' ? 'AGENTS.md 全局规则 global rules' : ''}`.toLocaleLowerCase().includes(normalizedSettingsQuery)),
     }))
     .filter((group) => group.items.length > 0);
   const visibleSettingsItems = visibleSettingsGroups.flatMap((group) => group.items);
@@ -646,10 +655,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         {sourceWorkspaceLeaveDialogOpen ? (
           <TaskTableLayoutDecisionDialog
             open={sourceWorkspaceLeaveDialogOpen}
-            title={appShellSettings.appLanguage === 'zh-CN' ? '代码修改尚未保存' : 'Code changes have not been saved'}
-            description={
-              appShellSettings.appLanguage === 'zh-CN' ? '离开后，未保存的代码修改会丢失。请保存全部文件、放弃修改，或取消离开。' : 'Unsaved code changes will be lost when you leave. Save all files, discard changes, or stay on this page.'
-            }
+            title={appShellSettings.appLanguage === 'zh-CN' ? (globalAgentSettingsDirty ? '全局规则尚未保存' : '代码修改尚未保存') : 'Changes have not been saved'}
+            description={appShellSettings.appLanguage === 'zh-CN' ? '未保存的修改会丢失。请保存、放弃修改，或取消本次操作。' : 'Unsaved changes will be lost. Save, discard changes, or cancel this action.'}
             busy={sourceWorkspaceSaveBusy}
             actions={[
               { id: 'cancel-source-leave', label: appShellSettings.appLanguage === 'zh-CN' ? '取消' : 'Cancel', onClick: cancelSourceWorkspaceLeave },
@@ -661,7 +668,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               },
               {
                 id: 'save-source-leave',
-                label: appShellSettings.appLanguage === 'zh-CN' ? '保存全部' : 'Save all',
+                label: appShellSettings.appLanguage === 'zh-CN' ? (globalAgentSettingsDirty ? '保存' : '保存全部') : globalAgentSettingsDirty ? 'Save' : 'Save all',
                 variant: 'primary',
                 onClick: () => void saveSourceWorkspaceAndLeave(),
               },
@@ -1666,6 +1673,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             <section key={settingsCategory} id={settingsPanelId} role="tabpanel" tabIndex={0} className="settings-detail-pane" aria-labelledby={`${settingsPanelId}-${settingsCategory}`}>
               <div className="settings-content-column">
                 {settingsCategory === 'general' ? <GeneralSettingsPane value={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onChange={setAppShellSettings} /> : null}
+                {settingsCategory === 'agents' ? (
+                  <GlobalAgentSettingsPane
+                    ref={globalAgentSettingsRef}
+                    language={appShellSettings.appLanguage}
+                    client={props.nativeConversationClient?.settings ?? null}
+                    onDirtyChange={setGlobalAgentSettingsDirty}
+                    onRequestLeave={(leave) => requestWorkspaceLeaveRef.current(leave)}
+                  />
+                ) : null}
                 {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
                 {settingsCategory === 'memory' && props.nativeConversationClient ? (
                   <MemorySettingsPane
