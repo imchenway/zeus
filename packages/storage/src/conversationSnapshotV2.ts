@@ -4,6 +4,7 @@ import {
   classifyAssistantMessage,
   conversationProcessProviderItemId,
   conversationNavigationExcerpt,
+  conversationQuestionNavigationExcerpt,
   type ConversationNavigationEntry,
   type ConversationNavigationSnapshot,
   type AssistantMessageMetadata,
@@ -699,6 +700,7 @@ export class ConversationSnapshotV2Repository {
       assistant_phase: string | null;
       assistant_metadata_json: string | null;
       formal_plan: number;
+      question_answer_json: string | null;
     }>(
       `SELECT conversation_model_history.id, conversation_model_history.sequence,
         conversation_model_history.turn_id, turn.provider_turn_id, turn.status,
@@ -708,6 +710,7 @@ export class ConversationSnapshotV2Repository {
         ${modelHistoryAssistantPhaseSql} AS assistant_phase,
         ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
         ${modelHistoryFormalPlanSql} AS formal_plan,
+        ${modelHistoryQuestionAnswerSql} AS question_answer_json,
         substr(CASE WHEN json_valid(content_json) THEN COALESCE(
           NULLIF(json_extract(content_json, '$.displayText'), ''),
           NULLIF(json_extract(content_json, '$.text'), ''),
@@ -722,7 +725,6 @@ export class ConversationSnapshotV2Repository {
         AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
         -- 来源记录也用于普通答复；沿用正文分类，只排除可读思考摘要。
         AND (conversation_model_history.role = 'user' OR ${modelHistoryReasoningSummarySql} = 0 OR ${modelHistoryAssistantPhaseSql} = 'plan')
-        AND ${modelHistoryQuestionAnswerSql} IS NULL
       ORDER BY conversation_model_history.sequence`,
       [conversationId],
     );
@@ -739,6 +741,10 @@ export class ConversationSnapshotV2Repository {
         if (text.trim() && (final || (row.formal_plan === 1 && !answers.get(row.turn_id)?.final))) answers.set(row.turn_id, { text: conversationNavigationExcerpt(text, 320), final });
         continue;
       }
+      /** 异步答案复用历史正文补齐原题的读取路径。 */
+      const questionAnswer = row.question_answer_json ? this.questionAnswer(conversationId, row.question_answer_json) : null;
+      /** 已回答卡片预览展示用户选择，不以助手最终答复覆盖。 */
+      const questionExcerpt = questionAnswer ? conversationQuestionNavigationExcerpt({ questions: questionAnswer.questions }, { answers: questionAnswer.answers }) : null;
       /** 客户端身份能连接发送前后两份投影，缺失时使用模型身份或历史身份。 */
       const identity = row.client_user_message_id ? `client:${row.client_user_message_id}` : row.provider_item_id ? `provider:${row.provider_item_id}` : `history:${row.id}`;
       if (!entries.has(identity))
@@ -750,12 +756,46 @@ export class ConversationSnapshotV2Repository {
           providerItemId: row.provider_item_id,
           sequence: row.sequence,
           occurredAt: row.confirmed_at,
-          prompt: conversationNavigationExcerpt(text, 160),
-          response: '',
+          prompt: questionExcerpt ? redactSensitivePreview(questionExcerpt.prompt).text : conversationNavigationExcerpt(text, 160),
+          response: questionExcerpt ? redactSensitivePreview(questionExcerpt.response).text : '',
           status: row.status,
         });
     }
-    return { conversationId, throughEventSeq, entries: [...entries.values()].map((entry) => ({ ...entry, response: answers.get(entry.turnId)?.text ?? '' })) };
+    /** 普通发言保持模型历史顺序，答题卡保留自己的答案摘录。 */
+    const directory = [...entries.values()].map((entry) => ({ ...entry, response: entry.response || answers.get(entry.turnId)?.text || '' }));
+    /** 同步询问独立存储，必须进入完整目录而不能只依赖已加载正文。 */
+    const requests = this.db.select<{ id: string; turn_id: string; provider_turn_id: string | null; payload_json: string; response_json: string; contains_secret: number; occurred_at: string }>(
+      `SELECT request.id, request.turn_id, turn.provider_turn_id, request.payload_json, request.response_json, request.contains_secret,
+              COALESCE(request.resolved_at, request.created_at) AS occurred_at
+         FROM conversation_server_requests AS request
+         JOIN conversation_turns AS turn ON turn.id = request.turn_id AND turn.conversation_id = request.conversation_id
+        WHERE request.conversation_id = ? AND request.status = 'resolved'
+          AND request.request_kind = 'request_user_input' AND request.response_json IS NOT NULL
+        ORDER BY occurred_at, request.id`,
+      [conversationId],
+    );
+    for (const request of requests) {
+      /** 与正文共享规范题目和脱敏答案口径，整张卡只建立一个身份。 */
+      const excerpt = conversationQuestionNavigationExcerpt(parseJsonRecordOrNull(request.payload_json), parseJsonRecordOrNull(request.response_json), request.contains_secret === 1);
+      if (!excerpt) continue;
+      /** 同步卡片没有模型消息序号，按答案提交时间插入并保持模型消息原顺序。
+       * ponytail: 插入为 O(卡片数 × 目录数)，目录达到万级卡片时改为双游标合并。 */
+      const index = directory.findIndex((entry) => entry.occurredAt > request.occurred_at);
+      directory.splice(index < 0 ? directory.length : index, 0, {
+        id: `request:${request.id}`,
+        requestId: request.id,
+        turnId: request.turn_id,
+        providerTurnId: request.provider_turn_id,
+        clientUserMessageId: null,
+        providerItemId: null,
+        sequence: 1,
+        occurredAt: request.occurred_at,
+        prompt: redactSensitivePreview(excerpt.prompt).text,
+        response: redactSensitivePreview(excerpt.response).text,
+        status: 'resolved',
+      });
+    }
+    return { conversationId, throughEventSeq, entries: directory };
   }
 
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
