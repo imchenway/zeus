@@ -246,6 +246,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const {
     server,
     zeusLocalServerHost,
+    listConversationSubagents,
+    stopConversationSubagents,
+    conversationRuntime,
     archiveNativeConversation,
     buildRuntimeProcessEnv,
     commandDeliveries,
@@ -779,6 +782,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   const codexSubagentQueries = new CodexSubagentQueryApplication({
     conversations,
+    owned: { relations: conversationRuntime, turns: conversationTurns, execution: conversationExecution, list: listConversationSubagents },
     providerItems: conversationProviderItems,
     provider: {
       getState: () => codexAppServerManager.getState(),
@@ -1177,7 +1181,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     tasks,
     conversations,
     goals: conversationGoals,
-    codex: codexNativeCoordinator,
+    codex: {
+      ...codexNativeCoordinator,
+      readGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal(input),
+      setGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).setGoal(input),
+      pauseGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).pauseGoal(input),
+      resumeGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).resumeGoal(input),
+      clearGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).clearGoal(input),
+    },
     archiveNativeConversation,
     restoreNativeConversation,
     isConversationIdle: (conversation) => inferNativeConversationSnapshotState(conversation).type === 'idle',
@@ -1270,6 +1281,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
           return toNativeInterruptAcceptance(operationIdentity, params.turnId, updatedConversation, submission);
         }
+        await stopConversationSubagents(conversation.id);
         const operation =
           conversation.agentKind === 'pi'
             ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
@@ -1292,7 +1304,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       planImplementationRespond: async ({ params, action, feedback, attachments, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await codexNativeCoordinator.respondToPlanImplementationRequest({
+        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
           conversationId: conversation.id,
           requestId: params.requestId,
           action,
@@ -1425,7 +1437,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
     if (readOnlyValidation) {
       return {
-        goal: conversation.agentKind === 'codex' ? (conversationGoals.get(conversation.id) ?? null) : null,
+        goal: conversationGoals.get(conversation.id) ?? null,
         timeline: conversationGoals.listEvents(conversation.id),
         capability: { supported: false, enabled: false, stage: null, reason: 'unverified' as const },
         projection: {
@@ -1436,7 +1448,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
     }
     try {
-      const goal = conversation.agentKind === 'codex' ? await codexNativeCoordinator.readGoal({ conversationId: conversation.id }) : null;
+      const goal = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal({ conversationId: conversation.id });
       return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
@@ -2642,7 +2654,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           destinationId: 'conversation-plan-implementation',
           resourceId: requestId,
           externalOperationId: `plan-implementation-response:${requestId}`,
-          invoke: () => codexNativeCoordinator.respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
+          invoke: () =>
+            (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
           isExplicitRejection: isExplicitConversationStartRejection,
         });
         const accepted = conversationPlanActions.getById(requestId);

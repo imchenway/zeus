@@ -1185,6 +1185,7 @@ async function waitForRuntimeCompletions(completions: readonly Promise<void>[], 
   }
 }
 
+/** 没有 PTY 时仍保留标准输入通道，供同一个受管命令继续交互。 */
 function spawnWithNodeChildProcess(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
   const useProcessGroup = process.platform !== 'win32';
   const child = nodeSpawn(command, args, {
@@ -1201,8 +1202,16 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
       if (event === 'stderr') child.stderr?.on('data', callback);
       if (event === 'exit') child.on('exit', callback);
       if (event === 'close') child.on('close', callback);
-      if (event === 'error') child.on('error', callback);
+      if (event === 'error') {
+        child.on('error', callback);
+        child.stdin?.on('error', callback);
+      }
       return this;
+    },
+    /** 输入错误由同一 Runtime 错误通道记录，不重启原命令。 */
+    write(input) {
+      if (!child.stdin?.writable || child.stdin.destroyed) throw new Error('命令的输入通道已关闭。');
+      child.stdin.write(input);
     },
     kill(signal) {
       if (useProcessGroup && child.pid) {

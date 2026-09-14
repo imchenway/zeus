@@ -24,6 +24,7 @@ import { migrateImSchema } from './imStore.js';
 import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStageHandoffMigration.js';
 import { migrateDigitalEmployeeLegacyRetirement } from './digitalEmployeeLegacyRetirementMigration.js';
 import { migrateConversationExpertSchema } from './conversationExpertStore.js';
+import { migrateConversationRuntimeSchema } from './conversationRuntimeStore.js';
 import { migrateEmployeeMemorySchema } from './employeeMemoryMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
@@ -53,6 +54,7 @@ export * from './conversationHotQueryIndexes.js';
 export * from './conversationItemTypes.js';
 export * from './conversationExecutionStore.js';
 export * from './conversationExpertStore.js';
+export * from './conversationRuntimeStore.js';
 export * from './conversationLegacyCutover.js';
 export * from './conversationProviderItemStore.js';
 export * from './conversationSnapshotV2.js';
@@ -467,10 +469,9 @@ export class ZeusDatabase implements ZeusDatabasePort {
   durableTransactionSync<T>(operation: () => T): T {
     this.assertWritable();
     if (this.savepointDepth > 0) throw new Error('ZeusDatabase.durableTransactionSync 不能嵌套在保存点事务中。');
-    if (this.persistedSaveRevision < this.requestedSaveRevision) {
-      throw new Error('ZeusDatabase.durableTransactionSync 执行前仍有未完成的异步保存。');
-    }
+    // 先提交已有普通事务；其成功通知不能被后续关键事务的失败回滚吞掉。
     const previouslyCommittedCallbacks = this.commitPendingTransaction();
+    this.persistedSaveRevision = this.requestedSaveRevision;
     const callbackCheckpoint = this.afterCommitCallbacks.length;
     try {
       this.db.exec('BEGIN IMMEDIATE');
@@ -1024,6 +1025,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationExpertSchema(zeusDb);
+    migrateConversationRuntimeSchema(zeusDb);
     migrateConversationLegacyCutoverSchema(zeusDb);
     migrateConversationProviderItemStoreSchema(zeusDb);
     migrateCompletedProviderPlansToConversationHistory(zeusDb);

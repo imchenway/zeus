@@ -14,7 +14,13 @@ const providerTraceIdentity = '55555555-5555-4555-8555-555555555555';
 
 try {
   database.execute('CREATE TABLE pi_provider_projection_probe (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  // 两个保存请求尚在等待 Promise 收口时，停止回执仍须同步提交，且保留先前事实。
+  const firstSave = database.save();
+  database.execute('INSERT INTO pi_provider_projection_probe (id, value) VALUES (?, ?)', ['pending-save', 'preserved']);
+  const secondSave = database.save();
   const session = prepareSession(service, 'session', 'conversation-1');
+  await Promise.all([firstSave, secondSave]);
+  assertBehavior(database.get<{ value: string }>('SELECT value FROM pi_provider_projection_probe WHERE id = ?', ['pending-save'])?.value === 'preserved', '同步命令提交必须排空并发保存，不能丢弃已接纳事实。');
   session.markProviderWriteStarted();
   session.recordSessionAcceptedAtomically(
     { nativeSessionId: 'session-1', runtimeInstanceId: 'generation-1', nativeSessionPath: '/tmp/session-1.jsonl' },

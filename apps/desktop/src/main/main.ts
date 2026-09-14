@@ -870,11 +870,10 @@ async function createWindow(): Promise<void> {
     if (mainWindow === window) mainWindow = [...windows].at(-1);
     if (
       windows.size === 0 &&
-      (isTestDistribution() ||
-        shouldQuitWhenAllWindowsClosed({
-          platform: process.platform,
-          backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
-        }))
+      shouldQuitWhenAllWindowsClosed({
+        platform: process.platform,
+        backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
+      })
     ) {
       menuBarUsageWindow?.destroy();
     }
@@ -3156,7 +3155,7 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       return cancelRequestedRestart();
     }
   }
-  const mayContinueInBackground = !isTestDistribution() && appShellSettings.backgroundModeEnabled;
+  const mayContinueInBackground = appShellSettings.backgroundModeEnabled;
   const options = {
     type: 'warning' as const,
     title: nativeText('仍有工作正在运行', 'Work is still running'),
@@ -3340,9 +3339,8 @@ app.on(
 );
 
 app.on('window-all-closed', () => {
-  // 测试身份关闭最后一个窗口即结束验收，避免不同 worktree 的测试包长期残留在 Dock 和后台进程中。
+  // 测试与正式应用共用后台设置；测试隔离由应用身份和独立数据目录保证。
   if (
-    isTestDistribution() ||
     shouldQuitWhenAllWindowsClosed({
       platform: process.platform,
       backgroundModeEnabled: appShellSettings.backgroundModeEnabled,

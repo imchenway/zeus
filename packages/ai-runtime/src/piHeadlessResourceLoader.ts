@@ -8,6 +8,8 @@ interface PiHeadlessResourceLoaderOptions {
   cwd: string;
   agentDir: string;
   pluginSkills?: PiPluginSkillResource[];
+  /** Zeus 统一目录中的普通 Skill。 */
+  skillCatalog?: PiPluginSkillResource[];
   pluginInstructions?: string;
 }
 
@@ -45,6 +47,8 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   private applicationContext: PiApplicationContextResource | null = null;
   private activeSkill: Skill | null = null;
   private readonly pluginSkills: Skill[];
+  /** 每轮准备时替换，执行期间保持冻结。 */
+  private skillCatalog: PiPluginSkillResource[];
   private readonly pluginInstructions: string;
 
   constructor(options: PiHeadlessResourceLoaderOptions) {
@@ -55,6 +59,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
       errors: [],
       runtime: createEmptyExtensionRuntime(),
     };
+    this.skillCatalog = options.skillCatalog ?? [];
     this.pluginSkills = (options.pluginSkills ?? []).map(toPiSkill);
     this.pluginInstructions = options.pluginInstructions?.trim() ?? '';
   }
@@ -65,8 +70,16 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
 
   getSkills() {
     const active = this.activeSkill;
-    const skills = active ? [active, ...this.pluginSkills.filter((skill) => skill.filePath !== active.filePath && skill.name !== active.name)] : this.pluginSkills;
+    const candidates = [...(active ? [active] : []), ...this.skillCatalog.map(toPiSkill), ...this.pluginSkills];
+    const skills = candidates.filter((skill, index) => candidates.findIndex((candidate) => candidate.filePath === skill.filePath || candidate.name === skill.name) === index);
     return { skills, diagnostics: [] };
+  }
+
+  /** 原子替换普通 Skill 目录，返回旧值供运行预检失败时恢复。 */
+  replaceSkillCatalog(skills: PiPluginSkillResource[]): PiPluginSkillResource[] {
+    const previous = this.skillCatalog;
+    this.skillCatalog = skills;
+    return previous;
   }
 
   getPrompts() {

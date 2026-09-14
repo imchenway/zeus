@@ -1589,7 +1589,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             developerInstructions: input.developerInstructions,
             ephemeral: input.ephemeral,
             dynamicTools: input.dynamicTools,
-            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
+            // 原生线程及其子任务也不能隐式取得整个系统临时目录的写权限。
+            config: {
+              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              'sandbox_workspace_write.exclude_tmpdir_env_var': true,
+              'sandbox_workspace_write.exclude_slash_tmp': true,
+              // 原生新内核把主代理计入并发数；五个执行名额对应四个子代理。
+              'agents.max_concurrent_threads_per_session': 4,
+              'features.multi_agent_v2.max_concurrent_threads_per_session': 5,
+              'agents.max_depth': 2,
+              // 普通模式也使用原生问题卡，避免切换模型后只能在计划模式提问。
+              'features.default_mode_request_user_input': true,
+            },
           }),
           { traceIdentity: input.traceIdentity },
         ),
@@ -1616,7 +1627,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             excludeTurns: true,
             cwd: input.cwd,
             modelProvider: responsesProvider?.id,
-            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
+            config: {
+              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              // 恢复与新建遵守同一权限和子代理上限，不能恢复旧默认值。
+              'sandbox_workspace_write.exclude_tmpdir_env_var': true,
+              'sandbox_workspace_write.exclude_slash_tmp': true,
+              'agents.max_concurrent_threads_per_session': 4,
+              'features.multi_agent_v2.max_concurrent_threads_per_session': 5,
+              'agents.max_depth': 2,
+              'features.default_mode_request_user_input': true,
+            },
           }),
           // 恢复耗时随完整历史增长，固定超时无法区分“仍在加载”和“已经失败”。
           // 等待明确回包；宿主交接时由调用方 signal 结束本地等待。
@@ -2618,6 +2638,7 @@ function normalizeThreadSandbox(sandbox: CodexSandboxPolicy): { mode: 'read-only
   throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox must be read-only, workspace-write, or danger-full-access.');
 }
 
+/** 每轮明确收回临时目录的隐式写权限，工作区授权只来自提交快照。 */
 function normalizeTurnSandbox(sandbox: CodexSandboxPolicy): Record<string, unknown> {
   if (!isRecord(sandbox)) throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox is invalid.');
   if (sandbox.type === 'readOnly' && sandbox.networkAccess === false) return { type: 'readOnly', networkAccess: false };
@@ -2627,8 +2648,8 @@ function normalizeTurnSandbox(sandbox: CodexSandboxPolicy): Record<string, unkno
       type: 'workspaceWrite',
       writableRoots: [...sandbox.writableRoots],
       networkAccess: false,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
     };
   }
   throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox must be read-only, workspace-write, or danger-full-access.');

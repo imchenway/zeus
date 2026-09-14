@@ -92,6 +92,7 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
   const output = Array.isArray(result.content) ? result.content.flatMap((block) => (processRecord(block).type === 'text' && typeof processRecord(block).text === 'string' ? [processRecord(block).text as string] : [])).join('\n') : '';
   /** 结果归档由宿主负责，展示只消费已有句柄。 */
   const resultDetails = processRecord(result.details);
+  if (Number.isInteger(resultDetails.exitCode)) payload.exitCode = resultDetails.exitCode;
   if (output) payload.output = output;
   if (processString(resultDetails.toolResultHandle)) payload.toolResult = { handle: resultDetails.toolResultHandle, projection: JSON.stringify({ text: output }), projectionTruncated: true };
   return { type, payload };

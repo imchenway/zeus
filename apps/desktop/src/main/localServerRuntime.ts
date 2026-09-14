@@ -1150,6 +1150,11 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
   });
   child.once('exit', (code, signal) => {
     childFailure ??= new Error(`Zeus Core 在发布控制面前退出（code=${String(code)}, signal=${String(signal)}）。`);
+    // 控制面发布后的退出也要留证，不能只有下一次心跳失败而没有退出身份。
+    void appendFile(join(dataLayout.executionHost, 'host.log'), `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'execution_host.process_exited', mainPid: process.pid, executionHostPid: child.pid, code, signal })}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    }).catch(() => undefined);
   });
   child.unref();
   const launched = await waitForExecutionHostReady({

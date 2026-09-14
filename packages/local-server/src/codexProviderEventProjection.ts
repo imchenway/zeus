@@ -497,6 +497,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const turnItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id);
     const completedTurnItems = turnItems.filter((item) => item.status === 'completed');
     for (const streamedItem of turnItems.filter((item) => item.status === 'in_progress')) {
+      // 正常回合结束不代表后台命令结束；停止回合时未完成的命令不得投影为成功。
+      if (streamedItem.itemType === 'commandExecution' && !failed && !interrupted) continue;
       const streamedText = streamedItem.textContent.trim();
       const supersedingItem =
         streamedText.length > 0
@@ -529,7 +531,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             }
           : streamedPayload,
         textContent: supersedingItem ? '' : streamedItem.textContent,
-        status: failed ? 'failed' : 'completed',
+        status: failed || (interrupted && streamedItem.itemType === 'commandExecution') ? 'failed' : 'completed',
         startedAt: streamedItem.startedAt,
         completedAt: timestamp,
         updatedAt: timestamp,

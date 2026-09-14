@@ -69,6 +69,10 @@ interface CoordinatorOptions {
   portableContexts: ManagedPortableContextStore;
   commandDeliveries?: CommandDeliveryRepository;
   now: () => string;
+  /** 派发换链前停止旧目标控制器，失败时不得创建新执行分段。 */
+  beforeRouteSwitch?(input: { conversationId: string; nativeSessionId: string | null; runtimeKind: ConversationRuntimeKind }): Promise<void>;
+  /** 同步校验整棵子会话树的执行上限，使用现有派发占用防止并发穿透。 */
+  assertDispatchAllowed?(conversationId: string, leasedConversationIds: readonly string[]): void;
 }
 
 /**
@@ -178,6 +182,7 @@ export class ConversationExecutionCoordinator {
         if (activeLease && activeLease !== submissionId) throw executionError('ZEUS_CONVERSATION_EXECUTION_LEASE_HELD', '产品会话已有一个活动切换操作。');
         this.leases.set(input.conversationId, submissionId);
         try {
+          this.options.assertDispatchAllowed?.(input.conversationId, [...this.leases.keys()]);
           // 同一路由续发也必须先收口已终态 submission 遗留的开放切换，不能只在创建新分段时自愈。
           this.options.execution.ensureSwitchSlotAvailable({ conversationId: input.conversationId, submissionId, occurredAt: this.options.now() });
           // 只有真实队首开始派发时才固定模型历史水位；入队阶段只冻结路由与权限配置。
@@ -194,6 +199,7 @@ export class ConversationExecutionCoordinator {
             });
           }
           if (requiresNewSegment) {
+            if (current) await this.options.beforeRouteSwitch?.({ conversationId: input.conversationId, nativeSessionId: current.nativeSessionId, runtimeKind: current.runtimeKind });
             const operation = this.options.execution.beginSwitch({
               conversationId: input.conversationId,
               submissionId,
@@ -529,7 +535,8 @@ export class ConversationExecutionCoordinator {
   }
 }
 
-function routeFingerprint(route: ConversationExecutionRoute): string {
+/** 所有提交入口共用冻结路由比较，插话不能偷偷改变正在运行的模型或模式。 */
+export function routeFingerprint(route: ConversationExecutionRoute): string {
   return createHash('sha256')
     .update(JSON.stringify([route.runtimeKind, route.connectionId, route.endpointIdentity, route.protocolFamily, route.modelId, route.credentialSlotId]))
     .digest('hex');
