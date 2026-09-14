@@ -185,7 +185,11 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
         <header className="zentao-sync-modal-header">
           <div>
             <strong id={titleId}>{zh ? '从禅道导入' : 'Import from ZenTao'}</strong>
-            <p id={descriptionId}>{zh ? `读取当前禅道账号负责的任务和缺陷，确认后导入到${props.projectName ?? '当前项目'}。` : `Read tasks and bugs assigned to the current ZenTao account, then confirm before importing into ${props.projectName ?? 'the current project'}.`}</p>
+            <p id={descriptionId}>
+              {zh
+                ? `读取当前禅道账号负责的任务和缺陷，确认后导入到${props.projectName ?? '当前项目'}。`
+                : `Read tasks and bugs assigned to the current ZenTao account, then confirm before importing into ${props.projectName ?? 'the current project'}.`}
+            </p>
           </div>
           <Button className="zentao-sync-modal-close" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
             ×
