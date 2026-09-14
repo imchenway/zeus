@@ -1600,6 +1600,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function snapshotNeedsRealtime(snapshot: NativeConversationSnapshot): boolean {
+    // 活跃目标在两轮之间仍会自动续跑，必须保留后续状态通知。
+    if (snapshot.goal?.status === 'active') return true;
     if (snapshot.requests.some((request) => request.status === 'pending')) return true;
     if (snapshot.planImplementationRequests.some((request) => request.status === 'pending')) return true;
     if (snapshot.queue.state.type === 'dispatching' || snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return true;
@@ -1613,6 +1615,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function stateNeedsRealtime(): boolean {
+    // 目标仍在执行时不能按短暂空闲释放订阅。
+    if (state.snapshot?.goal?.status === 'active') return true;
     if (pendingSend || deferredSends.length > 0) return true;
     if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
     if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;

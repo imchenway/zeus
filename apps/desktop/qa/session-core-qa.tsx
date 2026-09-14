@@ -4,7 +4,9 @@ import { asyncMessageQuestions, buildTaskPushLayout, describeUserFacingError, fo
 import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
-import type { NativeGoalSnapshot } from '../src/renderer/session/sessionTypes.js';
+import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
+import { ConnectedSessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
+import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
@@ -2083,6 +2085,7 @@ function GoalQa() {
   useEffect(() => {
     document.documentElement.dataset.zeusTheme = dark ? 'dark' : 'light';
   }, [dark]);
+  if (parameters.has('history')) return <GoalHistoryQa initialGoal={goal} />;
   return (
     <main className={`macos-ai-app zeus-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'} qa-error-layout`}>
       <header className="qa-error-layout-heading">
@@ -2091,6 +2094,7 @@ function GoalQa() {
           <a href="?goal">宽屏</a>
           <a href="?goal&narrow">窄分栏</a>
           <a href="?goal&dark">深色</a>
+          <a href="?goal&history">历史会话操作</a>
         </nav>
       </header>
       <div style={{ width: parameters.has('narrow') ? 420 : '100%', maxWidth: '100%', margin: '40px auto', display: 'flex', flexDirection: 'column' }}>
@@ -2106,6 +2110,8 @@ function GoalQa() {
           goalAvailable
           goal={goal}
           onOpenGoal={() => setOpen(true)}
+          permissionMode="read-only"
+          collaborationMode="default"
         />
       </div>
       <GoalPanel
@@ -2134,6 +2140,156 @@ function GoalQa() {
         onResume={() => setGoal({ ...goal, status: 'active' })}
         onClear={() => setOpen(false)}
       />
+    </main>
+  );
+}
+
+/** 通过真实工作面和命令客户端复验历史目标操作；只替换传输边界，不连接真实 Provider。 */
+function GoalHistoryQa(props: { initialGoal: NativeGoalSnapshot }) {
+  /** 页面显示实际发出的目标命令，避免只改演示状态就判定成功。 */
+  const [commands, setCommands] = useState<string[]>([]);
+  /** 显示存活订阅，确认自动续跑的轮次间隔不会断开。 */
+  const [connections, setConnections] = useState(0);
+  /** 固定会话身份与传输响应，重绘不重建会话控制器。 */
+  const fixture = useMemo(() => {
+    /** 查询参数覆盖只读与服务端拒绝。 */
+    const parameters = new URLSearchParams(window.location.search);
+    /** 操作前保持受阻状态，直接覆盖用户截图中的入口。 */
+    let goal: NativeGoalSnapshot | null = { ...props.initialGoal, status: 'blocked' };
+    /** 演示会话提供完整权限和归属，真实工作面自行判断是否可继续。 */
+    const conversation: NativeConversationChoice = {
+      id: 'qa',
+      projectId: 'qa-project',
+      taskId: null,
+      title: '历史目标恢复检查',
+      summary: null,
+      status: 'ready',
+      stage: 'completed',
+      stageUpdatedAt: '2026-09-14T01:00:00Z',
+      transportKind: 'codex_native',
+      providerId: 'codex',
+      providerThreadId: 'qa',
+      providerModel: null,
+      providerState: 'idle',
+      createdAt: '2026-09-14T01:00:00Z',
+      updatedAt: '2026-09-14T01:00:00Z',
+      archived: parameters.has('archived'),
+      hasUnreadAttention: false,
+      attentionKind: 'none',
+      attentionRevision: 0,
+      attentionTurnId: null,
+      attentionUpdatedAt: null,
+      pendingRequestKind: null,
+      resumable: true,
+      readOnly: parameters.has('readonly'),
+      agent: { kind: 'codex', transport: 'app_server', supportStatus: 'verified', capabilitySnapshotId: null },
+    };
+    /** 会话首屏沿用生产协议，由真实适配器处理。 */
+    const readable: NativeConversationReadableSnapshot = {
+      snapshot: {
+        schemaVersion: 2,
+        structureGeneration: '2026-09-03-conversation-stage-identity',
+        conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+        throughEventSeq: 0,
+        eventStreamGeneration: null,
+        conversation: { ...conversation, titleRedacted: false, providerState: 'idle', providerSettings: null, nextTurnSettings: null, agentKind: 'codex' },
+        openSegment: null,
+        activeTurn: null,
+        recentClosedTurns: [],
+        sessionMetrics: null,
+        collections: { timeline: { throughSequence: 0 }, modelHistory: { throughSequence: 0 }, process: { throughSequence: 0 }, resources: { available: false } },
+        limits: { closedTurnLimit: 10, byteLimit: 10000, returnedTurnCount: 0, responseBytes: 0 },
+      },
+      history: {
+        schemaVersion: 2,
+        structureGeneration: '2026-09-03-conversation-stage-identity',
+        conversationId: 'qa',
+        kind: 'model_history',
+        throughEventSeq: 0,
+        throughSequence: 0,
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+        limits: { entryLimit: 10, byteLimit: 10000, returnedItems: 0, responseBytes: 0 },
+      },
+    };
+    /** 未覆盖的网络操作直接报错，防止演示页面隐式连接真实服务。 */
+    const unsupported = (): never => {
+      throw new Error('此验收场景不支持该操作');
+    };
+    /** 客户端仍构造真实命令信封，传输边界记录次数并返回目标快照。 */
+    const client = createConversationApiClient({
+      protocol: 'zeus-local-api-v1',
+      async request<T>(path: string, init?: RequestInit): Promise<T> {
+        /** 只模拟目标命令的接纳或拒绝，不替换工作面回调。 */
+        if (path.includes('/goal') && init?.method) {
+          /** 校验点击确实经过命令客户端并形成可送达请求。 */
+          const body = JSON.parse(String(init.body));
+          if (body.command?.scope?.id !== 'qa' || !body.command?.idempotencyKey) throw new Error('目标命令身份缺失');
+          setCommands((current) => [...current, body.command.commandType]);
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          if (parameters.has('reject')) throw new Error('演示：继续执行失败，请稍后重试');
+          if (init.method === 'DELETE') goal = null;
+          else if (goal) goal = { ...goal, status: path.endsWith('/pause') ? 'paused' : path.endsWith('/resume') ? 'active' : goal.status, objective: body.input.objective ?? goal.objective };
+        }
+        /** 每次刷新回读同一份目标状态。 */
+        const response = path.includes('/goal')
+          ? { goal, timeline: [], capability: { supported: true, enabled: true, stage: 'stable', reason: 'available' } }
+          : path.endsWith('/readable-snapshot')
+            ? readable
+            : path.endsWith('/choice')
+              ? conversation
+              : path.endsWith('/queue-state')
+                ? { state: { type: 'idle' }, submissions: [] }
+                : path.endsWith('/pending-requests')
+                  ? { conversationId: 'qa', requests: [], planImplementationRequests: [] }
+                  : path.endsWith('/navigation')
+                    ? { conversationId: 'qa', throughEventSeq: 0, entries: [] }
+                    : path.includes('/events')
+                      ? {
+                          conversationId: 'qa',
+                          conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
+                          events: [],
+                          baseSequence: null,
+                          throughEventSeq: 0,
+                          nextCursor: 0,
+                          hasMore: false,
+                          requestedBeforeBaseline: false,
+                          syncStreamGeneration: 'zeus-conversation-sync-v2',
+                        }
+                      : unsupported();
+        return response as T;
+      },
+      requestBlob: unsupported,
+      requestStream: unsupported,
+      connectEvents: () => {
+        setConnections((current) => current + 1);
+        /** 每个连接只计一次关闭，便于检查重连和释放。 */
+        let closed = false;
+        /** 空闲演示连接仅供控制器订阅生命周期，不产生模型事件。 */
+        const socket = Object.assign(new EventTarget(), {
+          readyState: WebSocket.OPEN,
+          close() {
+            if (closed) return;
+            closed = true;
+            setConnections((current) => current - 1);
+          },
+        });
+        return socket as WebSocket;
+      },
+    });
+    return { client, conversation };
+  }, [props.initialGoal]);
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 theme-light" style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div role="status" style={{ padding: '8px 16px', fontSize: 12 }}>
+        实际目标请求：{commands.length} {commands.join(' → ')}；实时订阅：{connections}
+      </div>
+      <nav aria-label="目标验收场景" style={{ padding: '0 16px 8px', fontSize: 12 }}>
+        <a href="?goal&history">历史会话</a> <a href="?goal&history&readonly">只读</a> <a href="?goal&history&archived">归档</a> <a href="?goal&history&reject">请求失败</a> <a href="?goal">样式</a>
+      </nav>
+      <ConnectedSessionWorkspace language="zh-CN" client={fixture.client} conversation={fixture.conversation} task={null} owner={{ kind: 'project', projectId: 'qa-project', projectName: '目标验收' }} historyOnly />
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }
