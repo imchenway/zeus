@@ -407,7 +407,14 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
                   <span>{terminalTabTitle(session, sessions, index)}</span>
                   <i data-status={session.status} aria-label={terminalStatusLabel(session.status, copy)} title={terminalStatusLabel(session.status, copy)} />
                 </button>
-                <button type="button" className="session-terminal-tab-close" aria-label={`${copy.closeTab}: ${terminalTabTitle(session, sessions, index)}`} title={copy.closeTab} disabled={closingSessionId === session.id} onClick={() => requestCloseSession(session)}>
+                <button
+                  type="button"
+                  className="session-terminal-tab-close"
+                  aria-label={`${copy.closeTab}: ${terminalTabTitle(session, sessions, index)}`}
+                  title={copy.closeTab}
+                  disabled={closingSessionId === session.id}
+                  onClick={() => requestCloseSession(session)}
+                >
                   {closingSessionId === session.id ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <X aria-hidden="true" />}
                 </button>
               </div>
