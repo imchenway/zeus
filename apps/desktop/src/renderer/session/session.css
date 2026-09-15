@@ -4112,6 +4112,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-markdown {
+  /* Markdown 作为网格子项时允许缩到气泡宽度，宽表继续在自己的容器内滚动。 */
+  min-inline-size: 0;
   inline-size: min(var(--session-markdown-max), 100%);
   line-height: 1.58;
   overflow-wrap: anywhere;

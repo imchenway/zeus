@@ -15,7 +15,8 @@ import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import type { NativeConversationAttachment, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState, NativeSubagentSummary, NativeSubagentThreadSnapshot } from '../src/renderer/session/sessionTypes.js';
-import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
+import { TaskPushLayoutPreview, readTaskModelPushPreferences, writeTaskModelPushPreferences, type TaskModelPushForm } from '../src/renderer/task/TaskModelPushModal.js';
+import { writeConversationRuntimePreferences } from '../src/renderer/session/conversationRuntimePreferences.js';
 import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
@@ -1105,6 +1106,17 @@ function ComposerMarkdownQa() {
 | 2093161985053044748 | 2093161985044656133 | 20260828 | 00000852 | 2093161972491100160 | 000126082800428 | 5 | 2026-08-28 15:40:15 | 2026-08-28 15:40:44 | 1 | 0 | 2026-08-28 18:07:13 |`;
   /** 可以替换样例，检查普通文本、命令及 Markdown 的同一粘贴路径。 */
   const [pasteSample, setPasteSample] = useState(sample);
+  /** 使用真实任务消息组件复现网格字段中的宽表，避免只验证普通正文。 */
+  const message = activity(
+    {
+      query: 'composer-bubble',
+      title: '',
+      summary: '',
+      answer: '',
+      activities: [{ type: 'userMessage', status: 'completed', text: sample, payload: { taskPushLayout: buildTaskPushLayout({ taskTitle: '宽表消息', taskType: 'requirement', taskDescription: sample }) } }],
+    },
+    0,
+  );
   /** 仅普通浏览器 QA 注入附件返回值，不接触原生剪贴板或磁盘。 */
   useEffect(() => {
     if (window.zeus) return;
@@ -1173,6 +1185,18 @@ function ComposerMarkdownQa() {
         }}
       >
         检查表格单元格编辑
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            setFocusResult(checkTaskPushPreferenceIsolation());
+          } catch (error) {
+            setFocusResult(`失败：${String(error)}`);
+          }
+        }}
+      >
+        检查推送偏好隔离
       </button>
       <button
         type="button"
@@ -1276,6 +1300,9 @@ function ComposerMarkdownQa() {
           }}
         />
       </div>
+      <div className="qa-composer-message-preview" style={{ display: 'flex', flexDirection: 'column', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%' }}>
+        <ThreadItemView item={message} language="zh-CN" />
+      </div>
       <output aria-label="当前草稿" style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         {JSON.stringify(state.draft)}
       </output>
@@ -1293,6 +1320,14 @@ function nextQaTask(): Promise<void> {
 
 /** 在既有浏览器场景中重放真实输入事件，核对表格编辑、撤销和原文一致性。 */
 async function checkComposerTableEditing(input: ComposerInputHandle, sample: string): Promise<string> {
+  /** 宽表必须在气泡内滚动，外层网格不能按表格最小内容宽度撑开。 */
+  const bubble = document.querySelector<HTMLElement>('.qa-composer-message-preview .session-thread-item')!;
+  /** 只允许表格自身承载超出气泡的列。 */
+  const scroll = bubble.querySelector<HTMLElement>('.table-node-wrapper')!;
+  if (bubble.clientWidth <= 0 || bubble.scrollWidth > bubble.clientWidth + 2 || scroll.scrollWidth <= scroll.clientWidth) throw new Error('宽表未限制在气泡内滚动');
+  scroll.scrollLeft = 100;
+  if (scroll.scrollLeft <= 0) throw new Error('宽表无法横向滚动');
+  scroll.scrollLeft = 0;
   /** 等待独立表格渲染根提交，不将静态 DOM 视为交互结果。 */
   const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
   /** 样例通过当前编辑器的真实粘贴链路替换，检查也可重复运行。 */
@@ -1345,7 +1380,33 @@ async function checkComposerTableEditing(input: ComposerInputHandle, sample: str
   if (!input.value.includes('| A B | **粗体** |')) throw new Error('单元格内空格输入丢失');
   await paste(sample);
   await edit(1, 3, '00000999');
-  return '通过：十二列表格原位编辑、长编号与前导零、节点和焦点保持、撤销重做、回车不发送、空列及缺失尾列、竖线转义、单元格内联格式。';
+  return '通过：气泡内横向滚动、十二列表格原位编辑、长编号与前导零、节点和焦点保持、撤销重做、回车不发送、空列及缺失尾列、竖线转义、单元格内联格式。';
+}
+
+/** 用隔离存储重放推送后再改会话配置，不接触用户偏好或执行真实任务。 */
+function checkTaskPushPreferenceIsolation(): string {
+  /** 复用生产写入接口，存储只在本次检查期间存在。 */
+  const records = new Map<string, string>();
+  /** 使用与浏览器存储一致的最小读写接口。 */
+  const storage = {
+    getItem: (key: string) => records.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      records.set(key, value);
+    },
+  };
+  /** 仅偏好字段参与保存，其余任务内容不进入本场景。 */
+  const form = { model: 'push-model', effort: 'high', serviceTier: { type: 'standard' }, workMode: 'plan', permissionMode: 'auto', workspaceMode: 'worktree', workspaceModeSelected: true } as TaskModelPushForm;
+  writeTaskModelPushPreferences(storage, 'qa-project', form);
+  writeConversationRuntimePreferences(storage, 'qa-project', 'task_development', { model: 'conversation-model', effort: 'low', serviceTier: { type: 'standard' }, collaborationMode: 'default', permissionMode: 'read-only' });
+  /** 会话偏好已被改写，推送仍应恢复自己的选择。 */
+  const restored = readTaskModelPushPreferences(storage, 'qa-project');
+  if (restored?.model !== form.model || restored.effort !== form.effort || restored.workMode !== form.workMode || restored.permissionMode !== form.permissionMode || restored.workspaceMode !== form.workspaceMode)
+    throw new Error('会话配置覆盖了上次推送选择');
+  if (readTaskModelPushPreferences(storage, 'other-project') !== null) throw new Error('推送偏好跨项目串用');
+  /** 未配置推送的项目继续使用既有会话默认值。 */
+  for (const key of records.keys()) if (key.includes('task-model-push-preferences')) records.delete(key);
+  if (readTaskModelPushPreferences(storage, 'qa-project')?.model !== 'conversation-model') throw new Error('首次推送未恢复会话默认值');
+  return '通过：模型、等级、工作模式、权限和工作区选择不被会话覆盖，项目隔离及首次推送默认值正常。';
 }
 
 /** 在真实编辑节点上粘贴文件，检查处理中可输入、完成后的焦点和原选区。 */
