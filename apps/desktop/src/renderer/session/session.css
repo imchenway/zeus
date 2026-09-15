@@ -2474,7 +2474,6 @@
   .session-codex-parity-v1 .session-terminal-tab-shell {
     flex-basis: 144px;
   }
-
 }
 
 @media (forced-colors: active) {
@@ -11597,6 +11596,167 @@
 
 .session-codex-parity-v1 .session-extension-mention-selector {
   flex: 0 0 auto;
+}
+
+/* 会话右键菜单 */
+.conversation-context-menu {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px var(--session-shadow-soft);
+  display: grid;
+  gap: 2px;
+  inline-size: max-content;
+  max-inline-size: min(320px, calc(100vw - 32px));
+  min-inline-size: 190px;
+  overflow: hidden;
+  padding: 5px;
+  z-index: 100;
+}
+
+.conversation-context-menu button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-text);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 8px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  min-block-size: 32px;
+  padding: 6px 10px;
+  text-align: start;
+}
+
+.conversation-context-menu button:hover:not(:disabled):not([aria-disabled='true']),
+.conversation-context-menu button:focus-visible {
+  background: var(--zeus-interaction-hover);
+}
+
+.conversation-context-menu button:disabled {
+  color: var(--session-text-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.conversation-context-menu button svg {
+  block-size: 16px;
+  color: var(--session-text-muted);
+  inline-size: 16px;
+}
+
+.conversation-context-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-context-menu button kbd {
+  color: var(--session-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  margin-inline-start: auto;
+  padding-inline: 4px;
+}
+
+.conversation-context-menu-arrow {
+  color: var(--session-text-muted);
+  font-size: 14px;
+  margin-inline-start: auto;
+}
+
+.conversation-context-menu-separator {
+  block-size: 1px;
+  background: var(--session-line);
+  margin: 4px 8px;
+}
+
+.conversation-context-menu-danger {
+  color: var(--session-danger) !important;
+}
+
+.conversation-context-menu-danger svg {
+  color: var(--session-danger) !important;
+}
+
+/* 重命名对话框 */
+.conversation-rename-dialog-portal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.conversation-rename-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.conversation-rename-dialog {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px var(--session-shadow);
+  display: grid;
+  gap: 16px;
+  inline-size: min(400px, calc(100vw - 32px));
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.conversation-rename-dialog-header {
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-rename-dialog-header strong {
+  font-size: 16px;
+  font-weight: 610;
+}
+
+.conversation-rename-dialog-header small {
+  color: var(--session-text-muted);
+  font-size: 13px;
+}
+
+.conversation-rename-dialog-body {
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-rename-dialog-body label {
+  color: var(--session-text-muted);
+  font-size: 13px;
+}
+
+.conversation-rename-dialog-body input {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text);
+  font: inherit;
+  min-block-size: 36px;
+  padding: 8px 12px;
+}
+
+.conversation-rename-dialog-body input:focus {
+  border-color: var(--session-focus-outline);
+  box-shadow: 0 0 0 2px var(--session-focus);
+  outline: none;
+}
+
+.conversation-rename-dialog-footer {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .session-codex-parity-v1 .session-extension-mention-selector > button {
