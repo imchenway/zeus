@@ -2060,7 +2060,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
-  async function respond(request: NativePendingRequest, response: Record<string, unknown>): Promise<void> {
+  /** 完全访问先持久化后续轮次设置；失败时保留待审批请求，避免仅批准本次。 */
+  async function respond(request: NativePendingRequest, response: Record<string, unknown>, fullAccess = false): Promise<void> {
     if (!actions.onRespondToRequest || !responseGuard.begin(request.id)) return;
     const conversationId = workspaceIdentityRef.current;
     setRequestErrors((current) => {
@@ -2069,6 +2070,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       return next;
     });
     try {
+      if (fullAccess) {
+        if (!composerRuntimeSettings || !actions.onNextTurnSettingsChange) throw new Error('完全访问设置暂不可用，请刷新后重试。');
+        /** 正在执行的轮次保留冻结权限，只更改后续轮次的设置。 */
+        const settings = { ...composerRuntimeSettings, permissionMode: 'full-access' as const };
+        await actions.onNextTurnSettingsChange(settings);
+        if (workspaceIdentityRef.current !== conversationId) return;
+        updateComposerRuntimeSettings(settings);
+      }
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
@@ -2414,6 +2423,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
             error={requestErrors[blockingPendingRequest.id]}
             onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
+            onRespondWithFullAccess={!composerReadOnly && composerRuntimeSettings && actions.onNextTurnSettingsChange ? (_requestId, response) => respond(blockingPendingRequest, response, true) : undefined}
             onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
             onChooseAttachments={actions.onChooseStartAttachments}
             answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}

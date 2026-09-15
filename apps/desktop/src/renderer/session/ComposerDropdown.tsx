@@ -5,6 +5,8 @@ export interface ComposerDropdownOption<Value extends string = string> {
   value: Value;
   label: string;
   description?: string;
+  /** 选项左侧图标由共享选择框统一布局。 */
+  icon?: ReactNode;
   disabled?: boolean;
   group?: string;
   searchText?: string;
