@@ -1,10 +1,10 @@
-// 构建脚本运行在 Node 原生 ESM 环境，不能直接加载 TypeScript 源文件；工作区构建会先生成发行包 dist。
-import { skylightDistribution } from '../packages/skylight-distribution/dist/index.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-/** 发布与构建统一选择发行包，不从通用 shared 包读取二开常量。 */
-export const zeusDistribution = skylightDistribution;
+const distributionConfigPath = resolve(import.meta.dirname, '..', 'packages/skylight-distribution/src/config.json');
+
+/** 发布前检查运行在干净检出目录，直接读取受版本控制的发行配置，不依赖构建产物 dist。 */
+export const zeusDistribution = JSON.parse(readFileSync(distributionConfigPath, 'utf8'));
 
 /** 发行包版本是二开版本源，应用元数据在准备发布时同步。 */
 export const distributionPackagePath = 'packages/skylight-distribution/package.json';

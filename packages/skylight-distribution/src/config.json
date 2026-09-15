@@ -1,0 +1,14 @@
+{
+  "id": "skylight-f.zeus",
+  "repository": "skylight-f/zeus",
+  "upstreamRepository": "imchenway/zeus",
+  "releaseBranch": "develop",
+  "releaseTagPrefix": "skylight-v",
+  "integrationBranch": "develop",
+  "channel": "stable",
+  "homebrewEnabled": false,
+  "homebrewTap": "skylight-f/tap",
+  "homebrewRepository": "skylight-f/homebrew-tap",
+  "cask": "zeus",
+  "requireManifestIdentity": true
+}

@@ -6,6 +6,7 @@ import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import { installBuiltinWechatCommands } from './builtinWechatCommands.js';
+import { installBuiltinReleaseCommand } from './builtinReleaseCommand.js';
 import {
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
@@ -713,7 +714,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const runtimeSessions = new RuntimeSessionRepository(db);
   const commandDefinitions = new CommandDefinitionRepository(db);
   // 仅正常启动安装内置能力；只读验证副本不得修改用户命令。
-  if (!readOnlyValidation) installBuiltinWechatCommands(db);
+  if (!readOnlyValidation) {
+    installBuiltinWechatCommands(db);
+    installBuiltinReleaseCommand(db, projects, options.projectRoot ?? process.cwd());
+  }
   const commandRuns = new CommandRunRepository(db);
   const commandArtifacts = new CommandArtifactRepository(db);
   const artifactStore = new ArtifactStore(db, join(dataLayout.artifactsDirectory, 'content-addressed'), () => now().toISOString(), { writeFaultReporter: db });
