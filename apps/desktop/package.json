@@ -11,7 +11,9 @@
     "package:mac:release": "ZEUS_PACKAGE_VARIANT=release ZEUS_RELEASE_BUILD=1 node ../../scripts/package-mac.mjs --dmg"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.6",
     "@zeus/ai-runtime": "workspace:*",
+    "@zeus/distribution": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
@@ -19,8 +21,7 @@
     "ag-grid-react": "36.1.0",
     "markstream-react": "2.0.6",
     "mermaid": "11.17.2",
-    "qrcode": "1.5.4",
-    "@zeus/distribution": "workspace:*"
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",

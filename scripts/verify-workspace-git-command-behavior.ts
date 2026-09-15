@@ -20,7 +20,7 @@ import {
   TaskIntegrationAttemptRepository,
   type ZeusDatabase,
 } from '../packages/storage/src/index.js';
-import { getTaskWorkspaceReview, startTaskIntegrationAttempt, writeTaskIntegrationResolution } from '../packages/git-core/src/index.js';
+import { getTaskWorkspaceReview, prepareWorkflowCandidate, startTaskIntegrationAttempt, writeTaskIntegrationResolution } from '../packages/git-core/src/index.js';
 import { createGitIntegrationOperations, type GitIntegrationOperationDependencies } from '../packages/local-server/src/gitIntegrationOperations.js';
 import type { TaskWorkspaceConflictRecovery } from '../packages/shared/src/index.js';
 import {
@@ -175,6 +175,7 @@ try {
     assertProbe(observed.quickCheck === 'ok', '临时 SQLite quick_check 必须通过。');
     assertProbe(observed.boundaryProbeStartedExternalOperations === false, '前述命令边界场景不能启动外部操作。');
 
+    observed.workflowCandidate = await verifyWorkflowCandidate();
     observed.conflictDelivery = await verifyConflictDelivery(db, application, deliveries);
 
     console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
@@ -238,6 +239,105 @@ function requiredAttempt(deliveries: CommandDeliveryRepository, commandId: strin
 
 function assertProbe(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+/** 在临时仓库验证数字团队候选只生成隔离提交，不更新 main 或访问远端。 */
+async function verifyWorkflowCandidate() {
+  /** 临时仓库的 Git 命令隔离用户配置、签名和钩子。 */
+  const execute = promisify(execFile);
+  /** 候选场景使用探针根目录内的独立仓库。 */
+  const repositoryPath = join(probeRoot, 'workflow-candidate-repository');
+  /** 统一执行临时仓库命令并返回规范化输出。 */
+  const git = async (cwd: string, ...args: string[]): Promise<string> =>
+    (
+      await execute('git', ['-c', 'user.name=Zeus Probe', '-c', 'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], {
+        cwd,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+      })
+    ).stdout.trim();
+  await mkdir(repositoryPath);
+  await git(repositoryPath, 'init', '-b', 'main');
+  await git(repositoryPath, 'config', 'user.name', 'Zeus Probe');
+  await git(repositoryPath, 'config', 'user.email', 'probe@example.invalid');
+  await git(repositoryPath, 'config', 'commit.gpgsign', 'false');
+  await git(repositoryPath, 'config', 'core.hooksPath', '/dev/null');
+  await writeFile(join(repositoryPath, 'base.txt'), 'base\n');
+  await writeFile(join(repositoryPath, 'conflict.txt'), 'base\n');
+  await git(repositoryPath, 'add', '.');
+  await git(repositoryPath, 'commit', '-m', '候选基础提交');
+  /** main 在整个候选流程中必须保持的冻结基础提交。 */
+  const baseSha = await git(repositoryPath, 'rev-parse', 'HEAD');
+
+  await git(repositoryPath, 'switch', '-c', 'worker-a');
+  await writeFile(join(repositoryPath, 'a.txt'), 'a\n');
+  await writeFile(join(repositoryPath, 'conflict.txt'), 'worker-a\n');
+  await git(repositoryPath, 'add', '.');
+  await git(repositoryPath, 'commit', '-m', '员工 A 提交');
+  /** 第一项有序上游交付提交。 */
+  const commitA = await git(repositoryPath, 'rev-parse', 'HEAD');
+
+  await git(repositoryPath, 'switch', 'main');
+  await git(repositoryPath, 'switch', '-c', 'worker-b');
+  await writeFile(join(repositoryPath, 'b.txt'), 'b\n');
+  await git(repositoryPath, 'add', '.');
+  await git(repositoryPath, 'commit', '-m', '员工 B 提交');
+  /** 第二项无冲突上游交付提交。 */
+  const commitB = await git(repositoryPath, 'rev-parse', 'HEAD');
+  await git(repositoryPath, 'switch', 'main');
+
+  /** 同一输入会重复调用，用于校验候选 SHA 幂等。 */
+  const readyInput = {
+    repositoryPath,
+    projectSlug: 'workflow-candidate-probe',
+    candidateId: 'ready-candidate',
+    branchName: 'zeus/workflow-candidate-ready',
+    baseSha,
+    upstreamCommitShas: [commitA, commitB],
+  };
+  /** 首次调用必须形成可验证候选。 */
+  const ready = await prepareWorkflowCandidate(readyInput);
+  /** 第二次调用必须恢复既有候选而非再次合入。 */
+  const replay = await prepareWorkflowCandidate(readyInput);
+  assertProbe(ready.state === 'ready' && ready.candidateSha !== null, '双提交候选必须形成真实 candidateSha。');
+  assertProbe(replay.reused && replay.candidateSha === ready.candidateSha, '相同候选输入必须复用同一提交，不能重复合入。');
+  /** 第一父链中的两个 merge 用于核对调用方给定顺序。 */
+  const mergeCommits = (await git(ready.worktreePath, 'rev-list', '--first-parent', '--reverse', `${baseSha}..${ready.candidateSha}`)).split('\n').filter(Boolean);
+  /** 每个候选 merge 的第二父提交必须依次对应员工 A、员工 B。 */
+  const mergedUpstreams = await Promise.all(mergeCommits.map(async (sha) => (await git(ready.worktreePath, 'show', '-s', '--format=%P', sha)).split(/\s+/u)[1] ?? ''));
+  assertProbe(mergedUpstreams.length === 2 && mergedUpstreams[0] === commitA && mergedUpstreams[1] === commitB, '候选必须按给定顺序汇合两个精确上游提交。');
+  assertProbe((await git(repositoryPath, 'rev-parse', 'refs/heads/main')) === baseSha, '形成可验证候选不得更新 main 引用。');
+
+  await git(repositoryPath, 'switch', 'worker-b');
+  await writeFile(join(repositoryPath, 'conflict.txt'), 'worker-b\n');
+  await git(repositoryPath, 'add', 'conflict.txt');
+  await git(repositoryPath, 'commit', '-m', '员工 B 冲突提交');
+  /** 与员工 A 修改同一文件的第二个精确上游提交。 */
+  const conflictCommit = await git(repositoryPath, 'rev-parse', 'HEAD');
+  await git(repositoryPath, 'switch', 'main');
+  /** 冲突候选使用独立稳定身份，不能污染已完成候选。 */
+  const conflictInput = {
+    repositoryPath,
+    projectSlug: 'workflow-candidate-probe',
+    candidateId: 'conflict-candidate',
+    branchName: 'zeus/workflow-candidate-conflict',
+    baseSha,
+    upstreamCommitShas: [commitA, conflictCommit],
+  };
+  /** 首次冲突必须保留 Git 原始现场。 */
+  const conflicted = await prepareWorkflowCandidate(conflictInput);
+  /** 重入冲突候选仍应返回同一冲突，不能清理或重放 merge。 */
+  const conflictReplay = await prepareWorkflowCandidate(conflictInput);
+  assertProbe(conflicted.state === 'conflicted' && conflicted.conflictFiles.includes('conflict.txt'), '候选汇合冲突必须返回真实冲突路径。');
+  assertProbe(conflictReplay.reused && conflictReplay.state === 'conflicted' && conflictReplay.conflictFiles.includes('conflict.txt'), '重入必须原样保留候选冲突现场。');
+  assertProbe((await git(conflicted.worktreePath, 'rev-parse', 'MERGE_HEAD')) === conflictCommit, '冲突现场必须绑定当前有序上游提交。');
+  assertProbe((await git(repositoryPath, 'rev-parse', 'refs/heads/main')) === baseSha, '候选冲突及重入均不得更新 main 引用。');
+  return {
+    orderedUpstreams: mergedUpstreams,
+    idempotentCandidateSha: ready.candidateSha,
+    conflictFiles: conflictReplay.conflictFiles,
+    mainHeadSha: baseSha,
+    remoteAccessed: false,
+  };
 }
 
 /** 在临时仓库执行真实冲突交付；只使用本探针数据，不启动 Provider 或访问远端。 */

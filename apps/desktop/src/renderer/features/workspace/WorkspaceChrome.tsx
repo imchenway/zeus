@@ -688,7 +688,7 @@ export function ProjectWorkspaceNavigation(props: {
     commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
   };
   /** 全局工作区激活时不保留上一个项目工作区的伪选中态。 */
-  const projectWorkspaceActive = props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations';
+  const projectWorkspaceActive = props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
   /** 顶部允许并列打开多个项目槽位；每个槽位保留独立的项目下拉。 */
   const projectSlotSequenceRef = useRef(1);
   const [projectSlots, setProjectSlots] = useState<Array<{ id: string; projectId: string }>>(() => [{ id: 'project-slot-0', projectId: props.project.id }]);
@@ -920,6 +920,24 @@ export function ProjectWorkspaceNavigation(props: {
             </svg>
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
+        </button>
+        <button
+          type="button"
+          className={props.activeNavTarget === 'digital-teams' ? 'is-active' : ''}
+          aria-label={zh ? '数字团队' : 'Digital teams'}
+          aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined}
+          data-tooltip={zh ? '数字团队' : 'Digital teams'}
+          onClick={() => props.onNavigate('digital-teams')}
+        >
+          <span className="project-workspace-mode-icon" aria-hidden="true">
+            <svg className="project-workspace-mode-line-icon" viewBox="0 0 20 20" focusable="false">
+              <circle cx="6" cy="6" r="2.2" />
+              <circle cx="14" cy="6" r="2.2" />
+              <circle cx="10" cy="14" r="2.2" />
+              <path d="m7.6 7.6 1.4 4M12.4 7.6l-1.4 4M8.2 6h3.6" />
+            </svg>
+          </span>
+          <span className="project-workspace-mode-label">{zh ? '数字团队' : 'Digital teams'}</span>
         </button>
         <button
           type="button"
@@ -1174,7 +1192,8 @@ export function SidebarNav(props: {
   }, [openProjectMenuIds]);
   const copy = getLanguageCopy(props.appLanguage).sidebar;
   const zh = props.appLanguage === 'zh-CN';
-  const showConversationNavigation = props.mainLayout === 'upstream' || (props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions');
+  const showConversationNavigation =
+    props.mainLayout === 'upstream' || (props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions');
   const scopeToCurrentProject = showConversationNavigation && props.mainLayout !== 'upstream' && props.activeProjectId;
   /** 会话侧栏严格跟随顶部选中的当前项目，其他项目通过顶部入口切换。 */
   const scopedProjects = scopeToCurrentProject ? props.projects.filter((project) => project.id === props.activeProjectId) : props.projects;
@@ -1186,23 +1205,27 @@ export function SidebarNav(props: {
         : 'Automations'
       : props.activeNavTarget === 'skills'
         ? copy.skills
-        : props.activeProjectSection === 'tasks'
+        : props.activeNavTarget === 'digital-teams'
           ? zh
-            ? '任务'
-            : 'Tasks'
-          : props.activeProjectSection === 'git'
-            ? 'Git'
-            : props.activeProjectSection === 'code'
-              ? props.activeProjectCodeMode === 'commands'
-                ? zh
-                  ? '命令'
-                  : 'Commands'
+            ? '数字团队'
+            : 'Digital teams'
+          : props.activeProjectSection === 'tasks'
+            ? zh
+              ? '任务'
+              : 'Tasks'
+            : props.activeProjectSection === 'git'
+              ? 'Git'
+              : props.activeProjectSection === 'code'
+                ? props.activeProjectCodeMode === 'commands'
+                  ? zh
+                    ? '命令'
+                    : 'Commands'
+                  : zh
+                    ? '源码'
+                    : 'Source'
                 : zh
-                  ? '源码'
-                  : 'Source'
-              : zh
-                ? '会话'
-                : 'Conversations';
+                  ? '会话'
+                  : 'Conversations';
   const openProjectRenameDialog = (project: ProjectRecord) => {
     closeProjectMoreMenuWithMotion(project.id);
     setProjectRenameTarget(project);
@@ -1353,6 +1376,22 @@ export function SidebarNav(props: {
             </span>
             <span className="project-quick-action-label">{copy.skills}</span>
           </button>
+          <button
+            type="button"
+            className={`project-quick-action${props.activeNavTarget === 'digital-teams' ? ' is-active' : ''}`}
+            aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined}
+            onClick={() => props.onNavigate('digital-teams')}
+          >
+            <span className="project-quick-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" focusable="false">
+                <circle cx="6" cy="6" r="2.2" />
+                <circle cx="14" cy="6" r="2.2" />
+                <circle cx="10" cy="14" r="2.2" />
+                <path d="m7.6 7.6 1.4 4M12.4 7.6l-1.4 4M8.2 6h3.6" />
+              </svg>
+            </span>
+            <span className="project-quick-action-label">{zh ? '数字团队' : 'Digital teams'}</span>
+          </button>
         </nav>
       ) : (
         <nav className="project-quick-actions codex-source-list-quick-actions project-context-actions" aria-label={contextTitle}>
@@ -1465,7 +1504,7 @@ export function SidebarNav(props: {
           </section>
         ) : (
           visibleProjects.map((project) => {
-            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations';
+            const isActiveProject = project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
             const pinned = props.pinnedProjectIds.includes(project.id);
             const expanded = !props.collapsedProjectIds.includes(project.id);
             const menuOpen = openProjectMenuIds.has(project.id);
@@ -1674,6 +1713,17 @@ export function SidebarNav(props: {
                 </svg>
               </span>
               {copy.skills}
+            </button>
+            <button type="button" className={props.activeNavTarget === 'digital-teams' ? 'active' : ''} aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined} onClick={() => props.onNavigate('digital-teams')}>
+              <span aria-hidden="true">
+                <svg viewBox="0 0 20 20" focusable="false">
+                  <circle cx="6" cy="6" r="2.2" />
+                  <circle cx="14" cy="6" r="2.2" />
+                  <circle cx="10" cy="14" r="2.2" />
+                  <path d="m7.6 7.6 1.4 4M12.4 7.6l-1.4 4M8.2 6h3.6" />
+                </svg>
+              </span>
+              {zh ? '数字团队' : 'Digital teams'}
             </button>
           </nav>
           <section className="project-global-settings" aria-label={copy.globalSettingsLabel}>

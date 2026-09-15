@@ -71,6 +71,18 @@ export const workManagementClientCommandTypes = {
   taskWorkDeliverableRequestChanges: 'work_management.task_work_deliverable.request_changes',
   taskWorkDecisionResolve: 'work_management.task_work_decision.resolve',
   taskWorkOutcomeResolve: 'work_management.task_work_outcome.resolve',
+  /** 保存数字团队流程模板草稿或已校验定义。 */
+  digitalTeamTemplateSave: 'work_management.digital_team_template.save',
+  /** 删除数字团队流程模板。 */
+  digitalTeamTemplateDelete: 'work_management.digital_team_template.delete',
+  /** 原子创建任务并冻结数字团队运行快照。 */
+  digitalTeamRunCreate: 'work_management.digital_team_run.create',
+  /** 记录数字团队人工审批决定。 */
+  digitalTeamApprovalDecide: 'work_management.digital_team_approval.decide',
+  /** 暂停或继续数字团队后续派发。 */
+  digitalTeamRunControl: 'work_management.digital_team_run.control',
+  /** 从指定节点发起数字团队返工。 */
+  digitalTeamRework: 'work_management.digital_team_rework.request',
   taskWorkflowInitialize: 'work_management.task.workflow.initialize',
   taskStageUpdate: 'work_management.task.stage.update',
   taskStageDeliverableCapture: 'work_management.task.stage.deliverable.capture',
