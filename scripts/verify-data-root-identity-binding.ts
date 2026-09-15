@@ -9,6 +9,7 @@ import {
   expectedBundleIdForDataRootProfile,
   prepareZeusDataRootIdentity,
   readAndVerifyZeusDataRootIdentity,
+  verifyZeusDataRootHostIdentity,
   zeusDataRootHostIdentity,
   zeusDataRootIdentityPath,
   type ZeusDataRootHostIdentity,
@@ -35,6 +36,8 @@ try {
   };
   assert.equal(observed.emptyRootClaim && (observed.emptyRootClaim as { mode: string }).mode, '0600');
   assert.equal(testStats.nlink, 1);
+
+  observed.directoryPermissions = await verifyDirectoryPermissions();
 
   const development = claimEmptyRoot(join(probeRoot, 'empty-development-root'), 'development');
   observed.bundleIdentitySemantics = {
@@ -175,6 +178,42 @@ try {
 }
 
 process.stdout.write(`${JSON.stringify({ status: 'passed', observed }, null, 2)}\n`);
+
+/** 验证根目录可读权限不阻断启动，敏感文件与运行子目录继续独立保护。 */
+async function verifyDirectoryPermissions(): Promise<Record<string, unknown>> {
+  /** 使用已有探针的隔离根，覆盖空目录认领和已有身份再次启动。 */
+  const root = join(probeRoot, 'readable-root');
+  await mkdir(root, { mode: 0o755 });
+  await chmod(root, 0o755);
+  /** 身份绑定与正常桌面准备入口使用相同参数。 */
+  const identity = {
+    profile: 'test' as const,
+    bundleId: expectedBundleIdForDataRootProfile('test'),
+    keychainService: resolveDesktopKeychainService({ profile: 'test', dataRootPath: root }),
+  };
+  /** 完整准备必须接受已有 0755 根，并为敏感子目录设置私有权限。 */
+  const prepared = prepareZeusDataRoot(root, [], identity);
+  assert.equal((await lstat(root)).mode & 0o777, 0o755);
+  for (const directory of [prepared.layout.dataDirectory, prepared.layout.providersDirectory, prepared.layout.runtimeDirectory, prepared.layout.electronUserData]) {
+    assert.equal((await lstat(directory)).mode & 0o777, 0o700);
+  }
+  assert.equal((await lstat(zeusDataRootIdentityPath(root))).mode & 0o777, 0o600);
+  assert.equal(prepareZeusDataRoot(root, [], identity).rootIdentity.rootId, prepared.rootIdentity.rootId);
+  /** 纯读取和宿主校验同样接受该根，且不改目录权限或身份文件。 */
+  const before = await treeEvidence(root);
+  assert.equal(readAndVerifyZeusDataRootIdentity(root, identity).rootId, prepared.rootIdentity.rootId);
+  verifyZeusDataRootHostIdentity({ rootPath: root, expected: zeusDataRootHostIdentity(prepared.rootIdentity), keychainService: identity.keychainService });
+  assert.deepEqual(await treeEvidence(root), before);
+  assert.equal((await lstat(root)).mode & 0o777, 0o755);
+  /** 数据根放行不放宽敏感身份文件的权限要求。 */
+  await chmod(zeusDataRootIdentityPath(root), 0o644);
+  assert.equal(
+    rejectionCode(() => readAndVerifyZeusDataRootIdentity(root, identity)),
+    'ZEUS_DATA_ROOT_IDENTITY_UNSAFE',
+  );
+  await chmod(zeusDataRootIdentityPath(root), 0o600);
+  return { readableRootAccepted: true, repeatedPreparationAccepted: true, readOnlyVerificationUnchanged: true, privateChildrenPreserved: true, unsafeMarkerRejected: true };
+}
 
 function claimEmptyRoot(root: string, profile: ZeusDataRootProfile): { marker: ReturnType<typeof prepareZeusDataRootIdentity>; hostIdentity: ZeusDataRootHostIdentity; keychainService: string } {
   const keychainService = resolveDesktopKeychainService({ profile, dataRootPath: root });
