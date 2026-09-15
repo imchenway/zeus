@@ -8674,6 +8674,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   gap: 8px;
 }
 
+/* 没有补充说明时，标题使用说明列的空间，避免被标题列上限提前折行。 */
+.session-codex-parity-v1 .session-rui-request .session-question-option-copy:has(+ .session-question-option-description[aria-hidden='true']) {
+  grid-column: 2 / 4;
+}
+
+/* 空说明不占用网格位置，末尾箭头或多选标记继续留在原列。 */
+.session-codex-parity-v1 .session-rui-request .session-question-option-description[aria-hidden='true'] {
+  display: none;
+}
+
 .session-codex-parity-v1 .session-rui-request .session-question-option-description {
   align-self: center;
   color: var(--session-text-muted);
