@@ -2450,9 +2450,9 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
 }
 
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
-  // 活动轮次只投影一条当前摘要；Provider 换 item 时仍沿用轮次级 DOM 身份，
-  // 让文字原位更新并固定在过程底部，不因新 item 被卸载后重新跳位。
-  if (normalizeItemType(item.type) === 'reasoning') return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
+  // 只有活动轮次的当前摘要复用轮次级身份，保证 Provider 换 item 后文字仍原位更新。
+  // Pi 持久思考正文及旧折叠记录可在同轮出现多段，必须保留各自的条目身份。
+  if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;
