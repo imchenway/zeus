@@ -11,6 +11,7 @@ import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, read
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
+import { DatabaseSync } from 'node:sqlite';
 import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
@@ -2754,6 +2755,28 @@ async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[], co
   return savedAttachments;
 }
 
+/** 首屏直接读取权威设置；不等待宿主启动，也不维护第二份主题缓存。 */
+function applyStartupAppearance(): void {
+  if (dataRootPreparationError !== undefined) return;
+  /** 与执行宿主使用同一个经过身份核对的数据根。 */
+  const databasePath = activeZeusDataLayout().database;
+  if (!existsSync(databasePath)) return;
+  try {
+    /** 启动外观只读一条设置，不建库、不迁移、不修改业务数据。 */
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      /** 只接受明确的外观枚举；首次使用、缺失或无效设置均跟随系统。 */
+      const setting = database.prepare("SELECT json_extract(value_json, '$.appearance') AS appearance FROM settings WHERE key = ?").get('app.shell.settings');
+      nativeTheme.themeSource = setting?.appearance === 'light' || setting?.appearance === 'dark' ? setting.appearance : 'system';
+    } finally {
+      database.close();
+    }
+  } catch {
+    // 数据库尚未迁移、损坏或不可读时仍允许启动恢复页，具体错误交给既有启动链报告。
+    console.warn('Zeus 启动主题暂不可读，首屏跟随系统。');
+  }
+}
+
 async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
@@ -2792,6 +2815,7 @@ async function initializeApplication(): Promise<void> {
     },
   });
   setupIpc();
+  applyStartupAppearance();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();
   void initialWindowPromise.catch(() => undefined);
