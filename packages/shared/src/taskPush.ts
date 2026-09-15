@@ -57,6 +57,8 @@ export interface TaskPushContextConversationOption {
   id: string;
   title: string;
   createdAt: string;
+  /** 会话最后真实活动时间，不受打开、归档等后台维护影响。 */
+  activityAt: string;
   archived: boolean;
   path: string | null;
   available: boolean;
