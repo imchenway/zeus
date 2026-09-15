@@ -85,7 +85,8 @@ jobs:
 
   preflight:
     needs: candidate
-    if: ${{ needs.candidate.outputs.ready == 'true' }}
+    # 手动发布会跳过源码自动检查；显式检查直接依赖，避免跳过状态沿整条依赖链传播。
+    if: ${{ !cancelled() && needs.candidate.result == 'success' && needs.candidate.outputs.ready == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       publish: ${{ needs.candidate.outputs.publish }}
@@ -168,6 +169,8 @@ jobs:
 
   verify:
     needs: preflight
+    # 候选预检成功才检查源码，同时允许手动发布跳过上游自动检查。
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -187,6 +190,8 @@ jobs:
 
   package-mac:
     needs: preflight
+    # 候选预检成功才打包，失败或取消时不继续。
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: macos-latest
     env:
       CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
@@ -251,7 +256,8 @@ jobs:
           overwrite: true
 
   publish:
-    if: ${{ needs.preflight.outputs.publish == 'true' }}
+    # 绕过上游正常跳过状态时，仍要求预检、源码检查和打包全部成功。
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package-mac.result == 'success' && needs.preflight.outputs.publish == 'true' }}
     needs: [preflight, verify, package-mac]
     runs-on: ubuntu-latest
     env:
