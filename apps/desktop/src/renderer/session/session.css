@@ -6890,7 +6890,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .browser-workspace {
-  background: var(--session-canvas);
+  /* 浏览器外壳沿用会话底色，避免导航栏在分栏交界处形成白色台阶。 */
+  background: var(--zeus-page-background, var(--session-canvas));
   color: var(--session-text);
   display: flex;
   flex: 1 1 auto;
@@ -6918,7 +6919,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .browser-tab-strip {
   align-items: center;
-  background: var(--session-header);
+  background: var(--zeus-page-background, var(--session-header));
   border-block-end: 0;
   display: flex;
   flex: 0 0 40px;
@@ -6944,11 +6945,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .browser-tab-shell {
   align-items: center;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px 8px 0 0;
+  /* 标签以完整圆角和选中底色区分，不再绘制与工具栏拼接的轮廓。 */
+  border: 0;
+  border-radius: 8px;
   display: flex;
   flex: 0 1 200px;
-  min-block-size: 36px;
+  min-block-size: 32px;
   min-inline-size: 120px;
   max-inline-size: 220px;
   overflow: hidden;
@@ -6960,9 +6962,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .browser-tab-shell.selected {
-  background: var(--session-canvas);
-  border-color: var(--session-line-soft);
-  border-block-end-color: var(--session-canvas);
+  background: var(--session-selected);
   min-inline-size: 140px;
 }
 
@@ -7075,13 +7075,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .browser-toolbar {
   align-items: center;
-  background: var(--session-canvas);
+  background: transparent;
   border-block-end: 0;
   display: flex;
-  flex: 0 0 46px;
+  box-sizing: border-box;
+  flex: 0 0 44px;
   gap: 8px;
   min-inline-size: 0;
-  padding: 7px 10px;
+  min-block-size: 44px;
+  padding: 6px 8px;
 }
 
 .session-codex-parity-v1 .browser-navigation-actions {
@@ -7145,9 +7147,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 13px;
 }
 
-.session-codex-parity-v1 .browser-address-form input {
+/* 地址框由外层统一绘制，内部文本输入不重复套用全局深色表单的底色和阴影。 */
+.session-codex-parity-v1 .browser-workspace .browser-toolbar .browser-address-form input {
   background: transparent;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--session-text);
   flex: 1 1 auto;
   min-block-size: 30px;
@@ -7423,7 +7428,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-browser-sidecar,
 .session-codex-parity-v1 .session-browser-pane {
-  background: var(--session-canvas);
+  /* 外壳与会话连续，网页自己的背景仍由原生页面负责。 */
+  background: var(--zeus-page-background, var(--session-canvas));
 }
 
 /* 会话资源保持 Codex 的“正文内引用 + 独立资源卡”两种密度，不把路径退化成裸文本。 */
@@ -8480,21 +8486,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 16px;
 }
 
-.session-codex-parity-v1 .browser-toolbar {
-  box-sizing: border-box;
-  flex-basis: 48px;
-  min-block-size: 48px;
-  padding: 7px 10px;
-}
-
 .session-codex-parity-v1 .browser-navigation-toolbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .session-codex-parity-v1 .browser-address-form {
-  background: var(--session-control-hover);
-  border: 1px solid var(--session-line-soft);
+  /* 输入区使用中性底色，焦点仍由既有描边明确标识。 */
+  background: var(--zeus-card-background, var(--session-control));
+  border: 1px solid transparent;
   border-radius: 8px;
   justify-self: stretch;
   min-inline-size: 0;
@@ -11997,10 +11997,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-/* 文件与浏览器共用正文底色，标签保留圆角，不叠加分栏细线。 */
+/* 文件与浏览器顶栏沿用会话底色，保持上下连续且不叠加分栏细线。 */
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] {
   align-items: stretch;
-  background: var(--session-canvas);
+  background: var(--zeus-page-background, var(--session-canvas));
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--session-context-width);
@@ -12017,9 +12017,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 /* 顶栏与正文使用同一分栏宽度，标签起点与内容对齐。 */
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
-  align-items: stretch;
+  align-items: center;
   border-inline-start: 0;
-  padding: 6px 8px 0;
+  padding: 6px 8px;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-title-copy {
@@ -12033,22 +12033,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] .session-thread-header-actions {
   gap: 5px;
-  padding-block-end: 6px;
+  padding-block-end: 0;
 }
 
 .session-codex-parity-v1 .session-context-toolbar-host > :is(.browser-tab-strip, .session-context-workspace-header) {
   background: transparent;
   border: 0;
   flex: 1 1 0;
-  min-block-size: 38px;
+  min-block-size: 32px;
   padding: 0;
 }
 
 .session-codex-parity-v1 .session-context-toolbar-host .session-context-workspace-title {
-  background: var(--session-canvas);
+  /* 文件标题与浏览器选中标签共用相同形状和层次。 */
+  background: var(--session-selected);
   border: 0;
   border-block-end: 0;
-  border-radius: 9px 9px 0 0;
+  border-radius: 8px;
   align-self: stretch;
   padding-inline: 12px;
 }
