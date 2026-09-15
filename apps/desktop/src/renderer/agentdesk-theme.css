@@ -3337,7 +3337,10 @@ body:has(.macos-ai-app.zeus-shell) {
   gap: 7px;
   min-block-size: 28px;
   padding: 0 10px;
-  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .macos-ai-app.zeus-shell .project-global-search.is-open .project-global-search-field,
@@ -3377,7 +3380,9 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-card-background);
   border: 1px solid var(--zeus-card-border);
   border-radius: 10px;
-  box-shadow: 0 16px 40px color-mix(in srgb, #111827 18%, transparent), 0 3px 10px color-mix(in srgb, #111827 10%, transparent);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, #111827 18%, transparent),
+    0 3px 10px color-mix(in srgb, #111827 10%, transparent);
   box-sizing: border-box;
   inset-block-start: calc(100% + 7px);
   inset-inline-start: 50%;
@@ -3763,11 +3768,9 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 扩展页由外层统一滚动，不能沿用工作区卡片的内容裁剪。 */
 
-/* 宽屏会话列适度放宽，标题、正文和输入区形成更连续的左侧节奏。 */
+/* 工作区只调整两侧留白，正文与输入框沿用共用列宽。 */
 .macos-ai-app.zeus-shell.project-navigation-rail-shell .session-workspace-root {
-  --session-composer-max: 48rem;
   --session-gutter: clamp(18px, 2.6vw, 36px);
-  --session-thread-max: 54rem;
 }
 
 .macos-ai-app.zeus-shell.project-navigation-rail-shell .session-thread-header:not([data-context-toolbar='true']) {
