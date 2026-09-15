@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useId, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -30,7 +31,7 @@ export function FilePreview(props: {
 }
 
 /** 一个挂载周期只对应一个文件身份。 */
-function FilePreviewBody(props: { identity: string; zh: boolean; children?: ReactNode }) {
+function FilePreviewBody(props: { identity: string; zh: boolean; children?: ReactNode; /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void }) {
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
@@ -77,6 +78,8 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
   const images = items && items.length === 2 && items.some((item) => item.kind === 'image') && items.every((item) => item.kind === 'image' || item.kind === 'unavailable');
   /** 当前可用版本侧。 */
   const current = items?.[Math.min(selected, items.length - 1)];
+  /** 只精简单图弹窗，仓库内容、版本对比与其他文件仍使用完整操作。 */
+  const simpleImage = Boolean(props.onClose && items?.length === 1 && current?.kind === 'image' && current.url);
   /** 目录附件或不可解码附件仍保留既有受信打开操作。 */
   const attachment = JSON.parse(props.identity) as FilePreviewRequest;
   /** 继续通过附件凭据打开，不根据错误状态放宽路径权限。 */
@@ -89,42 +92,53 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
     }
   }
   return (
-    <section className="file-preview" aria-label={props.zh ? '文件预览' : 'File preview'}>
-      <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
-        {props.children ? (
-          <>
-            <button type="button" aria-pressed={showDiff} onClick={() => setMode('diff')}>
-              {props.zh ? '差异' : 'Diff'}
-            </button>
-            <button type="button" aria-pressed={!showDiff} onClick={() => setMode('preview')}>
-              {props.zh ? '内容预览' : 'Preview'}
-            </button>
-          </>
-        ) : null}
-        {!showDiff && !images && items && items.length > 1
-          ? items.map((item, index) => (
-              <button key={index} type="button" aria-pressed={current === item} onClick={() => setSelected(index)}>
-                {item.label}
-              </button>
-            ))
-          : null}
-        {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
-          <button type="button" onClick={() => void openAttachment()}>
-            {props.zh ? '打开附件' : 'Open attachment'}
+    <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
+      {props.onClose ? (
+        <header className="file-preview-dialog-header">
+          <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
+          {simpleImage ? <span title={current?.name}>{current?.name}</span> : null}
+          <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} title={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
+            <XIcon size={18} aria-hidden="true" />
           </button>
-        ) : null}
-        <button type="button" onClick={() => setAttempt((value) => value + 1)}>
-          {props.zh ? '刷新' : 'Refresh'}
-        </button>
-      </nav>
+        </header>
+      ) : null}
+      {!simpleImage || error ? (
+        <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
+          {props.children ? (
+            <>
+              <button type="button" aria-pressed={showDiff} onClick={() => setMode('diff')}>
+                {props.zh ? '差异' : 'Diff'}
+              </button>
+              <button type="button" aria-pressed={!showDiff} onClick={() => setMode('preview')}>
+                {props.zh ? '内容预览' : 'Preview'}
+              </button>
+            </>
+          ) : null}
+          {!showDiff && !images && items && items.length > 1
+            ? items.map((item, index) => (
+                <button key={index} type="button" aria-pressed={current === item} onClick={() => setSelected(index)}>
+                  {item.label}
+                </button>
+              ))
+            : null}
+          {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
+            <button type="button" onClick={() => void openAttachment()}>
+              {props.zh ? '打开附件' : 'Open attachment'}
+            </button>
+          ) : null}
+          <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+            {error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'}
+          </button>
+        </nav>
+      ) : null}
       {showDiff ? (
         props.children
       ) : error ? (
-        <p role="alert">
-          <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
-        </p>
+        <p role="alert">{simpleImage && typeof error === 'string' ? error : <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />}</p>
       ) : !items ? (
         <p role="status">{props.zh ? '正在读取文件…' : 'Loading file…'}</p>
+      ) : simpleImage && current?.url ? (
+        <PreviewImage url={current.url} name={current.name} zh={props.zh} compact onError={() => setError(props.zh ? '图片已损坏或无法解码，请重试。' : 'The image could not be decoded. Please retry.')} />
       ) : (
         <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
           {(images ? items : current ? [current] : []).map((item, index) => (
@@ -137,7 +151,7 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
 }
 
 /** 可复用的透明背景图片视图，支持原尺寸与放大检查小图标。 */
-export function PreviewImage(props: { url: string; name: string; zh: boolean; onError?: () => void }) {
+export function PreviewImage(props: { url: string; name: string; zh: boolean; onError?: () => void; /** 单图弹窗将尺寸和缩放收在底部一行。 */ compact?: boolean }) {
   /** 零代表适应窗口，正值代表原尺寸倍率。 */
   const [zoom, setZoom] = useState(0);
   /** 解码后的真实像素尺寸。 */
@@ -145,22 +159,30 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
   /** 记录当前图片解码失败。 */
   const [failed, setFailed] = useState(false);
   return (
-    <div className="file-preview-image">
-      <div className="file-preview-toolbar">
+    <div className={`file-preview-image${props.compact ? ' file-preview-image-compact' : ''}`}>
+      <div className="file-preview-toolbar" role="group" aria-label={props.zh ? '图片缩放' : 'Image zoom'}>
         <span>{dimensions}</span>
-        <button type="button" aria-pressed={zoom === 0} onClick={() => setZoom(0)}>
-          {props.zh ? '适应窗口' : 'Fit'}
-        </button>
-        <button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>
-          {props.zh ? '原始尺寸' : 'Actual size'}
-        </button>
+        {props.compact ? (
+          <button type="button" title={zoom ? (props.zh ? '适应窗口' : 'Fit') : props.zh ? '原始尺寸' : 'Actual size'} onClick={() => setZoom(zoom ? 0 : 1)}>
+            {zoom ? `${zoom * 100}%` : props.zh ? '适应窗口' : 'Fit'}
+          </button>
+        ) : (
+          <>
+            <button type="button" aria-pressed={zoom === 0} onClick={() => setZoom(0)}>
+              {props.zh ? '适应窗口' : 'Fit'}
+            </button>
+            <button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>
+              {props.zh ? '原始尺寸' : 'Actual size'}
+            </button>
+          </>
+        )}
         <button type="button" aria-label={props.zh ? '缩小' : 'Zoom out'} onClick={() => setZoom((value) => Math.max(0.25, (value || 1) / 2))}>
           −
         </button>
         <button type="button" aria-label={props.zh ? '放大' : 'Zoom in'} onClick={() => setZoom((value) => Math.min(16, (value || 1) * 2))}>
           +
         </button>
-        {zoom ? <span>{zoom * 100}%</span> : null}
+        {zoom && !props.compact ? <span>{zoom * 100}%</span> : null}
       </div>
       <div className="file-preview-checker">
         {failed ? (
@@ -270,18 +292,12 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
 
 /** 文件弹窗复用产品现有焦点管理和 Escape 关闭行为。 */
 export function FilePreviewDialog(props: { request: FilePreviewRequest; zh: boolean; onClose(): void }) {
-  /** 无障碍标题身份。 */
-  const titleId = useId();
+  /** 弹窗与嵌入视图共用加载和释放流程，以请求身份隔离异步结果。 */
+  const identity = JSON.stringify(props.request);
   return (
-    <ModalPortal rootClassName="file-preview-portal" onDismiss={props.onClose} role="dialog" aria-labelledby={titleId}>
+    <ModalPortal rootClassName="file-preview-portal" onDismiss={props.onClose} role="dialog" aria-label={props.zh ? '文件预览' : 'File preview'}>
       <section className="file-preview-dialog" data-modal-surface="dialog">
-        <header>
-          <strong id={titleId}>{props.zh ? '文件预览' : 'File preview'}</strong>
-          <button type="button" onClick={props.onClose}>
-            {props.zh ? '关闭' : 'Close'}
-          </button>
-        </header>
-        <FilePreview request={props.request} zh={props.zh} />
+        <FilePreviewBody key={identity} identity={identity} zh={props.zh} onClose={props.onClose} />
       </section>
     </ModalPortal>
   );
