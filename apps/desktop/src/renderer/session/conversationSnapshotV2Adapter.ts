@@ -403,6 +403,7 @@ function minimumKnownSequence(left: number | null | undefined, right: number | n
   return values.length > 0 ? Math.min(...values) : null;
 }
 
+/** 合并过程条目时保留读取方向，重新展开不会改变已读范围。 */
 export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>): NativeConversationSnapshot {
   if (
     !snapshot.snapshotV2 ||
@@ -421,12 +422,13 @@ export function mergeConversationProcessV2(snapshot: NativeConversationSnapshot,
       ...snapshot.v2Paging,
       processByTurn: {
         ...snapshot.v2Paging.processByTurn,
-        [turnId]: { nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, loaded: true, error: null },
+        [turnId]: { ...snapshot.v2Paging.processByTurn?.[turnId], nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, loaded: true, error: null },
       },
     },
   };
 }
 
+/** 轮次正文与过程共享方向状态，并继续按 Provider 身份去重。 */
 export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnapshot, turnId: string, page: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>): NativeConversationSnapshot {
   if (!snapshot.snapshotV2 || !snapshot.v2Paging || page.schemaVersion !== 2 || page.structureGeneration !== snapshot.snapshotV2.structureGeneration || page.conversationId !== snapshot.id || page.kind !== 'model_history') {
     throw new Error('会话 V2 轮次正文页与当前快照不匹配。');
@@ -439,7 +441,7 @@ export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnaps
       ...snapshot.v2Paging,
       historyByTurn: {
         ...snapshot.v2Paging.historyByTurn,
-        [turnId]: { nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, loaded: true, error: null },
+        [turnId]: { ...snapshot.v2Paging.historyByTurn?.[turnId], nextCursor: page.nextCursor, hasMore: page.hasMore, loading: false, loaded: true, error: null },
       },
     },
   };

@@ -573,6 +573,8 @@ interface TurnRow {
 }
 
 interface SequenceCursorPayload {
+  /** 轮次过程从最近向更早读取；缺省保持正序游标语义。 */
+  direction?: 'forward' | 'tail';
   version: 2;
   type: 'sequence';
   kind: 'timeline' | 'model_history' | 'process' | 'commands';
@@ -1069,7 +1071,7 @@ export class ConversationSnapshotV2Repository {
    * 按权威 turn 身份补齐完成轮次的模型正文。过程表只保存命令、工具和摘要，
    * 不能替代运行期间已经展示过的阶段性 commentary；展开历史轮次时必须同时读取二者。
    */
-  listTurnModelHistoryPage(input: { conversationId: string; turnId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
+  listTurnModelHistoryPage(input: { conversationId: string; turnId: string; cursor?: string; direction?: 'forward' | 'tail'; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const turnId = this.requireTurn(conversationId, input.turnId);
     const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}`, {
@@ -1104,8 +1106,8 @@ export class ConversationSnapshotV2Repository {
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND turn_id = ?
-          AND sequence > ? AND sequence <= ?
-        ORDER BY sequence
+          AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?
+        ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, turnId, context.afterSequence, context.throughSequence, context.entryLimit + 1],
     );
@@ -1156,7 +1158,16 @@ export class ConversationSnapshotV2Repository {
     });
   }
 
-  listProcessPage(input: { conversationId: string; turnId: string; kind?: ConversationProcessKind; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationProcessPageItem> {
+  /** 按冻结游标读取一页过程，末页优先时仍向界面交付正序内容。 */
+  listProcessPage(input: {
+    conversationId: string;
+    turnId: string;
+    kind?: ConversationProcessKind;
+    cursor?: string;
+    direction?: 'forward' | 'tail';
+    entryLimit?: number;
+    byteLimit?: number;
+  }): ConversationSnapshotV2Page<ConversationProcessPageItem> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const turnId = this.requireTurn(conversationId, input.turnId);
     const kind = input.kind === undefined ? null : processKind(input.kind);
@@ -1205,8 +1216,8 @@ export class ConversationSnapshotV2Repository {
                    ELSE NULL END AS presentation_json
          FROM conversation_process_items
         WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}
-          AND process_sequence > ? AND process_sequence <= ?
-        ORDER BY process_sequence
+          AND process_sequence ${context.direction === 'tail' ? '<' : '>'} ? AND process_sequence <= ?
+        ORDER BY process_sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, turnId, ...(kind ? [kind] : []), context.afterSequence, context.throughSequence, context.entryLimit + 1],
     );
@@ -1792,7 +1803,7 @@ export class ConversationSnapshotV2Repository {
   }
 
   private sequencePageContext(
-    input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number },
+    input: { conversationId: string; cursor?: string; direction?: 'forward' | 'tail'; entryLimit?: number; byteLimit?: number },
     kind: SequenceCursorPayload['kind'],
     scope: string,
     highWater: {
@@ -1812,11 +1823,14 @@ export class ConversationSnapshotV2Repository {
         ? (this.db.get<{ maximum_sequence: number | null }>(`SELECT MAX(${highWater.column}) AS maximum_sequence FROM ${highWater.table} WHERE conversation_id = ?${highWater.extraWhere}`, [conversationId, ...highWater.extraParams])
             ?.maximum_sequence ?? 0)
         : this.maximumSequence(kind === 'timeline' ? 'conversation_timeline_events' : 'conversation_model_history', 'sequence', conversationId));
+    /** 后续页以已校验游标为准，不能在同一冻结范围内反转方向。 */
+    const direction = cursor?.direction ?? (cursor ? 'forward' : (input.direction ?? 'forward'));
     return {
+      direction,
       conversationId,
       kind,
       scope,
-      afterSequence: cursor?.afterSequence ?? 0,
+      afterSequence: cursor?.afterSequence ?? (direction === 'tail' ? throughSequence + 1 : 0),
       throughSequence,
       throughEventSeq: cursor?.throughEventSeq ?? this.throughEventSeq(conversationId),
       ...limits,
@@ -2047,6 +2061,8 @@ export class ConversationSnapshotV2Repository {
 }
 
 interface SequencePageContext {
+  /** 游标冻结读取方向，分页期间不改变时间线顺序。 */
+  direction?: 'forward' | 'tail';
   conversationId: string;
   kind: SequenceCursorPayload['kind'];
   scope: string;
@@ -2233,8 +2249,10 @@ function activeItemProjection(previewValue: string, byteLength: number, sourceTr
   return sourceTruncated && !projection.truncated ? { ...projection, truncated: true } : projection;
 }
 
+/** 共用条数、字节和游标边界，读取方向不改变每页的显示顺序。 */
 function buildSequencePage<T extends { sequence: number }>(context: SequencePageContext, candidates: T[]): ConversationSnapshotV2Page<T> {
-  return buildCompositePage({
+  /** 先按读取方向裁定字节预算和游标，再恢复用户看到的正序。 */
+  const page = buildCompositePage({
     conversationId: context.conversationId,
     kind: context.kind,
     throughEventSeq: context.throughEventSeq,
@@ -2245,6 +2263,7 @@ function buildSequencePage<T extends { sequence: number }>(context: SequencePage
       encodeCursor({
         version: 2,
         type: 'sequence',
+        ...(context.direction === 'tail' ? { direction: 'tail' as const } : {}),
         kind: context.kind,
         conversationId: context.conversationId,
         scope: context.scope,
@@ -2253,6 +2272,7 @@ function buildSequencePage<T extends { sequence: number }>(context: SequencePage
         throughEventSeq: context.throughEventSeq,
       }),
   });
+  return context.direction === 'tail' ? { ...page, items: [...page.items].reverse() } : page;
 }
 
 function buildReverseSequencePage(input: {
@@ -2424,8 +2444,10 @@ function decodeCursor(value: string): CursorPayload {
   }
 }
 
+/** 会话、轮次、集合与方向均经过校验后才能继续同一冻结范围。 */
 function requireSequenceCursor(payload: CursorPayload, conversationId: string, kind: SequenceCursorPayload['kind'], scope: string): SequenceCursorPayload {
   if (
+    (payload.type === 'sequence' && payload.direction !== undefined && payload.direction !== 'forward' && payload.direction !== 'tail') ||
     payload.type !== 'sequence' ||
     payload.kind !== kind ||
     payload.conversationId !== conversationId ||

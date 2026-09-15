@@ -75,13 +75,13 @@ export interface ConversationApiClient {
     projectId: string,
     conversationId: string,
     turnId: string,
-    options?: { cursor?: string; limit?: number; byteLimit?: number },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>;
   loadNativeConversationProcessV2: (
     projectId: string,
     conversationId: string,
     turnId: string,
-    options?: { cursor?: string; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
   loadNativeConversationResourcesV2: (projectId: string, conversationId: string, options?: { cursor?: string; limit?: number; byteLimit?: number }) => Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2: (projectId: string, conversationId: string, turnId: string) => Promise<NativeConversationChangeSetV2Summary>;
