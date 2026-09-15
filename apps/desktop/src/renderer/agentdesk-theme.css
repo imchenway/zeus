@@ -541,9 +541,9 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
 }
 
-/* 文件审阅与环境操作卡片保留组件自身边框，用于界定各自的操作范围。 */
+/* 内容卡片通过白色内容面与页面底色分层，不叠加描边或阴影。 */
 .macos-ai-app.zeus-shell
-  :where(.task-board-card, .session-resource-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
+  :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
   background: var(--zeus-card-background);
   border: 0;
   box-shadow: none;
@@ -1162,7 +1162,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: var(--zeus-card-shadow-soft) !important;
 }
 
-/* 普通内容卡片由底色表达层次；文件审阅与环境操作卡片保留既有边界，不参与去边框。 */
+/* 内容卡片共用圆角与底色层次，包括文件审阅和环境操作区域。 */
 .macos-ai-app.zeus-shell
   :where(
     .task-table-workbench,
@@ -1176,6 +1176,8 @@ body:has(.macos-ai-app.zeus-shell) {
     .codex-usage-section,
     .task-board-card,
     .session-resource-card,
+    .session-quick-actions-card,
+    .session-turn-change-card,
     .session-browser-preview-card,
     .browser-approval-card,
     .session-goal-panel
@@ -2856,11 +2858,11 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-control-danger-bg, #fff5f5) !important;
 }
 
-/* 会话画布延伸至工作区边缘；正文仍使用会话自身的阅读宽度。 */
+/* 会话沿用浅灰页面底色，让白色卡片通过圆角自然形成边缘；深色随主题变化。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root),
 .macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
 .macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
-  background: var(--session-canvas, #fff) !important;
+  background: var(--zeus-page-background) !important;
   background-image: none !important;
   border: 0 !important;
   border-radius: 0 !important;
