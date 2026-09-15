@@ -512,6 +512,8 @@ export interface NativeConversationExecutionContext {
   cwd: string | null;
   branch: string | null;
   isGitRepository: boolean | null;
+  /** 最近原生命令现场；缺失时继续展示会话默认目录。 */
+  recentCommand?: Pick<NativeConversationExecutionContext, 'cwd' | 'branch' | 'isGitRepository'>;
 }
 
 export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';

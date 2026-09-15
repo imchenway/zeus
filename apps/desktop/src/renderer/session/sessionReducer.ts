@@ -5,6 +5,7 @@ import type {
   NativeConversationAttachment,
   NativeConversationEvent,
   NativeConversationSnapshot,
+  NativeConversationExecutionContext,
   NativeGoalResponse,
   NativeItemSnapshot,
   NativeNextTurnSettings,
@@ -38,6 +39,8 @@ export type NativeSessionAction =
   /** 差异全文是按需读取结果，不复用已经消费过的实时事件身份。 */
   | { type: 'turn_change_set_loaded'; changeSet: TurnChangeSet }
   | { type: 'session_metrics_hydrated'; conversationId: string; sessionMetrics: NativeSessionMetricsSnapshot }
+  /** 执行现场独立刷新，不重置正文、队列或实时事件水位。 */
+  | { type: 'execution_context_hydrated'; conversationId: string; executionContext: NativeConversationExecutionContext }
   | { type: 'goal_hydrated'; conversationId: string; response: NativeGoalResponse }
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | {
@@ -176,6 +179,10 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return mergeCompleteContent(state, action);
     case 'turn_change_set_loaded':
       return mergeTurnChangeSet(state, action.changeSet);
+    case 'execution_context_hydrated':
+      return state.conversationId === action.conversationId && state.snapshot?.id === action.conversationId
+        ? { ...state, snapshot: { ...state.snapshot, executionContext: action.executionContext, snapshotV2: state.snapshot.snapshotV2 ? { ...state.snapshot.snapshotV2, executionContext: action.executionContext } : undefined } }
+        : state;
     case 'session_metrics_hydrated': {
       if (state.conversationId !== action.conversationId || state.snapshot?.id !== action.conversationId) return state;
       const currentUpdatedAt = state.sessionMetrics?.updatedAt;

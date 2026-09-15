@@ -66,14 +66,19 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
         </RuntimeDetailGroup>
         <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
-          <RuntimeUsageRow wide label={zh ? '工作目录' : 'Working directory'} value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} />} />
-          <RuntimeUsageRow label={zh ? '工作分支' : 'Working branch'} value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} />} />
+          <RuntimeUsageRow
+            label={zh ? '工作目录' : 'Working directory'}
+            value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} copyLabel={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} />}
+          />
+          <RuntimeUsageRow
+            label={zh ? '工作分支' : 'Working branch'}
+            value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} copyLabel={zh ? '复制工作分支' : 'Copy working branch'} copiedLabel={zh ? '工作分支已复制' : 'Working branch copied'} />}
+          />
           <RuntimeUsageRow
             label={zh ? '线程 ID' : 'Thread ID'}
             value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} copyLabel={zh ? '复制线程 ID' : 'Copy thread ID'} copiedLabel={zh ? '线程 ID 已复制' : 'Thread ID copied'} />}
           />
           <RuntimeUsageRow
-            wide
             label="JSONL"
             value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} copyLabel={zh ? '复制 JSONL 路径' : 'Copy JSONL path'} copiedLabel={zh ? 'JSONL 路径已复制' : 'JSONL path copied'} />}
           />
@@ -126,21 +131,33 @@ function RuntimeDetailGroup(props: { title: string; kind: 'session' | 'usage' | 
   );
 }
 
-/** 长路径独占一行，其余事实共享自适应网格。 */
-function RuntimeUsageRow(props: { label: string; value: ReactNode; wide?: boolean }) {
+/** 字段顺序由描述列表保留，列数由分组布局统一决定。 */
+function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
   return (
-    <div data-wide={props.wide || undefined}>
+    <div>
       <dt>{props.label}</dt>
       <dd>{props.value}</dd>
     </div>
   );
 }
 
+/** 长值按首尾两段显示，由容器宽度决定中间省略；提示与复制保留原文。 */
 function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: SessionUiLanguage; copyLabel?: string; copiedLabel?: string }) {
   if (props.fact.state === 'unavailable') return unavailableValue(props.language);
+  /** 按完整字符拆分，避免拆开代理对。 */
+  const characters = Array.from(props.fact.value);
+  /** 首尾均保留内容，溢出时只在两段交界处省略。 */
+  const midpoint = Math.ceil(characters.length / 2);
   return (
     <span className="session-runtime-code-value">
-      <code title={props.fact.value}>{props.fact.value}</code>
+      <code title={props.fact.value} aria-label={props.fact.value}>
+        <span className="session-runtime-code-start" aria-hidden="true">
+          {characters.slice(0, midpoint).join('')}
+        </span>
+        <span className="session-runtime-code-end" aria-hidden="true">
+          <span>{characters.slice(midpoint).join('')}</span>
+        </span>
+      </code>
       {props.copyLabel && props.copiedLabel ? <RuntimeCopyButton text={props.fact.value} label={props.copyLabel} copiedLabel={props.copiedLabel} /> : null}
     </span>
   );

@@ -29,14 +29,22 @@ if (manifestIndex >= 0) {
 }
 
 if (process.argv.includes('--check-version')) {
+  // 读取待发布版本，保持稳定渠道的三段版本约束。
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
   if (!/^\d+\.\d+\.\d+$/u.test(version)) throw new Error('稳定渠道只接受三段递增版本号。');
-  const pages = JSON.parse(execFileSync('gh', ['api', `repos/${distribution.repository}/releases?per_page=100`, '--paginate', '--slurp'], { encoding: 'utf8' }));
-  for (const release of pages.flat()) {
-    if (release.draft || release.prerelease || release.tag_name === releaseTag(version) || !versionFromReleaseTag(release.tag_name)) continue;
+  // 保留全部分页，只输出公开稳定版标签，避免发布正文和附件详情撑满子进程缓冲区。
+  const tags = execFileSync('gh', ['api', `repos/${distribution.repository}/releases?per_page=100`, '--paginate', '--jq', '.[] | select(.draft == false and .prerelease == false) | .tag_name'], { encoding: 'utf8' })
+    .trim()
+    .split('\n');
+  // 逐个检查历史标签，不依赖发布时间或 API 返回顺序。
+  for (const tag of tags) {
+    if (tag === releaseTag(version) || !versionFromReleaseTag(tag)) continue;
+    // 将当前版本拆成可逐段比较的数字。
     const current = version.split('.').map(Number);
-    const published = versionFromReleaseTag(release.tag_name).split('.').map(Number);
+    // 将本发行版的历史稳定版本拆成数字。
+    const published = versionFromReleaseTag(tag).split('.').map(Number);
+    // 首个不同版本段决定高低；相同目标标签已在上方排除。
     const difference = current.map((part, index) => part - published[index]).find((part) => part !== 0) ?? 0;
-    if (difference <= 0) throw new Error(`目标版本必须高于本发行版已发布版本：${release.tag_name}`);
+    if (difference <= 0) throw new Error(`目标版本必须高于本发行版已发布版本：${tag}`);
   }
 }

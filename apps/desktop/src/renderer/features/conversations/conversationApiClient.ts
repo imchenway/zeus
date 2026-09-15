@@ -16,6 +16,7 @@ import type {
   NativeConversationModelHistoryV2Item,
   NativeConversationProcessV2Item,
   NativeConversationReadableSnapshot,
+  NativeConversationExecutionContext,
   NativeConversationResourceV2Item,
   NativeConversationSnapshotV2Page,
   NativeConversationStartDispatchResult,
@@ -63,6 +64,8 @@ export interface ConversationApiClient {
   /** 一次取得同一事件进度下的会话结构与消息尾页。 */
   loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string) => Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
+  /** 单独刷新执行现场，避免命令事件触发正文重载。 */
+  loadNativeConversationExecutionContext: (projectId: string, conversationId: string) => Promise<NativeConversationExecutionContext>;
   loadNativeConversationModelHistoryV2: (
     projectId: string,
     conversationId: string,
@@ -197,6 +200,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       }),
     loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
+    loadNativeConversationExecutionContext: (projectId, conversationId) => transport.request<NativeConversationExecutionContext>(`${conversationPath(projectId, conversationId)}/execution-context`),
     loadNativeConversationModelHistoryV2: (projectId, conversationId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/model-history${pageQuery(options)}`),
     loadNativeConversationTurnModelHistoryV2: (projectId, conversationId, turnId, options) =>

@@ -3788,7 +3788,8 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
     complete: usage?.apiEquivalentUsd !== null && usage?.priceCoverage === 1 && usage?.historyComplete === true,
   };
   const mcpStartup = props.state.mcpStartup?.value ?? null;
-  const executionContext = props.state.snapshot?.executionContext;
+  /** 环境展示优先采用最近命令事实，不改变会话默认目录和相对文件打开语义。 */
+  const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
   const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
   const performance = metrics?.performance ?? null;
   const activity = metrics?.activity ?? null;

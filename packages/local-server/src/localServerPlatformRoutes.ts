@@ -76,7 +76,7 @@ import { createTelegramBotMessageClient, getTelegramConfigurationState, type Tel
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
 import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
 import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js';
@@ -859,7 +859,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (!cwdSource) return { cwd: null, branch: null, isGitRepository: null };
       const cwd = resolve(cwdSource);
       const git = await getGitWorkingContext(cwd);
-      return { cwd, branch: git.branch, isGitRepository: git.isRepository };
+      /** 实际命令可以覆盖默认工作目录；仅采用 Provider 记录的绝对路径。 */
+      const recentCwd = conversationSnapshotV2.readRecentCommandCwd(conversationId);
+      if (!recentCwd || !isAbsolute(recentCwd)) return { cwd, branch: git.branch, isGitRepository: git.isRepository };
+      /** 分支始终从对应目录实时读取；同目录复用本次查询。 */
+      const recentGit = resolve(recentCwd) === cwd ? git : await getGitWorkingContext(recentCwd);
+      return { cwd, branch: git.branch, isGitRepository: git.isRepository, recentCommand: { cwd: recentCwd, branch: recentGit.branch, isGitRepository: recentGit.isRepository } };
     },
     readQueueState: (conversationId) => {
       const conversation = conversations.getRecordById(conversationId);

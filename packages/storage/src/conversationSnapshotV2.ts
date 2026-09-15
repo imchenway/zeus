@@ -362,6 +362,8 @@ export interface ConversationSnapshotV2ExecutionContext {
   cwd: string | null;
   branch: string | null;
   isGitRepository: boolean | null;
+  /** 最近原生命令的执行现场，仅供展示，不修改会话的默认执行目录。 */
+  recentCommand?: Pick<ConversationSnapshotV2ExecutionContext, 'cwd' | 'branch' | 'isGitRepository'>;
 }
 
 export interface ConversationSnapshotV2ProviderSettings {
@@ -678,6 +680,26 @@ export class ConversationSnapshotV2Repository {
     private readonly db: ZeusDatabasePort,
     private readonly artifactStore?: ArtifactStore,
   ) {}
+
+  /** 只从当前运行分段的命令事实读取目录，不解析命令文本、模型回复或其他会话。 */
+  readRecentCommandCwd(conversationIdValue: string): string | null {
+    /** 限定会话身份，查询仅返回单个短路径，不读取完整工具输出。 */
+    const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    /** 过程序号保留命令的开始顺序，旧命令较晚完成不会覆盖较新的执行现场。 */
+    const row = this.db.get<{ cwd: string | null }>(
+      `SELECT CASE WHEN json_type(process.detail_json, '$.payload.cwd') = 'text'
+                        AND length(json_extract(process.detail_json, '$.payload.cwd')) BETWEEN 1 AND 4096
+                   THEN json_extract(process.detail_json, '$.payload.cwd') END AS cwd
+         FROM conversation_process_items AS process
+         JOIN conversation_runtime_segments AS segment ON segment.id = process.segment_id
+        WHERE process.conversation_id = ? AND segment.conversation_id = process.conversation_id
+          AND segment.state = 'current' AND process.kind = 'command'
+          AND json_extract(process.detail_json, '$.itemType') = 'commandExecution'
+        ORDER BY process.process_sequence DESC LIMIT 1`,
+      [conversationId],
+    );
+    return row?.cwd ?? null;
+  }
 
   /** 同步读取全部发言目录，只取短文本与身份，不装载工具正文或创建持久目录。 */
   readNavigation(conversationIdValue: string): ConversationNavigationSnapshot {

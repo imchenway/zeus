@@ -4169,7 +4169,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-runtime-detail-body {
   display: grid;
   gap: 12px 20px;
-  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  /* 保留空列，让模型设置与用量字段使用相同的列起点。 */
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
   margin: 0;
   min-inline-size: 0;
 }
@@ -4201,7 +4202,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
-/* 路径独占通栏并换行，复制按钮独立占位，避免隐藏路径尾部或挤出横向滚动条。 */
+/* 环境按目录、分支、线程、日志顺序排成两行两列，窄容器再收为单列。 */
 .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body {
   gap: 8px 20px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4213,16 +4214,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   grid-template-columns: 100px minmax(0, 1fr);
 }
 
-.session-codex-parity-v1 .session-runtime-detail-body > [data-wide='true'] {
-  grid-column: 1 / -1;
-}
-
 .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] dd {
   font-size: 11px;
 }
 
 .session-codex-parity-v1 .session-runtime-code-value {
-  /* 单行或换行路径均与复制按钮按整行高度居中。 */
+  /* 复制按钮独立占位，不随长值收缩。 */
   align-items: center;
   display: flex;
   gap: 6px;
@@ -4232,12 +4229,31 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-runtime-code-value > code {
   background: transparent;
   color: inherit;
+  display: inline-flex;
   font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
   font-size: inherit;
   min-inline-size: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   padding: 0;
-  white-space: normal;
+  white-space: nowrap;
+}
+
+/* 首段尾部显示省略号，末段从左侧裁切，始终保留真实路径或标识的结尾。 */
+.session-codex-parity-v1 .session-runtime-code-start {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-codex-parity-v1 .session-runtime-code-end {
+  display: flex;
+  justify-content: flex-end;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-runtime-code-end > span {
+  flex: 0 0 auto;
 }
 
 .session-codex-parity-v1 .session-runtime-copy-button {

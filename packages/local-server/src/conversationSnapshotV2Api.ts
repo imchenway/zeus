@@ -48,6 +48,13 @@ type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compact
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
   const { server, repository } = options;
 
+  // 命令后的环境刷新只读取目录与分支，不重新装载会话正文或推进同步游标。
+  server.get('/api/projects/:projectId/conversations/:conversationId/execution-context', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    return (await options.readExecutionContext?.(request.params.conversationId)) ?? { cwd: null, branch: null, isGitRepository: null };
+  });
+
   // 已完成的提交可能不在历史首屏或活动队列中，按耐久身份单独核对。
   server.get('/api/projects/:projectId/conversations/:conversationId/submissions/:submissionId/receipt', async (request: FastifyRequest<{ Params: ConversationParams & { submissionId: string } }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);

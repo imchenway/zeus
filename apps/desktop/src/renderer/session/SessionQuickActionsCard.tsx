@@ -98,7 +98,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const taskId = props.task?.id ?? props.conversation.taskId;
   const workspace = resolveConversationWorkspace(workspaces, props.conversation, props.state);
   const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
-  const executionContext = props.state.snapshot?.executionContext;
+  /** 两处环境展示采用相同的最近命令事实，工作区交付身份仍沿用会话绑定。 */
+  const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
   const cwd = executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
   const branch = executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null);
   const changes = summarizeWorkspaceChanges(workspace);
