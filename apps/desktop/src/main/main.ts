@@ -473,6 +473,15 @@ function ensureMacOSDockIconVisible(): void {
   });
 }
 
+/** 继续后台运行时只隐藏界面，保留 Main、Core、通知和 Dock 图标。 */
+function continueApplicationInBackground(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.hide();
+  }
+  if (process.platform === 'darwin') app.hide();
+  ensureMacOSDockIconVisible();
+}
+
 function nativeUpdateProgressHelperPath(): string {
   const root = desktopRoot();
   if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusUpdateProgress');
@@ -3169,7 +3178,12 @@ function nativeText(zh: string, en: string): string {
   return appShellSettings.appLanguage === 'en-US' ? en : zh;
 }
 
+/** 未保存检查通过后立即消费本轮关闭许可，避免取消退出或转后台后复用。 */
 async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | 'cancel'> {
+  taskTableLayoutQuitPending = false;
+  taskTableLayoutQuitApproved = false;
+  taskTableLayoutCloseApprovedWindowIds.clear();
+  pendingTaskTableLayoutWindowCloseIds.clear();
   // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
   if (readOnlyValidationDescriptor) return 'final_quit';
   if (storageRecoveryRestart.isRequested()) return 'final_quit';
@@ -3343,6 +3357,7 @@ app.on(
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
+    continueInBackground: continueApplicationInBackground,
     closeLocalServer: async (mode) => {
       const cleanupErrors: unknown[] = [];
       const attemptCleanup = async (label: string, operation: () => void | Promise<void>): Promise<void> => {
