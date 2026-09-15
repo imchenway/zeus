@@ -549,11 +549,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     if (!interactionOpen || !props.task || !props.client || selectedWorkspaceIds.length === 0) return;
     const client = props.client;
     const taskId = props.task.id;
-    const activeConversationCount = selectedWorkspaceIds.reduce(
-      (total, selectedId) => total + (targetBranchesByWorkspace[selectedId] === workspaceDetails[selectedId]?.sourceBranch ? (workspaceDetails[selectedId]?.activeConversationCount ?? 0) : 0),
-      0,
-    );
-    if (activeConversationCount > 0 && !confirmBatchActiveSessionRisk(activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);
     setFeedback(null);
@@ -807,9 +802,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
+  /** 完成已解决冲突的合入；关联会话不需要额外确认目录回收。 */
   async function finalize(): Promise<void> {
     if (!interactionOpen || !props.task || !props.client || !integration) return;
-    if (selectedWorkspace && integration.targetBranch === selectedWorkspace.sourceBranch && selectedWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk(selectedWorkspace.activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);
     try {
@@ -1081,11 +1076,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   </span>
                   {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
                     <section className="task-git-review-active-sessions">
-                      <strong>{zh ? '仍有会话可能继续修改代码' : 'Conversations may still change the code'}</strong>
+                      <strong>{zh ? '仍有会话活动' : 'Conversation activity'}</strong>
                       <small>
                         {zh
-                          ? `还有 ${selectedWorkspace.activeConversationCount} 个会话可能修改此分支。仍可提交和推送；合入后如果移除工作目录，后续修改可能失败。`
-                          : `Another ${selectedWorkspace.activeConversationCount} conversation(s) may modify this branch. You can still commit and push. Removing the working folder after a merge may cause later changes to fail.`}
+                          ? `还有 ${selectedWorkspace.activeConversationCount} 个会话正在处理此分支。合入只包含已提交内容；关联会话未归档时，工作目录会保留。`
+                          : `${selectedWorkspace.activeConversationCount} conversation(s) are working on this branch. Merging includes only committed changes; the working folder is preserved while linked conversations remain unarchived.`}
                       </small>
                     </section>
                   ) : null}
@@ -1622,22 +1617,6 @@ function mergeWorkspaceAction(workspace: TaskWorkspaceSnapshot | undefined, inte
   }
   if (findDeliveredIntegration(workspace, integrations, targetBranch)) return null;
   return { type: 'start' };
-}
-
-function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
-  return window.confirm(
-    zh
-      ? `还有 ${activeConversationCount} 个会话可能修改此分支。合入后可能移除任务的独立工作目录，导致后续修改失败，未提交内容也可能丢失。继续合入吗？`
-      : `Another ${activeConversationCount} conversation(s) may modify this branch. The task’s separate working folder may be removed after merging, causing later changes to fail and uncommitted work to be lost. Continue merging?`,
-  );
-}
-
-function confirmBatchActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
-  return window.confirm(
-    zh
-      ? `还有 ${activeConversationCount} 个会话可能修改所选仓库。合入后可能移除对应的独立工作目录，导致后续修改失败，未提交内容也可能丢失。继续合入吗？`
-      : `Another ${activeConversationCount} conversation(s) may modify the selected repositories. Their separate working folders may be removed after merging, causing later changes to fail and uncommitted work to be lost. Continue merging?`,
-  );
 }
 
 function committedFileLabel(changeType: TaskGitFileDiff['changeType'], zh: boolean): string {
