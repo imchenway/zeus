@@ -3113,20 +3113,14 @@
   font-weight: 590;
 }
 
-.session-answered-request-options > li.is-custom-answer {
-  align-items: stretch;
-  gap: 7px;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.session-answered-request-custom-status {
-  align-items: center;
+.session-answered-request-custom-content {
+  /* 中间列容纳标题、附件和正文，两侧沿用选项行的整体居中规则。 */
   display: grid;
-  gap: 8px;
-  grid-template-columns: 17px minmax(0, 1fr) auto;
+  gap: 7px;
+  min-inline-size: 0;
 }
 
-.session-answered-request-custom-status > small {
+.session-answered-request-custom-content > small {
   font-size: 12px;
   font-weight: 500;
 }
@@ -3243,7 +3237,7 @@
 }
 
 @media (max-width: 760px) {
-  .session-answered-request-options > li {
+  .session-answered-request-options > li:not(.is-custom-answer) {
     grid-template-columns: 17px minmax(0, 1fr);
   }
 
@@ -3251,12 +3245,8 @@
     grid-row: 1 / span 2;
   }
 
-  .session-answered-request-options em {
+  .session-answered-request-options > li:not(.is-custom-answer) > em {
     grid-column: 2;
-  }
-
-  .session-answered-request-custom-status > em {
-    grid-column: 3;
   }
 }
 .session-codex-parity-v1 {

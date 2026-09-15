@@ -117,21 +117,22 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
                   })}
                   {showSelfAuthoredRow ? (
                     <li className="is-selected is-custom-answer">
-                      <div className="session-answered-request-custom-status">
-                        <span className="session-answered-request-option-marker" aria-hidden="true">
-                          <Check weight="bold" />
-                        </span>
+                      {/* 两侧状态与完整回答内容同排，随正文和附件高度垂直居中。 */}
+                      <span className="session-answered-request-option-marker" aria-hidden="true">
+                        <Check weight="bold" />
+                      </span>
+                      <div className="session-answered-request-custom-content">
                         <small>{copy.userChoice}</small>
-                        <em>{copy.selected}</em>
+                        {entry.attachments.length > 0 ? (
+                          <ConversationComposerAttachments attachments={entry.attachments} language={props.language} disabled={false} ariaLabel={copy.answerAttachments} className="session-answered-request-attachments" />
+                        ) : null}
+                        {entry.question.secret ? (
+                          <p className="session-answered-request-custom-answer-text">{copy.secretAnswer}</p>
+                        ) : selfAuthoredAnswers.length > 0 ? (
+                          <p className="session-answered-request-custom-answer-text">{selfAuthoredAnswers.join(copy.separator)}</p>
+                        ) : null}
                       </div>
-                      {entry.attachments.length > 0 ? (
-                        <ConversationComposerAttachments attachments={entry.attachments} language={props.language} disabled={false} ariaLabel={copy.answerAttachments} className="session-answered-request-attachments" />
-                      ) : null}
-                      {entry.question.secret ? (
-                        <p className="session-answered-request-custom-answer-text">{copy.secretAnswer}</p>
-                      ) : selfAuthoredAnswers.length > 0 ? (
-                        <p className="session-answered-request-custom-answer-text">{selfAuthoredAnswers.join(copy.separator)}</p>
-                      ) : null}
+                      <em>{copy.selected}</em>
                     </li>
                   ) : null}
                 </ul>
