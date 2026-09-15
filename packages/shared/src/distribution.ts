@@ -1,4 +1,4 @@
-/** 通用发行契约；具体二开配置由应用组装入口注入。 */
+/** 通用发行契约；具体发行配置由应用组装入口注入。 */
 export interface DistributionConfig {
   readonly id: string;
   readonly repository: string;
@@ -14,7 +14,7 @@ export interface DistributionConfig {
   readonly requireManifestIdentity: boolean;
 }
 
-/** 未注入二开配置时沿用上游来源及既有清单格式。 */
+/** 未注入发行配置时沿用上游来源及既有清单格式。 */
 export const upstreamDistribution: DistributionConfig = Object.freeze({
   id: 'imchenway.zeus',
   repository: 'imchenway/zeus',

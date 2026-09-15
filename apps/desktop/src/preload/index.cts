@@ -181,6 +181,15 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:task-git-delivery:appearance', handler);
     return () => ipcRenderer.removeListener('zeus:task-git-delivery:appearance', handler);
   },
+  /** 订阅独立仓库差异窗口的外观，卸载时释放监听。 */
+  onProjectGitDiffAppearance: (listener: (appearance: 'light' | 'dark' | 'system') => void) => {
+    /** 仅将合法主题传给界面。 */
+    const handler = (_event: unknown, appearance: unknown) => {
+      if (appearance === 'light' || appearance === 'dark' || appearance === 'system') listener(appearance);
+    };
+    ipcRenderer.on('zeus:project-git-diff:appearance', handler);
+    return () => ipcRenderer.removeListener('zeus:project-git-diff:appearance', handler);
+  },
   onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => {
     const handler = (_event: unknown, taskId: string) => listener(taskId);
     ipcRenderer.on('zeus:task-git-delivery:changed', handler);
@@ -325,6 +334,8 @@ contextBridge.exposeInMainWorld('zeus', {
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
   activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),
   closeBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:close-tab', input),
+  /** 明确关闭当前会话浏览器并释放全部标签。 */
+  closeBrowserConversation: (conversationId: string) => ipcRenderer.invoke('zeus:browser:close-conversation', conversationId),
   runBrowserCommand: (input: unknown) => invokeBrowserConversationCommand('zeus:browser:command', 'desktop.browser.command', input),
   setBrowserLayout: (input: unknown) => ipcRenderer.invoke('zeus:browser:set-layout', input),
   prepareBrowserComments: (input: unknown) => ipcRenderer.invoke('zeus:browser:prepare-comments', input),

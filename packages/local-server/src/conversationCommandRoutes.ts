@@ -51,6 +51,10 @@ interface AttentionAcknowledgeInput {
   expectedRevision?: unknown;
 }
 
+interface RenameInput {
+  title?: unknown;
+}
+
 interface GoalClearResult {
   cleared: boolean;
 }
@@ -83,7 +87,7 @@ export function registerConversationCommandRoutes(options: {
   tasks: Pick<TaskRepository, 'getById'>;
   conversations: Pick<
     ConversationRepository,
-    'getById' | 'getRecordById' | 'getNextTurnSettings' | 'setSessionFileEditGrant' | 'updateNextTurnSettings' | 'updatePermissionMode' | 'updateCollaborationMode' | 'acknowledgeAttention' | 'archive' | 'restore'
+    'getById' | 'getRecordById' | 'getNextTurnSettings' | 'setSessionFileEditGrant' | 'updateNextTurnSettings' | 'updatePermissionMode' | 'updateCollaborationMode' | 'acknowledgeAttention' | 'archive' | 'restore' | 'updateTitle'
   >;
   goals: Pick<ConversationGoalRepository, 'get' | 'listEvents'>;
   codex: {
@@ -283,6 +287,30 @@ export function registerConversationCommandRoutes(options: {
     }
   });
 
+  server.put('/api/projects/:projectId/conversations/:conversationId/rename', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<RenameInput> }>, reply) => {
+    try {
+      const parsed = parseCommand(request, conversationCommandTypes.rename);
+      assertExactInputKeys(parsed.input, ['title'], parsed.command.commandType);
+      const title = parseRenameTitle(parsed.input.title);
+      application.executeCore({
+        parsed,
+        destinationId: 'conversation-rename-application',
+        resourceId: request.params.conversationId,
+        mutateBusinessState: () => {
+          const conversation = requireNativeConversation(request.params, false);
+          options.conversations.updateTitle(conversation.id, title);
+          options.publishNativeEvent('conversation.title.changed', { conversationId: conversation.id, title });
+          return { conversationId: conversation.id, title };
+        },
+      });
+      const current = options.conversations.getById(request.params.conversationId);
+      if (!current) throw notFound('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation not found');
+      return options.toConversationChoice(current);
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
+  });
+
   server.post('/api/projects/:projectId/conversations/:conversationId/provider-thread/restore', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<EmptyInput> }>, reply) => {
     try {
       const parsed = parseCommand(request, conversationCommandTypes.providerThreadRestore);
@@ -471,6 +499,13 @@ function parseGoalObjective(value: unknown): string {
   const objective = value.trim();
   if (!objective || [...objective].length > 4_000) throw routeError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须为 1 到 4000 个字符。', 400);
   return objective;
+}
+
+function parseRenameTitle(value: unknown): string {
+  if (typeof value !== 'string') throw routeError('ZEUS_CONVERSATION_RENAME_INVALID', '标题必须是文本。', 400);
+  const title = value.trim();
+  if (!title || [...title].length > 500) throw routeError('ZEUS_CONVERSATION_RENAME_INVALID', '标题必须为 1 到 500 个字符。', 400);
+  return title;
 }
 
 function lifecycleResult(conversation: ZeusConversationRecord): ConversationLifecycleResult {

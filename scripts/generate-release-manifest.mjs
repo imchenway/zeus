@@ -41,8 +41,8 @@ export function renderReleaseManifest(input) {
   const version = normalizeVersion(input.version);
   const repository = normalizeRepository(input.repository);
   const homebrewTap = normalizeHomebrewTap(input.homebrewTap);
-  if (repository !== zeusDistribution.repository || homebrewTap !== zeusDistribution.homebrewTap) throw new Error('发布来源与二开配置不一致。');
-  if ((input.channel ?? 'stable') !== zeusDistribution.channel) throw new Error('发布渠道与二开配置不一致。');
+  if (repository !== zeusDistribution.repository || homebrewTap !== zeusDistribution.homebrewTap) throw new Error('发布来源与发行配置不一致。');
+  if ((input.channel ?? 'stable') !== zeusDistribution.channel) throw new Error('发布渠道与发行配置不一致。');
   const tag = releaseTag(version);
   const releaseBaseUrl = `https://github.com/${repository}/releases`;
   const releaseDownloadBaseUrl = `${releaseBaseUrl}/download/${tag}`;

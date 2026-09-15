@@ -69,7 +69,8 @@ const checks = [
   { id: 'internal-side-effect-coverage', command: 'pnpm', args: ['exec', 'tsx', 'scripts/audit-internal-side-effect-entries.ts', '--require-complete'] },
   { id: 'command-governance-registry', command: 'pnpm', args: ['exec', 'tsx', 'scripts/verify-command-governance-registry.ts'] },
   { id: 'conversation-event-durability-registry', command: 'pnpm', args: ['exec', 'tsx', 'scripts/audit-conversation-event-durability-registry.ts'] },
-  { id: 'renderer-transcript-window', command: 'pnpm', args: ['exec', 'tsx', 'scripts/probe-transcript-viewport.ts'] },
+  // 转录探针调用生产组件中的投影函数，沿用桌面 JSX 配置。
+  { id: 'renderer-transcript-window', command: 'pnpm', args: ['exec', 'tsx', '--tsconfig', 'apps/desktop/tsconfig.json', 'scripts/probe-transcript-viewport.ts'] },
 ];
 
 const results = [];

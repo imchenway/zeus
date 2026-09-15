@@ -801,13 +801,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
         <main className="project-source-editor-pane">
           <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
-            <button
-              type="button"
-              className="project-source-tree-toggle"
-              onClick={() => setTreeDrawerOpen((open) => !open)}
-              aria-label={zh ? '显示代码目录' : 'Show source tree'}
-              aria-expanded={treeDrawerOpen}
-            >
+            <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
               <FolderOpen aria-hidden="true" />
             </button>
             {tabs.map((tab) => (
@@ -840,16 +834,16 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             <>
               <div className="project-source-editor-track-placeholder" aria-hidden="true" />
               <section className="project-source-change-preview">
-              <header>
-                <span>
-                  {changePreview.path} · {changePreview.staged ? (zh ? 'HEAD → 暂存区' : 'HEAD → Index') : zh ? '暂存区 → 工作区' : 'Index → Working tree'}
-                </span>
-                <button type="button" onClick={() => setChangePreview(null)}>
-                  {zh ? '关闭对比' : 'Close diff'}
-                </button>
-              </header>
-              <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
-            </section>
+                <header>
+                  <span>
+                    {changePreview.path} · {changePreview.staged ? (zh ? 'HEAD → 暂存区' : 'HEAD → Index') : zh ? '暂存区 → 工作区' : 'Index → Working tree'}
+                  </span>
+                  <button type="button" onClick={() => setChangePreview(null)}>
+                    {zh ? '关闭对比' : 'Close diff'}
+                  </button>
+                </header>
+                <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
+              </section>
             </>
           ) : activeTab ? (
             <>

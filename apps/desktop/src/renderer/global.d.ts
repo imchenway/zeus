@@ -131,6 +131,8 @@ declare global {
       executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
       onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
       onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
+      /** 独立仓库差异窗口沿用应用主题，返回取消订阅函数。 */
+      onProjectGitDiffAppearance: (listener: (appearance: 'light' | 'dark' | 'system') => void) => () => void;
       onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;
       onOpenTaskGitDeliveryConversation: (listener: (input: { taskId: string; conversationId: string }) => void) => () => void;
       onOpenConversationNotification: (listener: (input: { projectId: string; conversationId: string }) => void) => () => void;
@@ -315,6 +317,8 @@ declare global {
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
       closeBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      /** 关闭当前会话全部标签，返回清理后的权威状态。 */
+      closeBrowserConversation: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       runBrowserCommand: (input: { conversationId: string; tabId: string; command: ZeusBrowserCommand }) => Promise<ZeusBrowserConversationSnapshot>;
       setBrowserLayout: (input: { conversationId: string; tabId: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }) => Promise<{ applied: boolean }>;
       prepareBrowserComments: (input: { conversationId: string; tabId: string; commentIds?: string[] }) => Promise<ZeusBrowserPreparedSubmission>;

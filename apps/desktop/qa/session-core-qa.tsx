@@ -5,23 +5,24 @@ import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/r
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
 import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
-import { ConnectedSessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
 import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
-import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
+import { ConversationInlineResource, ConversationResourceCards, defaultOpenTarget } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
 import type { NativeConversationAttachment, NativeRuntimeDetailsSnapshot, NativeSessionItemBuffer, NativeSessionState, NativeSubagentSummary, NativeSubagentThreadSnapshot } from '../src/renderer/session/sessionTypes.js';
-import { TaskPushLayoutPreview } from '../src/renderer/task/TaskModelPushModal.js';
+import { TaskPushLayoutPreview, readTaskModelPushPreferences, writeTaskModelPushPreferences, type TaskModelPushForm } from '../src/renderer/task/TaskModelPushModal.js';
+import { writeConversationRuntimePreferences } from '../src/renderer/session/conversationRuntimePreferences.js';
 import { TurnChangeCard, TurnDiffWorkspace } from '../src/renderer/session/TurnChanges.js';
 import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../src/renderer/session/sessionTypes.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
-import type { ConversationCodeComment, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationOpenTarget, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -39,6 +40,15 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  // 复用用户附件原文，覆盖时序图、流程图、语法错误与普通代码。
+  {
+    query: 'mermaid',
+    title: '会话图表预览',
+    summary: '共用 Markdown 渲染器的 Mermaid 预览与源码回退。',
+    answer:
+      '## 附件原始时序图\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant U as 用户(前端)\n    participant A as SocialImportLogApplication<br/>(@Transactional)\n    participant P as SocialImportProvider\n    participant E as socialGoodsImportLookupExecutor<br/>(10 线程，独立池)\n    participant X as 第三方接口\n\n    U->>A: 提交 40 行文件 (needLookup=true)\n    A->>P: prepareProcessQuery(rows)\n    Note over P: 条码去重 40 → 20\n\n    par 滑动窗口，最多 10 个在飞\n        P->>E: submit(条码1)\n        P->>E: submit(条码2)\n        P->>E: ... 最多 10 个\n    end\n    E->>X: HTTP 并发查询\n    X-->>E: 结果\n    E-->>P: 完成一个 → 立刻补下一个\n    Note over P: 20 次外呼全部完成(约 222ms)\n\n    P->>P: 按 barcode → payload 回写 40 行\n    P-->>A: query 已填充\n    Note over A: 之后才是原有的批量落库逻辑\n    A-->>U: 导入结果\n```\n\n## 流程图\n\n```mermaid\nflowchart LR\n  A[开始] --> B{检查格式}\n  B -->|正确| C[显示预览]\n  B -->|错误| D[保留源码]\n```\n\n## 错误语法回退\n\n```mermaid\nflowchart LR\n  A[未闭合\n```\n\n## 普通代码保持原样\n\n```text\nsequenceDiagram\n  A->>B: 普通代码\n```',
+    activities: [],
+  },
   { query: 'goal', title: '目标状态与继续执行', summary: '生产组件的目标详情和输入框对齐检查。', answer: '', activities: [] },
   { query: 'navigation', title: '完整历史刻度', summary: '生产时间线的长历史定位与动效记录。', answer: '', activities: [] },
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
@@ -107,12 +117,48 @@ export function sceneFromSearch(search: string): QaScene {
   return scenes.find((scene) => parameters.has(scene.query)) ?? scenes[0]!;
 }
 
+/** 用生产正文组件直接检查原图、错误回退、流式完成与主题可读性。 */
+function MermaidPreviewQa(props: { answer: string }) {
+  /** 可编辑输入便于重放真实附件和异常语法。 */
+  const [text, setText] = useState(props.answer);
+  /** 显式切换完成状态，检查未闭合代码块到完整图表的过渡。 */
+  const [streaming, setStreaming] = useState(false);
+  /** 同一正文按应用实际主题容器显示。 */
+  const [dark, setDark] = useState(false);
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <h1>会话图表预览</h1>
+        <nav>
+          <button type="button" onClick={() => setDark(!dark)}>
+            {dark ? '切换浅色' : '切换深色'}
+          </button>
+          <button type="button" onClick={() => setStreaming(!streaming)}>
+            {streaming ? '完成生成' : '开始流式生成'}
+          </button>
+          <button type="button" onClick={() => setText(props.answer)}>
+            恢复附件场景
+          </button>
+        </nav>
+      </header>
+      <section className="qa-error-layout-note">
+        <details>
+          <summary>编辑 Markdown</summary>
+          <textarea aria-label="图表 Markdown" value={text} onChange={(event) => setText(event.currentTarget.value)} rows={8} style={{ width: '100%' }} />
+        </details>
+        <ConversationMarkdown text={text} streamId="qa:mermaid" phase={streaming ? 'streaming' : 'final'} language="zh-CN" />
+      </section>
+    </main>
+  );
+}
+
 /** 统一挂载验收场景，界面就绪回报覆盖每个入口。 */
 export function SessionQaApp(props: { scene: QaScene }) {
   // 完整测试包通过开发入口承载 QA 时，只有组件实际挂载后才报告界面就绪。
   useEffect(() => {
     window.zeus?.reportRendererBootstrapReady?.();
   }, []);
+  if (props.scene.query === 'mermaid') return <MermaidPreviewQa answer={props.scene.answer} />;
   if (props.scene.query === 'goal') return <GoalQa />;
   if (props.scene.query === 'navigation') return <NavigationQa />;
   if (props.scene.query === 'conversation-visibility') return <ConversationVisibilityQa />;
@@ -512,6 +558,13 @@ function MessageLayoutQa() {
   });
   /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
   function checkLinks(): void {
+    /** 标题不含后缀时仍按真实路径审阅，图片与网页保留各自默认入口。 */
+    const documentResource = resources[0]!;
+    if (documentResource.kind !== 'file') throw new Error('文档场景缺少文件资源');
+    for (const extension of ['md', 'MARKDOWN', 'mdx']) {
+      if (defaultOpenTarget({ ...documentResource, iconKind: 'file', projectRelativePath: `docs/说明.${extension}` }) !== 'zeus_source') throw new Error(`Markdown 打开目标错误：${extension}`);
+    }
+    if (defaultOpenTarget({ ...documentResource, iconKind: 'image', projectRelativePath: 'image.png' }) !== 'zeus_source' || defaultOpenTarget(resources[1]!) !== 'zeus_browser') throw new Error('图片或网页未进入右侧面板');
     /** 只读取本场景正文，不将来源入口计入结果。 */
     const buttons = [...(contentRef.current?.querySelectorAll('.session-conversation-markdown .session-inline-resource') ?? [])].map((button) => button.textContent);
     if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
@@ -544,9 +597,10 @@ function MessageLayoutQa() {
     setLinkResult('运行检查通过：布局通知保留批注入口，取消选区后正常关闭');
   }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
-  function openResource(resource: ConversationResource): void {
+  function openResource(resource: ConversationResource, target: ConversationOpenTarget): void {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
-    setLinkResult(`打开回调：${resource.id}`);
+    if (resource.id === 'document-resource' && target !== 'zeus_source') throw new Error('Markdown 未进入会话审阅');
+    setLinkResult(`打开回调：${resource.id} → ${target}`);
   }
   /** 手动运行生产布局检查，覆盖计时合并、缺失过程与缺失时间的展示边界。 */
   function checkLayout(): void {
@@ -658,6 +712,7 @@ function MessageLayoutQa() {
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
+  if (parameters.has('workspace')) return <ResourceWorkspaceQa state={state} resources={resources} />;
   return (
     <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
       <header className="qa-error-layout-heading">
@@ -712,9 +767,132 @@ function MessageLayoutQa() {
           <>
             <span>来源：</span>
             <ConversationInlineResource resource={resources[1]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+            <ConversationResourceCards resources={[{ ...resources[0]!, presentation: 'card' }]} language="zh-CN" onOpenResource={openResource} />
           </>
         ) : null}
       </div>
+    </main>
+  );
+}
+
+/** 使用真实会话工作面检查资源去向，仅在文件读取和原生打开边界提供演示数据。 */
+function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: ConversationResource[] }) {
+  /** 记录显式资源动作；通用文件直接由工作面调用预览读取。 */
+  const [opened, setOpened] = useState('等待打开资源');
+  /** 行评论保留在演示会话中，验证源码审阅能力。 */
+  const [comments, setComments] = useState<ConversationCodeComment[]>([]);
+  /** 固定文件资源身份，显示标题刻意不带扩展名。 */
+  const documentResource = props.resources[0]!;
+  if (documentResource.kind !== 'file') throw new Error('缺少文档资源');
+  /** 同时覆盖正文文件链接、图片和 PDF 卡片。 */
+  const resources: ConversationResource[] = [
+    documentResource,
+    { ...documentResource, id: 'code-resource', displayName: '代码说明', projectRelativePath: 'src/example.ts', iconKind: 'typescript' },
+    { ...documentResource, id: 'image-resource', displayName: '示意图', projectRelativePath: 'diagram.png', iconKind: 'image', presentation: 'card' },
+    { ...documentResource, id: 'pdf-resource', displayName: '报告', projectRelativePath: 'report.pdf', iconKind: 'pdf', presentation: 'card' },
+    props.resources[2]!,
+  ];
+  /** 极小图片只用于检查实际预览组件的加载与关闭。 */
+  const imageUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  /** 单页 PDF 验证右侧媒体容器，不调用外部阅读器。 */
+  const pdfUrl =
+    'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAwID4+CnN0cmVhbQoKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyMDIgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA1IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgoyNTEKJSVFT0Y=';
+  useEffect(() => {
+    /** 页面退出恢复原桥接，不连接正式数据。 */
+    const previous = window.zeus;
+    window.zeus = {
+      ...previous,
+      loadFilePreview: async (request) => {
+        setOpened(`文件读取：${request.kind === 'resource' ? request.resourceId : request.kind}`);
+        /** 按请求身份返回对应格式，验证实际图片和 PDF 组件。 */
+        const pdf = request.kind === 'resource' && request.resourceId === 'pdf-resource';
+        return [{ id: 'qa-file', name: pdf ? 'report.pdf' : 'diagram.png', label: '会话文件', kind: pdf ? 'pdf' : 'image', mime: pdf ? 'application/pdf' : 'image/png', byteLength: pdf ? 413 : 69, url: pdf ? pdfUrl : imageUrl }];
+      },
+      releaseFilePreview: async () => {},
+    } as NonNullable<typeof window.zeus>;
+    return () => {
+      window.zeus = previous;
+    };
+  }, []);
+  /** 完整会话身份使生产工作面提供右侧布局和资源动作。 */
+  const conversation: NativeConversationChoice = {
+    id: 'qa-layout',
+    projectId: 'qa',
+    taskId: null,
+    title: '会话资源右侧审阅',
+    summary: null,
+    status: 'ready',
+    stage: 'completed',
+    stageUpdatedAt: '2026-09-15T04:00:00Z',
+    transportKind: 'codex_native',
+    providerId: 'codex',
+    providerThreadId: 'qa-layout',
+    providerModel: null,
+    providerState: 'idle',
+    createdAt: '2026-09-15T04:00:00Z',
+    updatedAt: '2026-09-15T04:00:00Z',
+    archived: false,
+    hasUnreadAttention: false,
+    attentionKind: 'none',
+    attentionRevision: 0,
+    attentionTurnId: null,
+    attentionUpdatedAt: null,
+    pendingRequestKind: null,
+    resumable: true,
+    readOnly: false,
+    agent: { kind: 'codex', transport: 'app_server', supportStatus: 'verified', capabilitySnapshotId: null },
+  };
+  /** 将同一组正文资源交给生产时间线，附件也通过会话提供的预览入口。 */
+  const state: NativeSessionState = {
+    ...props.state,
+    attachments: [{ name: '附件图片.png', kind: 'image', mime: 'image/png', size: 68, uploadRef: 'qa-image' }],
+    contextDraft: { ...props.state.contextDraft, codeComments: comments },
+    items: Object.fromEntries(
+      Object.entries(props.state.items).map(([key, item]) => [
+        key,
+        item.phase === 'final_answer'
+          ? { ...item, text: '[分析文档](docs/分析文档.md) · [代码说明](src/example.ts) · [访问网站](https://example.com/)', resources }
+          : item.phase === 'user'
+            ? { ...item, payload: { ...item.payload, attachments: [{ name: '历史附件.png', kind: 'image', mime: 'image/png', size: 69, uploadRef: 'qa-history-image' }] } }
+            : item,
+      ]),
+    ),
+  };
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 theme-light" style={{ width: 1440, height: 900, display: 'flex', flexDirection: 'column' }}>
+      <p role="status">{opened}</p>
+      <SessionWorkspace
+        language="zh-CN"
+        state={state}
+        conversation={conversation}
+        task={null}
+        owner={{ kind: 'project', projectId: 'qa', projectName: '资源验收' }}
+        actions={{
+          onOpenResource: async (resource, target) => {
+            if (target !== (resource.kind === 'website' ? 'zeus_browser' : 'zeus_source')) throw new Error('资源没有进入右侧目标');
+            setOpened(`${resource.id} → ${target}`);
+            if (resource.kind === 'website') return { opened: true, mode: 'zeus_browser' };
+            return {
+              opened: true,
+              mode: 'zeus_source',
+              preview: {
+                kind: 'source',
+                resource,
+                language: resource.iconKind === 'markdown' ? 'markdown' : 'typescript',
+                content: resource.iconKind === 'markdown' ? '# 分析文档\n\n右侧阅读内容。' : '// 示例代码\nconst value = 1;',
+                lineCount: 3,
+                truncated: false,
+              },
+            };
+          },
+          onLoadResourcePreview: async (resource) => {
+            if (resource.kind === 'website') throw new Error('网站不是图片');
+            return { kind: 'image', resource, mimeType: 'image/png', dataUrl: imageUrl, byteLength: 68 };
+          },
+          onContextDraftChange: (draft) => setComments(draft.codeComments),
+        }}
+      />
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }
@@ -1060,6 +1238,17 @@ function ComposerMarkdownQa() {
 | 2093161985053044748 | 2093161985044656133 | 20260828 | 00000852 | 2093161972491100160 | 000126082800428 | 5 | 2026-08-28 15:40:15 | 2026-08-28 15:40:44 | 1 | 0 | 2026-08-28 18:07:13 |`;
   /** 可以替换样例，检查普通文本、命令及 Markdown 的同一粘贴路径。 */
   const [pasteSample, setPasteSample] = useState(sample);
+  /** 使用真实任务消息组件复现网格字段中的宽表，避免只验证普通正文。 */
+  const message = activity(
+    {
+      query: 'composer-bubble',
+      title: '',
+      summary: '',
+      answer: '',
+      activities: [{ type: 'userMessage', status: 'completed', text: sample, payload: { taskPushLayout: buildTaskPushLayout({ taskTitle: '宽表消息', taskType: 'requirement', taskDescription: sample }) } }],
+    },
+    0,
+  );
   /** 仅普通浏览器 QA 注入附件返回值，不接触原生剪贴板或磁盘。 */
   useEffect(() => {
     if (window.zeus) return;
@@ -1119,6 +1308,27 @@ function ComposerMarkdownQa() {
         }}
       >
         模拟粘贴
+      </button>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
+          if (textareaRef.current) void checkComposerTableEditing(textareaRef.current, sample).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
+        }}
+      >
+        检查表格单元格编辑
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            setFocusResult(checkTaskPushPreferenceIsolation());
+          } catch (error) {
+            setFocusResult(`失败：${String(error)}`);
+          }
+        }}
+      >
+        检查推送偏好隔离
       </button>
       <button
         type="button"
@@ -1222,6 +1432,9 @@ function ComposerMarkdownQa() {
           }}
         />
       </div>
+      <div className="qa-composer-message-preview" style={{ display: 'flex', flexDirection: 'column', width: parameters.has('narrow') ? 360 : 1000, maxWidth: '100%' }}>
+        <ThreadItemView item={message} language="zh-CN" />
+      </div>
       <output aria-label="当前草稿" style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         {JSON.stringify(state.draft)}
       </output>
@@ -1235,6 +1448,97 @@ function ComposerMarkdownQa() {
 /** 让浏览器提交本轮 React 更新，模拟附件读取跨越事件循环。 */
 function nextQaTask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 在既有浏览器场景中重放真实输入事件，核对表格编辑、撤销和原文一致性。 */
+async function checkComposerTableEditing(input: ComposerInputHandle, sample: string): Promise<string> {
+  /** 宽表必须在气泡内滚动，外层网格不能按表格最小内容宽度撑开。 */
+  const bubble = document.querySelector<HTMLElement>('.qa-composer-message-preview .session-thread-item')!;
+  /** 只允许表格自身承载超出气泡的列。 */
+  const scroll = bubble.querySelector<HTMLElement>('.table-node-wrapper')!;
+  if (bubble.clientWidth <= 0 || bubble.scrollWidth > bubble.clientWidth + 2 || scroll.scrollWidth <= scroll.clientWidth) throw new Error('宽表未限制在气泡内滚动');
+  scroll.scrollLeft = 100;
+  if (scroll.scrollLeft <= 0) throw new Error('宽表无法横向滚动');
+  scroll.scrollLeft = 0;
+  /** 等待独立表格渲染根提交，不将静态 DOM 视为交互结果。 */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  /** 样例通过当前编辑器的真实粘贴链路替换，检查也可重复运行。 */
+  async function paste(text: string): Promise<void> {
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+    const editor = document.querySelector('.structured-composer-editor .cm-content');
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    editor?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    await settle();
+    if (input.value !== text) throw new Error('粘贴原文发生变化');
+  }
+  /** 点击真实单元格后写入原生输入事件，验证重绘仍复用同一输入节点。 */
+  async function edit(row: number, column: number, value: string): Promise<HTMLInputElement> {
+    const cell = document.querySelectorAll<HTMLTableRowElement>('.composer-md-table tr')[row]?.cells[column];
+    cell?.click();
+    await settle();
+    const field = cell?.querySelector('input');
+    if (!field) throw new Error(`第 ${row + 1} 行第 ${column + 1} 列未进入单元格编辑`);
+    field.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    if (!field.isConnected || document.activeElement !== field || document.querySelectorAll('.composer-md-table table').length !== 1) throw new Error('编辑时重建输入节点或撤掉表格');
+    return field;
+  }
+  await paste(sample);
+  const changed = sample.replace('00000852', '00000999');
+  const field = await edit(1, 3, '00000999');
+  if (input.value !== changed) throw new Error('修改单元格损坏其他原文');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== sample) throw new Error('撤销没有恢复原文');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== changed) throw new Error('重做没有恢复编辑');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== changed || document.querySelector('.composer-md-cell-input')) throw new Error('单元格回车误发送或未完成编辑');
+  await paste('| a | b | c |\n| --- | --- | --- |\n| 1 | | 3 |\n| only |');
+  await edit(1, 1, 'A | B');
+  if (!input.value.includes('| 1 | A \\| B| 3 |')) throw new Error('空列定位或竖线转义失败');
+  await edit(2, 2, '尾列');
+  if (!input.value.endsWith('| only |  | 尾列')) throw new Error('缺失尾列定位失败');
+  await paste('| a | b |\n| --- | --- |\n| # 字面文本 | **粗体** |');
+  if (document.querySelector('.composer-md-table h1') || !document.querySelector('.composer-md-table strong')) throw new Error('单元格内联格式被当作整篇 Markdown 解析');
+  await edit(1, 0, 'A ');
+  await edit(1, 0, 'A B');
+  if (!input.value.includes('| A B | **粗体** |')) throw new Error('单元格内空格输入丢失');
+  await paste(sample);
+  await edit(1, 3, '00000999');
+  return '通过：气泡内横向滚动、十二列表格原位编辑、长编号与前导零、节点和焦点保持、撤销重做、回车不发送、空列及缺失尾列、竖线转义、单元格内联格式。';
+}
+
+/** 用隔离存储重放推送后再改会话配置，不接触用户偏好或执行真实任务。 */
+function checkTaskPushPreferenceIsolation(): string {
+  /** 复用生产写入接口，存储只在本次检查期间存在。 */
+  const records = new Map<string, string>();
+  /** 使用与浏览器存储一致的最小读写接口。 */
+  const storage = {
+    getItem: (key: string) => records.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      records.set(key, value);
+    },
+  };
+  /** 仅偏好字段参与保存，其余任务内容不进入本场景。 */
+  const form = { model: 'push-model', effort: 'high', serviceTier: { type: 'standard' }, workMode: 'plan', permissionMode: 'auto', workspaceMode: 'worktree', workspaceModeSelected: true } as TaskModelPushForm;
+  writeTaskModelPushPreferences(storage, 'qa-project', form);
+  writeConversationRuntimePreferences(storage, 'qa-project', 'task_development', { model: 'conversation-model', effort: 'low', serviceTier: { type: 'standard' }, collaborationMode: 'default', permissionMode: 'read-only' });
+  /** 会话偏好已被改写，推送仍应恢复自己的选择。 */
+  const restored = readTaskModelPushPreferences(storage, 'qa-project');
+  if (restored?.model !== form.model || restored.effort !== form.effort || restored.workMode !== form.workMode || restored.permissionMode !== form.permissionMode || restored.workspaceMode !== form.workspaceMode)
+    throw new Error('会话配置覆盖了上次推送选择');
+  if (readTaskModelPushPreferences(storage, 'other-project') !== null) throw new Error('推送偏好跨项目串用');
+  /** 未配置推送的项目继续使用既有会话默认值。 */
+  for (const key of records.keys()) if (key.includes('task-model-push-preferences')) records.delete(key);
+  if (readTaskModelPushPreferences(storage, 'qa-project')?.model !== 'conversation-model') throw new Error('首次推送未恢复会话默认值');
+  return '通过：模型、等级、工作模式、权限和工作区选择不被会话覆盖，项目隔离及首次推送默认值正常。';
 }
 
 /** 在真实编辑节点上粘贴文件，检查处理中可输入、完成后的焦点和原选区。 */

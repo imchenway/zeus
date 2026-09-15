@@ -2,11 +2,11 @@ name: Release
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: 要构建的固定候选提交；公开发布时必须是 origin/develop 当前提交
+        description: 要构建的固定候选提交；公开发布时必须是 origin/main 当前提交
         required: false
         default: ''
       tag:
@@ -14,7 +14,7 @@ on:
         required: false
         default: ''
       publish_release:
-        description: 发布二开 GitHub Release；启用 Homebrew 时同步自己的 Tap
+        description: 发布 GitHub Release 并同步 Homebrew Tap
         required: true
         type: boolean
         default: false
@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   source-verify:
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' && vars.ZEUS_AUTO_RELEASE == 'true' && github.repository == 'imchenway/zeus' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +79,7 @@ jobs:
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
+          ZEUS_AUTO_RELEASE: ${{ vars.ZEUS_AUTO_RELEASE }}
           REQUIRE_APPLE_DISTRIBUTION: ${{ github.event_name == 'push' && vars.REQUIRE_APPLE_DISTRIBUTION == 'true' || inputs.require_apple_distribution == true }}
         run: node scripts/prepare-automatic-release.mjs
 
@@ -103,7 +104,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: 校验二开发行归属
+      - name: 校验发行归属
         id: distribution
         run: node scripts/distribution-config.mjs --github-output
       - name: 校验公开发布输入、目标占用与必要凭据
@@ -132,7 +133,7 @@ jobs:
             exit 1
           fi
           if [ "$(git ls-remote origin refs/heads/${{ steps.distribution.outputs.release_branch }} | awk '{print $1}')" != "$RELEASE_COMMIT" ]; then
-            echo '公开发布候选必须精确等于 origin/develop，拒绝发布漂移或未推送提交。' >&2
+            echo '公开发布候选必须精确等于 origin/main，拒绝发布漂移或未推送提交。' >&2
             exit 1
           fi
           node scripts/distribution-config.mjs --check-version
@@ -253,7 +254,6 @@ jobs:
     if: ${{ needs.preflight.outputs.publish == 'true' }}
     needs: [preflight, verify, package-mac]
     runs-on: ubuntu-latest
-    environment: release
     env:
       GH_TOKEN: ${{ github.token }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -284,7 +284,7 @@ jobs:
         run: |
           node scripts/distribution-config.mjs --manifest dist/zeus-release-manifest.json --check-version
           if [ "$(git ls-remote origin refs/heads/${{ needs.preflight.outputs.release_branch }} | awk '{print $1}')" != "$RELEASE_COMMIT" ]; then
-            echo '构建期间 develop 已变化，请重新选择发布候选。' >&2
+            echo '构建期间 main 已变化，请重新选择发布候选。' >&2
             exit 1
           fi
       - name: 检查或创建不可变标签

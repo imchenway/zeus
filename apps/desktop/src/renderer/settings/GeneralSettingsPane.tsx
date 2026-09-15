@@ -105,8 +105,8 @@ export function GeneralSettingsPane(props: {
             value={props.value.mainLayout}
             onChange={(mainLayout) => save({ mainLayout })}
             options={[
-              { value: 'upstream', label: zh ? '布局1 上游的主界面布局' : 'Layout 1 · Upstream main layout' },
-              { value: 'current', label: zh ? '布局2 当前布局' : 'Layout 2 · Current layout' },
+              { value: 'upstream', label: zh ? '经典布局' : 'Classic layout' },
+              { value: 'current', label: zh ? '紧凑布局' : 'Compact layout' },
             ]}
           />
         </NativeControlRow>

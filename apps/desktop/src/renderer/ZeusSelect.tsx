@@ -241,12 +241,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0, popoverContentWidthRef.current), maxWidth);
     const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
     const triggerInset = Math.min(14, triggerRect.width / 2);
-    const arrowAnchor =
-      props.popoverArrowAlignment === 'start'
-        ? triggerRect.left + triggerInset
-        : props.popoverArrowAlignment === 'end'
-          ? triggerRect.right - triggerInset
-          : triggerRect.left + triggerRect.width / 2;
+    const arrowAnchor = props.popoverArrowAlignment === 'start' ? triggerRect.left + triggerInset : props.popoverArrowAlignment === 'end' ? triggerRect.right - triggerInset : triggerRect.left + triggerRect.width / 2;
     /** 旋转方块以左上角定位，减去半边长后再限制在浮层圆角以内。 */
     const arrowLeft = Math.min(Math.max(arrowAnchor - left - 4, 12), Math.max(12, width - 20));
     const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
@@ -262,13 +257,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       placement,
     };
     setPopoverLayout((currentLayout) => {
-      if (
-        currentLayout?.top === nextLayout.top &&
-        currentLayout.left === nextLayout.left &&
-        currentLayout.width === nextLayout.width &&
-        currentLayout.arrowLeft === nextLayout.arrowLeft &&
-        currentLayout.placement === nextLayout.placement
-      ) {
+      if (currentLayout?.top === nextLayout.top && currentLayout.left === nextLayout.left && currentLayout.width === nextLayout.width && currentLayout.arrowLeft === nextLayout.arrowLeft && currentLayout.placement === nextLayout.placement) {
         return currentLayout;
       }
       return nextLayout;

@@ -1,10 +1,10 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
-import './skylight/tools/base.css';
+import './tooling/tools/base.css';
 import './session/session.css';
 import './ui/primitives.css';
 import './agentdesk-theme.css';
-import './skylight/tools/theme.css';
+import './tooling/tools/theme.css';
 import './settings/settings.css';
 import type { WorkspacePageProps } from './features/workspace/workspaceContracts.js';
 import { useWorkspaceQueryState } from './features/workspace/useWorkspaceQueryState.js';

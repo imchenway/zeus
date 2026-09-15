@@ -202,7 +202,7 @@ export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopb
   const zeusDistribution = options.distribution ?? upstreamDistribution;
   if (!isRecord(value)) throw new Error('Release update manifest must be an object.');
   if (value.app !== 'Zeus' || value.schemaVersion !== 1) throw new Error('Release update manifest identity or schema is incompatible.');
-  if (((zeusDistribution.requireManifestIdentity || value.distributionId !== undefined) && value.distributionId !== zeusDistribution.id) || value.repository !== zeusDistribution.repository) throw new Error('更新清单不属于当前二开发行版。');
+  if (((zeusDistribution.requireManifestIdentity || value.distributionId !== undefined) && value.distributionId !== zeusDistribution.id) || value.repository !== zeusDistribution.repository) throw new Error('更新清单不属于当前发行版。');
   if (value.channel !== zeusDistribution.channel) throw new Error('更新清单与当前发行渠道不一致。');
   if (value.channel !== 'stable' && value.channel !== 'preview') throw new Error('Release update manifest channel is invalid.');
   if (

@@ -322,6 +322,10 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
                     <span>
                       <strong>{conversation.title}</strong>
                       <small>
+                        {props.zh ? '最后更新：' : 'Last updated: '}
+                        <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                      </small>
+                      <small>
                         {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
                         {conversation.available ? conversation.path : conversation.unavailableReason}
                       </small>
@@ -410,6 +414,10 @@ function TaskPushContextPicker(props: {
                           />
                           <span>
                             <strong>{conversation.title}</strong>
+                            <small>
+                              {props.zh ? '最后更新：' : 'Last updated: '}
+                              <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                            </small>
                             <small>
                               {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
                               {conversation.available ? conversation.path : conversation.unavailableReason}
@@ -516,35 +524,44 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
   );
 }
 
+/** 优先恢复上次推送选择；尚未推送配置过的项目才借用会话偏好。 */
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
   if (!storage) return null;
   try {
-    const current = readConversationRuntimePreferences(storage, projectId, 'task_development');
-    if (current?.model) {
+    /** 推送专属记录不受打开会话或修改会话参数影响。 */
+    const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
+    if (
+      value?.model &&
+      typeof value.model === 'string' &&
+      typeof value.effort === 'string' &&
+      (value.workMode === 'default' || value.workMode === 'plan') &&
+      (value.permissionMode === 'read-only' || value.permissionMode === 'auto' || value.permissionMode === 'auto-review' || value.permissionMode === 'full-access')
+    ) {
       return {
-        model: current.model,
-        effort: current.effort ?? '',
+        model: value.model,
+        effort: value.effort,
         serviceTier: { type: 'standard' },
-        workMode: current.collaborationMode,
-        permissionMode: current.permissionMode,
-        ...(current.workspaceMode ? { workspaceMode: current.workspaceMode } : {}),
+        workMode: value.workMode,
+        permissionMode: value.permissionMode,
+        ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
       };
     }
-    const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
-    if (!value || typeof value.model !== 'string' || typeof value.effort !== 'string') return null;
-    if (value.workMode !== 'default' && value.workMode !== 'plan') return null;
-    if (value.permissionMode !== 'read-only' && value.permissionMode !== 'auto' && value.permissionMode !== 'auto-review' && value.permissionMode !== 'full-access') return null;
-    return {
-      model: value.model,
-      effort: value.effort,
-      serviceTier: { type: 'standard' },
-      workMode: value.workMode,
-      permissionMode: value.permissionMode,
-      ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
-    };
   } catch {
-    return null;
+    // 损坏的推送记录不阻断已有会话偏好的恢复。
   }
+  /** 旧项目继续沿用已有默认值，速度仍由项目中的模型速度偏好决定。 */
+  const current = readConversationRuntimePreferences(storage, projectId, 'task_development');
+  if (current?.model) {
+    return {
+      model: current.model,
+      effort: current.effort ?? '',
+      serviceTier: { type: 'standard' },
+      workMode: current.collaborationMode,
+      permissionMode: current.permissionMode,
+      ...(current.workspaceMode ? { workspaceMode: current.workspaceMode } : {}),
+    };
+  }
+  return null;
 }
 
 export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {

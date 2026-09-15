@@ -20581,8 +20581,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --zeus-control-danger-bg-hover: rgb(72 40 43);
   --zeus-control-danger-line: rgb(92 52 55);
   --zeus-control-danger-text: rgb(246 157 157);
-  background: var(--zeus-product-canvas);
   color: var(--zeus-product-text);
+}
+
+/* 整页背景只属于主界面；浮层复用主题颜色时保留各自的透明或遮罩规则。 */
+.macos-ai-app.zeus-shell.theme-dark {
+  background: var(--zeus-product-canvas);
 }
 
 .macos-ai-app.zeus-shell.theme-dark :where(input, select, textarea),
@@ -20710,8 +20714,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     --zeus-control-danger-bg-hover: rgb(72 40 43);
     --zeus-control-danger-line: rgb(92 52 55);
     --zeus-control-danger-text: rgb(246 157 157);
-    background: var(--zeus-product-canvas);
     color: var(--zeus-product-text);
+  }
+
+  /* 跟随系统深色时同样只绘制主界面背景，不覆盖浮层的透明背景。 */
+  .macos-ai-app.zeus-shell.theme-system {
+    background: var(--zeus-product-canvas);
   }
 
   .macos-ai-app.zeus-shell.theme-system :where(input, select, textarea),

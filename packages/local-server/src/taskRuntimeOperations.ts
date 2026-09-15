@@ -415,6 +415,13 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     }
   }
 
+  /** 展示时间不参与上下文修订，避免会话继续活动时阻断已有历史会话选择。 */
+  function taskPushContextRevision(options: unknown[], revisionResources: unknown[]): string {
+    return createHash('sha256')
+      .update(JSON.stringify({ options, revisionResources }, (key, value) => (key === 'activityAt' ? undefined : value)))
+      .digest('hex');
+  }
+
   function resolveTaskPushCurrentConversationState(task: ZeusTaskRecord): TaskPushCurrentConversationState {
     const revisionResources: unknown[] = [];
     const options = conversations.listAllByTask(task.id).map((conversation: ZeusConversationWithMessagesRecord): TaskPushContextConversationOption => {
@@ -424,11 +431,12 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
         id: conversation.id,
         title: conversation.title,
         createdAt: conversation.createdAt,
+        activityAt: conversations.meaningfulActivityAt(conversation.id),
         archived: conversation.archived,
         ...availability,
       };
     });
-    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    const revision = taskPushContextRevision(options, revisionResources);
     return { options, revision };
   }
 
@@ -448,6 +456,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
           id: conversation.id,
           title: conversation.title,
           createdAt: conversation.createdAt,
+          activityAt: conversations.meaningfulActivityAt(conversation.id),
           archived: conversation.archived,
           ...availability,
         };
@@ -464,7 +473,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
         attachments: inspectedAttachments.map((entry) => entry.option),
       };
     });
-    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    const revision = taskPushContextRevision(options, revisionResources);
     return { options, revision, tasksById, attachmentsByTaskId };
   }
 
@@ -484,7 +493,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       const conversationOptions = conversations.listAllByTask(relatedTask.id).map((conversation: ZeusConversationWithMessagesRecord) => {
         const availability = inspectTaskPushConversationPath(conversation);
         revisionResources.push({ type: 'conversation', taskId: relatedTask.id, id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
-        return { id: conversation.id, title: conversation.title, createdAt: conversation.createdAt, archived: conversation.archived, ...availability };
+        return { id: conversation.id, title: conversation.title, createdAt: conversation.createdAt, activityAt: conversations.meaningfulActivityAt(conversation.id), archived: conversation.archived, ...availability };
       });
       for (const attachment of inspectedAttachments) {
         revisionResources.push({ type: 'attachment', taskId: relatedTask.id, option: attachment.option, localPath: attachment.attachment?.localPath ?? null });
@@ -498,7 +507,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
         attachments: inspectedAttachments.map((entry) => entry.option),
       };
     });
-    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    const revision = taskPushContextRevision(options, revisionResources);
     return { options, revision, tasksById, attachmentsByTaskId };
   }
 

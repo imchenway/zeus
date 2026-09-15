@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -19,6 +19,7 @@ import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import type { TaskAgentRunStatus } from '../apiClient.js';
 import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
 import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
+import { ConversationContextMenu, type ConversationContextMenuLanguage } from './ConversationContextMenu.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -50,6 +51,14 @@ export interface ProjectConversationTreeProps {
   onSelectConversation: (conversation: NativeConversationChoice) => void;
   onStartConversation?: (taskId: string) => void;
   onArchiveConversation?: (conversation: NativeConversationChoice) => Promise<void> | void;
+  /** 标记为未读 */
+  onMarkAsUnread?: (conversation: NativeConversationChoice) => Promise<void> | void;
+  /** 标记为已读 */
+  onMarkAsRead?: (conversation: NativeConversationChoice) => Promise<void> | void;
+  /** 重命名会话 */
+  onRenameConversation?: (conversation: NativeConversationChoice, newTitle: string) => Promise<void> | void;
+  /** 在新窗口打开 */
+  onOpenInNewWindow?: (conversation: NativeConversationChoice) => Promise<void> | void;
   language: SessionUiLanguage;
   compactProjectLabel?: boolean;
   query?: string;
@@ -113,6 +122,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   /** 在绘制禁用态之前也阻止重复点击。 */
   const archiveRequestRef = useRef<string | null>(null);
+  /** 右键菜单状态 */
+  const [contextMenuState, setContextMenuState] = useState<{
+    conversation: NativeConversationChoice;
+    position: { x: number; y: number };
+  } | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   /** 搜索命中全部展示；数量限制只折叠普通会话，进行中的会话始终保留。 */
   const flattenedGroups = props.groups.map((project) => {
@@ -154,6 +168,36 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     }
   }
 
+  /** 右键菜单处理 */
+  function handleContextMenu(event: ReactMouseEvent, conversation: NativeConversationChoice): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenuState({
+      conversation,
+      position: { x: event.clientX, y: event.clientY },
+    });
+  }
+
+  function handleCloseContextMenu(): void {
+    setContextMenuState(null);
+  }
+
+  async function handleMarkAsUnread(conversation: NativeConversationChoice): Promise<void> {
+    await props.onMarkAsUnread?.(conversation);
+  }
+
+  async function handleMarkAsRead(conversation: NativeConversationChoice): Promise<void> {
+    await props.onMarkAsRead?.(conversation);
+  }
+
+  async function handleRename(conversation: NativeConversationChoice, newTitle: string): Promise<void> {
+    await props.onRenameConversation?.(conversation, newTitle);
+  }
+
+  async function handleOpenInNewWindow(conversation: NativeConversationChoice): Promise<void> {
+    await props.onOpenInNewWindow?.(conversation);
+  }
+
   /** 渲染平铺会话及其运行状态和归档入口。 */
   function renderConversationItems(conversations: FlattenedConversation[]) {
     return conversations.map(({ conversation, displayTitle }) => {
@@ -179,6 +223,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               }
               props.onSelectConversation(conversation);
             }}
+            onContextMenu={(event) => handleContextMenu(event, conversation)}
           >
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}
@@ -205,20 +250,35 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   }
 
   return (
-    <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
-      {flattenedGroups.map(({ project, conversations, visibleConversations }) => (
-        <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
-          {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
-          <ul className="session-conversation-project-items">{renderConversationItems(visibleConversations)}</ul>
-          {visibleConversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
-          {!normalizedQuery && props.onShowMore && visibleConversations.length < conversations.length ? (
-            <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
-              {copy.showMore}
-            </button>
-          ) : null}
-        </section>
-      ))}
-    </nav>
+    <>
+      <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
+        {flattenedGroups.map(({ project, conversations, visibleConversations }) => (
+          <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
+            {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
+            <ul className="session-conversation-project-items">{renderConversationItems(visibleConversations)}</ul>
+            {visibleConversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
+            {!normalizedQuery && props.onShowMore && visibleConversations.length < conversations.length ? (
+              <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
+                {copy.showMore}
+              </button>
+            ) : null}
+          </section>
+        ))}
+      </nav>
+      {/* 右键菜单 */}
+      <ConversationContextMenu
+        conversation={contextMenuState?.conversation ?? ({} as NativeConversationChoice)}
+        open={contextMenuState !== null}
+        position={contextMenuState?.position ?? { x: 0, y: 0 }}
+        onClose={handleCloseContextMenu}
+        language={props.language as ConversationContextMenuLanguage}
+        onArchive={props.onArchiveConversation}
+        onMarkAsUnread={handleMarkAsUnread}
+        onMarkAsRead={handleMarkAsRead}
+        onRename={handleRename}
+        onOpenInNewWindow={handleOpenInNewWindow}
+      />
+    </>
   );
 }
 

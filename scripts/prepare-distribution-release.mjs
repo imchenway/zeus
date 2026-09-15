@@ -27,5 +27,5 @@ console.log(JSON.stringify({ repository: d.repository, version, tag, files: [...
 if (apply) {
   for (let index = 0; index < paths.length; index += 1) writeFileSync(paths[index], JSON.stringify({ ...packages[index], version }, null, 2) + '\n');
   writeFileSync(target, notes);
-  console.log('候选文件已准备。审阅并推送 develop 后，使用 Release 工作流先验收候选，再显式公开发布。');
+  console.log(`候选文件已准备。审阅并推送 ${d.releaseBranch} 后，使用 Release 工作流先验收候选，再显式公开发布。`);
 }

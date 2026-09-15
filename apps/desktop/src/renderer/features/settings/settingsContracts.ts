@@ -14,6 +14,7 @@ export interface AppShellSettings {
   newProjectDefaultModelRef?: string | null;
   appLanguage: 'zh-CN' | 'en-US';
   appearance: 'system' | 'light' | 'dark';
+  /** 保留已持久化的布局值；界面分别显示为经典布局和紧凑布局。 */
   mainLayout: 'upstream' | 'current';
   webviewDebugEnabled: boolean;
   developerModeEnabled: boolean;

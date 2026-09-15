@@ -57,10 +57,10 @@ async function verifyImportBoundaries(): Promise<void> {
   }
 }
 
-/** 定制目录只能通过明确的组装入口和宿主适配面跨越边界。 */
+/** 工具页面目录只能通过明确的组装入口和宿主适配面跨越边界。 */
 async function verifyCustomizationBoundaries(): Promise<void> {
   const rendererRoot = 'apps/desktop/src/renderer/';
-  const customRoot = `${rendererRoot}skylight/`;
+  const customRoot = `${rendererRoot}tooling/`;
   const publicConsumers = new Map<string, Set<string>>([
     [`${rendererRoot}WorkspacePage.tsx`, new Set([`${customRoot}tools/base.css`, `${customRoot}tools/theme.css`])],
     [`${rendererRoot}features/workspace/WorkspaceView.tsx`, new Set([`${customRoot}index.js`])],
@@ -77,7 +77,7 @@ async function verifyCustomizationBoundaries(): Promise<void> {
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
         const argument = node.arguments[0];
         if (argument && ts.isStringLiteralLike(argument)) specifiers.push(argument.text);
-        else if (path.startsWith(customRoot) || path.startsWith('packages/skylight-')) failures.push(`${path} 定制模块禁止无法静态核验的动态导入。`);
+        else if (path.startsWith(customRoot) || path.startsWith('packages/distribution/')) failures.push(`${path} 工具与发行模块禁止无法静态核验的动态导入。`);
       }
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) specifiers.push(node.argument.literal.text);
       ts.forEachChild(node, visit);
@@ -90,10 +90,10 @@ async function verifyCustomizationBoundaries(): Promise<void> {
             .split('\\')
             .join('/')
         : specifier;
-      const isCustomPackage = specifier.startsWith('@skylight/') || target.startsWith('packages/skylight-');
-      if (path.startsWith('packages/') && !path.startsWith('packages/skylight-') && isCustomPackage) failures.push(`${path} 通用包不能依赖 ${specifier}。`);
+      const isCustomPackage = specifier === '@zeus/distribution' || target.startsWith('packages/distribution/');
+      if (path.startsWith('packages/') && !path.startsWith('packages/distribution/') && isCustomPackage) failures.push(`${path} 通用包不能依赖 ${specifier}。`);
       if (path.startsWith('apps/desktop/src/') && isCustomPackage && !distributionConsumers.has(path)) failures.push(`${path} 必须通过发行组装入口读取 ${specifier}。`);
-      if (!path.startsWith(customRoot) && target.startsWith(customRoot) && !publicConsumers.get(path)?.has(target)) failures.push(`${path} 不得直接访问定制内部模块 ${specifier}。`);
+      if (!path.startsWith(customRoot) && target.startsWith(customRoot) && !publicConsumers.get(path)?.has(target)) failures.push(`${path} 不得直接访问工具内部模块 ${specifier}。`);
       if (path.startsWith(`${customRoot}tools/`)) {
         if (specifier.startsWith('.') && !target.startsWith(`${customRoot}tools/`) && target !== `${customRoot}toolPageHost.js`) failures.push(`${path} 工具页只能通过 toolPageHost 使用宿主能力：${specifier}。`);
         if (!specifier.startsWith('.') && specifier !== 'react' && !specifier.startsWith('@phosphor-icons/react/')) failures.push(`${path} 工具页不能直接导入宿主或系统依赖 ${specifier}。`);

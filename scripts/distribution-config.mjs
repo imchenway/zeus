@@ -5,8 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { zeusDistribution as distribution } from './desktop-distribution.mjs';
 
-if (distribution.repository === distribution.upstreamRepository) throw new Error('二开发行仓库不能是上游仓库。');
-if (process.env.GITHUB_REPOSITORY && process.env.GITHUB_REPOSITORY !== distribution.repository) throw new Error('当前 Actions 仓库与二开发行配置不一致，拒绝发布。');
+// 普通 CI 可在贡献者 fork 中验证源码；只有发布入口检查远端仓库归属。
+if ((process.argv.includes('--manifest') || process.argv.includes('--check-version')) && process.env.GITHUB_REPOSITORY && process.env.GITHUB_REPOSITORY !== distribution.repository)
+  throw new Error('当前 Actions 仓库与发行配置不一致，拒绝发布。');
 if (process.argv.includes('--github-output')) {
   if (!process.env.GITHUB_OUTPUT) throw new Error('缺少 GITHUB_OUTPUT。');
   appendFileSync(process.env.GITHUB_OUTPUT, `release_branch=${distribution.releaseBranch}\nhomebrew_enabled=${distribution.homebrewEnabled}\nhomebrew_repository=${distribution.homebrewRepository}\n`);
@@ -18,7 +19,7 @@ else console.log(JSON.stringify({ ...distribution, version: distributionVersion 
 const manifestIndex = process.argv.indexOf('--manifest');
 if (manifestIndex >= 0) {
   const manifest = JSON.parse(readFileSync(process.argv[manifestIndex + 1], 'utf8'));
-  if (manifest.distributionId !== distribution.id || manifest.repository !== distribution.repository || manifest.channel !== distribution.channel) throw new Error('产物清单与二开发行配置不一致。');
+  if (manifest.distributionId !== distribution.id || manifest.repository !== distribution.repository || manifest.channel !== distribution.channel) throw new Error('产物清单与发行配置不一致。');
   if (process.env.RELEASE_COMMIT && manifest.sourceCommit !== process.env.RELEASE_COMMIT) throw new Error('产物提交与发布候选不一致。');
   if (process.env.RELEASE_TAG && releaseTag(manifest.version) !== process.env.RELEASE_TAG) throw new Error('产物版本与发布标签不一致。');
   if (!manifest.artifacts?.length) throw new Error('产物清单为空。');

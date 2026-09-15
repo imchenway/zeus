@@ -116,11 +116,11 @@ function collectPreflight(input) {
   let packageVersion = null;
   let desktopVersion = null;
 
-  if (branch !== zeusDistribution.releaseBranch) blockers.push(`当前分支必须是 develop，实际为 ${branch}`);
+  if (branch !== zeusDistribution.releaseBranch) blockers.push(`当前分支必须是 main，实际为 ${branch}`);
   if (worktreeStatus) blockers.push('工作区必须干净');
   if (!isExpectedOrigin(originUrl)) blockers.push(`origin 不是 ${repository}：${originUrl}`);
-  if (!remoteMainSha) blockers.push('无法读取 origin/develop 远程提交');
-  else if (remoteMainSha !== headSha) blockers.push(`本地 HEAD 与 origin/develop 不一致：local=${headSha} remote=${remoteMainSha}`);
+  if (!remoteMainSha) blockers.push('无法读取 origin/main 远程提交');
+  else if (remoteMainSha !== headSha) blockers.push(`本地 HEAD 与 origin/main 不一致：local=${headSha} remote=${remoteMainSha}`);
   if (ghAuth.status !== 0) blockers.push(`GitHub CLI 未完成可用登录：${commandFailureDetail(ghAuth)}`);
 
   try {
@@ -198,11 +198,11 @@ function buildPlan(preflight, input) {
     `- 标签：${input.tag}`,
     `- 分支：${preflight.branch}`,
     `- 候选提交：${preflight.headSha}`,
-    `- origin/develop：${preflight.remoteMainSha || '未读取到'}`,
+    `- origin/main：${preflight.remoteMainSha || '未读取到'}`,
     `- 根包／桌面包版本：${preflight.packageVersion ?? '未读取到'} / ${preflight.desktopVersion ?? '未读取到'}`,
     `- Release notes：${preflight.releaseNotesPath}`,
     `- 本地快速检查摘要：${preflight.localGateSummaryPath || '未提供'}`,
-    `- develop CI：${preflight.ciRun ? `${preflight.ciRun.conclusion} ${preflight.ciRun.url}` : '未完成；快速发布不串行等待'}`,
+    `- main CI：${preflight.ciRun ? `${preflight.ciRun.conclusion} ${preflight.ciRun.url}` : '未完成；快速发布不串行等待'}`,
     `- 本地／远程标签：${preflight.localTagSha || '无'} / ${preflight.remoteTagSha || '无'}`,
     `- GitHub Release：${preflight.release.exists ? preflight.release.data.url : '无'}`,
     `- GitHub CLI 登录：${preflight.ghAuthenticated ? '可用' : '不可用'}`,
@@ -228,7 +228,7 @@ function buildPlan(preflight, input) {
     '',
     '## 不在本命令中执行',
     '',
-    '- 不创建或合入 PR；候选改动必须在进入本命令前已通过正常代码交付进入 develop。',
+    '- 不创建或合入 PR；候选改动必须在进入本命令前已通过正常代码交付进入 main。',
     '- 不强推、不改写已存在标签、不删除失败发布留下的标签。',
     '- Workflow 在阻塞检查通过前不创建标签；失败后可对同一候选提交幂等重试。',
     '',
@@ -286,7 +286,7 @@ async function verifyPublishedRelease(input) {
     }
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     if (manifest.distributionId !== zeusDistribution.id || manifest.repository !== repository || manifest.sourceCommit !== input.headSha || manifest.channel !== zeusDistribution.channel)
-      throw new Error('公开清单不属于当前二开发行版或候选提交。');
+      throw new Error('公开清单不属于当前发行版或候选提交。');
     const manifestArtifact = manifest.artifacts?.find((artifact) => artifact.arch === 'arm64' && artifact.kind === 'dmg' && artifact.fileName === expectedDmgName);
     if (manifest.version !== input.releaseVersion || manifest.channel !== 'stable' || !manifestArtifact) {
       throw new Error('公开 manifest 的版本、通道或 DMG 记录不一致。');

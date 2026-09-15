@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { zeusDistribution, releaseTag, versionFromReleaseTag, releasePackagePaths, distributionPackagePath } from './desktop-distribution.mjs';
+import { zeusDistribution, releaseTag, versionFromReleaseTag, releasePackagePaths } from './desktop-distribution.mjs';
 /* global console, process */
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -148,9 +148,7 @@ function assertOnlyPreparedPathsChanged(status, targetNotesPath) {
 }
 
 function applyCandidateChanges(input) {
-  const distributionPackage = join(repositoryRoot, distributionPackagePath);
   const originalFiles = [
-    { path: distributionPackage, existed: true, content: readFileSync(distributionPackage, 'utf8') },
     { path: input.rootPackagePath, existed: true, content: readFileSync(input.rootPackagePath, 'utf8') },
     { path: input.desktopPackagePath, existed: true, content: readFileSync(input.desktopPackagePath, 'utf8') },
     { path: input.targetNotesPath, existed: existsSync(input.targetNotesPath), content: existsSync(input.targetNotesPath) ? readFileSync(input.targetNotesPath, 'utf8') : '' },
@@ -162,7 +160,6 @@ function applyCandidateChanges(input) {
     mkdirSync(dirname(input.targetNotesPath), { recursive: true });
     writeFileSync(input.rootPackagePath, nextRootPackage);
     writeFileSync(input.desktopPackagePath, nextDesktopPackage);
-    writeFileSync(distributionPackage, JSON.stringify({ ...JSON.parse(originalFiles[0].content), version: input.releaseVersion }, null, 2) + '\n');
     writeFileSync(input.targetNotesPath, input.sourceNotes);
     run('pnpm', ['exec', 'prettier', '--check', 'package.json', 'apps/desktop/package.json']);
     run('git', ['diff', '--check', '--', 'package.json', 'apps/desktop/package.json']);

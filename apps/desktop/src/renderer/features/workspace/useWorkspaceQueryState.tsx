@@ -1,4 +1,4 @@
-import { zeusReleaseBaseUrl } from '../../skylight/distribution.js';
+import { zeusReleaseBaseUrl } from '../../tooling/distribution.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
 import { projectTerminalOutput } from '@zeus/shared';
@@ -388,7 +388,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     props.initialAppShellSettings ?? {
       appLanguage: 'zh-CN',
       appearance: 'system',
-      mainLayout: 'current',
+      mainLayout: 'upstream',
       webviewDebugEnabled: false,
       developerModeEnabled: false,
       multiWindowEnabled: true,

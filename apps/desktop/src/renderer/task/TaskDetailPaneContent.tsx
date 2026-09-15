@@ -588,12 +588,17 @@ function TaskImmediateSelect<T extends string>(props: {
   disabled?: boolean;
   className?: string;
   colorized?: boolean;
+  /** 状态切换静默保存，其他属性仍沿用加载动效。 */
+  showSaveSpinner?: boolean;
   onSave: (value: T, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
 }) {
   const statusId = `${useId()}-status`;
   const desiredValueRef = useRef<T | null>(null);
   const [displayValue, setDisplayValue] = useState(props.value);
   const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+
+  /** 加载动效与保存保护分开，静默保存时保留下拉箭头。 */
+  const showSaveSpinner = saveState.kind === 'saving' && props.showSaveSpinner !== false;
 
   useEffect(() => {
     if (saveState.kind === 'saving' || saveState.kind === 'error' || saveState.kind === 'conflict') return;
@@ -639,7 +644,7 @@ function TaskImmediateSelect<T extends string>(props: {
 
   return (
     <span
-      className={['task-immediate-select', saveState.kind === 'saving' ? 'is-saving' : '', props.className].filter(Boolean).join(' ')}
+      className={['task-immediate-select', showSaveSpinner ? 'is-saving' : '', props.className].filter(Boolean).join(' ')}
       aria-busy={saveState.kind === 'saving' || undefined}
       aria-describedby={saveState.kind === 'error' || saveState.kind === 'conflict' ? statusId : undefined}
     >
@@ -664,7 +669,7 @@ function TaskImmediateSelect<T extends string>(props: {
         disabled={props.disabled || saveState.kind === 'saving'}
         searchable={false}
       />
-      {saveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
+      {showSaveSpinner ? <TaskSaveSpinner /> : null}
       <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
     </span>
   );
@@ -1285,6 +1290,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               color: status.color,
             }))}
             colorized
+            showSaveSpinner={false}
             ariaLabel={props.copy.detailStatusSelectAria}
             copy={editCopy}
             disabled={props.busy}

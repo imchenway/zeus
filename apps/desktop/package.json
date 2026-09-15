@@ -1,6 +1,6 @@
 {
   "name": "@zeus/desktop",
-  "version": "0.1.6",
+  "version": "0.3.126",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
@@ -18,8 +18,9 @@
     "ag-grid-community": "36.1.0",
     "ag-grid-react": "36.1.0",
     "markstream-react": "2.0.6",
+    "mermaid": "11.17.2",
     "qrcode": "1.5.4",
-    "@skylight/distribution": "workspace:*"
+    "@zeus/distribution": "workspace:*"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",

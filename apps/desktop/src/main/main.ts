@@ -2,7 +2,7 @@ import { isZeusReleaseUrl } from './desktopDistribution.js';
 
 import { registerFilePreview } from './filePreview.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -13,6 +13,7 @@ import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, read
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
+import { DatabaseSync } from 'node:sqlite';
 import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
@@ -658,6 +659,8 @@ async function openProjectGitDiffWindow(
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
+    // 网页首帧前的原生底色与加载页使用同一主题。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
     show: false,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
@@ -745,6 +748,8 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${desktopDisplayName()}`,
+    // 网页首帧前的原生底色与加载页使用同一主题。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
     show: false,
     resizable: true,
     minimizable: true,
@@ -1163,6 +1168,12 @@ function sanitizeRendererRuntimeLogDetail(message: unknown): string {
 }
 
 function setupIpc(): void {
+  /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
+  nativeTheme.on('updated', () => {
+    for (const window of projectGitDiffWindows) {
+      if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa');
+    }
+  });
   ipcMain.handle('zeus:conversation-store-migration:get-status', () => {
     if (dataRootPreparationError !== undefined) return null;
     return readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout());
@@ -2149,7 +2160,13 @@ function setupIpc(): void {
       desktopNotificationsEnabled: typeof settings.desktopNotificationsEnabled === 'boolean' ? settings.desktopNotificationsEnabled : appShellSettings.desktopNotificationsEnabled,
       openAtLoginEnabled: typeof settings.openAtLoginEnabled === 'boolean' ? settings.openAtLoginEnabled : appShellSettings.openAtLoginEnabled,
     };
+    /** 同步原生主题，让后续窗口的加载页立即沿用应用选择。 */
     const deliveryAppearance = settings.appearance === 'light' || settings.appearance === 'dark' ? settings.appearance : 'system';
+    nativeTheme.themeSource = deliveryAppearance;
+    /** 差异窗口保留当前文件和滚动位置，只更新主题。 */
+    for (const window of projectGitDiffWindows) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:project-git-diff:appearance', deliveryAppearance);
+    }
     for (const window of taskGitDeliveryWindows.values()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send('zeus:task-git-delivery:appearance', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
@@ -2769,6 +2786,28 @@ async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[], co
   return savedAttachments;
 }
 
+/** 首屏直接读取权威设置；不等待宿主启动，也不维护第二份主题缓存。 */
+function applyStartupAppearance(): void {
+  if (dataRootPreparationError !== undefined) return;
+  /** 与执行宿主使用同一个经过身份核对的数据根。 */
+  const databasePath = activeZeusDataLayout().database;
+  if (!existsSync(databasePath)) return;
+  try {
+    /** 启动外观只读一条设置，不建库、不迁移、不修改业务数据。 */
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      /** 只接受明确的外观枚举；首次使用、缺失或无效设置均跟随系统。 */
+      const setting = database.prepare("SELECT json_extract(value_json, '$.appearance') AS appearance FROM settings WHERE key = ?").get('app.shell.settings');
+      nativeTheme.themeSource = setting?.appearance === 'light' || setting?.appearance === 'dark' ? setting.appearance : 'system';
+    } finally {
+      database.close();
+    }
+  } catch {
+    // 数据库尚未迁移、损坏或不可读时仍允许启动恢复页，具体错误交给既有启动链报告。
+    console.warn('Zeus 启动主题暂不可读，首屏跟随系统。');
+  }
+}
+
 async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
@@ -2808,6 +2847,7 @@ async function initializeApplication(): Promise<void> {
     },
   });
   setupIpc();
+  applyStartupAppearance();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();
   void initialWindowPromise.catch(() => undefined);
@@ -3401,7 +3441,9 @@ async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: str
       headers: { authorization: `Bearer ${config.apiToken}` },
     });
     if (!response.ok) return appShellSettings;
-    const body = (await response.json()) as Partial<MainAppShellSettings>;
+    const body = (await response.json()) as Partial<MainAppShellSettings> & { appearance?: unknown };
+    // 设置就绪后同步原生主题，后续窗口的首屏 CSS 无需再等待页面设置请求。
+    nativeTheme.themeSource = body.appearance === 'light' || body.appearance === 'dark' ? body.appearance : 'system';
     return {
       appLanguage: body.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: body.webviewDebugEnabled === true,

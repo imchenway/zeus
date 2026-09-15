@@ -528,7 +528,7 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
 export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | undefined, fallbackLogDirectory: string, fallbackConfigPath: string, identities: SettingsIdentityCatalog): AppShellSettingsSnapshot {
   const appearance: AppAppearance = value?.appearance === 'light' || value?.appearance === 'dark' || value?.appearance === 'system' ? value.appearance : 'system';
   const appLanguage: AppLanguage = value?.appLanguage === 'en-US' ? 'en-US' : 'zh-CN';
-  const mainLayout: 'upstream' | 'current' = value?.mainLayout === 'upstream' ? 'upstream' : 'current';
+  const mainLayout: 'upstream' | 'current' = value?.mainLayout === 'current' ? 'current' : 'upstream';
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
     networkProxy: normalizeNetworkProxySettings(value?.networkProxy),

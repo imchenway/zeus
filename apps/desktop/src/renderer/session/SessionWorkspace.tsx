@@ -1,4 +1,4 @@
-import { FilePreviewDialog } from '../code/FilePreview.js';
+import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -8,7 +8,16 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { TerminalIcon as Terminal } from '@phosphor-icons/react/dist/csr/Terminal';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { type ConversationContextDraft, type ConversationFileLocation, type ConversationOpenTarget, type TurnChangeFile, type ZeusBrowserConversationSnapshot, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import {
+  isConversationSourcePreviewable,
+  type FilePreviewRequest,
+  type ConversationContextDraft,
+  type ConversationFileLocation,
+  type ConversationOpenTarget,
+  type TurnChangeFile,
+  type ZeusBrowserConversationSnapshot,
+  type ZeusBrowserPreparedSubmission,
+} from '@zeus/shared';
 import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
@@ -25,11 +34,11 @@ import { ComposerDropdown } from './ComposerDropdown.js';
 import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
 import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
-import { defaultSourceWorkspaceViewMode, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
+import { defaultSourceWorkspaceViewMode, FilePreviewWorkspace, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
-import { defaultOpenTarget } from './ConversationResources.js';
+import { defaultOpenTarget, isImageResource } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushModelCapability,
@@ -1634,6 +1643,7 @@ type SessionContextWorkspace =
   | { kind: 'browser' }
   | { kind: 'subagents' }
   | { kind: 'plan'; item: NativeSessionItemBuffer }
+  | { kind: 'file'; request: FilePreviewRequest }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
 
@@ -1673,12 +1683,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
   const terminalReturnFocusRef = useRef<HTMLElement | null>(null);
   const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
+  /** 防止关闭后的空标签通知重复触发同一会话的清理。 */
+  const closingBrowserConversationsRef = useRef(new Set<string>());
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
-  /** 快捷资源入口与正文附件使用同一预览，显式编辑器操作继续走原入口。 */
-  const [filePreviewResource, setFilePreviewResource] = useState<ConversationResource | null>(null);
+  /** 图片弹窗独立于右侧审阅，关闭后保留原有阅读位置。 */
+  const [imagePreviewRequest, setImagePreviewRequest] = useState<FilePreviewRequest | null>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
@@ -1703,6 +1715,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const contextOpen = contextWorkspace.kind !== 'none';
+  /** 通用文件同属审阅，原生焦点通知继续沿用源码类别。 */
+  const contextActivityKind = contextWorkspace.kind === 'file' ? 'source' : contextWorkspace.kind;
   const browserOpen = contextWorkspace.kind === 'browser';
   const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
@@ -1835,8 +1849,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     previousBlockingInteractionCountRef.current = 0;
     composerFocusRestorationPendingRef.current = false;
     setContextWorkspace({ kind: 'none' });
-    setFilePreviewResource(null);
     setContextFullWidth(false);
+    setImagePreviewRequest(null);
     setGoalPanelOpen(false);
     setGoalBusy(false);
     setGoalError(null);
@@ -1932,7 +1946,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       event.preventDefault();
       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setContextFullWidth(false);
-      setContextWorkspace((current) => (current.kind === 'browser' ? { kind: 'none' } : { kind: 'browser' }));
+      if (contextWorkspaceRef.current.kind === 'browser') void closeContextWorkspace();
+      else setContextWorkspace({ kind: 'browser' });
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -2091,7 +2106,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
-  async function respond(request: NativePendingRequest, response: Record<string, unknown>): Promise<void> {
+  /** 完全访问先持久化后续轮次设置；失败时保留待审批请求，避免仅批准本次。 */
+  async function respond(request: NativePendingRequest, response: Record<string, unknown>, fullAccess = false): Promise<void> {
     if (!actions.onRespondToRequest || !responseGuard.begin(request.id)) return;
     const conversationId = workspaceIdentityRef.current;
     setRequestErrors((current) => {
@@ -2100,6 +2116,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       return next;
     });
     try {
+      if (fullAccess) {
+        if (!composerRuntimeSettings || !actions.onNextTurnSettingsChange) throw new Error('完全访问设置暂不可用，请刷新后重试。');
+        /** 正在执行的轮次保留冻结权限，只更改后续轮次的设置。 */
+        const settings = { ...composerRuntimeSettings, permissionMode: 'full-access' as const };
+        await actions.onNextTurnSettingsChange(settings);
+        if (workspaceIdentityRef.current !== conversationId) return;
+        updateComposerRuntimeSettings(settings);
+      }
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
@@ -2177,10 +2201,27 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
-  async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
-    if (resource.kind !== 'website' && target === 'preferred' && !location) {
-      setFilePreviewResource(resource);
+  /** 图片使用弹窗并保留右侧内容，其他文件打开审阅并记录返回焦点。 */
+  const openFilePreview = useCallback((request: FilePreviewRequest, image = false): void => {
+    if (image) {
+      setImagePreviewRequest(request);
       return;
+    }
+    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setContextFullWidth(false);
+    setContextWorkspace({ kind: 'file', request });
+  }, []);
+
+  /** 会话图片使用弹窗，其余资源进入右侧；显式的系统和编辑器操作按用户选择执行。 */
+  async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
+    if (target === 'preferred') target = defaultOpenTarget(resource);
+    if (resource.kind !== 'website' && target === 'zeus_source') {
+      /** 代码和文本保留行评论，其他格式交给通用文件预览。 */
+      const path = resource.kind === 'file' ? resource.projectRelativePath : resource.displayName;
+      if (isImageResource(resource) || !isConversationSourcePreviewable(path)) {
+        openFilePreview({ kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id }, isImageResource(resource));
+        return;
+      }
     }
     if (!actions.onOpenResource) throw new Error('conversation_resource_open_unavailable');
     const conversationId = workspaceIdentityRef.current;
@@ -2263,7 +2304,24 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return result;
   }
 
-  function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
+  /** 明确关闭浏览器先释放标签；普通工作面切换与组件卸载不清理页面。 */
+  async function closeContextWorkspace(options: { focusComposer?: boolean } = {}): Promise<void> {
+    /** 使用实时会话身份，异步关闭完成后不影响用户刚切换的工作面。 */
+    const conversationId = workspaceIdentityRef.current;
+    if (contextWorkspaceRef.current.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
+      if (closingBrowserConversationsRef.current.has(conversationId)) return;
+      closingBrowserConversationsRef.current.add(conversationId);
+      try {
+        await window.zeus.closeBrowserConversation(conversationId);
+      } catch (error) {
+        reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
+        return;
+      } finally {
+        closingBrowserConversationsRef.current.delete(conversationId);
+      }
+      if (workspaceIdentityRef.current !== conversationId || contextWorkspaceRef.current.kind !== 'browser') return;
+      browserSnapshotRef.current = null;
+    }
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
@@ -2411,6 +2469,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
             error={requestErrors[blockingPendingRequest.id]}
             onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
+            onRespondWithFullAccess={!composerReadOnly && composerRuntimeSettings && actions.onNextTurnSettingsChange ? (_requestId, response) => respond(blockingPendingRequest, response, true) : undefined}
             onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
             onChooseAttachments={actions.onChooseStartAttachments}
             answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
@@ -2451,7 +2510,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return null;
   }
 
-  return (
+  /** 完整会话共享附件预览路由，创建会话前沿用独立附件容器。 */
+  const workspace = (
     <section
       className="session-workspace-root"
       aria-label={copy.workspace}
@@ -2462,25 +2522,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       onPointerDownCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
         const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
       }}
       onFocusCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
         const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
       }}
     >
-      {filePreviewResource ? (
-        <FilePreviewDialog
-          request={{ kind: 'resource', projectId: filePreviewResource.projectId, conversationId: filePreviewResource.conversationId, resourceId: filePreviewResource.id }}
-          zh={props.language === 'zh-CN'}
-          onClose={() => setFilePreviewResource(null)}
-        />
-      ) : null}
+      <MotionPresence>{imagePreviewRequest ? <FilePreviewDialog request={imagePreviewRequest} zh={props.language === 'zh-CN'} onClose={() => setImagePreviewRequest(null)} /> : null}</MotionPresence>
       {displayedHeader ? (
         <header
           className="session-thread-header"
-          data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || undefined}
+          data-context-toolbar={browserOpen || contextWorkspace.kind === 'source' || contextWorkspace.kind === 'file' || undefined}
           data-context-full-width={contextFullWidth || browserLayoutWidth <= 840 || undefined}
           data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}
           style={{ '--session-context-width': `${resolvedBrowserTargetWidth}px` } as CSSProperties}
@@ -2867,6 +2921,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
                         <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
                       ) : null}
+                      {contextWorkspace.kind === 'file' ? (
+                        <FilePreviewWorkspace
+                          request={contextWorkspace.request}
+                          language={props.language}
+                          toolbarHost={contextToolbarHost}
+                          canSplit={browserLayoutWidth > 840}
+                          fullWidth={contextFullWidth}
+                          onFullWidthChange={setContextFullWidth}
+                          onClose={closeContextWorkspace}
+                        />
+                      ) : null}
                       {contextWorkspace.kind === 'source' ? (
                         <SourceWorkspace
                           canSplit={browserLayoutWidth > 840}
@@ -2968,6 +3033,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       )}
     </section>
   );
+  return <FilePreviewOpenContext.Provider value={props.conversation ? openFilePreview : null}>{workspace}</FilePreviewOpenContext.Provider>;
 }
 
 export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {
@@ -2982,6 +3048,7 @@ function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: Ses
   if (workspace.kind === 'browser') return zh ? '会话浏览器' : 'Conversation browser';
   if (workspace.kind === 'subagents') return zh ? '智能体' : 'Agents';
   if (workspace.kind === 'plan') return zh ? '计划工作区' : 'Plan workspace';
+  if (workspace.kind === 'file') return zh ? '文件审阅' : 'File review';
   if (workspace.kind === 'source') return zh ? '源码预览' : 'Source preview';
   if (workspace.kind === 'turn_diff') return zh ? '变更审核' : 'Change review';
   return zh ? '会话上下文工作区' : 'Conversation context workspace';

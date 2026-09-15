@@ -1,6 +1,6 @@
 {
   "name": "zeus",
-  "version": "0.1.6",
+  "version": "0.3.126",
   "private": true,
   "type": "module",
   "scripts": {
@@ -48,8 +48,8 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "security:audit": "pnpm audit --audit-level=moderate",
     "verify:quick": "pnpm verify:publish",
-    "release:fork:prepare": "node scripts/prepare-fork-release.mjs",
     "release:config": "node scripts/distribution-config.mjs",
+    "release:distribution:prepare": "node scripts/prepare-distribution-release.mjs",
     "upstream:check": "node scripts/sync-upstream.mjs"
   },
   "dependencies": {
@@ -74,7 +74,7 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.34.0",
     "vite": "^8.0.16",
-    "@skylight/distribution": "workspace:*"
+    "@zeus/distribution": "workspace:*"
   },
   "packageManager": "pnpm@10.31.0",
   "engines": {
@@ -84,12 +84,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/skylight-f/zeus.git"
+    "url": "git+https://github.com/imchenway/zeus.git"
   },
   "bugs": {
-    "url": "https://github.com/skylight-f/zeus/issues"
+    "url": "https://github.com/imchenway/zeus/issues"
   },
-  "homepage": "https://github.com/skylight-f/zeus#readme",
+  "homepage": "https://github.com/imchenway/zeus#readme",
   "pnpm": {
     "overrides": {
       "esbuild": "0.28.1",

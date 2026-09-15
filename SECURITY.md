@@ -6,7 +6,7 @@ Zeus is pre-1.0. Security fixes target the latest `main` branch and the latest G
 
 ## Reporting a Vulnerability
 
-Please report security issues privately through GitHub Security Advisories for `skylight-f/zeus`.
+Please report security issues privately through GitHub Security Advisories for `imchenway/zeus`.
 
 Do not paste secrets, API keys, Bot Tokens, certificate material, private repository contents, or full terminal logs into public issues. Include a minimal reproduction, affected version, macOS version, and whether the issue touches local API, Keychain, Runtime, Telegram, Git operations, or release artifacts.
 

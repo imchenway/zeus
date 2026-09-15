@@ -8,7 +8,7 @@ import { zeusDistribution as distribution, releasePackagePaths, releaseTag, vers
 import { parseBoolean, requiredVersion, validateReleaseNotes } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
-const sourceTrailer = 'SkyLight-Release-Source:';
+const sourceTrailer = 'Zeus-Release-Source:';
 
 function compareVersions(left, right) {
   const a = requiredVersion(left).split('.').map(Number);
@@ -16,7 +16,7 @@ function compareVersions(left, right) {
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-/** 上游标签不参与版本选择；失败候选占用的版本也不能被新提交覆盖。 */
+/** 沿用 v 标签的版本序列；失败候选占用的版本也不能被新提交覆盖。 */
 export function selectAutomaticVersion(currentVersion, tags, notesExist) {
   let version = requiredVersion(currentVersion);
   const versions = tags.map(versionFromReleaseTag).filter(Boolean).sort(compareVersions);
@@ -40,12 +40,11 @@ export function automaticReleaseNotes(version, sourceSha, previousTag) {
     '',
     '## 本次更新',
     '',
-    `本版本汇总 develop 中通过检查的改动。[查看完整变更](${changes})。`,
+    `本版本汇总 main 中通过检查的改动。[查看完整变更](${changes})。`,
     '',
     '## 如何升级',
     '',
-    `从 [SkyLight 发布页](${base}/releases/tag/${releaseTag(version)}) 下载 Zeus-${version}-arm64.dmg，退出 Zeus 后安装。`,
-    '从旧 0.3.x 版本切换到 0.1.x 时需要手动安装一次，之后按 SkyLight 的递增版本更新。',
+    `从 [Zeus 发布页](${base}/releases/tag/${releaseTag(version)}) 下载 Zeus-${version}-arm64.dmg，退出 Zeus 后安装。`,
     ...(distribution.homebrewEnabled ? [`Homebrew：\`brew upgrade --cask ${distribution.homebrewTap}/zeus\`。`] : []),
     '',
     '## 系统要求与已知限制',
@@ -65,7 +64,7 @@ function git(root, ...args) {
 
 function packageVersion(root) {
   const versions = releasePackagePaths.map((path) => JSON.parse(readFileSync(resolve(root, path), 'utf8')).version);
-  if (versions.some((version) => version !== versions[0])) throw new Error('自动发布要求三个包的发行版本一致。');
+  if (versions.some((version) => version !== versions[0])) throw new Error('自动发布要求根包与桌面包的版本一致。');
   return requiredVersion(versions[0]);
 }
 
@@ -84,7 +83,7 @@ function remoteTags(root) {
 /** 必须同时匹配单父提交、固定尾注和版本文件范围，不能只凭提交标题跳过 CI。 */
 function readAutomaticCandidate(root, commit) {
   const message = git(root, 'show', '-s', '--format=%B', commit);
-  const source = message.match(/^SkyLight-Release-Source: ([a-f0-9]{40})$/mu)?.[1];
+  const source = message.match(/^Zeus-Release-Source: ([a-f0-9]{40})$/mu)?.[1];
   if (!source || git(root, 'show', '-s', '--format=%P', commit) !== source) return null;
   const version = packageVersion(root);
   const tag = releaseTag(version);
@@ -104,7 +103,7 @@ export function prepareAutomaticCandidate({ root, sourceSha, releases }) {
   const remoteHead = git(root, 'rev-parse', 'FETCH_HEAD');
   git(root, 'checkout', '--detach', remoteHead);
   const candidate = readAutomaticCandidate(root, remoteHead);
-  if (remoteHead !== sourceSha && candidate?.source !== sourceSha) return { ready: false, reason: 'develop 已更新，跳过过时的 CI 结果。' };
+  if (remoteHead !== sourceSha && candidate?.source !== sourceSha) return { ready: false, reason: 'main 已更新，跳过过时的 CI 结果。' };
   const tags = remoteTags(root);
   if (candidate) {
     if (tags.has(candidate.tag) && tags.get(candidate.tag) !== candidate.commit_sha) throw new Error('已有发行标签指向其他提交，拒绝覆盖。');
@@ -138,26 +137,36 @@ export function prepareAutomaticCandidate({ root, sourceSha, releases }) {
     git(root, 'push', 'origin', `HEAD:refs/heads/${distribution.releaseBranch}`);
   } catch (error) {
     const actual = git(root, 'ls-remote', 'origin', `refs/heads/${distribution.releaseBranch}`).split(/\s+/u)[0];
-    if (actual !== commit) throw new Error('版本提交推送失败：develop 可能已更新，或分支规则不允许 Actions 写入；未强推。', { cause: error });
+    if (actual !== commit) throw new Error('版本提交推送失败：main 可能已更新，或分支规则不允许 Actions 写入；未强推。', { cause: error });
   }
   return { ready: true, publish: true, commit_sha: commit, tag, source: sourceSha };
 }
 
 function main() {
-  if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REPOSITORY !== distribution.repository || !process.env.GITHUB_OUTPUT) throw new Error('此入口只在本仓库 GitHub Actions 中运行。');
+  if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.GITHUB_OUTPUT) throw new Error('此入口只在 GitHub Actions 中运行。');
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   let result;
   if (process.env.GITHUB_EVENT_NAME === 'push') {
-    if (event.deleted || event.ref !== `refs/heads/${distribution.releaseBranch}` || event.repository?.full_name !== distribution.repository) throw new Error('自动发布只接受本仓库 develop 推送。');
+    if (process.env.GITHUB_REPOSITORY !== distribution.repository) throw new Error('自动发布仓库与发行配置不一致。');
+    if (process.env.ZEUS_AUTO_RELEASE !== 'true') throw new Error('自动发布未启用，请先配置 ZEUS_AUTO_RELEASE。');
+    if (event.deleted || event.ref !== `refs/heads/${distribution.releaseBranch}` || event.repository?.full_name !== distribution.repository) throw new Error('自动发布只接受本仓库 main 推送。');
     const origin = git(repositoryRoot, 'remote', 'get-url', 'origin');
     if (![`https://github.com/${distribution.repository}`, `https://github.com/${distribution.repository}.git`, `git@github.com:${distribution.repository}.git`].includes(origin)) throw new Error('origin 与发行仓库不一致。');
     const releases = JSON.parse(execFileSync('gh', ['api', `repos/${distribution.repository}/releases?per_page=100`, '--paginate', '--slurp'], { encoding: 'utf8' })).flat();
     result = prepareAutomaticCandidate({ root: repositoryRoot, sourceSha: event.after, releases });
   } else if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch') {
+    const publish = parseBoolean('publish_release', String(event.inputs?.publish_release ?? 'false'), false);
+    const commit = git(repositoryRoot, 'rev-parse', 'HEAD');
+    // 候选构建可在贡献者 fork 运行；公开发布仍要求显式绑定上游提交和标签。
+    if (publish) {
+      if (process.env.GITHUB_REPOSITORY !== distribution.repository) throw new Error('公开发布仓库与发行配置不一致。');
+      if (!/^[a-f0-9]{40}$/u.test(event.inputs?.commit_sha ?? '') || event.inputs.commit_sha !== commit) throw new Error('公开发布要求显式填写与检出代码一致的 40 位提交。');
+      if (!event.inputs?.tag) throw new Error('公开发布要求显式填写目标标签。');
+    }
     result = {
       ready: true,
-      publish: parseBoolean('publish_release', String(event.inputs?.publish_release ?? 'false'), false),
-      commit_sha: git(repositoryRoot, 'rev-parse', 'HEAD'),
+      publish,
+      commit_sha: commit,
       tag: event.inputs?.tag || releaseTag(packageVersion(repositoryRoot)),
     };
   } else throw new Error('不支持的发布触发事件。');

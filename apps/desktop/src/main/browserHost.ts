@@ -31,17 +31,11 @@ import { googleWorkspaceExportRequest, sanitizeBrowserArtifactName } from './bro
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 import type { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
 
-interface PersistedBrowserTab {
-  snapshot: ZeusBrowserTabSnapshot;
-}
-
+/** 仅保存长期设置与书签；标签、活动页和分组随本次应用运行结束。 */
 interface PersistedBrowserState {
   version: 1;
   settings: ZeusBrowserSettings;
-  activeTabByConversation: Record<string, string>;
-  tabs: PersistedBrowserTab[];
   managementBookmarks?: ManagedBrowserBookmark[];
-  managementTabGroups?: ManagedBrowserTabGroup[];
   managementAudit?: ManagedBrowserAuditEntry[];
 }
 
@@ -146,7 +140,7 @@ interface CreateBrowserHostOptions {
   openExternal: (url: string) => Promise<void>;
   mainCommandLedger: () => MainCommandLedger;
   legacySystemDownloadDirectory?: string;
-  /** 正式数据隔离副本只恢复静态 snapshot；禁止创建 WebContentsView、导航、下载或持久化。 */
+  /** 正式数据隔离副本只读取设置；禁止创建 WebContentsView、导航、下载或持久化。 */
   readOnlyValidation?: boolean;
   configureExternalBrowsers?: (settings: Pick<ZeusBrowserSettings, 'externalChromeEnabled' | 'externalEdgeEnabled'>) => Promise<{
     state: NonNullable<ZeusBrowserSettings['externalConnectionState']>;
@@ -178,7 +172,8 @@ interface BrowserToolElementInfo {
 }
 
 export const browserPartition = 'persist:zeus-browser';
-const maxPersistedCommentsPerTab = 200;
+/** 每个标签最多保留的未发送批注数。 */
+const maxDraftCommentsPerTab = 200;
 const maxCommentBodyLength = 20_000;
 const approvalTimeoutMs = 5 * 60_000;
 const sensitiveFieldPattern = /\b(password|passcode|otp|one.?time|verification|secret|token|api.?key|card|cvv|cvc|iban|routing|account|ssn|身份证|密码|验证码|密钥|卡号|账户)\b/iu;
@@ -349,6 +344,14 @@ export class BrowserHost implements BrowserAutomationPort {
       const value = asRecord(input);
       await this.closeTab(window, requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
       return this.snapshotFor(requireNonEmptyString(value.conversationId, 'conversationId'));
+    });
+    // 明确关闭浏览器时释放当前会话的全部标签；切换工作面只隐藏视图。
+    ipcMain.handle('zeus:browser:close-conversation', (event, conversationId: unknown) => {
+      /** 关闭范围只取经过校验的会话身份和主进程实时标签。 */
+      const window = this.requireRendererWindow(event);
+      const id = requireNonEmptyString(conversationId, 'conversationId');
+      for (const tab of this.snapshotFor(id).tabs) this.closeTab(window, id, tab.id);
+      return this.snapshotFor(id);
     });
     ipcMain.handle('zeus:browser:command', async (event, request: MainCommandRequest) => {
       const window = this.requireRendererWindow(event);
@@ -631,6 +634,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.schedulePersist();
   }
 
+  /** 旧文件中的标签和分组不再恢复，登录状态仍由独立浏览器资料保存。 */
   private restorePersistedState(): void {
     try {
       const parsed = JSON.parse(readFileSync(this.statePath, 'utf8')) as Partial<PersistedBrowserState>;
@@ -640,19 +644,8 @@ export class BrowserHost implements BrowserAutomationPort {
         // 旧版本把系统“下载”目录当作内置浏览器默认值，会让普通设置操作也触发 macOS 文件夹授权。
         this.settings = { ...this.settings, downloadDirectory: resolve(this.options.defaultDownloadDirectory) };
       }
-      for (const [conversationId, tabId] of Object.entries(parsed.activeTabByConversation ?? {})) {
-        if (conversationId && tabId) this.activeTabByConversation.set(conversationId, tabId);
-      }
-      for (const entry of parsed.tabs ?? []) {
-        const snapshot = normalizePersistedTab(entry?.snapshot);
-        if (!snapshot) continue;
-        this.tabs.set(snapshot.id, { snapshot, refs: new Map(), documentGeneration: 1, consoleLogs: [] });
-      }
       for (const bookmark of parsed.managementBookmarks ?? []) {
         if (bookmark && typeof bookmark.id === 'string' && typeof bookmark.title === 'string') this.managementBookmarks.set(bookmark.id, bookmark);
-      }
-      for (const group of parsed.managementTabGroups ?? []) {
-        if (group && typeof group.id === 'string' && Array.isArray(group.tabIds)) this.managementTabGroups.set(group.id, group);
       }
       for (const audit of parsed.managementAudit ?? []) {
         if (audit && typeof audit.id === 'string') this.managementAudit.push(audit);
@@ -810,7 +803,8 @@ export class BrowserHost implements BrowserAutomationPort {
     return this.snapshotFor(conversationId);
   }
 
-  private async closeTab(window: BrowserWindow, conversationId: string, tabId: string): Promise<void> {
+  /** 同步释放标签，批量关闭期间不让新标签穿插进入清理范围。 */
+  private closeTab(window: BrowserWindow, conversationId: string, tabId: string): void {
     const tab = this.requireConversationTab(conversationId, tabId);
     if (this.visibleTabByWindow.get(window.id) === tabId) this.detachTab(tabId);
     if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
@@ -1054,7 +1048,7 @@ export class BrowserHost implements BrowserAutomationPort {
 
   private async savePageComment(tab: LiveBrowserTab, input: BrowserPageCommentInput): Promise<ZeusBrowserComment> {
     this.assertWritableBrowserCapability();
-    if (tab.snapshot.comments.filter((comment) => comment.status === 'draft').length >= maxPersistedCommentsPerTab) throw new Error('This browser tab already has the maximum number of draft comments.');
+    if (tab.snapshot.comments.filter((comment) => comment.status === 'draft').length >= maxDraftCommentsPerTab) throw new Error('This browser tab already has the maximum number of draft comments.');
     const body = typeof input.body === 'string' ? input.body.trim().slice(0, maxCommentBodyLength) : '';
     if (!body) throw new Error('Browser comment text is required.');
     const anchor = normalizePageAnchor(input.anchor);
@@ -2980,14 +2974,12 @@ export class BrowserHost implements BrowserAutomationPort {
     return operation;
   }
 
+  /** 写入长期偏好，不保存下次启动会重新打开的标签数据。 */
   private async writePersistedState(): Promise<void> {
     const value: PersistedBrowserState = {
       version: 1,
       settings: this.settings,
-      activeTabByConversation: Object.fromEntries(this.activeTabByConversation),
-      tabs: [...this.tabs.values()].map((tab) => ({ snapshot: tab.snapshot })),
       managementBookmarks: [...this.managementBookmarks.values()],
-      managementTabGroups: [...this.managementTabGroups.values()],
       managementAudit: this.managementAudit.slice(-500),
     };
     const directoryPath = dirname(this.statePath);
@@ -3115,60 +3107,6 @@ function webLinkOpenTarget(value: unknown): ZeusBrowserSettings['webLinkOpenTarg
 
 function fileOpenTarget(value: unknown): ZeusBrowserSettings['fileOpenTarget'] | null {
   return value === 'zeus_source' || value === 'system_default' || value === 'editor:vscode' || value === 'editor:vscode-insiders' || value === 'editor:cursor' || value === 'editor:windsurf' ? value : null;
-}
-
-function normalizePersistedTab(value: unknown): ZeusBrowserTabSnapshot | null {
-  try {
-    const record = asRecord(value);
-    const id = requireNonEmptyString(record.id, 'tab id');
-    const conversationId = requireNonEmptyString(record.conversationId, 'conversation id');
-    const url = normalizeBrowserUrl(typeof record.url === 'string' ? record.url : 'about:blank');
-    const comments = Array.isArray(record.comments)
-      ? record.comments
-          .map(normalizePersistedComment)
-          .filter((comment): comment is ZeusBrowserComment => Boolean(comment))
-          .slice(-maxPersistedCommentsPerTab)
-      : [];
-    return {
-      id,
-      conversationId,
-      url,
-      title: typeof record.title === 'string' && record.title ? record.title.slice(0, 500) : url,
-      ...(typeof record.faviconUrl === 'string' ? { faviconUrl: record.faviconUrl } : {}),
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      crashed: false,
-      annotationMode: record.annotationMode === true,
-      comments,
-      createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
-      updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function normalizePersistedComment(value: unknown): ZeusBrowserComment | null {
-  try {
-    const record = asRecord(value);
-    const anchor = normalizePageAnchor(record.anchor);
-    return {
-      id: requireNonEmptyString(record.id, 'comment id'),
-      number: boundedInteger(record.number, 1, 1, 10_000),
-      conversationId: requireNonEmptyString(record.conversationId, 'conversation id'),
-      tabId: requireNonEmptyString(record.tabId, 'tab id'),
-      body: requireNonEmptyString(record.body, 'comment body').slice(0, maxCommentBodyLength),
-      anchor,
-      designChanges: normalizeDesignChanges(record.designChanges),
-      ...(typeof record.screenshotPath === 'string' && isAbsolute(record.screenshotPath) ? { screenshotPath: resolve(record.screenshotPath) } : {}),
-      status: record.status === 'sent' ? 'sent' : 'draft',
-      createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
-      updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
 }
 
 function normalizePageAnchor(value: unknown): ZeusBrowserPageAnchor {

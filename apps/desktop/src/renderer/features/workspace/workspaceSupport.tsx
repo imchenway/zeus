@@ -936,7 +936,7 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
   );
   return {
     ...settings,
-    mainLayout: settings.mainLayout === 'upstream' ? 'upstream' : 'current',
+    mainLayout: settings.mainLayout === 'current' ? 'current' : 'upstream',
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,

@@ -1,0 +1,14 @@
+{
+  "id": "imchenway.zeus",
+  "repository": "imchenway/zeus",
+  "upstreamRepository": "imchenway/zeus",
+  "releaseBranch": "main",
+  "releaseTagPrefix": "v",
+  "integrationBranch": "main",
+  "channel": "stable",
+  "homebrewEnabled": true,
+  "homebrewTap": "imchenway/tap",
+  "homebrewRepository": "imchenway/homebrew-tap",
+  "cask": "zeus",
+  "requireManifestIdentity": false
+}

@@ -72,7 +72,7 @@
   flex: 1;
   min-width: 0;
 }
-/* 棋盘底适用于透明图标，明暗主题均保留可辨认的对照。 */
+/* 透明网格沿用当前主题的面板和分隔色，图片像素保持原样。 */
 .file-preview-checker {
   overflow: auto;
   min-height: 180px;
@@ -80,10 +80,10 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background-color: #fafafa;
-  background-image: conic-gradient(#ddd 25%, transparent 0 50%, #ddd 0 75%, transparent 0);
+  background-color: var(--zeus-product-panel);
+  background-image: conic-gradient(var(--zeus-product-line) 25%, transparent 0 50%, var(--zeus-product-line) 0 75%, transparent 0);
   background-size: 20px 20px;
-  color: #292929;
+  color: var(--zeus-product-text);
 }
 .file-preview-checker img {
   display: block;
@@ -143,12 +143,84 @@
   border-radius: 12px;
   box-shadow: 0 12px 50px #0004;
 }
-.file-preview-dialog > header {
+.file-preview-dialog-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--zeus-product-panel, #fff);
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px;
+  gap: 12px;
+  padding: 10px 16px;
   flex-shrink: 0;
+}
+.file-preview-dialog-header > strong {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+/* 长附件名仅占一行，完整名称由悬停提示保留。 */
+.file-preview-dialog-header > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.6;
+}
+.file-preview-dialog-header .file-preview-close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: auto;
+  border: 0;
+  border-radius: 6px;
+}
+.file-preview-dialog-header .file-preview-close:hover,
+.file-preview-image-compact button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+/* 单图使用弹窗剩余空间；仅画布滚动，标题和缩放始终可达。 */
+.file-preview-simple-image,
+.file-preview-image-compact {
+  min-height: 0;
+  overflow: hidden;
+}
+.file-preview-image-compact > .file-preview-toolbar {
+  order: 1;
+  justify-content: center;
+  padding: 8px 16px;
+  font-size: 12px;
+}
+.file-preview-image-compact > .file-preview-toolbar > span {
+  margin-right: auto;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.file-preview-image-compact button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 0;
+}
+/* 低对比棋盘跟随产品主题，保留透明区域辨识能力。 */
+.file-preview-image-compact > .file-preview-checker {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  background-color: var(--zeus-product-panel, #fff);
+  background-image: conic-gradient(color-mix(in srgb, currentColor 5%, transparent) 25%, transparent 0 50%, color-mix(in srgb, currentColor 5%, transparent) 0 75%, transparent 0);
+  background-size: 16px 16px;
+  color: inherit;
+}
+.file-preview-image-compact img:not(.is-actual-size) {
+  height: 100%;
+  max-height: 100%;
+}
+/* 放大后从左上角开始滚动，避免居中裁掉超出画布的图片边缘。 */
+.file-preview-image-compact .is-actual-size {
+  place-self: start;
+  image-rendering: auto;
 }
 @media (max-width: 640px) {
   .file-preview-pair {

@@ -1475,6 +1475,20 @@ export class ConversationRepository {
     return restored;
   }
 
+  updateTitle(conversationId: string, title: string): ZeusConversationWithMessagesRecord {
+    const existing = this.getById(conversationId);
+    if (!existing) {
+      throw new Error(`Zeus conversation not found: ${conversationId}`);
+    }
+    const timestamp = nowIso();
+    this.db.execute(`UPDATE conversations SET title = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [title, timestamp]);
+    const updated = this.getById(conversationId);
+    if (!updated) {
+      throw new Error(`Zeus conversation not found: ${conversationId}`);
+    }
+    return updated;
+  }
+
   listByProjectLegacy(projectId: string, limit = 20): ZeusConversationWithMessagesRecord[] {
     return this.listByProject(projectId, { limit }).items;
   }

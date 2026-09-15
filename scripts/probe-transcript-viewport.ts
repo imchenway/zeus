@@ -1,5 +1,6 @@
 import { conversationProcessPresentation } from '../packages/shared/src/conversationProcessPresentation.js';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
@@ -8,7 +9,6 @@ import { registerConversationSnapshotV2Api } from '../packages/local-server/src/
 import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
-import { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } from '../apps/desktop/src/renderer/features/workspace/workspaceSupport.js';
 import type { ConversationNavigationSnapshot } from '@zeus/shared';
 import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.js';
 import { TranscriptRowMeasurementCache, TranscriptViewportLayout, transcriptViewportMaximumWindowRows, transcriptViewportMeasurementCacheLimit } from '../apps/desktop/src/renderer/session/transcriptViewportVirtualizer.js';
@@ -24,6 +24,19 @@ import type {
   NativeQueueSnapshot,
   NativeSessionItemBuffer,
 } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+
+// 复用事件流探针的样式跳过方式，仅调用真实转录投影，不启动渲染器。
+registerHooks({
+  /** Node 无需加载组件样式，其他模块仍使用正常解析。 */
+  load(url, context, nextLoad) {
+    if (url.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
+    return nextLoad(url, context);
+  },
+});
+/** 将历史过程分页串联到正式行编号和轮次分组，覆盖同轮多段思考。 */
+const { projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+/** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
+const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
 
 // 通过历史分页投影检查各协议的 Pi 思考；截断预览也必须保留入口。
 for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthropic_messages']) {
@@ -50,7 +63,7 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
       conversationId: snapshot.id,
       structureGeneration: 1,
       kind: 'process',
-      items: [processItem, { ...processItem, id: 'codex-summary', protocolFamily: 'openai_responses', sourceEventId: 'codex:item:summary' }],
+      items: [processItem, { ...processItem, id: 'thinking-next', sourceEventId: 'pi:block:105:0' }, { ...processItem, id: 'codex-summary', protocolFamily: 'openai_responses', sourceEventId: 'codex:item:summary' }],
     } as NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>;
     /** 真实分页必须保留详情身份和可读文字；界面展开交互由浏览器另行检查。 */
     const items = mergeConversationProcessV2(snapshot, 'turn', page).items;
@@ -59,6 +72,33 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
         items.some((item) => item.id === 'codex-summary' && item.payload.reasoningPresentation === undefined),
       'Pi 各协议的完整或截断思考必须可回看，且不能混入 Codex 状态摘要。',
     );
+    /** 分页所得各条记录按正式缓冲字段进入转录，不改变原始条目身份。 */
+    const buffered: NativeSessionItemBuffer[] = items.map((item) => ({ ...item, key: item.id, itemId: item.id, conversationId: snapshot.id, threadId: 'thread', phase: item.phase ?? 'prework' }));
+    for (const presentation of ['process_text', 'details_collapsed']) {
+      /** 旧详情标记可能只存在于 detail，仍须保留每段正文的独立编号。 */
+      const reasoningItems = buffered.map((item) =>
+        item.key === 'codex-summary' || presentation === 'process_text' ? item : { ...item, payload: { ...item.payload, reasoningPresentation: undefined, detail: { reasoningPresentation: presentation } } },
+      );
+      /** 流式摘要换条目后仍使用同一轮次编号，正文编号保持原值。 */
+      const replacementSummary = { ...reasoningItems.find((item) => item.key === 'codex-summary')!, key: 'codex-summary-next', itemId: 'codex-summary-next', text: '继续核对结果', status: 'in_progress' };
+      for (const historyOnly of [false, true]) {
+        /** 两段正文和最新摘要共存；历史模式只隐藏状态摘要。 */
+        const rows = projectTranscriptRows([...reasoningItems, replacementSummary], [], 'turn', historyOnly);
+        assertProbe(
+          rows.map((row) => row.key).join('|') === (historyOnly ? 'thinking|thinking-next' : 'thinking|thinking-next|reasoning-summary:turn'),
+          `思考正文须各自保留，最新状态摘要独立且编号稳定：${protocolFamily}/${presentation}/${historyOnly}/${rows.map((row) => row.key).join('|')}`,
+        );
+        /** 同时核对未分组和已结束轮次，重复编号不能进入布局索引。 */
+        for (const terminalTurns of [{}, { turn: 'completed' as const }]) {
+          /** 真实布局校验保持开启，不能通过删行或跳过重复校验掩盖冲突。 */
+          const projected = projectTranscriptTurnRows(rows, null, terminalTurns);
+          new TranscriptViewportLayout().syncKeys(
+            projected.map((row) => row.key),
+            new TranscriptRowMeasurementCache(),
+          );
+        }
+      }
+    }
   }
 }
 

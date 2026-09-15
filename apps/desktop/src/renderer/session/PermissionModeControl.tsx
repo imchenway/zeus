@@ -4,6 +4,7 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
 import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
+import { ShieldChevronIcon as ShieldChevron } from '@phosphor-icons/react/dist/csr/ShieldChevron';
 import { ShieldWarningIcon as ShieldWarning } from '@phosphor-icons/react/dist/csr/ShieldWarning';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -79,18 +80,23 @@ const labels = {
 export function PermissionModeControl(props: PermissionModeControlProps) {
   const copy = labels[props.language];
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
-  const titleId = useId();
-  const introductionId = useId();
-  const riskId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  /** 各权限使用独立图标，菜单与当前权限入口共享同一视觉标识。 */
   const options = [
-    { value: 'read-only', label: copy.readOnly, description: copy.readOnlyDescription },
-    { value: 'auto', label: copy.auto, description: copy.autoDescription },
-    { value: 'auto-review', label: copy.autoReview, description: props.supportsAutoReview === false ? copy.autoReviewUnavailable : copy.autoReviewDescription, disabled: props.supportsAutoReview === false },
-    { value: 'full-access', label: copy.fullAccess, description: copy.fullAccessDescription },
+    { value: 'read-only', label: copy.readOnly, description: copy.readOnlyDescription, icon: <Eye size={20} weight="regular" /> },
+    { value: 'auto', label: copy.auto, description: copy.autoDescription, icon: <ShieldCheck size={20} weight="regular" /> },
+    {
+      value: 'auto-review',
+      label: copy.autoReview,
+      description: props.supportsAutoReview === false ? copy.autoReviewUnavailable : copy.autoReviewDescription,
+      disabled: props.supportsAutoReview === false,
+      icon: <ShieldChevron size={20} weight="regular" />,
+    },
+    { value: 'full-access', label: copy.fullAccess, description: copy.fullAccessDescription, icon: <ShieldWarning size={20} weight="fill" /> },
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
-  const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : props.value === 'full-access' ? <ShieldWarning weight="fill" /> : <ShieldCheck weight="regular" />;
+  /** 当前入口复用选项图标，避免菜单和触发器表达不同权限。 */
+  const triggerIcon = options.find((option) => option.value === props.value)?.icon;
 
   function closeConfirmation(next?: NativePermissionMode): void {
     setConfirmingFullAccess(false);
@@ -124,77 +130,85 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
           void props.onChange(next);
         }}
       />
-      <MotionPresence>
-        {confirmingFullAccess ? (
-          <ModalPortal
-            rootClassName="session-permission-dialog-portal-root"
-            backdropClassName="session-permission-dialog-backdrop"
-            onDismiss={() => closeConfirmation()}
-            role="alertdialog"
-            aria-labelledby={titleId}
-            aria-describedby={`${introductionId} ${riskId}`}
-          >
-            <section
-              className="session-permission-dialog zeus-solid-form-surface"
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return;
-                event.stopPropagation();
-                closeConfirmation();
-              }}
-              data-modal-surface="alertdialog"
-            >
-              <header className="session-permission-dialog-header">
-                <WarningCircle aria-hidden="true" weight="regular" />
-                <strong id={titleId}>{copy.title}</strong>
-              </header>
-              <p id={introductionId} className="session-permission-dialog-introduction">
-                {copy.introduction}
-              </p>
-              <div className="session-permission-dialog-capabilities">
-                <div className="session-permission-dialog-capability">
-                  <span className="session-permission-dialog-capability-icon" data-kind="files" aria-hidden="true">
-                    <Folder weight="fill" />
-                  </span>
-                  <span>
-                    <strong>{copy.filesTitle}</strong>
-                    <small>{copy.filesDescription}</small>
-                  </span>
-                </div>
-                <div className="session-permission-dialog-capability">
-                  <span className="session-permission-dialog-capability-icon" data-kind="terminal" aria-hidden="true">
-                    <TerminalWindow weight="fill" />
-                  </span>
-                  <span>
-                    <strong>{copy.terminalTitle}</strong>
-                    <small>{copy.terminalDescription}</small>
-                  </span>
-                </div>
-                <div className="session-permission-dialog-capability">
-                  <span className="session-permission-dialog-capability-icon" data-kind="internet" aria-hidden="true">
-                    <GlobeSimple weight="regular" />
-                  </span>
-                  <span>
-                    <strong>{copy.internetTitle}</strong>
-                    <small>{copy.internetDescription}</small>
-                  </span>
-                </div>
-              </div>
-              <p id={riskId} className="session-permission-dialog-risk">
-                {copy.risk}
-              </p>
-              <footer className="session-permission-dialog-actions">
-                <Button autoFocus variant="secondary" size="regular" onClick={() => closeConfirmation()}>
-                  {copy.cancel}
-                </Button>
-                <Button variant="danger" size="regular" onClick={() => closeConfirmation('full-access')}>
-                  <WarningCircle aria-hidden="true" weight="regular" />
-                  {copy.confirm}
-                </Button>
-              </footer>
-            </section>
-          </ModalPortal>
-        ) : null}
-      </MotionPresence>
+      <MotionPresence>{confirmingFullAccess ? <FullAccessConfirmation language={props.language} onDismiss={() => closeConfirmation()} onConfirm={() => closeConfirmation('full-access')} /> : null}</MotionPresence>
     </span>
+  );
+}
+
+/** 权限选择器与审批菜单共用完全访问确认，保留相同风险说明。 */
+export function FullAccessConfirmation(props: { language: SessionUiLanguage; onDismiss: () => void; onConfirm: () => void }) {
+  /** 共享文案和无障碍说明关联。 */
+  const copy = labels[props.language];
+  const titleId = useId();
+  const introductionId = useId();
+  const riskId = useId();
+  return (
+    <ModalPortal
+      rootClassName="session-permission-dialog-portal-root"
+      backdropClassName="session-permission-dialog-backdrop"
+      onDismiss={props.onDismiss}
+      role="alertdialog"
+      aria-labelledby={titleId}
+      aria-describedby={`${introductionId} ${riskId}`}
+    >
+      <section
+        className="session-permission-dialog zeus-solid-form-surface"
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.stopPropagation();
+          props.onDismiss();
+        }}
+        data-modal-surface="alertdialog"
+      >
+        <header className="session-permission-dialog-header">
+          <WarningCircle aria-hidden="true" weight="regular" />
+          <strong id={titleId}>{copy.title}</strong>
+        </header>
+        <p id={introductionId} className="session-permission-dialog-introduction">
+          {copy.introduction}
+        </p>
+        <div className="session-permission-dialog-capabilities">
+          <div className="session-permission-dialog-capability">
+            <span className="session-permission-dialog-capability-icon" data-kind="files" aria-hidden="true">
+              <Folder weight="fill" />
+            </span>
+            <span>
+              <strong>{copy.filesTitle}</strong>
+              <small>{copy.filesDescription}</small>
+            </span>
+          </div>
+          <div className="session-permission-dialog-capability">
+            <span className="session-permission-dialog-capability-icon" data-kind="terminal" aria-hidden="true">
+              <TerminalWindow weight="fill" />
+            </span>
+            <span>
+              <strong>{copy.terminalTitle}</strong>
+              <small>{copy.terminalDescription}</small>
+            </span>
+          </div>
+          <div className="session-permission-dialog-capability">
+            <span className="session-permission-dialog-capability-icon" data-kind="internet" aria-hidden="true">
+              <GlobeSimple weight="regular" />
+            </span>
+            <span>
+              <strong>{copy.internetTitle}</strong>
+              <small>{copy.internetDescription}</small>
+            </span>
+          </div>
+        </div>
+        <p id={riskId} className="session-permission-dialog-risk">
+          {copy.risk}
+        </p>
+        <footer className="session-permission-dialog-actions">
+          <Button autoFocus variant="secondary" size="regular" onClick={props.onDismiss}>
+            {copy.cancel}
+          </Button>
+          <Button variant="danger" size="regular" onClick={props.onConfirm}>
+            <WarningCircle aria-hidden="true" weight="regular" />
+            {copy.confirm}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
   );
 }

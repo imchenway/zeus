@@ -1,4 +1,4 @@
-import { zeusDistribution, skylightToolPages } from '../../skylight/index.js';
+import { zeusDistribution, toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
@@ -884,11 +884,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             onChooseFolder={() => void chooseProjectDirectoryForCreate()}
           />
         ) : null}
-        {activeNavTarget === 'skills' ? (
-          <skylightToolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} />
-        ) : null}
+        {activeNavTarget === 'skills' ? <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
         {activeNavTarget === 'automations' ? (
-          <skylightToolPages.automations
+          <toolPages.automations
             client={props.commandClient ?? null}
             projects={snapshot.projects}
             language={appShellSettings.appLanguage}
