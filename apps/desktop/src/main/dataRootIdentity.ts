@@ -159,7 +159,7 @@ export function prepareZeusDataRootIdentity(input: PrepareZeusDataRootIdentityIn
   if (existsSync(zeusDataRootIdentityPath(root))) return readAndVerifyZeusDataRootIdentity(root, expected);
 
   const rootExists = existsSync(root);
-  if (rootExists) assertCanonicalPrivateRoot(root);
+  if (rootExists) assertCanonicalOwnedRoot(root);
   const existingEntries = rootExists ? readdirSync(root) : [];
   const mayAdoptKnownProductionRoot =
     existingEntries.length > 0 &&
@@ -240,7 +240,7 @@ export function publishProvisionedZeusDataRootIdentity(
   },
 ): ZeusDataRootIdentityMarker {
   const root = normalizeRoot(input.rootPath);
-  assertCanonicalPrivateRoot(root);
+  assertCanonicalOwnedRoot(root);
   if (existsSync(zeusDataRootIdentityPath(root))) {
     throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_EXISTS', `Zeus 数据根身份已经存在，拒绝覆盖：${root}`);
   }
@@ -250,7 +250,7 @@ export function publishProvisionedZeusDataRootIdentity(
 
 export function readAndVerifyZeusDataRootIdentity(rootPath: string, expected?: ExpectedZeusDataRootIdentity): ZeusDataRootIdentityMarker {
   const root = normalizeRoot(rootPath);
-  assertCanonicalPrivateRoot(root);
+  assertCanonicalOwnedRoot(root);
   const markerPath = zeusDataRootIdentityPath(root);
   const descriptor = openSync(markerPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
@@ -381,7 +381,7 @@ function assertOfflineAdoptionProfilePathIsolation(root: string, profile: ZeusDa
 }
 
 function inspectOfflineAdoptionRoot(root: string): OfflineAdoptionInspection {
-  assertCanonicalPrivateRoot(root);
+  assertCanonicalOwnedRoot(root);
   if (pathEntryExistsNoFollow(zeusDataRootIdentityPath(root))) {
     throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_EXISTS', `Zeus 数据根身份已经存在，离线 adoption 拒绝覆盖：${root}`);
   }
@@ -610,7 +610,7 @@ function pathEntryExistsNoFollow(path: string): boolean {
 }
 
 function publishNewMarker(root: string, expected: ReturnType<typeof normalizeExpectedIdentity>): ZeusDataRootIdentityMarker {
-  assertCanonicalPrivateRoot(root);
+  assertCanonicalOwnedRoot(root);
   const payload: ZeusDataRootIdentityPayload = {
     format: markerFormat,
     formatVersion: markerFormatVersion,
@@ -764,10 +764,10 @@ function assertPrivateMarkerStats(stats: BigIntStats): void {
   if (stats.size <= 0n || stats.size > BigInt(maximumMarkerBytes)) throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_INVALID', 'Zeus 数据根身份标记超出有界读取范围。');
 }
 
-function assertCanonicalPrivateRoot(root: string): void {
+/** 数据根只校验目录归属与真实路径；私有权限由敏感文件和专用子目录各自保证。 */
+function assertCanonicalOwnedRoot(root: string): void {
   const stats = lstatSync(root);
   if (!stats.isDirectory() || stats.isSymbolicLink()) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_UNSAFE', `Zeus 数据根必须是普通目录且不能是符号链接：${root}`);
-  if ((stats.mode & 0o077) !== 0) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_UNSAFE', `Zeus 数据根权限范围过宽：${root}`);
   if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_UNSAFE', `Zeus 数据根不属于当前用户：${root}`);
   if (realpathSync(root) !== root) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_DRIFT', `Zeus 数据根包含符号链接或规范路径漂移：${root}`);
 }
@@ -782,7 +782,7 @@ function createCanonicalPrivateRoot(root: string): void {
   if (realpathSync(ancestor) !== ancestor) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_DRIFT', `Zeus 数据根父路径包含符号链接：${ancestor}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   chmodSync(root, 0o700);
-  assertCanonicalPrivateRoot(root);
+  assertCanonicalOwnedRoot(root);
 }
 
 function syncDirectory(path: string): void {
