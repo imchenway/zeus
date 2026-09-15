@@ -291,6 +291,106 @@ export function ProjectRenameDialog(props: {
   return surface;
 }
 
+/** 上游主界面布局的项目工具栏；布局切换只改变外壳，不影响项目和会话状态。 */
+export function ProjectWorkspaceModeToolbar(props: {
+  project: ProjectRecord;
+  projects: ProjectRecord[];
+  onSelectProject: (project: ProjectRecord) => void;
+  section: ProjectWorkspaceSection;
+  codeMode: ProjectCodeWorkspaceMode;
+  language: AppLanguage;
+  onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
+  /** 当前项目有已选中的会话时才提供抽屉入口。 */
+  currentConversationAvailable: boolean;
+  /** 展开状态同步给辅助技术。 */
+  currentConversationOpen: boolean;
+  /** 只打开当前会话，不切换项目工作区。 */
+  onOpenCurrentConversation: () => void;
+}) {
+  /** 导航文案跟随当前应用语言。 */
+  const zh = props.language === 'zh-CN';
+  /** 当前会话入口的固定名称不再随 Option 键切换。 */
+  const conversationLabel = zh ? '当前会话' : 'Current conversation';
+  /** 未选中会话时解释入口不可用的原因。 */
+  const conversationTitle = props.currentConversationAvailable ? conversationLabel : zh ? '先从侧栏选择一段会话' : 'Select a conversation in the sidebar first';
+  /** 各工作区的可见名称。 */
+  const labels: Record<ProjectWorkspaceEntryId, string> = {
+    tasks: zh ? '任务' : 'Tasks',
+    git: 'Git',
+    source: zh ? '源码' : 'Source',
+    commands: zh ? '命令' : 'Commands',
+  };
+  /** 同一套线性图标保持一致的视觉重量。 */
+  const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
+    tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
+    git: <WorkspaceGitIcon size={18} weight="regular" aria-hidden="true" />,
+    source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
+    commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
+  };
+  return (
+    <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
+      <div className="project-workspace-identity" title={props.project.localPath}>
+        <ZeusSelect
+          ariaLabel={zh ? '当前项目，切换项目' : 'Current project, switch project'}
+          value={props.project.id}
+          options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
+          onChange={(id) => {
+            const project = props.projects.find((item) => item.id === id);
+            if (project && project.id !== props.project.id) props.onSelectProject(project);
+          }}
+          triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
+          triggerClassName="project-workspace-identity-trigger"
+          triggerTitle={props.project.name}
+          searchable
+          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+          emptyLabel={zh ? '没有匹配项目' : 'No matching projects'}
+          popoverMinWidth={260}
+          size="compact"
+        />
+      </div>
+      <span className="project-workspace-separator" aria-hidden="true" />
+      <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
+        {PROJECT_WORKSPACE_ENTRIES.map((item) => {
+          /** 当前工作区与源码子模式共同决定选中态。 */
+          const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          /** 当前入口文案。 */
+          const label = labels[item.id];
+          /** 读屏和提示保留快捷键说明。 */
+          const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={active ? 'is-active' : ''}
+              aria-label={shortcutLabel}
+              aria-current={active ? 'page' : undefined}
+              aria-keyshortcuts={`Meta+${item.shortcutKey}`}
+              title={shortcutLabel}
+              onClick={() => props.onOpen(item.section, item.codeMode)}
+            >
+              <span aria-hidden="true">{icons[item.id]}</span>
+              <span className="project-workspace-mode-label">{label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <button
+        type="button"
+        className="project-workspace-current-conversation"
+        aria-label={conversationLabel}
+        aria-haspopup="dialog"
+        aria-expanded={props.currentConversationOpen}
+        title={conversationTitle}
+        disabled={!props.currentConversationAvailable}
+        onClick={props.onOpenCurrentConversation}
+      >
+        <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
+        <span>{conversationLabel}</span>
+      </button>
+    </header>
+  );
+}
+
 type GlobalSearchSourceResult = ProjectSourceContentMatch & { project: ProjectRecord };
 type GlobalSearchSelection = { kind: 'task'; task: TaskRecord } | { kind: 'conversation'; conversation: NativeConversationChoice; projectName: string } | { kind: 'source'; result: GlobalSearchSourceResult };
 type GlobalSearchScope = 'all' | 'task' | 'conversation' | 'source';
@@ -636,102 +736,104 @@ export function ProjectWorkspaceNavigation(props: {
   return (
     <>
       <header className="project-workspace-project-switcher" aria-label={props.project.name}>
-        <nav className="project-workspace-project-slots" aria-label={zh ? '已打开的项目' : 'Open projects'}>
-          {projectSlots.map((slot, index) => {
-            const slotProject = props.projects.find((project) => project.id === slot.projectId);
-            const active = slotProject?.id === props.project.id;
-            const emptyValue = `__empty_project_slot_${slot.id}`;
-            return (
-              <span key={slot.id} className={`project-workspace-project-slot${active ? ' is-active' : ''}`} data-project-slot-id={slot.id}>
-                <button
-                  type="button"
-                  className="project-workspace-project-slot-primary"
-                  aria-label={slotProject ? (zh ? `选择项目 ${slotProject.name}` : `Select project ${slotProject.name}`) : zh ? '尚未选择项目' : 'No project selected'}
-                  aria-pressed={active}
-                  aria-disabled={!slotProject || undefined}
-                  onClick={() => {
-                    if (slotProject && slotProject.id !== props.project.id) props.onSelectProject(slotProject);
-                  }}
-                />
-                <ZeusSelect
-                  ariaLabel={zh ? `更改第 ${index + 1} 个项目` : `Change project ${index + 1}`}
-                  value={slot.projectId || emptyValue}
-                  options={[
-                    ...props.projects.map((project) => ({
-                      value: project.id,
-                      label: project.name,
-                      searchText: project.localPath,
-                      disabled: project.id !== slot.projectId && openedProjectIds.has(project.id),
-                    })),
-                    {
-                      value: projectSlotCreateValue,
-                      label: zh ? '创建新项目' : 'Create new project',
-                      disabled: !props.canCreateProject,
-                    },
-                  ]}
-                  onChange={(id) => {
-                    if (id === projectSlotCreateValue) {
-                      props.onCreateProject();
-                      return;
-                    }
-                    const project = props.projects.find((item) => item.id === id);
-                    if (!project) return;
-                    setProjectSlots((current) => current.map((item) => (item.id === slot.id ? { ...item, projectId: project.id } : item)));
-                    if (project.id !== props.project.id) props.onSelectProject(project);
-                  }}
-                  triggerLabel={slotProject?.name ?? (zh ? '选择项目' : 'Select project')}
-                  triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
-                  triggerClassName="project-workspace-project-slot-trigger"
-                  triggerTitle={zh ? '点击左侧箭头切换项目' : 'Use the left arrow to change project'}
-                  searchable
-                  searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
-                  emptyLabel={zh ? '没有可选择的项目' : 'No projects available'}
-                  popoverMinWidth={260}
-                  popoverArrowAlignment="start"
-                  size="compact"
-                />
-                <button
-                  type="button"
-                  className="project-workspace-project-slot-close"
-                  disabled={projectSlots.length <= 1}
-                  aria-label={slotProject ? (zh ? `关闭项目 ${slotProject.name}` : `Close project ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
-                  title={projectSlots.length <= 1 ? (zh ? '至少保留一个项目' : 'Keep at least one project open') : slotProject ? (zh ? `关闭 ${slotProject.name}` : `Close ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeProjectSlot(slot.id);
-                  }}
-                >
-                  <X size={15} weight="regular" aria-hidden="true" />
-                </button>
-              </span>
-            );
-          })}
-        </nav>
-        <ZeusSelect
-          className="project-workspace-add-project-select"
-          ariaLabel={zh ? '打开项目菜单' : 'Open project menu'}
-          value={props.project.id}
-          options={[
-            ...props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath })),
-            {
-              value: projectSlotCreateValue,
-              label: zh ? '创建新项目' : 'Create new project',
-              disabled: !props.canCreateProject,
-            },
-          ]}
-          onChange={selectProjectFromAddMenu}
-          triggerIcon={<Plus size={18} weight="regular" aria-hidden="true" />}
-          triggerClassName="project-workspace-add-project"
-          triggerTitle={zh ? '打开项目菜单' : 'Open project menu'}
-          hideSelectedLabel
-          searchable
-          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
-          emptyLabel={zh ? '没有可选择的项目' : 'No projects available'}
-          popoverMinWidth={260}
-          popoverArrowAlignment="center"
-          disabled={props.createProjectBusy}
-          size="compact"
-        />
+        <div className="project-workspace-project-switcher-leading">
+          <nav className="project-workspace-project-slots" aria-label={zh ? '已打开的项目' : 'Open projects'}>
+            {projectSlots.map((slot, index) => {
+              const slotProject = props.projects.find((project) => project.id === slot.projectId);
+              const active = slotProject?.id === props.project.id;
+              const emptyValue = `__empty_project_slot_${slot.id}`;
+              return (
+                <span key={slot.id} className={`project-workspace-project-slot${active ? ' is-active' : ''}`} data-project-slot-id={slot.id}>
+                  <button
+                    type="button"
+                    className="project-workspace-project-slot-primary"
+                    aria-label={slotProject ? (zh ? `选择项目 ${slotProject.name}` : `Select project ${slotProject.name}`) : zh ? '尚未选择项目' : 'No project selected'}
+                    aria-pressed={active}
+                    aria-disabled={!slotProject || undefined}
+                    onClick={() => {
+                      if (slotProject && slotProject.id !== props.project.id) props.onSelectProject(slotProject);
+                    }}
+                  />
+                  <ZeusSelect
+                    ariaLabel={zh ? `更改第 ${index + 1} 个项目` : `Change project ${index + 1}`}
+                    value={slot.projectId || emptyValue}
+                    options={[
+                      ...props.projects.map((project) => ({
+                        value: project.id,
+                        label: project.name,
+                        searchText: project.localPath,
+                        disabled: project.id !== slot.projectId && openedProjectIds.has(project.id),
+                      })),
+                      {
+                        value: projectSlotCreateValue,
+                        label: zh ? '创建新项目' : 'Create new project',
+                        disabled: !props.canCreateProject,
+                      },
+                    ]}
+                    onChange={(id) => {
+                      if (id === projectSlotCreateValue) {
+                        props.onCreateProject();
+                        return;
+                      }
+                      const project = props.projects.find((item) => item.id === id);
+                      if (!project) return;
+                      setProjectSlots((current) => current.map((item) => (item.id === slot.id ? { ...item, projectId: project.id } : item)));
+                      if (project.id !== props.project.id) props.onSelectProject(project);
+                    }}
+                    triggerLabel={slotProject?.name ?? (zh ? '选择项目' : 'Select project')}
+                    triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
+                    triggerClassName="project-workspace-project-slot-trigger"
+                    triggerTitle={zh ? '点击左侧箭头切换项目' : 'Use the left arrow to change project'}
+                    searchable
+                    searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+                    emptyLabel={zh ? '没有可选择的项目' : 'No projects available'}
+                    popoverMinWidth={260}
+                    popoverArrowAlignment="start"
+                    size="compact"
+                  />
+                  <button
+                    type="button"
+                    className="project-workspace-project-slot-close"
+                    disabled={projectSlots.length <= 1}
+                    aria-label={slotProject ? (zh ? `关闭项目 ${slotProject.name}` : `Close project ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
+                    title={projectSlots.length <= 1 ? (zh ? '至少保留一个项目' : 'Keep at least one project open') : slotProject ? (zh ? `关闭 ${slotProject.name}` : `Close ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeProjectSlot(slot.id);
+                    }}
+                  >
+                    <X size={15} weight="regular" aria-hidden="true" />
+                  </button>
+                </span>
+              );
+            })}
+          </nav>
+          <ZeusSelect
+            className="project-workspace-add-project-select"
+            ariaLabel={zh ? '打开项目菜单' : 'Open project menu'}
+            value={props.project.id}
+            options={[
+              ...props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath })),
+              {
+                value: projectSlotCreateValue,
+                label: zh ? '创建新项目' : 'Create new project',
+                disabled: !props.canCreateProject,
+              },
+            ]}
+            onChange={selectProjectFromAddMenu}
+            triggerIcon={<Plus size={18} weight="regular" aria-hidden="true" />}
+            triggerClassName="project-workspace-add-project"
+            triggerTitle={zh ? '打开项目菜单' : 'Open project menu'}
+            hideSelectedLabel
+            searchable
+            searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+            emptyLabel={zh ? '没有可选择的项目' : 'No projects available'}
+            popoverMinWidth={260}
+            popoverArrowAlignment="center"
+            disabled={props.createProjectBusy}
+            size="compact"
+          />
+        </div>
         <ProjectGlobalSearch
           projects={props.projects}
           tasks={props.tasks}
@@ -839,6 +941,7 @@ export function ProjectWorkspaceNavigation(props: {
 
 /** 项目导航将状态筛选与搜索叠加，会话始终平铺。 */
 export function SidebarNav(props: {
+  mainLayout?: 'current' | 'upstream';
   activeNavTarget: WorkspaceViewId;
   activeProjectId?: string;
   activeProjectSection: ProjectWorkspaceSection;
@@ -1071,10 +1174,11 @@ export function SidebarNav(props: {
   }, [openProjectMenuIds]);
   const copy = getLanguageCopy(props.appLanguage).sidebar;
   const zh = props.appLanguage === 'zh-CN';
-  const showConversationNavigation = props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions';
+  const showConversationNavigation = props.mainLayout === 'upstream' || (props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions');
+  const scopeToCurrentProject = showConversationNavigation && props.mainLayout !== 'upstream' && props.activeProjectId;
   /** 会话侧栏严格跟随顶部选中的当前项目，其他项目通过顶部入口切换。 */
-  const scopedProjects = showConversationNavigation && props.activeProjectId ? props.projects.filter((project) => project.id === props.activeProjectId) : props.projects;
-  const scopedConversationGroups = showConversationNavigation && props.activeProjectId ? props.conversationGroups.filter((group) => group.projectId === props.activeProjectId) : props.conversationGroups;
+  const scopedProjects = scopeToCurrentProject ? props.projects.filter((project) => project.id === props.activeProjectId) : props.projects;
+  const scopedConversationGroups = scopeToCurrentProject ? props.conversationGroups.filter((group) => group.projectId === props.activeProjectId) : props.conversationGroups;
   const contextTitle =
     props.activeNavTarget === 'automations'
       ? zh
@@ -1203,9 +1307,9 @@ export function SidebarNav(props: {
     );
   });
   const enteringProjectIds = useNewItemMotionIds(scopedProjects.map((project) => project.id));
-  // macOS 红黄绿窗口按钮属于系统层：侧栏仅保留紧凑顶部安全区，避开交通灯但不占用过多内容区。
+  // 上游沿用 main 的 44px 交通灯安全区；当前布局保留紧凑侧栏。
   const titlebarProtectedSidebarStyle = {
-    '--zeus-hidden-titlebar-safe-top': '20px',
+    '--zeus-hidden-titlebar-safe-top': props.mainLayout === 'upstream' ? '44px' : '20px',
     paddingBlockStart: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
     paddingTop: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
   } as CSSProperties;
@@ -1214,9 +1318,10 @@ export function SidebarNav(props: {
   return (
     <aside className="zeus-sidebar ai-sidebar project-first-sidebar zeus-titlebar-protected-source-list" aria-label={copy.ariaLabel} style={titlebarProtectedSidebarStyle}>
       <div className="project-window-control-reserved-space" aria-hidden="true" />
-      <nav className="project-quick-actions codex-source-list-quick-actions project-context-actions" aria-label={contextTitle}>
-        {showConversationNavigation ? (
-          <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={props.createProjectBusy}>
+      {props.mainLayout === 'upstream' ? (
+        <nav className="project-quick-actions codex-source-list-quick-actions" aria-label={copy.quickActionsLabel}>
+          <strong className="project-sidebar-brand">Zeus</strong>
+          <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
             <span className="project-quick-action-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" focusable="false">
                 <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
@@ -1225,8 +1330,45 @@ export function SidebarNav(props: {
             </span>
             <span className="project-quick-action-label">{copy.newChat}</span>
           </button>
-        ) : null}
-      </nav>
+          <button
+            type="button"
+            className={`project-quick-action${props.activeNavTarget === 'automations' ? ' is-active' : ''}`}
+            aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined}
+            onClick={() => props.onNavigate('automations')}
+          >
+            <span className="project-quick-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" focusable="false">
+                <circle cx="10" cy="10" r="6.5" />
+                <path d="M10 6.2V10l2.7 1.8M4.2 3.8l1.5 1.5M15.8 3.8l-1.5 1.5" />
+              </svg>
+            </span>
+            <span className="project-quick-action-label">{props.appLanguage === 'zh-CN' ? '自动化' : 'Automations'}</span>
+          </button>
+          <button type="button" className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
+            <span className="project-quick-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" focusable="false">
+                <path d="M10 2.7 11.5 7l4.5 1.5-4.5 1.6-1.5 4.3-1.5-4.3L4 8.5 8.5 7 10 2.7Z" />
+                <path d="m15.2 13 .7 2 .1.1 2.1.7-2.1.8-.8 2.1-.7-2.1-2.1-.8 2.1-.7.7-2Z" />
+              </svg>
+            </span>
+            <span className="project-quick-action-label">{copy.skills}</span>
+          </button>
+        </nav>
+      ) : (
+        <nav className="project-quick-actions codex-source-list-quick-actions project-context-actions" aria-label={contextTitle}>
+          {showConversationNavigation ? (
+            <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={props.createProjectBusy}>
+              <span className="project-quick-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" focusable="false">
+                  <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
+                  <path d="m11.4 4.4 4.2 4.2" />
+                </svg>
+              </span>
+              <span className="project-quick-action-label">{copy.newChat}</span>
+            </button>
+          ) : null}
+        </nav>
+      )}
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation}>
         <div className="project-sidebar-heading">
           <label className="project-sidebar-search-field" onKeyDown={handleProjectSearchKeyDown}>
@@ -1308,7 +1450,7 @@ export function SidebarNav(props: {
                 size="compact"
               />
             ) : null}
-            {!props.activeProjectId ? (
+            {!props.activeProjectId && props.mainLayout !== 'upstream' ? (
               <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
                 <Plus aria-hidden="true" weight="regular" />
               </button>
@@ -1543,6 +1685,16 @@ export function SidebarNav(props: {
             </button>
           </section>
         </>
+      ) : null}
+      {props.mainLayout === 'upstream' ? (
+        <section className="project-global-settings" aria-label={copy.globalSettingsLabel}>
+          <button type="button" className={props.activeNavTarget === 'settings' ? 'active' : ''} onClick={() => props.onNavigate('settings')}>
+            <span aria-hidden="true">
+              <GearSix weight="regular" />
+            </span>
+            {copy.settings}
+          </button>
+        </section>
       ) : null}
       <MotionPresence>
         {projectRenameTarget ? (

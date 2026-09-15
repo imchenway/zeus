@@ -388,6 +388,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     props.initialAppShellSettings ?? {
       appLanguage: 'zh-CN',
       appearance: 'system',
+      mainLayout: 'current',
       webviewDebugEnabled: false,
       developerModeEnabled: false,
       multiWindowEnabled: true,
