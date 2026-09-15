@@ -322,6 +322,10 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
                     <span>
                       <strong>{conversation.title}</strong>
                       <small>
+                        {props.zh ? '最后更新：' : 'Last updated: '}
+                        <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                      </small>
+                      <small>
                         {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
                         {conversation.available ? conversation.path : conversation.unavailableReason}
                       </small>
@@ -410,6 +414,10 @@ function TaskPushContextPicker(props: {
                           />
                           <span>
                             <strong>{conversation.title}</strong>
+                            <small>
+                              {props.zh ? '最后更新：' : 'Last updated: '}
+                              <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                            </small>
                             <small>
                               {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
                               {conversation.available ? conversation.path : conversation.unavailableReason}
