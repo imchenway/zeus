@@ -9829,10 +9829,51 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .composer-md-table .session-markdown {
   font: inherit;
 }
-.session-codex-parity-v1 .composer-md-table .table-node :where(th, td) {
-  min-inline-size: max-content;
+.session-codex-parity-v1 .composer-md-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--session-border);
+  border-radius: 8px;
+}
+.session-codex-parity-v1 .composer-md-table table {
+  border-collapse: collapse;
+  inline-size: max-content;
+  min-inline-size: 100%;
+}
+.session-codex-parity-v1 .composer-md-table :where(th, td) {
+  min-inline-size: 4ch;
+  padding: 10px 12px;
+  border: 1px solid var(--session-border);
   white-space: nowrap;
   cursor: text;
+}
+/* 单元格编辑继承表格字号，焦点边界在浅色、深色和高对比度下均可识别。 */
+.session-codex-parity-v1 .composer-md-table th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--session-text) 4%, transparent);
+}
+.session-codex-parity-v1 .composer-md-table .session-markdown p {
+  margin: 0;
+}
+.session-codex-parity-v1 .composer-md-cell {
+  position: relative;
+  min-inline-size: 4ch;
+  min-block-size: 1.5em;
+}
+.session-codex-parity-v1 .composer-md-cell-input {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  outline: 1px solid var(--zeus-control-focus);
+  outline-offset: 3px;
 }
 
 @media (forced-colors: active) {

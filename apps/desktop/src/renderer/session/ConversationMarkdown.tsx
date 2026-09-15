@@ -69,6 +69,8 @@ export interface ConversationMarkdownProps {
   structuredTokens?: readonly StructuredMessageToken[];
   /** 已冻结的短文档可一次呈现，长会话继续按批次渲染。 */
   renderImmediately?: boolean;
+  /** 输入框可替换表格交互，单元格解析、安全链接和内联格式仍沿用正文渲染。 */
+  customComponentsId?: string;
 }
 
 export type StructuredMessageToken = {
@@ -119,7 +121,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   onRenderSettledRef.current = props.onRenderSettled;
 
   const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language), [props.language, props.text]);
-  const customId = props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID;
+  const customId = props.customComponentsId ?? (props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID);
   const parseOptions = useMemo<NonNullable<NodeRendererProps['parseOptions']>>(
     () => ({
       reuseStableTopLevelNodes: true,
@@ -337,7 +339,8 @@ function renderStructuredInlineText(content: string, tokens: readonly Structured
   return parts;
 }
 
-const customComponents = {
+/** 各 Markdown 展示入口共用安全节点，输入框只扩展表格的编辑交互。 */
+export const conversationMarkdownComponents = {
   link: SecureLinkNode,
   image: SecureImageNode,
   code_block: SecureCodeBlockNode,
@@ -350,8 +353,8 @@ const customComponents = {
   math_block: PlainMathNode,
 } as unknown as CustomComponentMap;
 
-setCustomComponents(CUSTOM_COMPONENTS_ID, customComponents);
-setCustomComponents(STRUCTURED_CUSTOM_COMPONENTS_ID, { ...customComponents, text: StructuredTextNode } as CustomComponentMap);
+setCustomComponents(CUSTOM_COMPONENTS_ID, conversationMarkdownComponents);
+setCustomComponents(STRUCTURED_CUSTOM_COMPONENTS_ID, { ...conversationMarkdownComponents, text: StructuredTextNode } as CustomComponentMap);
 
 function ConversationMarkdownCopyButton(props: { label: string; copiedLabel: string; text: string }) {
   const [copied, setCopied] = useState(false);

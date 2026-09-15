@@ -143,8 +143,14 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
     <div
       ref={hostRef}
       className="structured-composer-editor"
-      onKeyDownCapture={props.onKeyDown}
-      onPasteCapture={props.onPaste}
+      onKeyDownCapture={(event) => {
+        // 表格单元格拥有自己的编辑快捷键，回车不穿透到会话发送。
+        if (!(event.target instanceof HTMLInputElement)) props.onKeyDown(event);
+      }}
+      onPasteCapture={(event) => {
+        // 单元格文本由原生输入控件粘贴，避免按外层光标位置写进别的正文。
+        if (!(event.target instanceof HTMLInputElement)) props.onPaste?.(event);
+      }}
       onCompositionStart={props.onCompositionStart}
       onCompositionEnd={() => {
         // 等待编辑器收取最终组合文本，再解除调用方的草稿持久化保护。
