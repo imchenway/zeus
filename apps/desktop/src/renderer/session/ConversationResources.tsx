@@ -167,7 +167,8 @@ export function ConversationInlineResource(
   });
 
   async function open(): Promise<void> {
-    if (props.resource.kind !== 'website') {
+    // 默认目标允许文档进入会话审阅，通用文件才使用弹窗预览。
+    if (props.resource.kind !== 'website' && defaultOpenTarget(props.resource) === 'preferred') {
       setPreviewOpen(true);
       return;
     }
@@ -464,7 +465,8 @@ function ConversationResourceCard(
   });
 
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
-    if (props.resource.kind !== 'website' && target === defaultOpenTarget(props.resource)) {
+    // 显式审阅和编辑器操作必须交回会话，不能被卡片预览截获。
+    if (props.resource.kind !== 'website' && target === 'preferred') {
       setPreviewOpen(true);
       return;
     }
@@ -702,7 +704,13 @@ function focusAdjacentDocumentControl(trigger: HTMLButtonElement | null, backwar
   controls[(currentIndex + offset + controls.length) % controls.length]?.focus();
 }
 
+/** 会话 Markdown 默认进入右侧审阅；以真实文件路径识别，避免显示标题省略后缀。 */
 export function defaultOpenTarget(resource: ConversationResource): ConversationOpenTarget {
+  if (resource.kind !== 'website') {
+    /** 文件使用项目路径，附件使用保留文件名的显示名称。 */
+    const path = resource.kind === 'file' ? resource.projectRelativePath : resource.displayName;
+    if (resource.iconKind === 'markdown' || /\.(?:md|markdown|mdx)$/iu.test(path)) return 'zeus_source';
+  }
   return resource.kind === 'website' && resource.url.startsWith('mailto:') ? 'system_default' : 'preferred';
 }
 

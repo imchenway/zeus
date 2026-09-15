@@ -396,10 +396,40 @@ function normalizeLocation(value: unknown): { line?: number; column?: number; en
   };
 }
 
+/** 审阅入口接受阅读器支持的 Markdown 后缀，仍由资源授权和正文读取校验文件。 */
 function isSourcePreviewable(path: string): boolean {
-  return ['.c', '.cc', '.cpp', '.css', '.go', '.h', '.hpp', '.html', '.java', '.js', '.json', '.jsx', '.kt', '.md', '.php', '.py', '.rb', '.rs', '.scss', '.sh', '.sql', '.swift', '.ts', '.tsx', '.txt', '.xml', '.yaml', '.yml'].includes(
-    extname(path).toLocaleLowerCase(),
-  );
+  return [
+    '.c',
+    '.cc',
+    '.cpp',
+    '.css',
+    '.go',
+    '.h',
+    '.hpp',
+    '.html',
+    '.java',
+    '.js',
+    '.json',
+    '.jsx',
+    '.kt',
+    '.md',
+    '.markdown',
+    '.mdx',
+    '.php',
+    '.py',
+    '.rb',
+    '.rs',
+    '.scss',
+    '.sh',
+    '.sql',
+    '.swift',
+    '.ts',
+    '.tsx',
+    '.txt',
+    '.xml',
+    '.yaml',
+    '.yml',
+  ].includes(extname(path).toLocaleLowerCase());
 }
 
 function isImagePreviewable(path: string): boolean {

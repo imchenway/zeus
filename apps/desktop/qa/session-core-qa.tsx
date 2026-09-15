@@ -9,7 +9,7 @@ import { ConnectedSessionWorkspace } from '../src/renderer/session/SessionWorksp
 import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
-import { ConversationInlineResource } from '../src/renderer/session/ConversationResources.js';
+import { ConversationInlineResource, ConversationResourceCards, defaultOpenTarget } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
@@ -21,7 +21,7 @@ import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../src/renderer/session/sessionTypes.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
-import type { ConversationCodeComment, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationOpenTarget, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -557,6 +557,13 @@ function MessageLayoutQa() {
   });
   /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
   function checkLinks(): void {
+    /** 标题不含后缀时仍按真实路径审阅，图片与网页保留各自默认入口。 */
+    const documentResource = resources[0]!;
+    if (documentResource.kind !== 'file') throw new Error('文档场景缺少文件资源');
+    for (const extension of ['md', 'MARKDOWN', 'mdx']) {
+      if (defaultOpenTarget({ ...documentResource, iconKind: 'file', projectRelativePath: `docs/说明.${extension}` }) !== 'zeus_source') throw new Error(`Markdown 打开目标错误：${extension}`);
+    }
+    if (defaultOpenTarget({ ...documentResource, iconKind: 'image', projectRelativePath: 'image.png' }) !== 'preferred' || defaultOpenTarget(resources[1]!) !== 'preferred') throw new Error('图片或网页默认目标被改变');
     /** 只读取本场景正文，不将来源入口计入结果。 */
     const buttons = [...(contentRef.current?.querySelectorAll('.session-conversation-markdown .session-inline-resource') ?? [])].map((button) => button.textContent);
     if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
@@ -589,9 +596,10 @@ function MessageLayoutQa() {
     setLinkResult('运行检查通过：布局通知保留批注入口，取消选区后正常关闭');
   }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
-  function openResource(resource: ConversationResource): void {
+  function openResource(resource: ConversationResource, target: ConversationOpenTarget): void {
     if (!resources.some((candidate) => candidate.id === resource.id)) throw new Error('资源打开检查失败：编号未登记');
-    setLinkResult(`打开回调：${resource.id}`);
+    if (resource.id === 'document-resource' && target !== 'zeus_source') throw new Error('Markdown 未进入会话审阅');
+    setLinkResult(`打开回调：${resource.id} → ${target}`);
   }
   /** 手动运行生产布局检查，覆盖计时合并、缺失过程与缺失时间的展示边界。 */
   function checkLayout(): void {
@@ -757,6 +765,7 @@ function MessageLayoutQa() {
           <>
             <span>来源：</span>
             <ConversationInlineResource resource={resources[1]!} label="交互预览" language="zh-CN" onOpenResource={openResource} />
+            <ConversationResourceCards resources={[{ ...resources[0]!, presentation: 'card' }]} language="zh-CN" onOpenResource={openResource} />
           </>
         ) : null}
       </div>
