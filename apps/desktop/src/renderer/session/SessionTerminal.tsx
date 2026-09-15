@@ -3,7 +3,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TerminalIcon as TerminalGlyph } from '@phosphor-icons/react/dist/csr/Terminal';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   AiRuntimeSession,
   AiRuntimeSessionStatus,
@@ -16,6 +16,9 @@ import type {
   ZeusRealtimeEvent,
 } from '../apiClient.js';
 
+import { TerminalTabs } from '../features/runtime/TerminalTabs.js';
+import { observeTerminalTheme, terminalDisplayOptions } from '../features/runtime/terminalPresentation.js';
+
 const integratedTerminalCommand = 'sh';
 const integratedTerminalScript = 'exec "${SHELL:-sh}" -l';
 const integratedTerminalArgs = ['-lc', integratedTerminalScript] as const;
@@ -24,7 +27,6 @@ const defaultTerminalHeight = 284;
 const minimumTerminalHeight = 160;
 const maximumTerminalTabs = 8;
 const maximumTerminalInputChunk = 32 * 1024;
-const pathSeparatorPattern = /[\\/]+/gu;
 const alternateScreenResetSequence = '\u001b[?1049h\u001b[2J\u001b[H';
 const synchronizedOutputSequence = '\u001b[?2026h';
 
@@ -69,9 +71,7 @@ const terminalCopy = {
   'zh-CN': {
     panel: '终端',
     resize: '调整终端高度',
-    newTerminal: '新建终端',
     closePanel: '隐藏终端',
-    closeTab: '关闭终端标签',
     loading: '正在连接终端服务…',
     starting: '正在启动终端…',
     allowAndStart: '允许 Shell 并新建终端',
@@ -80,12 +80,6 @@ const terminalCopy = {
     unavailableTitle: '交互式终端不可用',
     retry: '重试',
     cancel: '取消',
-    running: '运行中',
-    stopped: '已停止',
-    exited: '已退出',
-    failed: '失败',
-    orphan: '待清理',
-    lost: '已断开',
     sessionEnded: '终端进程已结束',
     terminalAria: '交互式项目终端',
     startupFailed: '无法启动终端。',
@@ -94,9 +88,7 @@ const terminalCopy = {
   'en-US': {
     panel: 'Terminal',
     resize: 'Resize terminal height',
-    newTerminal: 'New terminal',
     closePanel: 'Hide terminal',
-    closeTab: 'Close terminal tab',
     loading: 'Connecting to the terminal service…',
     starting: 'Starting terminal…',
     allowAndStart: 'Allow Shell and create terminal',
@@ -105,12 +97,6 @@ const terminalCopy = {
     unavailableTitle: 'Interactive terminal unavailable',
     retry: 'Retry',
     cancel: 'Cancel',
-    running: 'Running',
-    stopped: 'Stopped',
-    exited: 'Exited',
-    failed: 'Failed',
-    orphan: 'Needs cleanup',
-    lost: 'Disconnected',
     sessionEnded: 'Terminal process ended',
     terminalAria: 'Interactive project terminal',
     startupFailed: 'Unable to start the terminal.',
@@ -119,6 +105,8 @@ const terminalCopy = {
 } as const;
 
 export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
+  /** 标签与输出面板共享的唯一标识。 */
+  const panelId = useId();
   const copy = terminalCopy[props.language];
   const [phase, setPhase] = useState<TerminalPanelPhase>({ kind: 'loading' });
   const [sessions, setSessions] = useState<AiRuntimeSession[]>([]);
@@ -376,62 +364,22 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           }
         }}
       />
-      <header className="session-terminal-header">
-        <div className="session-terminal-tabs" role="tablist" aria-label={copy.panel}>
-          {sessions.map((session, index) => {
-            const active = session.id === activeSessionId;
-            return (
-              <div key={session.id} className="session-terminal-tab-shell" data-active={active || undefined} role="presentation">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  tabIndex={active ? 0 : -1}
-                  title={session.cwd}
-                  className="session-terminal-tab"
-                  onClick={() => {
-                    setActiveSessionId(session.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
-                    event.preventDefault();
-                    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? sessions.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + sessions.length) % sessions.length;
-                    const nextSession = sessions[nextIndex];
-                    if (!nextSession) return;
-                    setActiveSessionId(nextSession.id);
-                    const tabs = event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('.session-terminal-tab');
-                    requestAnimationFrame(() => tabs?.[nextIndex]?.focus());
-                  }}
-                >
-                  <TerminalGlyph aria-hidden="true" />
-                  <span>{terminalTabTitle(session, sessions, index)}</span>
-                  <i data-status={session.status} aria-label={terminalStatusLabel(session.status, copy)} title={terminalStatusLabel(session.status, copy)} />
-                </button>
-                <button
-                  type="button"
-                  className="session-terminal-tab-close"
-                  aria-label={`${copy.closeTab}: ${terminalTabTitle(session, sessions, index)}`}
-                  title={copy.closeTab}
-                  disabled={closingSessionId === session.id}
-                  onClick={() => requestCloseSession(session)}
-                >
-                  {closingSessionId === session.id ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <X aria-hidden="true" />}
-                </button>
-              </div>
-            );
-          })}
-          <button
-            type="button"
-            className="session-terminal-new"
-            aria-label={copy.newTerminal}
-            title={copy.newTerminal}
-            disabled={starting || phase.kind !== 'ready' || sessions.length >= maximumTerminalTabs}
-            onClick={() => void startTerminal()}
-          >
-            {starting ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <Plus aria-hidden="true" />}
-          </button>
-        </div>
-        <button type="button" className="session-terminal-panel-close" aria-label={copy.closePanel} title={copy.closePanel} onClick={props.onClose}>
+      <header className="zeus-terminal-toolbar">
+        <TerminalTabs
+          sessions={sessions}
+          activeId={activeSessionId}
+          panelId={panelId}
+          language={props.language}
+          visible={props.visible}
+          starting={starting}
+          newDisabled={starting || Boolean(closingSessionId) || phase.kind !== 'ready' || sessions.length >= maximumTerminalTabs}
+          closingId={closingSessionId}
+          closeDisabled={starting || Boolean(closingSessionId)}
+          onSelect={setActiveSessionId}
+          onNew={() => void startTerminal()}
+          onClose={requestCloseSession}
+        />
+        <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} title={copy.closePanel} onClick={props.onClose}>
           <X aria-hidden="true" />
         </button>
       </header>
@@ -444,7 +392,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           </button>
         </div>
       ) : null}
-      <div className="session-terminal-body">
+      <div className="session-terminal-body" role="tabpanel" id={panelId} aria-labelledby={activeSessionId ? `${panelId}-${activeSessionId}` : undefined}>
         {phase.kind === 'loading' ? (
           <TerminalEmptyState icon={<CircleNotch className="session-terminal-spinner" aria-hidden="true" />} title={copy.loading} />
         ) : phase.kind === 'unavailable' ? (
@@ -550,22 +498,15 @@ function TerminalViewport(props: {
     void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
       .then(([{ Terminal }, { FitAddon }]) => {
         if (disposed || !hostRef.current) return;
-        const themeHost = hostRef.current.closest<HTMLElement>('.theme-dark, .theme-light, .theme-system');
-        const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const isDark = (): boolean => Boolean(themeHost?.classList.contains('theme-dark') || (themeHost?.classList.contains('theme-system') && darkModeQuery.matches));
+        /** 内容区使用命令入口的共享显示配置。 */
         const terminal = new Terminal({
+          ...terminalDisplayOptions,
           allowTransparency: false,
           convertEol: false,
-          cursorBlink: true,
-          cursorStyle: 'bar',
           disableStdin: !terminalSessionIsLive(sessionStatusRef.current),
-          fontFamily: "'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
-          fontSize: 12,
-          lineHeight: 1.25,
           rows: 20,
           cols: 80,
           scrollback: 10_000,
-          theme: terminalTheme(isDark()),
         });
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
@@ -574,12 +515,8 @@ function TerminalViewport(props: {
         const dataSubscription = terminal.onData((value) => io.input(value));
         const resizeObserver = new ResizeObserver(() => scheduleFit());
         resizeObserver.observe(hostRef.current);
-        const applyTheme = (): void => {
-          terminal.options.theme = terminalTheme(isDark());
-        };
-        const themeObserver = new MutationObserver(applyTheme);
-        if (themeHost) themeObserver.observe(themeHost, { attributeFilter: ['class'], attributes: true });
-        darkModeQuery.addEventListener('change', applyTheme);
+        /** 主题切换仅更新现有终端的颜色。 */
+        const disposeTheme = observeTerminalTheme(terminal, hostRef.current);
 
         const surface: TerminalSurfaceHandle = {
           sessionId: props.session.id,
@@ -655,8 +592,7 @@ function TerminalViewport(props: {
         disposeBindings = () => {
           dataSubscription.dispose();
           resizeObserver.disconnect();
-          themeObserver.disconnect();
-          darkModeQuery.removeEventListener('change', applyTheme);
+          disposeTheme();
         };
       })
       .catch((loadError) => {
@@ -683,7 +619,7 @@ function TerminalViewport(props: {
     terminalRef.current?.focus();
   }, [props.focusRequest]);
 
-  return <div ref={hostRef} className="session-terminal-viewport" aria-label={copy.terminalAria} data-terminal-status={props.session.status} />;
+  return <div ref={hostRef} className="zeus-terminal-screen" aria-label={copy.terminalAria} data-terminal-status={props.session.status} />;
 }
 
 function TerminalEmptyState(props: { icon: ReactNode; title: string; detail?: string; action?: ReactNode }) {
@@ -817,64 +753,6 @@ function writeRealtimeEvent(terminal: import('@xterm/xterm').Terminal, event: Ze
   if (logId) seenLogIds.add(logId);
   const text = typeof event.payload.terminalText === 'string' ? event.payload.terminalText : typeof event.payload.text === 'string' ? event.payload.text : '';
   if (text) terminal.write(text);
-}
-
-function terminalTheme(dark: boolean): import('@xterm/xterm').ITheme {
-  if (dark) {
-    return {
-      background: '#181a1d',
-      foreground: '#e8eaed',
-      cursor: '#e8eaed',
-      cursorAccent: '#181a1d',
-      selectionBackground: '#465066',
-      black: '#24272b',
-      red: '#ef8f8f',
-      green: '#8fd39a',
-      yellow: '#e3c07a',
-      blue: '#83b5ee',
-      magenta: '#c9a0ec',
-      cyan: '#79c9c6',
-      white: '#e8eaed',
-      brightBlack: '#777d87',
-      brightWhite: '#ffffff',
-    };
-  }
-  return {
-    background: '#fbfbfc',
-    foreground: '#30343a',
-    cursor: '#30343a',
-    cursorAccent: '#fbfbfc',
-    selectionBackground: '#cddbf0',
-    black: '#25282d',
-    red: '#a94444',
-    green: '#2f7d44',
-    yellow: '#8a651f',
-    blue: '#326da8',
-    magenta: '#8054a3',
-    cyan: '#2f7878',
-    white: '#e4e6e9',
-    brightBlack: '#747a83',
-    brightWhite: '#ffffff',
-  };
-}
-
-function terminalTabTitle(session: AiRuntimeSession, sessions: readonly AiRuntimeSession[], index: number): string {
-  const segments = session.cwd.split(pathSeparatorPattern).filter(Boolean);
-  const base = segments.at(-1) ?? 'terminal';
-  const matchingBefore = sessions.slice(0, index).filter((candidate) => {
-    const candidateSegments = candidate.cwd.split(pathSeparatorPattern).filter(Boolean);
-    return (candidateSegments.at(-1) ?? 'terminal') === base;
-  }).length;
-  return matchingBefore > 0 ? `${base} ${matchingBefore + 1}` : base;
-}
-
-function terminalStatusLabel(status: AiRuntimeSessionStatus, copy: (typeof terminalCopy)[keyof typeof terminalCopy]): string {
-  if (status === 'running') return copy.running;
-  if (status === 'exited') return copy.exited;
-  if (status === 'failed') return copy.failed;
-  if (status === 'orphan_detected') return copy.orphan;
-  if (status === 'lost') return copy.lost;
-  return copy.stopped;
 }
 
 function runtimeStatusValue(value: unknown): AiRuntimeSessionStatus | null {

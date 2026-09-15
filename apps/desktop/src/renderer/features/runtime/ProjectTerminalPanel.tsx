@@ -4,10 +4,11 @@ import type { AiRuntimeSession, DashboardClient, ProjectRecord } from '../../api
 import { Button } from '../../ui/Button.js';
 import { createPortal } from 'react-dom';
 import { MotionPresence, usePresenceSurface } from '../../ui/MotionPresence.js';
-import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
+import { TerminalTabs } from './TerminalTabs.js';
+import { observeTerminalTheme, terminalDisplayOptions } from './terminalPresentation.js';
 import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
 
 /** 命令页入口打开底部停靠面板，沿用浏览器分屏方式，收起不结束后台进程。 */
@@ -22,8 +23,6 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   const entryRef = useRef<HTMLButtonElement>(null);
   /** 标签与输出面板的无障碍关联保持唯一。 */
   const panelId = useId();
-  /** 新建或切换时让当前标签滚入可见范围。 */
-  const selectedTabRef = useRef<HTMLButtonElement>(null);
   /** 当前项目的交互 shell 与选中身份。 */
   const [sessions, setSessions] = useState<AiRuntimeSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -40,9 +39,15 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   const selected = sessions.find((session) => session.id === selectedId);
   /** 启停结果不能被更早发出的列表读取覆盖。 */
   const revisionRef = useRef(0);
-  useEffect(() => {
-    if (open) selectedTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [open, selectedId]);
+  /** 本次挂载已关闭的标签不再被轮询或重连恢复。 */
+  const closedIdsRef = useRef(new Set<string>());
+  /** 关闭请求的进度与同步互斥保护。 */
+  const [closingId, setClosingId] = useState<string | null>(null);
+  /** 同一轮事件中也不能重复发出关闭请求。 */
+  const closeInFlightRef = useRef(false);
+  /** 异步关闭完成时读取最新列表，保留期间新发现的终端。 */
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
 
   useEffect(() => {
@@ -55,7 +60,9 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
       refreshing = true;
       const revision = revisionRef.current;
       try {
-        const items = (await props.client.loadRuntimeSessions({ projectId: props.project.id })).filter((session) => session.projectId === props.project.id && isInteractiveShellSession(session) && !session.archived && !session.deletedAt);
+        const items = (await props.client.loadRuntimeSessions({ projectId: props.project.id })).filter(
+          (session) => session.projectId === props.project.id && isInteractiveShellSession(session) && !session.archived && !session.deletedAt && !closedIdsRef.current.has(session.id),
+        );
         if (disposed || revision !== revisionRef.current) return;
         setSessions(items);
         setSelectedId((current) => (items.some((session) => session.id === current) ? current : ((items.find((session) => session.status === 'running') ?? items[0])?.id ?? null)));
@@ -145,6 +152,35 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
     }
   }
 
+  /** 关闭标签直接结束运行进程；只有成功后才移除，失败保留标签和错误。 */
+  async function closeTab(session: AiRuntimeSession): Promise<void> {
+    if (busy || closeInFlightRef.current) return;
+    closeInFlightRef.current = true;
+    setBusy(true);
+    setClosingId(session.id);
+    setError(null);
+    try {
+      if (['running', 'orphan_detected'].includes(session.status)) await props.client.stopRuntimeSession(session.id);
+      closedIdsRef.current.add(session.id);
+      revisionRef.current += 1;
+      /** 按屏幕上的顺序选择右邻标签，末尾关闭时选择左邻标签。 */
+      const displayed = sessionsRef.current.slice().reverse();
+      /** 当前标签在最新列表中的位置。 */
+      const index = displayed.findIndex((item) => item.id === session.id);
+      /** 保留所有未关闭的终端，输出与历史记录不做删除。 */
+      const remaining = displayed.filter((item) => item.id !== session.id);
+      setSessions((current) => current.filter((item) => item.id !== session.id));
+      setSelectedId((current) => (current === session.id ? (remaining[Math.max(0, Math.min(index, remaining.length - 1))]?.id ?? null) : current));
+      if (remaining.length === 0) hide();
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      closeInFlightRef.current = false;
+      setClosingId(null);
+      setBusy(false);
+    }
+  }
+
   /** 根据工作区高度调整分屏比例，保留上方页面的操作空间。 */
   function resize(clientY: number): void {
     const rect = props.dockHost?.parentElement?.getBoundingClientRect();
@@ -196,53 +232,28 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                     setHeightShare((current) => Math.min(70, Math.max(25, current + (event.key === 'ArrowUp' ? 2 : -2))));
                   }}
                 />
-                <header className="project-terminal-toolbar">
-                  <div
-                    className="project-terminal-tabs"
-                    role="tablist"
-                    aria-label={zh ? '终端会话' : 'Terminal sessions'}
-                    onKeyDown={(event) => {
-                      /** 方向键只移动标签焦点，回车或空格由按钮原生激活。 */
-                      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                      const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-                      const index = tabs.indexOf(event.target as HTMLButtonElement);
-                      if (index < 0) return;
-                      event.preventDefault();
-                      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-                      tabs[next]?.focus();
-                    }}
-                  >
-                    {sessions
-                      .slice()
-                      .reverse()
-                      .map((session, index) => (
-                        <button
-                          key={session.id}
-                          ref={session.id === selectedId ? selectedTabRef : undefined}
-                          type="button"
-                          role="tab"
-                          id={`${panelId}-${session.id}`}
-                          aria-controls={panelId}
-                          aria-selected={session.id === selectedId}
-                          tabIndex={session.id === selectedId ? 0 : -1}
-                          className="project-terminal-tab"
-                          title={session.status === 'running' ? (zh ? '运行中' : 'Running') : zh ? '已结束' : 'Ended'}
-                          onClick={() => setSelectedId(session.id)}
-                        >
-                          {zh ? '终端' : 'Terminal'} {index + 1}
-                          {session.status !== 'running' ? <span>{zh ? '已结束' : 'Ended'}</span> : null}
-                        </button>
-                      ))}
-                  </div>
-                  <button type="button" title={zh ? '新建终端' : 'New terminal'} aria-label={zh ? '新建终端' : 'New terminal'} disabled={busy} onClick={() => void start()}>
-                    <Plus aria-hidden="true" />
-                  </button>
+                <header className="zeus-terminal-toolbar">
+                  <TerminalTabs
+                    sessions={sessions.slice().reverse()}
+                    activeId={selectedId}
+                    panelId={panelId}
+                    language={props.language}
+                    visible={open}
+                    starting={busy && !closingId && !selected}
+                    newDisabled={busy}
+                    closingId={closingId}
+                    closeDisabled={busy || loadFailed}
+                    onSelect={setSelectedId}
+                    onNew={() => void start()}
+                    onClose={(session) => void closeTab(session)}
+                  />
                   {selected ? (
                     <>
-                      <button type="button" title={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
+                      <button className="zeus-terminal-action" type="button" title={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
                         <ArrowClockwise aria-hidden="true" />
                       </button>
                       <button
+                        className="zeus-terminal-action"
                         type="button"
                         title={zh ? '结束会话' : 'End session'}
                         aria-label={zh ? '结束会话' : 'End session'}
@@ -253,7 +264,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                       </button>
                     </>
                   ) : null}
-                  <button type="button" title={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
+                  <button className="zeus-terminal-action" type="button" title={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
                     <X aria-hidden="true" />
                   </button>
                 </header>
@@ -303,8 +314,7 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     let terminal: import('@xterm/xterm').Terminal | undefined;
     let observer: ResizeObserver | undefined;
     /** 只更新显示主题，不重建终端或改变运行中的 shell。 */
-    let themeObserver: MutationObserver | undefined;
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+    let disposeTheme: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     let pollTimer: number | undefined;
     let refreshTimer: number | undefined;
@@ -329,13 +339,6 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
           }
         }
       });
-    }
-
-    /** 读取 Zeus 已解析的主题色，同时适配显式主题与跟随系统。 */
-    function applyTheme(): void {
-      if (!terminal || !containerRef.current || disposed) return;
-      const colors = getComputedStyle(containerRef.current);
-      terminal.options.theme = { ...terminal.options.theme, background: colors.backgroundColor, foreground: colors.color, cursor: colors.color, cursorAccent: colors.backgroundColor };
     }
 
     /** 从实际字符格测量尺寸，不额外引入适配依赖。 */
@@ -402,45 +405,17 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     void import('@xterm/xterm')
       .then(({ Terminal }) => {
         if (disposed || !containerRef.current) return;
-        /** 沿用本机 Ghostty 的字体与默认 ANSI 调色板，提示符由用户 shell 主题生成。 */
+        /** 内容区显示配置与会话入口共享，输入与日志仍由当前入口管理。 */
         terminal = new Terminal({
-          cursorBlink: true,
+          ...terminalDisplayOptions,
           disableStdin: true,
           screenReaderMode: true,
           scrollback: 5_000,
           rows: 24,
           cols: 100,
-          fontFamily: '"Sarasa Term SC", "MesloLGS Nerd Font", "SFMono-Regular", monospace',
-          fontSize: 15,
-          /** 浅底下提高 ANSI 字符对比度，保留用户提示符的配色关系。 */
-          minimumContrastRatio: 4.5,
-          theme: {
-            black: '#1d1f21',
-            red: '#cc6666',
-            green: '#b5bd68',
-            yellow: '#f0c674',
-            blue: '#81a2be',
-            magenta: '#b294bb',
-            cyan: '#8abeb7',
-            white: '#c5c8c6',
-            brightBlack: '#666666',
-            brightRed: '#d54e53',
-            brightGreen: '#b9ca4a',
-            brightYellow: '#e7c547',
-            brightBlue: '#7aa6da',
-            brightMagenta: '#c397d8',
-            brightCyan: '#70c0b1',
-            brightWhite: '#eaeaea',
-          },
         });
-        applyTheme();
+        disposeTheme = observeTerminalTheme(terminal, containerRef.current);
         terminal.open(containerRef.current);
-        /** 跟随现有根节点主题标记和系统偏好，卸载时统一取消订阅。 */
-        themeObserver = new MutationObserver(applyTheme);
-        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-zeus-theme'] });
-        const shell = containerRef.current.closest('.zeus-shell');
-        if (shell) themeObserver.observe(shell, { attributes: true, attributeFilter: ['class'] });
-        systemTheme.addEventListener('change', applyTheme);
         terminal.textarea?.setAttribute('aria-label', props.zh ? '终端输入' : 'Terminal input');
         terminal.onData((input) => {
           if (!terminal!.options.disableStdin) send(() => props.client.sendRuntimeInput(props.session.id, input));
@@ -468,8 +443,7 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     return () => {
       disposed = true;
       observer?.disconnect();
-      themeObserver?.disconnect();
-      systemTheme.removeEventListener('change', applyTheme);
+      disposeTheme?.();
       unsubscribe?.();
       window.clearInterval(pollTimer);
       window.clearTimeout(refreshTimer);
@@ -479,7 +453,7 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
 
   return (
     <>
-      <div className="project-terminal-screen" ref={containerRef} />
+      <div className="zeus-terminal-screen" ref={containerRef} />
       {state !== 'ready' || props.session.status !== 'running' ? (
         <p role="status">
           {state === 'input_failed'

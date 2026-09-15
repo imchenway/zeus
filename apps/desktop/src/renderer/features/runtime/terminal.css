@@ -1,0 +1,191 @@
+/* 两个入口共用会话式标签栏；不依赖会话页面的局部主题变量。 */
+.zeus-terminal-toolbar {
+  align-items: stretch;
+  background: var(--zeus-control-bg);
+  border-block-end: 1px solid var(--zeus-control-border);
+  display: flex;
+  flex: 0 0 38px;
+  justify-content: space-between;
+  min-inline-size: 0;
+  padding-inline-end: 5px;
+  color: var(--zeus-control-text);
+  font-size: 12px;
+}
+
+.zeus-terminal-tabs {
+  align-items: stretch;
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.zeus-terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.zeus-terminal-tab-shell {
+  align-items: center;
+  border-inline-end: 1px solid var(--zeus-control-border);
+  display: flex;
+  flex: 0 1 184px;
+  min-inline-size: 104px;
+  position: relative;
+}
+
+.zeus-terminal-tab-shell[data-active='true'] {
+  background: var(--zeus-card-background, var(--zeus-product-panel));
+  box-shadow: inset 0 2px 0 var(--zeus-brand-text);
+}
+
+.zeus-terminal-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 7px;
+  grid-template-columns: 15px minmax(0, 1fr) 7px;
+  min-block-size: 37px;
+  min-inline-size: 0;
+  padding: 0 5px 0 10px;
+  text-align: start;
+}
+
+.zeus-terminal-tab > svg {
+  block-size: 15px;
+  color: var(--zeus-control-muted-text);
+  inline-size: 15px;
+}
+
+.zeus-terminal-tab > span {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeus-terminal-tab > i {
+  background: var(--zeus-control-muted-text);
+  block-size: 6px;
+  border-radius: 999px;
+  inline-size: 6px;
+}
+
+.zeus-terminal-tab > i[data-status='running'] {
+  background: var(--zeus-brand-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zeus-brand-text) 13%, transparent);
+}
+
+.zeus-terminal-tab > i:is([data-status='failed'], [data-status='lost']) {
+  background: var(--zeus-control-danger-text);
+}
+
+.zeus-terminal-tab-close,
+.zeus-terminal-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0;
+}
+
+.zeus-terminal-tab-close {
+  block-size: 24px;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  margin-inline-end: 4px;
+  opacity: 0;
+}
+
+.zeus-terminal-tab-shell:hover .zeus-terminal-tab-close,
+.zeus-terminal-tab-shell[data-active='true'] .zeus-terminal-tab-close,
+.zeus-terminal-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.zeus-terminal-action {
+  align-self: center;
+  block-size: 28px;
+  flex: 0 0 28px;
+  inline-size: 28px;
+  margin: 0 3px;
+}
+
+:is(.zeus-terminal-tab-close, .zeus-terminal-action):hover:not(:disabled) {
+  background: var(--zeus-control-bg-hover);
+}
+
+:is(.zeus-terminal-tab-close, .zeus-terminal-action) svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+/* 标签和工具按钮保留统一的键盘边界与禁用反馈。 */
+.zeus-terminal-toolbar button {
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.zeus-terminal-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.zeus-terminal-toolbar button:focus-visible {
+  outline: 1px solid var(--zeus-brand-text);
+  outline-offset: -1px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--zeus-brand-primary) 16%, transparent);
+}
+
+/* 使用命令页的应用卡片底色，避开会话局部面板变量；6px 边框让现有尺寸计算得到真实内容宽高。 */
+.zeus-terminal-screen {
+  background: var(--zeus-card-background, var(--zeus-product-panel, #fff));
+  color: var(--zeus-control-text, #111827);
+  border: 6px solid var(--zeus-card-background, var(--zeus-product-panel, #fff));
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.zeus-terminal-screen .xterm {
+  height: 100%;
+}
+
+/* 字符网格外的余量仍跟随应用主题。 */
+.zeus-terminal-screen .xterm-viewport {
+  background-color: var(--zeus-card-background, var(--zeus-product-panel, #fff));
+}
+
+.zeus-terminal-spinner {
+  animation: zeus-terminal-spin 800ms linear infinite;
+}
+
+@keyframes zeus-terminal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  .zeus-terminal-tab-shell {
+    flex-basis: 144px;
+  }
+}
+
+@media (forced-colors: active) {
+  .zeus-terminal-tab-shell[data-active='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .zeus-terminal-tab > i {
+    forced-color-adjust: none;
+  }
+}

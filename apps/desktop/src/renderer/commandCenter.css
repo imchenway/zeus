@@ -140,57 +140,6 @@
   outline: none;
 }
 
-.project-terminal-toolbar {
-  align-items: center;
-  display: flex;
-  flex: none;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
-/* 标签横向排列，过多时滚动；选中标签沿用浏览器的顶部圆角形态。 */
-.project-terminal-tabs {
-  display: flex;
-  flex: 1;
-  gap: 2px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.project-terminal-tab {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  gap: 6px;
-  min-height: 30px;
-  padding: 4px 14px;
-  border: 1px solid transparent;
-  border-radius: 8px 8px 0 0;
-  background: transparent;
-  color: var(--zeus-control-muted-text);
-  font-size: inherit;
-  white-space: nowrap;
-}
-
-.project-terminal-tab:hover {
-  background: var(--zeus-control-bg-hover);
-}
-
-.project-terminal-tab[aria-selected='true'] {
-  background: var(--zeus-control-bg-hover);
-  border-color: var(--zeus-control-border);
-  border-bottom-color: transparent;
-  color: var(--zeus-control-text);
-}
-
-.project-terminal-tab > span {
-  font-size: 11px;
-  color: var(--zeus-control-muted-text);
-}
-
 /* 输出与当前标签关联，占满工具栏下方空间。 */
 .project-terminal-content {
   display: flex;
@@ -200,40 +149,6 @@
   min-width: 0;
 }
 
-.project-terminal-toolbar > button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--zeus-control-muted-text);
-}
-
-.project-terminal-toolbar > button:hover {
-  color: var(--zeus-control-text);
-  background: var(--zeus-control-bg-hover);
-}
-
-.project-terminal-toolbar > button:focus-visible,
-.project-terminal-tab:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
-  outline-offset: 1px;
-}
-
-.project-terminal-toolbar > button:disabled {
-  opacity: 0.4;
-}
-
-.project-terminal-toolbar svg {
-  width: 16px;
-  height: 16px;
-}
-
 .project-terminal-content > p {
   margin: 4px 10px;
   color: var(--zeus-control-muted-text);
@@ -241,25 +156,6 @@
 }
 
 /* 与 Zeus 工作面共用主题色，边框留白不参与字符尺寸测量。 */
-.project-terminal-screen {
-  background: var(--zeus-product-panel, #fff);
-  color: var(--zeus-control-text, #111827);
-  border: 6px solid var(--zeus-product-panel, #fff);
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.project-terminal-screen .xterm {
-  height: 100%;
-}
-
-/* 字符网格下方的余量也使用主题色，覆盖 xterm 默认黑底。 */
-.project-terminal-screen .xterm-viewport {
-  background-color: var(--zeus-product-panel, #fff);
-}
-
 .command-center-error,
 .command-run-failure {
   color: var(--zeus-control-danger-text);
