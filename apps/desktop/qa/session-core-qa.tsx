@@ -1169,6 +1169,15 @@ function ComposerMarkdownQa() {
         type="button"
         disabled={readOnly}
         onClick={() => {
+          if (textareaRef.current) void checkComposerTableEditing(textareaRef.current, sample).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
+        }}
+      >
+        检查表格单元格编辑
+      </button>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => {
           const control = document.querySelector<HTMLElement>('.structured-composer-editor [role="textbox"]');
           if (control && textareaRef.current) void checkAttachmentFocus(control, textareaRef.current).then(setFocusResult, (error) => setFocusResult(`失败：${String(error)}`));
         }}
@@ -1280,6 +1289,63 @@ function ComposerMarkdownQa() {
 /** 让浏览器提交本轮 React 更新，模拟附件读取跨越事件循环。 */
 function nextQaTask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** 在既有浏览器场景中重放真实输入事件，核对表格编辑、撤销和原文一致性。 */
+async function checkComposerTableEditing(input: ComposerInputHandle, sample: string): Promise<string> {
+  /** 等待独立表格渲染根提交，不将静态 DOM 视为交互结果。 */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  /** 样例通过当前编辑器的真实粘贴链路替换，检查也可重复运行。 */
+  async function paste(text: string): Promise<void> {
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+    const editor = document.querySelector('.structured-composer-editor .cm-content');
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    editor?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    await settle();
+    if (input.value !== text) throw new Error('粘贴原文发生变化');
+  }
+  /** 点击真实单元格后写入原生输入事件，验证重绘仍复用同一输入节点。 */
+  async function edit(row: number, column: number, value: string): Promise<HTMLInputElement> {
+    const cell = document.querySelectorAll<HTMLTableRowElement>('.composer-md-table tr')[row]?.cells[column];
+    cell?.click();
+    await settle();
+    const field = cell?.querySelector('input');
+    if (!field) throw new Error(`第 ${row + 1} 行第 ${column + 1} 列未进入单元格编辑`);
+    field.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    if (!field.isConnected || document.activeElement !== field || document.querySelectorAll('.composer-md-table table').length !== 1) throw new Error('编辑时重建输入节点或撤掉表格');
+    return field;
+  }
+  await paste(sample);
+  const changed = sample.replace('00000852', '00000999');
+  const field = await edit(1, 3, '00000999');
+  if (input.value !== changed) throw new Error('修改单元格损坏其他原文');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== sample) throw new Error('撤销没有恢复原文');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== changed) throw new Error('重做没有恢复编辑');
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  if (input.value !== changed || document.querySelector('.composer-md-cell-input')) throw new Error('单元格回车误发送或未完成编辑');
+  await paste('| a | b | c |\n| --- | --- | --- |\n| 1 | | 3 |\n| only |');
+  await edit(1, 1, 'A | B');
+  if (!input.value.includes('| 1 | A \\| B| 3 |')) throw new Error('空列定位或竖线转义失败');
+  await edit(2, 2, '尾列');
+  if (!input.value.endsWith('| only |  | 尾列')) throw new Error('缺失尾列定位失败');
+  await paste('| a | b |\n| --- | --- |\n| # 字面文本 | **粗体** |');
+  if (document.querySelector('.composer-md-table h1') || !document.querySelector('.composer-md-table strong')) throw new Error('单元格内联格式被当作整篇 Markdown 解析');
+  await edit(1, 0, 'A ');
+  await edit(1, 0, 'A B');
+  if (!input.value.includes('| A B | **粗体** |')) throw new Error('单元格内空格输入丢失');
+  await paste(sample);
+  await edit(1, 3, '00000999');
+  return '通过：十二列表格原位编辑、长编号与前导零、节点和焦点保持、撤销重做、回车不发送、空列及缺失尾列、竖线转义、单元格内联格式。';
 }
 
 /** 在真实编辑节点上粘贴文件，检查处理中可输入、完成后的焦点和原选区。 */
