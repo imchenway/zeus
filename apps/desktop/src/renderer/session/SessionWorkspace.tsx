@@ -1663,6 +1663,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const interruptResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
   const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
+  /** 防止关闭后的空标签通知重复触发同一会话的清理。 */
+  const closingBrowserConversationsRef = useRef(new Set<string>());
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
@@ -1909,7 +1911,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       event.preventDefault();
       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setContextFullWidth(false);
-      setContextWorkspace((current) => (current.kind === 'browser' ? { kind: 'none' } : { kind: 'browser' }));
+      if (contextWorkspaceRef.current.kind === 'browser') void closeContextWorkspace();
+      else setContextWorkspace({ kind: 'browser' });
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -2217,7 +2220,24 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return result;
   }
 
-  function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
+  /** 明确关闭浏览器先释放标签；普通工作面切换与组件卸载不清理页面。 */
+  async function closeContextWorkspace(options: { focusComposer?: boolean } = {}): Promise<void> {
+    /** 使用实时会话身份，异步关闭完成后不影响用户刚切换的工作面。 */
+    const conversationId = workspaceIdentityRef.current;
+    if (contextWorkspaceRef.current.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
+      if (closingBrowserConversationsRef.current.has(conversationId)) return;
+      closingBrowserConversationsRef.current.add(conversationId);
+      try {
+        await window.zeus.closeBrowserConversation(conversationId);
+      } catch (error) {
+        reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
+        return;
+      } finally {
+        closingBrowserConversationsRef.current.delete(conversationId);
+      }
+      if (workspaceIdentityRef.current !== conversationId || contextWorkspaceRef.current.kind !== 'browser') return;
+      browserSnapshotRef.current = null;
+    }
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);

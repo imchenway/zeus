@@ -314,6 +314,8 @@ declare global {
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
       closeBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      /** 关闭当前会话全部标签，返回清理后的权威状态。 */
+      closeBrowserConversation: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       runBrowserCommand: (input: { conversationId: string; tabId: string; command: ZeusBrowserCommand }) => Promise<ZeusBrowserConversationSnapshot>;
       setBrowserLayout: (input: { conversationId: string; tabId: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }) => Promise<{ applied: boolean }>;
       prepareBrowserComments: (input: { conversationId: string; tabId: string; commentIds?: string[] }) => Promise<ZeusBrowserPreparedSubmission>;
