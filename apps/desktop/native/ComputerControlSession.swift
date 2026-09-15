@@ -44,6 +44,8 @@ private final class ComputerCursorPanel: NSPanel {
 /** 一个控制轮次复用一个窗口采集流；锁保护回调、工具线程与主线程之间的撤销状态。 */
 // 跨线程仅共享 lock 保护的控制状态；视图及 NSEvent 监听只在主线程访问。
 final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    /** 系统共享入口属于进程；停止一个轮次不能关闭其他轮次的入口。 */
+    @MainActor private static var registeredStreams = Set<ObjectIdentifier>()
     /** 对共享状态的短同步保护，不在持锁时等待系统调用。 */
     private let lock = NSLock()
     /** 唯一目标窗口。 */
@@ -101,6 +103,17 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 同一目标应用本次可见的窗口，包括独立菜单和文件选择框。 */
     private(set) var availableWindows: [[String: Any]] = []
 
+    /** 原生进程身份用于跨轮次互斥；停止后立即释放应用占用。 */
+    var targetProcessIdentifier: pid_t? {
+        lock.withLock { !stopped ? target?.pid : nil }
+    }
+
+    /** 系统菜单注册按实际采集流计数，只在最后一路结束后关闭。 */
+    @MainActor private static func unregister(_ stream: SCStream) {
+        registeredStreams.remove(ObjectIdentifier(stream))
+        if #available(macOS 14.0, *) { SCContentSharingPicker.shared.isActive = !registeredStreams.isEmpty }
+    }
+
     /** 观察时固定窗口；切换应用或显式窗口编号才创建新的采集对象。 */
     func observe(app: NSRunningApplication, sessionId: String, windowId: CGWindowID?) async throws -> ComputerWindowTarget {
         guard !sessionId.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_REQUIRED", message: "缺少宿主控制身份。") }
@@ -142,7 +155,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if previous?.windowId != next.windowId || previous?.frame != next.frame || previous?.scale != next.scale || existing == nil {
             // 先脱离旧流，迟到的旧流停止回调不会撤销新窗口。
             lock.withLock { capture = nil; image = nil; previewData = nil; frameDate = .distantPast; imageDate = .distantPast; frameTime = .invalid; needsObservation = true }
-            if let existing { try await existing.stopCapture() }
+            if let existing { await Self.unregister(existing); try await existing.stopCapture() }
             let configuration = SCStreamConfiguration()
             configuration.width = max(1, Int(next.frame.width * scale))
             configuration.height = max(1, Int(next.frame.height * scale))
@@ -172,6 +185,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
                     configuration.allowsChangingSelectedContent = false
                     picker.setConfiguration(configuration, for: stream)
                     picker.maximumStreamCount = 0
+                    Self.registeredStreams.insert(ObjectIdentifier(stream))
                     picker.isActive = true
                 }
             }
@@ -325,7 +339,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         guard invalidated else { return }
         releaseInput()
-        DispatchQueue.main.async { [weak self] in self?.cursorPanel?.orderOut(nil); self?.publishPreview() }
+        DispatchQueue.main.async { [weak self] in Self.unregister(stream); self?.cursorPanel?.orderOut(nil); self?.publishPreview() }
         Task { try? await stream.stopCapture() }
     }
 
@@ -340,12 +354,12 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         guard let previous else { return }
         releaseInput()
-        DispatchQueue.main.async { [weak self] in
-            if #available(macOS 14.0, *) { SCContentSharingPicker.shared.isActive = false }
-            if let item = self?.statusItem { NSStatusBar.system.removeStatusItem(item); self?.statusItem = nil }
-            self?.cursorPanel?.orderOut(nil)
-            self?.lifecycleTimer?.invalidate()
-            if let monitor = self?.inputMonitor { NSEvent.removeMonitor(monitor); self?.inputMonitor = nil }
+        DispatchQueue.main.async { [self] in
+            if let stream = previous.0 { Self.unregister(stream) }
+            if let item = statusItem { NSStatusBar.system.removeStatusItem(item); statusItem = nil }
+            cursorPanel?.orderOut(nil)
+            lifecycleTimer?.invalidate()
+            if let monitor = inputMonitor { NSEvent.removeMonitor(monitor); inputMonitor = nil }
         }
         if let data = try? JSONSerialization.data(withJSONObject: ["event": "control_stopped", "sessionId": previous.1, "reason": reason]) { writeComputerOutput(data) }
         if let stream = previous.0 { Task { try? await stream.stopCapture() } }

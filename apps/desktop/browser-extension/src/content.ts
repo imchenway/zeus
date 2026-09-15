@@ -201,7 +201,7 @@ async function locatorOperation(params) {
     return true;
   }
   if (operation === 'fill' || operation === 'type' || operation === 'pressSequentially') {
-    if (isSecure(element)) throw failure('ZEUS_BROWSER_SECURE_FIELD_BLOCKED', 'Secure values must be entered through Zeus Browser Auth.');
+    // 用户已授权的凭据可直接填写，inputValue 仍不回传已有安全字段值。
     const text = String(params.text ?? params.value ?? '');
     if (operation === 'fill') setNativeValue(element, '');
     setNativeValue(element, operation === 'fill' ? text : `${element.value || ''}${text}`);

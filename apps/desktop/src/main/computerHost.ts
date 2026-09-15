@@ -7,7 +7,6 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
-import { assertComputerActionInputAllowed, type ComputerActionTarget } from './computerActionTarget.js';
 
 interface ComputerServiceResponse {
   id: string;
@@ -22,12 +21,18 @@ interface ComputerServiceResponse {
   preview?: unknown;
 }
 
-/** 每个宿主同一时间只允许一个轮次拥有桌面控制权。 */
+/** 每个轮次独立保存控制身份、观察与用户接管状态。 */
 interface ComputerControlOwner {
   /** 本地随机会话身份，同时传给原生服务。 */
   id: string;
   /** 工具来源的完整身份；不接受模型参数覆盖。 */
   input: Pick<BrowserAutomationToolCall, 'conversationId' | 'threadId' | 'turnId'>;
+  /** 元素代次不能被其他轮次的观察或动作覆盖。 */
+  snapshots: Map<string, number>;
+  /** 只向所属产品会话展示该轮次的画面。 */
+  preview: ZeusComputerPreview | null;
+  /** 用户接管等待不占用其他轮次的操作队列。 */
+  userControlWaiters: Set<() => void>;
 }
 
 interface PendingServiceRequest {
@@ -77,8 +82,6 @@ export class ComputerHost implements BrowserAutomationPort {
   private stdoutBuffer = '';
   private stderrBuffer = '';
   private readonly pending = new Map<string, PendingServiceRequest>();
-  /** 只保留补全元素身份所需的观察世代；目标检查始终读取实时控件。 */
-  private readonly latestSnapshots = new Map<string, number>();
   private serviceRecovery: Promise<void> | null = null;
   private serviceRecoveryFailure: Error | null = null;
   private lastServiceProgress: ComputerServiceProgress | null = null;
@@ -86,9 +89,8 @@ export class ComputerHost implements BrowserAutomationPort {
   private settings: ZeusComputerSettings;
   private ipcRegistered = false;
   private closed = false;
-  /** 当前控制者在任何异步操作之前占位，避免并发轮次抢占。 */
-  // ponytail: 每个宿主只允许一个桌面控制者；确有并行需求时再按应用划分。
-  private controlOwner: ComputerControlOwner | null = null;
+  /** 按完整轮次身份隔离状态；同一应用的冲突由原生进程身份判断。 */
+  private readonly controlOwners = new Map<string, ComputerControlOwner>();
   /** 停止世代使目标检查、排队和启动中的请求一并失效。 */
   private controlGeneration = 0;
   /** 已撤销的轮次不允许自动恢复；随本宿主退出释放。 */
@@ -97,10 +99,6 @@ export class ComputerHost implements BrowserAutomationPort {
   private operationTail: Promise<void> = Promise.resolve();
   /** 设置入口和工具入口共用一次启动，避免生成两个 Helper。 */
   private serviceStartup: Promise<void> | null = null;
-  /** 仅缓存当前控制者的最后一张缩略图，结束时同步清空。 */
-  private controlPreview: ZeusComputerPreview | null = null;
-  /** 串行工具在接管期间挂起；恢复、停止或服务退出都唤醒同一等待者。 */
-  private userControlWaiter: (() => void) | null = null;
 
   constructor(private readonly options: CreateComputerHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -186,30 +184,30 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 只读查询不会启动 Helper；其他会话看不到当前控制画面。 */
   getPreview(conversationId: unknown): ZeusComputerPreview | null {
-    return typeof conversationId === 'string' && this.controlPreview?.conversationId === conversationId ? this.controlPreview : null;
+    return [...this.controlOwners.values()].find((owner) => owner.input.conversationId === conversationId && owner.preview)?.preview ?? null;
   }
 
   /** 设置入口可以全局停止；会话按钮必须仍属于当前控制者。 */
   async stopFromUser(input?: unknown): Promise<void> {
     this.assertWritable();
-    if (input != null) this.assertPreviewOwner(input);
-    await this.stop('user');
+    if (input != null) await this.stopOwner(this.assertPreviewOwner(input));
+    else await this.stop('user');
   }
 
   /** 用户继续仅解除暂停，不启动新 Helper，也不恢复已结束的轮次。 */
   async resumeFromUser(input: unknown): Promise<void> {
     this.assertWritable();
-    const sessionId = this.assertPreviewOwner(input);
-    await this.callService('resume_control', { _control_session_id: sessionId });
+    const owner = this.assertPreviewOwner(input);
+    await this.callService('resume_control', { _control_session_id: owner.id });
     this.assertPreviewOwner(input);
   }
 
   /** 在每个用户命令的写入前复核会话与控制身份。 */
-  private assertPreviewOwner(input: unknown): string {
-    if (!isRecord(input) || !this.controlOwner || input.conversationId !== this.controlOwner.input.conversationId || input.sessionId !== this.controlOwner.id) {
-      throw Object.assign(new Error('该会话的屏幕控制已结束或发生变化，请查看当前会话状态。'), { code: 'ZEUS_COMPUTER_STOPPED' });
-    }
-    return this.controlOwner.id;
+  private assertPreviewOwner(input: unknown): ComputerControlOwner {
+    /** 同一会话旧轮次的按钮不能操作新控制。 */
+    const owner = isRecord(input) ? [...this.controlOwners.values()].find((candidate) => candidate.id === input.sessionId && candidate.input.conversationId === input.conversationId) : undefined;
+    if (!owner) throw Object.assign(new Error('该会话的屏幕控制已结束或发生变化，请查看当前会话状态。'), { code: 'ZEUS_COMPUTER_STOPPED' });
+    return owner;
   }
 
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
@@ -221,20 +219,31 @@ export class ComputerHost implements BrowserAutomationPort {
     if (!isComputerMethod(input.tool)) return computerText(`Computer Use 方法不受支持：${input.tool}`, false);
     // 入队前捕获停止世代，用户停止后不能由旧排队请求重新取得控制权。
     const generation = this.controlGeneration;
+    /** 观察状态按轮次绑定，不再从第一次观察起独占整个宿主。 */
+    let owner: ComputerControlOwner | undefined;
     try {
       this.assertControlAllowed(input, generation);
       if (input.tool !== 'list_apps') {
-        if (this.controlOwner && (this.controlOwner.input.conversationId !== input.conversationId || this.controlOwner.input.threadId !== input.threadId || this.controlOwner.input.turnId !== input.turnId)) {
-          return computerText('ZEUS_COMPUTER_BUSY: 另一个轮次正在使用桌面控制，请等待它结束或由用户停止。', false);
+        /** 完整身份防止同一产品会话的不同原生轮次共用观察。 */
+        const key = JSON.stringify([input.conversationId, input.threadId, input.turnId]);
+        owner = this.controlOwners.get(key);
+        if (!owner) {
+          owner = { id: randomUUID(), input: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId }, snapshots: new Map(), preview: null, userControlWaiters: new Set() };
+          this.controlOwners.set(key, owner);
         }
-        this.controlOwner ??= { id: randomUUID(), input: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId } };
+        // 新控制开始时取消此前只读查询留下的空闲回收计时。
+        this.scheduleIdleStop();
+        if (owner.preview?.paused) {
+          await this.waitForUserControl(input, generation, owner);
+          return this.userControlContinuation(owner, '当前请求尚未执行。');
+        }
       }
     } catch (error) {
       return computerText(error instanceof Error ? error.message : String(error), false);
     }
     // 排队与实际执行分别计时，避免把调度等待归因于界面操作。
     const queuedAt = performance.now();
-    const operation = this.operationTail.then(() => this.invokeSerial(input, generation, queuedAt));
+    const operation = this.operationTail.then(() => this.invokeSerial(input, generation, queuedAt, owner));
     this.operationTail = operation.then(
       () => undefined,
       () => undefined,
@@ -243,7 +252,7 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   /** 与文件、浏览器工具独立，仅串行执行桌面工具。 */
-  private async invokeSerial(input: BrowserAutomationToolCall, generation: number, queuedAt: number): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+  private async invokeSerial(input: BrowserAutomationToolCall, generation: number, queuedAt: number, owner: ComputerControlOwner | undefined): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     const startedAt = performance.now();
     try {
       this.assertControlAllowed(input, generation);
@@ -252,26 +261,24 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.refreshServiceStatus();
       this.assertToolPermissions(input);
       this.assertControlAllowed(input, generation);
-      if (input.tool !== 'list_apps' && this.controlPreview?.paused) {
-        await this.waitForUserControl(input, generation);
-        return this.userControlContinuation('当前请求尚未执行。');
+      if (owner?.preview?.paused) {
+        return this.userControlContinuation(owner, '当前请求尚未执行。');
       }
-      const serviceArguments = this.prepareServiceArguments(input);
+      const serviceArguments = this.prepareServiceArguments(input, owner);
       await this.prepareActionTarget(input, serviceArguments, generation);
       this.assertControlAllowed(input, generation);
       // 读取时限从目标检查结束后计算，准备耗时不挤占动作后的观察预算。
       if (input.tool === 'get_app_state' || serviceArguments.wait_for !== undefined) serviceArguments._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
       // 动作一旦发出就不能继续使用旧索引；只有实际回读成功才能恢复缓存。
-      if (!['get_app_state', 'list_apps'].includes(input.tool)) this.latestSnapshots.clear();
+      if (!['get_app_state', 'list_apps'].includes(input.tool)) owner?.snapshots.clear();
       const serviceStartedAt = performance.now();
       const result = await this.callService(input.tool, serviceArguments);
       const serviceFinishedAt = performance.now();
       this.assertControlAllowed(input, generation);
-      if (this.controlPreview?.paused || asRecord(asRecord(result).control).paused === true || asRecord(asRecord(result).confirmation).code === 'ZEUS_COMPUTER_PAUSED') {
-        await this.waitForUserControl(input, generation);
-        return this.userControlContinuation(input.tool === 'get_app_state' ? '观察期间发生用户接管，旧观察已作废。' : '动作已经返回，可能已执行；不得重放，必须重新观察实际结果。');
+      if (owner && (owner.preview?.paused || asRecord(asRecord(result).control).paused === true || asRecord(asRecord(result).confirmation).code === 'ZEUS_COMPUTER_PAUSED')) {
+        return this.userControlContinuation(owner, input.tool === 'get_app_state' ? '观察期间发生用户接管，旧观察已作废。' : '动作已经返回，可能已执行；不得重放，必须重新观察实际结果。');
       }
-      if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result);
+      if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result, owner);
       // 先记住动作回读的观察世代，再裁剪模型投影；目标检查始终读取实时控件。
       const { textValue, image } = await this.projectResult(result, input.arguments.full_output === true);
       if (isRecord(textValue)) {
@@ -291,18 +298,19 @@ export class ComputerHost implements BrowserAutomationPort {
         success: true,
       };
     } catch (error) {
-      if (input.tool !== 'list_apps') this.latestSnapshots.clear();
+      if (input.tool !== 'list_apps') owner?.snapshots.clear();
       this.scheduleIdleStop();
+      // 停止会使原生目标失效；按轮次撤销事实返回，不能要求已结束的轮次重新观察。
+      try {
+        this.assertControlAllowed(input, generation);
+      } catch (interruption) {
+        return computerText(interruption instanceof Error ? interruption.message : String(interruption), false);
+      }
       const record = isRecord(error) ? error : {};
       const code = typeof record.code === 'string' ? record.code : 'ZEUS_COMPUTER_OPERATION_FAILED';
       const message = error instanceof Error ? error.message : String(error);
-      if (code === 'ZEUS_COMPUTER_PAUSED' || this.controlPreview?.paused) {
-        try {
-          await this.waitForUserControl(input, generation);
-          return this.userControlContinuation(`请求被用户接管打断（${code}: ${message.slice(0, 500)}），可能尚未执行或仅部分执行；不得重放，必须重新观察实际结果。`);
-        } catch (interruption) {
-          return computerText(interruption instanceof Error ? interruption.message : String(interruption), false);
-        }
+      if (owner && (code === 'ZEUS_COMPUTER_PAUSED' || owner.preview?.paused)) {
+        return this.userControlContinuation(owner, `请求被用户接管打断（${code}: ${message.slice(0, 500)}），可能尚未执行或仅部分执行；不得重放，必须重新观察实际结果。`);
       }
       this.settings = { ...this.settings, serviceState: this.child ? 'ready' : 'error', detail: `${code}: ${message}`.slice(0, 1000) };
       return computerText(`${code}: ${message}`.slice(0, 2000), false);
@@ -310,31 +318,31 @@ export class ComputerHost implements BrowserAutomationPort {
   }
 
   /** 等待原生空闲通知，不占用原生请求超时，也不向服务投递恢复或旧动作。 */
-  private async waitForUserControl(input: BrowserAutomationToolCall, generation: number): Promise<void> {
-    this.latestSnapshots.clear();
+  private async waitForUserControl(input: BrowserAutomationToolCall, generation: number, owner: ComputerControlOwner): Promise<void> {
+    owner.snapshots.clear();
     this.assertControlAllowed(input, generation);
     /** 错误响应可能先于预览事件到达，先核对原生状态，不能误报已空闲。 */
-    const status = asRecord(await this.callService('status', {}));
+    const status = asRecord(await this.callService('status', { _control_session_id: owner.id }));
     this.assertControlAllowed(input, generation);
-    if (this.controlPreview?.paused || asRecord(status.control).paused === true)
+    if (owner.preview?.paused || asRecord(status.control).paused === true)
       await new Promise<void>((resolveWait) => {
         /** 恢复、停止和等待上限共用清理出口，避免遗留计时器或回调。 */
         const finish = (): void => {
           clearTimeout(timer);
-          this.userControlWaiter = null;
+          owner.userControlWaiters.delete(finish);
           resolveWait();
         };
         /** 等待上限只返回继续等待的结果，不撤销控制或执行动作。 */
-        const timer = setTimeout(finish, userControlWaitTimeoutMs);
-        this.userControlWaiter = finish;
+        const timer = setTimeout(finish, Math.min(userControlWaitTimeoutMs, (input.deadlineUnixMs ?? Date.now() + userControlWaitTimeoutMs) - Date.now()));
+        owner.userControlWaiters.add(finish);
       });
     this.assertControlAllowed(input, generation);
   }
 
   /** 将临时接管作为可继续的工具结果，明确要求重新观察而非结束任务。 */
-  private userControlContinuation(outcome: string): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
+  private userControlContinuation(owner: ComputerControlOwner, outcome: string): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
     /** 超时后仍在接管时继续等候，不谎报已恢复。 */
-    const waiting = this.controlPreview?.paused === true;
+    const waiting = owner.preview?.paused === true;
     return computerText(
       JSON.stringify({
         status: waiting ? 'waiting_for_user' : 'user_control_resumed',
@@ -349,7 +357,18 @@ export class ComputerHost implements BrowserAutomationPort {
   /** 统一接收正常完成、失败和用户中断；旧轮次通知不得停止新轮次。 */
   async endComputerUse(input: { conversationId: string; turnId: string }): Promise<void> {
     this.revokedTurns.add(JSON.stringify([input.conversationId, input.turnId]));
-    if (this.controlOwner?.input.conversationId === input.conversationId && this.controlOwner.input.turnId === input.turnId) await this.stop('turn_ended');
+    await Promise.all([...this.controlOwners.values()].filter((owner) => owner.input.conversationId === input.conversationId && owner.input.turnId === input.turnId).map((owner) => this.stopOwner(owner)));
+  }
+
+  /** 立即撤销指定轮次，原生停止命令不排在耗时观察之后，也不终止其他采集。 */
+  private async stopOwner(owner: ComputerControlOwner): Promise<void> {
+    this.revokedTurns.add(JSON.stringify([owner.input.conversationId, owner.input.turnId]));
+    this.controlOwners.delete(JSON.stringify([owner.input.conversationId, owner.input.threadId, owner.input.turnId]));
+    owner.preview = null;
+    owner.snapshots.clear();
+    for (const finish of owner.userControlWaiters) finish();
+    if (this.child) await this.callService('stop_control', { _control_session_id: owner.id });
+    this.scheduleIdleStop();
   }
 
   /** 所有异步边界复核同一停止世代，目标检查通过不代表已撤销控制可以恢复。 */
@@ -365,12 +384,13 @@ export class ComputerHost implements BrowserAutomationPort {
   /** 先撤销所有排队和在途请求，再释放原生资源。 */
   private revokeControl(): void {
     this.controlGeneration += 1;
-    if (this.controlOwner) this.revokedTurns.add(JSON.stringify([this.controlOwner.input.conversationId, this.controlOwner.input.turnId]));
-    this.controlOwner = null;
-    this.controlPreview = null;
-    this.latestSnapshots.clear();
-    this.userControlWaiter?.();
-    this.userControlWaiter = null;
+    for (const owner of this.controlOwners.values()) {
+      this.revokedTurns.add(JSON.stringify([owner.input.conversationId, owner.input.turnId]));
+      owner.preview = null;
+      owner.snapshots.clear();
+      for (const finish of owner.userControlWaiters) finish();
+    }
+    this.controlOwners.clear();
   }
 
   async close(): Promise<void> {
@@ -533,9 +553,11 @@ export class ComputerHost implements BrowserAutomationPort {
         this.recycleFailedService(child, Object.assign(new Error('Zeus Computer Service 返回了无效 JSON。'), { code: 'ZEUS_COMPUTER_RESPONSE_INVALID' }));
         return;
       }
-      if (response.event === 'control_stopped' && response.sessionId === this.controlOwner?.id) {
-        void this.stop('native_stop');
-        return;
+      if (response.event === 'control_stopped') {
+        /** 原生菜单或系统停止只撤销对应轮次。 */
+        const owner = [...this.controlOwners.values()].find((candidate) => candidate.id === response.sessionId);
+        if (owner) void this.stopOwner(owner).catch(() => undefined);
+        continue;
       }
       if (response.event === 'control_preview') {
         this.rememberPreview(response);
@@ -558,14 +580,14 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 拒绝旧控制及无效图像，原生身份由宿主映射为产品会话。 */
   private rememberPreview(response: ComputerServiceResponse): void {
-    const owner = this.controlOwner;
+    const owner = [...this.controlOwners.values()].find((candidate) => candidate.id === response.sessionId);
     const value = response.preview;
     if (!owner || response.sessionId !== owner.id || !isRecord(value) || typeof value.appName !== 'string' || typeof value.paused !== 'boolean' || typeof value.needsObservation !== 'boolean') return;
     if (value.imageUrl !== null && (typeof value.imageUrl !== 'string' || value.imageUrl.length > 1024 * 1024 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/u.test(value.imageUrl))) return;
     const point = isRecord(value.cursor) ? value.cursor : null;
     const cursor =
       point && typeof point.x === 'number' && typeof point.y === 'number' && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? { x: point.x, y: point.y } : null;
-    this.controlPreview = {
+    owner.preview = {
       conversationId: owner.input.conversationId,
       sessionId: owner.id,
       appName: value.appName.slice(0, 200),
@@ -574,10 +596,9 @@ export class ComputerHost implements BrowserAutomationPort {
       imageUrl: value.imageUrl as string | null,
       cursor,
     };
-    if (value.paused || value.needsObservation) this.latestSnapshots.clear();
+    if (value.paused || value.needsObservation) owner.snapshots.clear();
     if (!value.paused) {
-      this.userControlWaiter?.();
-      this.userControlWaiter = null;
+      for (const finish of owner.userControlWaiters) finish();
     }
   }
 
@@ -608,7 +629,6 @@ export class ComputerHost implements BrowserAutomationPort {
       pending.reject(rejection(id, pending));
     }
     this.pending.clear();
-    this.latestSnapshots.clear();
     return true;
   }
 
@@ -668,17 +688,17 @@ export class ComputerHost implements BrowserAutomationPort {
   private scheduleIdleStop(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     // 活跃采集由轮次生命周期结束；空闲 Helper 才采用延迟回收。
-    if (this.controlOwner) return;
+    if (this.controlOwners.size > 0) return;
     this.idleTimer = setTimeout(() => void this.stop('idle'), serviceIdleTimeoutMs);
     this.idleTimer.unref();
   }
 
-  private rememberAppState(args: Record<string, unknown>, result: unknown): void {
+  private rememberAppState(args: Record<string, unknown>, result: unknown, owner: ComputerControlOwner | undefined): void {
     const record = asRecord(result);
     const appRecord = isRecord(record.application) ? record.application : isRecord(record.app) ? record.app : {};
     const appKeys = [args.app, typeof record.app === 'string' ? record.app : undefined, appRecord.name, appRecord.bundleId, appRecord.path].filter((value): value is string => typeof value === 'string' && value.length > 0);
     const generation = typeof record.snapshot_generation === 'number' ? record.snapshot_generation : 0;
-    for (const key of appKeys) this.latestSnapshots.set(key, generation);
+    for (const key of appKeys) owner?.snapshots.set(key, generation);
     const status = isRecord(record.status) ? record.status : {};
     this.settings = {
       ...this.settings,
@@ -688,43 +708,23 @@ export class ComputerHost implements BrowserAutomationPort {
     };
   }
 
-  /** Codex 与 Pi 共用全局授权，执行前仍绑定真实目标并检查安全输入。 */
+  /** Codex 与 Pi 共用全局授权，执行前绑定真实目标；允许已授权的登录输入。 */
   private async prepareActionTarget(input: BrowserAutomationToolCall, serviceArguments: Record<string, unknown>, generation: number): Promise<void> {
     if (!['click', 'drag', 'paste', 'perform_secondary_action', 'press_key', 'set_value', 'type_text'].includes(input.tool)) return;
-    /** 控件及凭据均来自实际原生窗口，不由调用者声明。 */
-    const target = await this.describeServiceTarget(input.tool, serviceArguments);
+    /** 控件及一次性校验凭据均来自实际原生窗口，不由调用者声明。 */
+    const target = asRecord(await this.callService('describe_target', { ...serviceArguments, _action_tool: input.tool }));
     this.assertControlAllowed(input, generation);
-    assertComputerActionInputAllowed(input.tool, serviceArguments, target);
+    if (typeof target.token !== 'string' || !target.token || typeof target.appName !== 'string' || !target.appName || typeof target.windowId !== 'number' || typeof target.role !== 'string' || !target.role) {
+      throw Object.assign(new Error('无法确认这次操作的目标控件；请重新读取目标窗口，动作尚未执行。'), { code: 'ZEUS_COMPUTER_TARGET_UNAVAILABLE' });
+    }
     serviceArguments._action_token = target.token;
   }
 
-  /** 原生服务描述本次真实目标并签发一次性校验凭据。 */
-  private async describeServiceTarget(tool: string, serviceArguments: Record<string, unknown>): Promise<ComputerActionTarget> {
-    /** 来自隔离原生服务的响应仍需验证必要目标字段。 */
-    const result = asRecord(await this.callService('describe_target', { ...serviceArguments, _action_tool: tool }));
-    if (typeof result.token !== 'string' || !result.token || typeof result.appName !== 'string' || !result.appName || typeof result.windowId !== 'number' || typeof result.role !== 'string' || !result.role) {
-      throw Object.assign(new Error('无法确认这次操作的目标控件；请重新读取目标窗口，动作尚未执行。'), { code: 'ZEUS_COMPUTER_TARGET_UNAVAILABLE' });
-    }
-    return {
-      token: result.token,
-      appName: result.appName,
-      windowId: result.windowId,
-      windowTitle: typeof result.windowTitle === 'string' ? result.windowTitle : '',
-      role: result.role,
-      subrole: typeof result.subrole === 'string' ? result.subrole : '',
-      title: typeof result.title === 'string' ? result.title : '',
-      description: typeof result.description === 'string' ? result.description : '',
-      identifier: typeof result.identifier === 'string' ? result.identifier : '',
-      editable: result.editable === true,
-      secure: result.secure === true,
-    };
-  }
-
   /** 内部身份与目标校验凭据只由宿主写入，模型参数不能伪造。 */
-  private prepareServiceArguments(input: BrowserAutomationToolCall): Record<string, unknown> {
-    const args: Record<string, unknown> = { ...Object.fromEntries(Object.entries(input.arguments).filter(([key]) => !key.startsWith('_'))), _control_session_id: this.controlOwner?.id };
+  private prepareServiceArguments(input: BrowserAutomationToolCall, owner: ComputerControlOwner | undefined): Record<string, unknown> {
+    const args: Record<string, unknown> = { ...Object.fromEntries(Object.entries(input.arguments).filter(([key]) => !key.startsWith('_'))), _control_session_id: owner?.id };
     const app = typeof args.app === 'string' ? args.app : '';
-    const snapshot = app ? this.latestSnapshots.get(app) : undefined;
+    const snapshot = app ? owner?.snapshots.get(app) : undefined;
     if (input.tool === 'get_app_state' || args.wait_for !== undefined) {
       if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot;
       if (args.disableDiff === true) delete args.previous_snapshot_generation;

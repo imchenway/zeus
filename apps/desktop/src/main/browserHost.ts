@@ -176,7 +176,6 @@ export const browserPartition = 'persist:zeus-browser';
 const maxDraftCommentsPerTab = 200;
 const maxCommentBodyLength = 20_000;
 const approvalTimeoutMs = 5 * 60_000;
-const sensitiveFieldPattern = /\b(password|passcode|otp|one.?time|verification|secret|token|api.?key|card|cvv|cvc|iban|routing|account|ssn|身份证|密码|验证码|密钥|卡号|账户)\b/iu;
 
 function defaultSettings(options: CreateBrowserHostOptions): ZeusBrowserSettings {
   return {
@@ -1377,7 +1376,7 @@ export class BrowserHost implements BrowserAutomationPort {
     const text = requireString(input.arguments.text, 'text').slice(0, 100_000);
     const info = await this.elementInfo(tab, selector);
     if (info.fileInput) return toolText('Automated file uploads are not supported. Ask the user to choose the file manually.', false);
-    if (sensitiveFieldPattern.test(`${info.type} ${info.name} ${info.text}`)) return toolText('ZEUS_BROWSER_SECURE_FIELD_BLOCKED: Use Browser Auth so the credential never enters Provider arguments or tool history.', false);
+    // 用户已授权的登录信息沿用普通输入入口，私密凭据交接由用户自行选择。
     const result = await this.ensureView(tab).webContents.executeJavaScript(`(${typeIntoElementScript})(${JSON.stringify(selector)}, ${JSON.stringify(text)}, ${input.arguments.replace !== false ? 'true' : 'false'})`, true);
     return toolJson(result);
   }
@@ -3683,12 +3682,14 @@ const advancedLocatorOperationScript = async function advancedLocatorOperation(q
   }
   if (operation === 'fill' || operation === 'type' || operation === 'pressSequentially') {
     const text = String(args.value ?? args.text ?? '');
-    const secureDescriptor = `${target.getAttribute('type') || ''} ${target.getAttribute('autocomplete') || ''} ${target.getAttribute('name') || ''} ${target.id || ''} ${target.getAttribute('aria-label') || ''} ${target.getAttribute('placeholder') || ''}`;
-    if ((target instanceof HTMLInputElement && target.type === 'password') || /password|passcode|otp|one.?time|verification|cvv|cvc|secret|token|private.?key|密码|验证码|卡号|密钥/iu.test(secureDescriptor)) {
-      throw new Error('ZEUS_BROWSER_SECURE_FIELD_BLOCKED: Use Browser Auth so the credential never enters Provider arguments or tool history.');
-    }
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) target.value = operation === 'type' || operation === 'pressSequentially' ? `${target.value}${text}` : text;
-    else if (target.isContentEditable) target.textContent = operation === 'type' || operation === 'pressSequentially' ? `${target.textContent || ''}${text}` : text;
+    // 登录框可直接填写；读取密码的遮蔽规则与输入能力分开。
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      /** 调用原生赋值入口，让受框架控制的登录表单能收到后续输入事件。 */
+      const prototype = target instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+      /** 与普通输入工具使用同一赋值语义，避免框架误判为值未变化。 */
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      setter?.call(target, operation === 'type' || operation === 'pressSequentially' ? `${target.value}${text}` : text);
+    } else if (target.isContentEditable) target.textContent = operation === 'type' || operation === 'pressSequentially' ? `${target.textContent || ''}${text}` : text;
     else throw new Error('Locator is not editable.');
     target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
     target.dispatchEvent(new Event('change', { bubbles: true }));

@@ -95,10 +95,12 @@ private final class ComputerMenuObservation: @unchecked Sendable {
     private var pid: pid_t?
     /** 尚未关闭的菜单引用保留到下一次真实观察。 */
     private var menus: [AXUIElement] = []
+    /** 停止后的迟到观察不得重新注册系统回调。 */
+    private var stopped = false
 
     /** 先订阅再执行打开菜单的动作，避免丢失仅通过通知公开的菜单根。 */
     @MainActor func observe(pid nextPid: pid_t) {
-        if lock.withLock({ pid == nextPid }) { return }
+        if lock.withLock({ stopped || pid == nextPid }) { return }
         if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes) }
         observer = nil
         lock.withLock { pid = nextPid; menus.removeAll() }
@@ -125,16 +127,43 @@ private final class ComputerMenuObservation: @unchecked Sendable {
         var elementPid: pid_t = 0
         guard AXUIElementGetPid(element, &elementPid) == .success else { return }
         lock.withLock {
-            guard pid == elementPid else { return }
+            guard !stopped, pid == elementPid else { return }
             menus.removeAll { CFEqual($0, element) }
             if opened { menus.append(element) }
             if menus.count > 16 { menus.removeFirst(menus.count - 16) }
         }
     }
 
+    /** 轮次结束时移除系统监听，防止失效回调继续引用已释放对象。 */
+    @MainActor func stop() {
+        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes) }
+        observer = nil
+        lock.withLock { stopped = true; pid = nil; menus.removeAll() }
+    }
+
     /** 仅给当前进程返回候选；失效引用随后会被实时窗口校验拒绝。 */
     func roots(for requestedPid: pid_t) -> [AXUIElement] {
         lock.withLock { pid == requestedPid ? menus : [] }
+    }
+}
+
+/** 每个轮次持有独立采集、菜单监听和元素历史；工具执行仍按请求顺序推进。 */
+private final class ComputerServiceSession {
+    /** 该轮次唯一的窗口采集与用户接管状态。 */
+    let control = ComputerControlSession()
+    /** 菜单通知只属于该轮次观察的应用。 */
+    let menuObservation = ComputerMenuObservation()
+    /** 动作索引来自该轮次自己的最新观察。 */
+    var snapshots: [pid_t: ElementSnapshot] = [:]
+    /** 差异读取不得引用另一轮次的历史。 */
+    var snapshotHistory: [Int: ElementSnapshot] = [:]
+    /** 一次性动作凭据只在同一轮次内消费。 */
+    var preparedAction: PreparedComputerAction?
+
+    /** 立即停止原生输入，再在主线程移除菜单监听。 */
+    func stop(reason: String) {
+        control.stop(reason: reason)
+        Task { await menuObservation.stop() }
     }
 }
 
@@ -151,12 +180,23 @@ private struct ZeusComputerService {
         termination.setEventHandler { service.shutdown(); NSApp.terminate(nil) }
         termination.resume()
         Task.detached {
+            /** 输入读取独立于耗时观察；停止与继续可以立即到达指定控制会话。 */
+            var tail: Task<Void, Never>?
             while let line = readLine(strippingNewline: true) {
                 guard !line.isEmpty else { continue }
-                let response = await service.handle(line: line)
-                writeComputerOutput(response)
+                if let response = service.handleControlCommand(line: line) {
+                    writeComputerOutput(response)
+                    continue
+                }
+                /** 普通工具保持串行，不能交错一次性目标检查与输入。 */
+                let previous = tail
+                tail = Task {
+                    await previous?.value
+                    writeComputerOutput(await service.handle(line: line))
+                }
             }
             service.shutdown()
+            await tail?.value
             await MainActor.run { NSApp.terminate(nil) }
         }
         withExtendedLifetime(termination) { application.run() }
@@ -167,16 +207,37 @@ private final class ComputerService {
     private var generation = 0
     /** 串行工具动作的序号，观察结果可追溯到最近一次动作请求。 */
     private var actionSequence = 0
-    private var snapshots: [pid_t: ElementSnapshot] = [:]
-    private var snapshotHistory: [Int: ElementSnapshot] = [:]
-    /** 唯一控制窗口、持续采集和原生停止入口。 */
-    private let control = ComputerControlSession()
-    /** 系统菜单不依赖主窗口的普通子控件树。 */
-    private let menuObservation = ComputerMenuObservation()
+    /** 停止命令与工具线程共享注册表；控制对象本身另有输入锁。 */
+    private let sessionLock = NSLock()
+    /** 活跃轮次按宿主签发的随机身份隔离。 */
+    private var sessions: [String: ComputerServiceSession] = [:]
+    /** 已停止的身份不能被仍在排队的旧观察重新创建。 */
+    private var stoppedSessions = Set<String>()
+    /** 宿主退出后禁止新观察创建控制状态。 */
+    private var shuttingDown = false
+    /** 只有串行工具线程修改当前请求；停止命令不切换它。 */
+    private var currentSession: ComputerServiceSession?
+    /** 非管理请求在进入执行前已检查会话存在。 */
+    private var control: ComputerControlSession { currentSession!.control }
+    /** 当前轮次的系统菜单监听。 */
+    private var menuObservation: ComputerMenuObservation { currentSession!.menuObservation }
+    /** 当前轮次的元素索引不会因其他应用动作被清空。 */
+    private var snapshots: [pid_t: ElementSnapshot] {
+        get { currentSession!.snapshots }
+        set { currentSession!.snapshots = newValue }
+    }
+    /** 当前轮次独立保留有界差异历史。 */
+    private var snapshotHistory: [Int: ElementSnapshot] {
+        get { currentSession!.snapshotHistory }
+        set { currentSession!.snapshotHistory = newValue }
+    }
     /** 当前串行请求由宿主签发的控制身份。 */
     private var controlSessionId = ""
     /** 串行动作只保留一份待执行检查，使用后立即消费。 */
-    private var preparedAction: PreparedComputerAction?
+    private var preparedAction: PreparedComputerAction? {
+        get { currentSession!.preparedAction }
+        set { currentSession!.preparedAction = newValue }
+    }
     /** 虚拟输入独立于硬件键鼠状态，不继承用户正在按住的修饰键。 */
     private let inputSource = CGEventSource(stateID: .privateState)
     private let artifactRoot: URL
@@ -195,7 +256,61 @@ private final class ComputerService {
     }
 
     /** 父进程管道关闭时结束采集和预览。 */
-    func shutdown() { control.stop(reason: "parent_closed") }
+    func shutdown() {
+        /** 先关闭注册入口，再停止每个独立控制对象。 */
+        let active = sessionLock.withLock {
+            shuttingDown = true
+            /** 脱离注册表后仍保有对象，逐个释放输入和采集。 */
+            let active = Array(sessions.values)
+            stoppedSessions.formUnion(sessions.keys)
+            sessions.removeAll()
+            return active
+        }
+        for session in active { session.stop(reason: "parent_closed") }
+    }
+
+    /** 只处理宿主用户控制命令，不进入普通观察队列，也不更改当前执行身份。 */
+    func handleControlCommand(line: String) -> Data? {
+        guard let data = line.data(using: .utf8), let request = try? encoder.jsonObject(with: data) as? [String: Any],
+              let method = request["method"] as? String, ["stop_control", "resume_control"].contains(method) else { return nil }
+        /** 停止与继续均使用宿主绑定的控制身份，不能由应用名猜测。 */
+        let requestId = request["id"] ?? NSNull()
+        do {
+            /** 管理命令只从内部参数取得当前控制身份。 */
+            let params = request["params"] as? [String: Any] ?? [:]
+            guard let id = params["_control_session_id"] as? String, !id.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_REQUIRED", message: "缺少宿主控制身份。") }
+            /** 撤销与移出注册表同步发生，排队请求无法重建旧身份。 */
+            let session = sessionLock.withLock { () -> ComputerServiceSession? in
+                if method == "stop_control" { stoppedSessions.insert(id); return sessions.removeValue(forKey: id) }
+                return sessions[id]
+            }
+            if method == "stop_control" { session?.stop(reason: "turn_stopped") }
+            else {
+                guard let session else { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "该轮次控制已结束。") }
+                try session.control.resume(sessionId: id)
+            }
+            return try response(["id": requestId, "ok": true, "result": ["stopped": method == "stop_control", "control": session?.control.status ?? [:]]])
+        } catch let failure as ServiceFailure {
+            return try? response(["id": requestId, "ok": false, "error": ["code": failure.code, "message": failure.message]])
+        } catch {
+            return try? response(["id": requestId, "ok": false, "error": ["code": "ZEUS_COMPUTER_OPERATION_FAILED", "message": String(describing: error)]])
+        }
+    }
+
+    /** 控制只由首次观察建立；其他动作必须使用仍存活的观察身份。 */
+    private func bindSession(method: String) throws {
+        currentSession = try sessionLock.withLock {
+            if ["status", "request_permissions", "list_apps"].contains(method) { return sessions[controlSessionId] }
+            guard !controlSessionId.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_REQUIRED", message: "缺少宿主控制身份。") }
+            guard !shuttingDown, !stoppedSessions.contains(controlSessionId) else { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "该轮次控制已停止，旧请求不能恢复。") }
+            if let session = sessions[controlSessionId] { return session }
+            guard method == "get_app_state" else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口。") }
+            /** 首次观察才分配原生控制对象。 */
+            let session = ComputerServiceSession()
+            sessions[controlSessionId] = session
+            return session
+        }
+    }
 
     func handle(line: String) async -> Data {
         var requestId: Any = NSNull()
@@ -209,6 +324,7 @@ private final class ComputerService {
             }
             var params = request["params"] as? [String: Any] ?? [:]
             controlSessionId = params["_control_session_id"] as? String ?? ""
+            try bindSession(method: method)
             if let requestId = requestId as? String { params["_request_id"] = requestId }
             let result = try await invoke(method: method, params: params)
             return try response(["id": requestId, "ok": true, "result": result])
@@ -235,10 +351,6 @@ private final class ComputerService {
             return status()
         case "request_permissions":
             return requestPermissions(params)
-        case "resume_control":
-            // 此方法仅由宿主用户命令调用，不注册为模型工具。
-            try control.resume(sessionId: controlSessionId)
-            return control.status
         case "list_apps":
             return listApps()
         case "get_app_state":
@@ -301,7 +413,7 @@ private final class ComputerService {
         [
             "accessibilityTrusted": AXIsProcessTrusted(),
             "screenCaptureAvailable": CGPreflightScreenCaptureAccess(),
-            "control": control.status,
+            "control": currentSession?.control.status ?? [:],
             "servicePid": ProcessInfo.processInfo.processIdentifier,
             "protocolVersion": "zeus.computer.v1",
         ]
@@ -348,6 +460,9 @@ private final class ComputerService {
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
         try rejectSelf(app)
+        /** 按实际进程判定冲突，名称、路径和 bundle 别名不能各自取得一份控制。 */
+        let occupied = sessionLock.withLock { sessions.contains { id, session in id != controlSessionId && session.control.targetProcessIdentifier == app.processIdentifier } }
+        if occupied { throw ServiceFailure(code: "ZEUS_COMPUTER_APP_BUSY", message: "目标应用 \(app.localizedName ?? String(app.processIdentifier)) 正由另一个轮次控制；其他应用仍可使用。请等待该应用释放，不要停止无关任务。") }
         await menuObservation.observe(pid: app.processIdentifier)
         // 观察与后续输入固定同一窗口；截屏关闭只省略返回图片，不隐藏正在控制的系统状态。
         let target = afterAction ? try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) : try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
@@ -411,6 +526,8 @@ private final class ComputerService {
                 deferredIndex += 1
                 if walk(element: element, depth: depth, maxElements: maxElements, deadlineUnixMilliseconds: readDeadline, visited: &visited, elements: &elements, summaries: &summaries, truncatedReason: &truncatedReason, visibleFrame: target.frame, deferredElements: &deferredElements, progress: { _ in }) { break }
             }
+            // 停止后的大树读取立即退出，不继续占用其他轮次的原生请求队列。
+            if control.targetProcessIdentifier == nil { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "该轮次控制已停止，观察已取消。") }
             if deferredIndex < deferredElements.count && truncatedReason == nil { truncatedReason = elements.count >= maxElements ? "element_limit" : "deadline" }
             if let observedWindow, stringAttribute(observedWindow, kAXRoleAttribute) == kAXMenuRole, elements.count == 1 {
                 /** 系统声明有子项却拒绝返回时，保留菜单根并明确标记不完整。 */
@@ -501,6 +618,11 @@ private final class ComputerService {
         deferredElements: inout [(AXUIElement, Int)],
         progress: (Int) -> Void
     ) -> Bool {
+        // 每个控件之间检查撤销，让停止不必等待整棵树读取完成。
+        if control.targetProcessIdentifier == nil {
+            truncatedReason = "stopped"
+            return true
+        }
         if elements.count >= maxElements {
             truncatedReason = truncatedReason ?? "element_limit"
             return true
@@ -926,8 +1048,8 @@ private final class ComputerService {
         try requireAccessibility()
         try requireUnlockedSession()
         let (app, element) = try appAndElement(params, elementRequired: false)
-        if let element { try rejectSecure(element); try focus(element) }
-        else if let focused = focusedElement(app.processIdentifier) { try rejectSecure(focused) }
+        // 已授权的登录粘贴沿用同一目标和剪贴板恢复流程。
+        if let element { try focus(element) }
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "paste 缺少 text。") }
         let pasteboard = NSPasteboard.general
         let previous = snapshotPasteboard(pasteboard)
@@ -1092,7 +1214,7 @@ private final class ComputerService {
         let (_, element) = try appAndElement(params, elementRequired: true)
         defer { control.didMutate() }
         guard let element, let value = params["value"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_VALUE_REQUIRED", message: "set_value 参数不完整。") }
-        try rejectSecure(element)
+        // 密码值可以写入，但不读取旧值，也不在结果中回显。
         guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_SET_VALUE_FAILED", message: "目标元素拒绝设置值。")
         }
@@ -1105,10 +1227,28 @@ private final class ComputerService {
         let (app, element) = try appAndElement(params, elementRequired: false)
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "type_text 缺少 text。") }
         guard let target = element ?? focusedElement(app.processIdentifier) else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "文字输入需要明确的可编辑元素。") }
-        try rejectSecure(target)
         try requireElementWindow(target, target: control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId))
         if element != nil { try focus(target) }
         defer { control.didMutate() }
+        /** 密码输入只投递用户提供的文字，不读取已有值或伪称已校验密码内容。 */
+        if (try? rejectSecure(target)) == nil {
+            // 按 Unicode 标量发送，避免把表情等字符的 UTF-16 代理对拆成两次输入。
+            for scalar in text.unicodeScalars {
+                /** 一个完整字符对应的 UTF-16 单元。 */
+                let chunk = Array(String(scalar).utf16)
+                /** 按下事件固定投递到已经观察的窗口。 */
+                let down = try windowKeyEvent(pid: app.processIdentifier, keyCode: 0, down: true, flags: [])
+                /** 配对释放保持虚拟键盘状态完整。 */
+                let up = try windowKeyEvent(pid: app.processIdentifier, keyCode: 0, down: false, flags: [])
+                chunk.withUnsafeBufferPointer { buffer in
+                    down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+                    up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+                }
+                try postEvent(down, pid: app.processIdentifier)
+                try postEvent(up, pid: app.processIdentifier)
+            }
+            return ["typed": true, "text_value_verified": false, "length": text.utf16.count, "message": "已向目标密码框投递文字；密码值不读取或回传，请根据登录结果确认。"]
+        }
         /** 写入前冻结预期文字；富文本没有可靠选择范围时不能宣称输入已确认。 */
         let expectedValue = expectedTextAfterInsertion(target, text: text)
         var selectedTextSettable = DarwinBoolean(false)
@@ -1183,7 +1323,7 @@ private final class ComputerService {
         let role = stringAttribute(element, kAXRoleAttribute) ?? ""
         let subrole = stringAttribute(element, kAXSubroleAttribute) ?? ""
         if role == "AXSecureTextField" || subrole.localizedCaseInsensitiveContains("secure") {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_SECURE_FIELD_BLOCKED", message: "Zeus 不读取或填写密码、验证码及其他安全文本字段。")
+            throw ServiceFailure(code: "ZEUS_COMPUTER_SECURE_FIELD_BLOCKED", message: "Zeus 不读取密码及其他安全文本字段的已有值。")
         }
     }
 
