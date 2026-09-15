@@ -796,7 +796,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onSubmit: (delivery, settings) => {
       const currentState = input.controller.getState();
       const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(currentState) ? 'steer_now' : 'queue';
-      return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined));
+      // 发送失败交回输入区显示；前置校验错误不一定经过控制器的运行操作状态。
+      return input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined).then(() => undefined);
     },
     onStageBrowserComments: (prepared) => input.controller.setBrowserSubmission(prepared),
     onRemoveBrowserSubmission: () => input.controller.setBrowserSubmission(null),

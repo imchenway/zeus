@@ -840,6 +840,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    readSubmissionReceipt: (conversationId, submissionId) => {
+      const submission = conversationSubmissions.getById(submissionId);
+      if (!submission || submission.conversationId !== conversationId) return null;
+      return {
+        id: submission.id,
+        conversationId: submission.conversationId,
+        clientUserMessageId: submission.clientMessageId,
+        status: submission.status,
+        pausedReason: submission.pausedReason,
+        providerTurnId: submission.providerTurnId,
+      };
+    },
     readExecutionContext: async (conversationId) => {
       if (readOnlyValidation) return { cwd: null, branch: null, isGitRepository: null };
       const conversation = conversations.getRecordById(conversationId);

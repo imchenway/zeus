@@ -13,6 +13,7 @@ interface ConversationSnapshotV2ApiOptions {
   getConversation: (conversationId: string) => ConversationOwnershipRecord | undefined;
   readExecutionContext?: (conversationId: string) => Promise<ConversationSnapshotV2ExecutionContext>;
   readQueueState: (conversationId: string) => unknown;
+  readSubmissionReceipt: (conversationId: string, submissionId: string) => unknown;
 }
 
 interface ConversationParams {
@@ -46,6 +47,14 @@ type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compact
 /** 注册 Snapshot V2 与所有重内容按需读取入口；V1 路由继续由主 server 保持兼容。 */
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
   const { server, repository } = options;
+
+  // 已完成的提交可能不在历史首屏或活动队列中，按耐久身份单独核对。
+  server.get('/api/projects/:projectId/conversations/:conversationId/submissions/:submissionId/receipt', async (request: FastifyRequest<{ Params: ConversationParams & { submissionId: string } }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    const receipt = options.readSubmissionReceipt(request.params.conversationId, request.params.submissionId);
+    if (!receipt) return reply.code(404).send({ error: 'ZEUS_CONVERSATION_SUBMISSION_NOT_FOUND', message: '找不到这条消息的提交记录。' });
+    return receipt;
+  });
 
   // 目录覆盖完整历史，正文仍按轮次分页；不改变消息读取及实时同步进度。
   server.get('/api/projects/:projectId/conversations/:conversationId/navigation', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
