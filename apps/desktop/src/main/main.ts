@@ -1,6 +1,6 @@
 import { registerFilePreview } from './filePreview.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -641,6 +641,8 @@ async function openProjectGitDiffWindow(
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
+    // 网页首帧前的原生底色与加载页使用同一主题。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
     show: false,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
@@ -728,6 +730,8 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${desktopDisplayName()}`,
+    // 网页首帧前的原生底色与加载页使用同一主题。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
     show: false,
     resizable: true,
     minimizable: true,
@@ -2127,7 +2131,9 @@ function setupIpc(): void {
       desktopNotificationsEnabled: typeof settings.desktopNotificationsEnabled === 'boolean' ? settings.desktopNotificationsEnabled : appShellSettings.desktopNotificationsEnabled,
       openAtLoginEnabled: typeof settings.openAtLoginEnabled === 'boolean' ? settings.openAtLoginEnabled : appShellSettings.openAtLoginEnabled,
     };
+    /** 同步原生主题，让后续窗口的加载页立即沿用应用选择。 */
     const deliveryAppearance = settings.appearance === 'light' || settings.appearance === 'dark' ? settings.appearance : 'system';
+    nativeTheme.themeSource = deliveryAppearance;
     for (const window of taskGitDeliveryWindows.values()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send('zeus:task-git-delivery:appearance', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
@@ -3368,7 +3374,9 @@ async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: str
       headers: { authorization: `Bearer ${config.apiToken}` },
     });
     if (!response.ok) return appShellSettings;
-    const body = (await response.json()) as Partial<MainAppShellSettings>;
+    const body = (await response.json()) as Partial<MainAppShellSettings> & { appearance?: unknown };
+    // 设置就绪后同步原生主题，后续窗口的首屏 CSS 无需再等待页面设置请求。
+    nativeTheme.themeSource = body.appearance === 'light' || body.appearance === 'dark' ? body.appearance : 'system';
     return {
       appLanguage: body.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: body.webviewDebugEnabled === true,
