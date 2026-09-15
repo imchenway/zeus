@@ -525,7 +525,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     },
     [synchronizeTranscriptViewport],
   );
-  const projectedTurnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
+  /** 整轮耗时和当前阶段只由最后一段过程呈现，避免插话分段后重复提示。 */
+  const projectedTurnWorkKeyByTurn = useMemo(() => new Map(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => [row.turnId, row.key])), [turnRows]);
   const completionAnchorKeyByTurn = useMemo(() => turnArtifactAnchorKeyByTurn(transcriptRows), [transcriptRows]);
   /** 耗时入口优先锚定最终正文；资源交付仍沿用原有的轮次收尾位置。 */
   const turnSummaryAnchorKeyByTurn = useMemo(() => {
@@ -999,7 +1000,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       );
       const renderProcessSegments = (active: boolean): ReactNode =>
         row.segments.map((segment, segmentIndex) => (
-          <section className="session-turn-process-stage" data-current={row.live && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
+          <section className="session-turn-process-stage" data-current={row.live && projectedTurnWorkKeyByTurn.get(row.turnId) === row.key && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
             {segment.summary ? (
               <div className="session-turn-stage-summary">
                 {renderTranscriptRow(segment.summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
@@ -1062,7 +1063,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
-              turn={turnActive ? undefined : turn}
+              turn={turnActive || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
               requests={props.state.pendingRequests}
               presentation={processLive ? 'inline' : 'disclosure'}
               loading={Boolean(row.loadMore && processPaging?.loading)}
@@ -1102,7 +1103,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     // 入口只能来自可见过程事实。缺少 turn summary 或仅有历史视图会隐藏的 reasoning，
     // 都不能凭最终回答臆造一个展开后为空的“查看处理过程”。
     const historicalProcessAvailable = Boolean(v2Turn?.process.available);
-    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkIds.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
+    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
     /** 只剩用户输入的结束轮次仍先显示输入，随后显示其耗时。 */
     const opensWithUserMessage = itemRole(lastRowItem) === 'user';
     /** 同一消息仅渲染一次，根据消息角色决定它与轮次摘要的先后关系。 */
@@ -1129,7 +1130,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </SessionTurnProcessDisclosure>
         ) : null}
         {/* 没有处理过程的结束轮次只在正文前显示耗时，不生成空的展开按钮。 */}
-        {anchorsTurnSummary && turn && !isActiveSessionTurn(turn) && !projectedTurnWorkIds.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
+        {anchorsTurnSummary && turn && !isActiveSessionTurn(turn) && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
           <div className="session-turn-process-control">
             <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
           </div>
@@ -1984,59 +1985,69 @@ export function projectTranscriptTurnRows(
 ): TranscriptTurnRow[] {
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
   const completionOutputTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isTurnCompletionOutputItem(row.item) ? [row.item.turnId] : [])));
-  // 权威活动轮次优先于任何提前或误分类的输出；阶段摘要只负责切分单轮过程内部的内容，
-  // 不能再生成多个顶层折叠入口。活动轮次继续展开，只有正式结束后才收起过程。
+  /** 活动轮次和已结束轮次共用消息边界，展开与收起都不能改变发言顺序。 */
   const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
-  const openingUserRowKeyByTurn = new Map<string, string>();
+  /** 每次普通用户输入开启一段过程；结构化问题答案继续留在原过程内。 */
+  type ProcessGroup = { openingUserRowKey: string | null; rows: TranscriptRow[]; workRow?: TranscriptTurnWorkRow };
+  /** 同轮的各段按实际出现顺序保存，首段兼容过程先于开场消息到达。 */
+  const groupsByTurn = new Map<string, ProcessGroup[]>();
+  /** 输入行和过程行都直接关联所属段，避免输出时跨过中途引导。 */
+  const groupByRowKey = new Map<string, ProcessGroup>();
   for (const row of orderedRows) {
-    if (row.kind !== 'item' || row.questionAnswer || itemRole(row.item) !== 'user' || openingUserRowKeyByTurn.has(row.item.turnId)) continue;
-    openingUserRowKeyByTurn.set(row.item.turnId, row.key);
-  }
-
-  const processRowsByTurn = new Map<string, TranscriptRow[]>();
-  for (const row of orderedRows) {
+    /** 无轮次身份的消息保持原位。 */
     const turnId = transcriptRowTurnId(row);
     if (!turnId || !projectedTurnIds.has(turnId)) continue;
-    if (!isTurnProcessRow(row)) continue;
-    const workRows = processRowsByTurn.get(turnId) ?? [];
-    workRows.push(row);
-    processRowsByTurn.set(turnId, workRows);
-  }
-
-  const workRowByTurn = new Map<string, TranscriptTurnWorkRow>();
-  const processRowKeys = new Set<string>();
-  for (const turnId of new Set([...processRowsByTurn.keys(), ...processAvailableTurnIds])) {
-    if (!projectedTurnIds.has(turnId)) continue;
-    const processRows = processRowsByTurn.get(turnId) ?? [];
-    const segments = segmentTurnProcessRows(turnId, processRows);
-    workRowByTurn.set(turnId, {
-      kind: 'turn_work',
-      key: `turn-work:${encodeURIComponent(turnId)}`,
-      turnId,
-      segments,
-      live: turnId === activeTurnId && !terminalTurnIds[turnId],
-      loadMore: true,
-    });
-    processRows.forEach((row) => processRowKeys.add(row.key));
-  }
-
-  const projected: TranscriptTurnRow[] = [];
-  const emittedWorkTurns = new Set<string>();
-  for (const row of orderedRows) {
-    const turnId = transcriptRowTurnId(row);
-    const workRow = turnId ? workRowByTurn.get(turnId) : undefined;
-    const openingUserRowKey = turnId ? openingUserRowKeyByTurn.get(turnId) : undefined;
-    const firstProcessRowKey = workRow?.segments.flatMap((segment) => [segment.summary, ...segment.rows]).find((candidate): candidate is TranscriptRow => Boolean(candidate))?.key;
-    if (turnId && workRow && !openingUserRowKey && firstProcessRowKey === row.key && !emittedWorkTurns.has(turnId)) {
-      projected.push(workRow);
-      emittedWorkTurns.add(turnId);
+    /** 只有普通用户消息构成发言边界。 */
+    const isUserInput = row.kind === 'item' && !row.questionAnswer && itemRole(row.item) === 'user';
+    /** 使用同轮最近一段；新输入只分开已有开场消息的段。 */
+    const groups = groupsByTurn.get(turnId) ?? [];
+    /** 前置过程与稍后到达的首条用户消息仍属于首段。 */
+    let group = groups.at(-1);
+    if (!group || (isUserInput && group.openingUserRowKey)) {
+      group = { openingUserRowKey: null, rows: [] };
+      groups.push(group);
+      groupsByTurn.set(turnId, groups);
     }
-    if (processRowKeys.has(row.key)) continue;
-    projected.push(row);
-    // Provider 的过程事件可能先于用户消息落库；展示顺序必须以轮次语义为准，不能把处理过程放到开场消息上方。
-    if (turnId && workRow && openingUserRowKey === row.key && !emittedWorkTurns.has(turnId)) {
+    if (isUserInput) group.openingUserRowKey = row.key;
+    if (isTurnProcessRow(row)) group.rows.push(row);
+    groupByRowKey.set(row.key, group);
+  }
+
+  for (const [turnId, groups] of groupsByTurn) {
+    groups.forEach((group, index) => {
+      if (!group.rows.length && !processAvailableTurnIds.has(turnId)) return;
+      group.workRow = {
+        kind: 'turn_work',
+        // 首段沿用原身份；后续段绑定用户消息，流式追加不会重建已有过程。
+        key: `turn-work:${encodeURIComponent(turnId)}${index === 0 ? '' : `:after:${encodeURIComponent(group.openingUserRowKey!)}`}`,
+        turnId,
+        segments: segmentTurnProcessRows(turnId, group.rows),
+        live: turnId === activeTurnId && !terminalTurnIds[turnId],
+        // 每段均可补齐同轮历史；加载状态与分页请求仍由现有轮次入口统一管理。
+        loadMore: true,
+      };
+    });
+  }
+
+  /** 顺序只在段内收集过程，用户消息继续留在主会话中。 */
+  const projected: TranscriptTurnRow[] = [];
+  /** 每段只输出一次，不能再以轮次作为去重单位。 */
+  const emittedWorkKeys = new Set<string>();
+  for (const row of orderedRows) {
+    /** 当前行只会进入其所属输入后的过程段。 */
+    const group = groupByRowKey.get(row.key);
+    /** 没有过程内容的普通历史行保持原样。 */
+    const workRow = group?.workRow;
+    if (workRow && !group.openingUserRowKey && group.rows[0]?.key === row.key && !emittedWorkKeys.has(workRow.key)) {
       projected.push(workRow);
-      emittedWorkTurns.add(turnId);
+      emittedWorkKeys.add(workRow.key);
+    }
+    if (workRow && isTurnProcessRow(row)) continue;
+    projected.push(row);
+    // 即使前置过程先落库，也必须等到所属用户消息之后才显示。
+    if (workRow && group.openingUserRowKey === row.key && !emittedWorkKeys.has(workRow.key)) {
+      projected.push(workRow);
+      emittedWorkKeys.add(workRow.key);
     }
   }
   return projected;
@@ -2324,12 +2335,20 @@ export function projectTranscriptRows(
   const stageOrdinalByTurn = new Map<string, number>();
   const currentStageIdentityByTurn = new Map<string, string>();
   const stageIdentityByTimelineIndex = new Map<number, string>();
+  /** 同一展示阶段也不能跨越普通用户插话合并工具活动。 */
+  const inputBoundaryByTurn = new Map<string, string>();
   timeline.forEach((entry, index) => {
     const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
     if (!turnId) return;
+    if (entry.kind === 'item' && itemRole(entry.item) === 'user' && !questionAnswers.get(entry.item.key)) {
+      inputBoundaryByTurn.set(turnId, `${turnId}\u0000input:${transcriptItemRenderKey(entry.item)}`);
+      currentStageIdentityByTurn.delete(turnId);
+    }
+    /** 展示阶段在本次输入范围内有效，不能吸走后续引导后的工具。 */
+    const inputBoundary = inputBoundaryByTurn.get(turnId) ?? turnId;
     const explicitStageId = entry.kind === 'item' ? itemStageId(entry.item) : null;
     if (explicitStageId) {
-      const identity = `${turnId}\u0000stage:${explicitStageId}`;
+      const identity = `${inputBoundary}\u0000stage:${explicitStageId}`;
       currentStageIdentityByTurn.set(turnId, identity);
       stageIdentityByTimelineIndex.set(index, identity);
       return;
@@ -2338,9 +2357,9 @@ export function projectTranscriptRows(
     if (entry.kind === 'item' && isTurnStageSummaryItem(entry.item)) {
       ordinal += 1;
       stageOrdinalByTurn.set(turnId, ordinal);
-      currentStageIdentityByTurn.set(turnId, `${turnId}\u0000legacy:${ordinal}`);
+      currentStageIdentityByTurn.set(turnId, `${inputBoundary}\u0000legacy:${ordinal}`);
     }
-    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${turnId}\u0000legacy:${ordinal}`);
+    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${inputBoundary}\u0000legacy:${ordinal}`);
   });
 
   const activitiesByStage = new Map<string, NativeSessionItemBuffer[]>();
