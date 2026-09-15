@@ -5115,14 +5115,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .is-compact-approval .session-request-preview {
-  background: transparent;
-  color: var(--session-text-muted);
+  /* 命令保留原始行与参数边界，长行横向查看，不拆成碎片。 */
+  background: var(--session-selected);
+  box-sizing: border-box;
+  color: var(--session-text);
   font-size: 12px;
   line-height: 1.5;
   margin: 4px 0 0;
   max-block-size: 120px;
   overflow: auto;
-  padding: 0;
+  overflow-wrap: normal;
+  padding: 8px 10px;
+  white-space: pre;
+  word-break: normal;
+}
+
+.session-codex-parity-v1 .is-compact-approval .session-request-preview:focus-visible {
+  /* 内侧焦点轮廓不会被命令区域的溢出边界裁掉。 */
+  outline: 2px solid var(--session-accent);
+  outline-offset: -2px;
 }
 
 .session-codex-parity-v1 .session-compact-approval-actions {
@@ -5199,14 +5210,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border-radius: 12px;
   bottom: calc(100% + 8px);
   box-shadow: 0 8px 24px var(--session-shadow-soft);
+  box-sizing: border-box;
   display: grid;
   inline-size: max-content;
-  max-inline-size: min(320px, calc(100vw - 32px));
+  max-inline-size: min(420px, 100cqi, calc(100vw - 32px));
   min-inline-size: 190px;
   overflow: hidden;
   padding: 5px;
   position: absolute;
   right: 0;
+  /* 菜单说明允许换行，不继承操作按钮栏的不换行约束。 */
+  white-space: normal;
   z-index: 8;
 }
 
@@ -5222,7 +5236,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   color: var(--session-text);
   display: grid;
   gap: 3px;
+  font-size: 13px;
+  font-weight: 560;
   justify-content: stretch;
+  line-height: 18px;
+  min-inline-size: 0;
   padding: 8px 10px;
   text-align: start;
 }
@@ -5232,13 +5250,19 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: var(--zeus-interaction-hover);
 }
 
+/* 完全访问沿用权限选择器的警示语义，说明仍保持正文可读。 */
+.session-codex-parity-v1 .session-approval-grant-menu button[data-danger] {
+  color: var(--zeus-danger-text);
+}
+
 .session-codex-parity-v1 .session-approval-grant-menu small {
-  align-items: center;
+  align-items: start;
   color: var(--session-text-muted);
-  display: flex;
+  display: grid;
   font-size: 10px;
   gap: 4px;
-  max-inline-size: 280px;
+  grid-template-columns: 12px minmax(0, 1fr);
+  min-inline-size: 0;
   overflow-wrap: anywhere;
 }
 
@@ -9003,6 +9027,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-compact-approval-decision-row {
   align-items: center;
+  /* 菜单以审批区域为宽度上限，窄侧栏中也不会伸出左边界。 */
+  container-type: inline-size;
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -9019,7 +9045,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   margin: 0;
 }
 
-.session-codex-parity-v1 .session-compact-approval-actions button {
+/* 窄审批区域优先保留完整命令列，操作按钮在其下方右对齐。 */
+@container (max-width: 480px) {
+  .session-codex-parity-v1 .session-compact-approval-target:has(> .session-request-preview),
+  .session-codex-parity-v1 .session-compact-approval-target:has(> .session-request-preview) + .session-compact-approval-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+/* 固定高度只约束行内操作，菜单选项按说明内容自然撑高。 */
+.session-codex-parity-v1 .session-compact-approval-actions > button,
+.session-codex-parity-v1 .session-approval-grant-control > button {
   block-size: 28px;
   box-sizing: border-box;
   font-size: 13px;

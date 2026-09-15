@@ -10,6 +10,8 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { FullAccessConfirmation } from './PermissionModeControl.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { NativeConversationAttachment, NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -42,6 +44,8 @@ export interface PendingRequestSurfaceProps {
   error?: string | null;
   autoFocus?: boolean;
   onRespond: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
+  /** 先保存后续轮次的完全访问模式，再批准当前请求。 */
+  onRespondWithFullAccess?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   permissionMode?: NativePermissionMode;
   filePaths?: readonly string[];
   onSnooze?: () => void | Promise<void>;
@@ -96,6 +100,8 @@ const labels = {
     moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
+    fullAccess: '允许所有（完全访问）',
+    fullAccessScope: '允许本次，完全访问从下一轮生效',
     allEditScope: '本次对话中，后续只会自动允许已确认属于当前项目的文件访问；项目外文件仍会被拒绝。',
   },
   'en-US': {
@@ -139,6 +145,8 @@ const labels = {
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
+    fullAccess: 'Allow all (full access)',
+    fullAccessScope: 'Allow this request; full access starts next turn',
     allEditScope: 'During this conversation, only verified file access within the current project will be allowed automatically. Access outside the project will still be denied.',
   },
 } as const;
@@ -210,6 +218,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           approvalIssue={approvalIssue}
           permissionMode={props.permissionMode ?? 'read-only'}
           onDecision={(decision) => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision] }))}
+          onAllowFullAccess={props.onRespondWithFullAccess ? () => void props.onRespondWithFullAccess?.(props.request.id, buildPendingRequestResponse(props.request, { decision: ['accept'] })) : undefined}
         />
       );
     }
@@ -282,11 +291,15 @@ interface CompactApprovalPanelProps {
   approvalIssue: { title: string; help: string } | null;
   permissionMode: NativePermissionMode;
   onDecision: (decision: SupportedRequestDecision) => void;
+  /** 完全访问属于会话设置，不伪造成引擎支持的审批决定。 */
+  onAllowFullAccess?: () => void;
 }
 
 function CompactApprovalPanel(props: CompactApprovalPanelProps) {
   const copy = labels[props.language];
   const [menuOpen, setMenuOpen] = useState(false);
+  /** 确认完全访问前保持请求待审批。 */
+  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const failClosedRef = useRef<HTMLButtonElement | null>(null);
@@ -295,7 +308,12 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
   const hasAllowOnce = grantDecisions.includes('accept');
   const amendment = advertisedExecpolicyAmendmentDecision(props.request);
   const failClosedDecision = props.decisions.includes('decline') ? 'decline' : props.decisions.includes('cancel') ? 'cancel' : null;
-  const menuDecisions: SupportedRequestDecision[] = [...grantDecisions, ...(props.kind === 'command' && props.decisions.includes('cancel') && failClosedDecision !== 'cancel' ? (['cancel'] as const) : [])];
+  /** 只在本次确实可批准且提供持久化入口时展示完全访问。 */
+  const menuDecisions: Array<SupportedRequestDecision | 'full-access'> = [
+    ...grantDecisions,
+    ...(hasAllowOnce && !props.approvalIssue && props.permissionMode !== 'full-access' && props.onAllowFullAccess ? (['full-access'] as const) : []),
+    ...(props.kind === 'command' && props.decisions.includes('cancel') && failClosedDecision !== 'cancel' ? (['cancel'] as const) : []),
+  ];
   const extraFailClosedDecision = grantDecisions.length === 0 && failClosedDecision === 'decline' && props.decisions.includes('cancel') ? 'cancel' : null;
 
   useEffect(() => {
@@ -367,7 +385,15 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
         ) : null}
         <div className="session-compact-approval-decision-row">
           <div className="session-compact-approval-target">
-            {props.kind === 'file' ? props.filePaths.length > 0 ? <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} /> : null : <pre className="session-request-preview">{preview}</pre>}
+            {props.kind === 'file' ? (
+              props.filePaths.length > 0 ? (
+                <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} />
+              ) : null
+            ) : (
+              <pre className="session-request-preview" role="region" aria-label={copy.runCommand} tabIndex={0}>
+                {preview}
+              </pre>
+            )}
           </div>
           <div ref={rootRef} className="session-compact-approval-actions" role="group" aria-label={copy.approval}>
             {failClosedDecision ? (
@@ -401,10 +427,16 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                       }}
                       type="button"
                       role="menuitem"
-                      onClick={() => choose(decision)}
+                      data-danger={decision === 'full-access' || undefined}
+                      onClick={() => {
+                        if (decision === 'full-access') {
+                          setMenuOpen(false);
+                          setConfirmingFullAccess(true);
+                        } else choose(decision);
+                      }}
                     >
                       <span className="session-approval-grant-menu-label">
-                        <span>{copy[decision]}</span>
+                        <span>{decision === 'full-access' ? copy.fullAccess : copy[decision]}</span>
                         {props.kind === 'file' && decision === 'acceptForSession' ? (
                           <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
                             <Info aria-hidden="true" />
@@ -417,10 +449,31 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                           {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
                         </small>
                       ) : null}
+                      {decision === 'full-access' ? (
+                        <small>
+                          <Info aria-hidden="true" />
+                          {copy.fullAccessScope}
+                        </small>
+                      ) : null}
                     </button>
                   ))}
                 </div>
               ) : null}
+              <MotionPresence>
+                {confirmingFullAccess ? (
+                  <FullAccessConfirmation
+                    language={props.language}
+                    onDismiss={() => {
+                      setConfirmingFullAccess(false);
+                      menuTriggerRef.current?.focus();
+                    }}
+                    onConfirm={() => {
+                      setConfirmingFullAccess(false);
+                      props.onAllowFullAccess?.();
+                    }}
+                  />
+                ) : null}
+              </MotionPresence>
             </div>
             {extraFailClosedDecision ? (
               <button type="button" className="session-request-decline" onClick={() => choose(extraFailClosedDecision)}>
