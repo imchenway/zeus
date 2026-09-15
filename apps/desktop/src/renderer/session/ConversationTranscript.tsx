@@ -196,6 +196,7 @@ export function hasUnclaimedRecoveredRequestUserInput(state: NativeSessionState)
   );
 }
 
+/** 正文与过程共用加载状态，保留游标方向以决定补页位置。 */
 function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
   const process = snapshot?.v2Paging?.processByTurn[turnId];
   // v0.3.46 之前已经留在 Renderer 内存中的分页对象没有 historyByTurn。
@@ -203,6 +204,7 @@ function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: stri
   const history = snapshot?.v2Paging?.historyByTurn?.[turnId];
   if (!process && !history) return undefined;
   return {
+    direction: process?.direction ?? history?.direction ?? 'forward',
     loading: Boolean(process?.loading || history?.loading),
     error: process?.error ?? history?.error ?? null,
     loaded: Boolean(process?.loaded || history?.loaded),
@@ -993,6 +995,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
+      /** 更早过程只在用户向上浏览时补读，首屏贴底和重新挂载不触发连续追页。 */
+      const processPaging = turnDetailPaging(props.state.snapshot, turn?.providerTurnId ?? row.turnId);
+      /** 倒序读取时，补页入口放在已读过程之前。 */
+      const earlierProcess = processPaging?.direction === 'tail';
+      /** 两种轮次展示共用一个补页入口，保留原有错误提示。 */
+      const pageSentinel =
+        row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
+          <V2AutoPageSentinel enabled={!earlierProcess || historyPagingArmed} loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
+        ) : null;
       const expansionKey = turnProcessExpansionKey(row.key);
       const containsCompletionAnchor = row.segments.some(
         (segment) =>
@@ -1025,7 +1036,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         ));
       if (!turn) {
         const processLive = row.live;
-        const processPaging = turnDetailPaging(props.state.snapshot, row.turnId);
         const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
           <>
@@ -1039,14 +1049,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
                 onOpen={async () => {
                   if (!row.loadMore) return;
-                  await renderProps.onLoadTurnProcess?.(row.turnId);
+                  if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
+                {earlierProcess ? pageSentinel : null}
                 {renderProcessSegments(processLive)}
-                {row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
-                  <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
-                ) : null}
+                {earlierProcess ? null : pageSentinel}
               </SessionTurnProcessDisclosure>
             ) : null}
           </>
@@ -1055,7 +1064,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const turnActive = isActiveSessionTurn(turn);
       const processLive = row.live && turnActive;
       const v2PagingKey = turn.providerTurnId ?? turn.id;
-      const processPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
       const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
       const process = renderProcessSegments(processLive);
       return (
@@ -1072,14 +1080,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
               onOpen={async () => {
                 if (!row.loadMore) return;
-                await renderProps.onLoadTurnProcess?.(row.turnId);
+                if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
                 await renderProps.onLoadTurnArtifacts?.(row.turnId);
               }}
             >
+              {earlierProcess ? pageSentinel : null}
               {process}
-              {row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
-                <V2AutoPageSentinel loading={processPaging.loading} error={processPaging.error} kind="process" language={props.language} onLoad={() => renderProps.onLoadTurnProcess?.(row.turnId)} />
-              ) : null}
+              {earlierProcess ? null : pageSentinel}
             </SessionTurnProcessDisclosure>
           ) : null}
           {!turnActive && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
@@ -1122,7 +1129,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             open={expandedRowKeys.has(expansionKey)}
             onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
             onOpen={async () => {
-              await renderProps.onLoadTurnProcess?.(lastRowItem.turnId);
+              if (!v2ProcessPaging?.loaded || v2ProcessPaging.error) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId);
               await renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId);
             }}
           >
@@ -1347,11 +1354,12 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   );
 }
 
-function V2AutoPageSentinel(props: { loading: boolean; error: string | null | undefined; kind: 'process'; language: SessionUiLanguage; onLoad: () => void | Promise<void> }) {
+/** 读取边界需要同时满足用户浏览意图和接近视口，避免自动贴底触发追页。 */
+function V2AutoPageSentinel(props: { enabled: boolean; loading: boolean; error: string | null | undefined; kind: 'process'; language: SessionUiLanguage; onLoad: () => void | Promise<void> }) {
   const sentinelRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || props.loading || props.error) return;
+    if (!props.enabled || !sentinel || props.loading || props.error) return;
     let requested = false;
     const requestPage = (): void => {
       if (requested) return;
@@ -1370,7 +1378,7 @@ function V2AutoPageSentinel(props: { loading: boolean; error: string | null | un
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [props.error, props.loading, props.onLoad]);
+  }, [props.enabled, props.error, props.loading, props.onLoad]);
   return (
     <span ref={sentinelRef} className="session-v2-auto-page" role={props.error ? 'alert' : undefined}>
       {props.error ? <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}

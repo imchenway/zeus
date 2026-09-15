@@ -391,6 +391,27 @@ async function probeNavigation() {
       'INSERT INTO conversation_model_history (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json, confirmed_at) SELECT ?, conversation_id, ?, turn_id, submission_id, segment_id, role, content_json, confirmed_at FROM conversation_model_history WHERE id = ?',
       ['duplicate-user', count * 4 + 1, 'history-0-0'],
     );
+    /** 单轮超过附件规模的过程，包含足以触发字节分页的工具详情。 */
+    const processCount = 1536;
+    for (let index = 1; index <= processCount; index += 1) {
+      db.execute(
+        'INSERT INTO conversation_process_items (id, conversation_id, turn_id, segment_id, process_sequence, kind, status, title, detail_json, source_event_id, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          `long-process-${index}`,
+          conversation.id,
+          'turn-0',
+          'probe-segment',
+          index,
+          index % 2 ? 'reasoning' : 'command',
+          'completed',
+          `过程 ${index}`,
+          JSON.stringify({ text: '完整过程内容'.repeat(500) }),
+          `codex:item:long-${index}`,
+          '2026-01-01T00:00:00Z',
+          '2026-01-01T00:00:01Z',
+        ],
+      );
+    }
     await db.save();
     /** 查询前后核对写入计数，GET 不改变消息送达。 */
     const changes = db.get<{ count: number }>('SELECT total_changes() AS count')!.count;
@@ -444,6 +465,49 @@ async function probeNavigation() {
     /** 直接按最早轮次补正文，不通过倒翻全部页面定位。 */
     const body = await server.inject({ method: 'GET', url: `/api/projects/${project.id}/conversations/${conversation.id}/turns/turn-0/model-history` });
     assertProbe(body.statusCode === 200 && body.json<{ items: unknown[] }>().items.length > 0, `最早轮次读取失败：${body.body}`);
+    /** 倒序只改变读取方向，每页交付给界面的条目仍保持正序。 */
+    const processUrl = `/api/projects/${project.id}/conversations/${conversation.id}/turns/turn-0/process`;
+    /** 冻结游标串联所有早期过程，验证没有跳过、重复或跨轮读取。 */
+    const processSequences: number[] = [];
+    /** 首屏耗时只统计一次有界接口，不混入整段历史扫描。 */
+    const processStarted = performance.now();
+    /** 第一页复用 Renderer 的条数和字节预算。 */
+    let processResponse = await server.inject({ method: 'GET', url: `${processUrl}?direction=tail&limit=48&byteLimit=98304` });
+    assertProbe(processResponse.statusCode === 200, `最近过程读取失败：${processResponse.body}`);
+    /** 保存首屏统计，后续翻页不能改变该证据。 */
+    const firstProcessPage = processResponse.json<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>();
+    assertProbe(firstProcessPage.items.at(-1)?.sequence === processCount && firstProcessPage.items.length <= 48 && firstProcessPage.hasMore, '首屏必须立即到达最新过程，且只读取有界末页');
+    console.log(JSON.stringify({ longTurnItems: processCount, firstPageItems: firstProcessPage.items.length, firstPageMs: Math.round(performance.now() - processStarted) }));
+    assertProbe((await server.inject({ method: 'GET', url: `${processUrl}?direction=invalid` })).statusCode === 400, '未知读取方向必须拒绝');
+    /** 同一游标换成另一轮次必须失败，记录实际响应便于复查。 */
+    const crossTurn = await server.inject({ method: 'GET', url: `${processUrl.replace('turn-0', 'turn-1')}?direction=tail&cursor=${encodeURIComponent(firstProcessPage.nextCursor!)}` });
+    assertProbe(crossTurn.statusCode === 400, `倒序游标不能跨轮使用：${crossTurn.statusCode} ${crossTurn.body}`);
+    for (;;) {
+      /** 每页从真实接口解码，游标的字节截断也必须连续。 */
+      const processPage = processResponse.json<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>();
+      assertProbe(
+        processPage.items.every((item, index) => index === 0 || processPage.items[index - 1]!.sequence < item.sequence),
+        '倒序页内部必须正序呈现',
+      );
+      processSequences.unshift(...processPage.items.map((item) => item.sequence));
+      if (!processPage.nextCursor) break;
+      processResponse = await server.inject({ method: 'GET', url: `${processUrl}?direction=tail&limit=48&byteLimit=98304&cursor=${encodeURIComponent(processPage.nextCursor)}` });
+      assertProbe(processResponse.statusCode === 200 && processSequences.length <= processCount, '过程游标必须推进并成功读取');
+    }
+    assertProbe(processSequences.length === processCount && processSequences.every((sequence, index) => sequence === index + 1), '向上翻页必须保留全部思考与工具记录，不能重复或遗漏');
+    /** 正文的倒序页与过程共用有界游标规则，同时保留默认正序入口。 */
+    const tailBody = await server.inject({ method: 'GET', url: `/api/projects/${project.id}/conversations/${conversation.id}/turns/turn-0/model-history?direction=tail&limit=2` });
+    assertProbe(
+      tailBody.statusCode === 200 &&
+        JSON.stringify(tailBody.json<{ items: Array<{ id: string }> }>().items.map((item) => item.id)) ===
+          JSON.stringify(
+            body
+              .json<{ items: Array<{ id: string }> }>()
+              .items.slice(-2)
+              .map((item) => item.id),
+          ),
+      '轮次正文必须从末页开始且保留正序身份',
+    );
     /** 实际轮次页经过正文适配器，纯附件不能显示技术 JSON。 */
     const page = body.json<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>();
     /** 轮次合并只依赖已有的身份、分页和条目状态。 */

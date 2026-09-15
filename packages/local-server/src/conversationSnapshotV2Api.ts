@@ -166,6 +166,7 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       return repository.listTurnModelHistoryPage({
         ...pageInput(request.params.conversationId, request.query),
         turnId: request.params.turnId,
+        direction: pageDirection(request.query.direction),
       });
     } catch (error) {
       return sendSnapshotV2Error(reply, error);
@@ -187,6 +188,7 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
         return repository.listProcessPage({
           ...pageInput(request.params.conversationId, request.query),
           turnId: request.params.turnId,
+          direction: pageDirection(request.query.direction),
           ...(request.query.kind === undefined ? {} : { kind: parseProcessKind(request.query.kind) }),
         });
       } catch (error) {
@@ -290,6 +292,12 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       reply,
     ) => readContent(request, reply),
   );
+}
+
+/** 分页方向属于外部输入，只接受已定义的正序和倒序。 */
+function pageDirection(value: string | undefined): 'forward' | 'tail' {
+  if (value === undefined || value === 'forward' || value === 'tail') return value ?? 'forward';
+  throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_CURSOR', '分页方向无效。', 400);
 }
 
 function pageInput(conversationId: string, query: PageQuery): { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number } {
