@@ -1,11 +1,6 @@
-import { lazy, Suspense, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
-import { GitPullRequestIcon as GitPullRequest } from '@phosphor-icons/react/dist/csr/GitPullRequest';
-import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
-import { isTaskPriority, type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   AiRuntimeSession,
   RuntimeStatusSnapshot,
@@ -24,33 +19,21 @@ import type {
   UpdateTaskRequest,
 } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
-import { Button } from '../ui/Button.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import {
-  clampTaskTableColumnWidth,
   createTaskWorkspaceViewModel,
-  cycleTaskTableSort,
   defaultTaskTableColumnWidths,
   defaultTaskTableColumnOrder,
   defaultVisibleTaskTableColumns,
   formatTaskManagementStatus,
-  getTaskTableColumnWidthBounds,
-  moveTaskTableColumnTo,
   normalizeTaskTableColumnPreferences,
-  placeTaskTableColumn,
-  resolveTaskManagementStatus,
   resolveTaskAgentRunStatus,
   resolveTaskBranchStatus,
-  setTaskTableColumnWidth,
   type TaskAgentRunStatus,
-  type TaskBranchStatus,
-  type TaskTableColumnDropPosition,
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
-import { TaskRunStatusChip, taskBranchStatusTone, taskPriorityTone, taskTypeTone } from './TaskRunStatusChip.js';
+import { TaskDataTable } from './TaskDataTable.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { TaskBoardSettingsSection } from './TaskBoardView.js';
 
@@ -61,123 +44,6 @@ function countTaskBoardFilterRules(group: TaskBoardFilterGroup | null | undefine
 }
 
 type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
-type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
-
-function TaskPriorityControl(props: {
-  task: TaskRecord;
-  language: 'zh-CN' | 'en-US';
-  options: ReadonlyArray<{ value: TaskPriority; label: string }>;
-  ariaLabel: string;
-  disabled: boolean;
-  onSave: (taskId: string, input: UpdateTaskRequest) => Promise<TaskPriorityEditResult>;
-}) {
-  const statusId = `${useId()}-status`;
-  const taskPriority = props.task.priority ?? 'p3';
-  const desiredValueRef = useRef<TaskPriority | null>(null);
-  const [displayValue, setDisplayValue] = useState(taskPriority);
-  const [saveState, setSaveState] = useState<TaskPrioritySaveState>({ kind: 'idle' });
-  const zh = props.language === 'zh-CN';
-  const legacyLabel = zh ? '历史值' : 'Legacy value';
-  const selectOptions: ReadonlyArray<{ value: string; label: string; disabled?: boolean }> = isTaskPriority(taskPriority) ? props.options : [{ value: taskPriority, label: legacyLabel, disabled: true }, ...props.options];
-
-  useEffect(() => {
-    if (saveState.kind === 'saving' || saveState.kind === 'error' || saveState.kind === 'conflict') return;
-    setDisplayValue(taskPriority);
-  }, [saveState.kind, taskPriority]);
-
-  async function savePriority(priority: TaskPriority, expectedUpdatedAt: string): Promise<void> {
-    desiredValueRef.current = priority;
-    setDisplayValue(priority);
-    setSaveState({ kind: 'saving' });
-    try {
-      const result = await props.onSave(props.task.id, { priority, expectedUpdatedAt });
-      if (result.kind === 'conflict') {
-        setSaveState({ kind: 'conflict', latest: result.latest });
-        return;
-      }
-      desiredValueRef.current = null;
-      setSaveState({ kind: 'idle' });
-    } catch (error) {
-      setSaveState({ kind: 'error', message: reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }) });
-    }
-  }
-
-  function retrySave(): void {
-    const priority = desiredValueRef.current;
-    if (!priority) return;
-    const expectedUpdatedAt = saveState.kind === 'conflict' ? (saveState.latest.updatedAt ?? '') : (props.task.updatedAt ?? '');
-    if (!expectedUpdatedAt) return;
-    void savePriority(priority, expectedUpdatedAt);
-  }
-
-  function loadLatestValue(): void {
-    const latestPriority = saveState.kind === 'conflict' ? (saveState.latest.priority ?? 'p3') : taskPriority;
-    desiredValueRef.current = null;
-    setDisplayValue(latestPriority);
-    setSaveState({ kind: 'idle' });
-  }
-
-  const feedback = saveState.kind === 'conflict' ? (zh ? '保存冲突' : 'Conflict') : saveState.kind === 'error' ? saveState.message : null;
-  const triggerLabel = isTaskPriority(displayValue) ? displayValue.toUpperCase() : legacyLabel;
-
-  return (
-    <span className={`task-table-priority-control${saveState.kind === 'saving' ? ' is-saving' : ''}`} data-state={saveState.kind} aria-busy={saveState.kind === 'saving' || undefined} onClick={(event) => event.stopPropagation()}>
-      <ZeusSelect
-        size="compact"
-        ariaLabel={props.ariaLabel}
-        ariaDescribedBy={feedback ? statusId : undefined}
-        value={displayValue}
-        options={selectOptions}
-        triggerLabel={triggerLabel}
-        popoverMinWidth={props.language === 'zh-CN' ? 176 : 210}
-        onChange={(value) => {
-          if (!isTaskPriority(value)) return;
-          if (value === taskPriority) {
-            desiredValueRef.current = null;
-            setDisplayValue(taskPriority);
-            setSaveState({ kind: 'idle' });
-            return;
-          }
-          const expectedUpdatedAt = props.task.updatedAt ?? '';
-          if (!expectedUpdatedAt) {
-            desiredValueRef.current = value;
-            setDisplayValue(value);
-            setSaveState({ kind: 'error', message: zh ? '任务缺少更新时间。' : 'Task update time is missing.' });
-            return;
-          }
-          void savePriority(value, expectedUpdatedAt);
-        }}
-        className={`task-status-select task-priority-select task-status-tone-${taskPriorityTone(displayValue)}`}
-        disabled={props.disabled || saveState.kind === 'saving'}
-        searchable={false}
-      />
-      {saveState.kind === 'saving' ? <span className="task-save-spinner" aria-hidden="true" /> : null}
-      {feedback ? (
-        <span className={`task-table-priority-feedback${saveState.kind === 'error' || saveState.kind === 'conflict' ? ' is-error' : ''}`}>
-          <small id={statusId} role="status" aria-live="polite">
-            {feedback}
-          </small>
-          {saveState.kind === 'error' ? (
-            <Button variant="secondary" size="compact" onClick={retrySave}>
-              {zh ? '重试' : 'Retry'}
-            </Button>
-          ) : null}
-          {saveState.kind === 'conflict' ? (
-            <span className="task-table-priority-conflict-actions">
-              <Button variant="secondary" size="compact" onClick={retrySave}>
-                {zh ? '重试' : 'Retry'}
-              </Button>
-              <Button variant="secondary" size="compact" onClick={loadLatestValue}>
-                {zh ? '载入最新' : 'Load latest'}
-              </Button>
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 export interface TaskWorkspaceCopy {
   filterAria: string;
   searchAria: string;
@@ -277,7 +143,6 @@ export interface TaskWorkspaceCopy {
 
 export type TaskWorkspaceBulkActionStatus = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type TaskWorkspaceListState = 'ready' | 'loading' | 'error';
-export type TaskWorkspaceModelPushEntry = { taskId: string; status: 'checking' | 'error'; error?: string | null };
 
 export interface TaskWorkspaceProps {
   projectName?: string;
@@ -308,7 +173,7 @@ export interface TaskWorkspaceProps {
   bulkActionBusy?: boolean;
   statusChangeBusy?: boolean;
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
-  modelPushEntry?: TaskWorkspaceModelPushEntry;
+  modelPushEntry?: { taskId: string; status: 'checking' | 'error'; error?: string | null };
   taskActionBusy?: boolean;
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
@@ -324,10 +189,10 @@ export interface TaskWorkspaceProps {
   onCreateTask: () => void;
   onOpenZentaoImport?: () => void;
   onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
-  onPushTaskToNewConversation: (taskId: string) => void;
-  onOpenTaskCodeDelivery: (taskId: string) => void;
-  onDeleteTask: (taskId: string) => void;
-  onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
+  onPushTaskToNewConversation?: (taskId: string) => void;
+  onOpenTaskCodeDelivery?: (taskId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
+  onOpenTaskConversation?: (taskId: string, conversationId?: string) => void;
   onPageViewModeChange: (viewMode: TaskPageViewMode) => void;
   onReloadTaskBoard?: () => void;
   onUpdateTaskBoard?: (settings: Partial<TaskBoardViewSettings>) => Promise<TaskBoardViewSnapshot>;
@@ -346,206 +211,94 @@ export interface TaskWorkspaceProps {
   controlBusyProps: (busy: boolean) => { 'aria-busy'?: true; 'data-loading'?: 'true' };
 }
 
-function getTaskTableColumnTrack(columnKey: TaskTableColumnKey, preferences: TaskTableColumnPreferences): string {
-  const width = preferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-  // 以用户偏好的宽度作为上限，窄窗口下允许列一起收缩，避免表格把右侧内容推出工作区。
-  return `minmax(0, ${clampTaskTableColumnWidth(columnKey, width)}px)`;
-}
-
-const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {
-  code: 'start',
-  intent: 'start',
-  taskType: 'start',
-  managementStatus: 'start',
-  branchStatus: 'start',
-  runStatus: 'start',
-  source: 'start',
-  updatedAt: 'end',
-  createdAt: 'end',
-  template: 'start',
-  project: 'start',
-  priority: 'start',
-  description: 'start',
-  runtimeSession: 'start',
-  rawId: 'start',
-  createdFrom: 'start',
-};
-
-function taskTableCellClassName(columnKey: TaskTableColumnKey, rowCell = false): string {
-  const legacyColumnClass: Partial<Record<TaskTableColumnKey, string>> = {
-    intent: 'task-table-title-cell',
-    managementStatus: 'task-table-task-status-cell',
-    updatedAt: 'task-table-updated-cell',
-  };
-  const legacyRowClass: Partial<Record<TaskTableColumnKey, string>> = {
-    intent: 'task-list-copy',
-  };
-  return ['task-table-cell', legacyColumnClass[columnKey], rowCell ? legacyRowClass[columnKey] : undefined, `task-table-align-${taskTableColumnAlignment[columnKey]}`, `task-table-${columnKey}-cell`].filter(Boolean).join(' ');
-}
-
-function focusRelativeTaskRow(currentTarget: HTMLElement, currentElement: HTMLElement, direction: 1 | -1 | 'first' | 'last'): void {
-  const rows = Array.from(currentTarget.querySelectorAll<HTMLElement>('[data-task-row-action="open-detail"]'));
-  if (rows.length === 0) return;
-  const currentIndex = rows.indexOf(currentElement);
-  const nextIndex = direction === 'first' ? 0 : direction === 'last' ? rows.length - 1 : Math.min(Math.max(currentIndex + direction, 0), rows.length - 1);
-  rows[nextIndex]?.focus();
-}
-
 function arrayShallowEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
-function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mixed?: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
-  const checkboxRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    if (!checkboxRef.current) return;
-    // 原生 checkbox 的 indeterminate 只能通过 DOM property 设置；ARIA 同步用于读屏表达 mixed。
-    checkboxRef.current.indeterminate = Boolean(props.mixed);
-  }, [props.mixed]);
-  return (
-    <input
-      ref={checkboxRef}
-      type="checkbox"
-      aria-label={props.ariaLabel}
-      aria-checked={props.mixed ? 'mixed' : props.checked}
-      checked={props.checked}
-      disabled={props.disabled}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => props.onChange(event.currentTarget.checked)}
-    />
-  );
-}
-
-/** 单任务高频入口固定在列表行内；容器截断点击冒泡，避免操作时同时打开详情。 */
-function TaskRowActions(props: {
-  task: TaskRecord;
-  copy: TaskWorkspaceCopy;
-  terminal: boolean;
-  busy: boolean;
-  modelPushEntry?: TaskWorkspaceModelPushEntry;
-  onPushTaskToNewConversation: (taskId: string) => void;
-  onOpenTaskCodeDelivery: (taskId: string) => void;
-  onDeleteTask: (taskId: string) => void;
-}) {
-  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
-  const activePushEntry = props.modelPushEntry?.taskId === props.task.id ? props.modelPushEntry : undefined;
-  const pushChecking = activePushEntry?.status === 'checking';
-  const pushRetrying = activePushEntry?.status === 'error';
-  const pushLabel = pushChecking ? props.copy.taskActionChecking : activePushEntry?.status === 'error' ? props.copy.taskActionRetry : props.copy.pushNewConversation;
-  const actionLabel = (label: string) => (isEnglishCopy ? `${label}: ${props.task.title}` : `${label}：${props.task.title}`);
-  const pushTitle = props.terminal ? actionLabel(props.copy.taskActionTerminalHelp) : `${actionLabel(pushLabel)}${activePushEntry?.error ? ` · ${activePushEntry.error}` : ''}`;
-
-  return (
-    <span className="task-table-cell task-table-action-cell" role="gridcell" data-column-label={props.copy.actionsColumnTitle} onClick={(event) => event.stopPropagation()}>
-      <span className="task-table-row-actions">
-        <Button
-          variant="primary"
-          size="compact"
-          className="task-table-row-action task-table-row-action-push"
-          aria-label={actionLabel(pushLabel)}
-          title={pushTitle}
-          busy={pushChecking}
-          disabled={props.busy || props.terminal}
-          onClick={() => props.onPushTaskToNewConversation(props.task.id)}
-        >
-          {pushChecking ? (
-            <span className="task-table-row-action-spinner" aria-hidden="true">
-              <CircleNotch weight="regular" />
-            </span>
-          ) : pushRetrying ? (
-            <ArrowsClockwise aria-hidden="true" weight="regular" />
-          ) : (
-            <ChatCircleDots aria-hidden="true" weight="regular" />
-          )}
-        </Button>
-        <Button
-          variant="secondary"
-          size="compact"
-          className="task-table-row-action"
-          aria-label={actionLabel(props.copy.taskActionCodeDelivery)}
-          title={actionLabel(props.copy.taskActionCodeDelivery)}
-          disabled={props.busy}
-          onClick={() => props.onOpenTaskCodeDelivery(props.task.id)}
-        >
-          <GitPullRequest aria-hidden="true" weight="regular" />
-        </Button>
-        <Button
-          variant="danger"
-          size="compact"
-          className="task-table-row-action"
-          aria-label={actionLabel(props.copy.taskActionDelete)}
-          title={actionLabel(props.copy.taskActionDelete)}
-          disabled={props.busy}
-          onClick={() => props.onDeleteTask(props.task.id)}
-        >
-          <Trash aria-hidden="true" weight="regular" />
-        </Button>
-      </span>
-    </span>
-  );
-}
-
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [boardSettingsSection, setBoardSettingsSection] = useState<TaskBoardSettingsSection | null>(null);
-  const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
-  const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
-  const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
-  const [columnInteractionAnnouncement, setColumnInteractionAnnouncement] = useState('');
   const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>(() => props.statusDefinitions[0]?.id ?? 'todo');
   useApplicationErrorDialog(props.listState === 'error' ? props.copy.taskListErrorHelp : null, {
     language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
-  const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
-  const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);
   /** 原生弹出层使用独立身份，浏览器负责顶层显示、外部点击和 Escape 关闭。 */
   const fieldSettingsId = useId();
   /** 更多动作与列设置分别关联各自的触发按钮。 */
   const moreSettingsId = useId();
   /** 执行动作后关闭原生弹出层。 */
   const moreSettingsPopoverRef = useRef<HTMLElement | null>(null);
-  const model = createTaskWorkspaceViewModel({
-    tasks: props.tasks,
-    query: props.searchQuery,
-    status: props.statusFilter,
-    tag: props.tagFilter,
-    selectedTaskId: props.selectedTaskId,
-    selectedTaskIds: props.selectedTaskIds,
-    runtimeAiAvailable: props.runtime.aiCli.available,
-    runtimeSessions: props.runtimeSessions,
-    taskConversations: props.taskConversations,
-    conversationRunStatuses: props.conversationRunStatuses,
-    managementStatusLabels: props.statusLabels,
-    managementStatuses: props.statusDefinitions.map((status) => status.id),
-    completedManagementStatusId: props.completedStatusId,
-    cancelledManagementStatusId: props.cancelledStatusId,
-    runStatusLabels: props.runStatusLabels,
-    projectName: props.projectName,
-    taskTableColumns: props.taskTableColumns,
-    taskTableEnumSortOrders: props.taskTableEnumSortOrders,
-    appLanguage: props.appLanguage,
-  });
+  /** 工具条自身变化不重复计算全部任务的筛选、排序和展示字段。 */
+  const model = useMemo(
+    () =>
+      createTaskWorkspaceViewModel({
+        tasks: props.tasks,
+        query: props.searchQuery,
+        status: props.statusFilter,
+        tag: props.tagFilter,
+        selectedTaskId: props.selectedTaskId,
+        selectedTaskIds: props.selectedTaskIds,
+        runtimeAiAvailable: props.runtime.aiCli.available,
+        runtimeSessions: props.runtimeSessions,
+        taskConversations: props.taskConversations,
+        conversationRunStatuses: props.conversationRunStatuses,
+        managementStatusLabels: props.statusLabels,
+        managementStatuses: props.statusDefinitions.map((status) => status.id),
+        completedManagementStatusId: props.completedStatusId,
+        cancelledManagementStatusId: props.cancelledStatusId,
+        runStatusLabels: props.runStatusLabels,
+        projectName: props.projectName,
+        taskTableColumns: props.taskTableColumns,
+        taskTableEnumSortOrders: props.taskTableEnumSortOrders,
+        appLanguage: props.appLanguage,
+      }),
+    [
+      props.tasks,
+      props.searchQuery,
+      props.statusFilter,
+      props.tagFilter,
+      props.selectedTaskId,
+      props.selectedTaskIds,
+      props.runtime.aiCli.available,
+      props.runtimeSessions,
+      props.taskConversations,
+      props.conversationRunStatuses,
+      props.statusLabels,
+      props.statusDefinitions,
+      props.completedStatusId,
+      props.cancelledStatusId,
+      props.runStatusLabels,
+      props.projectName,
+      props.taskTableColumns,
+      props.taskTableEnumSortOrders,
+      props.appLanguage,
+    ],
+  );
   const boardSettings = props.taskBoardSnapshot?.settings;
   const boardFilterCount = countTaskBoardFilterRules(boardSettings?.filters);
   const boardSortCount = boardSettings?.sorts.length ?? 0;
   const boardHiddenCount = (boardSettings?.hiddenGroupIds.length ?? 0) + Object.values(boardSettings?.hiddenSubgroupIdsByGroup ?? {}).reduce((count, ids) => count + ids.length, 0);
-  const columnLabels: Record<TaskTableColumnKey, string> = {
-    code: props.copy.codeColumnTitle,
-    intent: props.copy.intentColumnTitle,
-    taskType: props.copy.taskTypeColumnTitle,
-    managementStatus: props.copy.managementStatusColumnTitle,
-    branchStatus: props.copy.branchStatusColumnTitle,
-    runStatus: props.copy.runStatusColumnTitle,
-    source: props.copy.sourceColumnTitle,
-    createdAt: props.copy.createdAtColumnTitle,
-    updatedAt: props.copy.updatedAtColumnTitle,
-    priority: props.copy.priorityColumnTitle,
-    project: props.copy.projectColumnTitle,
-    template: props.copy.templateColumnTitle,
-    description: props.copy.descriptionColumnTitle,
-    runtimeSession: props.copy.runtimeSessionColumnTitle,
-    rawId: props.copy.rawIdColumnTitle,
-    createdFrom: props.copy.createdFromColumnTitle,
-  };
+  /** 列标题保持稳定，避免表格随普通任务状态更新重建列定义。 */
+  const columnLabels = useMemo<Record<TaskTableColumnKey, string>>(
+    () => ({
+      code: props.copy.codeColumnTitle,
+      intent: props.copy.intentColumnTitle,
+      taskType: props.copy.taskTypeColumnTitle,
+      managementStatus: props.copy.managementStatusColumnTitle,
+      branchStatus: props.copy.branchStatusColumnTitle,
+      runStatus: props.copy.runStatusColumnTitle,
+      source: props.copy.sourceColumnTitle,
+      createdAt: props.copy.createdAtColumnTitle,
+      updatedAt: props.copy.updatedAtColumnTitle,
+      priority: props.copy.priorityColumnTitle,
+      project: props.copy.projectColumnTitle,
+      template: props.copy.templateColumnTitle,
+      description: props.copy.descriptionColumnTitle,
+      runtimeSession: props.copy.runtimeSessionColumnTitle,
+      rawId: props.copy.rawIdColumnTitle,
+      createdFrom: props.copy.createdFromColumnTitle,
+    }),
+    [props.copy],
+  );
   const configuredStatusOptions = props.statusDefinitions.map((status) => status.id);
   const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
   const statusColorById = new Map(props.statusDefinitions.map((status) => [status.id, status.color]));
@@ -558,43 +311,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskListState = props.listState ?? 'ready';
   const taskListLoading = taskListState === 'loading';
   const taskListError = taskListState === 'error';
-  const showEmptyState = !taskListLoading && !taskListError && model.visibleTasks.length === 0;
   const boardRunStatuses = useMemo(
     () => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskAgentRunStatus(props.taskConversations?.[task.id] ?? [], props.conversationRunStatuses ?? {})])),
     [props.conversationRunStatuses, props.taskConversations, props.tasks],
   );
   const boardBranchStatuses = useMemo(() => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskBranchStatus(props.taskConversations?.[task.id] ?? [])])), [props.taskConversations, props.tasks]);
-  const enteringTaskIds = useNewItemMotionIds(props.tasks.map((task) => task.id));
-  // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
-  // content plan: 顶部仍只服务筛选与新建；单任务高频操作固定在最右列，详情在右侧悬浮抽屉中展开。
-  // interaction thesis: checkbox 只负责选择，行内容负责打开详情，操作列截断冒泡并始终留在横向滚动视口内。
-  const renderedVisibleColumns = model.visibleColumns;
-  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
-  const taskTableActionColumnWidth = 160;
-  const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, model.columnPreferences)).join(' ');
-  const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32 + taskTableActionColumnWidth);
-  // 动态字段和不可隐藏的选择、操作列共用同一条轨道，header/row 不会因横向滚动发生错位。
-  const taskTableGridStyle = {
-    '--task-table-grid-template': `minmax(32px, 32px) ${taskTableContentGridTemplate} minmax(${taskTableActionColumnWidth}px, ${taskTableActionColumnWidth}px)`,
-    gridTemplateColumns: 'var(--task-table-grid-template)',
-    minWidth: `max(100%, ${Math.round(taskTableContentWidth)}px)`,
-  } as CSSProperties & Record<'--task-table-grid-template', string>;
-  const hasExpandedTaskTableColumns = taskTableContentWidth > 880;
-
-  useEffect(() => {
-    if (bulkStatusOptions.includes(bulkTargetStatus)) return;
-    setBulkTargetStatus(bulkStatusOptions[0] ?? 'todo');
-  }, [bulkStatusOptions, bulkTargetStatus]);
-  const listClassName = [
-    'task-list-workbench task-list-protagonist zeus-source-list',
-    showEmptyState ? 'task-list-empty' : undefined,
-    taskListLoading ? 'task-list-loading' : undefined,
-    taskListError ? 'task-list-error' : undefined,
-    !showEmptyState && !taskListLoading && !taskListError && model.visibleTasks.length > 0 && hasExpandedTaskTableColumns ? 'task-list-horizontal-scroll' : undefined,
-  ]
-    .filter(Boolean)
-    .join(' ');
   const statusSegmentOptions: TaskStatusFilter[] = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []), ...bulkStatusOptions].slice(0, 5);
+  const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const showTaskStatusLine = taskListLoading || taskListError;
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
   const statusLineHelp = taskListLoading ? props.copy.taskListLoadingHelp : props.copy.taskListErrorHelp;
@@ -628,150 +351,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences());
     moreSettingsPopoverRef.current?.hidePopover();
   };
-  // 任务页首屏不默认选中第一行，避免固定灰底；但仍保留第一行作为键盘进入表格后的 roving focus 起点。
-  const keyboardEntryTaskId = model.rows.find((row) => row.selected)?.task.id ?? model.rows[0]?.task.id;
-
   useEffect(() => {
     if (bulkStatusOptions.length === 0 || bulkStatusOptions.includes(bulkTargetStatus)) return;
     setBulkTargetStatus(bulkStatusOptions[0]);
   }, [bulkStatusOptions, bulkTargetStatus]);
 
-  const handleListKeyboardNavigation = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (!(event.target instanceof HTMLElement)) return;
-    if (!event.target.matches('[data-task-row-action="open-detail"]')) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      focusRelativeTaskRow(event.currentTarget, event.target, 1);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      focusRelativeTaskRow(event.currentTarget, event.target, -1);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      focusRelativeTaskRow(event.currentTarget, event.target, 'first');
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      focusRelativeTaskRow(event.currentTarget, event.target, 'last');
-    }
-  };
-
-  const announceColumnPosition = (columnKey: TaskTableColumnKey, preferences: TaskTableColumnPreferences) => {
-    const visibleColumns = preferences.columnOrder.filter((key) => preferences.visibleColumnKeys.includes(key));
-    const position = visibleColumns.indexOf(columnKey) + 1;
-    const title = columnLabels[columnKey];
-    setColumnInteractionAnnouncement(isEnglishCopy ? `${title} is column ${position} of ${visibleColumns.length}.` : `${title} 已移至第 ${position} 列，共 ${visibleColumns.length} 列。`);
-  };
-
-  const clearColumnDragState = () => {
-    setDraggedColumnKey(null);
-    setDragInsertion(null);
-  };
-
-  const handleColumnDragStart = (event: ReactDragEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
-    setDraggedColumnKey(columnKey);
-    setDragInsertion(null);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', columnKey);
-  };
-
-  const handleColumnDragOver = (event: ReactDragEvent<HTMLElement>, targetColumnKey: TaskTableColumnKey) => {
-    if (!draggedColumnKey) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    if (draggedColumnKey === targetColumnKey) {
-      setDragInsertion(null);
-      return;
-    }
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position: TaskTableColumnDropPosition = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
-    setDragInsertion((current) => (current?.targetColumnKey === targetColumnKey && current.position === position ? current : { targetColumnKey, position }));
-  };
-
-  const handleColumnDrop = (event: ReactDragEvent<HTMLElement>, targetColumnKey: TaskTableColumnKey) => {
-    event.preventDefault();
-    if (!draggedColumnKey || draggedColumnKey === targetColumnKey) {
-      clearColumnDragState();
-      return;
-    }
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position: TaskTableColumnDropPosition = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
-    const nextPreferences = placeTaskTableColumn(model.columnPreferences, draggedColumnKey, targetColumnKey, position);
-    props.onTaskTableColumnsChange(nextPreferences);
-    announceColumnPosition(draggedColumnKey, nextPreferences);
-    clearColumnDragState();
-  };
-
-  const handleColumnMoveKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, columnKey: TaskTableColumnKey) => {
-    if (event.key === ' ' || event.key === 'Enter') {
-      event.preventDefault();
-      if (keyboardMovingColumnKey === columnKey) {
-        setKeyboardMovingColumnKey(null);
-        keyboardMoveStartOrderRef.current = null;
-        setColumnInteractionAnnouncement(isEnglishCopy ? `${columnLabels[columnKey]} position saved in the draft.` : `${columnLabels[columnKey]} 的位置已写入草稿。`);
-      } else {
-        keyboardMoveStartOrderRef.current = [...model.columnPreferences.columnOrder];
-        setKeyboardMovingColumnKey(columnKey);
-        setColumnInteractionAnnouncement(isEnglishCopy ? `Moving ${columnLabels[columnKey]}. Use Left and Right arrows, then press Space to finish.` : `正在移动${columnLabels[columnKey]}。使用左右方向键调整，按空格完成。`);
-      }
-      return;
-    }
-    if (event.key === 'Escape' && keyboardMovingColumnKey === columnKey) {
-      event.preventDefault();
-      const startOrder = keyboardMoveStartOrderRef.current;
-      if (startOrder) props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences({ ...model.columnPreferences, columnOrder: startOrder }));
-      setKeyboardMovingColumnKey(null);
-      keyboardMoveStartOrderRef.current = null;
-      setColumnInteractionAnnouncement(isEnglishCopy ? 'Column move cancelled.' : '已取消移动列。');
-      return;
-    }
-    if (keyboardMovingColumnKey !== columnKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-    event.preventDefault();
-    const visibleColumns = model.visibleColumns;
-    const currentIndex = visibleColumns.indexOf(columnKey);
-    const targetIndex = event.key === 'ArrowLeft' ? currentIndex - 1 : currentIndex + 1;
-    const targetColumnKey = visibleColumns[targetIndex];
-    if (!targetColumnKey) return;
-    const nextPreferences = moveTaskTableColumnTo(model.columnPreferences, columnKey, targetColumnKey);
-    props.onTaskTableColumnsChange(nextPreferences);
-    announceColumnPosition(columnKey, nextPreferences);
-  };
-
-  /** 列宽拖动只响应主按钮，并由当前分隔条捕获指针。 */
-  const handleColumnResizePointerDown = (event: ReactPointerEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.focus();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.currentTarget.dataset.dragging = 'true';
-    const startWidth = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-    resizeStateRef.current = { columnKey, startX: event.clientX, startWidth };
-  };
-  /** 捕获中的指针持续更新当前列，其他指针不会干扰。 */
-  const handleColumnResizePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
-    const resizeState = resizeStateRef.current;
-    if (!resizeState || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    const width = clampTaskTableColumnWidth(resizeState.columnKey, resizeState.startWidth + event.clientX - resizeState.startX);
-    props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, resizeState.columnKey, width));
-  };
-  /** 松开、取消和失去捕获都清理拖动状态，卸载不遗留全局监听。 */
-  const finishColumnResize = (event: ReactPointerEvent<HTMLElement>) => {
-    resizeStateRef.current = null;
-    delete event.currentTarget.dataset.dragging;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  const handleColumnResizeKeyDown = (event: ReactKeyboardEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home') return;
-    event.preventDefault();
-    const currentWidth = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-    const delta = event.shiftKey ? 24 : 8;
-    const nextWidth = event.key === 'Home' ? defaultTaskTableColumnWidths[columnKey] : currentWidth + (event.key === 'ArrowLeft' ? -delta : delta);
-    props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, columnKey, nextWidth));
-  };
-
   return (
     <section className="task-management-codex-layout task-table-only-layout task-table-layout" aria-label={props.copy.workbenchAria}>
-      <section className="task-management-navigation task-table-workbench" role={props.pageViewMode === 'list' ? 'grid' : undefined} aria-label={props.copy.filterAria}>
+      <section className="task-management-navigation task-table-workbench" aria-label={props.copy.filterAria}>
         <section className="task-filter-workbench task-filter-toolbar task-table-toolbar task-table-primary-toolbar" aria-label={props.copy.filterAria}>
           <label className="task-filter-control-row task-filter-search task-toolbar-search" aria-label={props.copy.searchAria}>
             <span className="sr-only">{props.copy.searchTitle}</span>
@@ -1033,97 +620,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 <span>{visibleTaskCountLabel}</span>
               </div>
             ) : null}
-            <section className={listClassName} role="rowgroup" data-source-list-keyboard="vertical" aria-label={props.copy.today} aria-busy={taskListLoading ? true : undefined} onKeyDown={handleListKeyboardNavigation}>
-              {renderedVisibleColumns.length > 0 ? (
-                <div className="task-table-header" role="row" style={taskTableGridStyle}>
-                  <span className="task-table-cell task-table-select-cell" role="columnheader">
-                    <TaskSelectionCheckbox
-                      ariaLabel={props.copy.selectAllVisibleTasks}
-                      checked={model.allVisibleSelected}
-                      mixed={model.someVisibleSelected && !model.allVisibleSelected}
-                      disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
-                      onChange={(selected) => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, selected)}
-                    />
-                  </span>
-                  {renderedVisibleColumns.map((columnKey) => {
-                    const sortDirection = model.columnPreferences.sort.columnKey === columnKey ? model.columnPreferences.sort.direction : null;
-                    const width = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-                    const bounds = getTaskTableColumnWidthBounds(columnKey);
-                    const sortLabel = sortDirection === 'asc' ? (isEnglishCopy ? 'ascending' : '升序') : sortDirection === 'desc' ? (isEnglishCopy ? 'descending' : '降序') : isEnglishCopy ? 'not sorted' : '未排序';
-                    return (
-                      <span
-                        className={[
-                          taskTableCellClassName(columnKey),
-                          'task-table-interactive-header',
-                          draggedColumnKey === columnKey ? 'dragging' : undefined,
-                          dragInsertion?.targetColumnKey === columnKey ? `drop-${dragInsertion.position}` : undefined,
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        role="columnheader"
-                        aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
-                        key={columnKey}
-                        onDragOver={(event) => handleColumnDragOver(event, columnKey)}
-                        onDrop={(event) => handleColumnDrop(event, columnKey)}
-                      >
-                        <button
-                          type="button"
-                          className="task-table-column-drag-handle"
-                          draggable
-                          aria-pressed={keyboardMovingColumnKey === columnKey}
-                          aria-label={isEnglishCopy ? `Move ${columnLabels[columnKey]} column` : `移动${columnLabels[columnKey]}列`}
-                          title={isEnglishCopy ? 'Drag to reorder. Keyboard: Space, arrows, Space.' : '拖动调整位置；键盘可按空格、方向键、空格。'}
-                          onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                          onDragEnd={clearColumnDragState}
-                          onKeyDown={(event) => handleColumnMoveKeyDown(event, columnKey)}
-                        >
-                          <span aria-hidden="true">⋮⋮</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="task-table-column-sort-button"
-                          draggable
-                          aria-label={isEnglishCopy ? `Sort by ${columnLabels[columnKey]}; currently ${sortLabel}` : `按${columnLabels[columnKey]}排序；当前${sortLabel}`}
-                          title={isEnglishCopy ? `Click to sort (${sortLabel}); drag to reorder.` : `点击排序（${sortLabel}）；拖动调整列位置。`}
-                          onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                          onDragEnd={clearColumnDragState}
-                          onClick={() => props.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey))}
-                        >
-                          <span>{columnLabels[columnKey]}</span>
-                          {sortDirection ? (
-                            <span className="task-table-column-sort-indicator" aria-hidden="true">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          ) : null}
-                        </button>
-                        <span
-                          className="task-table-column-resize-handle"
-                          role="separator"
-                          tabIndex={0}
-                          aria-orientation="vertical"
-                          aria-valuemin={bounds.min}
-                          aria-valuemax={bounds.max}
-                          aria-valuenow={width}
-                          aria-label={isEnglishCopy ? `Resize ${columnLabels[columnKey]} column` : `调整${columnLabels[columnKey]}列宽`}
-                          onPointerDown={(event) => handleColumnResizePointerDown(event, columnKey)}
-                          onPointerMove={handleColumnResizePointerMove}
-                          onPointerUp={finishColumnResize}
-                          onPointerCancel={finishColumnResize}
-                          onLostPointerCapture={finishColumnResize}
-                          onDoubleClick={() => props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, columnKey, defaultTaskTableColumnWidths[columnKey]))}
-                          onKeyDown={(event) => handleColumnResizeKeyDown(event, columnKey)}
-                        />
-                      </span>
-                    );
-                  })}
-                  <span className="task-table-cell task-table-action-cell" role="columnheader">
-                    {props.copy.actionsColumnTitle}
-                  </span>
-                </div>
-              ) : null}
-              <span className="sr-only" role="status" aria-live="polite">
-                {columnInteractionAnnouncement}
-              </span>
+            <TaskDataTable key={props.activeProjectId} workspace={props} model={model} labels={columnLabels}>
               {taskListLoading ? (
                 // 加载态只替换表格内容，不替换工具条和列头，用户能确认即将出现的数据结构。
                 <section className="task-list-state-row task-list-loading-state" role="status" aria-live="polite">
@@ -1178,121 +675,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     </span>
                   ) : null}
                 </section>
-              ) : (
-                model.rows.map((row) => {
-                  const task = row.task;
-                  const managementStatus = resolveTaskManagementStatus(task);
-                  const branchStatus = row.cells.branchStatus.sortValue as TaskBranchStatus;
-                  const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
-                  const runStatusConversationId = row.runStatusConversationId;
-                  return (
-                    <div
-                      key={task.id}
-                      className={row.selected ? 'task-list-row selected task-table-row' : 'task-list-row task-table-row'}
-                      role="row"
-                      style={taskTableGridStyle}
-                      aria-selected={row.selected}
-                      aria-label={`${props.copy.openTaskDetail}：${task.title}`}
-                      tabIndex={task.id === keyboardEntryTaskId ? 0 : -1}
-                      data-source-list-item="true"
-                      data-task-row-action={row.action}
-                      data-motion-surface="list-item"
-                      data-motion-state={enteringTaskIds.has(task.id) ? 'entering' : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        props.onOpenTaskDetail(task.id);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return;
-                        if (event.key !== 'Enter' && event.key !== ' ') return;
-                        event.preventDefault();
-                        props.onOpenTaskDetail(task.id);
-                      }}
-                    >
-                      {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
-                      <span className="task-table-cell task-table-select-cell" role="gridcell" onClick={(event) => event.stopPropagation()}>
-                        <TaskSelectionCheckbox ariaLabel={props.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={bulkActionBusy} onChange={(selected) => props.onToggleTaskSelection?.(task.id, selected)} />
-                      </span>
-                      {renderedVisibleColumns.map((columnKey) => {
-                        const cell = row.cells[columnKey];
-                        return (
-                          <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey} data-column-label={columnLabels[columnKey]}>
-                            {columnKey === 'taskType' ? (
-                              <span className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
-                                <strong>{cell.primary}</strong>
-                              </span>
-                            ) : columnKey === 'managementStatus' ? (
-                              <span className="task-table-row-status-control" onClick={(event) => event.stopPropagation()}>
-                                <ZeusSelect
-                                  size="compact"
-                                  ariaLabel={props.copy.taskStatusSelectAria(task.title)}
-                                  value={managementStatus}
-                                  options={bulkStatusOptions.map((status) => ({
-                                    value: status,
-                                    label: statusLabel(status),
-                                    color: statusColorById.get(status),
-                                  }))}
-                                  onChange={(status) => props.onTaskStatusChange?.(task.id, status)}
-                                  className="task-status-select task-status-custom"
-                                  style={{ '--task-status-tone': statusColorById.get(managementStatus) ?? '#6b7280' } as CSSProperties}
-                                  disabled={props.statusChangeBusy || !props.onTaskStatusChange}
-                                  searchable={false}
-                                />
-                              </span>
-                            ) : columnKey === 'branchStatus' ? (
-                              <span className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(branchStatus)}`}>
-                                <strong>{cell.primary}</strong>
-                              </span>
-                            ) : columnKey === 'runStatus' ? (
-                              <TaskRunStatusChip
-                                status={runStatus}
-                                label={cell.primary}
-                                ariaLabel={runStatusConversationId && props.onOpenTaskConversation ? props.copy.openRunStatusConversationAria(task.title, cell.primary) : cell.primary}
-                                onClick={
-                                  runStatusConversationId && props.onOpenTaskConversation
-                                    ? (event) => {
-                                        event.stopPropagation();
-                                        props.onOpenTaskConversation?.(task.id, runStatusConversationId);
-                                      }
-                                    : undefined
-                                }
-                              />
-                            ) : columnKey === 'priority' ? (
-                              <TaskPriorityControl
-                                task={task}
-                                language={props.appLanguage}
-                                options={props.priorityOptions}
-                                ariaLabel={props.copy.taskPrioritySelectAria(task.title)}
-                                disabled={props.statusChangeBusy || !props.onTaskPriorityChange}
-                                onSave={(taskId, input) => {
-                                  if (!props.onTaskPriorityChange) return Promise.reject(new Error(props.appLanguage === 'zh-CN' ? '任务优先级更新能力不可用。' : 'Task priority update is unavailable.'));
-                                  return props.onTaskPriorityChange(taskId, input);
-                                }}
-                              />
-                            ) : columnKey === 'intent' ? (
-                              <span className="task-table-title-text">{cell.primary}</span>
-                            ) : (
-                              <strong>{cell.primary}</strong>
-                            )}
-                            {cell.secondary ? <small>{cell.secondary}</small> : null}
-                          </span>
-                        );
-                      })}
-                      <TaskRowActions
-                        task={task}
-                        copy={props.copy}
-                        terminal={managementStatus === props.completedStatusId || managementStatus === props.cancelledStatusId}
-                        busy={Boolean(props.taskActionBusy)}
-                        modelPushEntry={props.modelPushEntry}
-                        onPushTaskToNewConversation={props.onPushTaskToNewConversation}
-                        onOpenTaskCodeDelivery={props.onOpenTaskCodeDelivery}
-                        onDeleteTask={props.onDeleteTask}
-                      />
-                    </div>
-                  );
-                })
-              )}
-            </section>
+              ) : null}
+            </TaskDataTable>
           </>
         )}
       </section>

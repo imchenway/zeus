@@ -1,3 +1,7 @@
+import type { EmployeeWorkSettings } from '@zeus/shared';
+import type { CodexTaskPushModelCapability } from './sessionTypes.js';
+import { SettingsEditor } from '../features/digital-employees/TaskWorkPlanPanel.js';
+import { DigitalEmployeeAvatar } from '../features/digital-employees/DigitalEmployeeAvatar.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEventHandler, type KeyboardEvent, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -18,6 +22,8 @@ export interface StructuredToken {
   stableId: string;
   /** 扩展与电脑操作的显式调用文本；员工标签通过结构化字段提交。 */
   invocation?: string;
+  /** 成员本轮覆盖随输入标签草稿保留。 */
+  settings?: EmployeeWorkSettings;
 }
 
 interface TriggerRange {
@@ -41,7 +47,7 @@ interface MenuOption {
 export interface StructuredComposerSelection {
   displayText: string;
   promptText: string;
-  expertMentions: Array<{ employeeId: string }>;
+  expertMentions: Array<{ employeeId: string; settings?: EmployeeWorkSettings }>;
   skillReferences: Array<{ id: string }>;
   pluginReferences: PluginSkillReference[];
   /** 可选的电脑操作意图，不是每轮授权开关。 */
@@ -50,11 +56,17 @@ export interface StructuredComposerSelection {
 
 export interface StructuredComposerInputProps {
   value: string;
+  /** 原会话能力目录用于成员本轮配置。 */
+  models?: CodexTaskPushModelCapability[];
   tokenDraft?: { current: StructuredToken[] };
   onValueChange(value: string): void;
   onSelectionChange(selection: StructuredComposerSelection): void;
   textareaRef: RefObject<ComposerInputHandle | null>;
   projectId?: string;
+  /** 任务成员配置使用权威安排的默认值。 */
+  taskId?: string;
+  /** 由既有客户端读取，不在输入框另建连接。 */
+  loadTaskSettings?: (taskId: string) => Promise<import('@zeus/shared').EmployeeWorkSettings>;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
   autoFocus?: boolean;
@@ -88,6 +100,29 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [computerEnabled, setComputerEnabled] = useState(false);
+  /** 按需读取，失败时不将员工默认冒充有效任务配置。 */
+  const [taskSettings, setTaskSettings] = useState<import('@zeus/shared').EmployeeWorkSettings | null>(null);
+  /** 读取失败保留本轮草稿，并可重新核对。 */
+  const [taskSettingsError, setTaskSettingsError] = useState<string | null>(null);
+  /** 每次展开成员面板重新读取当前安排。 */
+  const [settingsReadRevision, setSettingsReadRevision] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setTaskSettings(null);
+    setTaskSettingsError(null);
+    if (settingsReadRevision && props.taskId && props.loadTaskSettings)
+      void props
+        .loadTaskSettings(props.taskId)
+        .then((settings) => {
+          if (active) setTaskSettings(settings);
+        })
+        .catch((cause: unknown) => {
+          if (active) setTaskSettingsError(cause instanceof Error ? cause.message : '读取任务配置失败。');
+        });
+    return () => {
+      active = false;
+    };
+  }, [props.taskId, props.loadTaskSettings, settingsReadRevision]);
   /** 输入法组词期间不显示命令菜单。 */
   const composingRef = useRef(false);
   /** 只在候选项内容真正变化时重置高亮，避免方向键更新选区后又被拉回第一项。 */
@@ -384,6 +419,57 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           props.onBlur?.(value);
         }}
       />
+      {tokens.some((token) => token.kind === 'expert') ? (
+        <details
+          className="expert-round-settings"
+          onToggle={(event) => {
+            // 内层成员配置的展开事件也会冒泡，不能因此重读并卸载正在编辑的成员。
+            if (event.target !== event.currentTarget) return;
+            if (event.currentTarget.open) setSettingsReadRevision((revision) => revision + 1);
+          }}
+        >
+          <summary>{zh ? '本轮接收成员与配置' : 'Recipients and settings'}</summary>
+          <p>
+            {zh
+              ? '回复显示在当前任务或会话中；点名表示接收对象，不是私人消息。先继承任务与成员配置，本轮调整不会修改员工。'
+              : 'Replies appear in this conversation. Mentions select recipients, not private visibility. Changes apply only to this round.'}
+          </p>
+          {tokens
+            .filter((token) => token.kind === 'expert')
+            .map((token) => {
+              /** 已选成员保持稳定身份，配置写回原草稿标签。 */
+              const employee = employees.find((candidate) => candidate.id === token.stableId);
+              return (
+                <div key={token.id} className="expert-round-member">
+                  {employee ? <DigitalEmployeeAvatar {...employee} /> : null}
+                  {props.taskId && props.loadTaskSettings && taskSettings === null ? (
+                    <p role={taskSettingsError ? 'alert' : 'status'}>
+                      {taskSettingsError ?? '正在核对任务默认配置…'}
+                      {taskSettingsError ? (
+                        <button type="button" onClick={() => setSettingsReadRevision((revision) => revision + 1)}>
+                          重新读取
+                        </button>
+                      ) : null}
+                    </p>
+                  ) : (
+                    <SettingsEditor
+                      inherited={taskSettings ?? undefined}
+                      value={token.settings ?? {}}
+                      employee={employee}
+                      employees={employees}
+                      allowDelegation={false}
+                      onChange={(settings) => setTokens((current) => current.map((candidate) => (candidate.id === token.id ? { ...candidate, settings } : candidate)))}
+                      models={props.models ?? []}
+                      skillClient={props.loadCatalog ? { loadSkills: props.loadCatalog } : null}
+                      projectId={props.projectId ?? ''}
+                      label={employee?.name ?? token.label}
+                    />
+                  )}
+                </div>
+              );
+            })}
+        </details>
+      ) : null}
       <MotionPresence>
         {trigger && !props.disabled ? (
           <PopoverSurface className="structured-composer-menu" id={listboxId} role="listbox" aria-label={trigger.kind === '@' ? (zh ? '选择数字员工' : 'Select digital employees') : zh ? '选择命令' : 'Select command'}>
@@ -439,7 +525,7 @@ function selectionFromTokens(value: string, tokens: StructuredToken[]): Structur
     displayText: value,
     // 空格、制表符和行尾双空格具有 Markdown 语义，不能为清理标签间距而压缩正文。
     promptText,
-    expertMentions: ordered.filter((token) => token.kind === 'expert').map((token) => ({ employeeId: token.stableId })),
+    expertMentions: ordered.filter((token) => token.kind === 'expert').map((token) => ({ employeeId: token.stableId, ...(token.settings ? { settings: token.settings } : {}) })),
     skillReferences: ordered.filter((token) => token.kind === 'skill').map((token) => ({ id: token.stableId })),
     pluginReferences: ordered.filter((token) => token.kind === 'plugin' || token.kind === 'plugin-skill').map((token) => ({ kind: token.kind === 'plugin' ? ('plugin' as const) : ('skill' as const), id: token.stableId })),
     computerUseRequested: ordered.some((token) => token.kind === 'computer'),

@@ -31,6 +31,8 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
+  /** 个人经验读取偏好。 */
+  memoryEnabled?: boolean;
   enabled: boolean;
   autoClaim: boolean;
   autonomousExploration: boolean;
@@ -123,6 +125,7 @@ export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDra
     enabled: record.enabled,
     autoClaim: record.autoClaim,
     autonomousExploration: record.autonomousExploration,
+    memoryEnabled: record.memoryEnabled !== false,
     managementStatuses: record.taskFilter.managementStatuses.join(', '),
     taskTypes: record.taskFilter.taskTypes.join(', '),
     requiredTags: record.taskFilter.requiredTags.join(', '),
@@ -172,6 +175,7 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
     enabled: draft.enabled,
     autoClaim: draft.autoClaim,
     autonomousExploration: draft.autonomousExploration,
+    memoryEnabled: draft.memoryEnabled !== false,
     taskFilter: {
       managementStatuses: splitList(draft.managementStatuses),
       taskTypes: splitList(draft.taskTypes),

@@ -4,6 +4,8 @@ import type { ManagedConversationToolResultStore } from './conversationPortableC
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import { isZeusNativeToolMutation, type ZeusToolBroker } from './zeusToolRegistry.js';
+import { effectiveToolPermission } from './conversationToolPolicy.js';
+import type { ConversationPermissionMode, ConversationCollaborationMode } from '@zeus/storage';
 
 interface CodexDynamicToolApplicationOptions {
   manager: Pick<CodexAppServerManager, 'respondToServerRequest'>;
@@ -14,7 +16,7 @@ interface CodexDynamicToolApplicationOptions {
   findConversation(threadId: string): { id: string; permissionMode?: string } | undefined;
   turns: Pick<ConversationTurnRepository, 'getByProvider'>;
   execution: Pick<ConversationExecutionRepository, 'segmentByNativeSession'>;
-  pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: string } | null;
+  pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: ConversationPermissionMode; workMode: ConversationCollaborationMode } | null;
   requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
   now(): string;
@@ -127,12 +129,13 @@ async function resolveResponse(input: {
     if (!turn || !segment || (segment.state !== 'current' && segment.state !== 'provisional')) throw dynamicToolError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
     /** 后续正文与图片共用同一份已核实的身份。 */
     const scope: ToolResultScope = { conversationId: input.conversation.id, turnId: turn.id, segmentId: segment.id };
-    if (input.options.plugins && input.namespace.startsWith('mcp__') && input.tool) {
+    if (input.options.plugins && input.namespace.startsWith('zeus_mcp_') && input.tool) {
       const pluginContext = input.options.pluginContext(input.conversation.id);
       if (!pluginContext) throw dynamicToolError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'The Plugin Host is not bound to this conversation context.');
       const catalog = await input.options.plugins.getCatalog(input.conversation.id);
       const tool = catalog.tools.find((candidate) => candidate.namespace === input.namespace && candidate.toolName === input.tool);
       if (!tool) throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', 'The requested MCP tool is not part of this conversation’s frozen Plugin snapshot.');
+      if (effectiveToolPermission(pluginContext.permissionMode, pluginContext.workMode) === 'read-only' && !tool.readOnly) throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '只读或计划模式仅允许明确声明只读的 MCP 工具。');
       const pre = await input.options.plugins.emitHook({
         event: 'PreToolUse',
         conversationId: input.conversation.id,
@@ -182,7 +185,7 @@ async function resolveResponse(input: {
         payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: args, tool_response: result.text },
       });
       const text = post.replaceToolResult ?? result.text;
-      const projection = await projectToolResult(input, text, scope);
+      const contentItems = await projectContentItems(input, [{ type: 'inputText', text }, ...(result.images ?? []).map((image) => ({ type: 'inputImage' as const, imageUrl: `data:${image.mimeType};base64,${image.data}` }))], scope);
       if (result.app) {
         input.options.broadcast('conversation.plugin_app.created', {
           conversationId: input.conversation.id,
@@ -197,14 +200,20 @@ async function resolveResponse(input: {
           toolResult: { text: result.text, structuredContent: result.structuredContent, isError: result.isError },
         });
       }
-      return dynamicToolResponse(input.event, [{ type: 'inputText', text: projection }], !result.isError);
+      return dynamicToolResponse(input.event, contentItems, !result.isError);
     }
     if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
-    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer')) {
+    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer' && input.namespace !== 'zeus_work')) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
     }
-    if (input.conversation.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
-      throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前会话是只读模式，已拒绝 Browser 或 Computer 交互。');
+    const permissionContext = input.options.pluginContext(input.conversation.id);
+    if (!permissionContext) throw dynamicToolError('ZEUS_TOOL_PERMISSION_CONTEXT_MISSING', '无法核实本轮工具权限。');
+    if (
+      (input.namespace !== 'zeus_work' || permissionContext.workMode === 'plan') &&
+      effectiveToolPermission(permissionContext.permissionMode, permissionContext.workMode) === 'read-only' &&
+      isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)
+    ) {
+      throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前轮次为只读或计划模式，已拒绝该工具的写入操作。');
     }
     // Computer Use 由原生宿主按全局开关统一检查，输入框标签仅表达调用意图。
     const result = await input.options.toolBroker.invoke({

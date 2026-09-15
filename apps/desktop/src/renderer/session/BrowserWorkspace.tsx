@@ -119,6 +119,7 @@ const copy = {
   },
 } as const;
 
+/** 同步会话标签与原生网页，最后一个标签关闭时退出浏览器工作面。 */
 export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const labels = copy[props.language];
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -128,6 +129,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const closedTabIdsRef = useRef(new Set<string>());
   const stageRef = useRef(props.onStageComments);
   stageRef.current = props.onStageComments;
+  /** 事件始终使用最新关闭回调，不因父界面刷新而重新订阅或打开标签。 */
+  const closeRef = useRef(props.onClose);
+  closeRef.current = props.onClose;
   const [snapshot, setSnapshot] = useState<ZeusBrowserConversationSnapshot | null>(() => (props.initialSnapshot?.conversationId === props.conversationId ? props.initialSnapshot : null));
   const [address, setAddress] = useState('');
   const [addressFocused, setAddressFocused] = useState(false);
@@ -165,6 +169,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const handleEvent = (event: ZeusBrowserEvent): void => {
       if (!active) return;
       if (event.type === 'snapshot' && event.snapshot.conversationId === props.conversationId) {
+        if (event.snapshot.tabs.length === 0) {
+          // 工具关闭最后一个标签与手动关闭一致；迟到的初始化结果不得重新打开工作面。
+          active = false;
+          closeRef.current();
+          return;
+        }
         setSnapshot(event.snapshot);
       } else if (event.type === 'error' && event.conversationId === props.conversationId) {
         setError(event.message);

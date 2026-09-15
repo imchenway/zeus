@@ -392,9 +392,9 @@ function latestMemoryWatermark(values: string[]): string {
   return [...values].sort().at(-1) ?? 'none';
 }
 
-function parseScope(kind: string, id: string | undefined): { kind: 'global' | 'project'; id: string } {
+function parseScope(kind: string, id: string | undefined): { kind: 'global' | 'project' | 'employee'; id: string } {
   if (kind === 'global') return { kind, id: id ?? '*' };
-  if (kind === 'project' && id !== undefined) return { kind, id };
+  if ((kind === 'project' || kind === 'employee') && id !== undefined) return { kind, id };
   throw new MemoryContextApiError('ZEUS_MEMORY_CONTEXT_INVALID_ARGUMENT', 'scopeKind/scopeId is invalid.', 400);
 }
 

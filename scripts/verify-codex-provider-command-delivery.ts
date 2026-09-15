@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { finalizeCodexPendingInteractionsForShutdown } from '../packages/local-server/src/codexFinalShutdownApplication.js';
 import { CodexProviderCommandApplicationService } from '../packages/local-server/src/codexProviderCommandApplication.js';
+import { createCodexInteractionRecoveryApplication, isInteractionRecoveryCheckpointRequest } from '../packages/local-server/src/codexInteractionRecoveryApplication.js';
+import { createCodexExternalRequestAnswerRecovery } from '../packages/local-server/src/codexExternalRequestAnswerRecovery.js';
 import { CommandDeliveryRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ProjectRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { CodexJsonLineDecoder, codexMaximumFrameBytes } from '../packages/ai-runtime/src/codexAppServerProtocol.js';
+import { readCodexTurnItems } from '../packages/ai-runtime/src/codexAppServerManager.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-codex-provider-command-'));
 const database = await createZeusDatabase(join(probeRoot, 'probe.db'));
@@ -14,6 +18,7 @@ const service = new CodexProviderCommandApplicationService(database, repository,
 const providerTraceIdentity = '44444444-4444-4444-8444-444444444444';
 
 try {
+  await probeProtocolAndPaging();
   database.execute(`CREATE TABLE probe_projection (id TEXT PRIMARY KEY, state TEXT NOT NULL)`);
 
   await service.executeSession({
@@ -163,7 +168,7 @@ try {
     transportGenerationId: 'generation-final-quit',
     providerRequestId: 'request-final-quit',
     requestKind: 'request_user_input',
-    payload: { questions: [] },
+    payload: { questions: [{ id: 'placement', header: '入口位置', question: '规则入口放在哪里？', isSecret: false, isOther: true, options: [{ label: '全局规则页', description: '直接进入规则编辑。' }] }] },
     status: 'pending',
     createdAt: shutdownTimestamp,
   });
@@ -202,12 +207,62 @@ try {
   assertBehavior(finalConversation?.providerState === 'paused', 'Provider 终态未知的 conversation 必须离开 waiting 并进入 paused。');
   assertBehavior(finalEvidence.providerOutcomeUnconfirmed === true && finalEvidence.recoveryRequired === true, 'final_quit 必须保留 Provider 结果未知与显式恢复证据。');
 
+  /** 在现有退出探针中接着恢复真实持久记录，不连接外部模型。 */
+  const answerRecovery = createCodexExternalRequestAnswerRecovery({ conversations, turns, requests, now, persist: () => database.save(), broadcast: () => undefined, enqueueBarrier: (work) => work(), isClosed: () => false });
+  /** 此探针只调用恢复持久请求入口，其余运行依赖不参与本次检查。 */
+  const recovery = createCodexInteractionRecoveryApplication({
+    options: { conversations, turns, requests, manager: { hasGeneration: () => false } },
+    now,
+    isClosed: () => false,
+    readyGenerationId: () => 'generation-restarted',
+    recoverExternalRequestAnswer: answerRecovery.recover,
+  } as unknown as Parameters<typeof createCodexInteractionRecoveryApplication>[0]);
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(shutdownRequest.id)?.status === 'pending' && isInteractionRecoveryCheckpointRequest(requests.getById(shutdownRequest.id)!), '退出后的未答问题必须恢复为显式续接卡片。');
+  assertBehavior(requests.getById(shutdownRequest.id)?.payloadJson === shutdownRequest.payloadJson, '恢复不能改写原问题、选项或自定义回答能力。');
+  requests.resolve(shutdownRequest.id, { response: { type: 'request_user_input', answers: {} }, resolvedAt: now() });
+
+  /** 明确排列请求创建时间，恢复判断不依赖随机编号排序。 */
+  let recoveredInteractionCount = 0;
+  for (const kind of ['request_user_input', 'command', 'file', 'permissions', 'mcp'] as const) {
+    for (const error of ['ZEUS_CODEX_REQUEST_GENERATION_STALE', 'ZEUS_FORCED_QUIT_INTERRUPTED', 'ZEUS_CODEX_FINAL_QUIT_OUTCOME_UNCONFIRMED']) {
+      /** 各类卡片使用独立请求身份，逐一确认三种连接退出原因。 */
+      const request = requests.upsert({
+        conversationId: conversation.id,
+        turnId: shutdownTurn.id,
+        transportGenerationId: 'generation-final-quit',
+        providerRequestId: `${kind}:${error}`,
+        requestKind: kind,
+        payload: JSON.parse(shutdownRequest.payloadJson),
+        status: 'failed',
+        response: { error },
+        createdAt: new Date(Date.UTC(2026, 7, 21, 13, 0, recoveredInteractionCount++)).toISOString(),
+      });
+      await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+      assertBehavior(requests.getById(request.id)?.status === 'pending' && isInteractionRecoveryCheckpointRequest(requests.getById(request.id)!), `${kind} 未恢复 ${error} 的卡片。`);
+      requests.resolve(request.id, { response: { probe: true }, resolvedAt: now() });
+    }
+  }
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(shutdownRequest.id)?.status === 'resolved', '已回答的卡片不能在再次恢复时重新打开。');
+  /** 使用最新记录检查非连接错误和正常完成，避免被“旧请求”规则提前过滤。 */
+  const latestRecoveryRequest = requests.listByConversation(conversation.id).at(-1)!;
+  requests.fail(latestRecoveryRequest.id, { error: { code: 'ZEUS_CODEX_PERMISSION_SCHEMA_UNSUPPORTED' }, resolvedAt: now() });
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(latestRecoveryRequest.id)?.status === 'failed', '校验失败的请求不能被当作断线问题恢复。');
+  requests.fail(latestRecoveryRequest.id, { error: { code: 'ZEUS_CODEX_REQUEST_GENERATION_STALE' }, resolvedAt: now() });
+  turns.upsert({ ...shutdownTurn, status: 'completed', completedAt: now(), updatedAt: now() });
+  await recovery.recoverStaleInteractionRequests(conversation.id, 'generation-restarted');
+  assertBehavior(requests.getById(latestRecoveryRequest.id)?.status === 'failed', '已正常完成轮次的旧问题不能重新打开。');
+  answerRecovery.close();
+
   const quickCheck = database.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check;
   assertBehavior(quickCheck === 'ok', `临时数据库 quick_check 失败：${quickCheck ?? 'missing'}`);
   console.log(
     JSON.stringify(
       {
         status: 'passed',
+        protocolAndPaging: 'passed',
         session: { destination: session.attempt.destinationKind, generation: session.receipt.providerGenerationId, nativeSessionId: session.receipt.nativeSessionId, nativeTurnId: session.receipt.nativeTurnId },
         turn: { destination: accepted.attempt.destinationKind, nativeSessionId: accepted.receipt.nativeSessionId, nativeTurnId: accepted.receipt.nativeTurnId },
         unknown: { outcome: unknown.receipt.outcome, replay: unknownReplay, providerCalls: unknownProviderCalls, attempts: unknown.snapshot.attempts.length },
@@ -231,6 +286,7 @@ try {
           },
         },
         quickCheck,
+        disconnectedInteractions: { kinds: 5, failureReasons: 3, answeredAndTerminalPreserved: true },
         providerTraceIdentity,
       },
       null,
@@ -240,6 +296,60 @@ try {
 } finally {
   await database.close();
   await rm(probeRoot, { recursive: true, force: true });
+}
+
+/** 正常大帧和原生正文分页不得被误判成未知写入，真正损坏仍需明确诊断。 */
+async function probeProtocolAndPaging(): Promise<void> {
+  /** 大于旧限制的合法回包，保留一次完整解析后的请求身份。 */
+  const largeFrame = Buffer.from(`${JSON.stringify({ id: 'large-history', result: '中'.repeat(2 * 1024 * 1024) })}\n`);
+  /** 用管道常见分块大小回放，检查 UTF-8 跨块和一次合并路径。 */
+  const decoder = new CodexJsonLineDecoder();
+  for (let offset = 0; offset < largeFrame.length; offset += 65537) {
+    /** 只有最后一块才能产生完整消息。 */
+    const frames = decoder.push(largeFrame.subarray(offset, offset + 65537));
+    assertBehavior(
+      offset + 65537 < largeFrame.length ? frames.length === 0 : frames.length === 1 && frames[0]?.type === 'message' && 'id' in frames[0].message && frames[0].message.id === 'large-history',
+      '中文大帧的分块读取丢失内容或请求身份。',
+    );
+  }
+  /** 无参数通知是原生协议允许的正常形式。 */
+  const notifications = decoder.push(Buffer.from('{"method":"initialized"}\r\n{"id":2,"method":"empty/request"}\n'));
+  assertBehavior(notifications.length === 2 && notifications.every((frame) => frame.type === 'message'), '无参数通知或请求不能被判为协议损坏。');
+  /** 损坏 JSON 与结构错误保留字节诊断，下一帧继续可读。 */
+  const damaged = decoder.push(Buffer.from('broken\n{"id":true,"result":1}\n{"id":3,"result":true}\n'));
+  assertBehavior(
+    damaged[0]?.type === 'protocol_error' &&
+      damaged[0].error.code === 'MALFORMED_JSON' &&
+      damaged[0].error.byteLength === 6 &&
+      damaged[1]?.type === 'protocol_error' &&
+      damaged[1].error.code === 'INVALID_MESSAGE' &&
+      damaged[2]?.type === 'message',
+    '损坏帧必须明确失败且不能吞掉后续合法帧。',
+  );
+  /** 真正超过硬上限的未结束帧只报错一次，并丢弃到换行处。 */
+  const oversized = decoder.push(Buffer.alloc(codexMaximumFrameBytes + 1, 0x61));
+  assertBehavior(oversized.length === 1 && oversized[0]?.type === 'protocol_error' && oversized[0].error.code === 'FRAME_TOO_LARGE', '传输硬上限失效。');
+  assertBehavior(decoder.push(Buffer.from('discarded\n{"id":4,"result":null}\n'))[0]?.type === 'message', '超限帧结束后必须恢复解码。');
+  /** 33 个条目强制经过两页，逐条保留原生身份和正文。 */
+  const source = Array.from({ length: 33 }, (_, index) => ({ id: `item-${index}`, type: 'agentMessage', text: `正文 ${index}` }));
+  /** 页面请求次数证明调用方使用了每页 32 条的原生接口。 */
+  let calls = 0;
+  const items = await readCodexTurnItems(
+    {
+      listThreadItems: async ({ turnId, cursor, limit, sortDirection }) => {
+        assertBehavior(limit === 32 && sortDirection === 'asc', '正文恢复没有使用约定的原生分页。');
+        calls += 1;
+        const offset = Number(cursor ?? 0);
+        return { data: source.slice(offset, offset + limit).map((item) => ({ turnId, item })), nextCursor: offset + limit < source.length ? String(offset + limit) : null };
+      },
+    },
+    { threadId: 'thread', turnId: 'turn' },
+  );
+  assertBehavior(calls === 2 && JSON.stringify(items) === JSON.stringify(source), '分页恢复丢失正文或改变了条目顺序。');
+  assertBehavior(
+    (await captureAsyncCode(() => readCodexTurnItems({ listThreadItems: async () => ({ data: [], nextCursor: 'same' }) }, { threadId: 'thread', turnId: 'turn' }))) === 'ZEUS_NATIVE_SYNC_CURSOR_INVALID',
+    '重复游标必须中止，不能把部分内容当完整正文。',
+  );
 }
 
 async function executeTurn(scopeId: string, commandKey: string, invoke: () => Promise<void>, isExplicitRejection?: (error: unknown) => boolean): Promise<void> {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, type CommandDeliveryRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 
 /**
  * 自动排空只选择仍处于 queued 的最早提交。paused/failed 是需要人工处理或保留审计的
@@ -20,6 +21,8 @@ export class ConversationQueueCoreMutationApplication {
       submissions: ConversationSubmissionRepository;
       execution: ConversationExecutionRepository;
       requests: ConversationServerRequestRepository;
+      /** 重试以持久发送证据为准，不能只凭没有轮次编号判断未发送。 */
+      commandDeliveries: CommandDeliveryRepository;
       now(): string;
       snapshot(conversationId: string): unknown;
     },
@@ -102,6 +105,7 @@ export class ConversationQueueCoreMutationApplication {
     if ((submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以重试。');
     }
+    if (!hasUnwrittenSubmissionEvidence(this.options.commandDeliveries, submission)) throw mutationError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '尚未确认这条消息未发送，不能安全重试。');
     if (submission.pausedReason === 'semantic_route_changed' || submission.pausedReason === 'upgrade_interrupted' || !submission.executionSnapshotId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '原执行路由已变化或不可恢复，请使用当前输入框模型创建改路由 replacement。');
     }

@@ -1,3 +1,4 @@
+import { PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -169,7 +170,7 @@ export function SourceWorkspace(props: {
       </div>
       <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
         {props.preview.kind === 'image' ? (
-          <img src={props.preview.dataUrl} alt={props.preview.resource.displayName} decoding="async" />
+          <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
         ) : renderedMarkdown ? (
           <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
         ) : (

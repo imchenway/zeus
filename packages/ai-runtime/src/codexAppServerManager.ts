@@ -8,6 +8,7 @@ import { type RawData, WebSocket } from 'ws';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import {
   CodexJsonLineDecoder,
+  codexMaximumFrameBytes,
   type CodexWireId,
   type CodexWireMessage,
   type ExternalAgentConfigDetectParams,
@@ -316,6 +317,41 @@ export interface CodexThreadTurnsPage {
   nextCursor: string | null;
 }
 
+/** 原生内容分页保留所属轮次，不把跨轮次条目误归入当前请求。 */
+export interface CodexThreadItemsPage {
+  /** 按请求方向排列的原生内容。 */
+  data: Array<{ turnId: string; item: Record<string, unknown> }>;
+  /** 后续页面使用的原生游标。 */
+  nextCursor: string | null;
+}
+
+/** 后台恢复、任务切换和子线程详情共用完整正文分页；失败时不返回不完整轮次。 */
+export async function readCodexTurnItems(provider: Pick<CodexAppServerManager, 'listThreadItems'>, input: { threadId: string; turnId: string; priority?: 'control' }): Promise<Record<string, unknown>[]> {
+  /** 完整轮次条目沿原生升序累计。 */
+  const items: Record<string, unknown>[] = [];
+  /** 重复游标代表分页没有前进，不能继续循环或提前确认正文完整。 */
+  const seenCursors = new Set<string>();
+  /** 同轮次重复条目也属于不可靠分页，保留旧投影等待下一次检查。 */
+  const seenItems = new Set<string>();
+  /** 游标仅由原生接口提供，不根据内容或时间自行推算。 */
+  let cursor: string | null = null;
+  do {
+    /** 每页只读取 32 条完整内容，避免把大量轮次正文塞入一个帧。 */
+    const page = await provider.listThreadItems({ ...input, cursor, limit: 32, sortDirection: 'asc' });
+    for (const entry of page.data) {
+      if (entry.turnId !== input.turnId || typeof entry.item.id !== 'string' || !entry.item.id || seenItems.has(entry.item.id)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex 内容分页出现不匹配或重复的条目身份。');
+      seenItems.add(entry.item.id);
+      items.push(entry.item);
+    }
+    cursor = page.nextCursor;
+    if (cursor) {
+      if (seenCursors.has(cursor)) throw managerError('ZEUS_NATIVE_SYNC_CURSOR_INVALID', 'Codex 内容分页重复返回同一游标。');
+      seenCursors.add(cursor);
+    }
+  } while (cursor);
+  return items;
+}
+
 export interface CodexThreadsPage {
   data: CodexThreadSnapshot[];
   nextCursor: string | null;
@@ -494,6 +530,8 @@ export interface CodexAppServerManager {
     /** 派发门禁读取不得被同一进程的过程事件投影背压阻塞。 */
     priority?: 'control';
   }): Promise<CodexThreadTurnsPage>;
+  /** 分页读取指定轮次的完整条目，元信息读取不携带正文。 */
+  listThreadItems(input: { threadId: string; turnId: string; cursor?: string | null; limit?: number; sortDirection?: 'asc' | 'desc'; priority?: 'control' }): Promise<CodexThreadItemsPage>;
   listSkills(input: { cwds?: string[]; forceReload?: boolean }): Promise<CodexSkillsListEntry[]>;
   compactThread(input: CodexThreadCompactInput): Promise<void>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
@@ -582,6 +620,8 @@ const SAFE_READ_RPC_METHODS = new Set([
   'thread/list',
   'thread/goal/get',
   'thread/turns/list',
+  // 正文分页属于只读调用，允许沿用有界读取重试。
+  'thread/items/list',
   'skills/list',
   'remoteControl/status/read',
   'remoteControl/pairing/status',
@@ -729,9 +769,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (child !== spawned || state.type === 'closed') return;
       for (const frame of decoder.push(toBuffer(chunk))) {
         if (frame.type === 'protocol_error') {
+          /** 只保存有界结构信息，诊断中不携带帧正文。 */
+          const details = {
+            reason: frame.error.code,
+            byteLength: frame.error.byteLength,
+            generationId,
+            requestMethods: [...new Set([...pendingRequests.values()].filter((request) => request.generationId === generationId).map((request) => request.method))].slice(0, 16).join(', '),
+          };
           // 坏回包无法可靠关联请求；结束本连接的全部待定等待，写入结果仍由上层核对，不能自动重发。
-          rejectGeneration(generationId, Object.assign(managerError('ZEUS_CODEX_RPC_PROTOCOL_ERROR', 'Codex 响应无法读取，已结束待定请求；已发出的操作需要核对结果。'), { protocolError: frame.error }));
-          emitEvent(generationId, 'transport/protocol_error', frame.error);
+          rejectGeneration(generationId, Object.assign(managerError('ZEUS_CODEX_RPC_PROTOCOL_ERROR', 'Codex 响应无法读取，已结束待定请求；已发出的操作需要核对结果。'), { protocolError: frame.error, details }));
+          emitEvent(generationId, 'transport/protocol_error', { ...frame.error, ...details });
         } else {
           handleWireMessage(generationId, frame.message);
         }
@@ -1542,7 +1589,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             developerInstructions: input.developerInstructions,
             ephemeral: input.ephemeral,
             dynamicTools: input.dynamicTools,
-            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
+            // 原生线程及其子任务也不能隐式取得整个系统临时目录的写权限。
+            config: {
+              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              'sandbox_workspace_write.exclude_tmpdir_env_var': true,
+              'sandbox_workspace_write.exclude_slash_tmp': true,
+              // 原生新内核把主代理计入并发数；五个执行名额对应四个子代理。
+              'agents.max_concurrent_threads_per_session': 4,
+              'features.multi_agent_v2.max_concurrent_threads_per_session': 5,
+              'agents.max_depth': 2,
+              // 普通模式也使用原生问题卡，避免切换模型后只能在计划模式提问。
+              'features.default_mode_request_user_input': true,
+            },
           }),
           { traceIdentity: input.traceIdentity },
         ),
@@ -1569,7 +1627,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             excludeTurns: true,
             cwd: input.cwd,
             modelProvider: responsesProvider?.id,
-            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
+            config: {
+              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              // 恢复与新建遵守同一权限和子代理上限，不能恢复旧默认值。
+              'sandbox_workspace_write.exclude_tmpdir_env_var': true,
+              'sandbox_workspace_write.exclude_slash_tmp': true,
+              'agents.max_concurrent_threads_per_session': 4,
+              'features.multi_agent_v2.max_concurrent_threads_per_session': 5,
+              'agents.max_depth': 2,
+              'features.default_mode_request_user_input': true,
+            },
           }),
           // 恢复耗时随完整历史增长，固定超时无法区分“仍在加载”和“已经失败”。
           // 等待明确回包；宿主交接时由调用方 signal 结束本地等待。
@@ -1652,6 +1719,27 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       return {
         data: response.data.map((turn) => parseTurn(turn, input.threadId)),
         nextCursor: response.nextCursor,
+      };
+    },
+    /** 内容独立分页，并在进入投影前核对轮次和条目身份。 */
+    async listThreadItems(input) {
+      /** 将当前分页绑定到可用连接代次。 */
+      const capabilities = await awaitCapabilities();
+      /** 只转发原生分页参数，内部优先级不进入协议正文。 */
+      const response = asRecord(
+        await retryableReadRpc(capabilities.generationId, 'thread/items/list', compactObject({ threadId: input.threadId, turnId: input.turnId, cursor: input.cursor, limit: input.limit, sortDirection: input.sortDirection })),
+      );
+      if (!Array.isArray(response.data) || (response.nextCursor != null && typeof response.nextCursor !== 'string')) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex 内容分页缺少条目或有效游标。');
+      return {
+        data: response.data.map((value) => {
+          /** 原生包装记录声明每条内容所属轮次。 */
+          const entry = asRecord(value);
+          /** 条目身份必须真实存在，禁止补造或合并不同身份。 */
+          const item = asRecord(entry.item);
+          if (entry.turnId !== input.turnId || typeof item.id !== 'string' || !item.id) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex 内容分页返回了不匹配的轮次或无效条目。');
+          return { turnId: input.turnId, item };
+        }),
+        nextCursor: response.nextCursor ?? null,
       };
     },
     async listSkills(input) {
@@ -2033,6 +2121,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
     socket = new WebSocket('ws://localhost/rpc', {
       createConnection: () => createConnection({ path: daemon.socketPath }),
       perMessageDeflate: false,
+      maxPayload: codexMaximumFrameBytes,
     });
     socket.on('open', () => {
       if (deliveryPaused) socket?.pause();
@@ -2549,6 +2638,7 @@ function normalizeThreadSandbox(sandbox: CodexSandboxPolicy): { mode: 'read-only
   throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox must be read-only, workspace-write, or danger-full-access.');
 }
 
+/** 每轮明确收回临时目录的隐式写权限，工作区授权只来自提交快照。 */
 function normalizeTurnSandbox(sandbox: CodexSandboxPolicy): Record<string, unknown> {
   if (!isRecord(sandbox)) throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox is invalid.');
   if (sandbox.type === 'readOnly' && sandbox.networkAccess === false) return { type: 'readOnly', networkAccess: false };
@@ -2558,8 +2648,8 @@ function normalizeTurnSandbox(sandbox: CodexSandboxPolicy): Record<string, unkno
       type: 'workspaceWrite',
       writableRoots: [...sandbox.writableRoots],
       networkAccess: false,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
     };
   }
   throw managerError('ZEUS_CODEX_SANDBOX_UNAVAILABLE', 'Codex sandbox must be read-only, workspace-write, or danger-full-access.');

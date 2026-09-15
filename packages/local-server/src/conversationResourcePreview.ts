@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { detectSourceLanguage, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
 import { toConversationResourceOpenIntent } from './conversationResources.js';
 
 export function isObjectLike(value: unknown): value is object {
@@ -27,7 +27,7 @@ export function readConversationResourcePreview(resource: Exclude<ConversationRe
     throw Object.assign(new Error('Conversation resource is not a regular file.'), { code: 'ZEUS_CONVERSATION_RESOURCE_NOT_FILE' });
   }
   const imageMimeType = conversationImageMimeType(fileRealPath);
-  const maximumPreviewBytes = imageMimeType ? 16 * 1024 * 1024 : 2 * 1024 * 1024;
+  const maximumPreviewBytes = imageMimeType ? filePreviewLimits.image : filePreviewLimits.text;
   if (fileStat.size > maximumPreviewBytes) {
     throw Object.assign(new Error('Conversation resource is too large for the Zeus preview.'), { code: 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE' });
   }
@@ -44,7 +44,7 @@ export function readConversationResourcePreview(resource: Exclude<ConversationRe
   if (bytes.includes(0)) {
     throw Object.assign(new Error('Binary files cannot be rendered in the source preview.'), { code: 'ZEUS_CONVERSATION_RESOURCE_BINARY' });
   }
-  const content = bytes.toString('utf8');
+  const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   return {
     kind: 'source',
     resource,
@@ -62,19 +62,10 @@ export function sourcePreviewLineCount(content: string): number {
   return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n').length;
 }
 
-export function conversationImageMimeType(path: string): 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/bmp' | 'image/x-icon' | null {
-  const extension = path.slice(path.lastIndexOf('.')).toLocaleLowerCase();
-  const mimeTypes = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.avif': 'image/avif',
-    '.bmp': 'image/bmp',
-    '.ico': 'image/x-icon',
-  } as const;
-  return mimeTypes[extension as keyof typeof mimeTypes] ?? null;
+/** 预览格式独立于模型图片输入格式，SVG 仅作为图片元素读取。 */
+export function conversationImageMimeType(path: string): Extract<ConversationResourcePreview, { kind: 'image' }>['mimeType'] | null {
+  const mime = filePreviewMime(path);
+  return filePreviewKind(mime) === 'image' ? (mime as Extract<ConversationResourcePreview, { kind: 'image' }>['mimeType']) : null;
 }
 
 export function isPathInsideRoot(candidate: string, root: string): boolean {

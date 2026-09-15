@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -72,6 +73,18 @@ async function runExecutionHost(): Promise<void> {
   if (bootstrap.readOnlyValidation) await verifyReadOnlyValidationBeforeOwnedCoreLock(bootstrap.readOnlyValidation);
   // 只有 bootstrap 路径、descriptor 与全部 validationRoot 规范身份验证后，失败路径才允许写入该宿主目录。
   startupFailureLogDirectory = dataLayout.executionHost;
+  // 未捕获异常仍按 Node 默认行为退出；只保留代码位置，排除可能包含工具参数或凭据的错误正文。
+  process.on('uncaughtExceptionMonitor', (error, origin) => {
+    try {
+      appendFileSync(
+        join(dataLayout.executionHost, 'host-error.log'),
+        `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'execution_host.uncaught', pid: process.pid, origin, name: error.name, frames: error.stack?.split('\n').slice(1, 12) })}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      );
+    } catch {
+      // 诊断写入失败不能改变原异常的退出行为。
+    }
+  });
   await unlink(bootstrapPath).catch(() => undefined);
   if (bootstrap.protocolVersion !== executionHostProtocolVersion) throw new Error('Zeus execution-host bootstrap protocol is incompatible.');
 

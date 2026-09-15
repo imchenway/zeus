@@ -24,10 +24,12 @@ struct ComputerWindowTarget {
     let frame: CGRect
     /** 该窗口实际所在显示器的像素比例。 */
     let scale: CGFloat
+    /** 系统窗口标题用于说明无焦点控件时的导航目标。 */
+    let title: String
 
     /** 将同一坐标映射同时提供给模型、截图和输入。 */
     var metadata: [String: Any] {
-        ["window_id": windowId, "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height], "scale": scale]
+        ["window_id": windowId, "title": title, "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height], "scale": scale]
     }
 }
 
@@ -96,13 +98,21 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var statusCaption: NSMenuItem?
     /** 用户也可从菜单栏继续暂停的控制，模型没有该恢复入口。 */
     private var resumeItem: NSMenuItem?
+    /** 同一目标应用本次可见的窗口，包括独立菜单和文件选择框。 */
+    private(set) var availableWindows: [[String: Any]] = []
 
     /** 观察时固定窗口；切换应用或显式窗口编号才创建新的采集对象。 */
     func observe(app: NSRunningApplication, sessionId: String, windowId: CGWindowID?) async throws -> ComputerWindowTarget {
         guard !sessionId.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_REQUIRED", message: "缺少宿主控制身份。") }
         guard CGPreflightScreenCaptureAccess() else { throw ServiceFailure(code: "ZEUS_COMPUTER_SCREEN_CAPTURE_PERMISSION_REQUIRED", message: "开始控制需要屏幕录制权限，以显示真实的控制状态。") }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let windows = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.windowLayer == 0 && $0.frame.width > 1 && $0.frame.height > 1 }
+        // 原生菜单使用非零层级；只按真实进程及可见边界筛选，不把层级当作窗口归属。
+        let windows = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.windowLayer >= 0 && $0.frame.width > 1 && $0.frame.height > 1 }
+        availableWindows = windows.map { ["window_id": $0.windowID, "title": $0.title ?? "", "layer": $0.windowLayer, "frame": ["x": $0.frame.minX, "y": $0.frame.minY, "width": $0.frame.width, "height": $0.frame.height]] }
+        /** 无可捕获窗口时直接说明原因，避免要求用户选择不存在的窗口编号。 */
+        guard !windows.isEmpty else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_UNAVAILABLE", message: "目标应用正在运行，但没有可捕获的可见窗口；桌面、隐藏或最小化窗口不能作为当前操作目标。")
+        }
         let previous = lock.withLock { target }
         let selectedId = windowId ?? (previous?.pid == app.processIdentifier ? previous?.windowId : nil)
         // 多窗口优先匹配应用公开的焦点窗口；无法确认时要求明确编号，禁止猜测第一项。
@@ -123,7 +133,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         let scale = await MainActor.run {
             NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display?.displayID }?.backingScaleFactor ?? 1
         }
-        let next = ComputerWindowTarget(sessionId: sessionId, pid: app.processIdentifier, windowId: window.windowID, frame: window.frame, scale: scale)
+        let next = ComputerWindowTarget(sessionId: sessionId, pid: app.processIdentifier, windowId: window.windowID, frame: window.frame, scale: scale, title: window.title ?? "")
         let existing = try lock.withLock { () throws -> SCStream? in
             if stopped { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "本轮控制已停止。") }
             if let previous, previous.sessionId != sessionId { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_MISMATCH", message: "控制身份已失效。") }
@@ -141,7 +151,13 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: 2)
             // 忽略窗口阴影，使图像原点、尺寸和输入坐标一致。
             if #available(macOS 14.0, *) { configuration.ignoreShadowsSingleWindow = true }
-            let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: window), configuration: configuration, delegate: self)
+            /** 非普通层级的弹出窗口使用明确窗口列表裁切，避免独立窗口采集错误缩放菜单。 */
+            let filter: SCContentFilter
+            if window.windowLayer != 0, let display {
+                filter = SCContentFilter(display: display, including: [window])
+                configuration.sourceRect = window.frame.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+            } else { filter = SCContentFilter(desktopIndependentWindow: window) }
+            let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
             try lock.withLock {
                 guard !stopped else { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "本轮控制已停止。") }

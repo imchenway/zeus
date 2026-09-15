@@ -18,7 +18,7 @@ interface GoalPanelProps {
   initialObjective?: string;
   draftOnly?: boolean;
   onDismiss: () => void;
-  onSave: (objective: string) => void | boolean | Promise<void | boolean>;
+  onSave?: (objective: string) => void | boolean | Promise<void | boolean>;
   onPause?: () => void | boolean | Promise<void | boolean>;
   onResume?: () => void | boolean | Promise<void | boolean>;
   onClear?: (confirmUnfinished: boolean) => void | boolean | Promise<void | boolean>;
@@ -81,23 +81,42 @@ export function GoalPanel(props: GoalPanelProps) {
   const canResume = Boolean(props.goal && props.goal.status !== 'active' && props.goal.status !== 'complete' && props.onResume);
   /** 编辑内容未保存时保留保存作为主操作，避免继续执行旧目标。 */
   const dirty = objective.trim() !== (props.goal?.objective ?? '');
+  /** 能力或操作缺失时只展示详情，不渲染空回调按钮。 */
+  const readOnly = !props.capability.supported || !props.capability.enabled || !(props.onSave || props.onPause || props.onResume || props.onClear);
 
   return (
-    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss}>
-      <section className="session-goal-panel zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <section className="session-goal-panel zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="session-goal-panel-header">
           <div>
-            <span className="session-goal-eyebrow">{zh ? '持续执行' : 'Continuous work'}</span>
             <h2 id={titleId}>{props.goal ? (zh ? '目标' : 'Goal') : zh ? '创建目标' : 'Create goal'}</h2>
           </div>
           {props.goal ? <span className={`session-goal-status is-${props.goal.status}`}>{statusLabels[props.goal.status][zh ? 'zh' : 'en']}</span> : null}
         </header>
         <p id={descriptionId} className="session-goal-description">
-          {zh ? '写清要达成什么、不能改什么、如何验证，以及何时停止。' : 'Describe the goal, what must stay unchanged, how to verify it, and when to stop.'}
+          {readOnly
+            ? zh
+              ? '当前会话仅可查看目标。'
+              : 'This conversation allows viewing the goal only.'
+            : props.goal?.status === 'paused'
+              ? zh
+                ? '后续自动执行已暂停，点击继续执行可恢复。'
+                : 'Automatic work is paused. Resume to continue.'
+              : props.goal?.status === 'blocked'
+                ? zh
+                  ? '自动执行遇到阻碍，请查看会话中的原因，处理后继续执行。'
+                  : 'Automatic work is blocked. Check the conversation, resolve the issue, then resume.'
+                : props.goal
+                  ? zh
+                    ? '查看执行状态，或调整目标内容。'
+                    : 'Review progress or edit the objective.'
+                  : zh
+                    ? '写清要达成什么、不能改什么、如何验证，以及何时停止。'
+                    : 'Describe the goal, constraints, verification, and when to stop.'}
         </p>
         <label className="session-goal-objective-field">
           <span>{zh ? '目标内容' : 'Objective'}</span>
-          <textarea autoFocus value={objective} disabled={props.busy || props.goal?.status === 'complete'} onChange={(event) => setObjective(event.currentTarget.value)} />
+          <textarea autoFocus={!props.goal} value={objective} readOnly={readOnly || !props.onSave || props.goal?.status === 'complete'} disabled={props.busy} onChange={(event) => setObjective(event.currentTarget.value)} />
           <small className={count > 4_000 ? 'is-invalid' : undefined}>{count} / 4000</small>
         </label>
         {props.goal ? (
@@ -107,7 +126,7 @@ export function GoalPanel(props: GoalPanelProps) {
               <dd>{formatDuration(props.goal.timeUsedSeconds, zh)}</dd>
             </div>
             <div>
-              <dt>{zh ? '已用令牌' : 'Tokens used'}</dt>
+              <dt>{props.goal.usageComplete === false ? (zh ? '已知令牌（回报不完整）' : 'Known tokens (incomplete usage)') : zh ? '已用令牌' : 'Tokens used'}</dt>
               <dd>{new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US').format(props.goal.tokensUsed)}</dd>
             </div>
             <div>
@@ -142,27 +161,32 @@ export function GoalPanel(props: GoalPanelProps) {
           </section>
         ) : null}
         {canResume && dirty ? <p className="session-goal-description">{zh ? '请先保存修改，再继续执行。' : 'Save your changes before resuming.'}</p> : null}
+        {props.busy ? (
+          <p className="session-goal-description" role="status">
+            {zh ? '正在更新目标…' : 'Updating goal…'}
+          </p>
+        ) : null}
         <footer className="session-goal-panel-actions" aria-busy={props.busy || undefined}>
-          {props.goal && props.onClear ? (
-            <Button variant="danger" className="session-goal-clear-action" onClick={() => setConfirmClear(true)} disabled={props.busy}>
+          {!readOnly && props.goal && props.onClear ? (
+            <Button size="compact" variant="danger" className="session-goal-clear-action" onClick={() => setConfirmClear(true)} disabled={props.busy}>
               {zh ? '清除' : 'Clear'}
             </Button>
           ) : null}
-          <Button onClick={props.onDismiss} disabled={props.busy}>
+          <Button size="compact" onClick={props.onDismiss} disabled={props.busy}>
             {zh ? '关闭' : 'Close'}
           </Button>
-          {props.goal && props.goal.status === 'active' && props.onPause ? (
-            <Button onClick={() => void props.onPause?.()} disabled={props.busy}>
+          {!readOnly && props.goal && props.goal.status === 'active' && props.onPause ? (
+            <Button size="compact" onClick={() => void props.onPause?.()} disabled={props.busy}>
               {zh ? '暂停执行' : 'Pause'}
             </Button>
           ) : null}
-          {canResume ? (
-            <Button variant={dirty ? 'secondary' : 'primary'} onClick={() => void props.onResume?.()} disabled={props.busy || dirty}>
+          {!readOnly && canResume ? (
+            <Button size="compact" variant={dirty ? 'secondary' : 'primary'} onClick={() => void props.onResume?.()} disabled={props.busy || dirty}>
               {zh ? '继续执行' : 'Resume'}
             </Button>
           ) : null}
-          {props.goal?.status !== 'complete' && (!props.goal || dirty) ? (
-            <Button variant="primary" onClick={() => void props.onSave(objective.trim())} disabled={props.busy || !valid || objective.trim() === props.goal?.objective}>
+          {!readOnly && props.onSave && props.goal?.status !== 'complete' && (!props.goal || dirty) ? (
+            <Button size="compact" variant="primary" onClick={() => void props.onSave?.(objective.trim())} disabled={props.busy || !valid || objective.trim() === props.goal?.objective}>
               {props.goal ? (zh ? '保存修改' : 'Save changes') : zh ? '创建目标' : 'Create goal'}
             </Button>
           ) : null}
@@ -184,7 +208,8 @@ export function GoalRail(props: { goal: NativeGoalSnapshot; language: SessionUiL
         <span title={props.goal.objective}>{props.goal.objective}</span>
       </span>
       <span className="session-goal-rail-meta">
-        {formatDuration(props.goal.timeUsedSeconds, zh)} · {new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { notation: 'compact' }).format(props.goal.tokensUsed)} {zh ? '令牌' : 'tokens'}
+        {formatDuration(props.goal.timeUsedSeconds, zh)} ·{' '}
+        {props.goal.usageComplete === false ? (zh ? '用量回报不完整' : 'Incomplete usage') : `${new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { notation: 'compact' }).format(props.goal.tokensUsed)} ${zh ? '令牌' : 'tokens'}`}
       </span>
     </button>
   );

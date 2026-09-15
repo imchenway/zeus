@@ -205,12 +205,9 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
 
       <MotionPresence>
         {createBranchOpen && rootRepository ? (
-          <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog}>
+          <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog} role="dialog" aria-label={zh ? '新建分支' : 'New branch'}>
             <form
               className="project-git-reference-dialog zeus-solid-form-surface"
-              role="dialog"
-              aria-modal="true"
-              aria-label={zh ? '新建分支' : 'New branch'}
               onSubmit={(event) => {
                 event.preventDefault();
                 const branchName = createBranchName.trim();
@@ -219,6 +216,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                   if (created) closeCreateBranchDialog();
                 });
               }}
+              data-modal-surface="dialog"
             >
               <header>
                 <strong>{zh ? '新建并检出分支' : 'Create and Checkout Branch'}</strong>

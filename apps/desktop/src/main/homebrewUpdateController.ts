@@ -259,11 +259,13 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         }
         accepted = result.restartAccepted === true;
       } else {
-        installed ??= await options.homebrew.install(prepared, (progress) => {
-          void publish(progressCopy(options.language(), progress, prepared!.update));
-        });
+        /** 保留本次下载结果，只有用户确认退出后才允许替换正在运行的应用。 */
+        const preparedHomebrew = prepared;
         accepted = await options.onInstallReady(prepared.update.executionHostProtocolVersion, async () => {
           const currentHost = await ensureHost();
+          installed ??= await options.homebrew.install(preparedHomebrew, (progress) => {
+            void publish(progressCopy(options.language(), progress, preparedHomebrew.update));
+          });
           currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed! });
         });
       }

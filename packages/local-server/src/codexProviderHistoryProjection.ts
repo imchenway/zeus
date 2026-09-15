@@ -1,5 +1,5 @@
 import { assistantMessageMetadata } from '@zeus/shared';
-import type { CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
+import { readCodexTurnItems, type CodexThreadSnapshot, type CodexTurnSnapshot } from '@zeus/ai-runtime';
 import type { ConversationResource } from '@zeus/shared';
 import {
   type ConversationTurnStatus,
@@ -106,10 +106,12 @@ export interface CodexProviderHistoryProjectionDependencies {
 
   isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean;
 
+  /** 只保护当前宿主持有且尚未写出用户消息的派发。 */
+  isPreparingDispatch(conversationId: string, submissionId?: string): boolean;
+
   markConversationRecoveryRequired(conversationId: string, error: unknown): boolean;
 
   markSubmissionRecoveryRequired(submission: ZeusConversationSubmissionRecord, error: unknown): void;
-
   failUnsentSubmissionsBeforeProviderDispatch(conversationId: string): void;
 
   persistProviderUserMessage(
@@ -264,7 +266,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         ...(cursor ? { cursor } : {}),
         limit: 100,
         sortDirection: 'desc',
-        itemsView: 'full',
+        itemsView: 'notLoaded',
         ...input,
       });
       pageCount += 1;
@@ -347,7 +349,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       throw coordinatorError('ZEUS_NATIVE_HISTORY_CONTENT_UNAVAILABLE', '原生会话中找不到待补齐的历史轮次，无法恢复完整正文；已保留现有记录。');
     }
 
-    const eligibleDescending = turnsDescending.filter((turn, index) => !checkpointBoundaryTurnId || index <= checkpointIndex || repairTurnIds.has(turn.id));
+    const eligibleDescending = turnsDescending.filter((turn, index) => !checkpointBoundaryTurnId || index <= checkpointIndex || repairTurnIds.has(turn.id) || classifySnapshotTurn(turn) === 'active');
     const localTurns = new Map(
       options.turns
         .listByConversation(conversation.id)
@@ -358,6 +360,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       const existingTurn = localTurns.get(providerTurn.id);
       // 终态基线只定义历史边界；仍在执行的基线必须投影，否则首次对账会再次把目标自主 turn 误判为空闲。
       if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn && classifySnapshotTurn(providerTurn) !== 'active') continue;
+      /** 已确认且状态未变的边界轮次无需反复下载正文。 */
+      const classification = classifySnapshotTurn(providerTurn);
+      if (!existingTurn || classification === 'active' || existingTurn.status !== classification || repairTurnIds.has(providerTurn.id)) {
+        providerTurn.items = await readCodexTurnItems(options.manager, { threadId: providerThreadId, turnId: providerTurn.id, ...input });
+      }
       const projected = await projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
       localTurns.set(providerTurn.id, projected);
     }
@@ -597,8 +604,10 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
-    const itemFailed = itemPayload.status === 'failed';
-    const itemTerminal = turnClassification !== 'active' || itemFailed || itemPayload.status === 'completed';
+    /** 中断轮次中的未完成命令没有成功证据；正常回合结束也不能结束后台进程。 */
+    const unfinishedCommand = itemType === 'commandExecution' && itemPayload.status === 'inProgress';
+    const itemFailed = itemPayload.status === 'failed' || (unfinishedCommand && (turnClassification === 'interrupted' || turnClassification === 'failed'));
+    const itemTerminal = itemFailed || itemPayload.status === 'completed' || (!unfinishedCommand && turnClassification !== 'active');
     const projectedStatus = itemFailed ? 'failed' : itemTerminal ? 'completed' : 'in_progress';
     if (compatibilitySnapshotItem) {
       const sourceItems = claimCompatibilitySnapshotSourceItems(
@@ -775,7 +784,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         providerThreadPath: snapshotPath,
       });
     }
+    // 线程状态通知也会核对历史；空闲历史没有正在准备的消息是正常现象，不能暂停它。
+    // 前面的旧轮次投影可能已把会话设为空闲，这里按仍有效的发送占用恢复准备状态。
     const submissions = options.submissions.listByConversation(conversation.id);
+    /** 必须匹配实际发送占用，不能保护重启残留或另一条消息。 */
+    const preparing = submissions.find((submission) => dependencies.isPreparingDispatch(conversation.id, submission.id));
+    if (preparing && snapshotConfirmsIdleProviderThread(snapshot)) {
+      runStates.set(conversation.id, { type: 'dispatching', submissionId: preparing.id });
+      return;
+    }
     const pendingSteering = submissions.filter((submission) => isSteeringSubmission(submission) && (submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required')));
     const inFlight = submissions.filter(
       (submission) =>
@@ -865,6 +882,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       return;
     }
     for (const submission of inFlight) {
+      if (!submission.providerTurnId && dependencies.isPreparingDispatch(conversation.id)) continue;
       const currentSubmission = options.submissions.getById(submission.id);
       if (
         !currentSubmission ||

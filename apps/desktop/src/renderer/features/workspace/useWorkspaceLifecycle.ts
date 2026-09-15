@@ -34,6 +34,8 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     settingsCategory,
     snapshot,
     sourceWorkspaceDirty,
+    globalAgentSettingsDirty,
+    requestWorkspaceLeaveRef,
     sessionDrawerReady,
     sessionDrawerTarget,
     taskTableLayoutDirty,
@@ -55,7 +57,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     const resolve = bridge?.resolveUnsavedChangesCloseRequest ?? bridge?.resolveTaskTableLayoutCloseRequest;
     if (!subscribe || !resolve) return;
     return subscribe(() => {
-      if (!taskTableLayoutDirty && !sourceWorkspaceDirty) {
+      if (!taskTableLayoutDirty && !sourceWorkspaceDirty && !globalAgentSettingsDirty) {
         resolve(true);
         return;
       }
@@ -65,7 +67,13 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
         'close',
       );
     });
-  }, [sourceWorkspaceDirty, taskTableLayoutDirty]);
+  }, [sourceWorkspaceDirty, taskTableLayoutDirty, globalAgentSettingsDirty]);
+  useEffect(() => {
+    /** 浏览器前进后退也进入同一草稿离开流程。 */
+    const register = props.shellNavigation?.onRegisterLeaveGuard;
+    register?.((leave, cancel) => requestWorkspaceLeaveRef.current(leave, cancel));
+    return () => register?.(null);
+  }, [props.shellNavigation?.onRegisterLeaveGuard, requestWorkspaceLeaveRef]);
   useEffect(() => {
     const client = props.nativeConversationClient;
     if (!client || !executionHostSupportsConversationSource(props.executionHostTransition, 'code_review')) return;

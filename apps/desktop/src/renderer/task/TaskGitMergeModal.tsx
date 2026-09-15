@@ -957,8 +957,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   return (
-    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
-      <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
+    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose} role="dialog" aria-labelledby="task-git-merge-title">
+      <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} data-modal-surface="dialog">
         <header className="task-git-merge-header">
           <span>
             <strong id="task-git-merge-title">
@@ -1061,7 +1061,15 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     ) : diffLoading ? (
                       <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p>
                     ) : (
-                      <TaskGitDiffTable diff={fileDiff?.fileDiffs[0] ?? null} hasSelection zh={zh} />
+                      <TaskGitDiffTable
+                        previewRequest={
+                          selectedWorkspace && props.task ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope === 'committed' ? 'committed' : 'working' } : undefined
+                        }
+                        revision={snapshotRevision}
+                        diff={fileDiff?.fileDiffs[0] ?? null}
+                        hasSelection
+                        zh={zh}
+                      />
                     )}
                   </section>
                 </main>
@@ -1290,12 +1298,26 @@ function DeliveryRepositoryFileTree(props: {
   return (
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
-        <span>
-          <button type="button" className={props.diffScope === 'working' ? 'is-active' : ''} onClick={() => props.onScopeChange('working')} disabled={props.disabled}>
-            {props.zh ? '本机未提交' : 'Local uncommitted'} <small>{props.totalWorkingFiles}</small>
+        <span role="group" aria-label={props.zh ? '文件范围' : 'File scope'}>
+          <button
+            type="button"
+            className={props.diffScope === 'working' ? 'is-active' : ''}
+            aria-pressed={props.diffScope === 'working'}
+            title={props.zh ? '本机未提交' : 'Local uncommitted'}
+            onClick={() => props.onScopeChange('working')}
+            disabled={props.disabled}
+          >
+            <span>{props.zh ? '本机未提交' : 'Local uncommitted'}</span> <small>{props.totalWorkingFiles}</small>
           </button>
-          <button type="button" className={props.diffScope === 'committed' ? 'is-active' : ''} onClick={() => props.onScopeChange('committed')} disabled={props.disabled}>
-            {props.zh ? '已提交成果' : 'Committed result'} <small>{props.totalCommittedFiles}</small>
+          <button
+            type="button"
+            className={props.diffScope === 'committed' ? 'is-active' : ''}
+            aria-pressed={props.diffScope === 'committed'}
+            title={props.zh ? '已提交成果' : 'Committed result'}
+            onClick={() => props.onScopeChange('committed')}
+            disabled={props.disabled}
+          >
+            <span>{props.zh ? '已提交成果' : 'Committed result'}</span> <small>{props.totalCommittedFiles}</small>
           </button>
         </span>
       </header>

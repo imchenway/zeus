@@ -1,5 +1,5 @@
-export type MemoryScopeKind = 'global' | 'project';
-export type MemoryKind = 'preference' | 'safety_boundary' | 'stable_workflow';
+export type MemoryScopeKind = 'global' | 'project' | 'employee';
+export type MemoryKind = 'preference' | 'safety_boundary' | 'stable_workflow' | 'domain_knowledge';
 export type MemoryEffect = 'advisory' | 'external_state';
 export type MemoryConfirmationLevel = 'observed' | 'confirmed' | 'explicit';
 export type MemorySourceKind = 'user_explicit' | 'project_instruction' | 'repeated_confirmation' | 'manual_import';

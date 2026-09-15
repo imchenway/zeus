@@ -1,4 +1,4 @@
-import { type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { type MainNavTarget, type SettingsCategory, WorkspacePage } from './WorkspacePage.js';
@@ -14,12 +14,28 @@ type AppProps = Omit<ComponentProps<typeof WorkspacePage>, 'shellNavigation'>;
 export function App(props: AppProps) {
   const [activeNavTarget, setActiveNavTarget] = useState<MainNavTarget>(() => initialMainRoute(props));
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>(() => initialSettingsCategory(props));
+  /** 地址栏导航复用工作区草稿保护，不在根组件复制保存逻辑。 */
+  const leaveGuardRef = useRef<((leave: () => void, cancel?: () => void) => void) | null>(null);
+  /** 工作区始终通过自己的最新状态处理离开。 */
+  const registerLeaveGuard = useCallback((guard: typeof leaveGuardRef.current) => {
+    leaveGuardRef.current = guard;
+  }, []);
 
   useEffect(() => {
-    const syncRoute = (): void => {
-      setActiveNavTarget(routeFromHash(globalThis.location?.hash));
-      const category = settingsCategoryFromHash(globalThis.location?.hash);
-      if (category) setSettingsCategory(category);
+    const syncRoute = (event: HashChangeEvent): void => {
+      /** 在用户选择保存或放弃前，保留当前地址和草稿。 */
+      const targetHash = new URL(event.newURL).hash;
+      if (leaveGuardRef.current) window.history.replaceState(null, '', event.oldURL);
+      /** 确认离开后才同步目标地址及页面状态。 */
+      const applyRoute = (): void => {
+        window.history.replaceState(null, '', event.newURL);
+        setActiveNavTarget(routeFromHash(targetHash));
+        /** 同一次导航同时恢复设置子页面。 */
+        const category = settingsCategoryFromHash(targetHash);
+        if (category) setSettingsCategory(category);
+      };
+      if (leaveGuardRef.current) leaveGuardRef.current(applyRoute);
+      else applyRoute();
     };
     globalThis.addEventListener?.('hashchange', syncRoute);
     return () => globalThis.removeEventListener?.('hashchange', syncRoute);
@@ -53,6 +69,7 @@ export function App(props: AppProps) {
           settingsCategory,
           onNavigate: navigate,
           onSettingsCategoryChange: selectSettingsCategory,
+          onRegisterLeaveGuard: registerLeaveGuard,
         }}
       />
     </RendererErrorBoundary>
@@ -99,4 +116,4 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
   return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
 
-const settingsCategories = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+const settingsCategories = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];

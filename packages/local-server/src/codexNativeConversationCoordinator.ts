@@ -94,7 +94,7 @@ import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
-import { type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkill, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import { appendConversationResourceContext, type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkills, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type NativeUserMessageProjection, reconcileNativeUserMessageAcceptance, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -193,7 +193,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     setRunState: (conversationId, state) => runStates.set(conversationId, state),
   });
-  const zeusToolBroker = options.browserAutomation ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool }) : undefined;
+  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,
@@ -207,7 +207,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const conversation = options.conversations.getById(conversationId);
       if (!conversation) return null;
       const context = contexts.get(conversationId) ?? contextFromConversation(conversation);
-      return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode };
+      return { cwd: context.projectLocalPath, model: context.model, permissionMode: context.permissionMode, workMode: context.workMode };
     },
     requestPluginApproval: pluginToolApprovals.requestApproval,
     broadcast: options.broadcast,
@@ -531,8 +531,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ];
     };
     const taskPushLayout = readNativeSubmissionTaskPushLayout(submission);
-    const skill = readNativeSubmissionSkill(submission);
-    const inputs: Array<Record<string, unknown>> = skill ? [{ type: 'skill', name: skill.name, path: skill.path }] : [];
+    const skills = readNativeSubmissionSkills(submission);
+    const inputs: Array<Record<string, unknown>> = skills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.path }));
     if (taskPushLayout) {
       const attachmentsByKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
       for (const part of buildTaskPushInputParts(taskPushLayout)) {
@@ -548,6 +548,20 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (text.trim()) inputs.push({ type: 'text', text });
       for (const attachment of attachments) inputs.push(...providerAttachment(attachment));
     }
+    // 不依赖前端把资源拼入正文，队列、恢复与插话都读取同一份持久资源。
+    const submitted = parseJsonRecord(submission.inputJson);
+    const existingText = inputs
+      .filter((item) => item.type === 'text')
+      .map((item) => String(item.text ?? ''))
+      .join('\n\n');
+    const combinedText = appendConversationResourceContext(
+      existingText,
+      typeof submitted.browserCommentContent === 'string' ? submitted.browserCommentContent : undefined,
+      submissionBrowserComments(submission),
+      submissionConversationContext(submission) ?? undefined,
+    );
+    const supplementary = combinedText.slice(existingText.length).trim();
+    if (supplementary) inputs.push({ type: 'text', text: supplementary });
     if (inputs.length === 0) throw coordinatorError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Native submission requires text or attachments.');
     return inputs;
   }
@@ -638,6 +652,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       recoveryKind?: NativeSubmissionRecoveryKind;
       goalObjective?: string;
       skill?: NativeConversationSkillInput;
+      /** 同一提交的全部显式选择。 */
+      skills?: NativeConversationSkillInput[];
       computerUseRequested?: boolean;
       requestedServiceTier?: string | null;
     },
@@ -665,7 +681,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.internalOperation ? { internalOperation: true } : {}),
       ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
       ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
-      ...(input.skill ? { skill: input.skill } : {}),
+      ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
       ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
@@ -912,7 +928,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string) {
     const previous = goals.get(conversationId);
-    if (previous && previous.providerUpdatedAt > goal.updatedAt) return previous;
+    const control = options.goalControls?.getGoalControl(conversationId);
+    // 交接后迟到的旧线程事件不能夺回控制权，也不能覆盖新线程累计量。
+    if (previous && control && (control.source === 'pi' || control.nativeSessionId !== goal.threadId)) return previous;
+    if (previous?.providerThreadId === goal.threadId && previous.providerUpdatedAt > goal.updatedAt) return previous;
+    if (control && control.nativeSessionId === goal.threadId)
+      goal = {
+        ...goal,
+        tokensUsed: goal.tokensUsed + (control.nativeTokensOffset ?? 0),
+        timeUsedSeconds: goal.timeUsedSeconds + (control.nativeTimeOffset ?? 0),
+        tokenBudget: control.totalTokenBudget !== undefined ? control.totalTokenBudget : goal.tokenBudget,
+      };
     const eventKind = codexGoalEventKind(previous, goal);
     const projected = goals.upsert(
       {
@@ -959,6 +985,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   const { setGoal, readGoal, pauseGoal, resumeGoal, clearGoal } = createCodexGoalApplication({
+    goalControls: options.goalControls,
     manager: options.manager,
     providerCommands,
     goals,
@@ -1706,6 +1733,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   const queueCoreMutations = new ConversationQueueCoreMutationApplication({
+    commandDeliveries: options.commandDeliveries,
     submissions: options.submissions,
     execution: options.execution,
     requests: options.requests,
@@ -2116,7 +2144,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         providerState: 'ready',
       });
       runStates.set(conversation.id, { type: 'idle' });
-      reconcileConversationSnapshot(conversation, snapshot, requireString(readyGenerationId(), 'transport generation id'));
+      // 恢复 Provider 归档线程不能清除用户刚确认的实施或续发输入；历史未知写入仍按原身份核对。
+      reconcileConversationSnapshot(conversation, snapshot, requireString(readyGenerationId(), 'transport generation id'), { preserveUnsentQueue: true });
       await externalAnswerRecovery.recoverAll(requireConversation(conversation.id));
       await persist();
       options.broadcast('conversation.thread.changed', {
@@ -2152,7 +2181,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const providerRequestId = JSON.parse(request.providerRequestIdJson) as string | number;
     const response = input.response;
     const payload = parseJsonRecord(request.payloadJson);
-    const pluginToolResponse = await pluginToolApprovals.tryRespond(request, response);
+    // 重启后的插件确认复用持久续接流程；只有原连接仍有效时才调用内存中的审批回调。
+    const pluginToolResponse = options.manager.hasGeneration(request.transportGenerationId) ? await pluginToolApprovals.tryRespond(request, response) : null;
     if (pluginToolResponse) return pluginToolResponse;
     let wireResponse = { ...response, generationId: request.transportGenerationId, requestId: providerRequestId } as CodexServerRequestResponse;
     const grantSessionFileEdits = request.requestKind === 'file' && response.type === 'file' && response.decision === 'acceptForSession';
@@ -2628,7 +2658,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const automaticRecoveryConversationIds = new Set(
       options.conversations
         .listNativeBoundRecords('codex')
-        .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')
+        .filter((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting' || interactionRecovery.hasRecoverableInteraction(conversation.id))
         .map((conversation) => conversation.id),
     );
     for (const submission of options.submissions.listRecoverable()) {
@@ -2854,7 +2884,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       // 已归档 Provider 会话只能由用户显式恢复，启动恢复不得触碰其线程。
       if (conversation.archived || conversation.providerState === 'archived') continue;
       try {
-        interactionRecovery.recoverStaleInteractionRequests(conversation.id, generationId);
+        await interactionRecovery.recoverStaleInteractionRequests(conversation.id, generationId);
+        assertOpen();
+        if (readyGenerationId() !== generationId) return;
         await ensureConversationExecutionContext(conversation.id, 'reconcile');
         assertOpen();
         if (readyGenerationId() !== generationId) return;
@@ -2890,6 +2922,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (!requestedConversationIds.has(submission.conversationId)) continue;
       if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
       if ((submission.status !== 'dispatching' && submission.status !== 'active') || boundConversationIds.has(submission.conversationId)) continue;
+      // 当前宿主仍在创建首轮线程时尚无已接纳分段，不能当成重启遗留的未知派发。
+      if (isPreparingDispatch(submission.conversationId, submission.id)) continue;
       markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', 'Native submission has no recoverable provider thread.'));
     }
   }
@@ -2919,6 +2953,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     failedTurnResults,
     hasExactProviderUserMessage,
     isSteeringSubmission,
+    /** 后台历史核对与派发入口共用同一条消息的写前保护。 */
+    isPreparingDispatch: (conversationId, submissionId) => isPreparingDispatch(conversationId, submissionId),
     markConversationRecoveryRequired,
     markSubmissionRecoveryRequired,
     now,
@@ -3026,6 +3062,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     projectedProviderThreadSnapshot,
     providerStopRecovery,
     readyGenerationId,
+    recoverExternalRequestAnswer: externalAnswerRecovery.recover,
     reconcileConversationSnapshot,
     rejectTurnResultWaiters,
     resolveTurnResult,
@@ -3333,6 +3370,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     respondToPlanImplementationRequest,
     reconcilePersistedTerminalSubmissions,
     setGoal,
+    async pauseGoalForHandoff(input) {
+      const paused = await executeSessionCommand({
+        operation: 'goal_set',
+        conversationId: input.conversationId,
+        threadId: input.threadId,
+        commandKey: `goal-handoff:${input.threadId}:${goals.get(input.conversationId)?.providerUpdatedAt ?? 'none'}`,
+        requestIdentity: { status: 'paused' },
+        invoke: (traceIdentity) => options.manager.setThreadGoal({ threadId: input.threadId, status: 'paused', traceIdentity }),
+      });
+      if (paused.status !== 'paused') throw coordinatorError('ZEUS_GOAL_HANDOFF_UNCONFIRMED', '旧目标控制器尚未确认停止，不能切换执行链。');
+    },
     readGoal,
     pauseGoal,
     resumeGoal,

@@ -361,7 +361,7 @@ function serializeError(error: unknown, redactSensitiveText: (value: string) => 
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
     const dispatchDisposition = 'dispatchDisposition' in error && typeof error.dispatchDisposition === 'string' ? boundedScalar(error.dispatchDisposition) : null;
-    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText), dispatchDisposition };
+    return { ...userFacingErrorCause(error), code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText), dispatchDisposition };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText), dispatchDisposition: null };
 }

@@ -180,7 +180,7 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
 
   if (!props.open) return null;
   return (
-    <ModalPortal rootClassName="zentao-sync-modal-portal" dismissDisabled={busy} onDismiss={props.onClose}>
+    <ModalPortal rootClassName="zentao-sync-modal-portal" dismissDisabled={busy} onDismiss={props.onClose} role="dialog">
       <section className="zentao-sync-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <header className="zentao-sync-modal-header">
           <div>
@@ -423,7 +423,7 @@ export function ZentaoPushModal(props: ZentaoPushModalProps) {
   const targetProduct = products.find((item) => item.id === productId);
   const ready = Boolean(instanceId && projectId && (kind === 'task' ? executionId : productId));
   return (
-    <ModalPortal rootClassName="zentao-sync-modal-portal" dismissDisabled={busy} onDismiss={props.onClose}>
+    <ModalPortal rootClassName="zentao-sync-modal-portal" dismissDisabled={busy} onDismiss={props.onClose} role="dialog">
       <section className="zentao-sync-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <header className="zentao-sync-modal-header">
           <div>

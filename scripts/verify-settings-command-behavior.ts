@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { createSettingsApiClient } from '../apps/desktop/src/renderer/features/settings/settingsApiClient.js';
 import { settingsPage } from '../apps/desktop/src/renderer/settings/SettingsPagination.js';
 import type { LocalApiTransport } from '../apps/desktop/src/renderer/transport/localApiTransport.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import Fastify from 'fastify';
+import { registerGlobalAgentSettingsRoutes } from '../packages/local-server/src/globalAgentSettings.js';
+import type { GlobalAgentSettingsSnapshot } from '@zeus/shared';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
@@ -52,6 +55,99 @@ try {
     const deliveries = new CommandDeliveryRepository(db);
     const artifacts = new ArtifactStore(db, join(probeRoot, 'artifacts'), () => now().toISOString(), { minimumFreeBytes: 0 });
     const application = new SettingsCommandApplication({ db, deliveries, artifacts, redactSensitiveText, now });
+
+    /** 真实文件与设置路由检查，全部限定在临时目录内。 */
+    const agentsRoot = join(probeRoot, 'agents');
+    /** 独立路由实例复用当前命令数据库。 */
+    const agentsServer = Fastify();
+    /** 成功回执和审计都不应保存正文。 */
+    const agentsAudit: unknown[] = [];
+    registerGlobalAgentSettingsRoutes({
+      server: agentsServer,
+      codexHome: agentsRoot,
+      commands: application,
+      redactSensitiveText,
+      recordSaved: (metadata) => {
+        agentsAudit.push(metadata);
+      },
+    });
+    /** 每个用户保存意图创建独立命令，重放时复用返回的请求对象。 */
+    const agentsRequest = (label: string, content: string, baseRevision: string | null) =>
+      commandRequest({ label: `agents-${label}`, commandType: settingsCommandTypes.agentsPut, scopeKind: 'settings', scopeId: 'agents', operationIdentity: `agents_${label}`, input: { content, baseRevision } });
+    /** 使用接口读取作为页面基线。 */
+    const readAgents = async (): Promise<GlobalAgentSettingsSnapshot> => {
+      /** 本检查必须通过真实路由状态码。 */
+      const response = await agentsServer.inject({ method: 'GET', url: '/api/settings/agents' });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json<GlobalAgentSettingsSnapshot>();
+    };
+    try {
+      /** 缺失读取不得创建文件或目录。 */
+      const missingAgents = await readAgents();
+      assert.equal(missingAgents.exists, false);
+      assert.equal(missingAgents.revision, null);
+      await assert.rejects(lstat(agentsRoot), { code: 'ENOENT' });
+      /** 空白内容也可显式创建。 */
+      const createAgents = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest('create', '', null) });
+      assert.equal(createAgents.statusCode, 200, createAgents.body);
+      assert.equal((await readAgents()).content, '');
+      /** 正文包含敏感哨兵，验证命令证据不落正文。 */
+      const editAgentsBody = agentsRequest('edit', `# 全局规则\n${secretSentinel}\n`, createAgents.json().revision);
+      const editedAgents = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: editAgentsBody });
+      assert.equal(editedAgents.statusCode, 200, editedAgents.body);
+      assert.equal(await readFile(missingAgents.path, 'utf8'), editAgentsBody.input.content);
+      assert.equal('content' in editedAgents.json(), false);
+      /** 外部编辑后重放旧的已成功命令，只返回回执，不覆盖新文件。 */
+      await writeFile(missingAgents.path, '外部修改\n');
+      const agentsReplay = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: editAgentsBody });
+      assert.deepEqual(agentsReplay.json(), editedAgents.json());
+      assert.equal(await readFile(missingAgents.path, 'utf8'), '外部修改\n');
+      assert.equal(agentsAudit.length, 2);
+      /** 新保存携带旧摘要，必须报告冲突。 */
+      const agentsConflict = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest('conflict', '不应覆盖', editedAgents.json().revision) });
+      assert.equal(agentsConflict.statusCode, 409);
+      assert.equal(await readFile(missingAgents.path, 'utf8'), '外部修改\n');
+      /** 两个并发窗口使用同一基线，最多一个保存成功。 */
+      const concurrentAgentsBase = await readAgents();
+      const concurrentAgents = await Promise.all(['first', 'second'].map((label) => agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest(label, label, concurrentAgentsBase.revision) })));
+      assert.deepEqual(concurrentAgents.map((response) => response.statusCode).sort(), [200, 409]);
+      /** 清空已有文件保留普通文件身份。 */
+      const beforeEmptyAgents = await readAgents();
+      const emptiedAgents = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest('empty', '', beforeEmptyAgents.revision) });
+      assert.equal(emptiedAgents.statusCode, 200, emptiedAgents.body);
+      assert.equal((await readAgents()).content, '');
+      /** 目录不可写使临时文件创建失败，原文件必须保持完整。 */
+      await chmod(agentsRoot, 0o500);
+      try {
+        const failedAgents = await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest('failure', '不应保存', emptiedAgents.json().revision) });
+        assert.equal(failedAgents.statusCode, 409, failedAgents.body);
+        assert.equal(await readFile(missingAgents.path, 'utf8'), '');
+      } finally {
+        await chmod(agentsRoot, 0o700);
+      }
+      /** 链接目标不能被读取或写入，外部文件不受影响。 */
+      const agentsOutside = join(probeRoot, 'outside-agents.md');
+      await writeFile(agentsOutside, '保留外部文件');
+      await rm(missingAgents.path);
+      await symlink(agentsOutside, missingAgents.path);
+      assert.equal((await agentsServer.inject({ method: 'GET', url: '/api/settings/agents' })).statusCode, 409);
+      assert.equal((await agentsServer.inject({ method: 'PUT', url: '/api/settings/agents', payload: agentsRequest('symlink', '不应写入', null) })).statusCode, 409);
+      assert.equal(await readFile(agentsOutside, 'utf8'), '保留外部文件');
+      assert.equal(JSON.stringify(agentsAudit).includes(secretSentinel), false);
+      observed.globalAgents = {
+        readWithoutCreate: true,
+        createAndEdit: true,
+        empty: true,
+        conflict: true,
+        concurrentSave: true,
+        replayWithoutWrite: true,
+        failedWritePreservesOriginal: true,
+        symlinksRejected: true,
+        auditWithoutContent: true,
+      };
+    } finally {
+      await agentsServer.close();
+    }
 
     let coreWrites = 0;
     const core = parse(
@@ -295,7 +391,7 @@ try {
     );
     assertProbe(unknownInvocations === 1 && unknownCode === 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN' && replayCode === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Unknown after write must block automatic resend.');
     assertProbe(secretWrites === 1 && !durableText.includes(secretSentinel) && !unknownAttempt.receipt.evidenceJson.includes(secretSentinel), 'Secret plaintext must not enter durable command evidence.');
-    assertProbe((observed.routeCounts as { total: number }).total === 8, '设置命令清单必须覆盖八条现有路由。');
+    assertProbe((observed.routeCounts as { total: number }).total === 9, '设置命令清单必须覆盖全局规则在内的九条路由。');
     assertProbe(observed.quickCheck === 'ok', 'Temporary SQLite quick_check must pass.');
     console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
   } finally {

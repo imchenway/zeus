@@ -1,3 +1,5 @@
+import { FilePreview, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import type { FilePreviewRequest } from '@zeus/shared';
 import { lazy, Suspense, type ReactNode } from 'react';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
 import type { DiffAnnotationLine } from '../code/CodeDiffView.js';
@@ -6,7 +8,11 @@ import type { DiffAnnotationLine } from '../code/CodeDiffView.js';
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
 /** 交付与会话审核共用左右差异；审核可在原始行号处补充操作及评论。 */
-export function TaskGitDiffTable(props: {
+function TaskGitTextDiffTable(props: {
+  /** 文件预览使用业务身份，而非补丁文本推断文件内容。 */
+  previewRequest?: FilePreviewRequest;
+  /** 工作区快照刷新后重新读取。 */
+  revision?: string | number;
   /** 已按补丁片段解析的文件差异。 */
   diff: TaskGitFileDiff | null;
   /** 区分尚未选择文件与当前文件没有文本差异。 */
@@ -28,7 +34,7 @@ export function TaskGitDiffTable(props: {
     );
   }
   if (props.diff.hunks.length === 0) {
-    return <p className="task-git-review-empty">{props.zh ? '文件已经变化，但没有可显示的文本内容，可能是二进制文件或仅文件属性变化。' : 'The file changed, but no text content is available; it may be binary or metadata-only.'}</p>;
+    return <p className="task-git-review-empty">{fileDiffEmptyMessage(props.diff, props.zh)}</p>;
   }
   return (
     <div className="task-git-review-diff-table code-diff-host">
@@ -43,5 +49,16 @@ export function TaskGitDiffTable(props: {
         />
       </Suspense>
     </div>
+  );
+}
+
+/** 所有任务差异入口通过共享预览选择媒体或原有文字与评论界面。 */
+export function TaskGitDiffTable(props: Parameters<typeof TaskGitTextDiffTable>[0]) {
+  return props.previewRequest ? (
+    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh}>
+      {props.diff ? <TaskGitTextDiffTable {...props} /> : null}
+    </FilePreview>
+  ) : (
+    <TaskGitTextDiffTable {...props} />
   );
 }

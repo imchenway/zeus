@@ -18,7 +18,7 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  border-inline-end: 0;
 }
 .code-diff-view .cm-lineNumbers {
   /* 编辑器基础样式以 important 固定 gutter 布局，差异只显示原文件行号。 */

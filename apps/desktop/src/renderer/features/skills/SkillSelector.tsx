@@ -10,6 +10,8 @@ export function SkillSelector(props: {
   client: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   projectId?: string;
   value: string;
+  /** 多选追加入口不表示当前已选状态，也不提供无效的空选项。 */
+  adding?: boolean;
   onChange(value: string): void;
   language: 'zh-CN' | 'en-US';
   disabled?: boolean;
@@ -58,11 +60,7 @@ export function SkillSelector(props: {
 
   const options = useMemo<ZeusSelectOption<string>[]>(() => {
     const items: ZeusSelectOption<string>[] = [
-      {
-        value: '',
-        label: zh ? '不使用 Skill' : 'No skill',
-        group: zh ? '默认' : 'Default',
-      },
+      ...(props.adding ? [] : [{ value: '', label: zh ? '不使用 Skill' : 'No skill', group: zh ? '默认' : 'Default' }]),
       ...(catalog?.skills ?? [])
         .filter((skill) => !props.allowedIds || props.allowedIds.includes(skill.id))
         .map((skill) => ({
@@ -76,10 +74,10 @@ export function SkillSelector(props: {
       items.push({ value: props.value, label: zh ? '原 Skill 已不可用' : 'Previous skill unavailable', group: zh ? '需要重选' : 'Reselect', disabled: true, searchText: props.value });
     }
     return items;
-  }, [catalog?.skills, props.allowedIds, props.value, zh]);
+  }, [catalog?.skills, props.adding, props.allowedIds, props.value, zh]);
 
   const selected = options.find((option) => option.value === props.value);
-  const fallbackLabel = loading ? (zh ? '正在读取 Skill…' : 'Loading skills…') : error ? (zh ? 'Skill 不可用' : 'Skills unavailable') : zh ? '不使用 Skill' : 'No skill';
+  const fallbackLabel = loading ? (zh ? '正在读取 Skill…' : 'Loading skills…') : error ? (zh ? 'Skill 不可用' : 'Skills unavailable') : props.adding ? (zh ? '添加 Skill' : 'Add skill') : zh ? '不使用 Skill' : 'No skill';
   return (
     <span className={`codex-skill-selector${props.className ? ` ${props.className}` : ''}`} title={error ?? selected?.label}>
       <ZeusSelect
@@ -115,6 +113,7 @@ export function SkillMultiSelector(props: {
   return (
     <span className="codex-skill-multi-selector">
       <SkillSelector
+        adding
         client={props.client}
         projectId={props.projectId}
         value={candidate}

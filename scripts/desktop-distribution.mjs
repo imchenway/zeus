@@ -1,4 +1,5 @@
-import { skylightDistribution } from '../packages/skylight-distribution/src/index.ts';
+// 构建脚本运行在 Node 原生 ESM 环境，不能直接加载 TypeScript 源文件；工作区构建会先生成发行包 dist。
+import { skylightDistribution } from '../packages/skylight-distribution/dist/index.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 

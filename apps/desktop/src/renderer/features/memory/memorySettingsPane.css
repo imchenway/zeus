@@ -49,8 +49,8 @@
 .memory-editor,
 .memory-tombstone-confirmation,
 .memory-record {
-  background: var(--surface-raised, rgba(127, 127, 127, 0.06));
-  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+  background: var(--zeus-product-panel);
+  border: 0;
   border-radius: 12px;
   display: grid;
   gap: 14px;
@@ -89,8 +89,9 @@
   gap: 12px;
 }
 
-.memory-record[data-status='review_due'] {
-  border-color: color-mix(in srgb, #d68700 55%, transparent);
+/* 待复核状态通过状态文字提示，不依赖整张记录的描边。 */
+.memory-record[data-status='review_due'] header > span:first-child > small {
+  color: var(--zeus-warning-text, #b87912);
 }
 
 .memory-record[data-status='superseded'],

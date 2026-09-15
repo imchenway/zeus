@@ -115,10 +115,11 @@ export type SessionDrawerTarget =
       navigationId: string;
       status: 'opening' | 'error';
     }>
+  | Readonly<{ projectId: string; taskId: string; conversationId?: undefined; navigationId?: undefined; status: 'empty' }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-export type SettingsCategory = 'general' | 'usage' | 'memory' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
-export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'tasks', 'employees', 'runtime', 'models', 'browser', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
+export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'employees' | 'runtime' | 'models' | 'browser' | 'terminal' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
+export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 export type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 export type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -1737,13 +1738,17 @@ export function TaskCreateModal(props: {
   }
 
   const modalSurface = (
-    <ModalPortal rootClassName="task-create-modal-portal-root" backdropClassName="task-create-modal-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
+    <ModalPortal
+      rootClassName="task-create-modal-portal-root"
+      backdropClassName="task-create-modal-backdrop"
+      dismissDisabled={interactionBusy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="task-create-modal-title"
+      aria-describedby={describedBy}
+    >
       <form
         className="task-create-modal zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-create-modal-title"
-        aria-describedby={describedBy}
         onPaste={handleTaskCreateClipboardPaste}
         onSubmit={(event) => {
           if (thirdPartyOpen) {
@@ -1758,6 +1763,7 @@ export function TaskCreateModal(props: {
           props.onSubmit(event);
         }}
         onKeyDown={handleTaskCreateModalKeyDown}
+        data-modal-surface="dialog"
       >
         <header className="task-create-modal-header">
           <strong id="task-create-modal-title" className="task-create-modal-heading">
@@ -2127,8 +2133,16 @@ export function TaskTableLayoutDecisionDialog(props: { open: boolean; title: str
   }, [props.open]);
   if (!props.open) return null;
   const surface = (
-    <ModalPortal rootClassName="task-table-layout-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel}>
-      <section className="task-table-layout-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-table-layout-dialog-title" aria-describedby="task-table-layout-dialog-description" tabIndex={-1}>
+    <ModalPortal
+      rootClassName="task-table-layout-dialog-portal"
+      backdropClassName="task-create-modal-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onCancel}
+      role="dialog"
+      aria-labelledby="task-table-layout-dialog-title"
+      aria-describedby="task-table-layout-dialog-description"
+    >
+      <section className="task-table-layout-dialog zeus-solid-form-surface" tabIndex={-1} data-modal-surface="dialog">
         <header>
           <strong id="task-table-layout-dialog-title">{props.title}</strong>
           <p id="task-table-layout-dialog-description">{props.description}</p>
@@ -2151,14 +2165,15 @@ export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: 
   const zh = props.language === 'zh-CN';
   const title = zh ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？` : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
   return (
-    <ModalPortal rootClassName="task-terminal-cleanup-dialog-portal" backdropClassName="task-create-modal-backdrop" onDismiss={props.onCancel}>
-      <section
-        className="task-terminal-cleanup-dialog zeus-solid-form-surface"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="task-terminal-cleanup-dialog-title"
-        aria-describedby="task-terminal-cleanup-dialog-description task-terminal-cleanup-dialog-effects task-terminal-cleanup-dialog-preserved"
-      >
+    <ModalPortal
+      rootClassName="task-terminal-cleanup-dialog-portal"
+      backdropClassName="task-create-modal-backdrop"
+      onDismiss={props.onCancel}
+      role="alertdialog"
+      aria-labelledby="task-terminal-cleanup-dialog-title"
+      aria-describedby="task-terminal-cleanup-dialog-description task-terminal-cleanup-dialog-effects task-terminal-cleanup-dialog-preserved"
+    >
+      <section className="task-terminal-cleanup-dialog zeus-solid-form-surface" data-modal-surface="alertdialog">
         <header>
           <span className="task-terminal-cleanup-dialog-icon" aria-hidden="true">
             <WarningCircle weight="fill" />
@@ -2212,8 +2227,8 @@ export function TaskDeleteRelationshipDialog(props: { task?: TaskRecord; allTask
   const movedBranchHeight = directChildren.length === 0 ? 0 : Math.max(...directChildren.map((task) => taskSubtreeHeight(task.id, props.allTasks)));
   const replacementCandidates = props.allTasks.filter((task) => !branchTaskIds.has(task.id) && taskHierarchyDepth(task, props.allTasks) + movedBranchHeight <= 3);
   return (
-    <ModalPortal rootClassName="task-delete-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel}>
-      <section className="task-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-delete-dialog-title">
+    <ModalPortal rootClassName="task-delete-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel} role="dialog" aria-labelledby="task-delete-dialog-title">
+      <section className="task-delete-dialog zeus-solid-form-surface" data-modal-surface="dialog">
         <header>
           <strong id="task-delete-dialog-title">{zh ? `删除“${props.task.title}”` : `Delete “${props.task.title}”`}</strong>
           <p>

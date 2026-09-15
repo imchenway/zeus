@@ -1,16 +1,14 @@
-import { ModalPortal } from '../ui/ModalPortal.js';
+import { FilePreviewDialog } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { normalizeRequestQuestions, type RequestQuestion } from './PendingRequestSurface.js';
 import type { NativePendingRequest } from './sessionTypes.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 
 export interface AnsweredRequestHistoryProps {
   /** 回显只需要问题和答案，不依赖同步请求的生命周期。 */
@@ -75,33 +73,15 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const copy = labels[props.language];
   const entries = answeredQuestions(props.request);
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
-  const [resourceError, setResourceError] = useState<unknown>(null);
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
-  useApplicationErrorDialog(resourceError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   if (entries.length === 0) return null;
   const answerUnavailable = isExternalUserInputResolution(props.request.response);
   const heading = answerUnavailable ? copy.answerSyncFailed : entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
 
-  async function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): Promise<void> {
-    setResourceError(null);
-    if (isImageAttachment(attachment)) {
-      previewTriggerRef.current = trigger;
-      setPreviewAttachment(attachment);
-      return;
-    }
-    const bridge = window.zeus?.openConversationInputResource;
-    if (!bridge) {
-      setResourceError(copy.openUnavailable);
-      return;
-    }
-    try {
-      const result = await bridge({ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) });
-      if (!result.opened) setResourceError(copy.openFailed);
-    } catch (error) {
-      setResourceError(error);
-    }
+  /** 已回答附件也统一使用页内预览，系统打开由用户在预览中选择。 */
+  function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): void {
+    previewTriggerRef.current = trigger;
+    setPreviewAttachment(attachment);
   }
 
   function closeAttachmentPreview(): void {
@@ -189,64 +169,9 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   );
 }
 
+/** 历史答案复用附件凭据，不以任意路径打开文件。 */
 function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onClose: () => void }) {
-  const copy = labels[props.language];
-
-  const [previewUrl, setPreviewUrl] = useState('');
-  const [previewLoading, setPreviewLoading] = useState(true);
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const previewId = useId();
-  const localPath = props.attachment.localPath;
-  const uploadRef = props.attachment.uploadRef;
-
-  useEffect(() => {
-    let active = true;
-    const bridge = window.zeus?.getConversationResourcePreview;
-    setPreviewUrl('');
-    setPreviewLoading(true);
-    setPreviewFailed(false);
-    if (!bridge) {
-      setPreviewLoading(false);
-      setPreviewFailed(true);
-      return () => {
-        active = false;
-      };
-    }
-    void bridge({ ...(localPath ? { localPath } : {}), ...(uploadRef ? { uploadRef } : {}) })
-      .then((preview) => {
-        if (!active) return;
-        if (preview?.previewUrl) setPreviewUrl(preview.previewUrl);
-        else setPreviewFailed(true);
-      })
-      .catch(() => {
-        if (active) setPreviewFailed(true);
-      })
-      .finally(() => {
-        if (active) setPreviewLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [localPath, uploadRef]);
-
-  return (
-    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose}>
-      <div className="session-answered-request-preview-sheet" role="dialog" aria-modal="true" aria-labelledby={`${previewId}-title`} aria-describedby={`${previewId}-description`}>
-        <header>
-          <span>
-            <strong id={`${previewId}-title`}>{props.attachment.name || copy.imagePreview}</strong>
-            <small id={`${previewId}-description`}>{copy.imagePreviewDescription}</small>
-          </span>
-          <button type="button" onClick={props.onClose} aria-label={copy.closePreview}>
-            <X aria-hidden="true" />
-          </button>
-        </header>
-        <div className="session-answered-request-preview-stage">
-          {previewLoading ? <p role="status">{copy.loadingPreview}</p> : previewUrl && !previewFailed ? <img src={previewUrl} alt={props.attachment.name} onError={() => setPreviewFailed(true)} /> : <p>{copy.previewUnavailable}</p>}
-        </div>
-      </div>
-    </ModalPortal>
-  );
+  return <FilePreviewDialog request={{ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }} zh={props.language === 'zh-CN'} onClose={props.onClose} />;
 }
 
 export function isAnsweredUserInputRequest(request: NativePendingRequest): boolean {
@@ -317,10 +242,6 @@ function answerText(entry: AnsweredQuestion, secretAnswer: string, redactedAnswe
 
 function isAttachmentOnlyAnswer(answer: string): boolean {
   return answer === '见附件' || answer === 'See attachments';
-}
-
-function isImageAttachment(attachment: NativeConversationAttachment): boolean {
-  return attachment.kind === 'image' || (!attachment.kind && attachment.mime.startsWith('image/'));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

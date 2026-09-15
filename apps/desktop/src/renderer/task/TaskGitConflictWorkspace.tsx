@@ -279,17 +279,21 @@ export function TaskGitConflictWorkspace(props: {
 
         <MotionPresence>
           {aiPermissionOpen ? (
-            <ModalPortal rootClassName="task-git-conflict-ai-permission-portal-root" backdropClassName="task-git-conflict-ai-permission-backdrop" onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}>
+            <ModalPortal
+              rootClassName="task-git-conflict-ai-permission-portal-root"
+              backdropClassName="task-git-conflict-ai-permission-backdrop"
+              onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}
+              role="dialog"
+              aria-labelledby="task-git-conflict-ai-permission-title"
+            >
               <section
                 className="task-git-conflict-ai-permission"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="task-git-conflict-ai-permission-title"
                 onKeyDown={(event) => {
                   if (event.key !== 'Escape' || props.aiBusy) return;
                   event.preventDefault();
                   setAiPermissionOpen(false);
                 }}
+                data-modal-surface="dialog"
               >
                 <span>
                   <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>

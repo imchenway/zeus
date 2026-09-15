@@ -56,8 +56,8 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
   const [error, setError] = useState('');
   const submitting = useRef(false);
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={busy}>
-      <section className="project-git-menu-action-dialog" role="alertdialog" aria-modal="true" aria-label={props.value.title}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={busy} role="alertdialog" aria-label={props.value.title}>
+      <section className="project-git-menu-action-dialog" data-modal-surface="alertdialog">
         <header>
           <strong>{props.value.title}</strong>
           <p>{props.value.description}</p>

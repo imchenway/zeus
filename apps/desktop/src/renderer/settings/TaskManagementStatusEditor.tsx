@@ -208,8 +208,8 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
       </Button>
       <MotionPresence>
         {pendingDeletion && deletingStatus ? (
-          <ModalPortal rootClassName="task-status-delete-portal" backdropClassName="task-create-modal-backdrop" onDismiss={() => setPendingDeletion(null)}>
-            <section className="task-status-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-status-delete-title">
+          <ModalPortal rootClassName="task-status-delete-portal" backdropClassName="task-create-modal-backdrop" onDismiss={() => setPendingDeletion(null)} role="dialog" aria-labelledby="task-status-delete-title">
+            <section className="task-status-delete-dialog zeus-solid-form-surface" data-modal-surface="dialog">
               <header>
                 <strong id="task-status-delete-title">{zh ? `删除“${props.labelForStatus(deletingStatus)}”` : `Delete “${props.labelForStatus(deletingStatus)}”`}</strong>
                 <p>

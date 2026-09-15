@@ -1,3 +1,4 @@
+import { serializeConversationContext, type ConversationContextDraft } from '@zeus/shared';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusConversationSubmissionRecord } from '@zeus/storage';
@@ -32,6 +33,8 @@ export interface PersistedSubmissionInput {
   recoveryKind?: NativeSubmissionRecoveryKind;
   goalObjective?: string;
   skill?: NativeConversationSkillInput;
+  /** 当前提交完整的显式 Skill 选择；旧单项记录只在读取入口归一化。 */
+  skills?: NativeConversationSkillInput[];
   /** 用户显式指定电脑操作的意图；能力授权由全局开关决定。 */
   computerUseRequested?: boolean;
 }
@@ -51,10 +54,16 @@ export function readNativeSubmissionTaskPushLayout(submission: ZeusConversationS
   return { ...value, supplementalAttachments: value.supplementalAttachments ?? [] } as unknown as TaskPushMessageLayout;
 }
 
-/** 从持久化提交中恢复经 Skill 目录解析过的选择；发送前再次确认文件仍然存在。 */
-export function readNativeSubmissionSkill(submission: ZeusConversationSubmissionRecord): NativeConversationSkillInput | null {
-  const value = parseJsonRecord(submission.inputJson).skill;
-  if (value === undefined) return null;
+/** 新旧提交共用的资源读取边界；保持用户选择顺序并核对磁盘身份。 */
+export function readNativeSubmissionSkills(submission: ZeusConversationSubmissionRecord): NativeConversationSkillInput[] {
+  const input = parseJsonRecord(submission.inputJson);
+  const values = input.skills ?? (input.skill === undefined ? [] : [input.skill]);
+  if (!Array.isArray(values) || values.length > 8) throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Skill 选择必须为最多 8 项的数组。');
+  return values.map(readPersistedSkill);
+}
+
+/** 校验一个持久化 Skill，避免模型请求使用未经目录确认的路径。 */
+function readPersistedSkill(value: unknown): NativeConversationSkillInput {
   if (
     !isRecord(value) ||
     typeof value.id !== 'string' ||
@@ -81,11 +90,19 @@ export function readNativeSubmissionSkill(submission: ZeusConversationSubmission
   }
 }
 
-/** Runtime Segment 重建时恢复最近一次冻结的 Skill，保证切换模型或 Provider 后仍投影同一内容。 */
-export function readNativeConversationSkill(submissions: readonly ZeusConversationSubmissionRecord[]): NativeConversationSkillInput | null {
+/** 恢复最近一轮完整的显式选择，空数组表示明确清除。 */
+export function readNativeConversationSkills(submissions: readonly ZeusConversationSubmissionRecord[]): NativeConversationSkillInput[] {
   for (let index = submissions.length - 1; index >= 0; index -= 1) {
-    const skill = readNativeSubmissionSkill(submissions[index]!);
-    if (skill) return skill;
+    const input = parseJsonRecord(submissions[index]!.inputJson);
+    if (input.skills !== undefined || input.skill !== undefined) return readNativeSubmissionSkills(submissions[index]!);
   }
-  return null;
+  return [];
+}
+
+/** 两条链路共用批注与引用正文，防止只保存界面元数据却没有交给模型。 */
+export function appendConversationResourceContext(prompt: string, browserCommentContent: string | undefined, browserComments: Record<string, unknown>[] | undefined, conversationContext: Record<string, unknown> | undefined): string {
+  const browserContext = browserCommentContent?.trim() || (browserComments?.length ? JSON.stringify({ browserComments }) : '');
+  const readableContext = conversationContext ? serializeConversationContext(conversationContext as unknown as ConversationContextDraft).trim() : '';
+  const missingReadableContext = readableContext && !prompt.includes(readableContext) ? readableContext : '';
+  return [prompt, browserContext && !prompt.includes(browserContext) ? browserContext : '', missingReadableContext].filter((part) => part.trim()).join('\n\n');
 }

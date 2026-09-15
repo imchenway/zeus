@@ -46,7 +46,6 @@ export function sourceConflictExtensions(zh: boolean, onCompare: (current: strin
         gap: '2px',
         padding: '4px 6px',
         background: 'var(--zeus-product-panel-muted)',
-        borderBottom: '1px solid var(--zeus-control-border)',
         fontFamily: 'var(--zeus-font-family, system-ui)',
       },
       '.source-conflict-actions button': {
@@ -63,8 +62,7 @@ export function sourceConflictExtensions(zh: boolean, onCompare: (current: strin
         cursor: 'pointer',
       },
       '.source-conflict-actions button:hover': { background: 'var(--zeus-interaction-hover)', color: 'var(--zeus-control-text)' },
-      '.source-conflict-actions button:focus-visible': { outline: '2px solid var(--zeus-control-focus)', outlineOffset: '-2px' },
-      '.source-conflict-actions button + button': { borderInlineStart: '1px solid var(--zeus-control-border)' },
+      '.source-conflict-actions button:focus-visible': { outline: '2px solid var(--zeus-control-accent)', outlineOffset: '-2px' },
     }),
   ];
 }
