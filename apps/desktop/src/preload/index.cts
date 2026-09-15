@@ -332,6 +332,8 @@ contextBridge.exposeInMainWorld('zeus', {
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
   activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),
   closeBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:close-tab', input),
+  /** 明确关闭当前会话浏览器并释放全部标签。 */
+  closeBrowserConversation: (conversationId: string) => ipcRenderer.invoke('zeus:browser:close-conversation', conversationId),
   runBrowserCommand: (input: unknown) => invokeBrowserConversationCommand('zeus:browser:command', 'desktop.browser.command', input),
   setBrowserLayout: (input: unknown) => ipcRenderer.invoke('zeus:browser:set-layout', input),
   prepareBrowserComments: (input: unknown) => ipcRenderer.invoke('zeus:browser:prepare-comments', input),
