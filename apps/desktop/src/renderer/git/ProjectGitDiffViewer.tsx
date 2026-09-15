@@ -46,15 +46,18 @@ export function ProjectGitDiffWindow(props: {
   appearance: 'light' | 'dark' | 'system';
 }) {
   const zh = props.language === 'zh-CN';
+  /** 初始设置用于首帧，后续变化沿用既有窗口通知机制。 */
+  const [appearance, setAppearance] = useState(props.appearance);
+  useEffect(() => window.zeus?.onProjectGitDiffAppearance?.(setAppearance), []);
   /** 将主题同步给正文之外的菜单和错误弹层。 */
   useEffect(() => {
     /** 文档主题使门户内容与独立窗口保持一致。 */
     const root = document.documentElement;
-    root.dataset.zeusTheme = props.appearance;
+    root.dataset.zeusTheme = appearance;
     return () => {
-      if (root.dataset.zeusTheme === props.appearance) delete root.dataset.zeusTheme;
+      if (root.dataset.zeusTheme === appearance) delete root.dataset.zeusTheme;
     };
-  }, [props.appearance]);
+  }, [appearance]);
   const [diff, setDiff] = useState<GitDiffSummary | null>(null);
   const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
   const [selectedPath, setSelectedPath] = useState(props.filePath);
@@ -123,7 +126,7 @@ export function ProjectGitDiffWindow(props: {
   ) : null;
 
   return (
-    <main className={`macos-ai-app zeus-shell theme-${props.appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
+    <main className={`macos-ai-app zeus-shell theme-${appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
       {diff ? (
         diff.fileDiffs.length > 1 ? (
           <div className="project-git-diff-window-layout">

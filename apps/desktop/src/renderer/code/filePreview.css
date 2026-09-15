@@ -72,7 +72,7 @@
   flex: 1;
   min-width: 0;
 }
-/* 棋盘底适用于透明图标，明暗主题均保留可辨认的对照。 */
+/* 透明网格沿用当前主题的面板和分隔色，图片像素保持原样。 */
 .file-preview-checker {
   overflow: auto;
   min-height: 180px;
@@ -80,10 +80,10 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background-color: #fafafa;
-  background-image: conic-gradient(#ddd 25%, transparent 0 50%, #ddd 0 75%, transparent 0);
+  background-color: var(--zeus-product-panel);
+  background-image: conic-gradient(var(--zeus-product-line) 25%, transparent 0 50%, var(--zeus-product-line) 0 75%, transparent 0);
   background-size: 20px 20px;
-  color: #292929;
+  color: var(--zeus-product-text);
 }
 .file-preview-checker img {
   display: block;
