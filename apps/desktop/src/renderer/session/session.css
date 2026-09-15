@@ -3140,8 +3140,10 @@
   overflow: hidden;
 }
 
+/* 会话嵌入抽屉或弹窗后，从全局主题读取明暗，复用主会话的颜色与输入控件规则。 */
 .theme-dark.session-codex-parity-v1,
-.theme-dark .session-codex-parity-v1 {
+.theme-dark .session-codex-parity-v1,
+html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   --session-canvas: rgb(24 26 29);
   --session-sidebar: var(--session-canvas);
   --session-text: rgb(235 237 240);
@@ -3167,7 +3169,8 @@
 }
 
 .macos-ai-app.zeus-shell.theme-dark.session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
-.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
+.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
+html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
   background: var(--session-canvas);
   border-color: var(--session-line);
   color: var(--session-text);
@@ -3176,14 +3179,17 @@
 .macos-ai-app.zeus-shell.theme-dark.session-codex-parity-v1 .session-composer-input-frame > textarea,
 .macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 .session-composer-input-frame > textarea,
 .macos-ai-app.zeus-shell.theme-dark.session-codex-parity-v1 .session-user-message-editor > textarea,
-.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 .session-user-message-editor > textarea {
+.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 .session-user-message-editor > textarea,
+html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .session-composer-input-frame > textarea,
+html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .session-user-message-editor > textarea {
   background: transparent;
   border: 0;
 }
 
 @media (prefers-color-scheme: dark) {
   .theme-system.session-codex-parity-v1,
-  .theme-system .session-codex-parity-v1 {
+  .theme-system .session-codex-parity-v1,
+  html[data-zeus-theme='system'] body > .macos-ai-app .session-codex-parity-v1 {
     --session-canvas: rgb(24 26 29);
     --session-sidebar: var(--session-canvas);
     --session-text: rgb(235 237 240);
@@ -3209,7 +3215,8 @@
   }
 
   .macos-ai-app.zeus-shell.theme-system.session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
-  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
+  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
+  html[data-zeus-theme='system'] body > .macos-ai-app .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
     background: var(--session-canvas);
     border-color: var(--session-line);
     color: var(--session-text);
@@ -3218,7 +3225,9 @@
   .macos-ai-app.zeus-shell.theme-system.session-codex-parity-v1 .session-composer-input-frame > textarea,
   .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 .session-composer-input-frame > textarea,
   .macos-ai-app.zeus-shell.theme-system.session-codex-parity-v1 .session-user-message-editor > textarea,
-  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 .session-user-message-editor > textarea {
+  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 .session-user-message-editor > textarea,
+  html[data-zeus-theme='system'] body > .macos-ai-app .session-codex-parity-v1 .session-composer-input-frame > textarea,
+  html[data-zeus-theme='system'] body > .macos-ai-app .session-codex-parity-v1 .session-user-message-editor > textarea {
     background: transparent;
     border: 0;
   }
@@ -10027,13 +10036,15 @@
 }
 
 .theme-dark.session-codex-parity-v1,
-.theme-dark .session-codex-parity-v1 {
+.theme-dark .session-codex-parity-v1,
+html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   --session-answer-text: var(--session-text);
 }
 
 @media (prefers-color-scheme: dark) {
   .theme-system.session-codex-parity-v1,
-  .theme-system .session-codex-parity-v1 {
+  .theme-system .session-codex-parity-v1,
+  html[data-zeus-theme='system'] body > .macos-ai-app .session-codex-parity-v1 {
     --session-answer-text: var(--session-text);
   }
 }
