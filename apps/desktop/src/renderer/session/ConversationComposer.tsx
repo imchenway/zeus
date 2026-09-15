@@ -261,7 +261,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
             promptText: structured.promptText,
           }
         : undefined;
-    void Promise.resolve(props.onSubmit(nextDelivery, settings));
+    setInputResourceError(null);
+    void Promise.resolve()
+      .then(() => props.onSubmit(nextDelivery, settings))
+      .catch(setInputResourceError);
   }
 
   function enterGoalInput(initialObjective?: string): void {

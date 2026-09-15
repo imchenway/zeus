@@ -263,6 +263,9 @@ export interface NativeSubagentPromptFact {
   reason: string | null;
 }
 
+/** 用固定大小的回执确认送达，不依赖历史正文是否位于当前分页。 */
+export type NativeSubmissionReceipt = Pick<NativeQueuedSubmission, 'id' | 'conversationId' | 'clientUserMessageId' | 'status' | 'pausedReason' | 'providerTurnId'>;
+
 export interface NativeQueuedSubmission {
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;

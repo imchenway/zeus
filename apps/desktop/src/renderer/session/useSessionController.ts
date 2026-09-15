@@ -32,6 +32,7 @@ import {
   type NativePermissionMode,
   type NativePlanImplementationResponseAcceptance,
   type NativeQueuedSubmission,
+  type NativeSubmissionReceipt,
   type NativeQueueSnapshot,
   type NativeRealtimeEventEnvelope,
   type NativeSessionError,
@@ -181,6 +182,7 @@ export interface SessionControllerClient {
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
   loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;
   loadNativeConversationQueueV2(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
+  loadNativeSubmissionReceipt?(projectId: string, conversationId: string, submissionId: string): Promise<NativeSubmissionReceipt>;
   loadNativeConversationModelHistoryV2(
     projectId: string,
     conversationId: string,
@@ -1045,8 +1047,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return snapshot.submissions.filter((submission) => submission.clientUserMessageId === envelope.clientUserMessageId);
   }
 
-  function submissionIsDurableEnvelopeEvidence(submission: NativeQueuedSubmission): boolean {
-    return submission.status !== 'deleted' && submission.status !== 'cancelled' && submission.status !== 'failed' && !isManualConfirmationSubmission(submission);
+  function submissionIsDurableEnvelopeEvidence(submission: NativeSubmissionReceipt): boolean {
+    return ['queued', 'dispatching', 'active', 'paused', 'completed', 'resolved'].includes(submission.status) && !isManualConfirmationSubmission(submission);
   }
 
   function acceptedEnvelopeIsDurable(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
@@ -1224,7 +1226,29 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) return;
+    if (await reconcileSubmissionReceipt(envelope)) return;
     if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
+  }
+
+  /** 历史分页不能决定已接收消息的送达状态；只读回执也不会重放旧消息。 */
+  async function reconcileSubmissionReceipt(envelope: PendingSendEnvelope): Promise<boolean> {
+    const load = options.client.loadNativeSubmissionReceipt;
+    const submissionId = envelope.acceptance?.submission?.id;
+    if (!load || !submissionId) return false;
+    const receipt = await withSessionTimeout(load(options.projectId, options.conversationId, submissionId), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
+    if (disposed || pendingSend !== envelope) return true;
+    if (receipt.id !== submissionId || receipt.conversationId !== options.conversationId || receipt.clientUserMessageId !== envelope.clientUserMessageId) {
+      throw new Error('消息提交回执身份不一致，已保留草稿，请重新连接后再试。');
+    }
+    if (submissionIsDurableEnvelopeEvidence(receipt)) {
+      finalizeDurableEnvelope(envelope);
+      return true;
+    }
+    if (['failed', 'deleted', 'cancelled'].includes(receipt.status) || isManualConfirmationSubmission(receipt)) {
+      finalizeTerminalEnvelope(envelope);
+      return true;
+    }
+    return false;
   }
 
   async function reconcileAcceptedSend(): Promise<void> {
@@ -1233,6 +1257,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
+      if (await reconcileSubmissionReceipt(envelope)) return;
       const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || pendingSend !== envelope) return;
       await applyAuthoritativeSnapshot(snapshot);
@@ -1819,6 +1844,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     activeOperation = { key, promise };
     return promise;
+  }
+
+  function rejectSend(error: Error): Promise<never> {
+    dispatch({ type: 'send_reconciliation_failed', error: toSessionError(error, true) });
+    return Promise.reject(error);
   }
 
   function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
@@ -2621,14 +2651,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
         }
-        return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
+        return rejectSend(new Error(`Session operation already in progress: ${activeOperation.key}`));
       }
       const draft = state.draft;
       const composerAttachments = [...state.attachments];
       const browserSubmission = state.browserSubmission ? structuredClone(state.browserSubmission) : null;
       const contextDraft = structuredClone(state.contextDraft);
       if (!draft.trim() && composerAttachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft)) {
-        return Promise.reject(new Error('Conversation message content, attachments, comments, or annotations are required.'));
+        return rejectSend(new Error('请输入消息，或添加附件、评论后再发送。'));
       }
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
       const appliedSettings = delivery === 'queue' ? settings : undefined;
@@ -2681,15 +2711,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
         const acceptedEnvelope = pendingSend;
         // 冷历史首屏不会处理发送账本；续聊前先用权威快照销账旧 acceptance，不能让它永久阻断下一条消息。
         return reconcileAcceptedSend().then(() => {
-          if (pendingSend === acceptedEnvelope) throw new Error('The previous accepted message is still waiting for its authoritative conversation snapshot.');
+          if (pendingSend === acceptedEnvelope) return rejectSend(new Error('上一条消息的送达状态仍待确认，已保留当前草稿，请重新连接后再试。'));
           return controller.send(delivery, normalizedExpectedTurnId, settings);
         });
       }
       if (pendingSend && pendingSend.deliveryState !== 'accepted' && !exactPending && !reusableIdentity) {
-        return Promise.reject(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
+        return rejectSend(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
       }
       if (browserSubmissionUsesReservedComments(browserSubmission, exactPending ?? reusableIdentity)) {
-        return Promise.reject(new Error('These browser comments already belong to a pending or delivered message.'));
+        return rejectSend(new Error('这些浏览器批注已属于待确认或已送达的消息。'));
       }
       if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
         pendingSend = {
@@ -3356,7 +3386,7 @@ function snapshotItemClientUserMessageId(item: { type: string; payload: Record<s
   return typeof clientId === 'string' && clientId.trim() ? clientId : null;
 }
 
-function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boolean {
+function isManualConfirmationSubmission(submission: NativeSubmissionReceipt): boolean {
   return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
 }
 
