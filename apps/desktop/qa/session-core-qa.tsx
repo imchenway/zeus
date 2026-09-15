@@ -5,7 +5,7 @@ import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/r
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
 import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
-import { ConnectedSessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace } from '../src/renderer/session/SessionWorkspace.js';
 import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
@@ -563,7 +563,7 @@ function MessageLayoutQa() {
     for (const extension of ['md', 'MARKDOWN', 'mdx']) {
       if (defaultOpenTarget({ ...documentResource, iconKind: 'file', projectRelativePath: `docs/说明.${extension}` }) !== 'zeus_source') throw new Error(`Markdown 打开目标错误：${extension}`);
     }
-    if (defaultOpenTarget({ ...documentResource, iconKind: 'image', projectRelativePath: 'image.png' }) !== 'preferred' || defaultOpenTarget(resources[1]!) !== 'preferred') throw new Error('图片或网页默认目标被改变');
+    if (defaultOpenTarget({ ...documentResource, iconKind: 'image', projectRelativePath: 'image.png' }) !== 'zeus_source' || defaultOpenTarget(resources[1]!) !== 'zeus_browser') throw new Error('图片或网页未进入右侧面板');
     /** 只读取本场景正文，不将来源入口计入结果。 */
     const buttons = [...(contentRef.current?.querySelectorAll('.session-conversation-markdown .session-inline-resource') ?? [])].map((button) => button.textContent);
     if (buttons.join('|') !== '分析文档|交互预览|访问网站') throw new Error(`正文链接检查失败：${buttons.join('|')}`);
@@ -711,6 +711,7 @@ function MessageLayoutQa() {
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
+  if (parameters.has('workspace')) return <ResourceWorkspaceQa state={state} resources={resources} />;
   return (
     <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
       <header className="qa-error-layout-heading">
@@ -769,6 +770,128 @@ function MessageLayoutQa() {
           </>
         ) : null}
       </div>
+    </main>
+  );
+}
+
+/** 使用真实会话工作面检查资源去向，仅在文件读取和原生打开边界提供演示数据。 */
+function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: ConversationResource[] }) {
+  /** 记录显式资源动作；通用文件直接由工作面调用预览读取。 */
+  const [opened, setOpened] = useState('等待打开资源');
+  /** 行评论保留在演示会话中，验证源码审阅能力。 */
+  const [comments, setComments] = useState<ConversationCodeComment[]>([]);
+  /** 固定文件资源身份，显示标题刻意不带扩展名。 */
+  const documentResource = props.resources[0]!;
+  if (documentResource.kind !== 'file') throw new Error('缺少文档资源');
+  /** 同时覆盖正文文件链接、图片和 PDF 卡片。 */
+  const resources: ConversationResource[] = [
+    documentResource,
+    { ...documentResource, id: 'code-resource', displayName: '代码说明', projectRelativePath: 'src/example.ts', iconKind: 'typescript' },
+    { ...documentResource, id: 'image-resource', displayName: '示意图', projectRelativePath: 'diagram.png', iconKind: 'image', presentation: 'card' },
+    { ...documentResource, id: 'pdf-resource', displayName: '报告', projectRelativePath: 'report.pdf', iconKind: 'pdf', presentation: 'card' },
+    props.resources[2]!,
+  ];
+  /** 极小图片只用于检查实际预览组件的加载与关闭。 */
+  const imageUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  /** 单页 PDF 验证右侧媒体容器，不调用外部阅读器。 */
+  const pdfUrl =
+    'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAwID4+CnN0cmVhbQoKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyMDIgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA1IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgoyNTEKJSVFT0Y=';
+  useEffect(() => {
+    /** 页面退出恢复原桥接，不连接正式数据。 */
+    const previous = window.zeus;
+    window.zeus = {
+      ...previous,
+      loadFilePreview: async (request) => {
+        setOpened(`文件读取：${request.kind === 'resource' ? request.resourceId : request.kind}`);
+        /** 按请求身份返回对应格式，验证实际图片和 PDF 组件。 */
+        const pdf = request.kind === 'resource' && request.resourceId === 'pdf-resource';
+        return [{ id: 'qa-file', name: pdf ? 'report.pdf' : 'diagram.png', label: '会话文件', kind: pdf ? 'pdf' : 'image', mime: pdf ? 'application/pdf' : 'image/png', byteLength: pdf ? 413 : 69, url: pdf ? pdfUrl : imageUrl }];
+      },
+      releaseFilePreview: async () => {},
+    } as NonNullable<typeof window.zeus>;
+    return () => {
+      window.zeus = previous;
+    };
+  }, []);
+  /** 完整会话身份使生产工作面提供右侧布局和资源动作。 */
+  const conversation: NativeConversationChoice = {
+    id: 'qa-layout',
+    projectId: 'qa',
+    taskId: null,
+    title: '会话资源右侧审阅',
+    summary: null,
+    status: 'ready',
+    stage: 'completed',
+    stageUpdatedAt: '2026-09-15T04:00:00Z',
+    transportKind: 'codex_native',
+    providerId: 'codex',
+    providerThreadId: 'qa-layout',
+    providerModel: null,
+    providerState: 'idle',
+    createdAt: '2026-09-15T04:00:00Z',
+    updatedAt: '2026-09-15T04:00:00Z',
+    archived: false,
+    hasUnreadAttention: false,
+    attentionKind: 'none',
+    attentionRevision: 0,
+    attentionTurnId: null,
+    attentionUpdatedAt: null,
+    pendingRequestKind: null,
+    resumable: true,
+    readOnly: false,
+    agent: { kind: 'codex', transport: 'app_server', supportStatus: 'verified', capabilitySnapshotId: null },
+  };
+  /** 将同一组正文资源交给生产时间线，附件也通过会话提供的预览入口。 */
+  const state: NativeSessionState = {
+    ...props.state,
+    attachments: [{ name: '附件图片.png', kind: 'image', mime: 'image/png', size: 68, uploadRef: 'qa-image' }],
+    contextDraft: { ...props.state.contextDraft, codeComments: comments },
+    items: Object.fromEntries(
+      Object.entries(props.state.items).map(([key, item]) => [
+        key,
+        item.phase === 'final_answer'
+          ? { ...item, text: '[分析文档](docs/分析文档.md) · [代码说明](src/example.ts) · [访问网站](https://example.com/)', resources }
+          : item.phase === 'user'
+            ? { ...item, payload: { ...item.payload, attachments: [{ name: '历史附件.png', kind: 'image', mime: 'image/png', size: 69, uploadRef: 'qa-history-image' }] } }
+            : item,
+      ]),
+    ),
+  };
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 theme-light" style={{ width: 1440, height: 900, display: 'flex', flexDirection: 'column' }}>
+      <p role="status">{opened}</p>
+      <SessionWorkspace
+        language="zh-CN"
+        state={state}
+        conversation={conversation}
+        task={null}
+        owner={{ kind: 'project', projectId: 'qa', projectName: '资源验收' }}
+        actions={{
+          onOpenResource: async (resource, target) => {
+            if (target !== (resource.kind === 'website' ? 'zeus_browser' : 'zeus_source')) throw new Error('资源没有进入右侧目标');
+            setOpened(`${resource.id} → ${target}`);
+            if (resource.kind === 'website') return { opened: true, mode: 'zeus_browser' };
+            return {
+              opened: true,
+              mode: 'zeus_source',
+              preview: {
+                kind: 'source',
+                resource,
+                language: resource.iconKind === 'markdown' ? 'markdown' : 'typescript',
+                content: resource.iconKind === 'markdown' ? '# 分析文档\n\n右侧阅读内容。' : '// 示例代码\nconst value = 1;',
+                lineCount: 3,
+                truncated: false,
+              },
+            };
+          },
+          onLoadResourcePreview: async (resource) => {
+            if (resource.kind === 'website') throw new Error('网站不是图片');
+            return { kind: 'image', resource, mimeType: 'image/png', dataUrl: imageUrl, byteLength: 68 };
+          },
+          onContextDraftChange: (draft) => setComments(draft.codeComments),
+        }}
+      />
+      <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );
 }

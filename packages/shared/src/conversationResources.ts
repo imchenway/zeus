@@ -140,3 +140,8 @@ export interface TurnChangeSetOperationResult {
   changeSet: TurnChangeSet;
   auditEventId: string | null;
 }
+
+/** 会话审阅与主进程共用文本后缀范围，正文读取仍校验授权、编码和大小。 */
+export function isConversationSourcePreviewable(path: string): boolean {
+  return /\.(?:c|cc|cpp|css|go|h|hpp|html|java|js|json|jsx|kt|md|markdown|mdx|php|py|rb|rs|scss|sh|sql|swift|ts|tsx|txt|xml|yaml|yml)$/iu.test(path);
+}

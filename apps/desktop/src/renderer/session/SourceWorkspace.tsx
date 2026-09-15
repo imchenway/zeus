@@ -1,4 +1,4 @@
-import { PreviewImage } from '../code/FilePreview.js';
+import { FilePreview, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -9,7 +9,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
-import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
+import type { FilePreviewRequest, ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
 /** 与项目源码编辑器一样按需加载，避免会话首屏加载编辑器运行时。 */
 const SourceCodePreview = lazy(() => import('../code/SourceCodePreview.js').then((module) => ({ default: module.SourceCodePreview })));
@@ -258,4 +258,52 @@ function formatBytes(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
   if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+/** 通用文件沿用会话右侧审阅容器，预览组件负责授权读取、格式展示和失败重试。 */
+export function FilePreviewWorkspace(props: {
+  request: FilePreviewRequest;
+  language: SessionUiLanguage;
+  toolbarHost?: HTMLElement | null;
+  fullWidth: boolean;
+  canSplit: boolean;
+  onFullWidthChange: (value: boolean) => void;
+  onClose: () => void;
+}) {
+  /** 当前界面的中英文文案。 */
+  const zh = props.language === 'zh-CN';
+  /** 每次切换文件将焦点移到审阅标题。 */
+  const titleRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, [props.request]);
+  /** 与源码和浏览器一样将操作栏放入会话顶栏。 */
+  const header = (
+    <header className="session-context-workspace-header">
+      <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
+        <FileCode aria-hidden="true" />
+        <strong>{zh ? '文件审阅' : 'File review'}</strong>
+      </span>
+      <nav aria-label={zh ? '文件审阅操作' : 'File review actions'}>
+        <button
+          type="button"
+          disabled={!props.canSplit}
+          title={!props.canSplit ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : undefined}
+          aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
+          onClick={() => props.onFullWidthChange(!props.fullWidth)}
+        >
+          {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
+        </button>
+        <button type="button" aria-label={zh ? '关闭文件审阅' : 'Close file review'} onClick={props.onClose}>
+          <X aria-hidden="true" />
+        </button>
+      </nav>
+    </header>
+  );
+  return (
+    <section className="session-context-workspace session-source-workspace" aria-label={zh ? '文件审阅' : 'File review'}>
+      {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
+      <FilePreview request={props.request} zh={zh} />
+    </section>
+  );
 }

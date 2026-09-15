@@ -1,8 +1,7 @@
-import { FilePreviewDialog, PreviewImage } from '../code/FilePreview.js';
-import { ModalPortal } from '../ui/ModalPortal.js';
+import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
-import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -49,6 +48,8 @@ export function ConversationPendingAttachmentImages(props: { attachments: Native
 }
 
 function ConversationPendingAttachmentImage(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onVisibleContentChange?: () => void }) {
+  /** 会话提供右侧容器，独立预览页面仍可使用自身弹窗。 */
+  const openFilePreview = useContext(FilePreviewOpenContext);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -102,7 +103,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.attachment.name}`}
         aria-busy={loading || undefined}
         title={props.attachment.name}
-        onClick={() => setPreviewOpen(true)}
+        onClick={() => (openFilePreview ? openFilePreview({ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }) : setPreviewOpen(true))}
       >
         {failed ? (
           <span className="session-resource-image-placeholder" role="status">
@@ -155,7 +156,6 @@ export function ConversationInlineResource(
     language: SessionUiLanguage;
   },
 ) {
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
@@ -167,11 +167,6 @@ export function ConversationInlineResource(
   });
 
   async function open(): Promise<void> {
-    // 默认目标允许文档进入会话审阅，通用文件才使用弹窗预览。
-    if (props.resource.kind !== 'website' && defaultOpenTarget(props.resource) === 'preferred') {
-      setPreviewOpen(true);
-      return;
-    }
     if (!props.onOpenResource || busy) return;
     setBusy(true);
     setError(null);
@@ -185,30 +180,13 @@ export function ConversationInlineResource(
   }
 
   return (
-    <>
-      <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-        <button
-          type="button"
-          className="session-inline-resource"
-          title={title}
-          aria-label={`${props.label}${location ? ` ${location}` : ''}`}
-          aria-busy={busy || undefined}
-          data-error={Boolean(error) || undefined}
-          onClick={() => void open()}
-        >
-          <ResourceIcon resource={props.resource} />
-          <span>{props.label}</span>
-          {location ? <span className="session-inline-resource-location">{location}</span> : null}
-        </button>
-      </span>
-      {previewOpen ? (
-        <FilePreviewDialog
-          request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
-          zh={props.language === 'zh-CN'}
-          onClose={() => setPreviewOpen(false)}
-        />
-      ) : null}
-    </>
+    <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
+      <button type="button" className="session-inline-resource" title={title} aria-label={`${props.label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
+        <ResourceIcon resource={props.resource} />
+        <span>{props.label}</span>
+        {location ? <span className="session-inline-resource-location">{location}</span> : null}
+      </button>
+    </span>
   );
 }
 
@@ -247,7 +225,6 @@ function ConversationImagePreview(
   const [visible, setVisible] = useState(false);
   const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
   const [loading, setLoading] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const resourceRef = useRef(props.resource);
   const languageRef = useRef(props.language);
@@ -285,7 +262,6 @@ function ConversationImagePreview(
     setPreview(null);
     setError(null);
     setVisible(false);
-    setPreviewOpen(false);
   }, [props.resource.id]);
 
   useEffect(() => {
@@ -313,6 +289,15 @@ function ConversationImagePreview(
     };
   }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible]);
 
+  /** 图片缩略图也沿用会话资源入口，不自行创建弹窗。 */
+  async function open(): Promise<void> {
+    try {
+      await props.onOpenResource?.(props.resource, defaultOpenTarget(props.resource));
+    } catch (cause) {
+      reportPreviewFailure(cause);
+    }
+  }
+
   function reportPreviewFailure(cause: unknown): void {
     setError(cause);
   }
@@ -331,80 +316,29 @@ function ConversationImagePreview(
         : props.label;
 
   return (
-    <>
-      <button
-        ref={rootRef}
-        type="button"
-        className={props.className}
-        aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
-        aria-busy={loading || undefined}
-        data-error={Boolean(error) || undefined}
-        title={props.resource.displayName}
-        onClick={() => {
-          setVisible(true);
-          setPreviewOpen(true);
-        }}
-      >
-        {preview ? (
-          <img decoding="async" src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
-        ) : (
-          <span className={props.placeholderClassName} role="status">
-            {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
-            <span>{status}</span>
-          </span>
-        )}
-        {preview ? <span className="session-sr-only">{status}</span> : null}
-      </button>
-      <MotionPresence>
-        {previewOpen ? (
-          <FilePreviewDialog
-            request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
-            zh={props.language === 'zh-CN'}
-            onClose={() => setPreviewOpen(false)}
-          />
-        ) : null}
-      </MotionPresence>
-    </>
-  );
-}
-
-/** 消息正文与输入附件共用同一图片弹窗、焦点管理和关闭行为。 */
-export function ConversationImagePreviewDialog(props: { previewUrl: string; label: string; language: SessionUiLanguage; loading: boolean; error?: string; onClose: () => void }) {
-  /** 无法解码的图片也显示可关闭的失败状态。 */
-  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
-  const previewId = useId();
-  const titleId = `${previewId}-conversation-image-preview-title`;
-  const descriptionId = `${previewId}-conversation-image-preview-description`;
-  const zh = props.language === 'zh-CN';
-
-  return (
-    <ModalPortal rootClassName="image-preview-portal session-codex-parity-v1" onDismiss={props.onClose} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
-      <div className="task-attachment-zoom-sheet" data-modal-surface="dialog">
-        <header className="task-attachment-zoom-header">
-          <span>
-            <strong id={titleId}>{props.label}</strong>
-            <small id={descriptionId}>{zh ? '会话图片附件预览' : 'Conversation image attachment preview'}</small>
-          </span>
-          <button type="button" className="task-attachment-zoom-close" onClick={props.onClose} aria-label={zh ? '关闭图片预览' : 'Close image preview'}>
-            ×
-          </button>
-        </header>
-        <div className="task-attachment-zoom-stage">
-          {props.previewUrl && failedPreviewUrl !== props.previewUrl ? (
-            <PreviewImage url={props.previewUrl} name={props.label} zh={zh} onError={() => setFailedPreviewUrl(props.previewUrl)} />
-          ) : props.loading ? (
-            <p className="task-attachment-zoom-state" role="status" aria-live="polite">
-              <span className="task-attachment-preview-spinner" aria-hidden="true" />
-              {zh ? '正在加载图片预览' : 'Loading image preview'}
-            </p>
-          ) : (
-            <p className="task-attachment-zoom-fallback" role="status">
-              {props.error ?? (zh ? '图片预览不可用。' : 'Image preview unavailable.')}
-            </p>
-          )}
-        </div>
-      </div>
-    </ModalPortal>
+    <button
+      ref={rootRef}
+      type="button"
+      className={props.className}
+      aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
+      aria-busy={loading || undefined}
+      data-error={Boolean(error) || undefined}
+      title={props.resource.displayName}
+      onClick={() => {
+        setVisible(true);
+        void open();
+      }}
+    >
+      {preview ? (
+        <img decoding="async" src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
+      ) : (
+        <span className={props.placeholderClassName} role="status">
+          {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
+          <span>{status}</span>
+        </span>
+      )}
+      {preview ? <span className="session-sr-only">{status}</span> : null}
+    </button>
   );
 }
 
@@ -442,6 +376,7 @@ function ConversationResourceImage(
       resource={props.resource}
       label={props.resource.displayName}
       language={props.language}
+      onOpenResource={props.onOpenResource}
       onLoadResourcePreview={props.onLoadResourcePreview}
       className="session-resource-image"
       placeholderClassName="session-resource-image-placeholder"
@@ -455,7 +390,6 @@ function ConversationResourceCard(
     language: SessionUiLanguage;
   },
 ) {
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const subtitle = resourceSubtitle(props.resource, props.language);
@@ -465,11 +399,6 @@ function ConversationResourceCard(
   });
 
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
-    // 显式审阅和编辑器操作必须交回会话，不能被卡片预览截获。
-    if (props.resource.kind !== 'website' && target === 'preferred') {
-      setPreviewOpen(true);
-      return;
-    }
     if (!props.onOpenResource || busy) return;
     setBusy(true);
     setError(null);
@@ -483,27 +412,18 @@ function ConversationResourceCard(
   }
 
   return (
-    <>
-      <article className="session-resource-card" data-resource-kind={props.resource.kind} data-error={Boolean(error) || undefined}>
-        <button type="button" className="session-resource-card-main" aria-busy={busy || undefined} onClick={() => void open()}>
-          <span className="session-resource-card-icon">
-            <ResourceIcon resource={props.resource} />
-          </span>
-          <span className="session-resource-card-copy">
-            <strong>{props.resource.displayName}</strong>
-            <small>{subtitle}</small>
-          </span>
-        </button>
-        <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
-      </article>
-      {previewOpen ? (
-        <FilePreviewDialog
-          request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }}
-          zh={props.language === 'zh-CN'}
-          onClose={() => setPreviewOpen(false)}
-        />
-      ) : null}
-    </>
+    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-error={Boolean(error) || undefined}>
+      <button type="button" className="session-resource-card-main" aria-busy={busy || undefined} onClick={() => void open()}>
+        <span className="session-resource-card-icon">
+          <ResourceIcon resource={props.resource} />
+        </span>
+        <span className="session-resource-card-copy">
+          <strong>{props.resource.displayName}</strong>
+          <small>{subtitle}</small>
+        </span>
+      </button>
+      <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
+    </article>
   );
 }
 
@@ -704,14 +624,10 @@ function focusAdjacentDocumentControl(trigger: HTMLButtonElement | null, backwar
   controls[(currentIndex + offset + controls.length) % controls.length]?.focus();
 }
 
-/** 会话 Markdown 默认进入右侧审阅；以真实文件路径识别，避免显示标题省略后缀。 */
+/** 会话文件进入审阅，网页进入内置浏览器；邮件链接仍交给邮件应用。 */
 export function defaultOpenTarget(resource: ConversationResource): ConversationOpenTarget {
-  if (resource.kind !== 'website') {
-    /** 文件使用项目路径，附件使用保留文件名的显示名称。 */
-    const path = resource.kind === 'file' ? resource.projectRelativePath : resource.displayName;
-    if (resource.iconKind === 'markdown' || /\.(?:md|markdown|mdx)$/iu.test(path)) return 'zeus_source';
-  }
-  return resource.kind === 'website' && resource.url.startsWith('mailto:') ? 'system_default' : 'preferred';
+  if (resource.kind === 'website') return resource.url.startsWith('mailto:') ? 'system_default' : 'zeus_browser';
+  return resource.iconKind === 'html' ? 'zeus_browser' : 'zeus_source';
 }
 
 export function isImageResource(resource: ConversationResource): boolean {
