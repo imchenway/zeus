@@ -36,7 +36,8 @@ interface PendingReverseRequest {
   traceIdentity: string | null;
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timeout: ReturnType<typeof setTimeout>;
+  /** 人工问答和审批由取消或宿主断连收口，不使用工具总时限。 */
+  timeout: ReturnType<typeof setTimeout> | undefined;
   abortCleanup: (() => void) | null;
 }
 
@@ -138,6 +139,8 @@ async function handleRequest(request: PiRuntimeWorkerRequest): Promise<unknown |
       return runtime.readSession(request.payload as Parameters<PiSdkRuntimeDriver['readSession']>[0]);
     case 'recover':
       return runtime.recover();
+    case 'reviewPermission':
+      return runtime.reviewPermission(request.payload as Parameters<PiSdkRuntimeDriver['reviewPermission']>[0]);
     case 'invalidateModelRuntime':
       return runtime.invalidateModelRuntime();
     case 'close':
@@ -204,17 +207,23 @@ function forwardRuntimeEvent(event: AgentRuntimeEvent): void {
 
 function reverseRequest(method: Parameters<typeof sendReverseRequest>[0], payload: unknown, signal?: AbortSignal, traceIdentity: string | null = null): Promise<unknown> {
   if (closing) return Promise.reject(workerError('ZEUS_PI_WORKER_CLOSING', 'Pi Worker 正在关闭。'));
+  // 取消可能先于监听注册；已经取消的调用不能进入无限等待或再发送工具操作。
+  if (signal?.aborted) return Promise.reject(workerError('ZEUS_PI_TOOL_ABORTED', 'Pi 工具调用已取消。'));
   const id = `pi_reverse_${randomUUID()}`;
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      const pending = pendingReverseRequests.get(id);
-      if (!pending) return;
-      pending.abortCleanup?.();
-      pendingReverseRequests.delete(id);
-      send({ kind: 'reverse_cancel', protocolVersion: piRuntimeWorkerProtocolVersion, generationId, id });
-      reject(workerError('ZEUS_PI_WORKER_REVERSE_RPC_TIMEOUT', `Pi Worker 反向 RPC 超时：${method}`));
-    }, reverseRequestTimeout(method));
-    timeout.unref();
+    const timeoutMs = reverseRequestTimeout(method);
+    const timeout =
+      timeoutMs === null
+        ? undefined
+        : setTimeout(() => {
+            const pending = pendingReverseRequests.get(id);
+            if (!pending) return;
+            pending.abortCleanup?.();
+            pendingReverseRequests.delete(id);
+            send({ kind: 'reverse_cancel', protocolVersion: piRuntimeWorkerProtocolVersion, generationId, id });
+            reject(workerError('ZEUS_PI_WORKER_REVERSE_RPC_TIMEOUT', `Pi Worker 反向 RPC 超时：${method}`));
+          }, timeoutMs);
+    timeout?.unref();
     const abort = () => {
       const pending = pendingReverseRequests.get(id);
       if (!pending) return;
@@ -301,8 +310,9 @@ async function closeDriver(): Promise<void> {
   knownCredentialValues.clear();
 }
 
-function reverseRequestTimeout(method: string): number {
-  if (method === 'tool_execute') return 180_000;
+/** 工具执行内可等待用户；外部工具的执行超时仍由各自共用 Broker 管理。 */
+function reverseRequestTimeout(method: string): number | null {
+  if (method === 'tool_execute') return null;
   if (method === 'run_acceptance') return 60_000;
   return 30_000;
 }

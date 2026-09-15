@@ -14,6 +14,7 @@ import {
   type TaskManagementStatusDefinition,
 } from '@zeus/shared';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
+import { taskAgentRunStatusLabels } from './TaskRunStatusChip.js';
 import { formatTaskType, type TaskBranchStatus } from './taskWorkspaceModel.js';
 
 export interface TaskBoardProjectionContext {
@@ -89,24 +90,8 @@ export function taskBoardGroupOptions(context: TaskBoardProjectionContext, prope
         .map((tag) => ({ id: tag, label: tag })),
     ];
   if (property === 'parentTask') return [{ id: taskBoardEmptyGroupId, label: zh ? '无父任务' : 'No parent task' }, ...context.tasks.map((task) => ({ id: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))];
-  if (property === 'runStatus')
-    return runStatusIds.map((id) => ({
-      id,
-      label: (
-        {
-          not_started: zh ? '未开始' : 'Not started',
-          connecting: zh ? '连接中' : 'Connecting',
-          reconnecting: zh ? '重连中' : 'Reconnecting',
-          running: zh ? '运行中' : 'Running',
-          waiting_user: zh ? '等待回复' : 'Waiting for reply',
-          waiting_approval: zh ? '等待授权' : 'Waiting for approval',
-          paused: zh ? '已暂停' : 'Paused',
-          idle: zh ? '空闲' : 'Idle',
-          failed: zh ? '失败' : 'Failed',
-          legacy_readonly: zh ? '只读' : 'Read only',
-        } as const
-      )[id],
-    }));
+  // 看板卡片、分组和筛选统一沿用列表状态文案，避免同一任务出现不同解释。
+  if (property === 'runStatus') return runStatusIds.map((id) => ({ id, label: taskAgentRunStatusLabels[context.language][id] }));
   if (property === 'branchStatus')
     return branchStatusIds.map((id) => ({
       id,

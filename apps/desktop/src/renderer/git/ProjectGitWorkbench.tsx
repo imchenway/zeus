@@ -1068,6 +1068,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <div className="project-git-browser-content">
           {tab === 'log' ? (
             <GitLogSurface
+              projectId={props.project.id}
               zh={zh}
               repositories={repositories}
               commits={allCommits.filter(({ repository }) => repository.id === selectedRepository?.id)}
@@ -1097,6 +1098,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             />
           ) : tab === 'changes' ? (
             <LocalChangesSurface
+              previewRevision={snapshot?.refreshedAt}
+              projectId={props.project.id}
               subtree={subtree}
               onClearSubtree={() => setSubtree(null)}
               zh={zh}
@@ -1137,6 +1140,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             />
           ) : tab === 'stash' ? (
             <StashSurface
+              projectId={props.project.id}
               zh={zh}
               repository={selectedRepository}
               stash={activeStash}
@@ -1536,8 +1540,8 @@ function UpdateProjectDialog(props: {
   const localCommitCount = props.repositories.reduce((total, repository) => total + repository.snapshot.outgoingCommits.length, 0);
   const resetNeedsConfirmation = strategy === 'reset' && localCommitCount > 0;
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-update-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '更新项目' : 'Update project'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '更新项目' : 'Update project'}>
+      <section className="project-git-update-dialog" data-modal-surface="dialog">
         <header>
           <strong>{props.zh ? '更新项目' : 'Update Project'}</strong>
           <small>
@@ -1643,8 +1647,8 @@ function NewBranchDialog(props: {
   const repository = props.repositories.find((candidate) => candidate.id === repositoryId) ?? null;
   const baseRef = props.baseRef || repository?.snapshot.headSha || '';
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-reference-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '新建分支' : 'New branch'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '新建分支' : 'New branch'}>
+      <section className="project-git-reference-dialog" data-modal-surface="dialog">
         <header>
           <strong>{props.zh ? '新建并签出分支' : 'Create and Checkout Branch'}</strong>
           <small>{props.zh ? `起点：${shortRef(baseRef)}` : `Starting point: ${shortRef(baseRef)}`}</small>
@@ -1715,7 +1719,7 @@ function RemoteBranchCheckoutDialog(props: {
   };
   const disabled = props.busy !== null || (mode === 'existing' ? !existingBranch || currentBranchSelected : !normalizedBranchName || branchAlreadyExists);
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog">
       <section className="project-git-reference-dialog project-git-remote-checkout-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '检出远程分支' : 'Checkout remote branch'}>
         <header>
           <strong>{props.zh ? '检出远程分支' : 'Checkout Remote Branch'}</strong>
@@ -1822,8 +1826,15 @@ function CheckoutRevisionDialog(props: {
   if (!props.open) return null;
   const repository = props.repositories.find((candidate) => candidate.id === repositoryId) ?? null;
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-reference-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '切换到标签或提交' : 'Switch to a tag or commit'}>
+    <ModalPortal
+      rootClassName="project-git-modal-root"
+      backdropClassName="project-git-modal-backdrop"
+      onDismiss={props.onClose}
+      dismissDisabled={props.busy !== null}
+      role="dialog"
+      aria-label={props.zh ? '切换到标签或提交' : 'Switch to a tag or commit'}
+    >
+      <section className="project-git-reference-dialog" data-modal-surface="dialog">
         <header>
           <strong>{props.zh ? '切换到标签或提交' : 'Switch to a tag or commit'}</strong>
           <small>
@@ -1896,6 +1907,8 @@ function readUpdateStrategy(projectId: string): ProjectGitUpdateStrategy {
 }
 
 function GitLogSurface(props: {
+  /** 仓库预览所属项目。 */
+  projectId: string;
   zh: boolean;
   historyLoading: boolean;
   historyError: string;
@@ -2135,7 +2148,11 @@ function GitLogSurface(props: {
             </section>
             <GitPaneSeparator name="inspector" label={props.zh ? '调整详情与差异宽度' : 'Resize details and diff'} initial={35} min={20} max={65} />
             <GitPaneSeparator name="details" label={props.zh ? '调整文件与提交详情高度' : 'Resize files and commit details'} axis="y" initial={55} min={20} max={80} />
-            <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null} zh={props.zh} />
+            <SideBySideDiff
+              previewRequest={props.selectedRepository ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash } : undefined}
+              diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null}
+              zh={props.zh}
+            />
           </>
         ) : (
           <p className="project-git-empty-copy">{props.zh ? '选择一个提交查看文件与差异。' : 'Select a commit to inspect files and diff.'}</p>
@@ -2444,6 +2461,10 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
 }
 
 function LocalChangesSurface(props: {
+  /** 刷新时即使二进制补丁相同，也重新读取当前文件。 */
+  previewRevision?: string;
+  /** 仓库预览所属项目。 */
+  projectId: string;
   subtree: { repositoryId: string; path: string } | null;
   onClearSubtree: () => void;
   zh: boolean;
@@ -2652,6 +2673,8 @@ function LocalChangesSurface(props: {
           </div>
         ) : (
           <SideBySideDiff
+            previewRequest={repository && props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage } : undefined}
+            revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
             partitionHunks
@@ -2912,6 +2935,8 @@ function buildChangeTree(paths: string[]): ChangeTreeNode {
 }
 
 function StashSurface(props: {
+  /** 仓库预览所属项目。 */
+  projectId: string;
   zh: boolean;
   repository: ProjectGitRepositoryWorkbenchItem | null;
   stash: ProjectGitRepositoryWorkbenchItem['snapshot']['stashes'][number] | null;
@@ -2973,7 +2998,12 @@ function StashSurface(props: {
             <CommitFileDirectoryTree files={props.detail.files} selectedPath={props.selectedFilePath} onSelect={props.onSelectFile} onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })} />
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
-          <SideBySideDiff diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null} zh={props.zh} title={props.selectedFilePath} />
+          <SideBySideDiff
+            previewRequest={{ kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref }}
+            diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
+            zh={props.zh}
+            title={props.selectedFilePath}
+          />
         </div>
       ) : (
         <p className="project-git-empty-copy">{props.zh ? '无法读取该贮藏的文件差异。' : 'The files and diff for this stash could not be loaded.'}</p>
@@ -3178,8 +3208,15 @@ function BranchContextMenu(props: {
   };
   if (confirmDelete) {
     return (
-      <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-        <section className="project-git-branch-delete-dialog" role="alertdialog" aria-modal="true" aria-label={props.zh ? '删除分支' : 'Delete branch'}>
+      <ModalPortal
+        rootClassName="project-git-modal-root"
+        backdropClassName="project-git-modal-backdrop"
+        onDismiss={props.onClose}
+        dismissDisabled={props.busy !== null}
+        role="alertdialog"
+        aria-label={props.zh ? '删除分支' : 'Delete branch'}
+      >
+        <section className="project-git-branch-delete-dialog" data-modal-surface="alertdialog">
           <header>
             <strong>{props.zh ? `删除“${props.branch}”？` : `Delete '${props.branch}'?`}</strong>
             <small>{props.zh ? '仅删除本地分支；尚未合入的分支会由 Git 拒绝删除。' : 'Only the local branch is deleted. Git refuses unmerged branches.'}</small>
@@ -3353,8 +3390,15 @@ function StashDialog(props: {
   const [submitting, setSubmitting] = useState(false);
   const locked = submitting || props.busy !== null;
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
-      <section className="project-git-reference-dialog project-git-stash-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? `贮藏 ${props.repository.name} 的变更` : `Stash changes in ${props.repository.name}`}>
+    <ModalPortal
+      rootClassName="project-git-modal-root"
+      backdropClassName="project-git-modal-backdrop"
+      onDismiss={props.onClose}
+      dismissDisabled={locked}
+      role="dialog"
+      aria-label={props.zh ? `贮藏 ${props.repository.name} 的变更` : `Stash changes in ${props.repository.name}`}
+    >
+      <section className="project-git-reference-dialog project-git-stash-dialog" data-modal-surface="dialog">
         <main>
           <p className="project-git-stash-introduction">
             {props.zh
@@ -3409,8 +3453,15 @@ function CommitDialog(props: {
   const staged = props.repositories.filter((repository) => repository.snapshot.fileStatuses.some((file) => file.indexStatus !== ' ' && file.indexStatus !== '?'));
   if (!props.open) return null;
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-commit-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '提交已暂存变更' : 'Commit staged changes'}>
+    <ModalPortal
+      rootClassName="project-git-modal-root"
+      backdropClassName="project-git-modal-backdrop"
+      onDismiss={props.onClose}
+      dismissDisabled={props.busy !== null}
+      role="dialog"
+      aria-label={props.zh ? '提交已暂存变更' : 'Commit staged changes'}
+    >
+      <section className="project-git-commit-dialog" data-modal-surface="dialog">
         <header>
           <strong>{props.zh ? '提交已暂存变更' : 'Commit staged changes'}</strong>
           <small>{props.zh ? '每个仓库会分别创建提交。' : 'Each repository will receive a separate commit.'}</small>
@@ -3476,8 +3527,8 @@ function PullDialog(props: {
   const branches = props.repository.snapshot.remoteBranches.filter((ref) => ref.startsWith(remote + '/') && !ref.endsWith('/HEAD')).map((ref) => ref.slice(remote.length + 1));
   const optionsId = useId();
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
-      <section className="project-git-reference-dialog project-git-sync-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '拉取' : 'Pull'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked} role="dialog" aria-label={props.zh ? '拉取' : 'Pull'}>
+      <section className="project-git-reference-dialog project-git-sync-dialog" data-modal-surface="dialog">
         <header>
           <strong>
             {props.zh ? '拉取' : 'Pull'} · {props.repository.name}
@@ -3626,8 +3677,8 @@ function PushDialog(props: {
     selections.some((other, otherIndex) => index !== otherIndex && item.repositoryId === other.repositoryId && item.remote === other.remote && item.targetBranch.trim() === other.targetBranch.trim()),
   );
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked}>
-      <section className="project-git-reference-dialog project-git-sync-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '推送' : 'Push'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked} role="dialog" aria-label={props.zh ? '推送' : 'Push'}>
+      <section className="project-git-reference-dialog project-git-sync-dialog" data-modal-surface="dialog">
         <header>
           <strong>{resultMode ? (props.zh ? '推送结果' : 'Push results') : props.zh ? '推送' : 'Push'}</strong>
           <small>{props.zh ? '按仓库选择本地分支及远程目标；切换仓库会保留已勾选项。' : 'Select local branches and remote targets. Selections are retained when switching repositories.'}</small>
@@ -3885,8 +3936,8 @@ function SubtreeManagementDialog(props: {
   const [remote, setRemote] = useState(props.repository.snapshot.remotes[0] ?? '');
   const [branch, setBranch] = useState('');
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
-      <section className="project-git-subtree-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '管理子树' : 'Manage subtree'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '管理子树' : 'Manage subtree'}>
+      <section className="project-git-subtree-dialog" data-modal-surface="dialog">
         <h2>{props.zh ? '管理子树' : 'Manage subtree'}</h2>
         <p>{props.zh ? '添加和拉取使用 squash 合并，需要干净的工作区。操作前会确认目标仓库与分支。' : 'Add and pull use squash and require a clean working tree. Confirm the target before executing.'}</p>
         <label>

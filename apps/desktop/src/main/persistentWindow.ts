@@ -77,7 +77,10 @@ export function createPersistentWindow(stateFileName: string, options: BrowserWi
   });
   window.on('blur', flush);
   window.on('close', flush);
+  // 共用退出链最终调用 app.exit，不触发窗口 close；退出请求时先同步保存尚未写盘的调整。
+  app.on('before-quit', flush);
   window.on('closed', () => {
+    app.removeListener('before-quit', flush);
     if (saveTimer) clearTimeout(saveTimer);
     if (activationTimer) clearTimeout(activationTimer);
   });

@@ -63,7 +63,7 @@
     flex-wrap: wrap;
     gap: 12px;
     padding-block: 2px 16px;
-    border-block-end: 1px solid var(--zeus-product-line);
+    border-block-end: 0;
   }
   .im-platform-identity {
     display: flex;
@@ -134,7 +134,7 @@
   }
   .im-account-overview {
     padding: 24px;
-    border: 1px solid var(--zeus-product-line);
+    border: 0;
     border-radius: 14px;
     background: var(--zeus-card-background, var(--zeus-solid-surface-bg));
   }
@@ -208,7 +208,7 @@
     gap: 24px;
     margin: 0;
     padding-block-start: 20px;
-    border-block-start: 1px solid var(--zeus-product-line);
+    border-block-start: 0;
   }
   .im-binding-facts > div {
     display: grid;
@@ -217,7 +217,7 @@
     align-content: start;
   }
   .im-binding-facts > div + div {
-    border-inline-start: 1px solid var(--zeus-product-line);
+    border-inline-start: 0;
     padding-inline-start: 24px;
   }
   .im-binding-facts svg {
@@ -253,7 +253,7 @@
     gap: 16px;
     align-items: center;
     padding-block: 20px;
-    border-block-end: 1px solid var(--zeus-product-line);
+    border-block-end: 0;
   }
   .im-setting-row > svg {
     align-self: start;
@@ -382,7 +382,7 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  :is(button, a, input, select):focus-visible {
+  :is(button, a, input[type='checkbox'], input[type='radio']):focus-visible {
     outline: 2px solid var(--im-accent);
     outline-offset: 3px;
     box-shadow: none;
@@ -423,7 +423,7 @@
     gap: 14px;
   }
   .im-step-list > li + li {
-    border-block-start: 1px solid var(--zeus-product-line);
+    border-block-start: 0;
     padding-block-start: 24px;
   }
   .im-step-number {
@@ -533,7 +533,7 @@
   /* 配对信息与账号概览区分；过期二维码淡化且旧跳转入口移除。 */
   .im-pairing-panel {
     padding: 24px;
-    border: 1px solid var(--zeus-product-line);
+    border: 0;
     border-radius: 14px;
   }
   .im-pairing-content {
@@ -585,7 +585,7 @@
     gap: 12px;
     max-block-size: 280px;
     overflow: auto;
-    border-block-start: 1px solid var(--zeus-product-line);
+    border-block-start: 0;
     padding-block-start: 16px;
     font-size: 12px;
     user-select: text;

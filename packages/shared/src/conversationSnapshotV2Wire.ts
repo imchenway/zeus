@@ -1,3 +1,5 @@
+import { parseCanonicalRequestUserInputQuestions } from './requestUserInput.js';
+
 /** Snapshot V2 的服务端、桌面端与存储层共用协议代次。 */
 export const conversationSnapshotV2StructureGeneration = '2026-09-03-conversation-stage-identity' as const;
 
@@ -39,6 +41,8 @@ export interface ConversationSnapshotV2Page<T> {
 export interface ConversationNavigationEntry {
   /** 持久历史消息身份。 */
   id: string;
+  /** 已回答询问的稳定身份；普通发言不携带。 */
+  requestId?: string;
   /** 所属本地轮次，用于按需读取正文。 */
   turnId: string;
   /** 实时消息使用的轮次身份。 */
@@ -53,7 +57,7 @@ export interface ConversationNavigationEntry {
   occurredAt: string;
   /** 最多 160 字的提问摘录。 */
   prompt: string;
-  /** 最多 320 字的最终答复或正式计划摘录。 */
+  /** 最多 320 字的最终答复、正式计划或答题卡答案摘录。 */
   response: string;
   /** 所属轮次的真实状态。 */
   status: string;
@@ -74,4 +78,32 @@ export function conversationNavigationExcerpt(text: string, limit: number): stri
   /** 只保留界面可读的单段文本。 */
   const characters = Array.from(text.replace(/\s+/gu, ' ').trim());
   return characters.length > limit ? `${characters.slice(0, limit - 1).join('')}…` : characters.join('');
+}
+
+/** 整张答题卡共用一个摘录，实时与历史目录沿用相同的问题校验和敏感答案规则。 */
+export function conversationQuestionNavigationExcerpt(payload: unknown, response: Record<string, unknown> | null, containsSecret = false): Pick<ConversationNavigationEntry, 'prompt' | 'response'> | null {
+  /** 不根据正文猜测题目；无效题目不能生成无法定位的刻度。 */
+  const parsed = parseCanonicalRequestUserInputQuestions(payload);
+  if (!parsed.ok || !response) return null;
+  /** 含敏感答案的记录只允许使用已经公开的回答。 */
+  const visible = containsSecret ? response.publicAnswers : response.answers;
+  /** 只读经过结构检查的答案映射。 */
+  const answers = visible && typeof visible === 'object' && !Array.isArray(visible) ? (visible as Record<string, unknown>) : {};
+  return {
+    prompt: conversationNavigationExcerpt(parsed.questions.map((question) => question.question).join('；'), 160),
+    response: conversationNavigationExcerpt(
+      parsed.questions
+        .map((question) => {
+          if (question.isSecret) return '敏感回答已提交';
+          if (response.type === 'external_resolution') return '答案尚未同步';
+          /** 普通答案使用规范对象，敏感记录的公开答案使用字符串数组。 */
+          const value = answers[question.id];
+          /** 仅接受字符串数组，不序列化未知内容或附件路径。 */
+          const values = containsSecret ? value : value && typeof value === 'object' && 'answers' in value ? value.answers : null;
+          return Array.isArray(values) && values.length && values.every((answer) => typeof answer === 'string') ? values.join('、') : '回答已提交，历史内容已脱敏';
+        })
+        .join('；'),
+      320,
+    ),
+  };
 }

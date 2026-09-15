@@ -99,17 +99,12 @@ body:has(.menu-bar-usage-root),
   min-inline-size: 0;
 }
 
-.menu-bar-usage-identity > span:last-child {
-  display: grid;
-  min-inline-size: 0;
-}
-
 .menu-bar-usage-identity strong {
   font-size: 14px;
   font-weight: 730;
 }
 
-.menu-bar-usage-identity small {
+.menu-bar-usage-freshness {
   overflow: hidden;
   color: var(--usage-muted);
   font-size: 10px;
@@ -132,8 +127,19 @@ body:has(.menu-bar-usage-root),
   font-style: italic;
 }
 
+/* 时间与刷新按钮作为一组，长文案省略但保留完整悬浮提示。 */
+.menu-bar-usage-refresh-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-inline-size: 0;
+  margin-inline-start: 12px;
+}
+
 .menu-bar-usage-freshness {
-  max-inline-size: 220px;
+  min-inline-size: 0;
+  text-align: end;
 }
 
 .menu-bar-usage-refresh {
@@ -282,7 +288,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-provider-list {
   display: grid;
   overflow: hidden;
-  border: 1px solid var(--usage-line);
+  border: 0;
   border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
 }
@@ -305,7 +311,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-list > button + button {
-  border-block-start: 1px solid var(--usage-line);
+  border-block-start: 0;
 }
 
 /* 独立用量窗口也使用强调色悬停，避免白块跳变。 */
@@ -381,7 +387,7 @@ body:has(.menu-bar-usage-root),
   min-block-size: 118px;
   gap: 8px;
   padding: 11px 12px 10px;
-  border: 1px solid var(--usage-accent-border, color-mix(in srgb, var(--usage-accent) 34%, transparent));
+  border: 0;
   border-radius: var(--usage-radius-card, 12px);
   background: color-mix(in srgb, var(--usage-accent-soft) 82%, var(--usage-panel-strong));
 }
@@ -536,7 +542,7 @@ body:has(.menu-bar-usage-root),
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
   padding: 10px 0;
-  border: 1px solid var(--usage-line);
+  border: 0;
   border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
 }
@@ -546,10 +552,6 @@ body:has(.menu-bar-usage-root),
   min-inline-size: 0;
   gap: 3px;
   padding-inline: 9px;
-}
-
-.menu-bar-usage-metrics > div + div {
-  border-inline-start: 1px solid var(--usage-line);
 }
 
 .menu-bar-usage-root dt,
@@ -743,16 +745,9 @@ body:has(.menu-bar-usage-root),
   }
 }
 
-@keyframes menu-bar-usage-hourglass {
-  0%,
-  42% {
-    transform: rotate(0deg);
-  }
-  50%,
-  92% {
-    transform: rotate(180deg);
-  }
-  100% {
+/* 仅旋转圆环，按钮背景和点击区域保持固定。 */
+@keyframes menu-bar-usage-spin {
+  to {
     transform: rotate(360deg);
   }
 }
@@ -889,12 +884,11 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-muted);
 }
 
+/* 浮窗装饰沿用主题分隔线，不再叠加固定白色高光。 */
 .menu-bar-usage-mark {
   border-color: var(--usage-accent-border);
-  background: linear-gradient(145deg, rgb(255 255 255 / 94%), var(--usage-accent-soft));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 68%),
-    0 8px 18px -15px color-mix(in srgb, var(--usage-accent) 70%, transparent);
+  background: var(--usage-accent-soft);
+  box-shadow: 0 8px 18px -15px color-mix(in srgb, var(--usage-accent) 70%, transparent);
   color: var(--zeus-brand-text);
 }
 
@@ -914,14 +908,15 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-.menu-bar-usage-refresh .menu-bar-usage-hourglass {
-  fill: currentcolor;
-  stroke: none;
-}
-
-.menu-bar-usage-refresh[aria-busy='true'] .menu-bar-usage-hourglass {
-  animation: menu-bar-usage-hourglass 1.2s ease-in-out infinite;
-  transform-origin: center;
+/* 使用品牌色细圆环，沿用全局减少动态效果设置。 */
+.menu-bar-usage-spinner {
+  inline-size: 14px;
+  block-size: 14px;
+  border: 1.5px solid var(--usage-accent-soft);
+  border-block-start-color: var(--zeus-brand-text);
+  border-inline-end-color: var(--zeus-brand-text);
+  border-radius: 50%;
+  animation: menu-bar-usage-spin 800ms linear infinite;
 }
 
 .menu-bar-usage-tabs button {
@@ -946,9 +941,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-notice {
-  border: 1px solid var(--usage-line);
+  border: 0;
   background: var(--usage-panel);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 32%);
+  box-shadow: none;
 }
 
 .menu-bar-usage-notice[data-tone='warning'] {
@@ -969,9 +964,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-list {
-  border-color: var(--usage-line);
+  border: 0;
   background: var(--usage-panel-strong);
-  box-shadow: var(--usage-shadow-soft);
+  box-shadow: none;
   backdrop-filter: blur(18px) saturate(145%);
   -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
@@ -990,22 +985,20 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-provider-symbol {
   border: 1px solid color-mix(in srgb, var(--usage-accent) 28%, transparent);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--usage-accent-highlight) 38%, white), var(--usage-accent-soft));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 52%);
+  background: var(--usage-accent-soft);
+  box-shadow: none;
   color: var(--usage-accent-strong);
 }
 
 .menu-bar-usage-account-card {
-  border-color: var(--usage-accent-border);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--usage-accent-soft) 88%, white), color-mix(in srgb, var(--usage-panel-strong) 88%, var(--usage-accent-soft)));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 45%),
-    0 14px 28px -24px color-mix(in srgb, var(--usage-accent) 68%, transparent);
+  border: 0;
+  background: var(--usage-panel);
+  box-shadow: none;
 }
 
 .menu-bar-usage-account-symbol {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--usage-accent-highlight) 34%, white), var(--usage-panel-strong));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 58%);
+  background: var(--usage-accent-soft);
+  box-shadow: none;
 }
 
 .menu-bar-usage-progress {
@@ -1018,19 +1011,15 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-metrics {
-  border-color: var(--usage-line);
+  border: 0;
   background: var(--usage-panel);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 24%),
-    var(--usage-shadow-soft);
+  box-shadow: none;
 }
 
 .menu-bar-usage-bars {
-  border: 1px solid var(--usage-line);
+  border: 0;
   background: var(--usage-panel);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 26%),
-    var(--usage-shadow-soft);
+  box-shadow: none;
 }
 
 .menu-bar-usage-bar-slot i {
@@ -1043,9 +1032,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-chart-empty {
-  border: 1px solid var(--usage-line);
+  border: 0;
   background: var(--usage-panel);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 24%);
+  box-shadow: none;
 }
 
 .menu-bar-usage-actions {
@@ -1090,9 +1079,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-skeleton span {
-  border: 1px solid var(--usage-line);
+  border: 0;
   background: linear-gradient(90deg, var(--usage-panel) 20%, var(--usage-panel-strong) 50%, var(--usage-panel) 80%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+  box-shadow: none;
 }
 
 /* 状态栏弹窗与主工作区共享 AgentDesk 的 4 / 8 / 12 / 16 间距阶梯。 */
@@ -1150,31 +1139,34 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-/* 原生 popover 承担背景模糊，网页只叠加轻薄的中性表面。 */
+/* 浮窗使用不透明主题表面，避免系统浅色模糊材质透入应用深色模式。 */
 .menu-bar-usage-root,
 .menu-bar-usage-root[data-appearance='dark'],
 .menu-bar-usage-root[data-appearance='system'] {
-  background: transparent;
-  --usage-panel: rgb(255 255 255 / 24%);
-  --usage-panel-strong: rgb(255 255 255 / 40%);
+  background: var(--usage-bg);
+  --usage-bg: #f7f8fa;
+  --usage-panel: #fff;
+  --usage-panel-strong: #fff;
   --usage-panel-inset: rgb(120 128 140 / 8%);
   --usage-line: rgb(100 110 125 / 16%);
-  --usage-edge: rgb(255 255 255 / 44%);
+  --usage-edge: var(--usage-line);
 }
 .menu-bar-usage-root[data-appearance='dark'] {
-  --usage-panel: rgb(255 255 255 / 5%);
-  --usage-panel-strong: rgb(255 255 255 / 10%);
+  --usage-bg: #17191d;
+  --usage-panel: #24272c;
+  --usage-panel-strong: #24272c;
   --usage-panel-inset: rgb(0 0 0 / 10%);
   --usage-line: rgb(255 255 255 / 12%);
-  --usage-edge: rgb(255 255 255 / 18%);
+  --usage-edge: var(--usage-line);
 }
 @media (prefers-color-scheme: dark) {
   .menu-bar-usage-root[data-appearance='system'] {
-    --usage-panel: rgb(255 255 255 / 5%);
-    --usage-panel-strong: rgb(255 255 255 / 10%);
+    --usage-bg: #17191d;
+    --usage-panel: #24272c;
+    --usage-panel-strong: #24272c;
     --usage-panel-inset: rgb(0 0 0 / 10%);
     --usage-line: rgb(255 255 255 / 12%);
-    --usage-edge: rgb(255 255 255 / 18%);
+    --usage-edge: var(--usage-line);
   }
 }
 

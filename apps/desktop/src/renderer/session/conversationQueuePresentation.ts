@@ -4,29 +4,38 @@ import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionItemBuff
 export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemBuffer[], queue: NativeQueueSnapshot | null): NativeSessionItemBuffer[] {
   /** 提交与客户端消息身份共同覆盖本地气泡和冷开队列投影。 */
   const positions = new Map<string, number>();
-  visibleQueuedSubmissions(queue).forEach((submission, index) => {
+  /** 失败提交仍占据原发送位置；已结束历史则由条目的原生身份排除。 */
+  const submissions = [...(queue?.submissions ?? [])].sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+  submissions.forEach((submission, index) => {
     positions.set(submission.id, index);
     if (submission.clientUserMessageId) positions.set(submission.clientUserMessageId, index);
   });
   /** 已有原生消息身份的条目仍属于真实历史，不能被陈旧队列状态挪到末尾。 */
   const queuePosition = (item: NativeSessionItemBuffer): number | undefined => {
     if (!item.optimistic || item.providerItemId) return undefined;
+    // 已交给当前轮次的引导消息仍沿用原位置，不能因等待原生回显移到答题卡之后。
+    if (item.payload.delivery === 'steer_now' && ['steering', 'active'].includes(item.status)) return undefined;
     for (const id of [item.payload.submissionId, item.clientUserMessageId, item.durableClientUserMessageId]) {
       if (typeof id === 'string' && positions.has(id)) return positions.get(id);
     }
-    return undefined;
+    // 本地消息尚无队列回执时，也必须排在既有待发消息之后。
+    return submissions.length;
   };
   return [...items].sort((left, right) => {
-    /** 有明确队列身份时优先按队列定位，其他条目沿用真实时间。 */
+    /** 已有队列身份和等待本地回执的消息统一在历史末尾排序。 */
     const leftPosition = queuePosition(left);
     /** 同时比较两端，保证已确认历史位于待发队列之前。 */
     const rightPosition = queuePosition(right);
-    if (leftPosition !== undefined || rightPosition !== undefined) return leftPosition === undefined ? -1 : rightPosition === undefined ? 1 : leftPosition - rightPosition;
-    /** 同一毫秒的持久历史按既有顺序排列，避免答复被技术 key 排到提问前。 */
-    const chronological = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
-    if (chronological) return chronological;
-    if (typeof left.payload.v2Sequence === 'number' && typeof right.payload.v2Sequence === 'number' && left.payload.v2Sequence !== right.payload.v2Sequence) return left.payload.v2Sequence - right.payload.v2Sequence;
-    return left.key.localeCompare(right.key);
+    if (leftPosition === undefined && rightPosition === undefined) {
+      // 同时落盘仍按持久序号区分先后，其他历史沿用上游顺序。
+      if ((left.timelineAt ?? left.updatedAt) === (right.timelineAt ?? right.updatedAt) && typeof left.payload.v2Sequence === 'number' && typeof right.payload.v2Sequence === 'number')
+        return left.payload.v2Sequence - right.payload.v2Sequence;
+      return 0;
+    }
+    if (leftPosition === undefined) return -1;
+    if (rightPosition === undefined) return 1;
+    /** 同时等待本地回执时按首次显示时间排序，状态更新时间不能移动气泡。 */
+    return leftPosition - rightPosition || (left.timelineAt ?? '').localeCompare(right.timelineAt ?? '');
   });
 }
 

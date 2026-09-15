@@ -46,6 +46,7 @@ import {
 import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
+import { ZeusSelect } from '../ZeusSelect.js';
 import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
@@ -583,8 +584,8 @@ function TaskBoardFilterEditor(props: { group: TaskBoardFilterGroup; depth: numb
 function TaskBoardSettingsDialog(props: {
   language: TaskBoardViewProps['language'];
   settings: TaskBoardViewSettings;
-  groupOptions: ReturnType<typeof taskBoardGroupOptions>;
-  subgroupOptions: ReturnType<typeof taskBoardGroupOptions>;
+  /** 草稿分组使用同一任务与状态上下文，不读取已保存分组的旧选项。 */
+  context: TaskBoardProjectionContext;
   section: TaskBoardSettingsSection;
   saving: boolean;
   errorMessage: string | null;
@@ -594,9 +595,15 @@ function TaskBoardSettingsDialog(props: {
 }) {
   const zh = props.language === 'zh-CN';
   const [draft, setDraft] = useState(props.settings);
+  /** 颜色和隐藏分组面板必须随当前草稿即时更新。 */
+  const draftContext = { ...props.context, settings: draft };
+  /** 当前草稿主分组的有效列。 */
+  const groupOptions = taskBoardGroupOptions(draftContext, draft.groupBy);
+  /** 当前草稿子分组的有效列，无子分组时保持空集合。 */
+  const subgroupOptions = draft.subgroupBy ? taskBoardGroupOptions(draftContext, draft.subgroupBy) : [];
   return (
-    <ModalPortal onDismiss={props.onDismiss} dismissDisabled={props.saving} rootClassName="task-board-settings-portal">
-      <section className="task-board-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="task-board-settings-title">
+    <ModalPortal onDismiss={props.onDismiss} dismissDisabled={props.saving} rootClassName="task-board-settings-portal" role="dialog" aria-labelledby="task-board-settings-title">
+      <section className="task-board-settings-dialog" data-modal-surface="dialog">
         <header>
           <div>
             <strong id="task-board-settings-title">{zh ? '看板设置' : 'Board settings'}</strong>
@@ -624,52 +631,43 @@ function TaskBoardSettingsDialog(props: {
             <legend>{zh ? '布局' : 'Layout'}</legend>
             <label>
               <span>{zh ? '主分组' : 'Group by'}</span>
-              <select
+              <ZeusSelect
+                ariaLabel={zh ? '主分组' : 'Group by'}
+                size="compact"
                 value={draft.groupBy}
-                onChange={(event) => {
-                  const groupBy = event.currentTarget.value as TaskBoardGroupProperty;
+                options={taskBoardGroupProperties.map((property) => ({ value: property, label: translate(groupPropertyLabels[property], props.language) }))}
+                onChange={(groupBy) => {
+                  // 主分组变更时清除重复子分组和旧列排序，保持原有保存语义。
                   setDraft((current) => ({ ...current, groupBy, subgroupBy: current.subgroupBy === groupBy ? null : current.subgroupBy, groupOrder: [] }));
                 }}
-              >
-                {taskBoardGroupProperties.map((property) => (
-                  <option key={property} value={property}>
-                    {translate(groupPropertyLabels[property], props.language)}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             <label>
               <span>{zh ? '子分组' : 'Sub-group'}</span>
-              <select
+              <ZeusSelect<TaskBoardGroupProperty | ''>
+                ariaLabel={zh ? '子分组' : 'Sub-group'}
+                size="compact"
                 value={draft.subgroupBy ?? ''}
-                onChange={(event) => {
-                  const subgroupBy = event.currentTarget.value ? (event.currentTarget.value as TaskBoardGroupProperty) : null;
-                  setDraft((current) => ({ ...current, subgroupBy }));
-                }}
-              >
-                <option value="">{zh ? '无' : 'None'}</option>
-                {taskBoardGroupProperties
-                  .filter((property) => property !== draft.groupBy)
-                  .map((property) => (
-                    <option key={property} value={property}>
-                      {translate(groupPropertyLabels[property], props.language)}
-                    </option>
-                  ))}
-              </select>
+                options={[
+                  { value: '', label: zh ? '无' : 'None' },
+                  ...taskBoardGroupProperties.filter((property) => property !== draft.groupBy).map((property) => ({ value: property, label: translate(groupPropertyLabels[property], props.language) })),
+                ]}
+                onChange={(subgroupBy) => setDraft((current) => ({ ...current, subgroupBy: subgroupBy || null }))}
+              />
             </label>
             <label>
               <span>{zh ? '分组排序' : 'Group sort'}</span>
-              <select
+              <ZeusSelect<TaskBoardViewSettings['groupSort']>
+                ariaLabel={zh ? '分组排序' : 'Group sort'}
+                size="compact"
                 value={draft.groupSort}
-                onChange={(event) => {
-                  const groupSort = event.currentTarget.value as TaskBoardViewSettings['groupSort'];
-                  setDraft((current) => ({ ...current, groupSort }));
-                }}
-              >
-                <option value="manual">{zh ? '手工' : 'Manual'}</option>
-                <option value="ascending">{zh ? '升序' : 'Ascending'}</option>
-                <option value="descending">{zh ? '降序' : 'Descending'}</option>
-              </select>
+                options={[
+                  { value: 'manual', label: zh ? '手工' : 'Manual' },
+                  { value: 'ascending', label: zh ? '升序' : 'Ascending' },
+                  { value: 'descending', label: zh ? '降序' : 'Descending' },
+                ]}
+                onChange={(groupSort) => setDraft((current) => ({ ...current, groupSort }))}
+              />
             </label>
             <label className="task-board-setting-check">
               <input
@@ -695,31 +693,33 @@ function TaskBoardSettingsDialog(props: {
             </label>
             {draft.colorColumns ? (
               <div className="task-board-column-color-settings">
-                {props.groupOptions.map((option) => (
+                {groupOptions.map((option) => (
                   <label key={option.id}>
                     <span>{option.label}</span>
-                    <select
-                      aria-label={`${zh ? '列颜色' : 'Column color'} ${option.label}`}
+                    <ZeusSelect<TaskBoardColorTone | ''>
+                      ariaLabel={`${zh ? '列颜色' : 'Column color'} ${option.label}`}
+                      size="compact"
                       value={draft.columnColors[option.id] ?? ''}
-                      onChange={(event) => {
-                        const tone = event.currentTarget.value;
+                      options={[
+                        { value: '', label: zh ? '自动（项目配置）' : 'Automatic' },
+                        { value: 'neutral', label: zh ? '中性' : 'Neutral' },
+                        { value: 'blue', label: zh ? '蓝色' : 'Blue' },
+                        { value: 'violet', label: zh ? '紫色' : 'Violet' },
+                        { value: 'green', label: zh ? '绿色' : 'Green' },
+                        { value: 'amber', label: zh ? '琥珀' : 'Amber' },
+                        { value: 'orange', label: zh ? '橙色' : 'Orange' },
+                        { value: 'red', label: zh ? '红色' : 'Red' },
+                      ]}
+                      onChange={(tone) => {
+                        // 自动颜色删除覆盖值，继续使用项目配置。
                         setDraft((current) => {
                           const columnColors = { ...current.columnColors };
-                          if (tone) columnColors[option.id] = tone as TaskBoardColorTone;
+                          if (tone) columnColors[option.id] = tone;
                           else delete columnColors[option.id];
                           return { ...current, columnColors };
                         });
                       }}
-                    >
-                      <option value="">{zh ? '自动（项目配置）' : 'Automatic'}</option>
-                      <option value="neutral">{zh ? '中性' : 'Neutral'}</option>
-                      <option value="blue">{zh ? '蓝色' : 'Blue'}</option>
-                      <option value="violet">{zh ? '紫色' : 'Violet'}</option>
-                      <option value="green">{zh ? '绿色' : 'Green'}</option>
-                      <option value="amber">{zh ? '琥珀' : 'Amber'}</option>
-                      <option value="orange">{zh ? '橙色' : 'Orange'}</option>
-                      <option value="red">{zh ? '红色' : 'Red'}</option>
-                    </select>
+                    />
                   </label>
                 ))}
               </div>
@@ -729,31 +729,31 @@ function TaskBoardSettingsDialog(props: {
             <legend>{zh ? '卡片' : 'Cards'}</legend>
             <label>
               <span>{zh ? '尺寸' : 'Size'}</span>
-              <select
+              <ZeusSelect<TaskBoardViewSettings['cardSize']>
+                ariaLabel={zh ? '尺寸' : 'Size'}
+                size="compact"
                 value={draft.cardSize}
-                onChange={(event) => {
-                  const cardSize = event.currentTarget.value as TaskBoardViewSettings['cardSize'];
-                  setDraft((current) => ({ ...current, cardSize }));
-                }}
-              >
-                <option value="small">{zh ? '小' : 'Small'}</option>
-                <option value="medium">{zh ? '中' : 'Medium'}</option>
-                <option value="large">{zh ? '大' : 'Large'}</option>
-              </select>
+                options={[
+                  { value: 'small', label: zh ? '小' : 'Small' },
+                  { value: 'medium', label: zh ? '中' : 'Medium' },
+                  { value: 'large', label: zh ? '大' : 'Large' },
+                ]}
+                onChange={(cardSize) => setDraft((current) => ({ ...current, cardSize }))}
+              />
             </label>
             <label>
               <span>{zh ? '预览' : 'Preview'}</span>
-              <select
+              <ZeusSelect<TaskBoardViewSettings['preview']>
+                ariaLabel={zh ? '预览' : 'Preview'}
+                size="compact"
                 value={draft.preview}
-                onChange={(event) => {
-                  const preview = event.currentTarget.value as TaskBoardViewSettings['preview'];
-                  setDraft((current) => ({ ...current, preview }));
-                }}
-              >
-                <option value="none">{zh ? '无' : 'None'}</option>
-                <option value="content">{zh ? '任务内容' : 'Task content'}</option>
-                <option value="first_image">{zh ? '第一张图片附件' : 'First image attachment'}</option>
-              </select>
+                options={[
+                  { value: 'none', label: zh ? '无' : 'None' },
+                  { value: 'content', label: zh ? '任务内容' : 'Task content' },
+                  { value: 'first_image', label: zh ? '第一张图片附件' : 'First image attachment' },
+                ]}
+                onChange={(preview) => setDraft((current) => ({ ...current, preview }))}
+              />
             </label>
             <label className="task-board-setting-check">
               <input
@@ -768,17 +768,17 @@ function TaskBoardSettingsDialog(props: {
             </label>
             <label>
               <span>{zh ? '打开方式' : 'Open in'}</span>
-              <select
+              <ZeusSelect<TaskBoardOpenMode>
+                ariaLabel={zh ? '打开方式' : 'Open in'}
+                size="compact"
                 value={draft.openMode}
-                onChange={(event) => {
-                  const openMode = event.currentTarget.value as TaskBoardOpenMode;
-                  setDraft((current) => ({ ...current, openMode }));
-                }}
-              >
-                <option value="side_peek">{zh ? '右侧抽屉' : 'Side peek'}</option>
-                <option value="center_peek">{zh ? '居中预览' : 'Center peek'}</option>
-                <option value="full_page">{zh ? '工作区全页' : 'Full page'}</option>
-              </select>
+                options={[
+                  { value: 'side_peek', label: zh ? '右侧抽屉' : 'Side peek' },
+                  { value: 'center_peek', label: zh ? '居中预览' : 'Center peek' },
+                  { value: 'full_page', label: zh ? '工作区全页' : 'Full page' },
+                ]}
+                onChange={(openMode) => setDraft((current) => ({ ...current, openMode }))}
+              />
             </label>
             <div className="task-board-property-visibility">
               {draft.propertyOrder.map((property, index) => (
@@ -963,7 +963,7 @@ function TaskBoardSettingsDialog(props: {
             <fieldset hidden={props.section !== 'layout'}>
               <legend>{zh ? '隐藏分组' : 'Hidden groups'}</legend>
               <p>{zh ? '勾选要恢复显示的分组，然后保存。取消不会改变当前看板。' : 'Select groups to show again, then save. Cancel keeps the current board unchanged.'}</p>
-              {props.groupOptions
+              {groupOptions
                 .filter((option) => draft.hiddenGroupIds.includes(option.id))
                 .map((option) => (
                   <label className="task-board-setting-check" key={option.id}>
@@ -979,8 +979,8 @@ function TaskBoardSettingsDialog(props: {
               <p>{zh ? '勾选要恢复显示的子分组，然后保存。' : 'Select subgroups to show again, then save.'}</p>
               {Object.entries(draft.hiddenSubgroupIdsByGroup).flatMap(([groupId, ids]) =>
                 ids.map((subgroupId) => {
-                  const groupLabel = props.groupOptions.find((option) => option.id === groupId)?.label ?? groupId;
-                  const subgroupLabel = props.subgroupOptions.find((option) => option.id === subgroupId)?.label ?? subgroupId;
+                  const groupLabel = groupOptions.find((option) => option.id === groupId)?.label ?? groupId;
+                  const subgroupLabel = subgroupOptions.find((option) => option.id === subgroupId)?.label ?? subgroupId;
                   return (
                     <label className="task-board-setting-check" key={`${groupId}\u0000${subgroupId}`}>
                       <input
@@ -1110,7 +1110,6 @@ export function TaskBoardView(props: TaskBoardViewProps) {
   );
   const groups = useMemo(() => (context ? buildTaskBoardGroups(context) : []), [context]);
   const groupOptions = useMemo(() => (context ? taskBoardGroupOptions(context, context.settings.groupBy) : []), [context]);
-  const subgroupOptions = useMemo(() => (context?.settings.subgroupBy ? taskBoardGroupOptions(context, context.settings.subgroupBy) : []), [context]);
   const laneOptions = useMemo(() => {
     if (!context) return [];
     return groups.flatMap((group) =>
@@ -1515,8 +1514,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
           <TaskBoardSettingsDialog
             language={props.language}
             settings={settings}
-            groupOptions={groupOptions}
-            subgroupOptions={subgroupOptions}
+            context={context}
             section={settingsSection}
             saving={savingSettings}
             errorMessage={settingsError}

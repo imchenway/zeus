@@ -62,8 +62,8 @@ export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'activ
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
 export type ConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
-export type ConversationOriginKind = 'ordinary' | 'automation' | 'expert_participant';
-export type ConversationListingScope = 'ordinary' | 'automation_inbox' | 'expert_internal';
+export type ConversationOriginKind = 'ordinary' | 'automation' | 'expert_participant' | 'subagent';
+export type ConversationListingScope = 'ordinary' | 'automation_inbox' | 'expert_internal' | 'subagent_internal';
 export type ConversationGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
 export type ConversationGoalEventKind = 'created' | 'edited' | 'paused' | 'resumed' | 'blocked' | 'usage_limited' | 'budget_limited' | 'completed' | 'cleared';
 
@@ -74,6 +74,8 @@ export interface ZeusConversationGoalRecord {
   status: ConversationGoalStatus;
   tokenBudget: number | null;
   tokensUsed: number;
+  /** 缺失回报时合计仅代表已知用量；历史原生记录不补造此字段。 */
+  usageComplete?: boolean;
   timeUsedSeconds: number;
   providerCreatedAt: number;
   providerUpdatedAt: number;
@@ -1347,28 +1349,34 @@ export class ConversationRepository {
   /** 精准任务刷新沿用同一元数据投影，不再扫描项目会话或消息。 */
   listRecordsByTask(taskId: string, options: ConversationRecordListOptions = {}): ZeusConversationRecord[] {
     return this.db
-      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = ? AND listing_scope <> 'expert_internal' ORDER BY stage_updated_at DESC, created_at DESC, id DESC`, [
-        taskId,
-        options.archived === true ? 1 : 0,
-      ])
+      .select<DbConversationRow>(
+        `SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = ? AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY stage_updated_at DESC, created_at DESC, id DESC`,
+        [taskId, options.archived === true ? 1 : 0],
+      )
       .map(mapConversationRow);
   }
 
   /** Runtime 日志镜像按会话身份定位时只需要主记录，不读取历史消息。 */
   listRecordsBySessionId(sessionId: string): ZeusConversationRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE session_id = ? AND listing_scope <> 'expert_internal' ORDER BY updated_at DESC, id DESC`, [sessionId]).map(mapConversationRow);
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE session_id = ? AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY updated_at DESC, id DESC`, [sessionId])
+      .map(mapConversationRow);
   }
 
   listByWorkspace(workspaceId: string): ZeusConversationWithMessagesRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE workspace_id = ? AND archived = 0 AND listing_scope <> 'expert_internal' ORDER BY updated_at DESC, id`, [workspaceId]).map((row) => {
-      const conversation = mapConversationRow(row);
-      return { ...conversation, messages: this.listMessages(conversation.id) };
-    });
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE workspace_id = ? AND archived = 0 AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY updated_at DESC, id`, [workspaceId])
+      .map((row) => {
+        const conversation = mapConversationRow(row);
+        return { ...conversation, messages: this.listMessages(conversation.id) };
+      });
   }
 
   listByEnvironment(environmentId: string): ZeusConversationWithMessagesRecord[] {
     return this.db
-      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE environment_id = ? AND archived = 0 AND listing_scope <> 'expert_internal' ORDER BY updated_at DESC, id`, [environmentId])
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE environment_id = ? AND archived = 0 AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY updated_at DESC, id`, [
+        environmentId,
+      ])
       .map((row) => {
         const conversation = mapConversationRow(row);
         return { ...conversation, messages: this.listMessages(conversation.id) };
@@ -1376,15 +1384,17 @@ export class ConversationRepository {
   }
 
   listByTask(taskId: string): ZeusConversationWithMessagesRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = 0 AND listing_scope <> 'expert_internal' ORDER BY updated_at DESC, id`, [taskId]).map((row) => {
-      const conversation = mapConversationRow(row);
-      return { ...conversation, messages: this.listMessages(conversation.id) };
-    });
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = 0 AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY updated_at DESC, id`, [taskId])
+      .map((row) => {
+        const conversation = mapConversationRow(row);
+        return { ...conversation, messages: this.listMessages(conversation.id) };
+      });
   }
 
   /** 父任务上下文选择需要同时看到未归档和已归档会话，不改变常规会话列表的隐藏规则。 */
   listAllByTask(taskId: string): ZeusConversationWithMessagesRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND listing_scope <> 'expert_internal' ORDER BY created_at ASC, id`, [taskId]).map((row) => {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY created_at ASC, id`, [taskId]).map((row) => {
       const conversation = mapConversationRow(row);
       return { ...conversation, messages: this.listMessages(conversation.id) };
     });
@@ -1634,6 +1644,7 @@ export class CodexLegacyImportRepository {
 export class ConversationGoalRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** 统一读取用量完整性，历史只读数据库缺少控制表时仍保持可读。 */
   get(conversationId: string): ZeusConversationGoalRecord | undefined {
     const row = this.db.get<{
       conversation_id: string;
@@ -1647,6 +1658,10 @@ export class ConversationGoalRepository {
       provider_updated_at: number;
       updated_at: string;
     }>(`SELECT * FROM conversation_goals WHERE conversation_id = ?`, [conversationId]);
+    const control =
+      row && this.db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_goal_control'")
+        ? this.db.get<{ state_json: string }>('SELECT state_json FROM conversation_goal_control WHERE conversation_id = ?', [conversationId])
+        : undefined;
     return row
       ? {
           conversationId: row.conversation_id,
@@ -1655,6 +1670,7 @@ export class ConversationGoalRepository {
           status: assertEnum(row.status, ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const, 'conversation goal status'),
           tokenBudget: row.token_budget,
           tokensUsed: row.tokens_used,
+          ...(control ? { usageComplete: JSON.parse(control.state_json).usageComplete === true } : {}),
           timeUsedSeconds: row.time_used_seconds,
           providerCreatedAt: row.provider_created_at,
           providerUpdatedAt: row.provider_updated_at,
@@ -3256,8 +3272,8 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     nativeSessionId: row.native_session_id,
     nativeSessionPath: row.native_session_path,
     capabilitySnapshotId: row.capability_snapshot_id,
-    originKind: assertEnum(row.origin_kind, ['ordinary', 'automation', 'expert_participant'] as const, 'conversation origin kind'),
-    listingScope: assertEnum(row.listing_scope, ['ordinary', 'automation_inbox', 'expert_internal'] as const, 'conversation listing scope'),
+    originKind: assertEnum(row.origin_kind, ['ordinary', 'automation', 'expert_participant', 'subagent'] as const, 'conversation origin kind'),
+    listingScope: assertEnum(row.listing_scope, ['ordinary', 'automation_inbox', 'expert_internal', 'subagent_internal'] as const, 'conversation listing scope'),
     automationRunId: row.automation_run_id,
   };
 }

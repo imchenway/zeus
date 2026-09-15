@@ -119,7 +119,21 @@ export interface AgentRunSkillActivation {
   path: string;
 }
 
+/** 已完成校验的本轮资源身份；宿主权限和模型目录必须来自同一快照。 */
+export interface AgentRunResourceSnapshot {
+  /** 沿用提交身份，恢复时不重建另一份资源。 */
+  id: string;
+  /** 目录与选择的路径均指向本轮冻结资源。 */
+  skillCatalog: AgentRunSkillActivation[];
+  /** 多个显式选择保持用户顺序。 */
+  skills: AgentRunSkillActivation[];
+  /** 宿主授予的额外只读根，包括精确附件文件。 */
+  readableRoots: string[];
+}
+
 export interface StartAgentRunInput {
+  /** 模型输入与工具权限共用的资源快照。 */
+  resourceSnapshot?: AgentRunResourceSnapshot;
   session: AgentSessionIdentity;
   content: string;
   clientRequestId: string;
@@ -129,6 +143,12 @@ export interface StartAgentRunInput {
   applicationContext?: AgentRunApplicationContext;
   untrustedContext?: AgentRunUntrustedContext;
   skill?: AgentRunSkillActivation;
+  /** 同一提交的全部显式 Skill。 */
+  skills?: AgentRunSkillActivation[];
+  /** 本轮冻结的普通 Skill 目录，与宿主的读取范围保持一致。 */
+  skillCatalog?: AgentRunSkillActivation[];
+  /** 产品工作模式，计划模式同时约束宿主工具。 */
+  workMode?: 'default' | 'plan';
   /** 仅用于 Zeus 内部 Command/Worker/RPC/回执性能关联，不进入 Provider 正文。 */
   traceIdentity?: string | null;
   /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */

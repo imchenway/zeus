@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAccountSnapshot, CodexAppServerEvent, CodexAppServerManager, CodexCapabilitiesSnapshot, CodexThreadSnapshot, CodexTurnSnapshot, CodexTurnStartInput, CodexTurnSteerInput } from '@zeus/ai-runtime';
-import { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import { conversationDispatchInputSha256 } from '../packages/local-server/src/conversationDispatchCommandApplication.js';
 import { conversationStartInputSha256 } from '../packages/local-server/src/conversationStartCommandApplication.js';
 import { createZeusDataLayout, startZeusLocalServer, type RunningZeusLocalServer } from '../packages/local-server/src/index.js';
@@ -290,6 +290,13 @@ try {
     }
     restartedProvider.loseNextReceipt(echoOrder);
     inspectPreparingDispatch = async () => {
+      /** 上一轮的空闲通知在下一条准备期间到达，覆盖后台线程状态核对入口。 */
+      const readsBeforeStatus = restartedProvider.readThreadCalls;
+      await restartedProvider.publishThreadStatus();
+      await waitFor(() => restartedProvider.readThreadCalls > readsBeforeStatus, '线程状态通知没有触发后台历史核对。');
+      /** 页面必须仍显示正在发送，不能被没有用户回显的旧历史改成暂停。 */
+      const afterStatus = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+      assertBehavior(isRecord(afterStatus.body.state) && afterStatus.body.state.type === 'dispatching', `线程状态通知误暂停准备中的消息：${JSON.stringify(afterStatus.body)}`);
       /** 页面刷新通过既有只读核对命令，不直接改写探针数据。 */
       const input = { intent: 'check' };
       /** 检查期间保留真实 dispatching 状态，而不是改成恢复或伪造模型接纳。 */
@@ -300,7 +307,13 @@ try {
       assertBehavior(result.status === 202 && isRecord(result.body.state) && result.body.state.type === 'dispatching', `准备发送被历史核对暂停：${JSON.stringify(result)}`);
     };
     await restartedProvider.completeTurn(activeIndex);
-    await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 2, '上一轮结束后没有发送队首补充。');
+    try {
+      await waitFor(() => restartedProvider.startTurnInputs.length === activeIndex + 2, '上一轮结束后没有发送队首补充。');
+    } catch (error) {
+      /** 准备回调的错误由真实服务持久化；派发超时时带回该证据，避免掩盖暂停原因。 */
+      const queue = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+      throw new Error(`${String(error)} 队列状态：${JSON.stringify(queue.body)}`);
+    }
     if (echoOrder === 'after') {
       await waitFor(async () => {
         /** 错误回执已落库后才投递用户回显。 */
@@ -320,12 +333,14 @@ try {
 
   /** 完整本地服务上复现引导已接纳但回显延迟的连续发送。 */
   const steering = await verifyContinuousSteering(runningServer, conversationId, restartedProvider);
+  await verifyInteractionRestart(conversationId, restartedProvider);
 
   console.log(
     JSON.stringify(
       {
         status: 'passed',
         steering,
+        unansweredCardRestart: { optionAndCustomAnswer: true, sameThreadContinuation: true, duplicateResponseSentOnce: true },
         piPrewriteRejection: true,
         immutablePayloadProtected: true,
         restartCount: 1,
@@ -338,6 +353,7 @@ try {
         lostReceiptEchoOrders: ['before', 'after'],
         queuedFollowupsSentOnce: true,
         preparingDispatchSurvivesHistoryCheck: true,
+        preparingDispatchSurvivesThreadStatusNotification: true,
         threeIdenticalQueuedMessagesWithAttachment: true,
         quotaFailureCanContinue: true,
         temporaryDatabaseCleanup: 'finally',
@@ -477,6 +493,111 @@ async function verifyContinuousSteering(server: RunningZeusLocalServer, conversa
   }
 }
 
+/** 复现退出后的未答卡片，经公开回答入口验证同线程续接和重复提交保护。 */
+async function verifyInteractionRestart(conversationId: string, initialProvider: ReturnType<typeof createRestartProbeManager>): Promise<void> {
+  /** 每次重启更换连接实例，但保留同一模型会话与真实持久数据库。 */
+  let provider = initialProvider;
+  for (const answer of ['独立全局规则页', '放在设置首页，并支持自定义说明', '确认插件工具']) {
+    /** 插件审批在旧实例中也有内存回调，需要单独验证重启后不再依赖它。 */
+    const pluginApproval = answer === '确认插件工具';
+    /** 保存可控模型的权威历史，下一实例仍能核对原轮次。 */
+    const snapshot = await provider.manager.readThread({ threadId: providerThreadId });
+    await runningServer!.close();
+    runningServer = null;
+    /** 关闭服务后构造截图中的退出失败记录，避免并发改动运行中的数据库。 */
+    const db = await createZeusDatabase(databasePath);
+    /** 待回答记录的稳定身份随数据库重启保留。 */
+    let requestId: string;
+    try {
+      /** 使用产品仓库写入与退出动作相同的状态。 */
+      const conversations = new ConversationRepository(db);
+      /** 前一阶段的未知发送已验证完成，此处显式取消以隔离答题卡场景。 */
+      const submissions = new ConversationSubmissionRepository(db);
+      /** 原问题仍归属最近的模型轮次。 */
+      const turns = new ConversationTurnRepository(db);
+      /** 原题和选项随请求记录一起耐久保存。 */
+      const requests = new ConversationServerRequestRepository(db);
+      /** 统一记录本次退出时间。 */
+      const timestamp = new Date().toISOString();
+      for (const submission of submissions.listByConversation(conversationId)) {
+        if (['queued', 'paused', 'active', 'dispatching'].includes(submission.status)) submissions.updateStatus(submission.id, 'cancelled', { resolvedAt: timestamp, updatedAt: timestamp });
+      }
+      /** 每张问题都有独立的退出轮次，不篡改之前已经正常完成的轮次。 */
+      const turn = turns.upsert({ conversationId, providerThreadId, providerTurnId: randomUUID(), clientSubmissionId: null, status: 'interrupted', startedAt: timestamp, completedAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+      snapshot.turns.push({ id: turn.providerTurnId!, threadId: providerThreadId, status: 'interrupted', items: [], completedAt: timestamp });
+      requestId = requests.upsert({
+        conversationId,
+        turnId: turn.id,
+        itemId: `question-${answer}`,
+        transportGenerationId: 'disconnected-generation',
+        providerRequestId: `question-${answer}`,
+        requestKind: pluginApproval ? 'command' : 'request_user_input',
+        payload: pluginApproval
+          ? { threadId: providerThreadId, turnId: turn.providerTurnId, zeusPluginToolApproval: true, command: 'MCP probe.inspect', availableDecisions: ['accept', 'decline', 'cancel'] }
+          : {
+              threadId: providerThreadId,
+              turnId: turn.providerTurnId,
+              questions: [
+                {
+                  id: 'placement',
+                  header: '入口位置',
+                  question: '规则编辑入口放在哪里？',
+                  isSecret: false,
+                  isOther: true,
+                  options: [
+                    { label: '独立全局规则页', description: '直接进入规则编辑。' },
+                    { label: 'AI 连接页', description: '与连接设置放在一起。' },
+                  ],
+                },
+              ],
+            },
+        status: 'failed',
+        response: { code: 'ZEUS_FORCED_QUIT_INTERRUPTED' },
+        createdAt: timestamp,
+      }).id;
+      conversations.bindProvider(conversationId, { providerId: 'codex', providerThreadId, providerModel: 'gpt-5.6-sol', providerState: 'ready' });
+      await db.save();
+    } finally {
+      db.close();
+    }
+    provider = createRestartProbeManager({ providerThreadId, initialTurns: snapshot.turns, turnIds: [randomUUID()] });
+    runningServer = await startProbeServer(provider.manager, `question-${answer}`);
+    /** 使用与界面相同的卡片查询入口，确认空闲会话也主动恢复未答卡片。 */
+    const base = `/api/projects/${projectId}/conversations/${conversationId}`;
+    await waitFor(
+      async () => {
+        /** 恢复会异步广播新快照，最初一次读取允许仍处于检查中。 */
+        const current = await requestJson(runningServer!, `${base}/pending-requests`);
+        return current.status === 200 && (current.body.requests as JsonObject[]).some((request) => request.id === requestId && request.status === 'pending');
+      },
+      `重启后的原答题卡未恢复提交入口：${answer}`,
+      15_000,
+    ).catch(async (error) => {
+      /** 失败时只输出临时场景状态，区分恢复规则与探针准备错误。 */
+      const state = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        throw new Error(
+          `${String(error)}：${JSON.stringify({ request: state.prepare('SELECT status, response_json, turn_id FROM conversation_server_requests WHERE id = ?').get(requestId), turns: state.prepare('SELECT id, status, error_json FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 2').all(conversationId), cards: (await requestJson(runningServer!, `${base}/pending-requests`)).body })}`,
+        );
+      } finally {
+        state.close();
+      }
+    });
+    /** 与界面相同的答案格式同时覆盖预设选项和自由输入。 */
+    const response = pluginApproval ? { type: 'command', decision: 'accept' } : { type: 'userInput', answers: { placement: { answers: [answer] } } };
+    /** 同一操作身份的重复点击只能形成一次续接。 */
+    const body = commandRequest({ commandType: 'conversation.server_request.respond', scopeKind: 'approval', scopeId: requestId, operationIdentity: requestId, input: response, inputSha256: conversationDispatchInputSha256(response) });
+    /** 公开写入口必须明确接纳原答案。 */
+    const accepted = await requestJson(runningServer, `${base}/requests/${requestId}/respond`, { method: 'POST', body });
+    assertBehavior(accepted.status === 202, `恢复答题提交失败：${JSON.stringify(accepted.body)}`);
+    await requestJson(runningServer, `${base}/requests/${requestId}/respond`, { method: 'POST', body });
+    await waitFor(() => provider.startTurnInputs.length === 1, '恢复答案没有继续模型对话。', 15_000);
+    assertBehavior(provider.startTurnInputs[0]!.threadId === providerThreadId && JSON.stringify(provider.startTurnInputs[0]!.input).includes(pluginApproval ? 'probe.inspect' : answer), '续接丢失用户答案或切换了模型会话。');
+    await provider.completeTurn(0);
+    assertBehavior(provider.startTurnInputs.length === 1, '重复回答创建了多个模型轮次。');
+  }
+}
+
 async function startProbeServer(manager: CodexAppServerManager, instanceId: string): Promise<RunningZeusLocalServer> {
   return startZeusLocalServer({
     dbPath: databasePath,
@@ -513,6 +634,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   loseNextReceipt(order: 'before' | 'after'): void;
   /** 投递带有原客户端身份的模型回显。 */
   publishUserMessage(index: number): Promise<void>;
+  /** 从原生订阅入口投递线程状态，覆盖独立的后台核对路径。 */
+  publishThreadStatus(): Promise<void>;
   /** 结束活动轮以唤醒下一条消息。 */
   completeTurn(index: number): Promise<void>;
   /** 控制真实服务收到的失败终态通知，不调用付费模型。 */
@@ -612,7 +735,16 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       readThreadCalls += 1;
       return threadSnapshot();
     },
-    listThreadTurns: async () => ({ data: [...turns].reverse(), nextCursor: null }),
+    /** 元信息分页不允许正文回退到整段读取。 */
+    listThreadTurns: async () => ({ data: [...turns].reverse().map((turn) => ({ ...turn, items: [] })), nextCursor: null }),
+    /** 正文只能通过原生条目分页读取，探针模拟原生升序游标。 */
+    listThreadItems: async ({ turnId, cursor, limit }: { turnId: string; cursor?: string | null; limit?: number }) => {
+      /** 当前轮次的真实探针内容，不跨轮次借用。 */
+      const items = turns.find((turn) => turn.id === turnId)?.items ?? [];
+      /** 游标表示已读取位置，页面结束后必须返回空游标。 */
+      const offset = Number(cursor ?? 0);
+      return { data: items.slice(offset, offset + (limit ?? 32)).map((item) => ({ turnId, item })), nextCursor: offset + (limit ?? 32) < items.length ? String(offset + (limit ?? 32)) : null };
+    },
     listThreads: async () => ({ data: [threadSnapshot()], nextCursor: null }),
     listSkills: async ({ cwds }: { cwds?: string[] }) => (cwds ?? []).map((cwd) => ({ cwd, skills: [], errors: [] })),
     startTurn: async (turnInput: CodexTurnStartInput) => {
@@ -691,6 +823,10 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       lostReceiptOrder = order;
     },
     publishUserMessage,
+    /** 状态通知走真实事件订阅和延迟核对，不直接改写提交。 */
+    async publishThreadStatus() {
+      await emit('thread/status/changed', { threadId: input.providerThreadId, status: threadSnapshot().status });
+    },
     completeTurn,
     /** 失败与回显共用递增序号，避免后续事件被当作重复通知。 */
     async failLatestTurn() {
@@ -708,7 +844,7 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   };
 }
 
-function commandRequest(input: { commandType: string; scopeKind: 'project' | 'product_conversation' | 'submission'; scopeId: string; operationIdentity: string; input: JsonObject; inputSha256: string }): JsonObject {
+function commandRequest(input: { commandType: string; scopeKind: 'project' | 'product_conversation' | 'submission' | 'approval'; scopeId: string; operationIdentity: string; input: JsonObject; inputSha256: string }): JsonObject {
   return {
     command: {
       schemaGeneration: 'zeus-command-envelope-v1',

@@ -250,5 +250,7 @@ export type WorkspacePageProps = {
     settingsCategory: SettingsCategory;
     onNavigate: (target: MainNavTarget) => void;
     onSettingsCategoryChange: (category: SettingsCategory) => void;
+    /** 外部地址变化进入工作区已有的未保存保护。 */
+    onRegisterLeaveGuard?: (guard: ((leave: () => void, cancel?: () => void) => void) | null) => void;
   };
 };

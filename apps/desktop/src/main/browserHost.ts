@@ -788,16 +788,14 @@ export class BrowserHost implements BrowserAutomationPort {
     const view = this.ensureView(tab, false);
     this.schedulePersist();
     this.emitSnapshot(input.conversationId);
-    if (url !== 'about:blank') {
-      // 标签和浏览器工作面先进入可交互状态，网页继续在 WebContents 内按正常导航生命周期加载。
-      void loadUserFacingBrowserUrl(view.webContents, url).then(() => {
-        if (this.tabs.get(id) !== tab || view.webContents.isDestroyed()) return;
-        // 连续刷新可能终止上一轮导航，加载状态始终以当前网页为准。
-        tab.snapshot = { ...tab.snapshot, loading: view.webContents.isLoading(), updatedAt: this.now() };
-        this.schedulePersist();
-        this.emitSnapshot(input.conversationId);
-      });
-    }
+    // 空白页也必须导航才能初始化文档；标签先可交互，加载继续走原生网页生命周期。
+    void loadUserFacingBrowserUrl(view.webContents, url).then(() => {
+      if (this.tabs.get(id) !== tab || view.webContents.isDestroyed()) return;
+      // 连续刷新可能终止上一轮导航，加载状态始终以当前网页为准。
+      tab.snapshot = { ...tab.snapshot, loading: view.webContents.isLoading(), updatedAt: this.now() };
+      this.schedulePersist();
+      this.emitSnapshot(input.conversationId);
+    });
     return this.snapshotFor(input.conversationId);
   }
 
@@ -954,7 +952,8 @@ export class BrowserHost implements BrowserAutomationPort {
       .catch((error) => {
         tab.consoleLogs.push({ level: 2, message: `Zeus dialog monitor unavailable: ${error instanceof Error ? error.message : String(error)}`, line: 0, sourceId: 'zeus-browser', createdAt: this.now() });
       });
-    if (loadSnapshotUrl && tab.snapshot.url && tab.snapshot.url !== 'about:blank') {
+    // 恢复持久化空白标签时，同样建立可读取的文档和预加载环境。
+    if (loadSnapshotUrl && tab.snapshot.url) {
       void loadUserFacingBrowserUrl(view.webContents, tab.snapshot.url);
     }
     return view;

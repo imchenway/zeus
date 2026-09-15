@@ -810,12 +810,9 @@ export function TaskModelPushModal(props: {
   }
 
   const modal = (
-    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose} role="dialog" aria-labelledby="task-model-push-title">
       <form
         className="task-model-push-modal zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-model-push-title"
         onSubmit={props.onSubmit}
         onFocusCapture={(event) => {
           /** 保存接入按钮或具备稳定标识的输入框，返回时保持键盘位置。 */
@@ -825,6 +822,7 @@ export function TaskModelPushModal(props: {
           else if (target.matches('[data-task-push-primary]')) readingPositionRef.current.focusSelector = '[data-task-push-primary]';
           else if (target.id) readingPositionRef.current.focusSelector = `#${CSS.escape(target.id)}`;
         }}
+        data-modal-surface="dialog"
       >
         <header className="task-model-push-header">
           <span>

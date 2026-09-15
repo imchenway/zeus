@@ -1,12 +1,11 @@
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
+import { MessageCheckIcon, MessageCopyIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import {
@@ -885,6 +884,9 @@ function structuredMessageTokens(text: string): StructuredMessageToken[] {
   for (const match of searchableText.matchAll(pattern)) {
     const label = match[2]?.trim();
     if (!label || seen.has(label)) continue;
+    // 文件路径保留为普通正文，不能套用技能标签的高亮和禁止换行样式。
+    // ponytail: 历史标签仍由文本推断，单段路径有歧义时需保存引用位置。
+    if (label.startsWith('/') && /[/\\.]/u.test(label.slice(1))) continue;
     seen.add(label);
     tokens.push({
       label,
@@ -1225,6 +1227,7 @@ function CommandExecutionItem(props: { item: NativeSessionItemBuffer; language: 
   );
 }
 
+/** 消息和命令共用复制按钮及柔化图标，保留复制成功反馈。 */
 function CopyIconButton(props: { label: string; copiedLabel: string; text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -1241,7 +1244,7 @@ function CopyIconButton(props: { label: string; copiedLabel: string; text: strin
       data-copied={copied || undefined}
       onClick={async () => setCopied(await copyText(props.text))}
     >
-      {copied ? <MessageCheckIcon /> : <Copy aria-hidden="true" weight="regular" />}
+      {copied ? <MessageCheckIcon /> : <MessageCopyIcon />}
     </button>
   );
 }

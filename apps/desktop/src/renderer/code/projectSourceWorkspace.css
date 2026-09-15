@@ -13,6 +13,47 @@
   background: var(--zeus-product-panel);
 }
 
+.project-source-toolbar {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 0;
+  background: var(--zeus-product-panel);
+  -webkit-app-region: no-drag;
+}
+
+.project-source-project-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.project-source-project-identity strong,
+.project-source-project-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-source-project-identity strong {
+  font-size: 13px;
+}
+.project-source-project-identity small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.project-source-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-source-toolbar-actions > button:not(.zeus-button),
 .project-source-tree-toggle,
 .project-source-operation-modal header button,
 .project-source-message button {
@@ -49,7 +90,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 12px;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   font-size: 12px;
 }
 
@@ -80,7 +121,7 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  border-right: 1px solid var(--zeus-control-border);
+  border-right: 0;
   background: var(--zeus-product-panel-muted);
 }
 .project-source-conflict-comparison {
@@ -109,7 +150,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--zeus-control-border);
+  border: 0;
 }
 .project-source-conflict-columns h3 {
   margin: 0;
@@ -133,7 +174,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
 }
 .project-source-change-preview > header > span {
   overflow-wrap: anywhere;
@@ -147,7 +188,7 @@
   --source-module-header-height: 30px;
   position: relative;
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
 }
 .macos-ai-app .project-source-tree .project-source-module > summary,
 .macos-ai-app .project-source-tree .project-source-changes-body summary {
@@ -284,7 +325,7 @@
   flex: 0 0 5px;
   cursor: row-resize;
   touch-action: none;
-  background: var(--zeus-control-border);
+  background: transparent;
 }
 .project-source-module-resizer:hover,
 .project-source-module-resizer:focus-visible {
@@ -353,7 +394,7 @@
   background: var(--zeus-interaction-hover);
 }
 .project-source-changes-body button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
 }
 .project-source-changes-body button > small {
@@ -403,10 +444,6 @@
   font: inherit;
   font-size: 12px;
 }
-.project-source-search input:focus {
-  border-color: var(--zeus-control-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zeus-control-accent) 18%, transparent);
-}
 
 .project-source-tree-scroll {
   min-height: 0;
@@ -438,7 +475,7 @@
   background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent);
 }
 .project-source-tree-scroll button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
 }
 .project-source-tree-scroll button:disabled {
@@ -519,6 +556,9 @@
   padding: 4px 8px 0;
   border-bottom: 1px solid var(--zeus-control-border);
   background: var(--zeus-code-editor-bg);
+
+  border-bottom: 0;
+  background: var(--zeus-product-panel-muted);
 }
 
 .project-source-tab {
@@ -531,6 +571,9 @@
   padding: 0 4px 0 0;
   border: 1px solid transparent;
   border-radius: 8px;
+
+  border-right: 0;
+  border-bottom: 2px solid transparent;
   color: var(--zeus-control-muted-text);
   background: transparent;
 }
@@ -601,7 +644,7 @@
   gap: 4px;
   overflow: hidden;
   padding: 0 12px;
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
   color: var(--zeus-control-muted-text);
   font-size: 11px;
 }
@@ -638,7 +681,7 @@
   justify-content: flex-end;
   gap: 14px;
   padding: 0 12px;
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
   color: var(--zeus-control-muted-text);
   background: var(--zeus-product-panel-muted);
   font-size: 10px;
@@ -753,14 +796,14 @@
   padding: 12px 14px;
 }
 .project-source-operation-modal > header {
-  border-bottom: 1px solid var(--zeus-control-border);
+  border-bottom: 0;
 }
 .project-source-operation-modal > header strong {
   flex: 1;
 }
 .project-source-operation-modal > footer {
   justify-content: flex-end;
-  border-top: 1px solid var(--zeus-control-border);
+  border-top: 0;
 }
 .project-source-operation-modal > div {
   display: flex;

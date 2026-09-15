@@ -1,3 +1,4 @@
+import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
@@ -46,6 +47,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   requests: ConversationServerRequestRepository;
   planActions: ConversationPlanActionRepository;
   goals: ConversationGoalRepository;
+  /** 双执行链交接目标时记录唯一控制来源。 */
+  goalControls?: import('@zeus/storage').ConversationRuntimeRepository;
   receipts: ProviderEventReceiptRepository;
   syncCheckpoints: ConversationProviderSyncCheckpointRepository;
   settings: SettingRepository;
@@ -57,6 +60,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   broadcast: (type: string, payload: Record<string, unknown>) => void;
   now: () => string;
   browserAutomation?: BrowserAutomationPort;
+  /** 当前任务的本地编排工具。 */
+  workTools?: TaskWorkToolPort;
   plugins?: ZeusConversationPluginRuntime;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   trustedAttachmentRoots: string[];
@@ -70,6 +75,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     executionWorkspaceMode?: 'direct' | 'worktree';
   } | null>;
   resolveResponsesRuntime: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
+  /** 两条链路读取同一轮冻结的普通 Skill 目录。 */
+  loadSkills?(cwd: string, identity: string): Promise<NativeConversationSkillInput[]>;
   compileDispatchContext: ProviderDispatchContextCompiler;
   preflightCodexModelBudget: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
 }
@@ -289,6 +296,8 @@ export interface StartTaskConversationInput {
   displayText?: string;
   model: string;
   skill?: NativeConversationSkillInput;
+  /** 本轮完整的显式 Skill 选择。 */
+  skills?: NativeConversationSkillInput[];
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -336,6 +345,8 @@ export interface StartProjectConversationInput {
   displayText?: string;
   model: string;
   skill?: NativeConversationSkillInput;
+  /** 本轮完整的显式 Skill 选择。 */
+  skills?: NativeConversationSkillInput[];
   modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
@@ -378,6 +389,8 @@ export interface SubmitNativeMessageInput {
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   skill?: NativeConversationSkillInput;
+  /** 本轮完整的显式 Skill 选择。 */
+  skills?: NativeConversationSkillInput[];
   computerUseRequested?: boolean;
   idempotencyKey: string;
   clientUserMessageId: string;
@@ -534,6 +547,8 @@ export interface CodexNativeConversationCoordinator {
 
   respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation>;
   setGoal(input: SetNativeGoalInput): Promise<ZeusConversationGoalRecord>;
+  /** 对旧线程停止原生自动推进，不因新线程身份覆盖而误发。 */
+  pauseGoalForHandoff(input: { conversationId: string; threadId: string }): Promise<void>;
   readGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord | null>;
   pauseGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
   resumeGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;

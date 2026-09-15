@@ -183,7 +183,7 @@ export function PlanImplementationRequestSurface(props: {
               <span className="session-question-index">
                 <PencilSimple aria-hidden="true" />
               </span>
-              <span className="session-question-option-copy">{zh ? '否，并告诉 Codex 应该如何做得不同' : 'No, tell Codex what to do differently'}</span>
+              <span className="session-question-option-copy">{zh ? '否，继续完善计划' : 'No, refine the plan'}</span>
             </button>
             {actions}
           </div>

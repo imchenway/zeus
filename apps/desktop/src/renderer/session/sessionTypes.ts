@@ -1,3 +1,4 @@
+import type { ConversationFeatureCatalog } from '@zeus/shared';
 import type { AssistantMessageMetadata, AsyncQuestionAnswer, AsyncQuestionResponse } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import type {
@@ -45,6 +46,8 @@ export interface NativeGoalSnapshot {
   status: NativeGoalStatus;
   tokenBudget: number | null;
   tokensUsed: number;
+  /** 为 false 时只显示已知用量，不声称总消耗准确。 */
+  usageComplete?: boolean;
   timeUsedSeconds: number;
   providerCreatedAt: number;
   providerUpdatedAt: number;
@@ -994,6 +997,8 @@ export interface CodexTaskPushModelCapability {
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   tools?: 'supported' | 'unsupported' | 'unverified';
   imageInput?: 'supported' | 'unsupported' | 'unverified';
+  /** 服务端按执行内核、已注册工具和接口给出的产品能力。 */
+  features?: ConversationFeatureCatalog;
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string | null;
   serviceTiers: Array<{ id: string; name: string; description: string }>;

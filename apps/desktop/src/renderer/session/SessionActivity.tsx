@@ -46,6 +46,8 @@ interface SessionActivityGroupProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+  /** 工具详情展开后沿用会话全文补载，恢复被分页截断的长命令。 */
+  onLoadContent?: (handle: string) => Promise<void>;
 }
 
 /** 活动组保留真实过程；单条无详情的整理记录直接显示，避免标题与明细重复。 */
@@ -90,6 +92,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
                     motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
                     onOpenResource={props.onOpenResource}
                     onLoadToolResult={props.onLoadToolResult}
+                    onLoadContent={props.onLoadContent}
                   />
                 ))}
               </ol>
@@ -115,6 +118,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
     previous.onLoadToolResult !== next.onLoadToolResult ||
+    previous.onLoadContent !== next.onLoadContent ||
     previous.items.length !== next.items.length
   )
     return false;
@@ -147,6 +151,8 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+  /** 与思考正文共用现有内容句柄读取入口。 */
+  onLoadContent?: (handle: string) => Promise<void>;
 }) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
@@ -171,7 +177,16 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
       </span>
       <div className="session-activity-item-copy">
         {detail ? (
-          <details className="session-activity-item-detail" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+          <details
+            className="session-activity-item-detail"
+            open={open}
+            onToggle={(event) => {
+              setOpen(event.currentTarget.open);
+              if (event.currentTarget.open && props.item.payload.v2ContentTruncated === true && typeof props.item.payload.v2ContentHandle === 'string') {
+                void props.onLoadContent?.(props.item.payload.v2ContentHandle).catch(() => undefined);
+              }
+            }}
+          >
             <summary className="session-activity-item-summary">
               {titleNode}
               <CaretDown className="session-activity-item-caret" aria-hidden="true" weight="bold" />
@@ -560,11 +575,6 @@ export function SessionTurnProcessDisclosure(props: {
       <Collapsible id={inline ? undefined : bodyId} open={open}>
         <div className="session-turn-process-body">
           {props.children}
-          {props.loading ? (
-            <p className="session-v2-page-status" role="status">
-              {props.labelKind === 'details' ? (props.language === 'zh-CN' ? '正在读取这轮的详情…' : 'Loading this turn’s details…') : props.language === 'zh-CN' ? '正在读取这轮的处理过程…' : 'Loading this turn’s process…'}
-            </p>
-          ) : null}
           {props.error ? (
             <p className="session-v2-page-error" role="alert">
               <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />

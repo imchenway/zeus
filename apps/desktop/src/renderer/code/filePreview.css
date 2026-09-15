@@ -1,0 +1,157 @@
+/* 所有文件预览共用紧凑操作栏；内容区域承担滚动。 */
+.file-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  color: inherit;
+}
+.file-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  flex: 0 0 auto;
+}
+.file-preview button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.file-preview button[aria-pressed='true'] {
+  background: color-mix(in srgb, #7255dc 15%, transparent);
+}
+.file-preview button:focus-visible {
+  outline: 2px solid #7255dc;
+  outline-offset: 2px;
+}
+.file-preview p {
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+.file-preview-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 260px;
+  flex: 1;
+}
+.file-preview-single {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.file-preview-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+.file-preview-content > header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+.file-preview-content > header small {
+  opacity: 0.65;
+}
+.file-preview-image {
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  flex: 1;
+  min-width: 0;
+}
+/* 棋盘底适用于透明图标，明暗主题均保留可辨认的对照。 */
+.file-preview-checker {
+  overflow: auto;
+  min-height: 180px;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background-color: #fafafa;
+  background-image: conic-gradient(#ddd 25%, transparent 0 50%, #ddd 0 75%, transparent 0);
+  background-size: 20px 20px;
+  color: #292929;
+}
+.file-preview-checker img {
+  display: block;
+  width: 100%;
+  height: min(45vh, 420px);
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+.file-preview-checker img.is-actual-size {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  image-rendering: pixelated;
+}
+.file-preview-pdf {
+  width: 100%;
+  min-height: 420px;
+  flex: 1;
+  border: 0;
+  background: #fff;
+}
+.file-preview video {
+  max-width: 100%;
+  max-height: 65vh;
+}
+.file-preview audio {
+  width: 100%;
+}
+.file-preview-text {
+  height: 100%;
+  min-height: 260px;
+  flex: 1;
+  overflow: hidden;
+}
+.file-preview-markdown {
+  overflow: auto;
+  padding: 12px;
+}
+.file-preview-portal {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: grid;
+  place-items: center;
+  background: #0006;
+}
+.file-preview-dialog {
+  width: min(1100px, 94vw);
+  height: min(850px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--zeus-product-panel, #fff);
+  color: var(--zeus-product-text, #222);
+  border-radius: 12px;
+  box-shadow: 0 12px 50px #0004;
+}
+.file-preview-dialog > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .file-preview-pair {
+    grid-template-columns: 1fr;
+  }
+}

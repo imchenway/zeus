@@ -1,3 +1,4 @@
+import { filePreviewMime, filePreviewKind, filePreviewLimits } from '@zeus/shared';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, link, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -153,12 +154,12 @@ export function createConversationInputResourceBroker(options: CreateConversatio
     async preview(resource) {
       const resolvedPath = await resolveInputResourcePath(resource, options.grantSecret, attachmentRoot);
       if (!resolvedPath) return null;
-      const mimeType = inferTaskClipboardAttachmentMimeType(resolvedPath);
+      const mimeType = filePreviewMime(resolvedPath);
       if (!mimeType.startsWith('image/')) return null;
       const pathStat = await stat(resolvedPath);
-      if (!pathStat.isFile() || pathStat.size > maximumResourceBytes) return null;
+      if (!pathStat.isFile() || pathStat.size > filePreviewLimits.image) return null;
       const data = await readFile(resolvedPath);
-      const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
+      const previewUrl = filePreviewKind(mimeType) === 'image' ? `data:${mimeType};base64,${data.toString('base64')}` : undefined;
       if (previewUrl) return { previewUrl, mimeType };
       const png = options.convertImagePathToPng?.(resolvedPath);
       const convertedPreviewUrl = png ? buildTaskAttachmentPreviewDataUrl(png, 'image/png') : undefined;

@@ -1,3 +1,4 @@
+import { isInteractiveShellSession } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AiCliAdapterDescriptor, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
@@ -138,6 +139,8 @@ export function registerRuntimeSessionCommandRoutes(options: {
   resolveExistingRuntimeSessionAdapter(command: string): AiCliAdapterDescriptor | null;
   readProjectAllowsShell(projectId: string): boolean;
   buildRuntimeProcessEnv(): NodeJS.ProcessEnv;
+  /** 仅在创建交互终端时读取，查询和重连不触发启动命令。 */
+  readTerminalStartupCommand(): string;
   resolveTaskDefaultManagementStatus(projectId: string): TaskManagementStatus;
   stopPersistedOrphanRuntimeSession(sessionId: string): Promise<AiRuntimeSession | null>;
   toAiRuntimeSession(record: ZeusRuntimeSessionRecord): AiRuntimeSession;
@@ -303,7 +306,9 @@ export function registerRuntimeSessionCommandRoutes(options: {
         },
         invoke: async () => {
           if (!prepared) throw new RuntimeSessionRouteError('ZEUS_RUNTIME_SESSION_REJECTED', 'Runtime session preflight did not complete.', 409);
-          return options.aiRuntimeManager.startSession({
+          /** 与进程创建共用一次性外部操作，重放启动回执不会重复发送命令。 */
+          const startupCommand = isInteractiveShellSession({ command: parsed.input.command, args: parsed.input.args ?? [] }) ? options.readTerminalStartupCommand() : '';
+          const session = await options.aiRuntimeManager.startSession({
             id: parsed.operationIdentity,
             projectId: parsed.input.projectId,
             taskId: parsed.input.taskId,
@@ -312,6 +317,8 @@ export function registerRuntimeSessionCommandRoutes(options: {
             cwd: parsed.input.cwd ?? prepared.projectRoot,
             env: options.buildRuntimeProcessEnv(),
           });
+          if (startupCommand) options.aiRuntimeManager.inputSession(session.id, `${startupCommand.replace(/\n/gu, '\r')}\r`);
+          return session;
         },
         mutateAcceptedBusinessState: (session) => {
           options.appendAuditLog({
@@ -812,7 +819,8 @@ function consumeRuntimeConfirmation(options: Parameters<typeof registerRuntimeSe
 function requireWritableLiveSession(options: Parameters<typeof registerRuntimeSessionCommandRoutes>[0], sessionId: string, errorCode: string): AiRuntimeSession {
   const session = options.aiRuntimeManager.getSession(sessionId);
   if (!session) throw new RuntimeSessionRouteError(errorCode, 'AI Runtime session not found', 404);
-  const adapter = options.resolveExistingRuntimeSessionAdapter(session.command);
+  /** 已通过启动校验的交互 shell 按会话事实识别，后续修改默认 shell 不影响已有输入与缩放。 */
+  const adapter = isInteractiveShellSession(session) ? options.resolveRegisteredRuntimeAdapter('sh') : options.resolveExistingRuntimeSessionAdapter(session.command);
   if (!adapter) throw new RuntimeSessionRouteError(errorCode, 'Runtime session adapter identity could not be verified.', 409);
   if (adapter.id === 'codex') throw new RuntimeSessionRouteError('ZEUS_CODEX_NATIVE_APP_SERVER_REQUIRED', 'Codex Runtime writes require the native app-server transport.', 409);
   return session;

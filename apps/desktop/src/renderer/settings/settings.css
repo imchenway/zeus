@@ -58,7 +58,7 @@
   :where(input, button, select, textarea) {
     font-family: inherit;
   }
-  :where(button, input, select, textarea, summary):focus-visible {
+  :where(button, summary, input[type='checkbox'], input[type='radio']):focus-visible {
     outline: 2px solid var(--zeus-product-accent);
     outline-offset: 2px;
   }
@@ -70,7 +70,7 @@
     min-block-size: 0;
     max-block-size: none;
     padding: 64px 12px 20px;
-    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    border-inline-end: 0;
     background: var(--zeus-source-list-bg);
     overflow: hidden;
   }
@@ -202,6 +202,28 @@
     align-content: start;
     gap: 28px;
     padding: 0;
+  }
+  /* 全局规则沿用设置页比例，文件路径换行，编辑器独立滚动。 */
+  .global-agent-settings {
+    gap: 16px;
+  }
+  .global-agent-settings-info {
+    display: grid;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .global-agent-settings-info p {
+    margin: 0;
+  }
+  .global-agent-settings-path {
+    overflow-wrap: anywhere;
+  }
+  .global-agent-settings-editor {
+    height: clamp(260px, 48vh, 640px);
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--zeus-control-border);
+    border-radius: 8px;
   }
   :where(.settings-product-pane, .settings-product-section, .native-settings-pane, .codex-usage-section, .memory-scope-controls, .codex-remote-control-settings) {
     border: 0 !important;
@@ -418,7 +440,7 @@
     border: 0;
   }
   .native-control-row + .native-control-row {
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
   :where(.native-control-copy, .settings-row-copy, .release-update-copy) {
     display: grid;
@@ -512,7 +534,7 @@
     min-block-size: 68px;
     padding: 16px 0;
     border: 0;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
   }
   .settings-row-field {
     display: grid;
@@ -570,7 +592,7 @@
   /* 诊断明细按需查阅，页面主体始终完整展示。 */
   .settings-disclosure {
     min-inline-size: 0;
-    border-block: 1px solid var(--zeus-product-line-soft);
+    border-block: 0;
     padding: 0;
   }
   .settings-disclosure > summary {
@@ -596,7 +618,7 @@
   .model-connection-list {
     padding: 0 14px 0 0;
     border: 0;
-    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    border-inline-end: 0;
     border-radius: 0;
     background: transparent;
     max-block-size: 560px;
@@ -676,7 +698,7 @@
     gap: 12px;
     min-inline-size: 0;
     padding-block-start: 18px;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
   /* 批量展开保持独立快捷入口，标题和说明共用左侧空间。 */
   .model-definition-section > header {
@@ -726,7 +748,7 @@
     box-shadow: none !important;
   }
   .model-definition-card + .model-definition-card {
-    border-block-start: 1px solid var(--zeus-product-line-soft) !important;
+    border-block-start: 0 !important;
   }
   .model-definition-header {
     display: flex;
@@ -788,7 +810,7 @@
     flex-wrap: wrap;
     gap: 8px;
     padding-block-start: 16px;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
   }
   .model-connection-actions > [data-button-variant='danger'] {
     margin-inline-start: auto;
@@ -808,7 +830,7 @@
     grid-template-columns: 1fr auto;
     gap: 8px 20px;
     padding: 0 0 22px;
-    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+    border-block-end: 0 !important;
   }
   .model-setup-account > p {
     color: var(--zeus-product-muted);
@@ -829,7 +851,7 @@
   .codex-usage-section {
     gap: 18px;
     padding-block-end: 24px;
-    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+    border-block-end: 0 !important;
   }
   .codex-usage-section > header {
     gap: 20px;
@@ -848,7 +870,7 @@
     min-inline-size: 0;
     max-inline-size: 100%;
     overflow-x: auto;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
   }
   .codex-usage-local-tab-list > button {
     flex: 0 0 auto;
@@ -950,7 +972,7 @@
     align-content: start;
     gap: 14px;
     padding: 16px;
-    border: 1px solid var(--zeus-product-line-soft);
+    border: 0;
     border-radius: 16px;
     background: color-mix(in srgb, var(--zeus-product-panel) 88%, var(--zeus-product-canvas));
   }
@@ -976,7 +998,7 @@
   }
   .codex-usage-table-wrap :where(th, td) {
     padding: 12px 8px;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
     font-variant-numeric: tabular-nums;
   }
   .codex-usage-table-wrap thead th {
@@ -1008,7 +1030,7 @@
     flex-wrap: wrap;
     gap: 8px;
     padding: 0 0 16px;
-    border-block-end: 1px solid var(--zeus-product-line-soft) !important;
+    border-block-end: 0 !important;
   }
   .memory-scope-controls > button:last-child {
     margin-inline-start: auto;
@@ -1016,7 +1038,7 @@
   .memory-record,
   .memory-tombstone-confirmation {
     padding: 16px;
-    border: 1px solid var(--zeus-product-line-soft) !important;
+    border: 0 !important;
     border-radius: 8px;
     background: transparent !important;
     box-shadow: none;
@@ -1052,7 +1074,7 @@
   .task-enum-order-editor > header {
     background: transparent;
     padding: 12px;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
   }
   .task-enum-order-editor li {
     min-block-size: 40px;
@@ -1095,7 +1117,7 @@
     gap: 20px;
     padding: 14px 0;
     border: 0;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
     border-radius: 0;
   }
   .settings-archived-conversation-copy {
@@ -1161,7 +1183,7 @@
     gap: 20px;
     padding: 20px 0;
     border: 0;
-    border-block-end: 1px solid var(--zeus-product-line-soft);
+    border-block-end: 0;
   }
   .release-update-field {
     display: grid;
@@ -1241,7 +1263,7 @@
       max-block-size: none;
       padding: 0 0 12px;
       border: 0;
-      border-block-end: 1px solid var(--zeus-product-line-soft);
+      border-block-end: 0;
       overflow-x: auto;
     }
     .model-connection-list > button {
@@ -1421,7 +1443,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    border-inline-end: 1px solid var(--zeus-product-line-soft);
+    border-inline-end: 0;
     padding-inline-end: 16px;
   }
   .task-field-tab {
@@ -1539,7 +1561,7 @@
   }
   .digital-employee-editor-actions {
     padding: 16px 0;
-    border-top: 1px solid var(--zeus-product-line-soft);
+    border-top: 0;
     background: transparent;
   }
   .employee-identity-heading {
@@ -1547,7 +1569,7 @@
     align-items: center;
     gap: 22px;
     padding-bottom: 20px;
-    border-bottom: 1px solid var(--zeus-product-line-soft);
+    border-bottom: 0;
   }
   .employee-identity-heading > .digital-employee-avatar {
     inline-size: 104px;
@@ -1633,7 +1655,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 14px;
     padding-block: 16px;
-    border-bottom: 1px solid var(--zeus-product-line-soft);
+    border-bottom: 0;
   }
   .remote-connection-summary > .settings-row-copy {
     grid-column: 1;
@@ -1659,7 +1681,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px 24px;
     padding-block: 18px;
-    border-bottom: 1px solid var(--zeus-product-line-soft);
+    border-bottom: 0;
   }
   .remote-host-details > div {
     display: grid;
@@ -1679,7 +1701,7 @@
     gap: 3px 16px;
     align-items: center;
     padding-block: 9px;
-    border-bottom: 1px solid var(--zeus-product-line-soft);
+    border-bottom: 0;
   }
   .remote-device-row > button {
     grid-column: 2;
@@ -1701,7 +1723,7 @@
     display: grid;
     gap: 16px;
     padding-block: 24px;
-    border-top: 1px solid var(--zeus-product-line-soft);
+    border-top: 0;
   }
   .legacy-import-heading {
     display: flex;
@@ -1729,7 +1751,7 @@
     justify-content: space-between;
     gap: 12px;
     padding-block: 10px;
-    border-bottom: 1px solid var(--zeus-product-line-soft);
+    border-bottom: 0;
   }
   .legacy-import-history strong {
     overflow-wrap: anywhere;

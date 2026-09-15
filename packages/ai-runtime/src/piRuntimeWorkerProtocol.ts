@@ -17,6 +17,7 @@ export type PiRuntimeWorkerMethod =
   | 'respondToInteraction'
   | 'readSession'
   | 'recover'
+  | 'reviewPermission'
   | 'invalidateModelRuntime'
   | 'close';
 
@@ -151,6 +152,7 @@ function isWorkerMethod(value: unknown): value is PiRuntimeWorkerMethod {
     value === 'respondToInteraction' ||
     value === 'readSession' ||
     value === 'recover' ||
+    value === 'reviewPermission' ||
     value === 'invalidateModelRuntime' ||
     value === 'close'
   );

@@ -65,6 +65,8 @@ export interface ConversationMarkdownProps {
   onRenderSettled?: () => void;
   /** 用户消息中的结构化引用标签，按原标签文本渲染为胶囊而不是普通 Markdown 文本。 */
   structuredTokens?: readonly StructuredMessageToken[];
+  /** 已冻结的短文档可一次呈现，长会话继续按批次渲染。 */
+  renderImmediately?: boolean;
 }
 
 export type StructuredMessageToken = {
@@ -205,9 +207,9 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           htmlPolicy="escape"
           typewriter={false}
           fade={false}
-          smoothStreaming
+          smoothStreaming={!props.renderImmediately}
           smoothStreamingOptions={SMOOTH_STREAMING_OPTIONS}
-          batchRendering
+          batchRendering={!props.renderImmediately}
           initialRenderBatchSize={24}
           renderBatchSize={16}
           renderBatchDelay={8}

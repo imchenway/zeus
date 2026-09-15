@@ -608,8 +608,8 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
   const locked = c.operation === 'importing' || c.operation === 'saving' || c.operation === 'configuring' || c.editorBusy;
   if (!c.step) return null;
   return (
-    <ModalPortal rootClassName="model-setup-portal" dismissDisabled={locked} onDismiss={c.close}>
-      <section className="model-setup-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="model-setup-title" aria-describedby="model-setup-description">
+    <ModalPortal rootClassName="model-setup-portal" dismissDisabled={locked} onDismiss={c.close} role="dialog" aria-labelledby="model-setup-title" aria-describedby="model-setup-description">
+      <section className="model-setup-dialog zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="model-setup-heading">
           <div>
             <strong id="model-setup-title">
