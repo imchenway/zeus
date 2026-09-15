@@ -1,8 +1,8 @@
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { FilePreviewDialog } from '../code/FilePreview.js';
+import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 
 export interface ConversationComposerAttachmentsProps {
   attachments: NativeConversationAttachment[];
@@ -17,11 +17,14 @@ export interface ConversationComposerAttachmentsProps {
 
 /** 草稿附件共享缩略图、放大预览和安全打开入口。 */
 export function ConversationComposerAttachments(props: ConversationComposerAttachmentsProps) {
+  /** 会话内的附件共用打开入口，图片弹窗与文档审阅按类型选择。 */
+  const openFilePreview = useContext(FilePreviewOpenContext);
   /** 所有输入入口共用图片预览，调用者仍可提供自己的打开行为。 */
   const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
   /** 所有格式就地预览，显式调用者的激活行为仍受保留。 */
   function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): void {
     if (props.onActivate) return props.onActivate(attachment, trigger);
+    if (openFilePreview) return openFilePreview({ kind: 'attachment', ...attachmentResource(attachment) }, attachmentKind(attachment) === 'image');
     setPreviewAttachment(attachment);
   }
 

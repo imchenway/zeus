@@ -1,9 +1,12 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './filePreview.css';
+
+/** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
+export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));

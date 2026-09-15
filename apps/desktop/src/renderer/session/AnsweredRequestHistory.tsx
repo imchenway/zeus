@@ -1,6 +1,3 @@
-import { FilePreviewDialog } from '../code/FilePreview.js';
-import { MotionPresence } from '../ui/MotionPresence.js';
-import { useRef, useState } from 'react';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -72,22 +69,9 @@ const labels = {
 export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const copy = labels[props.language];
   const entries = answeredQuestions(props.request);
-  const [previewAttachment, setPreviewAttachment] = useState<NativeConversationAttachment | null>(null);
-  const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   if (entries.length === 0) return null;
   const answerUnavailable = isExternalUserInputResolution(props.request.response);
   const heading = answerUnavailable ? copy.answerSyncFailed : entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
-
-  /** 已回答附件也统一使用页内预览，系统打开由用户在预览中选择。 */
-  function activateAttachment(attachment: NativeConversationAttachment, trigger: HTMLButtonElement): void {
-    previewTriggerRef.current = trigger;
-    setPreviewAttachment(attachment);
-  }
-
-  function closeAttachmentPreview(): void {
-    setPreviewAttachment(null);
-    window.requestAnimationFrame(() => previewTriggerRef.current?.focus());
-  }
 
   return (
     <article className={`session-answered-request${answerUnavailable ? ' is-answer-unavailable' : ''}`} aria-label={answerUnavailable ? copy.syncFailedRegion : copy.region}>
@@ -141,14 +125,7 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
                         <em>{copy.selected}</em>
                       </div>
                       {entry.attachments.length > 0 ? (
-                        <ConversationComposerAttachments
-                          attachments={entry.attachments}
-                          language={props.language}
-                          disabled={false}
-                          ariaLabel={copy.answerAttachments}
-                          className="session-answered-request-attachments"
-                          onActivate={(attachment, trigger) => void activateAttachment(attachment, trigger)}
-                        />
+                        <ConversationComposerAttachments attachments={entry.attachments} language={props.language} disabled={false} ariaLabel={copy.answerAttachments} className="session-answered-request-attachments" />
                       ) : null}
                       {entry.question.secret ? (
                         <p className="session-answered-request-custom-answer-text">{copy.secretAnswer}</p>
@@ -164,14 +141,8 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           );
         })}
       </div>
-      <MotionPresence>{previewAttachment ? <AnsweredAttachmentPreviewDialog attachment={previewAttachment} language={props.language} onClose={closeAttachmentPreview} /> : null}</MotionPresence>
     </article>
   );
-}
-
-/** 历史答案复用附件凭据，不以任意路径打开文件。 */
-function AnsweredAttachmentPreviewDialog(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onClose: () => void }) {
-  return <FilePreviewDialog request={{ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }} zh={props.language === 'zh-CN'} onClose={props.onClose} />;
 }
 
 export function isAnsweredUserInputRequest(request: NativePendingRequest): boolean {

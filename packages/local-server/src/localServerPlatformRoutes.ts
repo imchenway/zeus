@@ -2084,7 +2084,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (!record || record.projectId !== input.projectId || record.conversationId !== input.conversationId) throw new Error('会话资源不属于当前会话。');
         const grant = toConversationResourceOpenIntent(record);
         if (grant.kind === 'website') throw new Error('网站不是文件预览资源。');
-        intent = { sides: [{ name: String(grant.display.displayName || basename(String(grant.target.absolutePath))), label: '会话文件', root: String(grant.authority.allowedRoot || ''), path: String(grant.target.absolutePath || '') }] };
+        // 预览格式依据真实文件名，正文链接标题可能完全省略扩展名。
+        intent = { sides: [{ name: basename(String(grant.target.absolutePath || '')), label: '会话文件', root: String(grant.authority.allowedRoot || ''), path: String(grant.target.absolutePath || '') }] };
       } else if (input.kind === 'turn') {
         const { file } = resolveTurnChangeFileRecord(input);
         intent = {

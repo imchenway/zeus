@@ -1,3 +1,4 @@
+import { isConversationSourcePreviewable } from '@zeus/shared';
 import { createReadStream } from 'node:fs';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -122,7 +123,7 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
   }
 
   const file = await authorizedFile(intent);
-  const sourcePreviewable = isSourcePreviewable(file.absolutePath);
+  const sourcePreviewable = isConversationSourcePreviewable(file.absolutePath);
   const imagePreviewable = isImagePreviewable(file.absolutePath);
   const localHtml = ['.html', '.htm'].includes(extname(file.absolutePath).toLocaleLowerCase());
   if (sourcePreviewable || imagePreviewable) {
@@ -394,12 +395,6 @@ function normalizeLocation(value: unknown): { line?: number; column?: number; en
     ...(column ? { column } : {}),
     ...(endLine ? { endLine } : {}),
   };
-}
-
-function isSourcePreviewable(path: string): boolean {
-  return ['.c', '.cc', '.cpp', '.css', '.go', '.h', '.hpp', '.html', '.java', '.js', '.json', '.jsx', '.kt', '.md', '.php', '.py', '.rb', '.rs', '.scss', '.sh', '.sql', '.swift', '.ts', '.tsx', '.txt', '.xml', '.yaml', '.yml'].includes(
-    extname(path).toLocaleLowerCase(),
-  );
 }
 
 function isImagePreviewable(path: string): boolean {
