@@ -109,6 +109,8 @@ export interface ConversationApiClient {
     input: { changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string },
   ) => Promise<TurnChangeSetOperationResult>;
   acknowledgeNativeConversationAttention: (projectId: string, conversationId: string, expectedRevision: number) => Promise<{ acknowledged: boolean; conversation: NativeConversationChoice }>;
+  /** 重命名会话 */
+  renameConversation: (projectId: string, conversationId: string, title: string) => Promise<NativeConversationChoice>;
   restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<{ acknowledged: true }>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<{ acknowledged: true }>;
   updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<{ acknowledged: true }>;
@@ -250,6 +252,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         value: { expectedRevision },
       });
       return transport.request(`${conversationPath(projectId, conversationId)}/attention-acknowledgement`, jsonRequest('PUT', body));
+    },
+    renameConversation: async (projectId, conversationId, title) => {
+      const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.rename, conversationId, value: { title } });
+      return transport.request<NativeConversationChoice>(`${conversationPath(projectId, conversationId)}/rename`, jsonRequest('PUT', body));
     },
     restoreArchivedNativeConversation: async (projectId, conversationId) => {
       const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.providerThreadRestore, conversationId, value: {} });
