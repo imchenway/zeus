@@ -1,5 +1,5 @@
 import { Collapsible } from '../ui/Collapsible.js';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -12,14 +12,25 @@ import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
 
+/** 计划卡片复用右栏预览，卡片内部操作与正文选区保持独立。 */
 export function PlanSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean; panelOpen?: boolean; onOpenPanel?: (item: NativeSessionItemBuffer) => void }) {
+  /** 内容身份用于折叠按钮的辅助阅读关联。 */
+  const contentId = useId();
+  /** 折叠只控制会话内正文，不影响右侧计划。 */
   const [collapsed, setCollapsed] = useState(false);
+  /** 复制完成后短暂显示确认。 */
   const [copied, setCopied] = useState(false);
+  /** 当前卡片的本地反馈状态。 */
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
+  /** 本卡片沿用会话语言。 */
   const zh = props.language === 'zh-CN';
+  /** 计划正文使用共享流式阶段判断。 */
   const phase = conversationMarkdownPhaseForStatus(props.item.status);
+  /** 编写期间保留现有状态显示。 */
   const streaming = phase === 'streaming';
+  /** 标题同时作为预览按钮的可见名称。 */
   const title = streaming ? (zh ? '正在编写计划' : 'Writing plan') : zh ? '计划' : 'Plan';
+  /** 卡片操作使用原生按钮，父级点击不会接管其动作。 */
   const iconButton = (label: string, child: ReactNode, onClick: () => void, pressed?: boolean) => (
     <button type="button" aria-label={label} title={label} aria-pressed={pressed} onClick={onClick}>
       {child}
@@ -36,15 +47,42 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
   }
 
   return (
-    <article className="session-plan-summary" data-streaming={streaming || undefined} data-motion-active={props.motionActive || undefined} data-collapsed={collapsed || undefined}>
+    <article
+      className="session-plan-summary"
+      data-streaming={streaming || undefined}
+      data-motion-active={props.motionActive || undefined}
+      data-collapsed={collapsed || undefined}
+      data-preview-enabled={Boolean(props.onOpenPanel) || undefined}
+      onClick={(event) => {
+        if (!props.onOpenPanel || event.defaultPrevented) return;
+        /** 链接、工具栏和正文内控件各自处理点击，不重复打开右栏。 */
+        const target = event.target;
+        if (target instanceof Element && target.closest('button, a, input, textarea, select, summary, [role="button"], [contenteditable="true"]')) return;
+        /** 拖选本卡片的文字只保留选区，不将鼠标释放视作预览操作。 */
+        const selection = event.currentTarget.ownerDocument.defaultView?.getSelection();
+        if (selection && !selection.isCollapsed && (event.currentTarget.contains(selection.anchorNode) || event.currentTarget.contains(selection.focusNode))) return;
+        props.onOpenPanel(props.item);
+      }}
+    >
       <header>
-        <button type="button" className="session-plan-summary-title" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>
-          <span className="session-plan-summary-symbol" aria-hidden="true">
-            <Lightbulb />
-          </span>
-          <strong>{title}</strong>
-          <CaretDown aria-hidden="true" />
-        </button>
+        <div className="session-plan-summary-heading">
+          <button type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} title={zh ? '在右侧打开计划' : 'Open plan at right'}>
+            <span className="session-plan-summary-symbol" aria-hidden="true">
+              <Lightbulb />
+            </span>
+            <strong>{title}</strong>
+          </button>
+          <button
+            type="button"
+            className="session-plan-summary-collapse"
+            onClick={() => setCollapsed((value) => !value)}
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            aria-label={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
+          >
+            <CaretDown aria-hidden="true" />
+          </button>
+        </div>
         {!streaming ? (
           <nav aria-label={zh ? '计划操作' : 'Plan actions'}>
             {iconButton(zh ? '下载 plan.md' : 'Download plan.md', <DownloadSimple aria-hidden="true" />, () => downloadPlan(props.item.text))}
@@ -62,7 +100,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
         ) : null}
       </header>
       <Collapsible open={!collapsed}>
-        <div className="session-plan-summary-content">
+        <div id={contentId} className="session-plan-summary-content">
           {streaming && !props.item.text.trim() ? (
             <span className="session-thinking-pulse" aria-hidden="true" />
           ) : (
@@ -74,8 +112,11 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
   );
 }
 
+/** 下载当前计划的原始 Markdown，不切换右侧工作区。 */
 function downloadPlan(markdown: string): void {
+  /** 临时资源地址在点击完成后释放。 */
   const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+  /** 使用浏览器原生下载能力。 */
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = 'plan.md';

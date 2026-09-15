@@ -777,10 +777,77 @@ function MessageLayoutQa() {
 
 /** 使用真实会话工作面检查资源去向，仅在文件读取和原生打开边界提供演示数据。 */
 function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: ConversationResource[] }) {
+  /** 边缘场景仍使用真实工作面、输入框和计划右栏。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 既有资源验收保持原样，边缘场景按参数追加计划。 */
+  const edges = parameters.has('edges');
+  /** 本页主题和宽度不修改应用设置。 */
+  const [dark, setDark] = useState(parameters.has('dark'));
+  /** 窄容器复现右侧工作面占用空间。 */
+  const [narrow, setNarrow] = useState(parameters.has('narrow'));
+  /** 只测量当前验收工作面的真实节点。 */
+  const surface = useRef<HTMLElement>(null);
   /** 记录显式资源动作；通用文件直接由工作面调用预览读取。 */
   const [opened, setOpened] = useState('等待打开资源');
   /** 行评论保留在演示会话中，验证源码审阅能力。 */
   const [comments, setComments] = useState<ConversationCodeComment[]>([]);
+  /** 计划沿用同一轮消息身份，正文覆盖长文本、链接和代码控件。 */
+  const plan: NativeSessionItemBuffer = {
+    ...props.state.items[props.state.itemOrder[0]!]!,
+    key: 'qa-edge-plan',
+    itemId: 'qa-edge-plan',
+    type: 'plan',
+    phase: 'final_answer',
+    text: '# 会话边缘对齐与计划预览\n\n## 修改方案\n\n回复正文左侧、用户气泡右侧和计划卡片两侧与底部输入框外边框对齐。\n\n- 普通消息和已提交答题卡合计两次互动后显示刻度。\n- 标题、正文、空白处均打开右侧计划。\n\n[文档链接](#qa-plan-link)\n\n```text\n计划中的代码复制按钮保留独立操作。\n```\n\n## 验收\n\n检查宽窗口、窄分栏、浅色、深色，以及右栏开关后的边界。',
+    payload: { formalPlan: true },
+    resources: [],
+  };
+  /** 页面内保留可重复检查，不依赖外部脚本或模拟布局。 */
+  function checkEdges(): void {
+    /** 输入框可见外边框是唯一测量基准。 */
+    const composer = surface.current?.querySelector('.session-composer-input-frame')?.getBoundingClientRect();
+    /** 右栏打开后主时间线以计划入口代替完整卡片。 */
+    const card = surface.current?.querySelector('.session-plan-summary, .session-plan-entry')?.getBoundingClientRect();
+    /** 普通用户气泡不包含结构化答题卡。 */
+    const users = [...(surface.current?.querySelectorAll('.session-thread-item-user:not([data-question-answer])') ?? [])];
+    /** 正文与处理中摘要均需要保持左缘。 */
+    const replies = [...(surface.current?.querySelectorAll('.session-thread-item-assistant > .session-markdown, .session-thread-item-commentary > .session-markdown, .session-transcript-thinking, .session-turn-process-control') ?? [])];
+    if (!composer || !card || !users.length || !replies.length) throw new Error('边缘检查缺少真实输入框、计划或消息');
+    /** 窄分栏沿用全宽审阅；隐藏在右栏背后的会话不作为可见边界测量。 */
+    const conversationVisible = getComputedStyle(users[0]!).visibility !== 'hidden';
+    /** 保留有方向的差值，便于识别额外内缩。 */
+    const delta = conversationVisible
+      ? {
+          replyLeft: replies.map((node) => node.getBoundingClientRect().left - composer.left),
+          userRight: users.map((node) => node.getBoundingClientRect().right - composer.right),
+          planLeft: card.left - composer.left,
+          planRight: card.right - composer.right,
+        }
+      : null;
+    /** 每个滚动容器分别检查，不能用外壳裁剪掩盖横向溢出。 */
+    const overflow = [...(surface.current?.querySelectorAll('.session-conversation-pane, .session-transcript, .session-transcript-window, .session-plan-summary, .session-plan-workspace') ?? [])].some(
+      (node) => getComputedStyle(node).visibility !== 'hidden' && node.scrollWidth > node.clientWidth + 1,
+    );
+    /** 已打开的右栏必须实际可见，不能把零宽占位当成预览成功。 */
+    const preview = surface.current?.querySelector('.session-plan-workspace');
+    /** 同时记录真实右栏宽度，便于区分展开过渡和最终布局。 */
+    const previewWidth = preview?.getBoundingClientRect().width ?? 0;
+    /** 一像素容差只允许浏览器亚像素取整。 */
+    const passed = !overflow && (!preview || previewWidth > 1) && (delta ? [...delta.replyLeft, ...delta.userRight, delta.planLeft, delta.planRight].every((value) => Math.abs(value) <= 1) : Boolean(preview));
+    setOpened(
+      JSON.stringify({
+        passed,
+        theme: dark ? 'dark' : 'light',
+        surfaceWidth: surface.current?.getBoundingClientRect().width,
+        composerWidth: conversationVisible ? composer.width : null,
+        delta,
+        overflow,
+        previewOpen: Boolean(preview),
+        previewWidth,
+      }),
+    );
+    if (!passed) throw new Error(`会话边界未对齐：${JSON.stringify(delta)}`);
+  }
   /** 固定文件资源身份，显示标题刻意不带扩展名。 */
   const documentResource = props.resources[0]!;
   if (documentResource.kind !== 'file') throw new Error('缺少文档资源');
@@ -798,6 +865,8 @@ function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: Conv
   const pdfUrl =
     'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAwID4+CnN0cmVhbQoKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyMDIgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA1IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgoyNTEKJSVFT0Y=';
   useEffect(() => {
+    /** 原生验收保留预加载提供的只读接口；浏览器独立页面才安装文件预览数据。 */
+    if (window.zeus) return;
     /** 页面退出恢复原桥接，不连接正式数据。 */
     const previous = window.zeus;
     window.zeus = {
@@ -847,10 +916,11 @@ function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: Conv
     ...props.state,
     attachments: [{ name: '附件图片.png', kind: 'image', mime: 'image/png', size: 68, uploadRef: 'qa-image' }],
     contextDraft: { ...props.state.contextDraft, codeComments: comments },
+    itemOrder: [...props.state.itemOrder, ...(edges ? [plan.key] : [])],
     items: Object.fromEntries(
-      Object.entries(props.state.items).map(([key, item]) => [
+      Object.entries({ ...props.state.items, ...(edges ? { [plan.key]: plan } : {}) }).map(([key, item]) => [
         key,
-        item.phase === 'final_answer'
+        item.phase === 'final_answer' && item.type !== 'plan'
           ? { ...item, text: '[分析文档](docs/分析文档.md) · [代码说明](src/example.ts) · [访问网站](https://example.com/)', resources }
           : item.phase === 'user'
             ? { ...item, payload: { ...item.payload, attachments: [{ name: '历史附件.png', kind: 'image', mime: 'image/png', size: 69, uploadRef: 'qa-history-image' }] } }
@@ -859,12 +929,31 @@ function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: Conv
     ),
   };
   return (
-    <main className="macos-ai-app zeus-shell session-codex-parity-v1 theme-light" style={{ width: 1440, height: 900, display: 'flex', flexDirection: 'column' }}>
-      <p role="status">{opened}</p>
+    <main
+      ref={surface}
+      className={`macos-ai-app zeus-shell project-navigation-rail-shell session-codex-parity-v1 theme-${dark ? 'dark' : 'light'}`}
+      data-theme={dark ? 'dark' : 'light'}
+      style={{ width: narrow ? 420 : '100%', maxWidth: '100%', height: '100vh', display: 'flex', flexDirection: 'column', marginInline: 'auto' }}
+    >
+      {edges ? (
+        <nav aria-label="会话边缘验收" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: 8 }}>
+          <Button aria-pressed={dark} onClick={() => setDark((value) => !value)}>
+            深色
+          </Button>
+          <Button aria-pressed={narrow} onClick={() => setNarrow((value) => !value)}>
+            窄分栏
+          </Button>
+          <Button onClick={checkEdges}>检查布局</Button>
+        </nav>
+      ) : null}
+      <p role="status" style={edges ? { overflowWrap: 'anywhere' } : undefined}>
+        {opened}
+      </p>
       <SessionWorkspace
         language="zh-CN"
         state={state}
         conversation={conversation}
+        quickActionsSuppressed={edges}
         task={null}
         owner={{ kind: 'project', projectId: 'qa', projectName: '资源验收' }}
         actions={{
@@ -2196,7 +2285,9 @@ function NavigationQa() {
     [],
   );
   /** 目录总量可自然增减，不改变生产导航规则。 */
-  const [count, setCount] = useState(Math.max(1, Math.min(10000, Number(parameters.get('count')) || 1000)));
+  const [count, setCount] = useState(Math.max(0, Math.min(10000, Number(parameters.get('count') ?? 1000) || 0)));
+  /** 在同一个组件内切换会话，检查旧目录不会残留。 */
+  const [conversationId, setConversationId] = useState('qa-navigation');
   /** 启动时只读取最后四轮正文。 */
   const [loaded, setLoaded] = useState(() => new Set(Array.from({ length: 4 }, (_, index) => count - 4 + index).filter((index) => index >= 0)));
   /** 持续生成只向最后一轮追加文字。 */
@@ -2243,8 +2334,8 @@ function NavigationQa() {
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
     if (directoryFailure.current) throw new Error('验收注入：目录读取失败');
-    return { conversationId: 'qa-navigation', throughEventSeq: 1, entries };
-  }, [entries]);
+    return { conversationId, throughEventSeq: 1, entries };
+  }, [conversationId, entries]);
   /** 延迟补齐目标轮次，让锚点补偿经历真实组件尺寸变化。 */
   const loadTurn = useCallback(async (turnId: string) => {
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -2271,7 +2362,7 @@ function NavigationQa() {
         if (!entry || entry.requestId) return [];
         return ['user', 'assistant'].map((role) => ({
           key: `${role}-${index}`,
-          conversationId: 'qa-navigation',
+          conversationId,
           threadId: 'qa-navigation',
           turnId: entry.turnId,
           itemId: role === 'user' ? (taskHistory ? `user-${index}` : entry.id) : `answer-${index}`,
@@ -2294,7 +2385,7 @@ function NavigationQa() {
       });
     return {
       ...createInitialSessionState(),
-      conversationId: 'qa-navigation',
+      conversationId,
       transportState: 'ready',
       conversationState: 'idle',
       transcriptRevision: revision,
@@ -2303,7 +2394,7 @@ function NavigationQa() {
           ? [
               {
                 id: entry.requestId,
-                conversationId: 'qa-navigation',
+                conversationId,
                 turnId: entry.turnId,
                 itemId: null,
                 generationId: 'qa-generation',
@@ -2329,7 +2420,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, revision, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse]);
+  }, [loaded, entries, revision, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, conversationId]);
 
   /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
   function recordFrames() {
@@ -2417,6 +2508,16 @@ function NavigationQa() {
           解除故障
         </Button>
         <Button onClick={recordFrames}>记录帧耗时</Button>
+        <Button
+          onClick={() => {
+            setConversationId((value) => (value === 'qa-navigation' ? 'qa-navigation-next' : 'qa-navigation'));
+            setCount(1);
+            setLoaded(new Set([0]));
+          }}
+        >
+          切换单次互动会话
+        </Button>
+        <a href="?navigation&count=0">空会话</a>
         <a href="?navigation&count=1">单条发言</a>
         <a href="?navigation&count=3&question-history">答题卡导航</a>
         <a href="?navigation&count=7">短历史</a>
@@ -2436,6 +2537,9 @@ function NavigationQa() {
               JSON.stringify(
                 {
                   ticks: ticks?.length,
+                  expectedTicks: count > 1 ? count : 0,
+                  navigationThresholdCheck: ticks?.length === (count > 1 ? count : 0) ? '通过' : '失败：互动门槛异常',
+                  navigationReady: surface.current?.querySelector('.session-transcript-shell')?.getAttribute('data-navigation-ready') === 'true',
                   tickHeight: first?.getBoundingClientRect().height,
                   pitch: first && ticks?.[1] ? ticks[1].getBoundingClientRect().top - first.getBoundingClientRect().top : null,
                   lineWidth: first?.firstElementChild?.getBoundingClientRect().width,
@@ -2446,7 +2550,7 @@ function NavigationQa() {
                   ...(questionHistory
                     ? {
                         questionHistoryCheck:
-                          ticks?.length === count && surface.current?.querySelectorAll('.session-answered-request').length === count - 1 && !surface.current?.querySelector('.session-navigation-placeholder')
+                          ticks?.length === (count > 1 ? count : 0) && surface.current?.querySelectorAll('.session-answered-request').length === Math.max(0, count - 1) && !surface.current?.querySelector('.session-navigation-placeholder')
                             ? '通过'
                             : '失败：卡片数量或定位异常',
                       }

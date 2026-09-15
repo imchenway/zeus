@@ -443,8 +443,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     previousNavigationEntriesRef.current = next;
     return next;
   }, [navigation.snapshot, liveNavigationEntries]);
-  /** 已有一个入口就显示刻度，长单轮问答也能回到起点。 */
-  const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 0);
+  /** 普通发言和已提交答题卡合计至少两次互动才显示刻度，单次互动保留原生滚动。 */
+  const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 1);
   /** 只有接入目录的主会话添加历史占位，其他调用方沿用原列表。 */
   const turnRows = useMemo(() => (props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows), [baseTurnRows, navigationEntries, props.onLoadNavigation]);
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
