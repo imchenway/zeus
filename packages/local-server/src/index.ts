@@ -972,6 +972,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     (missingTaskStatusProjectIds.length > 0 ||
       (persistedAppShellSettings &&
         (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
+          persistedAppShellSettings.mainLayout !== appShellSettings.mainLayout ||
           JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
           JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
           JSON.stringify(persistedAppShellSettings.taskManagementStatusTemplate) !== JSON.stringify(appShellSettings.taskManagementStatusTemplate) ||

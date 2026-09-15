@@ -3324,6 +3324,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             payload: {
               appLanguage: nextSettings.appLanguage,
               appearance: nextSettings.appearance,
+              mainLayout: nextSettings.mainLayout,
               webviewDebugEnabled: nextSettings.webviewDebugEnabled,
               developerModeEnabled: nextSettings.developerModeEnabled,
               multiWindowEnabled: nextSettings.multiWindowEnabled,

@@ -58,7 +58,7 @@ import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from '../../CommandCenterPanel.js';
 import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
-import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
+import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceModeToolbar, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
   browserNativeConversationStartStorage,
@@ -169,6 +169,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     codexConfigImportResult,
     codexUsageRevision,
     conversationDrawer,
+    conversationDraftOpen,
     creatingProjectBusy,
     creatingTaskBusy,
     currentProjectTasks,
@@ -334,6 +335,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openProjectCreateDialog,
     openTaskConflictAiConversation,
     openTaskConversationDrawer,
+    openNativeConversationDrawer,
     openNativeConversationPage,
     openTaskCreateModal,
     openTaskDetailPane,
@@ -588,15 +590,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     .filter((group) => group.items.length > 0);
   const visibleSettingsItems = visibleSettingsGroups.flatMap((group) => group.items);
   const settingsNavigationTabStop = visibleSettingsItems.some(([id]) => id === settingsCategory) ? settingsCategory : visibleSettingsItems[0]?.[0];
-  const projectWorkspaceNavigationVisible = Boolean(selectedProject);
+  const upstreamMainLayout = appShellSettings.mainLayout === 'upstream';
+  const projectWorkspaceNavigationVisible = !upstreamMainLayout && Boolean(selectedProject);
   /** 会话使用项目/会话来源列表；其他模式由各自工作区提供紧邻活动栏的上下文导航。 */
-  const projectSessionSourceListVisible = Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
+  const projectSessionSourceListVisible = !upstreamMainLayout && Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
+  const sessionCodexParityVisible = upstreamMainLayout
+    ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations'
+    : projectSessionSourceListVisible;
 
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${projectSessionSourceListVisible ? ' session-codex-parity-v1 project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${upstreamMainLayout ? ' main-layout-upstream' : ' main-layout-current'}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${sessionCodexParityVisible ? ' session-codex-parity-v1' : ''}${projectSessionSourceListVisible ? ' project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
+      data-main-layout={appShellSettings.mainLayout}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
       style={projectSidebarShellStyle}
       lang={uiCopy.documentLang}
@@ -781,7 +788,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           />
         ) : null}
       </MotionPresence>
-      {projectWorkspaceNavigationVisible && selectedProject ? (
+      {!upstreamMainLayout && projectWorkspaceNavigationVisible && selectedProject ? (
         <ProjectWorkspaceNavigation
           project={selectedProject}
           projects={orderedProjects}
@@ -811,15 +818,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           }}
         />
       ) : null}
-      {projectWorkspaceNavigationVisible ? (
+      {!upstreamMainLayout && projectWorkspaceNavigationVisible ? (
         <>
           {/* 空槽位仅预留布局；接入真实工具时再添加导航语义和可访问名称。 */}
           <div className="project-workspace-tool-rail" data-workspace-tool-slot="right" aria-hidden="true" />
           <div className="project-workspace-status-bar" data-workspace-tool-slot="bottom" aria-hidden="true" />
         </>
       ) : null}
-      {activeNavTarget !== 'settings' && (!selectedProject || projectSessionSourceListVisible) ? (
+      {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
+          mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}
           activeProjectId={activeProjectId}
           activeProjectSection={activeProjectSection}
@@ -852,7 +860,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           pendingProjectDeleteId={pendingProjectDeleteId}
         />
       ) : null}
-      {projectSessionSourceListVisible ? (
+      {(upstreamMainLayout && activeNavTarget !== 'settings') || projectSessionSourceListVisible ? (
         <div
           className="project-sidebar-resizer"
           role="separator"
@@ -890,6 +898,22 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               if (!run.conversationId || !props.nativeConversationClient) return;
               const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
               await selectNativeConversation(choice);
+            }}
+          />
+        ) : null}
+        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && selectedProject ? (
+          <ProjectWorkspaceModeToolbar
+            project={selectedProject}
+            projects={orderedProjects}
+            onSelectProject={(project) => openProjectSection(project, activeProjectSection === 'project-settings' ? 'tasks' : activeProjectSection, projectCodeWorkspaceMode)}
+            section={activeProjectSection}
+            codeMode={projectCodeWorkspaceMode}
+            language={appShellSettings.appLanguage}
+            onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
+            currentConversationAvailable={Boolean(selectedNativeConversation) && !conversationDraftOpen}
+            currentConversationOpen={Boolean(sessionDrawerTarget)}
+            onOpenCurrentConversation={() => {
+              if (selectedNativeConversation) void openNativeConversationDrawer(selectedNativeConversation);
             }}
           />
         ) : null}
