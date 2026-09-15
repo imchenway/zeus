@@ -74,12 +74,7 @@ for (const [source, target, width, height] of [
   ['promo-small.svg', 'promo-small-440x280.png', 440, 280],
   ['promo-marquee.svg', 'promo-marquee-1400x560.png', 1400, 560],
 ])
-  await run(
-    '/usr/bin/xcrun',
-    ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)],
-    desktopRoot,
-    swiftEnvironment,
-  );
+  await run('/usr/bin/xcrun', ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)], desktopRoot, swiftEnvironment);
 // 商店素材保留原始 PNG，避免扩展与桌面应用使用不同头像。
 await copyFile(resolve(desktopRoot, 'dist/branding/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
 await writeFile(resolve(materials, 'PRODUCTION_EXTENSION_ID_REQUIRED.txt'), '生产扩展 ID 是商店首次上传后的发布输入。本任务禁止使用通配 allowed_origins，也不上传或提交审核。\n', 'utf8');
