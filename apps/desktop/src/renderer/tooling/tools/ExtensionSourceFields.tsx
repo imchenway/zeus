@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
-import { Button } from '../../ui/Button.js';
+import { Button } from '../toolPageHost.js';
 
 /** 插件和技能共用的安装来源草稿。 */
 export type ExtensionSourceDraft = { kind: 'local' | 'git'; path: string; repositoryUrl: string; ref: string; subdirectory: string };

@@ -26,6 +26,20 @@ export interface ProjectSourceSearchResult {
   truncated: boolean;
 }
 
+/** 全局搜索中的源码命中，保留项目相对路径与可直接定位的文本位置。 */
+export interface ProjectSourceContentMatch {
+  relativePath: string;
+  line: number;
+  column: number;
+  preview: string;
+  matchKind: 'path' | 'content';
+}
+
+export interface ProjectSourceContentSearchResult {
+  matches: ProjectSourceContentMatch[];
+  truncated: boolean;
+}
+
 export interface ProjectSourceDocument {
   relativePath: string;
   name: string;

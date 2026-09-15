@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process */
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -7,6 +8,12 @@ const desktopRoot = resolve(import.meta.dirname, '..');
 const sourceRoot = resolve(desktopRoot, 'browser-extension/src');
 const storeRoot = resolve(desktopRoot, 'browser-extension/store');
 const outputRoot = resolve(desktopRoot, 'dist/browser-extension');
+const svgRenderer = resolve(desktopRoot, 'scripts/render-svg.swift');
+const projectRoot = resolve(desktopRoot, '../..');
+const swiftEnvironment = {
+  ...process.env,
+  CLANG_MODULE_CACHE_PATH: process.env.CLANG_MODULE_CACHE_PATH || resolve(projectRoot, '.tmp/clang-module-cache'),
+};
 const chromeTestKey =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtbixiqp3UHuJx2C81eJxDKJyGQCtZgDRw66bP6KY5lF9yUGedShp4oiIKZOXSwu9iC4Zy39+PqwPtjuGO9v0Oo91wiJR0LvkdVDhirCCLxCLq6s7Hl72h9L8lelCZzPvDsuUJP5gfBIP3yoUJ5mkJUE0jKXGaxey2Gu5vh5nWuMrNRuItpX9jPF1zz3GKeX8v5hhSO/drwFxUKcs528ZbOFLZUlHMR29heFG1K/gTrAltzDeLfK2LP6XmnYQ/Rjp12lAslpw9cuLYseKH2dly9usltJaOKGVaz4R3WvJb7ttRS2QnCppnqwjZVkZocGjbCaxndh4Ku9Gjfv42ujamwIDAQAB';
 const edgePreviewKey =
@@ -56,7 +63,7 @@ for (const variant of variants) {
   }
   await writeFile(resolve(target, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   // 扩展各尺寸图标直接由应用的同一份原图生成。
-  for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'assets/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
+  for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'dist/branding/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
   await run('/usr/bin/zip', ['-q', '-r', resolve(outputRoot, variant.zip), '.'], target);
 }
 
@@ -67,14 +74,14 @@ for (const [source, target, width, height] of [
   ['promo-small.svg', 'promo-small-440x280.png', 440, 280],
   ['promo-marquee.svg', 'promo-marquee-1400x560.png', 1400, 560],
 ])
-  await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(height), String(width), resolve(storeRoot, source), '--out', resolve(materials, target)]);
+  await run('/usr/bin/xcrun', ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)], desktopRoot, swiftEnvironment);
 // 商店素材保留原始 PNG，避免扩展与桌面应用使用不同头像。
-await copyFile(resolve(desktopRoot, 'assets/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
+await copyFile(resolve(desktopRoot, 'dist/branding/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
 await writeFile(resolve(materials, 'PRODUCTION_EXTENSION_ID_REQUIRED.txt'), '生产扩展 ID 是商店首次上传后的发布输入。本任务禁止使用通配 allowed_origins，也不上传或提交审核。\n', 'utf8');
 
-async function run(command, args, cwd = desktopRoot) {
+async function run(command, args, cwd = desktopRoot, env = process.env) {
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'ignore', 'inherit'] });
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });
     child.once('error', rejectRun);
     child.once('exit', (code, signal) => (code === 0 ? resolveRun() : rejectRun(new Error(`${basename(command)} failed${signal ? ` with signal ${signal}` : ` with code ${code}`}`))));
   });

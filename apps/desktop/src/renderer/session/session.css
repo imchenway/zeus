@@ -3650,6 +3650,36 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
+/* 宽屏并排展示标题和统计，分栏或窄窗口时在同一标题区自然换行。 */
+.session-codex-parity-v1 .session-thread-title-copy.session-thread-title-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+}
+
+.session-codex-parity-v1 .session-thread-title-overview > .session-thread-title-row {
+  flex: 1 1 220px;
+}
+
+.session-codex-parity-v1 .session-thread-header-runtime {
+  flex: 1 1 720px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-thread-header-runtime:has(.session-runtime-details[open]) {
+  flex-basis: 100%;
+}
+
+.session-codex-parity-v1 .session-thread-header-runtime .session-runtime-details > summary {
+  padding-inline: 0;
+}
+
+.session-codex-parity-v1 .session-thread-header:has(.session-thread-header-runtime .session-runtime-details[open]) > .session-context-header-tools {
+  align-self: start;
+}
+
 /* 线程状态沿用标题副文案的阅读层级，主、子工作面共享。 */
 .session-codex-parity-v1 .session-thread-title-copy > small {
   color: var(--session-text-muted);
@@ -12128,17 +12158,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
   border-inline-start: 0;
   grid-column: 2;
-}
-
-/* 详情只占左侧会话高度；右侧浏览器和源码工作区保持完整可用高度。 */
-.session-codex-parity-v1 .session-conversation-pane > .session-thread-subtitle-row {
-  flex: 0 0 auto;
-  padding: 4px 20px 0;
-}
-
-/* 分栏摘要与左侧标题使用相同水平内边距。 */
-.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] > .session-conversation-pane > .session-thread-subtitle-row {
-  padding-inline: 12px;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] .session-thread-header-actions {

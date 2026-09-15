@@ -1,9 +1,12 @@
+import { createDistributionContext, type DistributionConfig } from '@zeus/shared';
+
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { parseJsonObject } from './localServerPlatformSupport.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import { installBuiltinWechatCommands } from './builtinWechatCommands.js';
+import { installBuiltinReleaseCommand } from './builtinReleaseCommand.js';
 import {
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
@@ -254,6 +257,8 @@ function claimCodexFinalizationOwnership(error: unknown): unknown {
 }
 
 export interface CreateLocalServerOptions {
+  /** 宿主注入发行信息；未提供时使用上游配置。 */
+  distribution?: DistributionConfig;
   dbPath: string;
   apiToken: string;
   /** Electron Main 派生并经 Execution Host bootstrap 贯穿；Core 不得自行回退到生产 service。 */
@@ -618,11 +623,12 @@ export type TelegramDispatchPreviewBody = TelegramUpdate;
 const telegramNotificationSettingsKey = 'telegram.notificationSettings';
 const telegramSecuritySettingsKey = 'telegram.securitySettings';
 
-function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean): string {
-  const fallback = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
+function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean, distribution?: DistributionConfig): string {
+  const { zeusReleaseManifestUrl, isZeusReleaseUrl } = createDistributionContext(distribution);
+  const fallback = zeusReleaseManifestUrl;
   const candidate = configured?.trim() || fallback;
   const url = new URL(candidate);
-  if (url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith('/imchenway/zeus/releases/')) return url.toString();
+  if (isZeusReleaseUrl(candidate)) return url.toString();
   if (allowUntrustedTest && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port)) return url.toString();
   throw new Error('Zeus release update manifest URL is not trusted.');
 }
@@ -708,7 +714,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const runtimeSessions = new RuntimeSessionRepository(db);
   const commandDefinitions = new CommandDefinitionRepository(db);
   // 仅正常启动安装内置能力；只读验证副本不得修改用户命令。
-  if (!readOnlyValidation) installBuiltinWechatCommands(db);
+  if (!readOnlyValidation) {
+    installBuiltinWechatCommands(db);
+    installBuiltinReleaseCommand(db, projects, options.projectRoot ?? process.cwd());
+  }
   const commandRuns = new CommandRunRepository(db);
   const commandArtifacts = new CommandArtifactRepository(db);
   const artifactStore = new ArtifactStore(db, join(dataLayout.artifactsDirectory, 'content-addressed'), () => now().toISOString(), { writeFaultReporter: db });
@@ -866,7 +875,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const readGitStatus = async (cwd: string): Promise<GitStatusSummary> => (await runGitStatusHeavyJob(cwd)).status;
   const readGitDiff = async (cwd: string): Promise<GitDiffSummary> => (await runGitDiffHeavyJob(cwd)).diff;
   const releaseEnvironment = process.env;
-  const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest));
+  const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest), options.distribution);
   const telegramRuntimeConfirmations = new Map<string, TelegramRuntimeConfirmation>();
   const telegramRuntimeSummarySentLogCounts = new Map<string, Set<number>>();
   const telegramCommandRunMessages = new Map<string, { chatId: number; messageId?: number }>();
@@ -963,6 +972,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     (missingTaskStatusProjectIds.length > 0 ||
       (persistedAppShellSettings &&
         (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
+          persistedAppShellSettings.mainLayout !== appShellSettings.mainLayout ||
           JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
           JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
           JSON.stringify(persistedAppShellSettings.taskManagementStatusTemplate) !== JSON.stringify(appShellSettings.taskManagementStatusTemplate) ||

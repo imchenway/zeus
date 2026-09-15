@@ -1,3 +1,5 @@
+import { isZeusReleaseUrl } from './desktopDistribution.js';
+
 import { registerFilePreview } from './filePreview.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
@@ -444,7 +446,7 @@ function desktopRoot(): string {
 
 function developmentAppIconPath(): string | undefined {
   if (app.isPackaged) return undefined;
-  const developmentIcon = join(desktopRoot(), 'assets', 'icon-dev.png');
+  const developmentIcon = join(desktopRoot(), 'dist', 'branding', 'icon-dev.png');
   // 开发图标为可选定制资源；干净源码检出使用仓库自带图标，避免阻断启动。
   return existsSync(developmentIcon) ? developmentIcon : join(desktopRoot(), 'assets', 'icon.png');
 }
@@ -1537,6 +1539,11 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码搜索请求无效。');
     return service.search(input.projectId, input.query);
   });
+  ipcMain.handle('zeus:project-source:search-content', (event, input: { projectId?: unknown; query?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码内容搜索请求无效。');
+    return service.searchContent(input.projectId, input.query);
+  });
   ipcMain.handle('zeus:project-source:read-file', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
@@ -2336,7 +2343,6 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
 /** 创建固定显示尺寸的菜单栏图标，并同步菜单与点击行为。 */
 function setupTray(): void {
   if (!tray) {
-    /** 菜单栏专用透明图案保留当前品牌造型。 */
     const trayIconPath = join(desktopRoot(), 'assets/trayTemplate.png');
     /** 按路径同时加载 18×18 原图和 36×36 的 @2x 副本，让系统按屏幕密度选择清晰资源。 */
     const trayIcon = nativeImage.createFromPath(trayIconPath);
@@ -3002,7 +3008,7 @@ async function initializeApplication(): Promise<void> {
         /** 发布清单中的链接也必须属于 Zeus 官方发布目录。 */
         openDownloadPage: async (value) => {
           const url = new URL(value);
-          if (url.origin !== 'https://github.com' || !/^\/imchenway\/zeus\/releases(?:\/|$)/u.test(url.pathname)) throw new Error('更新下载页面不是 Zeus 官方发布地址。');
+          if (!isZeusReleaseUrl(url.toString())) throw new Error('更新下载页面不是 Zeus 官方发布地址。');
           const result = await openExternalHttpsUrl({ url: value, openExternal: (target) => shell.openExternal(target) });
           if (!result.opened) throw new Error('无法打开更新下载页面，请稍后重试。');
         },

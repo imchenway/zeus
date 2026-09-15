@@ -25,14 +25,13 @@ case "$arch" in
 esac
 
 dmg="$release_output_dir/Zeus-${version}-${package_arch}.dmg"
-source_cask="Casks/zeus.rb"
 generated_cask="$release_output_dir/homebrew/zeus.rb"
 release_manifest="$release_output_dir/zeus-release-manifest.json"
-source_repository="imchenway/zeus"
-homebrew_tap="imchenway/tap"
+source_repository="$(node --input-type=module -e "import { zeusDistribution as d } from './scripts/desktop-distribution.mjs'; process.stdout.write(d.repository)")"
+homebrew_tap="$(node --input-type=module -e "import { zeusDistribution as d } from './scripts/desktop-distribution.mjs'; process.stdout.write(d.homebrewTap)")"
 node scripts/generate-homebrew-cask.mjs "$version" "$package_arch" "$dmg" "$generated_cask"
 
-for required in "$dmg" "$app" "$source_cask" "$generated_cask"; do
+for required in "$dmg" "$app" "$generated_cask"; do
   if [ ! -e "$required" ]; then
     echo "Zeus verify-release: missing required release artifact $required" >&2
     exit 1
@@ -81,22 +80,22 @@ if ! ELECTRON_RUN_AS_NODE=1 "$app_executable" scripts/verify-packaged-app-health
   exit 1
 fi
 
-if ! grep -q 'app "Zeus.app"' "$source_cask" || ! grep -q 'app "Zeus.app"' "$generated_cask"; then
+if ! grep -q 'app "Zeus.app"' "$generated_cask"; then
   echo 'Zeus verify-release: Homebrew cask must install Zeus.app' >&2
   exit 1
 fi
 
-if ! grep -q 'uninstall quit: "dev.hypha.zeus"' "$source_cask" || ! grep -q 'uninstall quit: "dev.hypha.zeus"' "$generated_cask"; then
+if ! grep -q 'uninstall quit: "dev.hypha.zeus"' "$generated_cask"; then
   echo 'Zeus verify-release: Homebrew cask must quit the Zeus bundle during uninstall' >&2
   exit 1
 fi
 
-if ! grep -q "depends_on arch: :${package_arch/x64/x86_64}" "$source_cask" || ! grep -q "depends_on arch: :${package_arch/x64/x86_64}" "$generated_cask"; then
+if ! grep -q "depends_on arch: :${package_arch/x64/x86_64}" "$generated_cask"; then
   echo "Zeus verify-release: Homebrew cask must declare the packaged architecture $package_arch" >&2
   exit 1
 fi
 
-if ! grep -q 'Application Support/Zeus' "$source_cask" || ! grep -q 'Application Support/Zeus' "$generated_cask"; then
+if ! grep -q 'Application Support/Zeus' "$generated_cask"; then
   echo 'Zeus verify-release: Homebrew cask must zap Zeus user data path' >&2
   exit 1
 fi

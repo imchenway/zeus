@@ -1,22 +1,22 @@
-import { MotionPresence } from '../../ui/MotionPresence.js';
-import { Collapsible } from '../../ui/Collapsible.js';
-import { FormDialog } from '../../ui/FormDialog.js';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { MotionPresence } from '../toolPageHost.js';
+import { Collapsible } from '../toolPageHost.js';
+import { FormDialog } from '../toolPageHost.js';
+import { reportApplicationError } from '../toolPageHost.js';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
-import type { PluginApprovalMode, PluginDescriptor, PluginDirectSource, PluginInstallSource, PluginMarketplaceCatalog, PluginScope } from '../codex/codexContracts.js';
-import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
-import { Button } from '../../ui/Button.js';
+import type { PluginApprovalMode, PluginDescriptor, PluginDirectSource, PluginInstallSource, PluginMarketplaceCatalog, PluginScope } from '../toolPageHost.js';
+import type { NativeConversationAppClient } from '../toolPageHost.js';
+import { Button } from '../toolPageHost.js';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
-import { ZeusSelect } from '../../ZeusSelect.js';
+import { ZeusSelect } from '../toolPageHost.js';
 import { ExtensionSourceFields, emptyExtensionSource, type ExtensionSourceDraft } from './ExtensionSourceFields.js';
-import { ZeusApiError } from '../../transport/localApiTransport.js';
+import { ZeusApiError } from '../toolPageHost.js';
 import { SkillsWorkspace } from './SkillsWorkspace.js';
-import { skillCatalogChangedEvent } from './SkillSelector.js';
+import { skillCatalogChangedEvent } from '../toolPageHost.js';
 
 type ExtensionsClient = Pick<
   NativeConversationAppClient,

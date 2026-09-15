@@ -355,6 +355,8 @@ export interface AppShellSettingsSnapshot {
   newProjectDefaultModelRef?: string | null;
   appLanguage: AppLanguage;
   appearance: AppAppearance;
+  /** 主工作区布局；旧设置缺省时继续使用当前布局。 */
+  mainLayout: 'upstream' | 'current';
   webviewDebugEnabled: boolean;
   developerModeEnabled: boolean;
   multiWindowEnabled: boolean;
@@ -397,6 +399,7 @@ export interface UpdateAppShellSettingsBody {
   newProjectDefaultModelRef?: string | null;
   appLanguage?: AppLanguage;
   appearance?: AppAppearance;
+  mainLayout?: 'upstream' | 'current';
   webviewDebugEnabled?: boolean;
   developerModeEnabled?: boolean;
   multiWindowEnabled?: boolean;
@@ -525,11 +528,13 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
 export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | undefined, fallbackLogDirectory: string, fallbackConfigPath: string, identities: SettingsIdentityCatalog): AppShellSettingsSnapshot {
   const appearance: AppAppearance = value?.appearance === 'light' || value?.appearance === 'dark' || value?.appearance === 'system' ? value.appearance : 'system';
   const appLanguage: AppLanguage = value?.appLanguage === 'en-US' ? 'en-US' : 'zh-CN';
+  const mainLayout: 'upstream' | 'current' = value?.mainLayout === 'current' ? 'current' : 'upstream';
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
     networkProxy: normalizeNetworkProxySettings(value?.networkProxy),
     appLanguage,
     appearance,
+    mainLayout,
     webviewDebugEnabled: value?.webviewDebugEnabled === true,
     developerModeEnabled: value?.developerModeEnabled === true,
     multiWindowEnabled: typeof value?.multiWindowEnabled === 'boolean' ? value.multiWindowEnabled : true,
@@ -580,6 +585,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       networkProxy: input.networkProxy === undefined ? current.networkProxy : normalizeNetworkProxySettings(input.networkProxy),
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
+      mainLayout: input.mainLayout === 'upstream' || input.mainLayout === 'current' ? input.mainLayout : current.mainLayout,
       webviewDebugEnabled: typeof input.webviewDebugEnabled === 'boolean' ? input.webviewDebugEnabled : current.webviewDebugEnabled,
       developerModeEnabled: typeof input.developerModeEnabled === 'boolean' ? input.developerModeEnabled : current.developerModeEnabled,
       multiWindowEnabled: typeof input.multiWindowEnabled === 'boolean' ? input.multiWindowEnabled : current.multiWindowEnabled,

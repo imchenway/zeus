@@ -1,3 +1,4 @@
+import { isZeusReleaseUrl } from './desktopDistribution.js';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs';
@@ -531,7 +532,7 @@ function isUnderTemporaryDirectory(path: string): boolean {
 }
 
 function isTrustedGithubDownloadUrl(url: URL): boolean {
-  return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/download/');
+  return isZeusReleaseUrl(url.toString(), true);
 }
 
 /** 下载与打开缓存共用来源校验，回环和本地文件仅供明确启用的隔离验证。 */

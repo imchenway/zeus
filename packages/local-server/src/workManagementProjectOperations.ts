@@ -1,4 +1,5 @@
-import { accessSync, constants as fsConstants, existsSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
 import type { AppendAuditLogInput, ProjectRepository, ProjectSharedPathRepository, TaskTemplateRepository, ZeusProjectRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
@@ -7,6 +8,7 @@ import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
 import type { ProjectRepositoryDiscoveryService } from './projectRepositoryDiscovery.js';
 
 export interface CreateProjectCommandInput {
+  temporary?: boolean;
   name: string;
   localPath: string;
   description?: string;
@@ -31,6 +33,7 @@ export interface SetProjectDefaultTemplateCommandInput {
 }
 
 interface ProjectOperationPorts {
+  temporaryWorkspaceDirectory?: string;
   /** 项目命令提交后异步发现本地仓库。 */
   repositoryDiscovery: Pick<ProjectRepositoryDiscoveryService, 'request'>;
   projects: Pick<ProjectRepository, 'archive' | 'create' | 'delete' | 'getById' | 'prepareArchive' | 'restore' | 'setDefaultTemplate' | 'update'>;
@@ -51,6 +54,15 @@ export class WorkManagementProjectOperations {
   constructor(private readonly ports: ProjectOperationPorts) {}
 
   create(input: CreateProjectCommandInput, projectId: string, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
+    if (input?.temporary === true) {
+      const directory = this.ports.temporaryWorkspaceDirectory;
+      if (!directory) throw routeError(503, 'ZEUS_TEMPORARY_WORKSPACE_UNAVAILABLE', 'Temporary workspace is unavailable');
+      mkdirSync(directory, { recursive: true });
+      const existing = this.ports.projects.getById(temporaryWorkspaceId);
+      if (existing) return existing;
+      projectId = temporaryWorkspaceId;
+      input = { ...input, name: '临时会话', localPath: directory };
+    }
     if (!input?.name || !input.localPath) throw routeError(400, 'ZEUS_INVALID_PROJECT', 'Project name and localPath are required');
     const localPath = requireReadableProjectDirectory(input.localPath);
     const initialDefaults = normalizeProjectConfig('pending-project', { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode }, createDefaultProjectConfig('pending-project'));
@@ -78,7 +90,7 @@ export class WorkManagementProjectOperations {
   }
 
   update(projectId: string, input: UpdateProjectCommandInput, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
-    const existing = this.requireProject(projectId);
+    const existing = this.requireMutableProject(projectId);
     const localPath = typeof input.localPath === 'string' && input.localPath !== existing.localPath ? requireReadableProjectDirectory(input.localPath) : undefined;
     const updated = this.ports.projects.update(existing.id, { ...input, localPath });
     if (localPath) this.ports.repositoryDiscovery.request(updated, context.commandId);
@@ -88,7 +100,7 @@ export class WorkManagementProjectOperations {
   }
 
   updateWorkspace(projectId: string, input: UpdateProjectWorkspaceCommandInput, context: WorkManagementTaskCommandContext): { projectId: string; containerPath: string; sharedWritablePaths: ZeusProjectSharedPathRecord[] } {
-    const project = this.requireProject(projectId);
+    const project = this.requireMutableProject(projectId);
     const sharedPaths = normalizeProjectMemberDirectories(project, input.sharedWritablePaths);
     assertPathsDoNotOverlap(sharedPaths.map((entry) => entry.localPath));
     const savedSharedPaths = this.ports.sharedPaths.replaceForProject(
@@ -105,7 +117,7 @@ export class WorkManagementProjectOperations {
   }
 
   remove(projectId: string, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
-    const existing = this.requireProject(projectId);
+    const existing = this.requireMutableProject(projectId);
     const deleted = this.ports.projects.delete(existing.id);
     this.audit(context, 'project.deleted', deleted, { name: deleted.name, localPath: deleted.localPath });
     this.ports.afterCommit(() => this.ports.publishRealtimeEvent('project.deleted', { projectId: deleted.id }));
@@ -113,29 +125,35 @@ export class WorkManagementProjectOperations {
   }
 
   archiveConfirmation(projectId: string): ReturnType<ProjectRepository['prepareArchive']> {
-    return this.ports.projects.prepareArchive(this.requireProject(projectId).id);
+    return this.ports.projects.prepareArchive(this.requireMutableProject(projectId).id);
   }
 
   archive(projectId: string): ZeusProjectRecord {
-    const archived = this.ports.projects.archive(this.requireProject(projectId).id);
+    const archived = this.ports.projects.archive(this.requireMutableProject(projectId).id);
     this.ports.afterCommit(() => this.ports.publishRealtimeEvent('project.archived', { projectId: archived.id }));
     return archived;
   }
 
   restore(projectId: string): ZeusProjectRecord {
-    const restored = this.ports.projects.restore(this.requireProject(projectId).id);
+    const restored = this.ports.projects.restore(this.requireMutableProject(projectId).id);
     this.ports.afterCommit(() => this.ports.publishRealtimeEvent('project.restored', { projectId: restored.id }));
     return restored;
   }
 
   setDefaultTemplate(projectId: string, input: SetProjectDefaultTemplateCommandInput): ZeusProjectRecord {
-    const project = this.requireProject(projectId);
+    const project = this.requireMutableProject(projectId);
     const templateId = input.templateId ?? null;
     if (templateId) {
       const template = this.ports.templates.getById(templateId);
       if (!template || (template.projectId && template.projectId !== project.id)) throw routeError(404, 'ZEUS_TEMPLATE_NOT_FOUND', 'Task template not found for this project');
     }
     return this.ports.projects.setDefaultTemplate(project.id, templateId);
+  }
+
+  /** 默认工作区只禁止用户修改容器，仓库发现等正常初始化仍可读取。 */
+  private requireMutableProject(projectId: string): ZeusProjectRecord {
+    if (projectId === temporaryWorkspaceId) throw routeError(409, 'ZEUS_TEMPORARY_WORKSPACE_MANAGED', 'Temporary workspace is managed by Zeus');
+    return this.requireProject(projectId);
   }
 
   private requireProject(projectId: string): ZeusProjectRecord {

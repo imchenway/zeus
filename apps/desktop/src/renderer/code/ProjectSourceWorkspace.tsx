@@ -8,11 +8,11 @@ import { Collapsible } from '../ui/Collapsible.js';
 import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
-import { FloppyDiskIcon as FloppyDisk } from '@phosphor-icons/react/dist/csr/FloppyDisk';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
@@ -182,6 +182,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [searchTruncated, setSearchTruncated] = useState(false);
   const [loadingTree, setLoadingTree] = useState(true);
   const [busyPath, setBusyPath] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   /** 只记录解码失败的内容版本；图片在磁盘更新后可自动重新预览。 */
   const [error, setError] = useState<unknown>(null);
   useApplicationErrorDialog(error, {
@@ -284,6 +285,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               : candidate,
           ),
         );
+        setNotice(zh ? `已保存 ${relativePath}` : `Saved ${relativePath}`);
         return !editedWhileSaving;
       } catch (saveError) {
         setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: false, externalChange: true } : candidate)));
@@ -291,7 +293,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return false;
       }
     },
-    [bridge, props.project.id],
+    [bridge, props.project.id, zh],
   );
 
   const saveAll = useCallback(async (): Promise<boolean> => {
@@ -539,6 +541,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const entry = await bridge.createProjectSourceEntry({ projectId: props.project.id, parentRelativePath: operationParent, name: operationName, kind: operation.kind === 'create-file' ? 'file' : 'directory' });
         await loadDirectory(operationParent, true);
         if (entry.kind === 'file') await openFile(entry.relativePath);
+        setNotice(zh ? `已创建 ${entry.relativePath}` : `Created ${entry.relativePath}`);
       } else if (operation.kind === 'save-as') {
         const sourceTab = tabsRef.current.find((tab) => tab.document.relativePath === operation.tabPath);
         if (!sourceTab) throw new Error(zh ? '原文件标签已经关闭。' : 'The source tab is already closed.');
@@ -556,6 +559,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setTabs((current) => [...current, { document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }]);
         setActivePath(document.relativePath);
         await loadDirectory(operationParent, true);
+        setNotice(zh ? `已另存为 ${document.relativePath}` : `Saved as ${document.relativePath}`);
       } else if (operation.kind === 'rename' || operation.kind === 'move') {
         const entry = await bridge.moveProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath, targetParentRelativePath: operationParent, targetName: operationName });
         const oldPath = operation.entry.relativePath;
@@ -570,6 +574,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           });
         }
         await Promise.all([loadDirectory(parentPath(oldPath), true), loadDirectory(operationParent, true)]);
+        setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
         if (
@@ -594,6 +599,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           setActivePath(remainingTabs[Math.min(nextIndex, remainingTabs.length - 1)]?.document.relativePath ?? null);
         }
         await loadDirectory(parentPath(operation.entry.relativePath), true);
+        setNotice(zh ? '已移入系统废纸篓，可在 Finder 中恢复。' : 'Moved to system Trash. You can restore it in Finder.');
       }
       setOperation(null);
     } catch (operationError) {
@@ -625,44 +631,21 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   return (
     <section className="project-source-workspace" style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties} data-tree-open={treeDrawerOpen ? 'true' : 'false'}>
-      <header className="project-source-toolbar">
-        <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'}>
-          <FolderOpen aria-hidden="true" />
-        </button>
-        <span className="project-source-project-identity">
-          <strong>{props.project.name}</strong>
-          <small>{props.project.localPath}</small>
-        </span>
-        <span className="project-source-toolbar-actions">
-          <button type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' })} title={zh ? '新建文件' : 'New file'}>
-            <File aria-hidden="true" />
-            <Plus aria-hidden="true" />
-          </button>
-          <button type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' })} title={zh ? '新建目录' : 'New folder'}>
-            <Folder aria-hidden="true" />
-            <Plus aria-hidden="true" />
-          </button>
-          <Button size="compact" variant="secondary" onClick={() => void (activePath ? saveTab(activePath) : Promise.resolve())} disabled={!activeTab?.dirty || activeTab.saving}>
-            <FloppyDisk aria-hidden="true" />
-            {zh ? '保存' : 'Save'}
-          </Button>
-          <Button size="compact" variant="secondary" onClick={() => void saveAll()} disabled={!dirty}>
-            {zh ? '保存全部' : 'Save all'}
-          </Button>
-        </span>
-      </header>
-
-      {/* 成功结果由文件树与标签体现；这里只保留需要用户处理的外部修改提醒。 */}
-      {activeTab?.externalChange ? (
-        <div className="project-source-message" role="status">
-          <span>{zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.'}</span>
-          {activeTab.document.editable || activeTab.document.readOnlyReason === 'symlink' ? (
-            <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
-              {zh ? '另存为' : 'Save as'}
-            </button>
+      {notice || activeTab?.externalChange ? (
+        <div className="project-source-message success" role="status">
+          <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
+          {activeTab?.externalChange ? (
+            <>
+              <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
+                {zh ? '另存为' : 'Save as'}
+              </button>
+              <button type="button" onClick={() => void reloadActiveTab()}>
+                {zh ? '重新加载' : 'Reload'}
+              </button>
+            </>
           ) : null}
-          <button type="button" onClick={() => void reloadActiveTab()}>
-            {zh ? '重新加载' : 'Reload'}
+          <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
+            <X aria-hidden="true" />
           </button>
         </div>
       ) : null}
@@ -696,7 +679,37 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       <div className="project-source-main">
         <aside className="project-source-tree" style={{ '--source-module-share': `${sourceShare}%` } as CSSProperties} aria-label={zh ? '代码目录' : 'Source tree'}>
           <details className="project-source-module" open>
-            <summary>{zh ? '源码' : 'Source'}</summary>
+            <summary>
+              <span>{zh ? '源码' : 'Source'}</span>
+              <span className="project-source-module-actions" aria-label={zh ? '源码操作' : 'Source actions'}>
+                <button
+                  type="button"
+                  title={zh ? '新建文件' : 'New file'}
+                  aria-label={zh ? '新建文件' : 'New file'}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' });
+                  }}
+                >
+                  <File aria-hidden="true" />
+                  <Plus aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  title={zh ? '新建目录' : 'New folder'}
+                  aria-label={zh ? '新建目录' : 'New folder'}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' });
+                  }}
+                >
+                  <Folder aria-hidden="true" />
+                  <Plus aria-hidden="true" />
+                </button>
+              </span>
+            </summary>
             <label className="project-source-search">
               <MagnifyingGlass aria-hidden="true" />
               <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} placeholder={zh ? '搜索文件名' : 'Search file names'} />
@@ -788,6 +801,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
         <main className="project-source-editor-pane">
           <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
+            <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
+              <FolderOpen aria-hidden="true" />
+            </button>
             {tabs.map((tab) => (
               <div key={tab.document.relativePath} className={`project-source-tab${tab.document.relativePath === activePath ? ' active' : ''}`}>
                 <button
@@ -815,17 +831,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             ))}
           </div>
           {changePreview?.projectId === props.project.id ? (
-            <section className="project-source-change-preview">
-              <header>
-                <span>
-                  {changePreview.path} · {changePreview.staged ? (zh ? 'HEAD → 暂存区' : 'HEAD → Index') : zh ? '暂存区 → 工作区' : 'Index → Working tree'}
-                </span>
-                <button type="button" onClick={() => setChangePreview(null)}>
-                  {zh ? '关闭对比' : 'Close diff'}
-                </button>
-              </header>
-              <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
-            </section>
+            <>
+              <div className="project-source-editor-track-placeholder" aria-hidden="true" />
+              <section className="project-source-change-preview">
+                <header>
+                  <span>
+                    {changePreview.path} · {changePreview.staged ? (zh ? 'HEAD → 暂存区' : 'HEAD → Index') : zh ? '暂存区 → 工作区' : 'Index → Working tree'}
+                  </span>
+                  <button type="button" onClick={() => setChangePreview(null)}>
+                    {zh ? '关闭对比' : 'Close diff'}
+                  </button>
+                </header>
+                <SideBySideDiff key={`${changePreview.path}:${changePreview.staged}`} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
+              </section>
+            </>
           ) : activeTab ? (
             <>
               <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
@@ -852,29 +871,36 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   />
                 </Suspense>
               )}
-              <footer className="project-source-statusbar">
-                {activeTab.document.imagePreviewUrl ? (
-                  <span>{zh ? '图片 · 只读' : 'Image · Read-only'}</span>
-                ) : (
-                  <>
-                    <span>{activeTab.document.language}</span>
-                    <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
-                    <span>{activeTab.document.eol.toUpperCase()}</span>
-                    <span>
-                      Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
-                    </span>
-                  </>
-                )}
-                {activeTab.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
-              </footer>
             </>
           ) : (
-            <section className="project-source-editor-empty">
-              <FolderOpen aria-hidden="true" />
-              <strong>{zh ? '从左侧目录打开一个文件' : 'Open a file from the source tree'}</strong>
-              <span>{zh ? '打开文件后，可以在这里查看和编辑代码。' : 'Open a file to view and edit its code here.'}</span>
-            </section>
+            <>
+              <div className="project-source-editor-track-placeholder" aria-hidden="true" />
+              <section className="project-source-editor-empty">
+                <FolderOpen aria-hidden="true" />
+                <strong>{zh ? '从左侧目录打开一个文件' : 'Open a file from the source tree'}</strong>
+                <span>{zh ? '打开文件后，可以在这里查看和编辑代码。' : 'Open a file to view and edit its code here.'}</span>
+              </section>
+            </>
           )}
+          <footer className="project-source-statusbar">
+            {activeTab ? (
+              activeTab.document.imagePreviewUrl ? (
+                <span>{zh ? '图片 · 只读' : 'Image · Read-only'}</span>
+              ) : (
+                <>
+                  <span>{activeTab.document.language}</span>
+                  <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
+                  <span>{activeTab.document.eol.toUpperCase()}</span>
+                  <span>
+                    Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
+                  </span>
+                </>
+              )
+            ) : (
+              <span>{zh ? '未打开文件' : 'No file open'}</span>
+            )}
+            {activeTab?.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
+          </footer>
         </main>
       </div>
 

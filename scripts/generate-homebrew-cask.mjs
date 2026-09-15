@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /* global console, process */
+import { zeusDistribution } from './desktop-distribution.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,10 +27,10 @@ export function renderHomebrewCask({ version, arch, sha256 }) {
   version "${version}"
   sha256 "${sha256}"
 
-  url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-${normalizedArch.artifact}.dmg"
+  url "https://github.com/${zeusDistribution.repository}/releases/download/${zeusDistribution.releaseTagPrefix}#{version}/Zeus-#{version}-${normalizedArch.artifact}.dmg"
   name "Zeus"
   desc "Local-first AI development workbench"
-  homepage "https://github.com/imchenway/zeus"
+  homepage "https://github.com/${zeusDistribution.repository}"
 
   depends_on :macos
   depends_on arch: ${normalizedArch.homebrew}

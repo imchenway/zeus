@@ -3,8 +3,6 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   --zeus-control-height: 34px;
-  --zeus-card-shadow-soft: none;
-  --zeus-card-shadow: none;
 }
 .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace {
   min-inline-size: 0;
@@ -26,7 +24,6 @@
   padding: 0;
   border: 0 !important;
   border-radius: 0;
-  /* 顶部拖拽留白与正文共用底色，避免安全间距露出异色横条。 */
   background: var(--zeus-card-background) !important;
 }
 
@@ -178,6 +175,8 @@
     padding: 0;
     background: var(--zeus-card-background) !important;
     border: 0;
+    border-radius: 0;
+    box-shadow: none;
     overflow: auto;
     scrollbar-gutter: stable;
   }
@@ -1866,4 +1865,30 @@
 }
 .macos-ai-app.zeus-shell .settings-reference-shell .memory-editor {
   min-inline-size: 0;
+}
+
+/* 项目标题栏已提供拖拽区；设置分类和正文共用一个外层工作面。 */
+.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell > .ai-workspace {
+  padding: 8px !important;
+}
+
+.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell > .ai-workspace > .settings-reference-shell {
+  border: 1px solid var(--zeus-card-border) !important;
+  border-radius: 12px !important;
+  background: var(--zeus-card-background) !important;
+  box-shadow: none !important;
+}
+
+.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell .settings-sidebar-shell {
+  padding-block-start: 18px !important;
+}
+
+.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell > .settings-detail-pane {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell .settings-detail-pane {
+  margin: 0;
 }

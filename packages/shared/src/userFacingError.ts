@@ -660,7 +660,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ],
   ],
   [
-    ['Homebrew Cask 与 Zeus 发布清单不一致，为避免安装错误版本已停止升级。', 'Zeus 只允许使用 imchenway/tap 中的正式 Cask 升级。'],
+    ['Homebrew Cask 与 Zeus 发布清单不一致，为避免安装错误版本已停止升级。', 'Zeus 只允许使用本发行版配置的 Homebrew Tap 升级。'],
     [
       'Homebrew 的更新信息与 Zeus 官方发布不一致，安装已停止。请检查安装来源并等待发布信息更新。',
       'Homebrew’s update information does not match the official Zeus release. Installation stopped. Check the installation source and wait for the release information to update.',

@@ -396,7 +396,14 @@ async function probeNavigation() {
     const changes = db.get<{ count: number }>('SELECT total_changes() AS count')!.count;
     /** 目录、正文页均由同一正式仓库提供。 */
     const repository = new ConversationSnapshotV2Repository(db);
-    registerConversationSnapshotV2Api({ server, repository, projectExists: (id) => id === project.id, getConversation: (id) => (id === conversation.id ? conversation : undefined), readQueueState: () => null });
+    registerConversationSnapshotV2Api({
+      server,
+      repository,
+      projectExists: (id) => id === project.id,
+      getConversation: (id) => (id === conversation.id ? conversation : undefined),
+      readQueueState: () => null,
+      readSubmissionReceipt: () => null,
+    });
     /** 记录真实查询时间，不用截图推断性能。 */
     const started = performance.now();
     /** 完整目录一次返回，不携带分页游标。 */

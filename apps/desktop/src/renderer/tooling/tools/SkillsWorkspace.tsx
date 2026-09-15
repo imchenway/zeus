@@ -1,16 +1,16 @@
-import { MotionPresence } from '../../ui/MotionPresence.js';
-import { FormDialog } from '../../ui/FormDialog.js';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { MotionPresence } from '../toolPageHost.js';
+import { FormDialog } from '../toolPageHost.js';
+import { reportApplicationError } from '../toolPageHost.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
-import { Button } from '../../ui/Button.js';
+import { Button } from '../toolPageHost.js';
 import { ExtensionSourceFields, emptyExtensionSource } from './ExtensionSourceFields.js';
-import type { SkillCatalog, SkillDescriptor, SkillInstallSource } from '../codex/codexContracts.js';
-import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
-import { SkillSelector, skillCatalogChangedEvent } from './SkillSelector.js';
-import { readSkillWorkflowPreferences, skillWorkflowDefinitions, writeSkillWorkflowDefault, type SkillWorkflowId } from './skillWorkflowPreferences.js';
+import type { SkillCatalog, SkillDescriptor, SkillInstallSource } from '../toolPageHost.js';
+import type { NativeConversationAppClient } from '../toolPageHost.js';
+import { SkillSelector, skillCatalogChangedEvent } from '../toolPageHost.js';
+import { readSkillWorkflowPreferences, skillWorkflowDefinitions, writeSkillWorkflowDefault, type SkillWorkflowId } from '../toolPageHost.js';
 
 type SkillsClient = Pick<NativeConversationAppClient, 'loadSkills' | 'installSkill' | 'removeSkill'>;
 
@@ -21,6 +21,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedScope, setSelectedScope] = useState<SkillDescriptor['scope']>('user');
   const [installOpen, setInstallOpen] = useState(false);
   /** 安装字段与插件安装共用，切换来源保留各自输入。 */
   const [source, setSource] = useState(emptyExtensionSource);
@@ -63,9 +64,12 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
 
   const groupedSkills = useMemo(() => {
     const groups = new Map<SkillDescriptor['scope'], SkillDescriptor[]>();
+    for (const scope of ['user', 'system'] as const) groups.set(scope, []);
     for (const skill of visibleSkills) groups.set(skill.scope, [...(groups.get(skill.scope) ?? []), skill]);
     return [...groups.entries()];
   }, [visibleSkills]);
+
+  const activeSkills = groupedSkills.find(([scope]) => scope === selectedScope)?.[1] ?? [];
 
   const closeInstall = () => {
     if (installing) return;
@@ -213,45 +217,50 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
           <p className="skills-catalog-warning">{zh ? `Codex 报告 ${catalog.errors.length} 项目录错误；未被发现的 Skill 不可选择。` : `Codex reported ${catalog.errors.length} catalog errors; undiscovered skills cannot be selected.`}</p>
         ) : null}
         {loading && !catalog ? <div className="skills-empty-state">{zh ? '正在读取 Skill…' : 'Loading skills…'}</div> : null}
-        {!loading && catalog && visibleSkills.length === 0 ? (
+        {!loading && catalog && activeSkills.length === 0 ? (
           <div className="skills-empty-state">
             {query ? (zh ? '没有匹配的 Skill。' : 'No matching skills.') : zh ? '尚未发现 Skill。可以从本地目录或 Git 仓库安装。' : 'No skills discovered. Install one from a local directory or Git repository.'}
           </div>
         ) : null}
-        <div className="skills-scope-groups">
+        <nav className="extension-tabs skills-scope-tabs" aria-label={zh ? '技能来源' : 'Skill sources'}>
           {groupedSkills.map(([scope, skills]) => (
-            <section key={scope} className="skills-scope-group" aria-label={scopeName(scope, zh)}>
-              <header>
-                <strong>{scopeName(scope, zh)}</strong>
-                <span>{skills.length}</span>
-              </header>
-              <div className="skills-list">
-                {skills.map((skill) => (
-                  <article key={skill.id} className="skill-list-item">
-                    <span className="skill-list-glyph" aria-hidden="true">
-                      {skill.name.slice(0, 1).toLocaleUpperCase()}
-                    </span>
-                    <span className="skill-list-copy">
-                      <span className="skill-list-title">
-                        <strong>{skill.name}</strong>
-                        <code>{skill.invocation}</code>
-                      </span>
-                      <span>{skill.shortDescription || skill.description}</span>
-                      <small title={skill.path}>{skill.path}</small>
-                    </span>
-                    {skill.removable ? (
-                      <Button variant="danger" size="compact" busy={removingId === skill.id} disabled={Boolean(removingId)} onClick={() => setPendingRemoval(skill)}>
-                        <Trash aria-hidden="true" weight="regular" />
-                        {zh ? '移除' : 'Remove'}
-                      </Button>
-                    ) : (
-                      <span className="skill-list-managed-badge">{scope === 'repo' ? (zh ? '随项目' : 'Repository') : zh ? '受管理' : 'Managed'}</span>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </section>
+            <button key={scope} type="button" aria-current={selectedScope === scope ? 'page' : undefined} onClick={() => setSelectedScope(scope)}>
+              {scopeName(scope, zh)} <span>{skills.length}</span>
+            </button>
           ))}
+        </nav>
+        <div className="skills-scope-groups">
+          {groupedSkills
+            .filter(([scope]) => scope === selectedScope)
+            .map(([scope, skills]) => (
+              <section key={scope} className="skills-scope-group" aria-label={scopeName(scope, zh)}>
+                <div className="skills-list">
+                  {skills.map((skill) => (
+                    <article key={skill.id} className="skill-list-item">
+                      <span className="skill-list-glyph" aria-hidden="true">
+                        {skill.name.slice(0, 1).toLocaleUpperCase()}
+                      </span>
+                      <span className="skill-list-copy">
+                        <span className="skill-list-title">
+                          <strong>{skill.name}</strong>
+                          <code>{skill.invocation}</code>
+                        </span>
+                        <span>{skill.shortDescription || skill.description}</span>
+                        <small title={skill.path}>{skill.path}</small>
+                      </span>
+                      {skill.removable ? (
+                        <Button variant="danger" size="compact" busy={removingId === skill.id} disabled={Boolean(removingId)} onClick={() => setPendingRemoval(skill)}>
+                          <Trash aria-hidden="true" weight="regular" />
+                          {zh ? '移除' : 'Remove'}
+                        </Button>
+                      ) : (
+                        <span className="skill-list-managed-badge">{scope === 'repo' ? (zh ? '随项目' : 'Repository') : zh ? '受管理' : 'Managed'}</span>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))}
         </div>
       </section>
 

@@ -29,6 +29,7 @@ import type {
   NativePlanImplementationResponseAcceptance,
   NativeProjectConversationChoicesSnapshot,
   NativeQueueSnapshot,
+  NativeSubmissionReceipt,
   NativeSessionMetricsSnapshot,
   NativeSubagentListSnapshot,
   NativeSubagentThreadSnapshot,
@@ -91,6 +92,7 @@ export interface ConversationApiClient {
   loadNativeConversationContentV2: (projectId: string, conversationId: string, handle: string, options?: { offset?: number; byteLimit?: number }) => Promise<NativeConversationContentV2Page>;
   loadNativeConversationToolResult: (projectId: string, conversationId: string, handle: string, options?: { offset?: number; limit?: number }) => Promise<NativeConversationToolResultPage>;
   loadNativeConversationQueueV2: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
+  loadNativeSubmissionReceipt: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeSubmissionReceipt>;
   loadNativeConversationEvents: (projectId: string, conversationId: string, options: { afterSequence: number; limit?: number; byteLimit?: number; syncStreamGeneration?: string }) => Promise<NativeConversationEventPage>;
   loadNativePendingRequests: (projectId: string, conversationId: string) => Promise<NativePendingInteractionsSnapshot>;
   loadNativeSubagents: (projectId: string, conversationId: string) => Promise<NativeSubagentListSnapshot>;
@@ -211,6 +213,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadNativeConversationContentV2: (projectId, conversationId, handle, options) => transport.request<NativeConversationContentV2Page>(`${conversationPath(projectId, conversationId)}/content${contentQuery(handle, options)}`),
     loadNativeConversationToolResult: (projectId, conversationId, handle, options) => transport.request<NativeConversationToolResultPage>(`${conversationPath(projectId, conversationId)}/tool-results${toolResultQuery(handle, options)}`),
     loadNativeConversationQueueV2: (projectId, conversationId) => transport.request<NativeQueueSnapshot>(`${conversationPath(projectId, conversationId)}/queue-state`),
+    loadNativeSubmissionReceipt: (projectId, conversationId, submissionId) => transport.request<NativeSubmissionReceipt>(`${conversationPath(projectId, conversationId)}/submissions/${encodeURIComponent(submissionId)}/receipt`),
     loadNativeConversationEvents: (projectId, conversationId, options) => {
       const query = new URLSearchParams({ afterSequence: String(options.afterSequence) });
       if (options.limit !== undefined) query.set('limit', String(options.limit));

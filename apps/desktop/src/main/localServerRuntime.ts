@@ -1,3 +1,4 @@
+import { zeusDistribution } from './desktopDistribution.js';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -794,6 +795,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
 
   async function launchServer(): Promise<RunningZeusLocalServer> {
     const server = await startZeusLocalServer({
+      distribution: zeusDistribution,
       dbPath,
       dataLayout,
       localConfigPath: configPath,

@@ -10,7 +10,7 @@ import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
-type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'desktopNotificationsEnabled' | 'networkProxy'>;
+type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'desktopNotificationsEnabled' | 'networkProxy'>;
 
 /** 通用设置即时应用、顺序保存；失败后保留当前选择并提供重试。 */
 export function GeneralSettingsPane(props: {
@@ -38,7 +38,7 @@ export function GeneralSettingsPane(props: {
     preferences.current = next;
     props.onChange((value) => ({ ...value, ...patch }));
     /** 请求仅包含通用偏好，保留其余设置的服务端当前值。 */
-    const input: GeneralPreferences = { appLanguage: next.appLanguage, appearance: next.appearance, desktopNotificationsEnabled: next.desktopNotificationsEnabled, networkProxy: next.networkProxy };
+    const input: GeneralPreferences = { appLanguage: next.appLanguage, appearance: next.appearance, mainLayout: next.mainLayout, desktopNotificationsEnabled: next.desktopNotificationsEnabled, networkProxy: next.networkProxy };
     /** 异步反馈的归属序号。 */
     const currentRevision = ++revision.current;
     setStatus('saving');
@@ -95,6 +95,18 @@ export function GeneralSettingsPane(props: {
               { value: 'system', label: zh ? '跟随系统' : 'System' },
               { value: 'light', label: zh ? '浅色' : 'Light' },
               { value: 'dark', label: zh ? '深色' : 'Dark' },
+            ]}
+          />
+        </NativeControlRow>
+        <NativeControlRow title={zh ? '主界面布局' : 'Main layout'} description={zh ? '选择主界面布局，修改后立即生效。' : 'Choose the main interface layout. Changes apply immediately.'}>
+          <ZeusSelect
+            size="regular"
+            ariaLabel={zh ? '主界面布局' : 'Main layout'}
+            value={props.value.mainLayout}
+            onChange={(mainLayout) => save({ mainLayout })}
+            options={[
+              { value: 'upstream', label: zh ? '经典布局' : 'Classic layout' },
+              { value: 'current', label: zh ? '紧凑布局' : 'Compact layout' },
             ]}
           />
         </NativeControlRow>

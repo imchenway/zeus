@@ -165,6 +165,7 @@ export function toSafeAppShellImport(
       AppShellSettings,
       | 'appLanguage'
       | 'appearance'
+      | 'mainLayout'
       | 'webviewDebugEnabled'
       | 'developerModeEnabled'
       | 'multiWindowEnabled'
@@ -193,6 +194,7 @@ export function toSafeAppShellImport(
   return {
     appLanguage: raw.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
     appearance: raw.appearance === 'light' || raw.appearance === 'dark' || raw.appearance === 'system' ? raw.appearance : 'system',
+    mainLayout: raw.mainLayout === 'current' ? 'current' : 'upstream',
     webviewDebugEnabled: raw.webviewDebugEnabled === true,
     developerModeEnabled: raw.developerModeEnabled === true,
     multiWindowEnabled: typeof raw.multiWindowEnabled === 'boolean' ? raw.multiWindowEnabled : true,

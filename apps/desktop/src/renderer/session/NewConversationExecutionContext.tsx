@@ -1,3 +1,4 @@
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -16,7 +17,7 @@ export interface NewConversationExecutionContextProps {
   projectId: string;
   projects: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   disabled?: boolean;
-  onSelectProject?: (projectId: string) => void;
+  onSelectProject?: (projectId: string) => void | Promise<void>;
   onLoadProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   onExecuteProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   onBusyChange?: (busy: boolean) => void;
@@ -33,21 +34,27 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     language: zh ? 'zh-CN' : 'en',
   });
   const [branchBusy, setBranchBusy] = useState(false);
+  const [projectBusy, setProjectBusy] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
   const [createBranchName, setCreateBranchName] = useState('');
 
+  const temporary = props.projectId === temporaryWorkspaceId;
   const selectedProject = props.projects.find((project) => project.id === props.projectId) ?? null;
   const rootRepository = useMemo(() => workbench?.repositories.find((repository) => repository.relativePath === '.' || repository.relativePath === '') ?? null, [workbench]);
   const branchLabel = rootRepository?.snapshot.branch || (loadState === 'loading' ? (zh ? '正在读取' : 'Loading') : zh ? '非 Git 目录' : 'Not a Git repository');
   const checkedOutBranches = useMemo(() => new Set(rootRepository?.snapshot.checkedOutBranches ?? []), [rootRepository?.snapshot.checkedOutBranches]);
   const projectOptions = useMemo(
-    () =>
-      props.projects.map((project) => ({
-        value: project.id,
-        label: `${project.name} · ${project.localPath}`,
-        group: zh ? '项目' : 'Projects',
-        searchText: `${project.name} ${project.localPath}`,
-      })),
+    () => [
+      { value: temporaryWorkspaceId, label: zh ? '临时会话 · 默认目录' : 'Temporary conversation · Default folder', group: zh ? '无项目' : 'Without a project', searchText: '临时 默认 temporary default' },
+      ...props.projects
+        .filter((project) => project.id !== temporaryWorkspaceId)
+        .map((project) => ({
+          value: project.id,
+          label: `${project.name} · ${project.localPath}`,
+          group: zh ? '项目' : 'Projects',
+          searchText: `${project.name} ${project.localPath}`,
+        })),
+    ],
     [props.projects, zh],
   );
   const branchOptions = useMemo(() => {
@@ -82,6 +89,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     setError(null);
     setCreateBranchOpen(false);
     setCreateBranchName('');
+    if (temporary) {
+      setLoadState('ready');
+      return;
+    }
     if (!props.onLoadProjectGit) {
       setLoadState('error');
       setError(zh ? '当前无法读取项目分支。' : 'Project branches are unavailable.');
@@ -102,12 +113,12 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     return () => {
       loadVersionRef.current += 1;
     };
-  }, [props.language, props.onLoadProjectGit, props.projectId, zh]);
+  }, [props.language, props.onLoadProjectGit, props.projectId, temporary, zh]);
 
   useEffect(() => {
-    props.onBusyChange?.(branchBusy);
+    props.onBusyChange?.(branchBusy || projectBusy);
     return () => props.onBusyChange?.(false);
-  }, [branchBusy, props.onBusyChange]);
+  }, [branchBusy, projectBusy, props.onBusyChange]);
 
   function closeCreateBranchDialog(): void {
     setCreateBranchOpen(false);
@@ -136,11 +147,19 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       <div className="session-new-conversation-context" aria-label={zh ? '新对话的项目与分支' : 'Project and branch for the new conversation'}>
         <span className="session-new-conversation-context-control">
           <ZeusSelect
-            ariaLabel={zh ? `项目：${selectedProject?.name ?? '不可用'}` : `Project: ${selectedProject?.name ?? 'Unavailable'}`}
+            ariaLabel={zh ? `工作目录：${selectedProject?.name ?? '不可用'}` : `Project: ${selectedProject?.name ?? 'Unavailable'}`}
             className="session-new-conversation-context-select"
             emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
-            onChange={(projectId) => {
-              if (projectId !== props.projectId) props.onSelectProject?.(projectId);
+            onChange={async (projectId) => {
+              if (projectId === props.projectId || !props.onSelectProject || projectBusy) return;
+              setProjectBusy(true);
+              try {
+                await props.onSelectProject(projectId);
+              } catch (reason) {
+                setError(reason);
+              } finally {
+                setProjectBusy(false);
+              }
             }}
             options={projectOptions}
             popoverMinWidth={320}
@@ -148,36 +167,40 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
             searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
             size="compact"
             triggerIcon={<Folder />}
-            triggerLabel={selectedProject?.name ?? (zh ? '项目不可用' : 'Project unavailable')}
+            triggerLabel={temporary ? (zh ? '临时会话 · 默认目录' : 'Temporary · Default folder') : (selectedProject?.name ?? (zh ? '项目不可用' : 'Project unavailable'))}
             value={props.projectId}
-            disabled={props.disabled || branchBusy || props.projects.length === 0 || !props.onSelectProject}
+            disabled={props.disabled || branchBusy || projectBusy || props.projects.length === 0 || !props.onSelectProject}
           />
         </span>
 
-        <span className="session-new-conversation-context-control">
-          <ZeusSelect
-            ariaLabel={zh ? `分支：${branchLabel}` : `Branch: ${branchLabel}`}
-            className="session-new-conversation-context-select"
-            emptyLabel={zh ? '没有匹配的本地分支' : 'No matching local branches'}
-            onChange={(value) => {
-              if (value === createBranchActionValue) {
-                setCreateBranchOpen(true);
-                return;
-              }
-              if (value !== rootRepository?.snapshot.branch) void executeBranchAction({ type: 'checkout', branchName: value });
-            }}
-            options={branchOptions}
-            popoverMinWidth={340}
-            searchable
-            searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
-            size="compact"
-            triggerIcon={loadState === 'loading' ? <span className="session-new-conversation-context-spinner" aria-hidden="true" /> : <GitBranch />}
-            triggerLabel={branchLabel}
-            triggerRef={branchTriggerRef}
-            value={rootRepository?.snapshot.branch ?? branchLabel}
-            disabled={props.disabled || branchBusy || loadState !== 'ready' || !rootRepository || !props.onExecuteProjectGit}
-          />
-        </span>
+        {temporary ? (
+          <span title={selectedProject?.localPath}>{zh ? '文件保存在默认目录' : 'Files saved in the default folder'}</span>
+        ) : (
+          <span className="session-new-conversation-context-control">
+            <ZeusSelect
+              ariaLabel={zh ? `分支：${branchLabel}` : `Branch: ${branchLabel}`}
+              className="session-new-conversation-context-select"
+              emptyLabel={zh ? '没有匹配的本地分支' : 'No matching local branches'}
+              onChange={(value) => {
+                if (value === createBranchActionValue) {
+                  setCreateBranchOpen(true);
+                  return;
+                }
+                if (value !== rootRepository?.snapshot.branch) void executeBranchAction({ type: 'checkout', branchName: value });
+              }}
+              options={branchOptions}
+              popoverMinWidth={340}
+              searchable
+              searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
+              size="compact"
+              triggerIcon={loadState === 'loading' ? <span className="session-new-conversation-context-spinner" aria-hidden="true" /> : <GitBranch />}
+              triggerLabel={branchLabel}
+              triggerRef={branchTriggerRef}
+              value={rootRepository?.snapshot.branch ?? branchLabel}
+              disabled={props.disabled || branchBusy || projectBusy || loadState !== 'ready' || !rootRepository || !props.onExecuteProjectGit}
+            />
+          </span>
+        )}
       </div>
 
       <MotionPresence>

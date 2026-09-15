@@ -49,6 +49,9 @@ importers:
         specifier: ^8.18.2
         version: 8.21.0
     devDependencies:
+      '@zeus/distribution':
+        specifier: workspace:*
+        version: link:packages/distribution
       '@eslint/js':
         specifier: ^9.29.0
         version: 9.39.4
@@ -91,6 +94,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@zeus/distribution':
+        specifier: workspace:*
+        version: link:../../packages/distribution
       '@zeus/ai-runtime':
         specifier: workspace:*
         version: link:../../packages/ai-runtime
@@ -261,6 +267,12 @@ importers:
         version: 0.12.1
 
   packages/shared: {}
+
+  packages/distribution:
+    dependencies:
+      '@zeus/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/storage:
     dependencies:

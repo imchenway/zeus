@@ -3,6 +3,7 @@ export * from './filePreview.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
+export * from './temporaryWorkspace.js';
 export * from './codexUsage.js';
 export * from './commandEnvelope.js';
 export * from './commandGovernance.js';
@@ -785,6 +786,8 @@ export function zentaoInstanceApiBase(instance: Pick<ZentaoInstanceRecord, 'host
 export const digitalEmployeeAvatarIds = ['loki', 'argus', 'eric', 'higgins', 'vidar'] as const;
 /** 头像身份跨模板与项目员工保持一致。 */
 export type DigitalEmployeeAvatarId = (typeof digitalEmployeeAvatarIds)[number];
+
+export * from './distribution.js';
 
 export * from './conversationCapabilities.js';
 export * from './employeeWorkPlanning.js';

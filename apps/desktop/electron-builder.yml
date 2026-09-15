@@ -39,7 +39,7 @@ extraFiles:
     to: Helpers/Zeus Computer Service.app
 mac:
   category: public.app-category.developer-tools
-  icon: assets/icon.icns
+  icon: dist/branding/icon.icns
   minimumSystemVersion: '13.0'
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist

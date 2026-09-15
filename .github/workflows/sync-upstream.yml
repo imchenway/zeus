@@ -1,0 +1,43 @@
+name: Sync upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: vars.ZEUS_UPSTREAM_SYNC == 'true' && github.repository != 'imchenway/zeus'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.ZEUS_INTEGRATION_BRANCH || 'main' }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 获取上游最新稳定版并准备同步分支
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZEUS_UPSTREAM_SYNC: ${{ vars.ZEUS_UPSTREAM_SYNC }}
+        run: node scripts/sync-upstream.mjs
+      - name: 创建待审阅的同步 PR
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.upstream.outputs.branch }}
+          BASE_BRANCH: ${{ steps.upstream.outputs.base_branch }}
+        run: |
+          if ! gh pr list --head "$BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number' | grep -q '[0-9]'; then
+            gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title '同步上游稳定版本' --body-file .tmp/upstream-pr.md
+          fi

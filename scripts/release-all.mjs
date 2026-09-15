@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { releaseTag, versionFromReleaseTag, releasePackagePaths, assertDistributionVersions } from './desktop-distribution.mjs';
 /* global console, process */
+import { zeusDistribution } from './desktop-distribution.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,8 +11,8 @@ import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
 import { parseBoolean } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
-const repository = 'imchenway/zeus';
-const releaseFiles = ['package.json', 'apps/desktop/package.json'];
+const repository = zeusDistribution.repository;
+const releaseFiles = releasePackagePaths;
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
 // 仓库其他目录中的 Markdown 仍按文档处理；本地任务记录统一由 docs/ 路径识别。
 const documentationWhitespaceExtensions = new Set(['.md', '.mdx', '.markdown']);
@@ -120,20 +122,20 @@ async function runIsolatedRelease(input) {
   mkdirSync(isolatedRoot, { recursive: true, mode: 0o700 });
 
   if (!existsSync(isolatedRepository)) {
-    runInDirectory(repositoryRoot, 'git', ['clone', '--shared', '--branch', 'main', '--single-branch', repositoryRoot, isolatedRepository]);
+    runInDirectory(repositoryRoot, 'git', ['clone', '--shared', '--branch', zeusDistribution.releaseBranch, '--single-branch', repositoryRoot, isolatedRepository]);
   } else if (!existsSync(join(isolatedRepository, '.git'))) {
     throw new Error(`隔离发布目录已存在但不是 Git 仓库，拒绝覆盖或清理：${isolatedRepository}`);
   }
 
   runInDirectory(isolatedRepository, 'git', ['remote', 'set-url', 'origin', origin]);
-  runInDirectory(isolatedRepository, 'git', ['fetch', '--force', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
+  runInDirectory(isolatedRepository, 'git', ['fetch', '--force', 'origin', `refs/heads/${zeusDistribution.releaseBranch}:refs/remotes/origin/${zeusDistribution.releaseBranch}`]);
   const isolatedBranch = gitInDirectory(isolatedRepository, ['branch', '--show-current']) || '(detached HEAD)';
   const isolatedHead = gitInDirectory(isolatedRepository, ['rev-parse', 'HEAD']);
-  if (isolatedBranch !== 'main') throw new Error(`隔离发布副本不在 main：${isolatedBranch}`);
+  if (isolatedBranch !== zeusDistribution.releaseBranch) throw new Error(`隔离发布副本不在 main：${isolatedBranch}`);
   if (isolatedHead !== input.sourceHead && !isRecoverableIsolatedReleaseCommit(isolatedRepository, input.sourceHead, isolatedHead)) {
     throw new Error(`隔离发布副本已经偏离发布源，拒绝覆盖或清理：source=${input.sourceHead} isolated=${isolatedHead}`);
   }
-  if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', 'origin/main', input.sourceHead], true).status !== 0) {
+  if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', `origin/${zeusDistribution.releaseBranch}`, input.sourceHead], true).status !== 0) {
     throw new Error(`origin/main 已领先发布源或与之分叉，拒绝隔离发布：source=${input.sourceHead}`);
   }
 
@@ -184,7 +186,7 @@ function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isol
     const version = JSON.parse(readFileSync(packagePath, 'utf8')).version;
     const gitDirectoryValue = gitInDirectory(isolatedRepository, ['rev-parse', '--git-common-dir']);
     const gitDirectory = isAbsolute(gitDirectoryValue) ? gitDirectoryValue : resolve(isolatedRepository, gitDirectoryValue);
-    const releaseStatePath = join(gitDirectory, 'zeus-release', `v${version}`, 'state.json');
+    const releaseStatePath = join(gitDirectory, 'zeus-release', releaseTag(version), 'state.json');
     if (existsSync(releaseStatePath)) {
       const state = JSON.parse(readFileSync(releaseStatePath, 'utf8'));
       const sourceIsAncestor = captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceHead, state.sourceHead], true).status === 0;
@@ -194,8 +196,8 @@ function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isol
   const parent = captureInDirectory(isolatedRepository, 'git', ['rev-parse', `${isolatedHead}^`], true);
   if (parent.status !== 0 || parent.stdout.trim() !== sourceHead) return false;
   const changedPaths = gitInDirectory(isolatedRepository, ['diff-tree', '--no-commit-id', '--name-only', '-r', isolatedHead]).split(/\r?\n/u).filter(Boolean);
-  const versionNotes = changedPaths.filter((path) => /^releases\/v\d+\.\d+\.\d+\.md$/u.test(path));
-  return changedPaths.length === 3 && releaseFiles.every((path) => changedPaths.includes(path)) && versionNotes.length === 1;
+  const versionNotes = changedPaths.filter((path) => path.startsWith('releases/') && path.endsWith('.md') && Boolean(versionFromReleaseTag(path.slice('releases/'.length, -3))));
+  return changedPaths.length === releaseFiles.length + 1 && releaseFiles.every((path) => changedPaths.includes(path)) && versionNotes.length === 1;
 }
 
 function seedIsolatedReleaseState(isolatedRepository, sourceHead) {
@@ -204,7 +206,7 @@ function seedIsolatedReleaseState(isolatedRepository, sourceHead) {
   if (!sourceState) return;
   const gitDirectoryValue = gitInDirectory(isolatedRepository, ['rev-parse', '--git-common-dir']);
   const gitDirectory = isAbsolute(gitDirectoryValue) ? gitDirectoryValue : resolve(isolatedRepository, gitDirectoryValue);
-  const stateDirectory = join(gitDirectory, 'zeus-release', `v${version}`);
+  const stateDirectory = join(gitDirectory, 'zeus-release', releaseTag(version));
   const targetStatePath = join(stateDirectory, 'state.json');
   if (existsSync(targetStatePath)) return;
   if (sourceState.phase !== 'release_committed' || sourceState.gateSummaryPath || sourceState.publishResultPath || !sourceState.releaseCommit) {
@@ -214,7 +216,7 @@ function seedIsolatedReleaseState(isolatedRepository, sourceHead) {
     return;
   }
   if (resolveLocalTagSha(sourceState.tag) || resolveRemoteReference(`refs/tags/${sourceState.tag}`)) return;
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (!remoteMainSha || captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceState.releaseCommit, remoteMainSha], true).status === 0) {
     return;
   }
@@ -263,7 +265,7 @@ function buildIsolationValidationResult(input, isolatedRepository) {
 
 function assertRepositoryPreflight() {
   const branch = git(['branch', '--show-current']) || '(detached HEAD)';
-  if (branch !== 'main') throw new Error(`一键发布只能从本地 main 执行，当前分支为 ${branch}。`);
+  if (branch !== zeusDistribution.releaseBranch) throw new Error(`一键发布只能从本地 main 执行，当前分支为 ${branch}。`);
   const origin = git(['remote', 'get-url', 'origin']);
   if (![`https://github.com/${repository}.git`, `https://github.com/${repository}`, `git@github.com:${repository}.git`].includes(origin)) {
     throw new Error(`origin 不是受控仓库 ${repository}：${origin}`);
@@ -272,9 +274,9 @@ function assertRepositoryPreflight() {
 }
 
 function inspectCommittedCandidateWhitespace(headSha) {
-  const baseTagResult = capture('git', ['describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--abbrev=0', headSha], true);
+  const baseTagResult = capture('git', ['describe', '--tags', '--match', `${zeusDistribution.releaseTagPrefix}[0-9]*.[0-9]*.[0-9]*`, '--abbrev=0', headSha], true);
   const baseTag = baseTagResult.stdout.trim();
-  if (baseTagResult.status !== 0 || !/^v\d+\.\d+\.\d+$/u.test(baseTag)) {
+  if (baseTagResult.status !== 0 || !versionFromReleaseTag(baseTag)) {
     throw new Error(`发布前无法确认候选提交的本地稳定基线：${baseTagResult.stderr.trim() || baseTagResult.stdout.trim() || 'missing'}`);
   }
   const inspection = inspectGitDiffCheck({
@@ -367,19 +369,24 @@ function assertGitHubAuthentication() {
 }
 
 function readLatestStableRelease() {
-  const value = JSON.parse(gh(['release', 'view', '--repo', repository, '--json', 'tagName,isDraft,isPrerelease,publishedAt,url']));
-  if (value.isDraft || value.isPrerelease || !/^v\d+\.\d+\.\d+$/u.test(value.tagName ?? '')) {
-    throw new Error(`无法确认最新公开稳定版：${JSON.stringify(value)}`);
-  }
-  return { tag: value.tagName, version: value.tagName.slice(1), publishedAt: value.publishedAt, url: value.url };
+  const pages = JSON.parse(gh(['api', `repos/${repository}/releases?per_page=100`, '--paginate', '--slurp']));
+  const releases = pages.flat().filter((release) => !release.draft && !release.prerelease && versionFromReleaseTag(release.tag_name));
+  releases.sort((left, right) => {
+    const a = versionFromReleaseTag(left.tag_name).split('.').map(Number);
+    const b = versionFromReleaseTag(right.tag_name).split('.').map(Number);
+    return b[0] - a[0] || b[1] - a[1] || b[2] - a[2];
+  });
+  const value = releases[0];
+  if (!value) throw new Error('尚无 Zeus 稳定发行版，请先使用 release:fork:prepare 和 Release 工作流完成首次发布。');
+  return { tag: value.tag_name, version: versionFromReleaseTag(value.tag_name), publishedAt: value.published_at, url: value.html_url };
 }
 
 function fetchReleaseFacts(tag) {
-  runRemoteReadInherited('同步远程 main 与稳定标签', 'git', ['--no-pager', 'fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
+  runRemoteReadInherited('同步远程 main 与稳定标签', 'git', ['--no-pager', 'fetch', 'origin', `refs/heads/${zeusDistribution.releaseBranch}:refs/remotes/origin/${zeusDistribution.releaseBranch}`, `refs/tags/${tag}:refs/tags/${tag}`]);
 }
 
 function assertMainRelationship(headSha) {
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (!remoteMainSha) throw new Error('无法读取 origin/main。');
   if (remoteMainSha === headSha) return;
   const relationship = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true);
@@ -438,7 +445,7 @@ function resolveReleaseState(input) {
   const state = {
     schemaVersion: 1,
     version: input.nextVersion,
-    tag: `v${input.nextVersion}`,
+    tag: releaseTag(input.nextVersion),
     baseTag: input.stableRelease.tag,
     sourceHead: input.headSha,
     releaseCommit: null,
@@ -466,7 +473,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (readMatchingPackageVersion() !== state.version) return false;
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) return false;
   if (capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, headSha], true).status !== 0) return false;
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (!remoteMainSha) return false;
   const previousReleaseIsOnRemote = capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0;
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
@@ -491,7 +498,7 @@ function assertNoActiveReleaseWorkflow(replacementCommit) {
   const activeRuns = runs.filter((run) => run.status !== 'completed');
   if (activeRuns.length === 0) return;
 
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   const supersededRuns = activeRuns.filter((run) => isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha));
   const supersededRunIds = new Set(supersededRuns.map((run) => run.databaseId));
   const blockingRuns = activeRuns.filter((run) => !supersededRunIds.has(run.databaseId));
@@ -526,7 +533,7 @@ function isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha) 
 }
 
 function validateState(state, stableRelease) {
-  if (state.schemaVersion !== 1 || !/^\d+\.\d+\.\d+$/u.test(state.version ?? '') || state.tag !== `v${state.version}`) {
+  if (state.schemaVersion !== 1 || !/^\d+\.\d+\.\d+$/u.test(state.version ?? '') || state.tag !== releaseTag(state.version)) {
     throw new Error('一键发布恢复状态格式无效。');
   }
   if (state.baseTag !== stableRelease.tag && stableRelease.version !== state.version) {
@@ -785,7 +792,7 @@ async function ensureFastLocalGate(state) {
 
 function ensureMainPushed(state) {
   assertReleaseHead(state);
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (remoteMainSha === state.releaseCommit) {
     state.phase = 'main_pushed';
     writeState(state);
@@ -795,7 +802,7 @@ function ensureMainPushed(state) {
     throw new Error(`推送前 origin/main 已领先或分叉，拒绝自动合并或强推：remote=${remoteMainSha ?? 'missing'} release=${state.releaseCommit}`);
   }
   pushMainWithVerification(state);
-  const pushedSha = resolveRemoteReference('refs/heads/main');
+  const pushedSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (pushedSha !== state.releaseCommit) throw new Error(`main 推送后远端提交不一致：expected=${state.releaseCommit} actual=${pushedSha ?? 'missing'}`);
   state.phase = 'main_pushed';
   writeState(state);
@@ -845,6 +852,7 @@ function buildFinalResult(state) {
 }
 
 function readMatchingPackageVersion() {
+  assertDistributionVersions();
   const rootVersion = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8')).version;
   const desktopVersion = JSON.parse(readFileSync(join(repositoryRoot, 'apps', 'desktop', 'package.json'), 'utf8')).version;
   if (rootVersion !== desktopVersion || !/^\d+\.\d+\.\d+$/u.test(rootVersion ?? '')) {
@@ -874,7 +882,7 @@ function resolveTargetVersion(stableVersion) {
 function releaseStateDirectory(version) {
   const gitDirectoryValue = git(['rev-parse', '--git-common-dir']);
   const gitDirectory = isAbsolute(gitDirectoryValue) ? gitDirectoryValue : resolve(repositoryRoot, gitDirectoryValue);
-  return join(gitDirectory, 'zeus-release', `v${version}`);
+  return join(gitDirectory, 'zeus-release', releaseTag(version));
 }
 
 function statePath(version) {
@@ -982,7 +990,7 @@ function runRemoteReadInherited(label, command, args, timeout = releaseRemoteRea
 }
 
 function pushMainWithVerification(state) {
-  const args = ['--no-pager', 'push', 'origin', 'refs/heads/main:refs/heads/main'];
+  const args = ['--no-pager', 'push', 'origin', `refs/heads/${zeusDistribution.releaseBranch}:refs/heads/${zeusDistribution.releaseBranch}`];
   const timeout = 180_000;
   const result = spawnSync('git', args, {
     cwd: repositoryRoot,
@@ -991,7 +999,7 @@ function pushMainWithVerification(state) {
     timeout,
   });
   if (!result.error && result.status === 0) return;
-  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  const remoteMainSha = resolveRemoteReference(`refs/heads/${zeusDistribution.releaseBranch}`);
   if (remoteMainSha === state.releaseCommit) {
     console.log(`main 推送返回异常，但远程已复验为目标提交 ${state.releaseCommit.slice(0, 12)}，继续安全续跑。`);
     return;

@@ -170,6 +170,8 @@ for (const args of diffChecks) {
   runStep(`Git 空白错误检查：git ${args.join(' ')}`, 'git', args);
 }
 
+runStep('发行配置检查', 'node', ['scripts/distribution-config.mjs']);
+
 runStep('发布公网只读重试行为探针', 'pnpm', ['verify:release-remote-read']);
 
 if (formattedPaths.length > 0) {

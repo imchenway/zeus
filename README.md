@@ -5,6 +5,8 @@ Zeus 是一款 AI 研发工作台，将项目与任务管理、Coding Agent 会�
 ## 功能
 
 - 管理项目、任务和 Coding Agent 会话。
+- 不选项目也可启动临时会话，默认工作目录为当前 Zeus 数据目录下的 `workspaces/temporary`；文件和会话历史保留在本机。
+- 在“设置 → 通用”切换经典布局或紧凑布局，选择自动保存；未选择过布局时沿用经典布局，已有选择和会话状态保持不变。
 - 在创建任务中粘贴 GitHub Issue、Jira 工作项或禅道详情链接，读取标题和正文后确认创建；受限内容通过 Zeus 登录，GitHub 与 Jira 附件保留为来源链接。
 - 任务列表可读取当前禅道账号负责的任务和缺陷，确认后导入 Zeus。
 - 浏览和编辑项目源码，搜索文件与代码内容。
@@ -53,7 +55,7 @@ brew uninstall --cask --zap imchenway/tap/zeus
 
 ## 首次打开
 
-当前公开版本尚未经过 Apple 公证。首次打开时，如果 macOS 提示无法验证 Zeus：
+未配置 Apple 公证的候选包首次打开时，如果 macOS 提示无法验证 Zeus：
 
 1. 关闭提示窗口。
 2. 打开“系统设置”。
@@ -102,3 +104,16 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 Computer Use 的动作和观察可通过 `wait_for` 在同次调用中确认控件出现、消失或文本值变化，并返回可继续操作的新快照。条件未满足时只报告超时，不重放动作；确认范围仅为可访问的界面状态。默认返回紧凑控件或较小的差异，首次未缓存观察附带截图，后续确认按需使用 `include_screenshot`；需要全部控件属性时使用 `full_output`。优点是减少额外等待与模型往返；复杂界面可能需要补充完整观察，实际性能需以相同流程复测。
 发布正文由发布准备流程写入 `releases/v<版本>.md`。任务记录与验收证据统一保留在本地 `docs/`，整个目录已加入 Git 忽略规则，不随源码提交。旧记录可从 Git 历史查阅，不维护新旧两套发布文档路径。
+
+## 发行配置与发布
+
+应用版本统一由根目录 `package.json` 维护，桌面包同步该版本，发布标签使用 `v<版本>`。更新来源为 `imchenway/zeus`，Homebrew 使用 `imchenway/tap/zeus`。
+
+- `pnpm release:config`：检查发行来源及应用版本一致性。
+- `pnpm release:distribution:prepare`：使用已审阅的发布说明准备版本文件，支持首次发行；默认预览，显式设置 `APPLY_CHANGES=1` 才写入文件。
+- `pnpm release`：执行受控发布流程；在当前 Zeus 源码项目中也可通过内置 `/release` 命令调用，仍经过项目权限与高风险确认。
+- `Release` 工作流默认由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。
+- 可选自动发布：维护者设置仓库变量 `ZEUS_AUTO_RELEASE=true` 后，`main` 推送会先检查源码，再准备递增补丁版本和发布候选；该功能需要 Actions 写入分支的权限。失败重试复用同一候选，不覆盖已有标签。
+- 可选上游同步：`pnpm upstream:check` 默认只显示同步入口，上游仓库自身直接跳过。衍生仓库可配置自己的发行来源，并设置 `ZEUS_UPSTREAM_SYNC=true` 启用 `Sync upstream` 工作流；集成分支默认 `main`，自定义时需将 `ZEUS_INTEGRATION_BRANCH` 与发行配置保持一致。同步产生待审阅 PR，遇到冲突停止，不强行覆盖。
+
+`packages/distribution/` 提供发行配置，应用、浏览器扩展及安装器从 apps/desktop/assets/ 读取同一份图标并生成构建资源；内部包版本不参与应用发行编号。`apps/desktop/src/renderer/tooling/` 管理自动化、扩展与技能页面，通过宿主适配面调用已有客户端能力。`pnpm verify:architecture` 检查这些依赖边界。

@@ -58,8 +58,8 @@
 .project-source-operation-modal header button,
 .project-source-message button {
   display: inline-flex;
-  min-width: 28px;
-  min-height: 28px;
+  min-width: 26px;
+  min-height: 26px;
   align-items: center;
   justify-content: center;
   gap: 1px;
@@ -69,7 +69,6 @@
   background: transparent;
 }
 
-.project-source-toolbar-actions > button:hover:not(:disabled):not([aria-disabled='true']),
 .project-source-tree-toggle:hover:not(:disabled):not([aria-disabled='true']),
 .project-source-operation-modal header button:hover:not(:disabled):not([aria-disabled='true']),
 .project-source-message button:hover:not(:disabled):not([aria-disabled='true']) {
@@ -77,16 +76,9 @@
   background: var(--zeus-interaction-hover);
 }
 
-.project-source-toolbar-actions svg,
 .project-source-tree-toggle svg {
   width: 15px;
   height: 15px;
-}
-.project-source-toolbar-actions > button:not(.zeus-button) svg + svg {
-  width: 9px;
-  height: 9px;
-  margin-left: -5px;
-  margin-top: 9px;
 }
 .project-source-tree-toggle {
   display: none;
@@ -247,6 +239,56 @@
 .project-source-module > summary::marker,
 .project-source-changes-body summary::marker {
   content: '';
+}
+.project-source-module > summary > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-source-module-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: 0;
+  flex: 0 0 auto;
+}
+.project-source-module-actions button {
+  display: inline-flex;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+}
+.project-source-module-actions button:hover:not(:disabled):not([aria-disabled='true']),
+.project-source-module-actions button:focus-visible {
+  color: var(--zeus-control-text);
+  background: var(--zeus-interaction-hover);
+}
+.project-source-module-actions button:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: -1px;
+}
+.project-source-module-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.project-source-module-actions button svg + svg {
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  margin-left: -5px;
+}
+.project-source-module > summary::after {
+  margin-left: 4px;
 }
 .project-source-changes-body summary > small {
   margin-inline-end: 10px;
@@ -499,12 +541,22 @@
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   background: var(--zeus-code-editor-bg);
 }
+.project-source-editor-track-placeholder {
+  min-width: 0;
+  min-height: 0;
+}
 
 .project-source-tabs {
   display: flex;
   min-width: 0;
-  min-height: 36px;
+  min-height: 38px;
   overflow-x: auto;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--zeus-control-border);
+  background: var(--zeus-code-editor-bg);
+
   border-bottom: 0;
   background: var(--zeus-product-panel-muted);
 }
@@ -513,8 +565,13 @@
   display: inline-flex;
   min-width: 116px;
   max-width: 220px;
-  min-height: 36px;
+  min-height: 34px;
   align-items: center;
+  box-sizing: border-box;
+  padding: 0 4px 0 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+
   border-right: 0;
   border-bottom: 2px solid transparent;
   color: var(--zeus-control-muted-text);
@@ -545,8 +602,12 @@
 }
 .project-source-tab.active {
   color: var(--zeus-control-text);
-  border-bottom-color: var(--zeus-control-accent);
-  background: var(--zeus-code-editor-bg);
+  border-color: var(--zeus-control-border);
+  background: color-mix(in srgb, var(--zeus-control-text) 8%, var(--zeus-code-editor-bg));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--zeus-control-text) 10%, transparent);
+}
+.project-source-tab.active > [role='tab'] {
+  font-weight: 600;
 }
 .project-source-tabs i {
   color: var(--zeus-brand-text);
@@ -776,11 +837,12 @@
 }
 
 @media (max-width: 900px) {
-  .project-source-project-identity small {
-    display: none;
-  }
-  .project-source-tree-toggle {
+  .project-source-tabs > .project-source-tree-toggle {
     display: inline-flex;
+    flex: 0 0 36px;
+    min-height: 36px;
+    border-right: 1px solid var(--zeus-control-border);
+    border-radius: 0;
   }
   .project-source-main {
     grid-template-columns: minmax(0, 1fr);
@@ -811,9 +873,6 @@
     display: block;
     border: 0;
     background: rgb(0 0 0 / 20%);
-  }
-  .project-source-toolbar-actions .zeus-button:first-of-type {
-    display: none;
   }
 }
 

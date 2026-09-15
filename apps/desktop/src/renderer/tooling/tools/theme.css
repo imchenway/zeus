@@ -1,0 +1,131 @@
+
+.macos-ai-app.zeus-shell :is(.project-git-tabs > button.is-active, .extension-tabs button.is-active) {
+  color: var(--agentdesk-accent-strong);
+}
+
+.macos-ai-app.zeus-shell
+  :where(.task-management-navigation, .project-repository-workbench, .project-code-workbench, .project-settings-shell, .settings-product-pane, .native-settings-pane, .command-center, .skills-workspace, .automations-workspace) {
+  color: var(--agentdesk-text);
+}
+
+.macos-ai-app.zeus-shell :where(.project-source-tabs, .project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
+  border-color: rgb(255 255 255 / 56%);
+  border-radius: 12px;
+  background: rgb(218 233 247 / 44%);
+}
+
+.macos-ai-app.zeus-shell :is(.settings-section-nav, .project-settings-section-tabs, .project-git-tabs, .digital-employee-section-tabs, .automations-tabs) {
+  gap: var(--agentdesk-space-1);
+  padding: var(--agentdesk-space-1);
+}
+
+.macos-ai-app.zeus-shell
+  :where(
+    .ai-workspace,
+    .workspace,
+    .workspace-view,
+    .workspace-view-project-tasks,
+    .workspace-view-project-code,
+    .workspace-view-project-git,
+    .workspace-view-project-sessions,
+    .workspace-view-project-settings,
+    .workspace-view-settings,
+    .ai-sidebar,
+    .zeus-sidebar,
+    .project-git-workbench,
+    .project-code-mode-host,
+    .project-code-mode-pane,
+    .project-code-workbench,
+    .project-repository-workbench,
+    .task-management-detail-pane,
+    .command-center,
+    .skills-workspace,
+    .automations-workspace
+  ) {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+.macos-ai-app.zeus-shell
+  :where(
+    .ai-workspace,
+    .workspace,
+    .workspace-view,
+    .workspace-view-project-tasks,
+    .workspace-view-project-code,
+    .workspace-view-project-git,
+    .workspace-view-project-sessions,
+    .workspace-view-project-settings,
+    .workspace-view-settings,
+    .workspace-detail-pane,
+    .settings-detail-pane,
+    .project-detail-pane,
+    .task-management-detail-pane,
+    .skills-workspace,
+    .automations-workspace
+  ) {
+  background: var(--zeus-page-background) !important;
+  background-image: none !important;
+}
+
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 0;
+  border: 0;
+  border-block-end: 1px solid var(--zeus-product-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button {
+  min-block-size: 38px;
+  padding: 8px 2px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button[aria-current='page'] {
+  background: transparent;
+  border-block-end-color: var(--zeus-brand-primary);
+  color: var(--zeus-product-text);
+  font-weight: 600;
+}
+
+.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app.zeus-shell .automations-tabs > button > span:not(.automations-unread-count) {
+  background: transparent;
+  color: var(--zeus-product-subtle);
+  padding-inline: 2px;
+}
+
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .automations-workspace {
+  background: var(--zeus-card-background) !important;
+  border: 1px solid var(--zeus-card-border);
+  border-radius: 12px;
+  box-shadow: none;
+  flex: 1 1 0;
+  block-size: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view.extensions-workspace {
+  overflow-x: hidden;
+  overflow-y: auto;
+}

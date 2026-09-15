@@ -81,6 +81,7 @@ export interface ProjectOverview {
 }
 
 export interface CreateProjectRequest {
+  temporary?: boolean;
   name: string;
   localPath: string;
   description?: string;

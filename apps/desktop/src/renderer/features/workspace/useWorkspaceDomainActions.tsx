@@ -1,5 +1,6 @@
+import type { ProjectRecord } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useRef } from 'react';
-import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
+import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
@@ -1921,8 +1922,37 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return true;
   }
 
-  const prepareNewConversationDraft = useCallback((): void => {
-    void runAfterWorkspaceLeave(() => {
+  const temporaryWorkspacePending = useRef<Promise<ProjectRecord> | null>(null);
+  async function ensureTemporaryWorkspace(): Promise<ProjectRecord> {
+    const existing = snapshot.projects.find((project) => project.id === temporaryWorkspaceId);
+    if (existing) return existing;
+    if (temporaryWorkspacePending.current) return temporaryWorkspacePending.current;
+    const create = props.onCreateCurrentProject;
+    if (!create) throw new Error('当前无法启动临时会话。');
+    setActionState('creating-project');
+    const pending = create({ name: '临时会话', localPath: '', temporary: true }).then((nextSnapshot) => {
+      const workspace = nextSnapshot.projects.find((project) => project.id === temporaryWorkspaceId);
+      if (!workspace) throw new Error('临时会话目录未能创建。');
+      setSnapshot(nextSnapshot);
+      return workspace;
+    });
+    temporaryWorkspacePending.current = pending;
+    try {
+      return await pending;
+    } finally {
+      temporaryWorkspacePending.current = null;
+      setActionState('idle');
+    }
+  }
+
+  const prepareNewConversationDraft = (temporary = false): void => {
+    void runAfterWorkspaceLeave(async () => {
+      if (temporary || !activeProjectIdRef.current) {
+        const workspace = await ensureTemporaryWorkspace();
+        activeProjectIdRef.current = workspace.id;
+        setProjectDetail(workspace);
+      }
+      resetProjectCreateDialog();
       // 新对话只是本地会话草稿入口，不能复用任务创建接口，否则会误生成 ZEU 编号的正式任务。
       // 离开任务页时不改状态筛选，返回后继续使用当前项目最后一次显式选择。
       setActiveNavTarget('conversations');
@@ -1941,29 +1971,34 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         window.history.replaceState(null, '', '#project-sessions');
       }
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  }, [runAfterWorkspaceLeave]);
+    }).catch((error: unknown) => recordLocalError('temporary-conversation-start', error));
+  };
 
-  const selectNewConversationProject = useCallback(
-    (projectId: string): void => {
-      const project = snapshot.projects.find((candidate) => candidate.id === projectId);
-      if (!project || project.id === activeProjectIdRef.current) return;
-      // 新会话项目选择与全局当前项目使用同一事实；只切换执行上下文，不卸载 composer，保留未发送文字和附件。
-      activeProjectIdRef.current = project.id;
-      setProjectDetail(project);
-      setTaskDetail(undefined);
-      setTaskDetailPaneTaskId(undefined);
-      setSelectedNativeConversationId(null);
-      setSelectedNativeConversationPresentation('interactive');
-      setFocusedArchivedConversation(null);
-      setConversationDrawer(undefined);
-      setConversationDraftOpen(true);
-      setActiveNavTarget('conversations');
-      setActiveProjectSection('sessions');
-      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
-    },
-    [snapshot.projects],
-  );
+  const selectNewConversationProject = async (projectId: string): Promise<void> => {
+    let project = snapshot.projects.find((candidate) => candidate.id === projectId);
+    if (!project && projectId === temporaryWorkspaceId) {
+      try {
+        project = await ensureTemporaryWorkspace();
+      } catch (error) {
+        recordLocalError('temporary-conversation-start', error);
+        return;
+      }
+    }
+    if (!project || project.id === activeProjectIdRef.current) return;
+    // 新会话项目选择与全局当前项目使用同一事实；只切换执行上下文，不卸载 composer，保留未发送文字和附件。
+    activeProjectIdRef.current = project.id;
+    setProjectDetail(project);
+    setTaskDetail(undefined);
+    setTaskDetailPaneTaskId(undefined);
+    setSelectedNativeConversationId(null);
+    setSelectedNativeConversationPresentation('interactive');
+    setFocusedArchivedConversation(null);
+    setConversationDrawer(undefined);
+    setConversationDraftOpen(true);
+    setActiveNavTarget('conversations');
+    setActiveProjectSection('sessions');
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+  };
 
   const executeNewConversationProjectGit = useCallback(
     async (projectId: string, repositoryId: string, action: ProjectGitAction): Promise<ProjectGitActionResponse> => {

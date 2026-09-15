@@ -8,6 +8,7 @@ import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
   ProjectSourceDirectorySnapshot,
+  ProjectSourceContentSearchResult,
   ProjectSourceDocument,
   ProjectSourceEntry,
   ProjectSourceEvent,
@@ -19,6 +20,9 @@ import type {
 const maximumEditableBytes = filePreviewLimits.text;
 const maximumSearchResults = 200;
 const maximumSearchVisits = 50_000;
+const maximumContentSearchResults = 60;
+const maximumContentSearchFileBytes = 1024 * 1024;
+const maximumContentSearchBytes = 32 * 1024 * 1024;
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
 // 生成目录只供按需浏览，不应把高频外部写入放大成主进程与渲染进程之间的事件风暴。
 const ignoredWatchDirectoryNames = new Set(['.git', '.tmp', 'node_modules', 'dist', 'coverage']);
@@ -77,6 +81,78 @@ export class ProjectSourceWorkspaceService {
     }
     entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
     return { entries, truncated: resultLimitReached || directories.length > 0 || visited >= maximumSearchVisits };
+  }
+
+  /** 搜索项目内的路径和 UTF-8 文本内容；跳过依赖、产物、二进制与超大文件。 */
+  async searchContent(projectId: string, query: string): Promise<ProjectSourceContentSearchResult> {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return { matches: [], truncated: false };
+    const root = await this.#projectRoot(projectId);
+    const matches: ProjectSourceContentSearchResult['matches'] = [];
+    const directories = [''];
+    let visited = 0;
+    let searchedBytes = 0;
+    while (directories.length > 0 && matches.length < maximumContentSearchResults && visited < maximumSearchVisits && searchedBytes < maximumContentSearchBytes) {
+      const directoryRelativePath = directories.shift()!;
+      let handle;
+      try {
+        handle = await opendir(resolveLexicalPath(root, directoryRelativePath));
+      } catch {
+        continue;
+      }
+      for await (const item of handle) {
+        if (item.name === '.git' || ignoredWatchDirectoryNames.has(item.name)) continue;
+        visited += 1;
+        const entryRelativePath = joinRelative(directoryRelativePath, item.name);
+        if (item.isDirectory()) {
+          directories.push(entryRelativePath);
+          continue;
+        }
+        if (!item.isFile()) continue;
+        if (entryRelativePath.toLocaleLowerCase().includes(normalizedQuery)) {
+          matches.push({ relativePath: entryRelativePath, line: 1, column: 1, preview: '', matchKind: 'path' });
+          if (matches.length >= maximumContentSearchResults) break;
+        }
+        let fileStat;
+        try {
+          fileStat = await stat(resolveLexicalPath(root, entryRelativePath));
+        } catch {
+          continue;
+        }
+        if (fileStat.size === 0 || fileStat.size > maximumContentSearchFileBytes || searchedBytes + fileStat.size > maximumContentSearchBytes) continue;
+        let bytes: Buffer;
+        try {
+          bytes = await readFile(resolveLexicalPath(root, entryRelativePath));
+        } catch {
+          continue;
+        }
+        searchedBytes += bytes.byteLength;
+        if (bytes.includes(0)) continue;
+        let content: string;
+        try {
+          content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, utf8Bom.length).equals(utf8Bom) ? bytes.subarray(utf8Bom.length) : bytes);
+        } catch {
+          continue;
+        }
+        let fileMatchCount = 0;
+        for (const [index, line] of content.split(/\r\n?|\n/u).entries()) {
+          const column = line.toLocaleLowerCase().indexOf(normalizedQuery);
+          if (column < 0) continue;
+          matches.push({
+            relativePath: entryRelativePath,
+            line: index + 1,
+            column: column + 1,
+            preview: line.trim().slice(0, 240),
+            matchKind: 'content',
+          });
+          fileMatchCount += 1;
+          if (fileMatchCount >= 3 || matches.length >= maximumContentSearchResults) break;
+        }
+        if (matches.length >= maximumContentSearchResults || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes) break;
+      }
+    }
+    const truncated = matches.length >= maximumContentSearchResults || directories.length > 0 || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes;
+    return { matches, truncated };
   }
 
   /** 在项目目录边界内读取文件；图片返回只读预览，文本继续走原有编辑链路。 */

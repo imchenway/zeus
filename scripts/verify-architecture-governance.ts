@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,7 @@ const failures: string[] = [];
 
 await verifyRendererApiBoundaries();
 await verifyImportBoundaries();
+await verifyCustomizationBoundaries();
 await verifyWorkspaceDependencyCycles();
 await verifyStorageTableOwnership();
 
@@ -55,13 +57,58 @@ async function verifyImportBoundaries(): Promise<void> {
   }
 }
 
+/** 工具页面目录只能通过明确的组装入口和宿主适配面跨越边界。 */
+async function verifyCustomizationBoundaries(): Promise<void> {
+  const rendererRoot = 'apps/desktop/src/renderer/';
+  const customRoot = `${rendererRoot}tooling/`;
+  const publicConsumers = new Map<string, Set<string>>([
+    [`${rendererRoot}WorkspacePage.tsx`, new Set([`${customRoot}tools/base.css`, `${customRoot}tools/theme.css`])],
+    [`${rendererRoot}features/workspace/WorkspaceView.tsx`, new Set([`${customRoot}index.js`])],
+    [`${rendererRoot}features/workspace/useWorkspaceQueryState.tsx`, new Set([`${customRoot}distribution.js`])],
+  ]);
+  const distributionConsumers = new Set(['apps/desktop/src/main/desktopDistribution.ts', `${customRoot}distribution.ts`]);
+  const files = [...(await collectFiles('packages')), ...(await collectFiles('apps/desktop/src'))].filter((path) => /\.(?:ts|tsx|cts|mjs|js)$/u.test(path));
+  for (const path of files) {
+    const content = await readText(path);
+    const ast = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true);
+    const specifiers: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) specifiers.push(node.moduleSpecifier.text);
+      if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+        const argument = node.arguments[0];
+        if (argument && ts.isStringLiteralLike(argument)) specifiers.push(argument.text);
+        else if (path.startsWith(customRoot) || path.startsWith('packages/distribution/')) failures.push(`${path} 工具与发行模块禁止无法静态核验的动态导入。`);
+      }
+      if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) specifiers.push(node.argument.literal.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    for (const specifier of specifiers) {
+      const target = specifier.startsWith('.')
+        ? resolve(repositoryRoot, dirname(path), specifier)
+            .slice(repositoryRoot.length + 1)
+            .split('\\')
+            .join('/')
+        : specifier;
+      const isCustomPackage = specifier === '@zeus/distribution' || target.startsWith('packages/distribution/');
+      if (path.startsWith('packages/') && !path.startsWith('packages/distribution/') && isCustomPackage) failures.push(`${path} 通用包不能依赖 ${specifier}。`);
+      if (path.startsWith('apps/desktop/src/') && isCustomPackage && !distributionConsumers.has(path)) failures.push(`${path} 必须通过发行组装入口读取 ${specifier}。`);
+      if (!path.startsWith(customRoot) && target.startsWith(customRoot) && !publicConsumers.get(path)?.has(target)) failures.push(`${path} 不得直接访问工具内部模块 ${specifier}。`);
+      if (path.startsWith(`${customRoot}tools/`)) {
+        if (specifier.startsWith('.') && !target.startsWith(`${customRoot}tools/`) && target !== `${customRoot}toolPageHost.js`) failures.push(`${path} 工具页只能通过 toolPageHost 使用宿主能力：${specifier}。`);
+        if (!specifier.startsWith('.') && specifier !== 'react' && !specifier.startsWith('@phosphor-icons/react/')) failures.push(`${path} 工具页不能直接导入宿主或系统依赖 ${specifier}。`);
+      }
+    }
+  }
+}
+
 async function verifyWorkspaceDependencyCycles(): Promise<void> {
   const packageFiles = [...(await collectFiles('apps')), ...(await collectFiles('packages'))].filter((path) => path.endsWith('/package.json'));
   const packages = new Map<string, { path: string; dependencies: string[] }>();
   for (const path of packageFiles) {
     const manifest = JSON.parse(await readText(path)) as { name?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
-    if (!manifest.name?.startsWith('@zeus/')) continue;
-    const dependencies = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})].filter((name) => name.startsWith('@zeus/'));
+    if (!manifest.name) continue;
+    const dependencies = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})];
     packages.set(manifest.name, { path, dependencies });
   }
   const visiting = new Set<string>();

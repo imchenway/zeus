@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { zeusDistribution, releaseTag, versionFromReleaseTag, releasePackagePaths } from './desktop-distribution.mjs';
 /* global console, process */
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -27,7 +28,7 @@ async function main() {
   assertTagDoesNotExist(expectedVersion);
   assertPackageVersions(expectedVersion);
 
-  const releaseNotesPath = join(repositoryRoot, 'releases', `v${expectedVersion}.md`);
+  const releaseNotesPath = join(repositoryRoot, 'releases', `${releaseTag(expectedVersion)}.md`);
   validateReleaseNotesFile(releaseNotesPath, expectedVersion);
 
   const worktreeStatus = git(['status', '--short']);
@@ -114,18 +115,18 @@ async function main() {
 }
 
 function resolveLatestStableTag() {
-  const tag = git(['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']);
-  if (!/^v\d+\.\d+\.\d+$/u.test(tag)) throw new Error(`最新稳定标签格式无效：${tag}`);
+  const tag = git(['describe', '--tags', '--abbrev=0', '--match', `${zeusDistribution.releaseTagPrefix}[0-9]*`]);
+  if (!versionFromReleaseTag(tag)) throw new Error(`最新稳定标签格式无效：${tag}`);
   return tag;
 }
 
 function assertTagDoesNotExist(version) {
-  const result = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/v${version}`], { cwd: repositoryRoot });
-  if (result.status === 0) throw new Error(`标签 v${version} 已存在，拒绝把已标记版本当作新候选版本重新打包。`);
+  const result = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${releaseTag(version)}`], { cwd: repositoryRoot });
+  if (result.status === 0) throw new Error(`标签 ${releaseTag(version)} 已存在，拒绝把已标记版本当作新候选版本重新打包。`);
 }
 
 function assertPackageVersions(expectedVersion) {
-  for (const relativePath of ['package.json', 'apps/desktop/package.json']) {
+  for (const relativePath of releasePackagePaths) {
     const actualVersion = JSON.parse(readFileSync(join(repositoryRoot, relativePath), 'utf8')).version;
     if (actualVersion !== expectedVersion) {
       throw new Error(`${relativePath} 版本与期望不一致：expected=${expectedVersion} actual=${actualVersion ?? 'missing'}`);

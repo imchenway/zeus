@@ -138,6 +138,7 @@ export const languageCopy = {
       latestConversationOnly: '同任务仅显示最新会话',
       noConversationMatches: '没有符合筛选条件的会话',
       createDialogTitle: '创建项目',
+      createTemporary: '不选项目，开始临时会话',
       createNameLabel: '项目名称',
       /** 目录优先，名称支持自动填入后修改。 */
       createNamePlaceholder: '选择文件夹后自动填入，可修改',
@@ -1079,8 +1080,8 @@ export const languageCopy = {
         updateFailed: '更新检查失败，请稍后重试。',
         recommendedActions: {
           none: '无需更新',
-          open_download_page: '使用 Homebrew 更新',
-          download_and_install: '使用 Homebrew 更新',
+          open_download_page: '查看发行版安装包',
+          download_and_install: '下载并安装更新',
         },
       },
       data: {
@@ -1353,6 +1354,7 @@ export const languageCopy = {
       latestConversationOnly: 'Latest conversation per task',
       noConversationMatches: 'No conversations match the filters',
       createDialogTitle: 'Create project',
+      createTemporary: 'Start without a project',
       createNameLabel: 'Project name',
       /** 英文同样说明名称自动填入且可修改。 */
       createNamePlaceholder: 'Filled from the folder; editable',
@@ -2294,8 +2296,8 @@ export const languageCopy = {
         updateFailed: 'Update check failed. Try again later.',
         recommendedActions: {
           none: 'No update needed',
-          open_download_page: 'Update with Homebrew',
-          download_and_install: 'Update with Homebrew',
+          open_download_page: 'View release installer',
+          download_and_install: 'Download and install update',
         },
       },
       data: {

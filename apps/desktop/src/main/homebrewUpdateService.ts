@@ -1,3 +1,4 @@
+import { zeusDistribution, zeusHomebrewCask } from './desktopDistribution.js';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants, createReadStream, type Stats } from 'node:fs';
@@ -8,7 +9,7 @@ import { promisify } from 'node:util';
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 
 const execFile = promisify(execFileCallback);
-const caskToken = 'imchenway/tap/zeus';
+const caskToken = zeusHomebrewCask;
 const commandOutputLimit = 8 * 1024 * 1024;
 const progressOutputLimit = 4 * 1024;
 const downloadProgressPollIntervalMs = 500;
@@ -101,10 +102,11 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
   return {
     /** 未安装 Homebrew 或未登记 Zeus 时交给直接更新，其他查询错误保留原始原因。 */
     async isManaged() {
+      if (!zeusDistribution.homebrewEnabled) return false;
       const brewPath = await resolveHomebrewBinary(options.testMode);
       if (!brewPath) return false;
       const { stdout } = await runBrew(brewPath, ['list', '--cask', '--versions'], { timeoutMs: 60_000, allowAutoUpdate: false });
-      if (!stdout.split(/\r?\n/u).some((line) => /^(?:imchenway\/tap\/)?zeus\s+\S/u.test(line.trim()))) return false;
+      if (!stdout.split(/\r?\n/u).some((line) => [zeusDistribution.cask, caskToken].includes(line.trim().split(/\s/u)[0]))) return false;
       const cask = await inspectCask(brewPath);
       await validateManagedCask(cask, options);
       return true;
@@ -227,7 +229,7 @@ function assertUpdateCanUseHomebrew(update: DesktopReleaseUpdateStatus, options:
 
 /** 版本漂移可以由 Homebrew 收敛，但当前 App 的路径、身份和实际版本必须可信。 */
 async function validateManagedCask(cask: HomebrewCaskInfo, options: CreateHomebrewUpdateServiceOptions): Promise<void> {
-  if (cask.tap !== 'imchenway/tap') throw new Error('Zeus 只允许使用 imchenway/tap 中的正式 Cask 升级。');
+  if (cask.tap !== zeusDistribution.homebrewTap) throw new Error('Zeus 只允许使用本发行版配置的 Homebrew Tap 升级。');
   if (!cask.installedVersion) throw new Error('当前 Zeus 没有目标 Homebrew Cask 管理收据，不能自动接管安装。');
   if (cask.appTarget !== resolve(options.currentAppPath)) {
     throw new Error('Homebrew Cask 管理的 Zeus App 不是当前正在使用的日常正式应用。');
@@ -290,7 +292,7 @@ async function inspectCask(brewPath: string): Promise<HomebrewCaskInfo> {
 }
 
 function validateCask(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus, currentAppPath: string): void {
-  if (cask.tap !== 'imchenway/tap') throw new Error('Zeus 只允许使用 imchenway/tap 中的正式 Cask 升级。');
+  if (cask.tap !== zeusDistribution.homebrewTap) throw new Error('Zeus 只允许使用本发行版配置的 Homebrew Tap 升级。');
   if (!cask.installedVersion) throw new Error('当前 Zeus 没有目标 Homebrew Cask 管理收据，不能自动接管安装。');
   if (!caskMatchesRelease(cask, update)) {
     throw new Error('Homebrew Cask 与 Zeus 发布清单不一致，为避免安装错误版本已停止升级。');

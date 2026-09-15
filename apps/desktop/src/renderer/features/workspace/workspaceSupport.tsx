@@ -1,3 +1,4 @@
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
@@ -573,6 +574,7 @@ export type AppShellSettingsSavePayload = Pick<
   | 'networkProxy'
   | 'appLanguage'
   | 'appearance'
+  | 'mainLayout'
   | 'webviewDebugEnabled'
   | 'developerModeEnabled'
   | 'multiWindowEnabled'
@@ -934,6 +936,7 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
   );
   return {
     ...settings,
+    mainLayout: settings.mainLayout === 'current' ? 'current' : 'upstream',
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
@@ -958,6 +961,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     networkProxy: settings.networkProxy,
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
+    mainLayout: settings.mainLayout,
     webviewDebugEnabled: settings.webviewDebugEnabled,
     developerModeEnabled: settings.developerModeEnabled,
     multiWindowEnabled: settings.multiWindowEnabled,
@@ -1362,6 +1366,7 @@ export function inferInitialProjectSection(props: {
   initialArchivedProjects?: ProjectRecord[];
   snapshot?: DashboardSnapshot;
 }): ProjectWorkspaceSection {
+  if (props.snapshot?.projects[0]?.id === temporaryWorkspaceId) return 'sessions';
   if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret) return 'project-settings';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
@@ -1861,22 +1866,7 @@ export function TaskCreateModal(props: {
               ) : null}
               <div className="task-create-field task-create-title-field">
                 <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
-                <input
-                  ref={props.titleInputRef}
-                  id="task-create-title-input"
-                  className="task-create-title-input"
-                  value={props.form.title}
-                  placeholder={props.copy.taskCreateTitlePlaceholder}
-                  aria-labelledby="task-create-title-label"
-                  aria-invalid={props.error ? true : undefined}
-                  aria-describedby={props.error ? 'task-create-error' : undefined}
-                  onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
-                  disabled={textInputDisabled}
-                />
-              </div>
-              <div className="task-create-two-column-row">
-                <div className="task-create-field task-create-type-field">
-                  <span id="task-create-type-label">{props.copy.taskCreateTypeLabel}</span>
+                <div className="task-create-title-control" role="group" aria-labelledby="task-create-title-label">
                   <ZeusSelect
                     size="regular"
                     className="task-create-type-select"
@@ -1884,6 +1874,30 @@ export function TaskCreateModal(props: {
                     value={props.form.taskType}
                     options={taskTypeOptions}
                     onChange={props.onTaskTypeChange}
+                    searchable={false}
+                    disabled={interactionBusy}
+                  />
+                  <input
+                    ref={props.titleInputRef}
+                    id="task-create-title-input"
+                    className="task-create-title-input"
+                    value={props.form.title}
+                    placeholder={props.copy.taskCreateTitlePlaceholder}
+                    aria-labelledby="task-create-title-label"
+                    aria-invalid={props.error ? true : undefined}
+                    aria-describedby={props.error ? 'task-create-error' : undefined}
+                    onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
+                    disabled={textInputDisabled}
+                  />
+                  <ZeusSelect
+                    size="regular"
+                    className="task-create-priority-select"
+                    ariaLabel={props.copy.taskCreatePriorityLabel}
+                    value={props.form.priority}
+                    triggerLabel={props.form.priority.toUpperCase()}
+                    triggerTitle={props.copy.taskCreatePriorityOptions.find((option) => option.value === props.form.priority)?.label}
+                    options={props.copy.taskCreatePriorityOptions}
+                    onChange={props.onPriorityChange}
                     searchable={false}
                     disabled={interactionBusy}
                   />
@@ -2033,19 +2047,6 @@ export function TaskCreateModal(props: {
               ) : null}
               {settingsOpen ? (
                 <div ref={settingsPanelRef} id="task-create-options" className="task-create-options">
-                  <div className="task-create-field task-create-priority-field">
-                    <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
-                    <ZeusSelect
-                      size="regular"
-                      className="task-create-priority-select"
-                      ariaLabel={props.copy.taskCreatePriorityLabel}
-                      value={props.form.priority}
-                      options={props.copy.taskCreatePriorityOptions}
-                      onChange={props.onPriorityChange}
-                      searchable={false}
-                      disabled={interactionBusy}
-                    />
-                  </div>
                   <div className="task-create-field task-create-parent-field">
                     <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
                     <ZeusSelect

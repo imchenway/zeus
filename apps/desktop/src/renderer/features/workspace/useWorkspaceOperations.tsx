@@ -1655,8 +1655,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     '--zeus-project-sidebar-width': `${projectSidebarWidth}px`,
   } as CSSProperties;
   const workspaceDrawerPortalStyle = {
-    // Portal 不继承应用壳层变量，只同步真实侧栏宽度用于计算抽屉可用空间；关闭点击层始终覆盖整个窗口。
-    '--zeus-drawer-sidebar-inline-size': `${projectSidebarWidth + 1}px`,
+    // 会话抽屉避开活动栏与来源列表；其他模式只避开固定活动栏。
+    '--zeus-drawer-sidebar-inline-size': `${activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions' ? projectSidebarWidth + 49 : 49}px`,
   } as CSSProperties;
   const projectDrawerVisualProps = projectPanel === 'config' ? ({ presentation: 'floating', backdrop: 'dimmed', size: 'wide' } as const) : ({ presentation: 'sheet', backdrop: 'dimmed', size: 'wide' } as const);
 

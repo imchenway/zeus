@@ -840,6 +840,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    readSubmissionReceipt: (conversationId, submissionId) => {
+      const submission = conversationSubmissions.getById(submissionId);
+      if (!submission || submission.conversationId !== conversationId) return null;
+      return {
+        id: submission.id,
+        conversationId: submission.conversationId,
+        clientUserMessageId: submission.clientMessageId,
+        status: submission.status,
+        pausedReason: submission.pausedReason,
+        providerTurnId: submission.providerTurnId,
+      };
+    },
     readExecutionContext: async (conversationId) => {
       if (readOnlyValidation) return { cwd: null, branch: null, isGitRepository: null };
       const conversation = conversations.getRecordById(conversationId);
@@ -2141,6 +2153,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 后台发现只在普通可写宿主中被项目命令或恢复入口触发。 */
   const repositoryDiscovery = new ProjectRepositoryDiscoveryService({ db, projects, repositories: projectRepositories, settings, publishRealtimeEvent, redactSensitiveText });
   const workManagementProjectOperations = new WorkManagementProjectOperations({
+    temporaryWorkspaceDirectory: join(dataLayout.root, 'workspaces', 'temporary'),
     repositoryDiscovery,
     projects,
     sharedPaths: projectSharedPaths,
@@ -3324,6 +3337,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             payload: {
               appLanguage: nextSettings.appLanguage,
               appearance: nextSettings.appearance,
+              mainLayout: nextSettings.mainLayout,
               webviewDebugEnabled: nextSettings.webviewDebugEnabled,
               developerModeEnabled: nextSettings.developerModeEnabled,
               multiWindowEnabled: nextSettings.multiWindowEnabled,

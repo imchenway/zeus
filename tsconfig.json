@@ -5,6 +5,9 @@
       "path": "packages/shared"
     },
     {
+      "path": "packages/distribution"
+    },
+    {
       "path": "packages/storage"
     },
     {

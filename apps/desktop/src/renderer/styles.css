@@ -10,6 +10,8 @@
   text-rendering: optimizeLegibility;
 }
 
+/* 自动化与扩展管理使用同一中性页面和单层目录表面。 */
+
 /* 自动化与扩展管理使用平铺分组列表，靠标题和留白表达层次。 */
 .macos-ai-app .automations-workspace {
   box-sizing: border-box;
@@ -35,6 +37,8 @@
   background: var(--surface-primary, #fff);
   color: inherit;
 }
+
+/* 长表单只增加可读宽度，仍由共用弹窗固定标题、操作区和内部滚动。 */
 
 .macos-ai-app .automations-header,
 .macos-ai-app .automations-header-actions,
@@ -1606,21 +1610,7 @@ a {
   overflow-wrap: anywhere;
 }
 
-.macos-ai-app .skills-workspace {
-  align-content: start;
-  background: var(--zeus-product-canvas);
-  color: var(--zeus-product-text);
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 28px clamp(20px, 4vw, 48px) 40px;
-}
-
 /* 扩展页统一承载纵向滚动，避免后面的通用工作区裁剪规则覆盖它。 */
-.macos-ai-app .workspace-view.skills-workspace {
-  box-sizing: border-box;
-  gap: 20px;
-  overflow-y: auto;
-}
 
 .macos-ai-app .skills-workspace-header,
 .macos-ai-app .skills-workflow-defaults,
@@ -1630,38 +1620,9 @@ a {
   min-inline-size: 0;
 }
 
-.macos-ai-app .skills-workspace-header {
-  display: grid;
-  gap: 11px;
-}
-
-.macos-ai-app .skills-workspace-title-row {
-  align-items: end;
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
-}
-
-.macos-ai-app .skills-workspace-title-row > button {
-  align-self: flex-start;
-}
-
-.macos-ai-app .skills-workspace-title-row > div {
-  display: grid;
-  gap: 7px;
-  min-inline-size: 0;
-}
-
 .macos-ai-app .skills-workspace-title-row h1,
 .macos-ai-app .skills-section-heading h2 {
   margin: 0;
-}
-
-.macos-ai-app .skills-workspace-title-row h1 {
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  line-height: 1.35;
 }
 
 .macos-ai-app .skills-workspace-title-row p,
@@ -1669,16 +1630,6 @@ a {
   color: var(--zeus-product-muted);
   line-height: 1.55;
   margin: 0;
-}
-
-.macos-ai-app .skills-workspace-title-row p {
-  font-size: 13px;
-}
-
-.macos-ai-app .skills-workspace-actions {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 8px;
 }
 
 .macos-ai-app .skills-workspace-actions button,
@@ -2175,125 +2126,13 @@ a {
   inline-size: 100%;
 }
 
-.macos-ai-app .zeus-form-fields textarea.extension-connector-config {
-  font-family: var(--zeus-font-mono, monospace);
-}
-
 .macos-ai-app .zeus-form-fields textarea {
   line-height: 1.6;
   padding-block: 8px;
   resize: vertical;
 }
 
-.macos-ai-app .extension-path-control,
-.macos-ai-app .extension-form-grid {
-  display: grid;
-  gap: 12px;
-  min-inline-size: 0;
-}
-
-.macos-ai-app .extension-path-control {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.macos-ai-app .extension-path-control > input:only-child {
-  grid-column: 1 / -1;
-}
-
-.macos-ai-app .extension-form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 /* 来源切换是两个原生切换按钮，键盘焦点与禁用状态清晰可见。 */
-.macos-ai-app .extension-source-tabs {
-  background: var(--zeus-product-panel-muted);
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 10px;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-}
-
-.macos-ai-app .extension-source-tabs button {
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--zeus-product-muted);
-  flex: 1;
-  font: inherit;
-  min-block-size: 32px;
-}
-
-.macos-ai-app .extension-source-tabs button[aria-pressed='true'] {
-  background: var(--zeus-product-panel);
-  color: var(--zeus-product-text);
-  box-shadow: none;
-  font-weight: 600;
-}
-
-.macos-ai-app .extension-source-tabs button:focus-visible,
-.macos-ai-app .extension-plugin-summary:focus-visible,
-.macos-ai-app .extension-source-details > summary:focus-visible {
-  outline: 2px solid var(--zeus-product-accent);
-  outline-offset: 2px;
-}
-
-.macos-ai-app .extension-source-tabs button:disabled {
-  opacity: 0.5;
-}
-
-.macos-ai-app .extension-plugin-summary .skill-list-glyph {
-  flex: 0 0 36px;
-  block-size: 36px;
-}
-
-.macos-ai-app .extension-plugin-summary strong,
-.macos-ai-app .extension-marketplace-source strong,
-.macos-ai-app .extension-component-row strong {
-  font-size: 13px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.macos-ai-app .extension-expand-icon {
-  color: var(--zeus-product-muted);
-  flex: 0 0 16px;
-  transition: transform var(--zeus-motion-state-duration, 120ms) ease;
-}
-
-.macos-ai-app .extension-plugin-summary[aria-expanded='true'] .extension-expand-icon {
-  transform: rotate(90deg);
-}
-
-.macos-ai-app .extension-source-details > summary {
-  color: var(--zeus-product-muted);
-  cursor: pointer;
-  font-size: 12px;
-  padding-block: 4px;
-}
-
-.macos-ai-app .extension-source-details dl {
-  padding-block-start: 8px;
-}
-
-.macos-ai-app .extension-plugin-detail > footer {
-  justify-content: flex-end;
-}
-
-.macos-ai-app .extension-component-row > span:last-child {
-  flex-shrink: 0;
-}
-
-.macos-ai-app .extension-component-row .zeus-select {
-  inline-size: auto;
-}
-
-.macos-ai-app .extension-component-row label {
-  align-items: center;
-  display: inline-flex;
-  gap: 6px;
-  white-space: nowrap;
-}
 
 .macos-ai-app .skills-embedded-toolbar {
   align-items: center;
@@ -2305,12 +2144,6 @@ a {
   inline-size: min(980px, 100%);
   justify-content: space-between;
   margin-inline: auto;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .macos-ai-app .extension-expand-icon {
-    transition: none;
-  }
 }
 
 /* 冲突确认弹窗原有 label 规则服务于单选项；Skill 选择器需要恢复为独立纵向字段。 */
@@ -2336,19 +2169,10 @@ a {
 }
 
 @media (max-width: 780px) {
-  .macos-ai-app .skills-workspace {
-    gap: 22px;
-    padding: 20px 16px 32px;
-  }
-
   .macos-ai-app .skills-workspace-title-row,
   .macos-ai-app .skills-section-heading {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .macos-ai-app .skills-workspace-actions {
-    align-self: flex-start;
   }
 
   .macos-ai-app .skills-workflow-grid {
@@ -2369,16 +2193,6 @@ a {
 }
 
 @media (max-width: 520px) {
-  .macos-ai-app .skills-workspace-title-row h1 {
-    font-size: 22px;
-  }
-
-  .macos-ai-app .skills-workspace-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    inline-size: 100%;
-  }
-
   .macos-ai-app .skill-list-item {
     align-items: start;
     grid-template-columns: 34px minmax(0, 1fr);
@@ -2387,11 +2201,6 @@ a {
   .macos-ai-app .skill-list-item > :last-child {
     grid-column: 2;
     justify-self: start;
-  }
-
-  .macos-ai-app .extension-form-grid,
-  .macos-ai-app .extension-path-control {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -3182,12 +2991,6 @@ a {
 .project-workspace-mode-toolbar button:focus-visible {
   box-shadow: inset var(--zeus-control-focus);
   outline: 0;
-}
-/* 当前会话是右侧抽屉入口，独立于左侧工作区切换。 */
-.project-workspace-mode-toolbar > .project-workspace-current-conversation {
-  flex: 0 0 auto;
-  margin-inline-start: auto;
-  white-space: nowrap;
 }
 .project-workspace-mode-toolbar nav button span {
   align-items: center;
@@ -9488,7 +9291,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 /* 与启动占位页共用透明底图标，保留品牌底板并随样式打包。 */
 .startup-failure-mark {
-  background: url('../../assets/startup-mark.png') center / contain no-repeat;
+  background: url('../../dist/branding/startup-mark.png') center / contain no-repeat;
   block-size: 64px;
   grid-column: 1;
   grid-row: 1 / span 2;
@@ -17783,6 +17586,50 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 9px 10px;
 }
 
+/* 类型、标题与优先级共用外框，保留独立键盘操作及下拉浮层。 */
+.macos-ai-app .task-create-title-control {
+  display: grid;
+  grid-template-columns: minmax(0, 128px) minmax(0, 1fr) 68px;
+  min-inline-size: 0;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: var(--agentdesk-radius-control, 9px);
+  background: var(--zeus-control-bg);
+}
+
+.macos-ai-app .task-create-title-control:focus-within {
+  border-color: var(--zeus-focus-line);
+  box-shadow: var(--zeus-control-focus);
+}
+
+.macos-ai-app .task-create-title-control .zeus-select-trigger {
+  min-block-size: 34px;
+  border: 0;
+  border-inline-end: 1px solid var(--zeus-control-border);
+  border-radius: var(--agentdesk-radius-control, 9px) 0 0 var(--agentdesk-radius-control, 9px);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.macos-ai-app .task-create-title-control .zeus-select-value {
+  color: inherit;
+  font: inherit;
+}
+
+.macos-ai-app .task-create-title-control > .task-create-title-input {
+  min-inline-size: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.macos-ai-app .task-create-title-control .task-create-priority-select > .zeus-select-trigger {
+  border-inline-end: 0;
+  border-inline-start: 1px solid var(--zeus-control-border);
+  border-radius: 0 var(--agentdesk-radius-control, 9px) var(--agentdesk-radius-control, 9px) 0;
+}
+
 .macos-ai-app .task-create-field-attachments,
 .macos-ai-app .task-detail-field-attachments {
   display: grid;
@@ -23058,6 +22905,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app .project-start-action {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: center;
 }
 /* 步骤仅作流程提示；每段与前导箭头一起换行，避免窄窗口出现孤立箭头。 */
@@ -23112,11 +22961,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-create-settings-toggle {
   margin-inline-end: auto;
 }
-/* 展开后优先级与父任务并排，标签单独一行。 */
+/* 优先级常驻标题右侧，更多设置保留父任务与标签。 */
 .macos-ai-app .task-create-options {
   border-block-start: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   padding-block-start: 12px;
 }

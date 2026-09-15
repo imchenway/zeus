@@ -1,3 +1,4 @@
+import { createDistributionContext } from '@zeus/shared';
 import {
   type AiCliAdapterDescriptor,
   type AiRuntimeLogEntry,
@@ -583,7 +584,7 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
     const workflowPath = `${projectRoot}/.github/workflows/release.yml`;
     const configuredCurrentVersion = typeof options.currentAppVersion === 'function' ? options.currentAppVersion().trim() : options.currentAppVersion?.trim();
     const currentVersion = configuredCurrentVersion || readProjectVersion(projectRoot);
-    const versionChangelogPath = `releases/v${currentVersion}.md`;
+    const versionChangelogPath = `releases/${createDistributionContext(options.distribution).zeusDistribution.releaseTagPrefix}${currentVersion}.md`;
     const changelogPath = existsSync(`${projectRoot}/${versionChangelogPath}`) ? versionChangelogPath : '';
     const readiness = detectReleaseReadiness({
       hasAppleCertificate: signingConfigured,
@@ -639,7 +640,7 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
         currentVersion,
         latestVersion: currentVersion,
         channel: 'stable',
-        releasePageUrl: 'https://github.com/imchenway/zeus/releases/latest',
+        releasePageUrl: `${createDistributionContext(options.distribution).zeusReleaseBaseUrl}/latest`,
         artifact: null,
         executionHostProtocolVersion: options.executionHost?.protocolVersion ?? 2,
         automaticInstallEnabled: false,
@@ -673,7 +674,7 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
           throw Object.assign(new Error('未能完整读取 GitHub 更新清单。', { cause }), { code: signal.aborted ? 'ZEUS_RELEASE_MANIFEST_TIMEOUT' : 'ZEUS_RELEASE_MANIFEST_NETWORK' });
         });
         try {
-          return parseReleaseUpdateManifest(JSON.parse(body), { allowLoopbackDownloadUrls: Boolean(options.allowUntrustedReleaseUpdateTest) });
+          return parseReleaseUpdateManifest(JSON.parse(body), { allowLoopbackDownloadUrls: Boolean(options.allowUntrustedReleaseUpdateTest), distribution: options.distribution });
         } catch (cause) {
           throw Object.assign(new Error('GitHub 更新清单校验失败。', { cause }), { code: 'ZEUS_RELEASE_MANIFEST_INVALID' });
         }

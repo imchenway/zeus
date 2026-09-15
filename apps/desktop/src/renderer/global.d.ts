@@ -10,6 +10,7 @@ import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
   ProjectSourceDirectorySnapshot,
+  ProjectSourceContentSearchResult,
   ProjectSourceDocument,
   ProjectSourceEntry,
   ProjectSourceEvent,
@@ -144,6 +145,8 @@ declare global {
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
+      searchProjectSourceContent: (input: { projectId: string; query: string }) => Promise<ProjectSourceContentSearchResult>;
+
       /** 跨入口共用的受授权文件预览。 */
       loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;
       /** 页面关闭和选择变化时撤销短期资源。 */

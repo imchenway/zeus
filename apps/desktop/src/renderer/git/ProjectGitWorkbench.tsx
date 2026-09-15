@@ -210,7 +210,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const activeTopLevelTab = tab === 'stash' ? 'log' : tab;
   /** 其他仓库的选择不能借用当前仓库读取详情。 */
   const selectedCommitHash = selectedCommit?.repositoryId === selectedRepository?.id ? (selectedCommit?.ref ?? '') : '';
-  const changedCount = repositories.reduce((total, repository) => total + repository.snapshot.fileStatuses.length, 0);
+  // 角标与文件列表使用同一个仓库，不能把其他子模块的改动算进来。
+  const changedCount = selectedRepository?.snapshot.fileStatuses.length ?? 0;
   const conflictCount = repositories.reduce((total, repository) => total + repository.snapshot.conflictFiles.length, 0);
   const hasStagedChanges = repositories.some((repository) => repository.snapshot.fileStatuses.some((file) => file.indexStatus !== ' ' && file.indexStatus !== '?'));
   const allCommits = useMemo(
@@ -1929,6 +1930,10 @@ function GitLogSurface(props: {
   onConfirmAction: (repository: ProjectGitRepositoryWorkbenchItem, action: Extract<ProjectGitAction, { type: 'revert' | 'cherry_pick' }>, title: string, description: string, danger?: boolean) => void;
 }) {
   const selectedDiff = props.commitDetail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? props.commitDetail?.diff.fileDiffs[0] ?? null;
+  const [commitMenu, setCommitMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    setCommitMenu(null);
+  }, [props.selectedRepository?.id, props.commitDetail?.commit.hash, props.commitLoading, props.busy]);
   const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; repository: ProjectGitRepositoryWorkbenchItem; branch: string; kind: BranchKind } | null>(null);
   const historyScroll = useRef<HTMLDivElement>(null);
   const historySentinel = useRef<HTMLDivElement>(null);
@@ -2061,47 +2066,72 @@ function GitLogSurface(props: {
               <small>
                 {props.commitDetail.commit.shortHash} · {new Date(props.commitDetail.commit.authoredAt).toLocaleString()}
               </small>
-              {props.commitDetail.body && props.commitDetail.body !== props.commitDetail.commit.subject ? <p>{props.commitDetail.body}</p> : null}
               <div className="project-git-commit-actions">
-                <Button
-                  variant="secondary"
-                  disabled={props.busy !== null || !props.selectedRepository}
-                  onClick={() =>
-                    props.selectedRepository &&
-                    props.onConfirmAction(
-                      props.selectedRepository,
-                      { type: 'revert', revision: props.commitDetail!.commit.hash },
-                      props.zh ? '反向提交' : 'Revert commit',
-                      props.zh ? '这会创建一个新提交来撤销当前提交。' : 'This creates a new commit that reverses the selected commit.',
-                      true,
-                    )
-                  }
-                >
-                  {props.zh ? '反向提交' : 'Revert'}
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={props.busy !== null || !props.selectedRepository || props.selectedRepository.snapshot.detached}
-                  onClick={() =>
-                    props.selectedRepository &&
-                    props.onConfirmAction(
-                      props.selectedRepository,
-                      { type: 'cherry_pick', revision: props.commitDetail!.commit.hash },
-                      props.zh ? '拣选提交' : 'Cherry-pick commit',
-                      props.zh ? '这会把当前提交应用到当前分支。' : 'This applies the selected commit to the current branch.',
-                    )
-                  }
-                >
-                  {props.zh ? '拣选到当前分支' : 'Cherry-pick'}
-                </Button>
                 <Button
                   variant="secondary"
                   disabled={!props.selectedRepository}
                   onClick={() => props.selectedRepository && props.onOpenDiff(props.selectedRepository, '', { comparisonRef: props.commitDetail!.commit.hash, comparisonMode: 'current' })}
                 >
-                  {props.zh ? '与当前分支比较' : 'Compare with current'}
+                  {props.zh ? '查看与当前分支的差异' : 'View diff with current branch'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={props.busy !== null || !props.selectedRepository}
+                  aria-haspopup="menu"
+                  aria-expanded={commitMenu !== null}
+                  onClick={(event) => {
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    setCommitMenu(commitMenu ? null : { x: bounds.left, y: bounds.bottom + 5 });
+                  }}
+                >
+                  {props.zh ? '更多操作' : 'More actions'}
+                  <CaretDown aria-hidden="true" />
                 </Button>
               </div>
+              <MotionPresence>
+                {commitMenu && props.selectedRepository
+                  ? createPortal(
+                      <MenuSurface className="project-git-context-menu" aria-label={props.zh ? '提交操作' : 'Commit actions'} style={{ left: commitMenu.x, top: commitMenu.y }} onClose={() => setCommitMenu(null)}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={props.busy !== null || props.selectedRepository.snapshot.detached}
+                          onClick={() => {
+                            setCommitMenu(null);
+                            props.onConfirmAction(
+                              props.selectedRepository!,
+                              { type: 'cherry_pick', revision: props.commitDetail!.commit.hash },
+                              props.zh ? '拣选到当前分支' : 'Cherry-pick commit',
+                              props.zh ? '这会把选中提交的改动应用到当前分支。' : 'This applies the selected commit to the current branch.',
+                            );
+                          }}
+                        >
+                          {props.zh ? '拣选到当前分支' : 'Cherry-pick to current branch'}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-danger="true"
+                          disabled={props.busy !== null}
+                          onClick={() => {
+                            setCommitMenu(null);
+                            props.onConfirmAction(
+                              props.selectedRepository!,
+                              { type: 'revert', revision: props.commitDetail!.commit.hash },
+                              props.zh ? '撤销此提交' : 'Revert commit',
+                              props.zh ? '这会创建一个新提交来撤销选中提交的改动，原提交仍保留在历史中。' : 'This creates a new commit that reverses the selected commit. The original commit remains in history.',
+                              true,
+                            );
+                          }}
+                        >
+                          {props.zh ? '撤销此提交' : 'Revert this commit'}
+                        </button>
+                      </MenuSurface>,
+                      document.querySelector('.macos-ai-app') ?? document.body,
+                    )
+                  : null}
+              </MotionPresence>
+              {props.commitDetail.body && props.commitDetail.body !== props.commitDetail.commit.subject ? <p>{props.commitDetail.body}</p> : null}
             </section>
             <section className="project-git-changed-files">
               <header>
