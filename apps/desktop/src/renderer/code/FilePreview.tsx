@@ -5,8 +5,8 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './filePreview.css';
 
-/** 会话提供右侧审阅入口，其他页面保留各自的预览容器。 */
-export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest) => void) | null>(null);
+/** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
+export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));

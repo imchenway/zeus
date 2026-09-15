@@ -1,4 +1,4 @@
-import { FilePreviewOpenContext } from '../code/FilePreview.js';
+import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -37,7 +37,7 @@ import { defaultSourceWorkspaceViewMode, FilePreviewWorkspace, SourceWorkspace, 
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
-import { defaultOpenTarget } from './ConversationResources.js';
+import { defaultOpenTarget, isImageResource } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushModelCapability,
@@ -1677,6 +1677,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
+  /** 图片弹窗独立于右侧审阅，关闭后保留原有阅读位置。 */
+  const [imagePreviewRequest, setImagePreviewRequest] = useState<FilePreviewRequest | null>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
@@ -1825,6 +1827,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     composerFocusRestorationPendingRef.current = false;
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
+    setImagePreviewRequest(null);
     setGoalPanelOpen(false);
     setGoalBusy(false);
     setGoalError(null);
@@ -2140,21 +2143,25 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
-  /** 所有会话附件使用现有右侧面板，打开时记录返回焦点。 */
-  const openFilePreview = useCallback((request: FilePreviewRequest): void => {
+  /** 图片使用弹窗并保留右侧内容，其他文件打开审阅并记录返回焦点。 */
+  const openFilePreview = useCallback((request: FilePreviewRequest, image = false): void => {
+    if (image) {
+      setImagePreviewRequest(request);
+      return;
+    }
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setContextFullWidth(false);
     setContextWorkspace({ kind: 'file', request });
   }, []);
 
-  /** 会话默认打开位置统一在右侧，显式的系统和编辑器操作仍按用户选择执行。 */
+  /** 会话图片使用弹窗，其余资源进入右侧；显式的系统和编辑器操作按用户选择执行。 */
   async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
     if (target === 'preferred') target = defaultOpenTarget(resource);
     if (resource.kind !== 'website' && target === 'zeus_source') {
       /** 代码和文本保留行评论，其他格式交给通用文件预览。 */
       const path = resource.kind === 'file' ? resource.projectRelativePath : resource.displayName;
-      if (!isConversationSourcePreviewable(path)) {
-        openFilePreview({ kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id });
+      if (isImageResource(resource) || !isConversationSourcePreviewable(path)) {
+        openFilePreview({ kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id }, isImageResource(resource));
         return;
       }
     }
@@ -2447,6 +2454,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
       }}
     >
+      <MotionPresence>{imagePreviewRequest ? <FilePreviewDialog request={imagePreviewRequest} zh={props.language === 'zh-CN'} onClose={() => setImagePreviewRequest(null)} /> : null}</MotionPresence>
       {displayedHeader ? (
         <header
           className="session-thread-header"

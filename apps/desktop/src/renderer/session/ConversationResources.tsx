@@ -48,7 +48,7 @@ export function ConversationPendingAttachmentImages(props: { attachments: Native
 }
 
 function ConversationPendingAttachmentImage(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onVisibleContentChange?: () => void }) {
-  /** 会话提供右侧容器，独立预览页面仍可使用自身弹窗。 */
+  /** 图片由会话统一打开弹窗，独立页面沿用自身预览。 */
   const openFilePreview = useContext(FilePreviewOpenContext);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -103,7 +103,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.attachment.name}`}
         aria-busy={loading || undefined}
         title={props.attachment.name}
-        onClick={() => (openFilePreview ? openFilePreview({ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }) : setPreviewOpen(true))}
+        onClick={() => (openFilePreview ? openFilePreview({ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }, true) : setPreviewOpen(true))}
       >
         {failed ? (
           <span className="session-resource-image-placeholder" role="status">
@@ -624,7 +624,7 @@ function focusAdjacentDocumentControl(trigger: HTMLButtonElement | null, backwar
   controls[(currentIndex + offset + controls.length) % controls.length]?.focus();
 }
 
-/** 会话文件进入审阅，网页进入内置浏览器；邮件链接仍交给邮件应用。 */
+/** 会话文件交由统一入口选择预览容器，网页进入内置浏览器；邮件链接交给邮件应用。 */
 export function defaultOpenTarget(resource: ConversationResource): ConversationOpenTarget {
   if (resource.kind === 'website') return resource.url.startsWith('mailto:') ? 'system_default' : 'zeus_browser';
   return resource.iconKind === 'html' ? 'zeus_browser' : 'zeus_source';
