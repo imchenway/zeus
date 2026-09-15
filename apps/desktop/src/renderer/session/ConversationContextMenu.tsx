@@ -3,10 +3,9 @@
  *
  * 提供会话列表项的上下文菜单，支持归档、标记未读、重命名等操作。
  */
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
-import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { ArrowBendUpRightIcon as Fork } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';

@@ -292,7 +292,7 @@ export function registerConversationCommandRoutes(options: {
       const parsed = parseCommand(request, conversationCommandTypes.rename);
       assertExactInputKeys(parsed.input, ['title'], parsed.command.commandType);
       const title = parseRenameTitle(parsed.input.title);
-      const mutation = application.executeCore({
+      application.executeCore({
         parsed,
         destinationId: 'conversation-rename-application',
         resourceId: request.params.conversationId,
