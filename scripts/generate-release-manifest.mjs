@@ -113,7 +113,8 @@ export async function generateReleaseManifest({ version, channel = 'stable', rep
     repository: normalizedRepository,
   });
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir, encoding: 'utf8' }).trim();
-  const upstream = JSON.parse(await readFile(join(rootDir, 'releases/upstream-baseline.json'), 'utf8'));
+  // 上游自身不产生同步基线；派生发行仍须读取真实记录，缺失或损坏时阻断发布。
+  const upstream = zeusDistribution.repository === zeusDistribution.upstreamRepository ? null : JSON.parse(await readFile(join(rootDir, 'releases/upstream-baseline.json'), 'utf8'));
   const content = renderReleaseManifest({
     sourceCommit,
     upstream,
