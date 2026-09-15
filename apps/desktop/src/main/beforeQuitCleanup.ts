@@ -9,6 +9,8 @@ export type BeforeQuitCleanupFailureAction = 'retry' | 'keep_open' | 'force_quit
 export interface BeforeQuitCleanupResources {
   closeSystemNotifications?: () => void;
   resolveQuitMode?: () => Promise<DesktopLocalServerCloseMode | 'cancel'>;
+  /** 用户选择继续后台运行时隐藏窗口，但保留 Main、Core 和通知资源。 */
+  continueInBackground?: () => void | Promise<void>;
   closeLocalServer?: (mode: DesktopLocalServerCloseMode) => Promise<void>;
   shouldDeferQuit?: () => boolean;
   requestQuitConfirmation?: () => void;
@@ -40,6 +42,11 @@ export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResou
             return;
           }
           quitMode = resolvedQuitMode;
+          if (quitMode === 'continue_in_background') {
+            await resources.continueInBackground?.();
+            cleanupStarted = false;
+            return;
+          }
           const cleanupErrors: unknown[] = [];
           try {
             resources.closeSystemNotifications?.();
