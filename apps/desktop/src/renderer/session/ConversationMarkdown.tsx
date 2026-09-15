@@ -1,8 +1,8 @@
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import MarkdownRender, { setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
+import MarkdownRender, { MermaidBlockNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
-import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -22,6 +22,8 @@ const CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown';
 const STRUCTURED_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-structured';
 const EMPTY_RESOURCES: ConversationResource[] = [];
 const CHILD_ARRAY_FIELDS = ['children', 'items', 'rows', 'cells', 'term', 'definition'] as const;
+/** 图表复用按需加载的原生预览，禁止正文开启脚本、链接交互或导出入口。 */
+const MERMAID_OPTIONS = { isStrict: true, enableMermaidInteractions: false, showCopyButton: false, showExportButton: false, showFullscreenButton: false, showCollapseButton: false, showTooltips: false } as const;
 const SMOOTH_STREAMING_OPTIONS = {
   minCharsPerSecond: 1_200,
   maxCharsPerSecond: 100_000,
@@ -218,6 +220,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           deferNodesUntilVisible={false}
           maxLiveNodes={0}
           renderCodeBlocksAsPre
+          mermaidProps={MERMAID_OPTIONS}
           codeBlockStream={false}
           showTooltips={false}
         />
@@ -280,6 +283,18 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
   );
 }
 
+/** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
+function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
+  /** 复用带可访问名称的复制按钮，关闭原生组件未标注名称的图标操作。 */
+  const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
+  return (
+    <div className="session-code-block">
+      <ConversationMarkdownCopyButton label={languageLabels.copyCode} copiedLabel={languageLabels.copied} text={props.node.code} />
+      <MermaidBlockNode {...props} loading={Boolean(props.node.loading)} />
+    </div>
+  );
+}
+
 function PlainMathNode(props: NodeComponentProps<MarkstreamNode>) {
   const content = typeof props.node.raw === 'string' ? props.node.raw : typeof props.node.content === 'string' ? props.node.content : '';
   return props.node.type === 'math_block' ? <pre className="session-markdown-math-plain">{content}</pre> : <span className="session-markdown-math-plain">{content}</span>;
@@ -326,7 +341,8 @@ const customComponents = {
   link: SecureLinkNode,
   image: SecureImageNode,
   code_block: SecureCodeBlockNode,
-  mermaid: SecureCodeBlockNode,
+  // 所有服务商共用图表预览；普通代码块仍保留原有复制与长度限制。
+  mermaid: ConversationMermaidNode,
   infographic: SecureCodeBlockNode,
   d2: SecureCodeBlockNode,
   d2lang: SecureCodeBlockNode,

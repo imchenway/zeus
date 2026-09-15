@@ -39,6 +39,15 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  // 复用用户附件原文，覆盖时序图、流程图、语法错误与普通代码。
+  {
+    query: 'mermaid',
+    title: '会话图表预览',
+    summary: '共用 Markdown 渲染器的 Mermaid 预览与源码回退。',
+    answer:
+      '## 附件原始时序图\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant U as 用户(前端)\n    participant A as SocialImportLogApplication<br/>(@Transactional)\n    participant P as SocialImportProvider\n    participant E as socialGoodsImportLookupExecutor<br/>(10 线程，独立池)\n    participant X as 第三方接口\n\n    U->>A: 提交 40 行文件 (needLookup=true)\n    A->>P: prepareProcessQuery(rows)\n    Note over P: 条码去重 40 → 20\n\n    par 滑动窗口，最多 10 个在飞\n        P->>E: submit(条码1)\n        P->>E: submit(条码2)\n        P->>E: ... 最多 10 个\n    end\n    E->>X: HTTP 并发查询\n    X-->>E: 结果\n    E-->>P: 完成一个 → 立刻补下一个\n    Note over P: 20 次外呼全部完成(约 222ms)\n\n    P->>P: 按 barcode → payload 回写 40 行\n    P-->>A: query 已填充\n    Note over A: 之后才是原有的批量落库逻辑\n    A-->>U: 导入结果\n```\n\n## 流程图\n\n```mermaid\nflowchart LR\n  A[开始] --> B{检查格式}\n  B -->|正确| C[显示预览]\n  B -->|错误| D[保留源码]\n```\n\n## 错误语法回退\n\n```mermaid\nflowchart LR\n  A[未闭合\n```\n\n## 普通代码保持原样\n\n```text\nsequenceDiagram\n  A->>B: 普通代码\n```',
+    activities: [],
+  },
   { query: 'goal', title: '目标状态与继续执行', summary: '生产组件的目标详情和输入框对齐检查。', answer: '', activities: [] },
   { query: 'navigation', title: '完整历史刻度', summary: '生产时间线的长历史定位与动效记录。', answer: '', activities: [] },
   { query: 'queue-actions', title: '排队消息操作', summary: '按真实送达状态核对删除、引导和状态检查入口。', answer: '', activities: [] },
@@ -107,12 +116,48 @@ export function sceneFromSearch(search: string): QaScene {
   return scenes.find((scene) => parameters.has(scene.query)) ?? scenes[0]!;
 }
 
+/** 用生产正文组件直接检查原图、错误回退、流式完成与主题可读性。 */
+function MermaidPreviewQa(props: { answer: string }) {
+  /** 可编辑输入便于重放真实附件和异常语法。 */
+  const [text, setText] = useState(props.answer);
+  /** 显式切换完成状态，检查未闭合代码块到完整图表的过渡。 */
+  const [streaming, setStreaming] = useState(false);
+  /** 同一正文按应用实际主题容器显示。 */
+  const [dark, setDark] = useState(false);
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <h1>会话图表预览</h1>
+        <nav>
+          <button type="button" onClick={() => setDark(!dark)}>
+            {dark ? '切换浅色' : '切换深色'}
+          </button>
+          <button type="button" onClick={() => setStreaming(!streaming)}>
+            {streaming ? '完成生成' : '开始流式生成'}
+          </button>
+          <button type="button" onClick={() => setText(props.answer)}>
+            恢复附件场景
+          </button>
+        </nav>
+      </header>
+      <section className="qa-error-layout-note">
+        <details>
+          <summary>编辑 Markdown</summary>
+          <textarea aria-label="图表 Markdown" value={text} onChange={(event) => setText(event.currentTarget.value)} rows={8} style={{ width: '100%' }} />
+        </details>
+        <ConversationMarkdown text={text} streamId="qa:mermaid" phase={streaming ? 'streaming' : 'final'} language="zh-CN" />
+      </section>
+    </main>
+  );
+}
+
 /** 统一挂载验收场景，界面就绪回报覆盖每个入口。 */
 export function SessionQaApp(props: { scene: QaScene }) {
   // 完整测试包通过开发入口承载 QA 时，只有组件实际挂载后才报告界面就绪。
   useEffect(() => {
     window.zeus?.reportRendererBootstrapReady?.();
   }, []);
+  if (props.scene.query === 'mermaid') return <MermaidPreviewQa answer={props.scene.answer} />;
   if (props.scene.query === 'goal') return <GoalQa />;
   if (props.scene.query === 'navigation') return <NavigationQa />;
   if (props.scene.query === 'conversation-visibility') return <ConversationVisibilityQa />;
