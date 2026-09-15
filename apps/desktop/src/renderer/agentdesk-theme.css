@@ -541,9 +541,9 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
 }
 
-/* 文件审阅卡片保留组件自身边框，用于界定本轮变更及操作范围。 */
+/* 文件审阅与环境操作卡片保留组件自身边框，用于界定各自的操作范围。 */
 .macos-ai-app.zeus-shell
-  :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
+  :where(.task-board-card, .session-resource-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
   background: var(--zeus-card-background);
   border: 0;
   box-shadow: none;
@@ -1162,7 +1162,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: var(--zeus-card-shadow-soft) !important;
 }
 
-/* 普通内容卡片由底色表达层次；文件审阅卡片保留既有边界，不参与去边框。 */
+/* 普通内容卡片由底色表达层次；文件审阅与环境操作卡片保留既有边界，不参与去边框。 */
 .macos-ai-app.zeus-shell
   :where(
     .task-table-workbench,
@@ -1176,7 +1176,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .codex-usage-section,
     .task-board-card,
     .session-resource-card,
-    .session-quick-actions-card,
     .session-browser-preview-card,
     .browser-approval-card,
     .session-goal-panel

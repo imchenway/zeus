@@ -112,10 +112,12 @@
   inline-size: 20px;
 }
 
+/* 环境信息与来源共享完整边界，常驻和弹出状态使用同一主题描边。 */
 .session-codex-parity-v1 .session-quick-actions-card {
   background: var(--session-canvas);
-  border: 0;
+  border: 1px solid var(--session-line);
   border-radius: 18px;
+  box-sizing: border-box;
   box-shadow:
     0 18px 48px var(--session-shadow),
     0 2px 8px var(--session-shadow-soft);
