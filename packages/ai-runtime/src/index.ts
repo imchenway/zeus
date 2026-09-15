@@ -439,7 +439,8 @@ export interface CreateAiRuntimeSessionManagerOptions {
   onProcessIdentity?: (identity: { sessionId: string; token: string }) => void | Promise<void>;
   /** spawn 后立即持久化真实 PID；回调完成前 Runtime 不会向调用方报告启动成功。 */
   onProcessStarted?: (process: { sessionId: string; pid: number }) => void | Promise<void>;
-  onLog?: (log: AiRuntimeLogEntry) => void;
+  /** 第二个参数仅供真实终端回放，保留 ANSI/光标控制序列但已执行敏感信息脱敏。 */
+  onLog?: (log: AiRuntimeLogEntry, terminalText?: string) => void;
 }
 
 const MAX_IN_MEMORY_RUNTIME_LOG_ENTRIES = 2_000;
@@ -449,6 +450,8 @@ const MAX_IN_MEMORY_RUNTIME_SESSIONS = 64;
 const RUNTIME_PROCESS_IDENTITY_ENV = 'ZEUS_RUNTIME_PROCESS_IDENTITY_TOKEN';
 const RUNTIME_STOP_TERM_GRACE_MS = 500;
 const RUNTIME_STOP_KILL_WAIT_MS = 5_000;
+const RUNTIME_OUTPUT_FLUSH_INTERVAL_MS = 16;
+const RUNTIME_OUTPUT_FLUSH_BYTE_THRESHOLD = 256 * 1024;
 
 /** 在与实际启动一致的目录中查找程序，保留搜索顺序。 */
 async function findCommandOnPath(command: string, searchPath?: string): Promise<string | null> {
@@ -579,6 +582,14 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
   const stopEscalations = new Map<string, Promise<void>>();
   const orphanFinalizers = new Map<string, Promise<void>>();
   const redactedValues = new Map<string, string[]>();
+  const pendingProcessOutputs = new Map<
+    string,
+    {
+      chunks: Array<{ stream: 'stdout' | 'stderr'; text: string }>;
+      byteLength: number;
+      timer: ReturnType<typeof setTimeout> | null;
+    }
+  >();
   const runtimeLifecycleErrors: unknown[] = [];
   let closing = false;
   let closed = false;
@@ -591,8 +602,9 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     return [options.allowedRoot, ...dynamicAllowedRoots];
   }
 
-  function appendLog(sessionId: string, stream: AiRuntimeLogStream, text: string): void {
+  function appendLog(sessionId: string, stream: AiRuntimeLogStream, text: string, terminalText?: string): void {
     if (closed) return;
+    if (stream === 'system') flushProcessOutput(sessionId);
     const entries = logs.get(sessionId) ?? [];
     const exactValues = redactedValues.get(sessionId) ?? [];
     const sequence = (logSequences.get(sessionId) ?? 0) + 1;
@@ -618,7 +630,8 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     logs.set(sessionId, entries);
     logBytes.set(sessionId, cachedBytes);
     pruneRuntimeLogCaches(sessionId);
-    options.onLog?.(entry);
+    const redactedTerminalText = terminalText === undefined ? undefined : redactExactValues(redactSensitiveText(terminalText), exactValues);
+    options.onLog?.(entry, redactedTerminalText);
   }
 
   function pruneRuntimeLogCaches(currentSessionId: string): void {
@@ -647,10 +660,40 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
 
   function appendProcessOutput(sessionId: string, stream: 'stdout' | 'stderr', value: unknown): void {
     if (closed) return;
-    /** 交互终端保留光标与颜色控制码；后续统一脱敏和持久化仍由 appendLog 承担。 */
     const session = sessions.get(sessionId);
-    const text = session && isInteractiveShellSession(session) ? (value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value)) : normalizeProcessChunk(value);
-    appendLog(sessionId, stream, text);
+    // 交互终端必须保留光标、颜色和其它控制码，供 xterm 正确渲染。
+    if (session && isInteractiveShellSession(session)) {
+      const text = value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value);
+      if (text) appendLog(sessionId, stream, text, text);
+      return;
+    }
+    const terminalText = decodeProcessChunk(value);
+    if (!terminalText) return;
+    let pending = pendingProcessOutputs.get(sessionId);
+    if (!pending) {
+      pending = { chunks: [], byteLength: 0, timer: null };
+      pendingProcessOutputs.set(sessionId, pending);
+    }
+    const tail = pending.chunks.at(-1);
+    if (tail?.stream === stream) tail.text += terminalText;
+    else pending.chunks.push({ stream, text: terminalText });
+    pending.byteLength += Buffer.byteLength(terminalText);
+    if (pending.byteLength >= RUNTIME_OUTPUT_FLUSH_BYTE_THRESHOLD) {
+      flushProcessOutput(sessionId);
+      return;
+    }
+    if (pending.timer) return;
+    pending.timer = setTimeout(() => flushProcessOutput(sessionId), RUNTIME_OUTPUT_FLUSH_INTERVAL_MS);
+    pending.timer.unref?.();
+  }
+
+  /** 将同一渲染帧内的非交互进程小块合并，保留 stdout/stderr 顺序并降低 SQLite、SSE 压力。 */
+  function flushProcessOutput(sessionId: string): void {
+    const pending = pendingProcessOutputs.get(sessionId);
+    if (!pending) return;
+    pendingProcessOutputs.delete(sessionId);
+    if (pending.timer) clearTimeout(pending.timer);
+    for (const chunk of pending.chunks) appendLog(sessionId, chunk.stream, normalizeTerminalChunk(chunk.text), chunk.text);
   }
 
   function runtimeSignalErrorCode(error: unknown): string | null {
@@ -1020,7 +1063,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       const handle = handles.get(sessionId);
       if (!handle?.write) throw new Error('AI Runtime 当前会话不支持输入。');
       handle.write(input);
-      appendLog(sessionId, 'system', '已发送输入到 AI Runtime 会话');
+      // 交互式终端会按键持续写入；输入正文与逐键回执都不进入日志或 WAL。
       return session;
     },
     interruptSession(sessionId) {
@@ -1037,7 +1080,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) throw new Error('Runtime 终端尺寸无效。');
       if (!handle?.resize) throw new Error('AI Runtime 当前会话不支持 resize。');
       handle.resize(cols, rows);
-      appendLog(sessionId, 'system', `已调整 Runtime 终端尺寸：${cols}x${rows}`);
+      // 尺寸变化属于易失控制面，高频拖动不能制造持久日志。
       return session;
     },
     getTerminalSnapshot(sessionId) {
@@ -1239,8 +1282,8 @@ function assertCwdInsideAllowedRoots(cwd: string, allowedRoots: readonly string[
   throw new Error('AI Runtime 工作目录必须位于允许的项目目录内。');
 }
 
-function normalizeProcessChunk(value: unknown): string {
-  return normalizeTerminalChunk(value);
+function decodeProcessChunk(value: unknown): string {
+  return value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : String(value);
 }
 
 function redactSensitiveText(text: string): string {

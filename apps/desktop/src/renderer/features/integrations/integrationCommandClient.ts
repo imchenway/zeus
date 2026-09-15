@@ -13,6 +13,7 @@ export const integrationClientCommandTypes = {
   zentaoInstanceDelete: 'integration.zentao_instance.delete',
   zentaoInstancePasswordClear: 'integration.zentao_instance.password.clear',
   zentaoInstanceVerify: 'integration.zentao_instance.verify',
+  zentaoTaskSync: 'integration.zentao_task.sync',
   projectModelSelectionSave: 'settings.project_model_selection.save',
   telegramBotTokenPut: 'integration.telegram_bot_token.put',
   telegramBotTokenDelete: 'integration.telegram_bot_token.delete',

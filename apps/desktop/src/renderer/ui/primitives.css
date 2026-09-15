@@ -1107,7 +1107,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 }
 
-/* 全应用错误使用统一弹窗；摘要保持稳定，详情保留已脱敏的真实错误。 */
+/* 全应用错误使用统一弹窗；主区域显示具体原因，展开区保留已脱敏的诊断日志。 */
 .application-error-dialog-portal-root.macos-ai-app {
   z-index: 12000;
 }

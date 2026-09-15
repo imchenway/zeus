@@ -1,26 +1,35 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageAnalyticsSnapshot, type CodexUsageRange } from '@zeus/shared';
+import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageRange, type UsageAnalyticsSnapshot, type UsageProviderAnalytics } from '@zeus/shared';
 import { CalendarDotsIcon as CalendarDots } from '@phosphor-icons/react/dist/csr/CalendarDots';
 import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 type UsageClient = {
-  loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
+  loadUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<UsageAnalyticsSnapshot>;
 };
 
 type Language = 'zh-CN' | 'en-US';
 
 const text = {
   'zh-CN': {
-    title: '用量',
+    title: '用量详情',
     official: 'Codex 账户总览',
     officialHelp: '全部 Codex 客户端的官方账户数据，不与 Zeus 本地明细相加。',
-    local: 'Zeus 内使用明细',
-    localHelp: '仅包含功能启用后 Zeus 采集的逐轮数据。Credits 和美元均为估算，不是实际账单。',
+    local: '供应商本地使用明细',
+    localHelp: '按供应商分别展示 Zeus 采集的逐轮数据。Credits 和美元均为估算，不是实际账单。',
     allClients: '全部 Codex 客户端',
-    onlyZeus: '仅 Zeus',
+    onlyZeus: '仅 Zeus 本地记录',
+    allProviders: '全部供应商',
+    provider: '供应商',
+    subscription: '订阅供应商',
+    api: 'API 供应商',
+    providerHelp: '不同供应商的 Token、缓存和费用口径独立展示，不跨供应商相加。',
+    localOverview: '供应商本地总览',
+    today: '今日',
+    selectedRange: '当前范围',
+    noOfficial: '该供应商不提供官方账户配额；以下为 Zeus 本地采集明细。',
     loading: '正在读取用量…',
     unavailable: '不可用',
     signedOut: '尚未登录 Codex ChatGPT 账户。',
@@ -35,13 +44,22 @@ const text = {
     refresh: '刷新',
   },
   'en-US': {
-    title: 'Usage',
+    title: 'Usage details',
     official: 'Codex account overview',
     officialHelp: 'Official account data across all Codex clients. It is never added to Zeus-local usage.',
-    local: 'Usage inside Zeus',
-    localHelp: 'Only turn-level data collected by Zeus since this feature was enabled. Credits and USD are estimates, not an actual bill.',
+    local: 'Provider-local usage details',
+    localHelp: 'Turn-level data collected by Zeus, shown independently for each provider. Credits and USD are estimates, not an actual bill.',
     allClients: 'All Codex clients',
-    onlyZeus: 'Zeus only',
+    onlyZeus: 'Zeus local records',
+    allProviders: 'All providers',
+    provider: 'Provider',
+    subscription: 'Subscription provider',
+    api: 'API provider',
+    providerHelp: 'Token, cache, and cost scopes stay independent and are never added across providers.',
+    localOverview: 'Provider-local overview',
+    today: 'Today',
+    selectedRange: 'Selected range',
+    noOfficial: 'This provider does not expose official account limits; the details below are collected locally by Zeus.',
     loading: 'Loading usage…',
     unavailable: 'Unavailable',
     signedOut: 'No Codex ChatGPT account is signed in.',
@@ -62,7 +80,8 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
   const [range, setRange] = useState<CodexUsageRange>('30d');
   const [projectId, setProjectId] = useState('');
   const [model, setModel] = useState('');
-  const [snapshot, setSnapshot] = useState<CodexUsageAnalyticsSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<UsageAnalyticsSnapshot | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const loadRevision = useRef(0);
@@ -80,12 +99,18 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
     }
     setLoading(true);
     try {
-      const next = await props.client.loadCodexUsageAnalytics({ range, projectId: projectId || undefined, model: model || undefined });
+      const next = await props.client.loadUsageAnalytics({ range, projectId: projectId || undefined, model: model || undefined });
       if (revision !== loadRevision.current) return;
       setSnapshot(next);
       setFilterOptions((current) => ({
-        projects: mergeGroups(current.projects, next.local.byProject),
-        models: mergeGroups(current.models, next.local.byModel),
+        projects: mergeGroups(
+          current.projects,
+          next.providers.flatMap((provider) => provider.local.byProject),
+        ),
+        models: mergeGroups(
+          current.models,
+          next.providers.flatMap((provider) => provider.local.byModel),
+        ),
       }));
       setError(null);
     } catch (cause) {
@@ -121,48 +146,163 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
       ) : null}
       {snapshot ? (
         <>
-          <UsageSection title={copy.official} description={copy.officialHelp} badge={copy.allClients}>
-            <OfficialOverview snapshot={snapshot.official} language={props.language} />
+          <UsageSection title={copy.provider} description={copy.providerHelp} badge={`${snapshot.providers.length}`}>
+            <ProviderTabs providers={snapshot.providers} selectedProviderId={selectedProviderId} onChange={setSelectedProviderId} language={props.language} />
           </UsageSection>
-
-          <LocalUsageTabs snapshot={snapshot} language={props.language} dataKey={`${range}:${projectId}:${model}`}>
-            <div className="codex-usage-filters" aria-label={copy.local}>
-              <label>
-                <span>{copy.range}</span>
-                <select value={range} onChange={(event) => setRange(event.currentTarget.value as CodexUsageRange)}>
-                  <option value="7d">7 {props.language === 'zh-CN' ? '天' : 'days'}</option>
-                  <option value="30d">30 {props.language === 'zh-CN' ? '天' : 'days'}</option>
-                  <option value="90d">90 {props.language === 'zh-CN' ? '天' : 'days'}</option>
-                  <option value="all">{copy.all}</option>
-                </select>
-              </label>
-              <label>
-                <span>{copy.project}</span>
-                <select value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)}>
-                  <option value="">{copy.all}</option>
-                  {filterOptions.projects.map((group) => (
-                    <option value={group.id} key={group.id}>
-                      {group.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>{copy.model}</span>
-                <select value={model} onChange={(event) => setModel(event.currentTarget.value)}>
-                  <option value="">{copy.all}</option>
-                  {filterOptions.models.map((group) => (
-                    <option value={group.id} key={group.id}>
-                      {group.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </LocalUsageTabs>
+          <div className="codex-usage-filters" aria-label={copy.local}>
+            <label>
+              <span>{copy.range}</span>
+              <select value={range} onChange={(event) => setRange(event.currentTarget.value as CodexUsageRange)}>
+                <option value="7d">7 {props.language === 'zh-CN' ? '天' : 'days'}</option>
+                <option value="30d">30 {props.language === 'zh-CN' ? '天' : 'days'}</option>
+                <option value="90d">90 {props.language === 'zh-CN' ? '天' : 'days'}</option>
+                <option value="all">{copy.all}</option>
+              </select>
+            </label>
+            <label>
+              <span>{copy.project}</span>
+              <select value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)}>
+                <option value="">{copy.all}</option>
+                {filterOptions.projects.map((group) => (
+                  <option value={group.id} key={group.id}>
+                    {group.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{copy.model}</span>
+              <select value={model} onChange={(event) => setModel(event.currentTarget.value)}>
+                <option value="">{copy.all}</option>
+                {filterOptions.models.map((group) => (
+                  <option value={group.id} key={group.id}>
+                    {group.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {selectedProviderId === 'all' ? (
+            <AllProvidersOverview providers={snapshot.providers} language={props.language} />
+          ) : snapshot.providers.find((provider) => provider.provider.providerId === selectedProviderId) ? (
+            (() => {
+              const provider = snapshot.providers.find((candidate) => candidate.provider.providerId === selectedProviderId)!;
+              return (
+                <>
+                  <UsageSection title={provider.official ? copy.official : copy.localOverview} description={provider.official ? copy.officialHelp : copy.noOfficial} badge={provider.provider.name}>
+                    {provider.official ? <OfficialOverview snapshot={provider.official} language={props.language} /> : <LocalProviderOverview analytics={provider} language={props.language} />}
+                  </UsageSection>
+                  <LocalUsageTabs analytics={provider} language={props.language} dataKey={`${provider.provider.providerId}:${range}:${projectId}:${model}`} />
+                </>
+              );
+            })()
+          ) : (
+            <p className="codex-usage-state">{copy.empty}</p>
+          )}
         </>
       ) : null}
     </section>
+  );
+}
+
+function ProviderTabs(props: { providers: UsageProviderAnalytics[]; selectedProviderId: string; onChange: (providerId: string) => void; language: Language }) {
+  const copy = text[props.language];
+  return (
+    <nav className="codex-usage-provider-tabs" role="tablist" aria-label={copy.provider} onKeyDown={handleLocalUsageTabKeyDown}>
+      <button type="button" role="tab" aria-selected={props.selectedProviderId === 'all'} onClick={() => props.onChange('all')}>
+        {copy.allProviders}
+      </button>
+      {props.providers.map((analytics) => (
+        <button key={analytics.provider.providerId} type="button" role="tab" aria-selected={props.selectedProviderId === analytics.provider.providerId} onClick={() => props.onChange(analytics.provider.providerId)}>
+          <span>{analytics.provider.name}</span>
+          <small>{analytics.provider.kind === 'subscription' ? copy.subscription : copy.api}</small>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; language: Language }) {
+  const copy = text[props.language];
+  if (props.providers.length === 0) return <p className="codex-usage-state">{copy.empty}</p>;
+  return (
+    <UsageSection title={copy.allProviders} description={copy.providerHelp} badge={String(props.providers.length)}>
+      <div className="codex-usage-provider-grid">
+        {props.providers.map((analytics) => (
+          <article className="codex-usage-provider-card" key={analytics.provider.providerId}>
+            <header>
+              <span>
+                <strong>{analytics.provider.name}</strong>
+                <small>{analytics.provider.kind === 'subscription' ? copy.subscription : copy.api}</small>
+              </span>
+              <em>{analytics.provider.deleted ? copy.unavailable : (analytics.provider.planType ?? (analytics.provider.kind === 'api' ? 'API' : copy.unavailable))}</em>
+            </header>
+            <MetricGrid
+              language={props.language}
+              items={[
+                [copy.today, formatTokens(analytics.provider.todayLocal.totalTokens, props.language)],
+                [copy.selectedRange, formatTokens(analytics.local.totals.totalTokens, props.language)],
+                [props.language === 'zh-CN' ? '轮次数' : 'Turns', String(analytics.local.totals.turnCount)],
+                [props.language === 'zh-CN' ? 'API 等价美元' : 'API-equivalent USD', formatEstimate(analytics.local.totals.apiEquivalentUsd, 'usd', props.language)],
+              ]}
+            />
+          </article>
+        ))}
+      </div>
+    </UsageSection>
+  );
+}
+
+function LocalProviderOverview(props: { analytics: UsageProviderAnalytics; language: Language }) {
+  const totals = props.analytics.local.totals;
+  const providerName = props.analytics.provider.name;
+  return (
+    <>
+      <div className="codex-usage-official-summary">
+        <MetricGrid
+          language={props.language}
+          items={[
+            [props.language === 'zh-CN' ? '供应商类型' : 'Provider type', props.language === 'zh-CN' ? 'API 供应商' : 'API provider'],
+            [props.language === 'zh-CN' ? '今日 Token' : 'Today tokens', formatTokens(props.analytics.provider.todayLocal.totalTokens, props.language)],
+            [props.language === 'zh-CN' ? '当前范围 Token' : 'Range tokens', formatTokens(totals.totalTokens, props.language)],
+            [props.language === 'zh-CN' ? '轮次数' : 'Turns', String(totals.turnCount)],
+            [props.language === 'zh-CN' ? '缓存命中率' : 'Cache hit rate', formatPercent(totals.cacheHitRate, props.language)],
+            [props.language === 'zh-CN' ? 'API 等价美元' : 'API-equivalent USD', formatEstimate(totals.apiEquivalentUsd, 'usd', props.language)],
+          ]}
+        />
+      </div>
+      <div className="codex-usage-official-detail-grid">
+        <OfficialUsageCalendar days={props.analytics.local.daily} label={`${providerName} · ${props.language === 'zh-CN' ? '本地记录' : 'Local records'}`} runtimeName={providerName} local language={props.language} />
+        <section className="codex-usage-quota-panel" aria-label={`${providerName} · ${props.language === 'zh-CN' ? '本地用量摘要' : 'Local usage summary'}`}>
+          <header>
+            <span>
+              <Gauge size={20} weight="regular" aria-hidden="true" />
+              <strong>{props.language === 'zh-CN' ? '本地用量摘要' : 'Local usage summary'}</strong>
+            </span>
+            <small>{props.language === 'zh-CN' ? `${totals.turnCount} 轮` : `${totals.turnCount} turn${totals.turnCount === 1 ? '' : 's'}`}</small>
+          </header>
+          <div className="codex-usage-limit-list">
+            {[
+              [props.language === 'zh-CN' ? '输入 Token' : 'Input tokens', formatTokens(totals.inputTokens, props.language)],
+              [props.language === 'zh-CN' ? '输出 Token' : 'Output tokens', formatTokens(totals.outputTokens, props.language)],
+              [props.language === 'zh-CN' ? '缓存命中' : 'Cache hits', formatTokens(totals.cachedInputTokens, props.language)],
+              [props.language === 'zh-CN' ? '缓存写入' : 'Cache writes', formatTokens(totals.cacheWriteInputTokens, props.language)],
+              [props.language === 'zh-CN' ? '费用覆盖率' : 'Price coverage', formatPercent(totals.priceCoverage, props.language)],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <span>
+                  <strong>{label}</strong>
+                  <small>{props.language === 'zh-CN' ? '本地统计' : 'Local data'}</small>
+                </span>
+                <span>
+                  <b>{value}</b>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </>
   );
 }
 
@@ -246,7 +386,7 @@ function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; languag
 
 type LocalUsageTab = 'overview' | 'models' | 'projects' | 'conversations';
 
-function LocalUsageTabs(props: { snapshot: CodexUsageAnalyticsSnapshot; language: Language; dataKey: string; children: ReactNode }) {
+function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: Language; dataKey: string }) {
   const copy = text[props.language];
   const [activeTab, setActiveTab] = useState<LocalUsageTab>('overview');
   const tabGroupId = useId();
@@ -273,50 +413,56 @@ function LocalUsageTabs(props: { snapshot: CodexUsageAnalyticsSnapshot; language
         <em>{copy.onlyZeus}</em>
       </header>
       <small className="codex-usage-local-help">{copy.localHelp}</small>
-      {props.children}
       <section id={panelId('overview')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('overview')} tabIndex={0} hidden={activeTab !== 'overview'}>
-        <LocalOverview snapshot={props.snapshot} language={props.language} />
+        <LocalOverview local={props.analytics.local} language={props.language} />
       </section>
       <section id={panelId('models')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('models')} tabIndex={0} hidden={activeTab !== 'models'}>
-        {props.snapshot.local.byModel.length > 0 ? (
-          <UsageBreakdownTable key={`${props.dataKey}:models`} title={props.language === 'zh-CN' ? '模型明细' : 'Models'} rows={props.snapshot.local.byModel} language={props.language} showTitle={false} />
+        {props.analytics.local.byModel.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:models`} title={props.language === 'zh-CN' ? '模型明细' : 'Models'} rows={props.analytics.local.byModel} language={props.language} showTitle={false} />
         ) : (
           emptyPanel
         )}
       </section>
       <section id={panelId('projects')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('projects')} tabIndex={0} hidden={activeTab !== 'projects'}>
-        {props.snapshot.local.byProject.length > 0 ? (
-          <UsageBreakdownTable key={`${props.dataKey}:projects`} title={props.language === 'zh-CN' ? '项目明细' : 'Projects'} rows={props.snapshot.local.byProject} language={props.language} showTitle={false} />
+        {props.analytics.local.byProject.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:projects`} title={props.language === 'zh-CN' ? '项目明细' : 'Projects'} rows={props.analytics.local.byProject} language={props.language} showTitle={false} />
         ) : (
           emptyPanel
         )}
       </section>
       <section id={panelId('conversations')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('conversations')} tabIndex={0} hidden={activeTab !== 'conversations'}>
-        {props.snapshot.local.byConversation.length > 0 ? (
-          <UsageBreakdownTable key={`${props.dataKey}:conversations`} title={props.language === 'zh-CN' ? '会话明细' : 'Conversations'} rows={props.snapshot.local.byConversation} language={props.language} showTitle={false} />
+        {props.analytics.local.byConversation.length > 0 ? (
+          <UsageBreakdownTable key={`${props.dataKey}:conversations`} title={props.language === 'zh-CN' ? '会话明细' : 'Conversations'} rows={props.analytics.local.byConversation} language={props.language} showTitle={false} />
         ) : (
           emptyPanel
         )}
       </section>
       <p className="codex-usage-pricing-note">
-        {props.snapshot.pricing.note} {props.language === 'zh-CN' ? '价格来源日期' : 'Price source date'}: {props.snapshot.pricing.catalogDate}
-        {' · '}
-        <a href={props.snapshot.pricing.sourceUrls[0]} target="_blank" rel="noreferrer">
-          OpenAI
-        </a>
+        {props.analytics.pricing.note}
+        {props.analytics.pricing.catalogDate && !['unknown', 'unavailable'].includes(props.analytics.pricing.catalogDate)
+          ? ` ${props.language === 'zh-CN' ? '价格来源日期' : 'Price source date'}: ${props.analytics.pricing.catalogDate}`
+          : null}
+        {props.analytics.pricing.sourceUrls[0] ? (
+          <>
+            {' · '}
+            <a href={props.analytics.pricing.sourceUrls[0]} target="_blank" rel="noreferrer">
+              {props.analytics.provider.name}
+            </a>
+          </>
+        ) : null}
       </p>
-      {props.snapshot.local.collectionStartedAt ? (
+      {props.analytics.local.collectionStartedAt ? (
         <small>
-          {props.language === 'zh-CN' ? '本地采集始于' : 'Local collection started'} {formatDateTime(props.snapshot.local.collectionStartedAt, props.language)}
+          {props.language === 'zh-CN' ? '本地采集始于' : 'Local collection started'} {formatDateTime(props.analytics.local.collectionStartedAt, props.language)}
         </small>
       ) : null}
     </section>
   );
 }
 
-function LocalOverview(props: { snapshot: CodexUsageAnalyticsSnapshot; language: Language }) {
+function LocalOverview(props: { local: UsageProviderAnalytics['local']; language: Language }) {
   const copy = text[props.language];
-  const totals = props.snapshot.local.totals;
+  const totals = props.local.totals;
   return (
     <>
       <MetricGrid
@@ -338,7 +484,7 @@ function LocalOverview(props: { snapshot: CodexUsageAnalyticsSnapshot; language:
           [props.language === 'zh-CN' ? '费用覆盖率' : 'Price coverage', formatPercent(totals.priceCoverage, props.language)],
         ]}
       />
-      <UsageHeatmap days={props.snapshot.local.daily} label={copy.onlyZeus} language={props.language} />
+      <UsageHeatmap days={props.local.daily} label={copy.onlyZeus} language={props.language} />
       {totals.turnCount === 0 ? <p className="codex-usage-state">{copy.empty}</p> : null}
     </>
   );
@@ -368,7 +514,7 @@ function MetricGrid(props: { items: Array<[string, string]>; language: Language 
   );
 }
 
-function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>; label: string; language: Language }) {
+function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>> | CodexLocalUsageDay[]; label: string; language: Language; runtimeName?: string; local?: boolean }) {
   const calendar = useMemo(() => buildUsageCalendar(props.days, props.language), [props.days, props.language]);
   const [hover, setHover] = useState<{ day: UsageCalendarCell; left: number; top: number } | null>(null);
   const tooltipId = useId();
@@ -389,26 +535,38 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
   };
   const totals = hover ? props.days.filter((day) => day.date === hover.day.date && Number.isFinite(day.totalTokens)) : [];
   const missing = zh ? '未提供' : 'Not provided';
+  const runtimeName = props.runtimeName ?? 'Codex';
+  const localDay = props.local ? (totals[0] as CodexLocalUsageDay | undefined) : undefined;
   const rows = hover
-    ? [
-        ['Runtime', 'Codex'],
-        [
-          zh ? '总量' : 'Total',
-          totals.length
-            ? `${formatTokens(
-                totals.reduce((sum, day) => sum + Math.max(0, day.totalTokens), 0),
-                props.language,
-              )} Token`
-            : zh
-              ? '无记录'
-              : 'No record',
-        ],
-        [zh ? '未缓存' : 'Uncached', missing],
-        [zh ? '缓存' : 'Cached', missing],
-        [zh ? '输出' : 'Output', missing],
-        [zh ? '估算' : 'Estimate', missing],
-        [zh ? '口径' : 'Scope', props.label],
-      ]
+    ? props.local
+      ? [
+          ['Runtime', runtimeName],
+          [zh ? '总量' : 'Total', localDay ? `${formatTokens(localDay.totalTokens, props.language)} Token` : zh ? '无记录' : 'No record'],
+          [zh ? '未缓存' : 'Uncached', localDay ? `${formatTokens(calculateUncachedInputTokens(localDay), props.language)} Token` : missing],
+          [zh ? '缓存' : 'Cached', localDay ? `${formatTokens(localDay.cachedInputTokens, props.language)} Token` : missing],
+          [zh ? '输出' : 'Output', localDay ? `${formatTokens(localDay.outputTokens, props.language)} Token` : missing],
+          [zh ? '估算' : 'Estimate', formatEstimate(localDay?.apiEquivalentUsd ?? null, 'usd', props.language)],
+          [zh ? '口径' : 'Scope', props.label],
+        ]
+      : [
+          ['Runtime', runtimeName],
+          [
+            zh ? '总量' : 'Total',
+            totals.length
+              ? `${formatTokens(
+                  totals.reduce((sum, day) => sum + Math.max(0, day.totalTokens), 0),
+                  props.language,
+                )} Token`
+              : zh
+                ? '无记录'
+                : 'No record',
+          ],
+          [zh ? '未缓存' : 'Uncached', missing],
+          [zh ? '缓存' : 'Cached', missing],
+          [zh ? '输出' : 'Output', missing],
+          [zh ? '估算' : 'Estimate', missing],
+          [zh ? '口径' : 'Scope', props.label],
+        ]
     : [];
   const title = props.language === 'zh-CN' ? '最近半年用量' : 'Usage over the last 6 months';
   return (
@@ -476,7 +634,15 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
                   </div>
                 ))}
               </dl>
-              <small>{zh ? '官方按日统计未提供缓存拆分和费用。' : 'Daily account statistics do not include cache breakdown or costs.'}</small>
+              <small>
+                {props.local
+                  ? zh
+                    ? '按供应商本地账本逐日统计，费用取已固化的估算费率。'
+                    : 'Daily provider-local records use the rate snapshot captured with each turn.'
+                  : zh
+                    ? '官方按日统计未提供缓存拆分和费用。'
+                    : 'Daily account statistics do not include cache breakdown or costs.'}
+              </small>
             </div>
           </div>,
           document.body,

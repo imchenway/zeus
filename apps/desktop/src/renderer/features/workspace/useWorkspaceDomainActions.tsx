@@ -156,6 +156,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     nativeConversationChoicesByProjectRef,
     nativeConversationChoicesByTask,
     nativeConversationChoicesByTaskRef,
+    nativeConversationChoices,
     nativeConversationRuntimeStates,
     nativeConversationStartEnvelopeManager,
     nativeLegacyMessages,
@@ -1446,6 +1447,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
+  /** 归档当前会话后优先选中同一项目的另一个活跃会话。 */
+  function resolveConversationAfterArchive(conversationId: string, projectId: string | null, navigationId: string): NativeConversationChoice | null {
+    const candidates = nativeConversationChoices.filter((candidate) => !candidate.archived && candidate.id !== conversationId && resolveConversationNavigationId(candidate) !== navigationId);
+    const preferredProjectId = projectId ?? activeProjectId;
+    return candidates.find((candidate) => candidate.projectId === preferredProjectId) ?? candidates[0] ?? null;
+  }
+
   /** HTTP 回执与实时通知共用已确认归档的移除逻辑，不依赖下一次列表读取成功。 */
   function removeConfirmedArchivedConversation(conversationId: string, projectId: string | null, taskId: string | null, navigationId = conversationId): void {
     if (taskId) nativeConversationChoiceLoadCoordinator.forget(taskId, conversationId);
@@ -1465,11 +1473,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       ),
     );
     if (selectedNativeConversationIdRef.current === navigationId) {
+      const replacement = resolveConversationAfterArchive(conversationId, projectId, navigationId);
       selectedNativeConversationIdRef.current = null;
       setSelectedNativeConversationId(null);
       setFocusedArchivedConversation(null);
       setConversationDraftOpen(false);
-      setActiveProjectSection('tasks');
+      if (replacement) {
+        // 与侧栏直接点击另一个会话保持相同的导航行为。
+        void selectNativeConversation(replacement).catch((error: unknown) => recordLocalError('conversation-archive-selection', error));
+      } else {
+        setActiveNavTarget('conversations');
+        setActiveProjectSection('sessions');
+      }
     }
     setNativeConversationRuntimeStates((current) => {
       // 清除已离开工作区的会话运行状态。

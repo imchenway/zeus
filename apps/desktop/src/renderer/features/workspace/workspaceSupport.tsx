@@ -219,6 +219,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'loadCodexAccount'
     | 'loadCodexUsageSummary'
     | 'loadUsageOverview'
+    | 'loadUsageAnalytics'
     | 'loadCodexUsageAnalytics'
     | 'startCodexChatGptLogin'
     | 'loadCodexChatGptLoginStatus'

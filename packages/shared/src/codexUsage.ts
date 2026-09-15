@@ -131,6 +131,36 @@ export interface CodexLocalUsageDay extends CodexLocalUsageTotals {
 
 export type CodexUsageRange = '7d' | '30d' | '90d' | 'all';
 
+/** 用量详情的通用供应商数据；Codex 官方账户字段只对 Codex 有值。 */
+export interface UsageProviderAnalytics {
+  provider: UsageProviderSummary;
+  range: CodexUsageRange;
+  projectId: string | null;
+  model: string | null;
+  official: CodexOfficialUsageSnapshot | null;
+  local: {
+    totals: CodexLocalUsageTotals;
+    daily: CodexLocalUsageDay[];
+    byModel: CodexLocalUsageGroup[];
+    byProject: CodexLocalUsageGroup[];
+    byConversation: CodexLocalUsageGroup[];
+    collectionStartedAt: string | null;
+  };
+  pricing: {
+    catalogDate: string | null;
+    sourceUrls: string[];
+    note: string;
+  };
+}
+
+export interface UsageAnalyticsSnapshot {
+  range: CodexUsageRange;
+  projectId: string | null;
+  model: string | null;
+  providers: UsageProviderAnalytics[];
+  updatedAt: string;
+}
+
 export interface CodexUsageSummarySnapshot {
   providerId: 'codex';
   official: CodexOfficialUsageSnapshot;

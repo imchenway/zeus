@@ -43,27 +43,33 @@ let nextErrorId = 1;
 const copyByLanguage = {
   'zh-CN': {
     title: '无法完成操作',
-    summary: 'Zeus 尚未识别这次错误的具体原因。请查看错误详情。',
-    unavailable: 'Zeus 尚未识别这次错误的具体原因。',
     unknown: '未知错误。',
     details: '查看详情',
     hideDetails: '收起详情',
     close: '关闭',
-    detailTitle: '错误详情',
-    occurredAt: '发生时间',
-    originalMessage: '原始信息',
+    detailTitle: '错误日志',
+    occurredAt: '时间',
+    severity: '级别',
+    operation: '操作',
+    errorCode: '错误码',
+    errorType: '异常类型',
+    visibleMessage: '错误提示',
+    diagnosticContext: '诊断记录',
   },
   en: {
     title: 'Unable to complete this action',
-    summary: 'Zeus has not identified the cause of this error. See the error details.',
-    unavailable: 'Zeus has not identified the cause of this error.',
     unknown: 'Unknown error.',
     details: 'View Details',
     hideDetails: 'Hide Details',
     close: 'Close',
-    detailTitle: 'Error details',
-    occurredAt: 'Occurred at',
-    originalMessage: 'Original message',
+    detailTitle: 'Error log',
+    occurredAt: 'Time',
+    severity: 'Level',
+    operation: 'Operation',
+    errorCode: 'Error code',
+    errorType: 'Error type',
+    visibleMessage: 'Message',
+    diagnosticContext: 'Diagnostic record',
   },
 } as const;
 
@@ -90,6 +96,26 @@ function errorCode(error: unknown): string | null {
   return candidate?.trim() || null;
 }
 
+function errorType(error: unknown): string | null {
+  if (error instanceof Error) return error.name.trim() || null;
+  if (!error || typeof error !== 'object' || !('name' in error) || typeof error.name !== 'string') return null;
+  return error.name.trim() || null;
+}
+
+function errorOperation(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { action?: unknown; source?: unknown };
+  const candidate = typeof value.action === 'string' ? value.action : typeof value.source === 'string' ? value.source : null;
+  return candidate?.trim() || null;
+}
+
+function errorOccurredAt(error: unknown): string {
+  if (error && typeof error === 'object' && 'occurredAt' in error && typeof error.occurredAt === 'string' && Number.isFinite(Date.parse(error.occurredAt))) {
+    return new Date(error.occurredAt).toISOString();
+  }
+  return new Date().toISOString();
+}
+
 /** 只负责解释原因，不改变错误对应操作的可重试性。 */
 export function formatVisibleApplicationError(error: unknown, language: ApplicationErrorLanguage = 'zh-CN'): string {
   return describeUserFacingError(error, language).message;
@@ -111,20 +137,33 @@ export function VisibleApplicationError(props: { error: unknown; language?: Appl
   );
 }
 
-/** 全应用统一错误出口：摘要保持稳定，脱敏后的真实错误码和消息进入可展开详情。 */
+/** 全应用统一错误出口：主区域直接显示具体原因，展开区只承载可复制的诊断日志。 */
 export function reportApplicationError(error: unknown, options: ApplicationErrorOptions = {}): string {
   const language = options.language ?? 'zh-CN';
   const copy = copyByLanguage[language];
   const code = errorCode(error);
+  const type = errorType(error);
+  const operation = errorOperation(error);
+  const explanation = describeUserFacingError(error, language);
   const message = errorMessage(error, language).replace(/\s+/gu, ' ').trim() || copy.unknown;
   const original = code && message !== code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
-  const detailsBody = `${copy.originalMessage}: ${describeUserFacingError(error, language).details || original}`;
-  const details = redactDetails(`${copy.occurredAt}: ${new Date().toISOString()}\n${detailsBody}`);
+  const diagnosticContext = explanation.details || original;
+  const detailsBody = [
+    `${copy.severity}: ERROR`,
+    `${copy.visibleMessage}: ${explanation.message}`,
+    code ? `${copy.errorCode}: ${code}` : '',
+    type ? `${copy.errorType}: ${type}` : '',
+    operation ? `${copy.operation}: ${operation}` : '',
+    `${copy.diagnosticContext}:\n${diagnosticContext}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const details = redactDetails(`${copy.occurredAt}: ${errorOccurredAt(error)}\n${detailsBody}`);
   const entry: ApplicationErrorEntry = {
     id: nextErrorId++,
     language,
     title: options.title ?? copy.title,
-    summary: formatVisibleApplicationError(error, language),
+    summary: explanation.message,
     showDetails: options.showDetails === true,
     details,
     dedupeKey: `${options.title ?? copy.title}\n${detailsBody}`,

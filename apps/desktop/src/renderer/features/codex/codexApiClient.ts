@@ -22,7 +22,7 @@ import type {
   TaskWorkspaceSnapshotResponse,
   TaskWorkspacesSnapshot,
 } from '../../session/sessionTypes.js';
-import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageOverviewSnapshot } from '@zeus/shared';
+import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageAnalyticsSnapshot, UsageOverviewSnapshot } from '@zeus/shared';
 import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot, SkillCatalog, SkillInstallResult, SkillInstallSource } from './codexContracts.js';
 import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPublicClientScopeIds } from './codexPublicCommandClient.js';
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
@@ -39,6 +39,7 @@ export interface CodexApiClient {
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
   loadCodexUsageSummary: () => Promise<CodexUsageSummarySnapshot>;
   loadUsageOverview: () => Promise<UsageOverviewSnapshot>;
+  loadUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<UsageAnalyticsSnapshot>;
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
   /** 只读取指定实例和登录编号对应的结果。 */
@@ -163,6 +164,12 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     loadCodexAccount: () => transport.request<CodexAccountSnapshot>('/api/codex/account'),
     loadCodexUsageSummary: () => transport.request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
     loadUsageOverview,
+    loadUsageAnalytics: (input) => {
+      const query = new URLSearchParams({ range: input.range });
+      if (input.projectId) query.set('projectId', input.projectId);
+      if (input.model) query.set('model', input.model);
+      return transport.request<UsageAnalyticsSnapshot>(`/api/usage-analytics?${query.toString()}`);
+    },
     loadCodexUsageAnalytics: (input) => {
       const query = new URLSearchParams({ range: input.range });
       if (input.projectId) query.set('projectId', input.projectId);

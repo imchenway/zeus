@@ -600,14 +600,14 @@ export class RuntimeSessionRepository {
     this.db.execute(`UPDATE runtime_sessions SET ${column} = ?, updated_at = ? WHERE id = ?`, [enabled ? 1 : 0, updatedAt, sessionId]);
   }
 
-  /** Runtime 日志同时镜像成 terminal_events，保证设计书要求的终端回放表有真实写入来源。 */
+  /** Runtime 日志同时镜像成 terminal_events，原始 PTY 正文由共享追加文件承载。 */
   private appendTerminalEventFromRuntimeLog(record: ZeusRuntimeLogRecord): void {
     const session = this.getById(record.sessionId);
     const nextSeq = this.db.get<{ next_seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM terminal_events WHERE session_id = ?`, [record.sessionId])?.next_seq ?? 1;
     this.db.execute(
       `INSERT INTO terminal_events (id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      // 正文只保存在 runtime_logs；terminal_events 保留稳定序号和引用，读取回放时再关联正文。
+      // 避免高频全屏 TUI 将同一份原始输出同时复制进 SQLite；读取回放时使用 raw_chunk_path。
       [`terminal_event_${record.id}`, record.sessionId, session?.taskId ?? null, nextSeq, record.stream, '', null, record.createdAt],
     );
   }
@@ -696,17 +696,43 @@ export class TerminalEventRepository {
     return this.db
       .select<DbTerminalEventRow>(
         `SELECT terminal_events.id, terminal_events.session_id, terminal_events.task_id, terminal_events.seq,
-                terminal_events.event_type, COALESCE(runtime_logs.text, terminal_events.content) AS content,
+                terminal_events.event_type,
+                CASE WHEN terminal_events.content <> '' THEN terminal_events.content ELSE COALESCE(runtime_logs.text, terminal_events.content) END AS content,
                 terminal_events.raw_chunk_path, terminal_events.created_at
            FROM terminal_events
            LEFT JOIN runtime_logs
-             ON terminal_events.id = 'terminal_event_' || runtime_logs.id
-            AND terminal_events.session_id = runtime_logs.session_id
+             ON runtime_logs.id = substr(terminal_events.id, 16)
+            AND runtime_logs.session_id = terminal_events.session_id
           WHERE terminal_events.session_id = ?
           ORDER BY terminal_events.seq ASC, terminal_events.created_at ASC`,
         [sessionId],
       )
       .map(mapTerminalEventRow);
+  }
+
+  /** 单次查询读取会话最新终端块，避免活跃 TUI 在 COUNT 与 OFFSET 查询之间持续追加导致尾部漂移。 */
+  listRecentBySession(sessionId: string, limit = 1_000): TerminalEventListResult {
+    const boundedLimit = clampPositiveInteger(limit, 1_000, 1, 2_500);
+    // seq 是会话内从 1 开始的持久单调序号；MAX 可走 session+seq 索引，避免长会话每次冷回放都扫描全量事件。
+    const total = this.db.get<{ count: number }>(`SELECT COALESCE(MAX(seq), 0) AS count FROM terminal_events WHERE session_id = ?`, [sessionId])?.count ?? 0;
+    const items = this.db
+      .select<DbTerminalEventRow>(
+        `SELECT terminal_events.id, terminal_events.session_id, terminal_events.task_id, terminal_events.seq,
+                terminal_events.event_type,
+                CASE WHEN terminal_events.content <> '' THEN terminal_events.content ELSE COALESCE(runtime_logs.text, terminal_events.content) END AS content,
+                terminal_events.raw_chunk_path, terminal_events.created_at
+           FROM terminal_events
+           LEFT JOIN runtime_logs
+             ON runtime_logs.id = substr(terminal_events.id, 16)
+            AND runtime_logs.session_id = terminal_events.session_id
+          WHERE terminal_events.session_id = ?
+          ORDER BY terminal_events.seq DESC
+          LIMIT ?`,
+        [sessionId, boundedLimit],
+      )
+      .map(mapTerminalEventRow)
+      .reverse();
+    return { sessionId, items, total, limit: boundedLimit, offset: Math.max(0, total - items.length) };
   }
 
   /** 按 session 和 seq 做稳定 SQL 分页，避免终端长会话回放时一次性加载全量事件。 */
@@ -717,12 +743,13 @@ export class TerminalEventRepository {
     const items = this.db
       .select<DbTerminalEventRow>(
         `SELECT terminal_events.id, terminal_events.session_id, terminal_events.task_id, terminal_events.seq,
-                terminal_events.event_type, COALESCE(runtime_logs.text, terminal_events.content) AS content,
+                terminal_events.event_type,
+                CASE WHEN terminal_events.content <> '' THEN terminal_events.content ELSE COALESCE(runtime_logs.text, terminal_events.content) END AS content,
                 terminal_events.raw_chunk_path, terminal_events.created_at
            FROM terminal_events
            LEFT JOIN runtime_logs
-             ON terminal_events.id = 'terminal_event_' || runtime_logs.id
-            AND terminal_events.session_id = runtime_logs.session_id
+             ON runtime_logs.id = substr(terminal_events.id, 16)
+            AND runtime_logs.session_id = terminal_events.session_id
           WHERE terminal_events.session_id = ?
           ORDER BY terminal_events.seq ASC, terminal_events.created_at ASC
           LIMIT ? OFFSET ?`,

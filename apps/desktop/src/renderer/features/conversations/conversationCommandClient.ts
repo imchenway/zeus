@@ -13,6 +13,7 @@ export const conversationClientCommandTypes = {
   providerThreadRestore: 'conversation.provider_thread.restore',
   archive: 'conversation.archive',
   restore: 'conversation.restore',
+  rename: 'conversation.rename',
 } as const;
 
 type ConversationClientCommandType = (typeof conversationClientCommandTypes)[keyof typeof conversationClientCommandTypes];

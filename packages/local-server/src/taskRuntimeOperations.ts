@@ -953,7 +953,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     });
   }
 
-  function publishRuntimeLogEvent(log: AiRuntimeLogEntry): void {
+  function publishRuntimeLogEvent(log: AiRuntimeLogEntry, terminalText?: string): void {
     if (log.stream !== 'stdout' && log.stream !== 'stderr') return;
     const realtimeByteBudget = 64 * 1024;
     const realtimeMarker = '[实时事件仅携带该日志块末尾，完整内容已写入 Runtime 日志]\n';
@@ -964,6 +964,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       stream: log.stream,
       text,
       textTruncated: text !== log.text,
+      ...(terminalText === undefined ? {} : { terminalText }),
       createdAt: log.createdAt,
     });
   }

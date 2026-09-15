@@ -110,6 +110,13 @@ export interface TaskWorkspaceCopy {
   runtimeSessionColumnTitle: string;
   rawIdColumnTitle: string;
   createdFromColumnTitle: string;
+  actionsColumnTitle: string;
+  pushNewConversation: string;
+  taskActionChecking: string;
+  taskActionRetry: string;
+  taskActionCodeDelivery: string;
+  taskActionDelete: string;
+  taskActionTerminalHelp: string;
   fieldSettings: string;
   fieldSettingsAria: string;
   fieldSettingsHelp: string;
@@ -166,6 +173,8 @@ export interface TaskWorkspaceProps {
   bulkActionBusy?: boolean;
   statusChangeBusy?: boolean;
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
+  modelPushEntry?: { taskId: string; status: 'checking' | 'error'; error?: string | null };
+  taskActionBusy?: boolean;
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
   pageViewMode: TaskPageViewMode;
@@ -178,7 +187,11 @@ export interface TaskWorkspaceProps {
   onTaskTableColumnsChange: (value: TaskTableColumnPreferences) => void;
   onSaveTaskTableLayout?: () => void;
   onCreateTask: () => void;
+  onOpenZentaoImport?: () => void;
   onOpenTaskDetail: (taskId: string, mode?: TaskBoardOpenMode) => void;
+  onPushTaskToNewConversation?: (taskId: string) => void;
+  onOpenTaskCodeDelivery?: (taskId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
   onOpenTaskConversation?: (taskId: string, conversationId?: string) => void;
   onPageViewModeChange: (viewMode: TaskPageViewMode) => void;
   onReloadTaskBoard?: () => void;
@@ -485,9 +498,16 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </>
             ) : null}
           </div>
-          <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
-            {props.copy.newTask}
-          </button>
+          <span className="task-table-create-actions">
+            {props.onOpenZentaoImport ? (
+              <button className="task-table-new-task-button task-table-zentao-button" type="button" onClick={props.onOpenZentaoImport} disabled={!props.activeProjectId || props.creatingTaskBusy}>
+                {isEnglishCopy ? 'Import ZenTao' : '从禅道导入'}
+              </button>
+            ) : null}
+            <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
+              {props.copy.newTask}
+            </button>
+          </span>
         </section>
         {props.pageViewMode === 'board' ? (
           <Suspense

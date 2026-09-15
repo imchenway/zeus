@@ -17,7 +17,7 @@ export interface UserFacingErrorCause {
 export interface UserFacingErrorDescription {
   /** 用户能理解的实际原因。 */
   message: string;
-  /** 可展开的脱敏原始说明。 */
+  /** 写入诊断日志的脱敏错误链；不能代替界面中的实际原因。 */
   details: string;
   /** 上次操作尚无确定结果，场景只能核对，不能据此再次发送。 */
   outcomeUnconfirmed: boolean;
@@ -1038,6 +1038,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
 ];
 
+function isLikelyErrorCode(value: string): boolean {
+  const candidate = value.trim();
+  return /^[A-Z][A-Z0-9_.:-]{1,127}$/u.test(candidate) || explanations.some(([codes]) => codes.includes(candidate));
+}
+
 /** 只拆除 Zeus 跨进程调用的固定前缀，不根据任意错误正文猜测原因。 */
 function unwrapZeusErrorMessage(message: string): string {
   return message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '');
@@ -1047,10 +1052,24 @@ function unwrapZeusErrorMessage(message: string): string {
 export function userFacingErrorCause(error: unknown, depth = 0): UserFacingErrorCause {
   const value = error !== null && typeof error === 'object' ? (error as Record<string, unknown>) : {};
   // 字符串形式的历史错误只识别开头的完整错误码，不猜测正文关键词。
-  const message = typeof value.message === 'string' ? value.message : typeof error === 'string' ? error : '';
+  const errorField = typeof value.error === 'string' ? value.error : '';
+  const message =
+    typeof value.message === 'string' && value.message.trim()
+      ? value.message
+      : typeof error === 'string'
+        ? error
+        : errorField && !isLikelyErrorCode(errorField)
+          ? errorField
+          : typeof value.details === 'string'
+            ? value.details
+            : typeof value.additionalDetails === 'string'
+              ? value.additionalDetails
+              : Array.isArray(value.additionalDetails)
+                ? value.additionalDetails.filter((item): item is string => typeof item === 'string').join('\n')
+                : '';
   // Electron 会在 message 外包裹固定 IPC 前缀，仅拆解 Zeus 自身通道的这一格式。
   const codeMessage = unwrapZeusErrorMessage(message);
-  const code = typeof value.code === 'string' ? value.code : typeof value.error === 'string' ? value.error : /^([A-Z][A-Z0-9_]+)(?::|$)/u.exec(codeMessage)?.[1];
+  const code = typeof value.code === 'string' ? value.code : errorField && isLikelyErrorCode(errorField) ? errorField : /^([A-Z][A-Z0-9_]+)(?::|$)/u.exec(codeMessage)?.[1];
   // 仅保留诊断对象的有界标量字段，避免跨界面携带凭据对象或大块业务数据。
   const detailFields =
     value.details && typeof value.details === 'object' && !Array.isArray(value.details)
@@ -1095,6 +1114,35 @@ export function redactUserFacingErrorDetails(value: string): string {
     .slice(0, 2000);
 }
 
+/** 这些文案只是旧版兜底，不应再次作为“具体原因”回显到新的错误弹窗。 */
+function isGenericErrorMessage(value: string): boolean {
+  return (
+    /^(?:error|unknown error|未知错误|发生了未知错误)[.!。]?$/iu.test(value.trim()) || /^(?:Zeus 尚未识别这次错误的具体原因。请查看错误详情。|Zeus has not identified the cause of this error\. See the error details\.)$/u.test(value.trim())
+  );
+}
+
+/** 去掉 Electron IPC 的固定包装，只保留适合直接显示的一行具体原因。 */
+function visibleFallbackMessage(item: UserFacingErrorCause): string {
+  const withoutTransportPrefix = item.message.replace(/^Error invoking remote method 'zeus:[^'\r\n]+': (?:[A-Za-z_$][\w$]*Error: |Error: )?/u, '').replace(/^(?:[A-Za-z_$][\w$]*Error|Error):\s*/u, '');
+  const withoutCodePrefix = item.code && withoutTransportPrefix.startsWith(`${item.code}:`) ? withoutTransportPrefix.slice(item.code.length + 1) : withoutTransportPrefix;
+  const message = withoutCodePrefix.replace(/\s+/gu, ' ').trim();
+  if (message && !isGenericErrorMessage(message)) return message.slice(0, 600);
+  const detail = item.details?.replace(/\s+/gu, ' ').trim() ?? '';
+  return detail && !isGenericErrorMessage(detail) ? detail.slice(0, 600) : '';
+}
+
+/** 未收录的错误也必须显示已有的具体原因，不能把原始消息只藏在详情中。 */
+function describeUncataloguedError(chain: readonly UserFacingErrorCause[], language: UserFacingErrorLanguage): string {
+  const candidates = [...chain].reverse().map((item) => ({ item, message: visibleFallbackMessage(item) }));
+  const specific = candidates.find(({ item, message }) => message && message !== item.code && !isGenericErrorMessage(message));
+  if (specific) return specific.message;
+  const available = candidates.find(({ message }) => Boolean(message) && !isGenericErrorMessage(message));
+  if (available) return available.message;
+  const code = candidates.find(({ item }) => Boolean(item.code))?.item.code;
+  if (code) return language === 'zh-CN' ? `操作失败（错误代码：${code}）。` : `The action failed (error code: ${code}).`;
+  return language === 'zh-CN' ? '发生了未知错误。' : 'An unknown error occurred.';
+}
+
 /** 优先解释读取失败或归档尚未完成，其余错误使用最内层已知原因。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
@@ -1119,7 +1167,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   const zh = language === 'zh-CN';
   const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$|^ZEUS_GIT_TIMEOUT$/u.test(item.code ?? ''));
   return {
-    message: match?.[zh ? 0 : 1] ?? (zh ? 'Zeus 尚未识别这次错误的具体原因。请查看错误详情。' : 'Zeus has not identified the cause of this error. See the error details.'),
+    message: match?.[zh ? 0 : 1] ?? describeUncataloguedError(chain, language),
     details: translated && !root.code && !root.cause && !root.details ? '' : details,
     outcomeUnconfirmed: unknownOutcome,
     action: unknownOutcome && (!match?.[2] || match[2] === 'retry') ? 'check' : (match?.[2] ?? null),

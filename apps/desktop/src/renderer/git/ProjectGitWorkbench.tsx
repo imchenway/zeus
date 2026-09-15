@@ -8,6 +8,7 @@ import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
@@ -183,6 +184,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [newBranchOpen, setNewBranchOpen] = useState(false);
   const [newBranchBase, setNewBranchBase] = useState('');
+  const [remoteCheckoutTarget, setRemoteCheckoutTarget] = useState<{ repositoryId: string; remoteRef: string } | null>(null);
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [busy, setBusy] = useState<BusyState>(null);
   const actionBusyRef = useRef(false);
@@ -202,6 +204,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const repositories = snapshot?.repositories ?? [];
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
   const stashRepository = repositories.find((repository) => repository.id === stashRepositoryId) ?? null;
+  const remoteCheckoutRepository = repositories.find((repository) => repository.id === remoteCheckoutTarget?.repositoryId) ?? null;
   const activeStash = selectedRepository?.snapshot.stashes.find((stash) => stash.ref === selectedStashRef) ?? selectedRepository?.snapshot.stashes[0] ?? null;
   const activeStashRef = activeStash?.ref ?? '';
   const activeTopLevelTab = tab === 'stash' ? 'log' : tab;
@@ -995,8 +998,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                       selectCommit(selectedRepository, ref);
                     }}
                     onCheckout={
-                      branches === selectedRepository.snapshot.localBranches
-                        ? (ref) => {
+                      branches === selectedRepository.snapshot.tags
+                        ? undefined
+                        : (ref) => {
+                            if (kind === 'remote') {
+                              setRemoteCheckoutTarget({ repositoryId: selectedRepository.id, remoteRef: ref });
+                              return;
+                            }
                             if (!selectedRepository.snapshot.detached && selectedRepository.snapshot.branch === ref) return;
                             void execute(selectedRepository, { type: 'checkout', branchName: ref }, zh ? `切换到分支“${ref}”` : `Checkout '${ref}'`).then((outcome) => {
                               if (outcome !== 'completed') return;
@@ -1005,7 +1013,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                               setSelectedCommit(null);
                             });
                           }
-                        : undefined
                     }
                     onContextMenu={(event, ref) => showGitContextMenu(event, { kind: branches === selectedRepository.snapshot.tags ? 'tag' : kind, repositoryId: selectedRepository.id, ref })}
                   />
@@ -1174,6 +1181,19 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>
         {newBranchOpen ? (
           <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
+        {remoteCheckoutTarget && remoteCheckoutRepository ? (
+          <RemoteBranchCheckoutDialog
+            key={`${remoteCheckoutTarget.repositoryId}:${remoteCheckoutTarget.remoteRef}`}
+            zh={zh}
+            repository={remoteCheckoutRepository}
+            initialRemoteRef={remoteCheckoutTarget.remoteRef}
+            busy={busy}
+            onClose={() => setRemoteCheckoutTarget(null)}
+            onExecute={execute}
+          />
         ) : null}
       </MotionPresence>
       <MotionPresence>
@@ -1668,6 +1688,122 @@ function NewBranchDialog(props: {
       </section>
     </ModalPortal>
   );
+}
+
+function RemoteBranchCheckoutDialog(props: {
+  zh: boolean;
+  repository: ProjectGitRepositoryWorkbenchItem;
+  initialRemoteRef: string;
+  busy: BusyState;
+  onClose: () => void;
+  onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
+}) {
+  type CheckoutMode = 'existing' | 'new';
+  const initialCandidates = matchingLocalBranches(props.repository, props.initialRemoteRef);
+  const [mode, setMode] = useState<CheckoutMode>('new');
+  const [remoteRef, setRemoteRef] = useState(props.initialRemoteRef);
+  const [existingBranch, setExistingBranch] = useState(initialCandidates[0] ?? '');
+  const [branchName, setBranchName] = useState(() => remoteBranchLeaf(props.initialRemoteRef));
+  const [trackRemote, setTrackRemote] = useState(true);
+  const existingCandidates = matchingLocalBranches(props.repository, remoteRef);
+  const normalizedBranchName = branchName.trim();
+  const branchAlreadyExists = props.repository.snapshot.localBranches.includes(normalizedBranchName);
+  const currentBranchSelected = !props.repository.snapshot.detached && existingBranch === props.repository.snapshot.branch;
+  const selectRemote = (nextRemoteRef: string) => {
+    const nextCandidates = matchingLocalBranches(props.repository, nextRemoteRef);
+    setRemoteRef(nextRemoteRef);
+    setExistingBranch(nextCandidates[0] ?? '');
+    setBranchName(remoteBranchLeaf(nextRemoteRef));
+    if (mode === 'existing' && nextCandidates.length === 0) setMode('new');
+  };
+  const disabled = props.busy !== null || (mode === 'existing' ? !existingBranch || currentBranchSelected : !normalizedBranchName || branchAlreadyExists);
+  return (
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog">
+      <section className="project-git-reference-dialog project-git-remote-checkout-dialog" role="dialog" aria-modal="true" aria-label={props.zh ? '检出远程分支' : 'Checkout remote branch'}>
+        <header>
+          <strong>{props.zh ? '检出远程分支' : 'Checkout Remote Branch'}</strong>
+          <span className="project-git-remote-checkout-modes" role="tablist" aria-label={props.zh ? '检出方式' : 'Checkout mode'}>
+            <button type="button" role="tab" aria-selected={mode === 'existing'} disabled={existingCandidates.length === 0 || props.busy !== null} onClick={() => setMode('existing')}>
+              <ArrowRight aria-hidden="true" />
+              <span>{props.zh ? '检出现有' : 'Checkout Existing'}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={mode === 'new'} disabled={props.busy !== null} onClick={() => setMode('new')}>
+              <GitBranch aria-hidden="true" />
+              <span>{props.zh ? '检出新分支' : 'Checkout New Branch'}</span>
+            </button>
+          </span>
+        </header>
+        <main>
+          <label>
+            <span>{props.zh ? '检出远程分支' : 'Remote branch'}</span>
+            <select value={remoteRef} onChange={(event) => selectRemote(event.currentTarget.value)} disabled={props.busy !== null}>
+              {props.repository.snapshot.remoteBranches.map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
+                </option>
+              ))}
+            </select>
+          </label>
+          {mode === 'existing' ? (
+            <label>
+              <span>{props.zh ? '现有本地分支' : 'Existing local branch'}</span>
+              <select value={existingBranch} onChange={(event) => setExistingBranch(event.currentTarget.value)} autoFocus disabled={props.busy !== null}>
+                {existingCandidates.map((branch) => (
+                  <option key={branch} value={branch}>
+                    {branch}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <>
+              <label>
+                <span>{props.zh ? '新的本地分支名称' : 'New local branch name'}</span>
+                <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} autoFocus disabled={props.busy !== null} />
+              </label>
+              <label className="project-git-remote-checkout-track">
+                <input type="checkbox" checked={trackRemote} onChange={(event) => setTrackRemote(event.currentTarget.checked)} disabled={props.busy !== null} />
+                <span>{props.zh ? '本地分支跟踪远程分支' : 'Track the remote branch'}</span>
+              </label>
+              {branchAlreadyExists ? (
+                <p className="project-git-remote-checkout-warning" role="alert">
+                  {props.zh ? `本地分支“${normalizedBranchName}”已存在，请选择“检出现有”或使用其他名称。` : `Local branch '${normalizedBranchName}' already exists. Checkout the existing branch or choose another name.`}
+                </p>
+              ) : null}
+            </>
+          )}
+        </main>
+        <footer>
+          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
+            {props.zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button
+            variant="primary"
+            busy={props.busy?.action === (mode === 'existing' ? 'checkout' : 'create_branch')}
+            disabled={disabled}
+            onClick={async () => {
+              const outcome =
+                mode === 'existing'
+                  ? await props.onExecute(props.repository, { type: 'checkout', branchName: existingBranch }, props.zh ? '检出现有分支' : 'Checkout existing branch')
+                  : await props.onExecute(props.repository, { type: 'create_branch', branchName: normalizedBranchName, baseRef: remoteRef, trackRemote }, props.zh ? '检出远程分支' : 'Checkout remote branch');
+              if (outcome === 'completed') props.onClose();
+            }}
+          >
+            {props.zh ? '检出' : 'Checkout'}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}
+
+function matchingLocalBranches(repository: ProjectGitRepositoryWorkbenchItem, remoteRef: string): string[] {
+  const leaf = remoteBranchLeaf(remoteRef);
+  return repository.snapshot.localBranches.filter((branch) => repository.snapshot.branchUpstreams?.[branch] === remoteRef || branch === leaf);
+}
+
+function remoteBranchLeaf(remoteRef: string): string {
+  return remoteRef.replace(/^[^/]+\//u, '');
 }
 
 function CheckoutRevisionDialog(props: {

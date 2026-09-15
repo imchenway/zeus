@@ -7,5 +7,5 @@ export function conversationDisplayTitle(conversationTitle: string, taskTitle?: 
   if (normalizedTaskTitle && taskConflictConversationPrefixes.some((prefix) => conversationTitle.startsWith(prefix))) {
     return language === 'zh-CN' ? `冲突处理：${normalizedTaskTitle}` : `Resolve conflicts: ${normalizedTaskTitle}`;
   }
-  return taskTitle ?? conversationTitle;
+  return normalizedTaskTitle || conversationTitle.trim() || (language === 'zh-CN' ? '未命名会话' : 'Untitled conversation');
 }

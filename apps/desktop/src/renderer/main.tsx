@@ -259,7 +259,7 @@ async function renderWithClient(
             onImportBusinessDataFile={() => window.zeus?.importBusinessDataSnapshotFromFile?.() ?? Promise.resolve({ imported: false, filePath: null })}
             onLoadRuntimeAdapters={() => client.loadRuntimeAdapters()}
             onCheckRuntimeAdapter={(adapterId) => client.checkRuntimeAdapter(adapterId)}
-            onLoadRuntimeSessions={() => client.loadRuntimeSessions()}
+            onLoadRuntimeSessions={(input) => client.loadRuntimeSessions(input)}
             onCreateRuntimeConfirmation={(input) => client.createRuntimeConfirmation(input)}
             onConfirmRuntimeOperation={(confirmationId) => client.confirmRuntimeOperation(confirmationId)}
             onRejectRuntimeOperation={(confirmationId, reason) => client.rejectRuntimeOperation(confirmationId, reason)}

@@ -1,4 +1,9 @@
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { GitPullRequestIcon as GitPullRequest } from '@phosphor-icons/react/dist/csr/GitPullRequest';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { AgGridReact, type CustomCellRendererProps } from 'ag-grid-react';
 import {
   ClientSideRowModelModule,
@@ -232,9 +237,10 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
   const row = props.data;
   if (!row) return null;
   const task = row.task;
-  const columnKey = props.column?.getColId() as TaskTableColumnKey | 'selection';
+  const columnKey = props.column?.getColId() as TaskTableColumnKey | 'selection' | 'actions';
   if (columnKey === 'selection')
     return <TaskCheckbox label={workspace.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={Boolean(workspace.bulkActionBusy)} onChange={(selected) => workspace.onToggleTaskSelection?.(task.id, selected)} />;
+  if (columnKey === 'actions') return <TaskActionCell task={task} />;
   const cell = row.cells[columnKey];
   if (columnKey === 'priority') return <TaskPriorityCell task={task} />;
   if (columnKey === 'managementStatus')
@@ -287,6 +293,60 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
     <span className="task-data-table-text" title={[cell.primary, cell.secondary].filter(Boolean).join('\n')}>
       {cell.primary}
       {cell.secondary ? <small> · {cell.secondary}</small> : null}
+    </span>
+  );
+}
+
+/** 任务行高频操作沿用 Zeus 的图标按钮，避免打开详情后再寻找入口。 */
+function TaskActionCell({ task }: { task: TaskRecord }) {
+  const { workspace } = useTaskTable();
+  const english = workspace.copy.taskCountPrefix === 'Tasks';
+  const entry = workspace.modelPushEntry?.taskId === task.id ? workspace.modelPushEntry : undefined;
+  const terminal = resolveTaskManagementStatus(task) === workspace.completedStatusId || resolveTaskManagementStatus(task) === workspace.cancelledStatusId;
+  const label = (value: string) => (english ? `${value}: ${task.title}` : `${value}：${task.title}`);
+  const pushLabel = entry?.status === 'checking' ? workspace.copy.taskActionChecking : entry?.status === 'error' ? workspace.copy.taskActionRetry : workspace.copy.pushNewConversation;
+  return (
+    <span className="task-table-row-actions" onClick={(event) => event.stopPropagation()}>
+      {workspace.onPushTaskToNewConversation ? (
+        <Button
+          variant="primary"
+          size="compact"
+          className="task-table-row-action task-table-row-action-push"
+          aria-label={label(pushLabel)}
+          title={terminal ? label(workspace.copy.taskActionTerminalHelp) : label(pushLabel)}
+          busy={entry?.status === 'checking'}
+          disabled={Boolean(workspace.taskActionBusy) || terminal}
+          onClick={() => workspace.onPushTaskToNewConversation?.(task.id)}
+        >
+          {entry?.status === 'checking' ? <CircleNotch aria-hidden="true" weight="regular" /> : entry?.status === 'error' ? <ArrowsClockwise aria-hidden="true" weight="regular" /> : <ChatCircleDots aria-hidden="true" weight="regular" />}
+        </Button>
+      ) : null}
+      {workspace.onOpenTaskCodeDelivery ? (
+        <Button
+          variant="secondary"
+          size="compact"
+          className="task-table-row-action"
+          aria-label={label(workspace.copy.taskActionCodeDelivery)}
+          title={label(workspace.copy.taskActionCodeDelivery)}
+          disabled={Boolean(workspace.taskActionBusy)}
+          onClick={() => workspace.onOpenTaskCodeDelivery?.(task.id)}
+        >
+          <GitPullRequest aria-hidden="true" weight="regular" />
+        </Button>
+      ) : null}
+      {workspace.onDeleteTask ? (
+        <Button
+          variant="danger"
+          size="compact"
+          className="task-table-row-action"
+          aria-label={label(workspace.copy.taskActionDelete)}
+          title={label(workspace.copy.taskActionDelete)}
+          disabled={Boolean(workspace.taskActionBusy)}
+          onClick={() => workspace.onDeleteTask?.(task.id)}
+        >
+          <Trash aria-hidden="true" weight="regular" />
+        </Button>
+      ) : null}
     </span>
   );
 }
@@ -345,8 +405,11 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
           cellRenderer: TaskCell,
         }),
       ),
+      ...(workspace.onPushTaskToNewConversation || workspace.onOpenTaskCodeDelivery || workspace.onDeleteTask
+        ? [{ colId: 'actions', headerName: workspace.copy.actionsColumnTitle, initialWidth: 150, minWidth: 120, maxWidth: 220, cellRenderer: TaskCell }]
+        : []),
     ],
-    [labels],
+    [labels, workspace.copy.actionsColumnTitle, workspace.onDeleteTask, workspace.onOpenTaskCodeDelivery, workspace.onPushTaskToNewConversation],
   );
   const defaults = useMemo<ColDef<TaskRowViewModel>>(
     () => ({ resizable: true, sortable: false, suppressHeaderMenuButton: true, suppressKeyboardEvent: ({ event }) => suppressTaskControlKeys(event), suppressHeaderKeyboardEvent: ({ event }) => suppressTaskControlKeys(event) }),
@@ -365,7 +428,7 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
   /** 保存完整列顺序和宽度，沿用项目级及全局级的既有持久化入口。 */
   function saveLayout(event: ColumnMovedEvent<TaskRowViewModel> | ColumnResizedEvent<TaskRowViewModel>): void {
     if (!event.finished || !['uiColumnMoved', 'uiColumnDragged', 'uiColumnResized', 'autosizeColumns'].includes(event.source)) return;
-    const state = event.api.getColumnState().filter((column) => column.colId !== 'selection');
+    const state = event.api.getColumnState().filter((column) => column.colId !== 'selection' && column.colId !== 'actions');
     workspace.onTaskTableColumnsChange(
       normalizeTaskTableColumnPreferences({ ...model.columnPreferences, columnOrder: state.map((column) => column.colId), columnWidths: Object.fromEntries(state.map((column) => [column.colId, column.width])) }),
     );

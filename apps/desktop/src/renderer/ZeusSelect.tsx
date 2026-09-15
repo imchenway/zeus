@@ -51,6 +51,8 @@ export interface ZeusSelectProps<T extends string> {
   emptyLabel?: string;
   searchable?: boolean;
   popoverMinWidth?: number;
+  /** 浮层箭头对齐触发器的起始、中部或末端交互区。 */
+  popoverArrowAlignment?: 'start' | 'center' | 'end';
   /** 启用后使用包含选择与置顶按钮的对话框，避免在选项内嵌套按钮。 */
   pinning?: ZeusSelectPinning;
   /** 弹层的局部外观，不影响同一选择器的其他使用位置。 */
@@ -66,6 +68,7 @@ interface ZeusSelectPopoverLayout {
   top: number;
   left: number;
   width: number;
+  arrowLeft: number;
   placement: 'top' | 'bottom';
 }
 
@@ -237,6 +240,10 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     }
     const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0, popoverContentWidthRef.current), maxWidth);
     const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
+    const triggerInset = Math.min(14, triggerRect.width / 2);
+    const arrowAnchor = props.popoverArrowAlignment === 'start' ? triggerRect.left + triggerInset : props.popoverArrowAlignment === 'end' ? triggerRect.right - triggerInset : triggerRect.left + triggerRect.width / 2;
+    /** 旋转方块以左上角定位，减去半边长后再限制在浮层圆角以内。 */
+    const arrowLeft = Math.min(Math.max(arrowAnchor - left - 4, 12), Math.max(12, width - 20));
     const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
     const bottomTop = triggerRect.bottom + popoverGap;
     const availableBottomHeight = Math.max(0, window.innerHeight - bottomTop - viewportPadding);
@@ -246,15 +253,16 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       top,
       left,
       width,
+      arrowLeft,
       placement,
     };
     setPopoverLayout((currentLayout) => {
-      if (currentLayout?.top === nextLayout.top && currentLayout.left === nextLayout.left && currentLayout.width === nextLayout.width && currentLayout.placement === nextLayout.placement) {
+      if (currentLayout?.top === nextLayout.top && currentLayout.left === nextLayout.left && currentLayout.width === nextLayout.width && currentLayout.arrowLeft === nextLayout.arrowLeft && currentLayout.placement === nextLayout.placement) {
         return currentLayout;
       }
       return nextLayout;
     });
-  }, [props.popoverMinWidth, props.pinning]);
+  }, [props.popoverArrowAlignment, props.popoverMinWidth, props.pinning]);
 
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
@@ -480,11 +488,12 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         data-zeus-select-placement={popoverLayout?.placement ?? 'bottom'}
         style={
           popoverLayout
-            ? {
+            ? ({
                 top: popoverLayout.top,
                 left: popoverLayout.left,
                 width: popoverLayout.width,
-              }
+                '--zeus-select-arrow-left': `${popoverLayout.arrowLeft}px`,
+              } as CSSProperties)
             : { visibility: 'hidden' }
         }
       >
