@@ -27,6 +27,8 @@ const env = { ...configured, ...process.env };
 delete env.ZEUS_RELEASE_BUILD;
 delete env.ZEUS_PACKAGE_VARIANT;
 env.ZEUS_USER_DATA_DIR ||= resolve(root, `.tmp/electron-${mode}-data`);
+// Swift 原生辅助程序的模块缓存放在项目临时目录，避免受外部缓存目录权限影响。
+env.CLANG_MODULE_CACHE_PATH ||= resolve(root, '.tmp/clang-module-cache');
 
 async function ensureNodePtySpawnHelperExecutable() {
   if (process.platform !== 'darwin') return;

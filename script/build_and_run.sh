@@ -10,7 +10,8 @@ esac
 
 cd "$ROOT_DIR"
 # 直接运行源码，不生成 .app 或 DMG，也不按目录模糊终止其他进程。
-unset ZEUS_RELEASE_BUILD ZEUS_PACKAGE_VARIANT
+# Electron 必须以桌面宿主模式启动，不能继承调用方用于 Node 子进程的标志。
+unset ZEUS_RELEASE_BUILD ZEUS_PACKAGE_VARIANT ELECTRON_RUN_AS_NODE
 if [[ "${ZEUS_DEV_SERVER_READY:-}" != "1" ]]; then
   exec node "$ROOT_DIR/apps/desktop/scripts/dev.mjs" "$MODE"
 fi
