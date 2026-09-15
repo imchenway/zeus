@@ -594,9 +594,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const projectWorkspaceNavigationVisible = !upstreamMainLayout && Boolean(selectedProject);
   /** 会话使用项目/会话来源列表；其他模式由各自工作区提供紧邻活动栏的上下文导航。 */
   const projectSessionSourceListVisible = !upstreamMainLayout && Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
-  const sessionCodexParityVisible = upstreamMainLayout
-    ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations'
-    : projectSessionSourceListVisible;
+  const sessionCodexParityVisible = upstreamMainLayout ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' : projectSessionSourceListVisible;
 
   return (
     <main
