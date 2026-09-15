@@ -1151,6 +1151,12 @@ function sanitizeRendererRuntimeLogDetail(message: unknown): string {
 }
 
 function setupIpc(): void {
+  /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
+  nativeTheme.on('updated', () => {
+    for (const window of projectGitDiffWindows) {
+      if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa');
+    }
+  });
   ipcMain.handle('zeus:conversation-store-migration:get-status', () => {
     if (dataRootPreparationError !== undefined) return null;
     return readUnifiedConversationStoreMigrationStatus(activeZeusDataLayout());
@@ -2135,6 +2141,10 @@ function setupIpc(): void {
     /** 同步原生主题，让后续窗口的加载页立即沿用应用选择。 */
     const deliveryAppearance = settings.appearance === 'light' || settings.appearance === 'dark' ? settings.appearance : 'system';
     nativeTheme.themeSource = deliveryAppearance;
+    /** 差异窗口保留当前文件和滚动位置，只更新主题。 */
+    for (const window of projectGitDiffWindows) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:project-git-diff:appearance', deliveryAppearance);
+    }
     for (const window of taskGitDeliveryWindows.values()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send('zeus:task-git-delivery:appearance', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
