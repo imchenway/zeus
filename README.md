@@ -87,6 +87,7 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 - `pnpm dev`：首次构建运行依赖后启动 Electron + Vite；React/CSS 修改热更新，不生成安装包。主进程、preload 和共享后端包修改后需重启命令。退出开发窗口或按 Ctrl+C 会关闭本次开发服务，不影响已安装应用。
 - 开发配置读取根目录 `.env`、`.env.development`，系统环境变量优先；`ZEUS_DEV_MODE=test pnpm dev` 读取 `.env`、`.env.test`。数据默认隔离到 `.tmp/electron-development-data` 或 `.tmp/electron-test-data`，可通过 `ZEUS_USER_DATA_DIR` 指定兼容的开发数据目录。不要指向正式数据目录。修改环境文件后重启开发命令；只有 `VITE_` 前缀变量可供前端读取，勿放入密钥。
+- 首次使用的开发数据目录必须不存在或为空，由启动过程创建身份标记。指定非主外接屏使用 `ZEUS_TEST_DISPLAY_ID=<显示器 ID> pnpm dev`，无需预写 `main-window-state.json`；显示器不可用时停止创建窗口。已有文件但缺少身份标记时，保留原目录并将 `ZEUS_USER_DATA_DIR` 指向新的空目录，已有数据另行确认迁移；反复重启不会补建标记，离线认领工具目前只支持正式版和测试版。
 - `pnpm build`、`pnpm verify:publish` 和所有打包、签名、发布入口保持原有行为，不启动开发服务、不读取上述开发入口配置。
 - `pnpm verify:publish`：本地与 CI 共用的检查入口，执行冲突、格式、Lint、架构边界、类型和构建检查，不发布。
 - `pnpm package:mac`：默认只生成独立身份 `Zeus Test.app`，输出到 `dist/test/mac-arm64/`（Intel 为 `dist/test/mac/`）；运行验收使用独立用户数据目录。

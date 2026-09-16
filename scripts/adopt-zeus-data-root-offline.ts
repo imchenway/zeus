@@ -62,9 +62,10 @@ if (process.argv.length === 2) {
   }
 }
 
+/** 兼容 pnpm 透传的首个参数分隔符，随后仍严格校验每个认领参数。 */
 function parseArguments(argumentsList: readonly string[]): ParsedArguments {
   const { values } = parseArgs({
-    args: argumentsList,
+    args: argumentsList[0] === '--' ? argumentsList.slice(1) : argumentsList,
     strict: true,
     options: {
       'data-root': { type: 'string' },

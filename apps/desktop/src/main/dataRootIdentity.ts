@@ -169,6 +169,12 @@ export function prepareZeusDataRootIdentity(input: PrepareZeusDataRootIdentityIn
     (input.knownProductionAdoptionRoots ?? []).some((candidate) => normalizeRoot(candidate) === root);
 
   if (existingEntries.length > 0 && !mayAdoptKnownProductionRoot) {
+    if (expected.profile === 'development') {
+      throw dataRootIdentityError(
+        'ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED',
+        `开发数据目录 ${root} 已有文件，但缺少身份标记，无法确认归属。请保留原目录，将 ZEUS_USER_DATA_DIR 指向新的空目录后重新启动；已有数据需要单独确认迁移，当前离线认领工具不支持开发目录。首次指定外接屏请使用 ZEUS_TEST_DISPLAY_ID，无需提前写入窗口位置文件。仅点击重新启动不会解决此问题。`,
+      );
+    }
     throw dataRootIdentityError('ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED', `Zeus 数据根 ${root} 非空但缺少持久身份标记。为避免 Test/正式资料互认，必须在所有 Zeus/Provider/Execution Host 退出后执行显式离线 adoption；启动链不会自动猜测。`);
   }
 
@@ -842,6 +848,7 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
 }
 
+/** Electron 跨进程只保留消息，前置稳定错误码以便界面生成简述，原始诊断仍留在详情。 */
 function dataRootIdentityError(code: string, message: string, cause?: unknown): Error {
-  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code, failClosed: true as const });
+  return Object.assign(new Error(`${code}: ${message}`, cause === undefined ? undefined : { cause }), { code, failClosed: true as const });
 }

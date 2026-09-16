@@ -30,6 +30,8 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 
 /** 跨页面、原生窗口和通知共用的原因目录。每组只合并具有相同产品含义的错误。 */
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
+  // 启动目录的诊断路径与维护命令留在详情，主提示只说明阻止启动的原因。
+  [['ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED'], ['无法确认本地数据目录的归属，启动已停止。', 'Startup stopped because the local data folder could not be identified.']],
   // 工作安排表单复用后端明确的校验原因，用户可按提示修正草稿。
   [['请选择实际需要的成果类型。'], ['请为每份分工至少选择一种成果类型，再保存安排。', 'Select at least one output type for each assignment before saving the plan.']],
   [['请安排 1 到 12 个阶段。'], ['请安排 1 到 12 个阶段。', 'Create between 1 and 12 stages.']],
@@ -1143,8 +1145,8 @@ function describeUncataloguedError(chain: readonly UserFacingErrorCause[], langu
   return language === 'zh-CN' ? '发生了未知错误。' : 'An unknown error occurred.';
 }
 
-/** 优先解释读取失败或归档尚未完成，其余错误使用最内层已知原因。 */
-export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN'): UserFacingErrorDescription {
+/** 优先解释已知原因；页面可提供未知错误简述，避免把原始诊断当作首屏摘要。 */
+export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN', fallbackMessage?: string): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
   const chain: UserFacingErrorCause[] = [];
   for (let item: UserFacingErrorCause | undefined = root; item; item = item.cause) chain.push(item);
@@ -1167,7 +1169,7 @@ export function describeUserFacingError(error: unknown, language: UserFacingErro
   const zh = language === 'zh-CN';
   const unknownOutcome = chain.some((item) => /OUTCOME_UNKNOWN|DELIVERY_UNCONFIRMED|REPLAY_BLOCKED|ACCEPTANCE_HYDRATION_PENDING|^ZEUS_CODEX_RPC_PROTOCOL_ERROR$|^ZEUS_GIT_TIMEOUT$/u.test(item.code ?? ''));
   return {
-    message: match?.[zh ? 0 : 1] ?? describeUncataloguedError(chain, language),
+    message: match?.[zh ? 0 : 1] ?? fallbackMessage ?? describeUncataloguedError(chain, language),
     details: translated && !root.code && !root.cause && !root.details ? '' : details,
     outcomeUnconfirmed: unknownOutcome,
     action: unknownOutcome && (!match?.[2] || match[2] === 'retry') ? 'check' : (match?.[2] ?? null),

@@ -497,10 +497,10 @@ function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<N
   renderStartupFailure(status);
 }
 
-/** 错误说明本身就是详情入口，使用原生折叠保留鼠标和键盘操作。 */
+/** 首屏只显示简述，诊断信息经独立入口展开；原生折叠保留键盘操作。 */
 function renderStartupFailure(error: unknown): void {
   const zh = startupLanguage === 'zh-CN';
-  const failure = describeUserFacingError(error, startupLanguage);
+  const failure = describeUserFacingError(error, startupLanguage, zh ? '启动未能完成，请查看错误详情。' : 'Startup could not finish. See the error details.');
   reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
   const root = document.getElementById('root');
   if (!root) return;
@@ -522,9 +522,12 @@ function renderStartupFailure(error: unknown): void {
   title.textContent = zh ? 'Zeus 无法启动' : 'Zeus could not start';
 
   const details = document.createElement('details');
-  const description = document.createElement('summary');
+  const description = document.createElement('p');
   description.className = 'startup-failure-description';
   description.textContent = failure.message;
+  /** 详情入口与简述分离，初始保持原生 details 的收起状态。 */
+  const detailsLink = document.createElement('summary');
+  detailsLink.textContent = zh ? '错误详情' : 'Error details';
 
   const logHint = document.createElement('p');
   logHint.className = 'startup-failure-log-hint';
@@ -533,7 +536,7 @@ function renderStartupFailure(error: unknown): void {
   original.textContent = failure.details;
   original.style.whiteSpace = 'pre-wrap';
   original.style.overflowWrap = 'anywhere';
-  details.append(description, original);
+  details.append(detailsLink, original);
 
   const actions = document.createElement('div');
   actions.className = 'startup-failure-actions';
@@ -560,7 +563,7 @@ function renderStartupFailure(error: unknown): void {
     }
   };
   actions.append(exit, restart);
-  content.append(mark, title, details, actions, logHint);
+  content.append(mark, title, description, details, actions, logHint);
   shell.append(content);
   root.replaceChildren(shell);
 }

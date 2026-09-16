@@ -25,7 +25,7 @@ export class TestDisplayPlacementError extends Error {
 }
 
 /**
- * 打包测试身份可显式要求首个窗口在指定非主外接屏内创建。
+ * 开发与打包测试身份可显式要求首个窗口在指定非主外接屏内创建。
  * 这里直接返回 BrowserWindow 构造参数；调用方不得先创建窗口再移动。
  */
 export function resolveTestDisplayPlacement(input: {

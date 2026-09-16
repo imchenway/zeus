@@ -519,10 +519,11 @@ function mainWindowStatePath(): string {
   return join(app.getPath('userData'), 'main-window-state.json');
 }
 
+/** 开发与测试窗口直接按指定外接屏创建，无需在首次启动前写入数据根。 */
 async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined): Promise<ResolvedMainWindowState> {
   const displays = screen.getAllDisplays();
   const requestedTestDisplayId = process.env.ZEUS_TEST_DISPLAY_ID;
-  if (isTestDistribution() && requestedTestDisplayId !== undefined) {
+  if (activeDataRootProfile() !== 'production' && requestedTestDisplayId !== undefined) {
     const placement = resolveTestDisplayPlacement({
       requestedDisplayId: requestedTestDisplayId,
       displays,

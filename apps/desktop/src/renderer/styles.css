@@ -9332,15 +9332,19 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-wrap: pretty;
 }
 
-/* 错误说明直接展开详情，不再另设重复入口。 */
+/* 简述与诊断分开，详情只通过明确入口展开。 */
 .startup-failure-content details {
+  margin-block-start: 8px;
   min-inline-size: 0;
   text-align: start;
 }
 
 .startup-failure-content summary {
   border-radius: 4px;
+  color: var(--zeus-brand-text);
   cursor: pointer;
+  font-size: 14px;
+  inline-size: fit-content;
   list-style: none;
 }
 
