@@ -79,13 +79,13 @@ export function TaskRunStatusChip(props: { status: TaskAgentRunStatus; label: st
   );
   if (props.onClick) {
     return (
-      <button type="button" className={className} aria-label={props.ariaLabel ?? props.label} onClick={props.onClick}>
+      <button type="button" className={className} title={props.label} aria-label={props.ariaLabel ?? props.label} onClick={props.onClick}>
         {content}
       </button>
     );
   }
   return (
-    <span className={className} aria-label={props.ariaLabel ?? props.label}>
+    <span className={className} title={props.label} aria-label={props.ariaLabel ?? props.label}>
       {content}
     </span>
   );

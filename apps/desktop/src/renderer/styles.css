@@ -13539,6 +13539,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-status-chip {
+  /* 胶囊可随窄列收缩，内边距与边框计入可用宽度。 */
+  box-sizing: border-box;
+  min-inline-size: 0;
   align-items: center;
   background: var(--task-status-tone-bg);
   border: 1px solid var(--task-status-tone-line);
@@ -13558,6 +13561,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-status-chip strong {
+  /* 长状态在胶囊内部省略，保留完整文字供辅助技术与标题读取。 */
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--task-status-tone-text);
   font-size: 11px;
   font-weight: 650;

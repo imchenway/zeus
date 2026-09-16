@@ -263,13 +263,13 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
     );
   if (columnKey === 'taskType')
     return (
-      <span className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
+      <span title={cell.primary} className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
         <strong>{cell.primary}</strong>
       </span>
     );
   if (columnKey === 'branchStatus')
     return (
-      <span className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(cell.sortValue as TaskBranchStatus)}`}>
+      <span title={cell.primary} className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(cell.sortValue as TaskBranchStatus)}`}>
         <strong>{cell.primary}</strong>
       </span>
     );

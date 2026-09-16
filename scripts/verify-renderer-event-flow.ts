@@ -591,6 +591,44 @@ function verifyRestoredSubmissionOrder() {
   }));
   /** 每次切回都从同一权威提交重建，不能依赖上一屏的临时条目。 */
   const snapshot = { ...base, items: replies, submissions, queue: { ...queue, submissions } };
+  /** 回复先到、提交后到时，HTTP 补读和实时队列事件都必须立刻恢复相同顺序。 */
+  for (const firstStatus of ['active', 'completed', 'resolved']) {
+    /** 活动和已结束的首发均属于已接纳历史，待发消息仍留在最后。 */
+    const lateQueue = { ...snapshot.queue, submissions: submissions.map((submission, index) => (index === 0 ? { ...submission, status: firstStatus } : submission)) };
+    /** 不先加载提交，复现历史正文已显示而队列信息稍后到达的真实边界。 */
+    const repliesOnly = createHydratedSessionState({ ...snapshot, submissions: [], queue });
+    /** 独立的引导接纳入口也必须复用相同插入规则。 */
+    const steered = sessionReducer(repliesOnly, { type: 'steering_submission_hydrated', submission: submissions[1]! });
+    assert(
+      orderTranscriptItemsWithQueue(
+        steered.itemOrder.map((key) => steered.items[key]!),
+        steered.queue,
+      )
+        .map((item) => item.text)
+        .join('|') === '回复 1|第一次引导|回复 3|回复 5',
+      '迟到的引导接纳必须插回对应回复之前。',
+    );
+    for (const action of [
+      { type: 'queue_hydrated' as const, queue: lateQueue },
+      { type: 'event_received' as const, event: conversationEvent(1, 'conversation.queue.changed', { queue: lateQueue }) },
+    ]) {
+      /** 不允许依赖切换会话或完整快照的重新排序。 */
+      const live = sessionReducer(repliesOnly, action);
+      const ordered = orderTranscriptItemsWithQueue(
+        live.itemOrder.map((key) => live.items[key]!),
+        live.queue,
+      );
+      assert(ordered.map((item) => item.text).join('|') === '任务推送提示词|回复 1|第一次引导|回复 3|第二次引导|回复 5|待发消息', '实时补回的首发和引导必须立即归位，不能等待切换会话。');
+      /** 内容增量更新不能用更新时间把回复挪到后续输入之后。 */
+      const updated = ordered.map((item) => (item.text === '回复 1' ? { ...item, updatedAt: at(30) } : item));
+      assert(
+        orderTranscriptItemsWithQueue(updated, live.queue)
+          .map((item) => item.key)
+          .join('|') === ordered.map((item) => item.key).join('|'),
+        '正文更新不能改变首次发言顺序。',
+      );
+    }
+  }
   /** 冷恢复和带缓存的恢复都经过真实状态归并。 */
   let state = createHydratedSessionState(snapshot);
   for (let pass = 0; pass < 3; pass += 1) {
@@ -609,7 +647,7 @@ function verifyRestoredSubmissionOrder() {
       assert(orderTranscriptItemsWithQueue(terminal, state.queue)[0]?.text === '任务推送提示词', '终态消息不能因保留乐观标记被误当成待发送消息。');
     }
   }
-  return { coldAndWarmRestoration: true, steeringMessages: 2, queuedMessages: 1, acceptedWithoutNativeEcho: true };
+  return { coldAndWarmRestoration: true, lateHttpAndRealtimeSubmissions: true, stableDeltaOrder: true, steeringMessages: 2, queuedMessages: 1, acceptedWithoutNativeEcho: true };
 }
 
 function verifyInternalPayloadsStayOutOfTranscript() {
