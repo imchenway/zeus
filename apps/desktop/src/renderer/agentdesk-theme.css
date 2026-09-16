@@ -264,8 +264,7 @@
 }
 
 /* 常见卡片和图表 surface 只改变材质与边界，不改变其原有尺寸。 */
-.macos-ai-app.zeus-shell
-  :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section) {
+.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section) {
   background: color-mix(in srgb, var(--agentdesk-surface-strong) 82%, transparent);
   border-color: var(--agentdesk-border);
   box-shadow: var(--agentdesk-shadow-soft);
@@ -539,8 +538,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 内容卡片通过白色内容面与页面底色分层，不叠加描边或阴影。 */
-.macos-ai-app.zeus-shell
-  :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
+.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
   background: var(--zeus-card-background);
   border: 0;
   box-shadow: none;
@@ -991,18 +989,18 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /*
- * 2026-09-07 中性表面规范：页面统一使用 #f7f8fa，常规卡片统一使用 #fff。
- * 页面只保留一层底色，真正需要抬起的内容通过细边框和轻阴影建立层次。
+ * 中性表面规范：页面与侧栏共用主题表面色，避免各工作区分别残留灰底。
+ * 内容边界由组件自身的细边框表达，选中与悬停继续使用独立状态色。
  * 任务页右侧的多个筛选维度继续各自成组，不把不同语义合并成一个胶囊。
  */
 html:has(.macos-ai-app.zeus-shell),
 body:has(.macos-ai-app.zeus-shell) {
-  background: #f7f8fa !important;
+  background: transparent !important;
   background-image: none !important;
 }
 
 .macos-ai-app.zeus-shell {
-  --zeus-page-background: #f7f8fa;
+  --zeus-page-background: var(--zeus-card-background);
   --zeus-card-background: #fff;
   --zeus-card-border: rgb(17 24 39 / 10%);
   --zeus-card-border-strong: rgb(17 24 39 / 16%);
@@ -1028,7 +1026,6 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 .macos-ai-app.zeus-shell.theme-dark {
-  --zeus-page-background: #17191d;
   --zeus-card-background: #24272c;
   --zeus-card-border: rgb(226 232 240 / 14%);
   --zeus-card-border-strong: rgb(226 232 240 / 22%);
@@ -1055,7 +1052,6 @@ body:has(.macos-ai-app.zeus-shell) {
 
 @media (prefers-color-scheme: dark) {
   .macos-ai-app.zeus-shell.theme-system {
-    --zeus-page-background: #17191d;
     --zeus-card-background: #24272c;
     --zeus-card-border: rgb(226 232 240 / 14%);
     --zeus-card-border-strong: rgb(226 232 240 / 22%);
@@ -1091,7 +1087,8 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-product-panel) !important;
 }
 
-.macos-ai-app.zeus-shell :where(.ai-sidebar, .zeus-sidebar, .settings-sidebar-shell) {
+/* 侧栏主题底色优先于旧深色玻璃规则，确保与会话使用同一不透明表面。 */
+.macos-ai-app.zeus-shell :is(.ai-sidebar, .zeus-sidebar, .settings-sidebar-shell) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
   border-color: var(--zeus-card-border) !important;
@@ -1115,7 +1112,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .codex-usage-section,
     .task-board-card,
     .session-resource-card,
-    .session-quick-actions-card,
     .session-turn-change-card,
     .session-browser-preview-card,
     .browser-approval-card,
@@ -1366,7 +1362,7 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /*
  * 窗口外壳去卡片化：应用根层和顶层工作面贴合原生窗口边界，
- * 让 macOS 的透明/振动材质成为唯一的窗口背景；内容卡片仍由各自组件承担。
+ * 应用表面使用统一主题底色；内容边界仍由各自组件承担。
  */
 html:has(.macos-ai-app.zeus-shell),
 body:has(.macos-ai-app.zeus-shell) {
@@ -1375,7 +1371,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 .macos-ai-app.zeus-shell {
-  background: transparent !important;
+  background: var(--zeus-page-background) !important;
   background-image: none !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -1386,13 +1382,13 @@ body:has(.macos-ai-app.zeus-shell) {
 
 .macos-ai-app.zeus-shell.theme-dark,
 .macos-ai-app.zeus-shell.theme-system {
-  background: transparent !important;
+  background: var(--zeus-page-background) !important;
   background-image: none !important;
 }
 
 @media (prefers-color-scheme: dark) {
   .macos-ai-app.zeus-shell.theme-system {
-    background: transparent !important;
+    background: var(--zeus-page-background) !important;
     background-image: none !important;
   }
 }
@@ -1827,7 +1823,7 @@ body:has(.macos-ai-app.zeus-shell) {
   font-size: 10px;
   padding: 2px 5px;
   border-radius: 5px;
-  background: var(--zeus-page-background);
+  background: var(--zeus-interaction-hover);
   color: var(--zeus-product-muted);
   white-space: nowrap;
 }
@@ -2596,7 +2592,7 @@ body:has(.macos-ai-app.zeus-shell) {
   font-size: 10px;
   line-height: 16px;
   border-radius: 8px;
-  background: var(--zeus-page-background);
+  background: var(--zeus-interaction-hover);
 }
 .macos-ai-app.zeus-shell .project-git-tab-facts {
   min-width: 0;
@@ -2807,27 +2803,6 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 .macos-ai-app.zeus-shell .project-git-conflict-files > button.is-current {
   background: var(--zeus-control-danger-bg, #fff5f5) !important;
-}
-
-/* 会话沿用浅灰页面底色，让白色卡片通过圆角自然形成边缘；深色随主题变化。 */
-.macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root),
-.macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
-.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
-  background: var(--zeus-page-background) !important;
-  background-image: none !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.macos-ai-app.zeus-shell .workspace-view-project-sessions,
-.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
-  padding: 0 !important;
-  gap: 0;
-}
-.macos-ai-app.zeus-shell .session-workspace-root {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
 }
 
 /* 项目页保留统一外围留白，主内容区和内部工作台均不绘制装饰外框。 */
@@ -3765,6 +3740,28 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: 0 !important;
 }
 
+/* 会话与导航侧栏共用主题底色，外层保持连续平面，不绘制卡片边缘。 */
+.macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root, .workspace-view-project-sessions),
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view-project-sessions,
+.macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
+.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
+  background: var(--zeus-card-background) !important;
+  background-image: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell .workspace-view-project-sessions,
+.macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
+  padding: 0 !important;
+  gap: 0;
+}
+.macos-ai-app.zeus-shell .session-workspace-root {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* 自动化使用同一工作区卡片，同时保留页面内边距和纵向滚动。 */
 
 /* 扩展页由外层统一滚动，不能沿用工作区卡片的内容裁剪。 */
@@ -3864,7 +3861,7 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 截图反馈：项目槽位、活动栏和会话内容轴统一为轻量桌面工作区层级。 */
 .macos-ai-app.zeus-shell.project-navigation-rail-shell > .project-workspace-project-switcher {
-  /* 顶栏属于外层工作台，下面的大模块作为独立卡片浮在其上。 */
+  /* 顶栏与工作区共用主题底色，保持连续的平面。 */
   background: var(--zeus-page-background);
   padding-inline-start: 92px;
 }

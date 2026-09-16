@@ -270,8 +270,9 @@
   background: var(--zeus-interaction-hover);
 }
 
+/* 交互状态独立于页面底色，统一表面后仍能辨识当前位置。 */
 .command-run-list > li > button.selected {
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .command-run-list > li > button:focus-visible {
