@@ -264,7 +264,7 @@
 }
 
 /* 常见卡片和图表 surface 只改变材质与边界，不改变其原有尺寸。 */
-.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section) {
+.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section) {
   background: color-mix(in srgb, var(--agentdesk-surface-strong) 82%, transparent);
   border-color: var(--agentdesk-border);
   box-shadow: var(--agentdesk-shadow-soft);
@@ -525,8 +525,8 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
 }
 
-/* 内容卡片通过白色内容面与页面底色分层，不叠加描边或阴影。 */
-.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
+/* 通用内容卡片不叠加描边；会话审阅卡片自行区分同色背景。 */
+.macos-ai-app.zeus-shell :where(.task-board-card, .session-resource-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
   background: var(--zeus-card-background);
   border: 0;
   box-shadow: none;
@@ -1086,7 +1086,7 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: var(--zeus-card-shadow-soft) !important;
 }
 
-/* 内容卡片共用圆角与底色层次，包括文件审阅和环境操作区域。 */
+/* 通用内容卡片共用圆角与底色；会话审阅和环境操作保留自身边界。 */
 .macos-ai-app.zeus-shell
   :where(
     .task-table-workbench,
@@ -1100,7 +1100,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .codex-usage-section,
     .task-board-card,
     .session-resource-card,
-    .session-turn-change-card,
     .browser-approval-card,
     .session-goal-panel
   ) {

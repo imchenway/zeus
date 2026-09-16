@@ -7820,8 +7820,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 /* 每轮变更卡片只消费该 turn 的 provider diff；Undo/Reapply 不读取全局 Git 工作区。 */
 .session-codex-parity-v1 .session-turn-change-card {
   background: var(--session-canvas);
-  border: 0;
+  /* 会话画布与卡片同色时，沿用环境信息卡片的细边线保持完整轮廓。 */
+  border: 1px solid var(--zeus-card-border, var(--session-line));
   border-radius: 13px;
+  box-sizing: border-box;
   box-shadow: none;
   flex: 0 0 auto;
   inline-size: min(var(--session-thread-max), 100%);
@@ -8488,8 +8490,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   display: flex;
   inline-size: 7px;
   inset-block: 0;
-  inset-inline-start: -3px;
-  justify-content: center;
+  /* 拖动区完整留在会话侧，避免原生网页覆盖细线及指针命中区域。 */
+  inset-inline-start: -7px;
+  justify-content: flex-end;
   min-block-size: 0;
   outline: 0;
   position: absolute;
@@ -8499,7 +8502,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-browser-resizer::before {
   /* 常驻细线区分同色会话与浏览器；随主题调整明暗，不依赖悬停才显现。 */
-  background: color-mix(in srgb, var(--session-text) 35%, var(--session-canvas));
+  background: var(--session-line);
   content: '';
   inline-size: 1px;
   transition:
