@@ -7,6 +7,10 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+
+const createBranchActionValue = '__zeus create branch__';
 
 export interface NewConversationExecutionContextProps {
   language: SessionUiLanguage;
@@ -26,6 +30,11 @@ export interface NewConversationExecutionContextProps {
 export function NewConversationExecutionContext(props: NewConversationExecutionContextProps) {
   const zh = props.language === 'zh-CN';
   const loadVersionRef = useRef(0);
+  const branchTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const branchBusyRef = useRef(false);
+  const [branchBusy, setBranchBusy] = useState(false);
+  const [createBranchOpen, setCreateBranchOpen] = useState(false);
+  const [createBranchName, setCreateBranchName] = useState('');
   const [workbench, setWorkbench] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<unknown>(null);
@@ -68,12 +77,42 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     [props.projects, zh],
   );
 
+  const checkedOutBranches = useMemo(() => new Set(snapshot?.checkedOutBranches ?? []), [snapshot?.checkedOutBranches]);
+  const branchOptions = useMemo(() => {
+    if (!rootRepository) return [];
+    const unavailableReason = zh ? '已在其他工作目录使用' : 'In use in another working folder';
+    return [
+      ...rootRepository.snapshot.localBranches.map((branch) => {
+        const current = branch === rootRepository.snapshot.branch;
+        const occupied = !current && checkedOutBranches.has(branch);
+        return {
+          value: branch,
+          label: occupied ? `${branch} · ${unavailableReason}` : branch,
+          group: zh ? '分支' : 'Branches',
+          searchText: `${branch} ${occupied ? unavailableReason : ''}`,
+          disabled: occupied,
+        };
+      }),
+      {
+        value: createBranchActionValue,
+        label: zh ? '创建并检出新分支…' : 'Create and check out a new branch…',
+        group: zh ? '操作' : 'Actions',
+        searchText: zh ? '新建 创建 检出 分支' : 'new create checkout branch',
+        disabled: false,
+      },
+    ];
+  }, [checkedOutBranches, rootRepository, zh]);
+
   useEffect(() => {
     const version = ++loadVersionRef.current;
     setWorkbench(null);
     setLoadState('loading');
     setError(null);
     setRefreshing(false);
+    branchBusyRef.current = false;
+    setBranchBusy(false);
+    setCreateBranchOpen(false);
+    setCreateBranchName('');
     if (temporary) {
       setLoadState('ready');
       return;
@@ -107,9 +146,37 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   }, [temporary, props.workspaceMode, props.worktree, props.onWorktreeChange, worktreeAvailable, sources, snapshot?.branch]);
 
   useEffect(() => {
-    props.onBusyChange?.(projectBusy || refreshing || (!temporary && props.workspaceMode === 'worktree' && !validWorktree));
+    props.onBusyChange?.(branchBusy || projectBusy || refreshing || (!temporary && props.workspaceMode === 'worktree' && !validWorktree));
     return () => props.onBusyChange?.(false);
-  }, [projectBusy, refreshing, temporary, props.workspaceMode, validWorktree, props.onBusyChange]);
+  }, [branchBusy, projectBusy, refreshing, temporary, props.workspaceMode, validWorktree, props.onBusyChange]);
+
+  function closeCreateBranchDialog(): void {
+    setCreateBranchOpen(false);
+    setCreateBranchName('');
+    window.requestAnimationFrame(() => branchTriggerRef.current?.focus());
+  }
+
+  async function executeBranchAction(action: ProjectGitAction): Promise<boolean> {
+    if (!rootRepository || !props.onExecuteProjectGit || branchBusyRef.current || refreshing || projectBusy || props.disabled) return false;
+    const version = loadVersionRef.current;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    setError(null);
+    try {
+      const response = await props.onExecuteProjectGit(props.projectId, rootRepository.id, action);
+      if (version !== loadVersionRef.current) return false;
+      setWorkbench((current) => replaceRepositorySnapshot(current, rootRepository.id, response));
+      return true;
+    } catch (reason) {
+      if (version === loadVersionRef.current) setError(reason);
+      return false;
+    } finally {
+      if (version === loadVersionRef.current) {
+        branchBusyRef.current = false;
+        setBranchBusy(false);
+      }
+    }
+  }
 
   async function refreshRemoteBranches(): Promise<void> {
     if (!rootRepository || !props.onExecuteProjectGit || refreshing) return;
@@ -154,7 +221,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
             triggerIcon={<Folder />}
             triggerLabel={temporary ? (zh ? '临时会话 · 默认目录' : 'Temporary · Default folder') : (selectedProject?.name ?? (zh ? '项目不可用' : 'Project unavailable'))}
             value={props.projectId}
-            disabled={props.disabled || refreshing || projectBusy || props.projects.length === 0 || !props.onSelectProject}
+            disabled={props.disabled || refreshing || branchBusy || projectBusy || props.projects.length === 0 || !props.onSelectProject}
           />
         </span>
         {!temporary ? (
@@ -172,16 +239,36 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
               triggerLabel={props.workspaceMode === 'worktree' ? (zh ? '新建工作树' : 'New worktree') : zh ? '项目目录' : 'Project folder'}
               size="compact"
               popoverMinWidth={220}
-              disabled={props.disabled || refreshing || projectBusy}
+              disabled={props.disabled || refreshing || branchBusy || projectBusy}
             />
           </span>
         ) : null}
         {temporary ? (
           <span title={selectedProject?.localPath}>{zh ? '文件保存在默认目录' : 'Files saved in the default folder'}</span>
         ) : props.workspaceMode === 'direct' ? (
-          <span className="session-new-conversation-current-branch" aria-label={zh ? `当前分支：${branchLabel}` : `Current branch: ${branchLabel}`} title={branchLabel}>
-            <GitBranch aria-hidden="true" />
-            <span>{branchLabel}</span>
+          <span className="session-new-conversation-context-control">
+            <ZeusSelect
+              ariaLabel={zh ? `分支：${branchLabel}` : `Branch: ${branchLabel}`}
+              className="session-new-conversation-context-select"
+              emptyLabel={zh ? '没有匹配的本地分支' : 'No matching local branches'}
+              onChange={(value) => {
+                if (value === createBranchActionValue) {
+                  setCreateBranchOpen(true);
+                  return;
+                }
+                if (value !== rootRepository?.snapshot.branch) void executeBranchAction({ type: 'checkout', branchName: value });
+              }}
+              options={branchOptions}
+              popoverMinWidth={340}
+              searchable
+              searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
+              size="compact"
+              triggerIcon={loadState === 'loading' ? <span className="session-new-conversation-context-spinner" aria-hidden="true" /> : <GitBranch />}
+              triggerLabel={branchLabel}
+              triggerRef={branchTriggerRef}
+              value={rootRepository?.snapshot.branch ?? branchLabel}
+              disabled={props.disabled || refreshing || branchBusy || projectBusy || loadState !== 'ready' || !rootRepository || !props.onExecuteProjectGit}
+            />
           </span>
         ) : (
           <span className="session-new-conversation-context-control">
@@ -235,6 +322,53 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           </span>
         )}
       </div>
+
+      <MotionPresence>
+        {createBranchOpen && rootRepository ? (
+          <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog} role="dialog" aria-label={zh ? '新建分支' : 'New branch'}>
+            <form
+              className="project-git-reference-dialog zeus-solid-form-surface"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const branchName = createBranchName.trim();
+                if (!branchName) return;
+                void executeBranchAction({ type: 'create_branch', branchName, baseRef: rootRepository.snapshot.detached ? undefined : rootRepository.snapshot.branch }).then((created) => {
+                  if (created) closeCreateBranchDialog();
+                });
+              }}
+              data-modal-surface="dialog"
+            >
+              <header>
+                <strong>{zh ? '新建并检出分支' : 'Create and Checkout Branch'}</strong>
+                <small>{zh ? `起点：${rootRepository.snapshot.branch}` : `Starting point: ${rootRepository.snapshot.branch}`}</small>
+              </header>
+              <main>
+                <label>
+                  <span>{zh ? '分支名称' : 'Branch name'}</span>
+                  <input autoFocus value={createBranchName} disabled={branchBusy} placeholder="feature/example" onChange={(event) => setCreateBranchName(event.currentTarget.value)} />
+                </label>
+              </main>
+              <footer>
+                <Button variant="secondary" onClick={closeCreateBranchDialog} disabled={branchBusy}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button type="submit" variant="primary" busy={branchBusy} disabled={!createBranchName.trim()}>
+                  {zh ? '创建并检出' : 'Create and Checkout'}
+                </Button>
+              </footer>
+            </form>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </>
   );
+}
+
+function replaceRepositorySnapshot(current: ProjectGitWorkbenchSnapshot | null, repositoryId: string, response: ProjectGitActionResponse): ProjectGitWorkbenchSnapshot | null {
+  if (!current) return current;
+  return {
+    ...current,
+    refreshedAt: new Date().toISOString(),
+    repositories: current.repositories.map((repository) => (repository.id === repositoryId ? { ...repository, snapshot: response.snapshot } : repository)),
+  };
 }
