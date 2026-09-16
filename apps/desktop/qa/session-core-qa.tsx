@@ -592,6 +592,13 @@ function MessageLayoutQa() {
     paragraph.closest('.session-transcript')?.dispatchEvent(new Event('scroll'));
     await settle();
     if (!document.querySelector('.session-selection-toolbar:popover-open[data-motion-state="open"]:not([inert])')) throw new Error('批注检查失败：布局通知误关闭入口');
+    /** 复用运行探针核对实际生产按钮的文案、紧凑尺寸和右上角定位。 */
+    const toolbar = document.querySelector<HTMLElement>('.session-selection-toolbar:popover-open');
+    if (!toolbar || toolbar.textContent !== '评论' || toolbar.offsetWidth > 100 || toolbar.offsetHeight < 24 || toolbar.offsetHeight > 34) throw new Error('评论入口文案或尺寸不符合预期');
+    /** 单行完整选区应以右边缘作为定位点，上方留出 6px。 */
+    const selectionRect = range.getBoundingClientRect();
+    if (Math.abs(Number.parseFloat(toolbar.style.left) - selectionRect.right) > 1 || toolbar.dataset.placement !== 'above' || Math.abs(Number.parseFloat(toolbar.style.top) - selectionRect.top + 6) > 1)
+      throw new Error('评论入口未对齐选区右上角');
     selection.removeAllRanges();
     window.dispatchEvent(new Event('resize'));
     await settle();
