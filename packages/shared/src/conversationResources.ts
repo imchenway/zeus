@@ -52,7 +52,20 @@ export interface ConversationAttachmentResource extends ConversationResourceBase
 
 export type ConversationResource = ConversationFileResource | ConversationWebsiteResource | ConversationAttachmentResource;
 
-export type ConversationOpenTarget = 'preferred' | 'zeus_source' | 'zeus_browser' | 'system_default' | 'file_manager' | 'copy_link' | 'copy_path' | 'editor:vscode' | 'editor:vscode-insiders' | 'editor:cursor' | 'editor:windsurf';
+export type ConversationOpenTarget =
+  | 'preferred'
+  | 'zeus_source'
+  | 'zeus_browser'
+  | 'system_default'
+  | 'file_manager'
+  | 'copy_link'
+  | 'copy_path'
+  | 'editor:vscode'
+  | 'editor:vscode-insiders'
+  | 'editor:cursor'
+  | 'editor:windsurf'
+  | 'terminal:terminal'
+  | 'terminal:ghostty';
 
 export interface ConversationResourceOpenTarget {
   id: ConversationOpenTarget;

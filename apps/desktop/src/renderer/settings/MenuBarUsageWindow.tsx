@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
 
 type Language = AppShellSettings['appLanguage'];
@@ -53,7 +53,6 @@ const copy = {
     showZeus: '显示 Zeus',
     quitZeus: '退出 Zeus',
     retry: '重新读取',
-    refreshed: '刷新',
     stale: '上次成功结果',
     failed: '暂时无法更新用量',
     failedDetail: '未能读取本地用量数据，请重试。',
@@ -105,7 +104,6 @@ const copy = {
     showZeus: 'Show Zeus',
     quitZeus: 'Quit Zeus',
     retry: 'Reload',
-    refreshed: 'Refreshed',
     stale: 'Last successful result',
     failed: 'Usage cannot be updated',
     failedDetail: 'Local usage data could not be read. Please retry.',
@@ -126,9 +124,6 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const requestRef = useRef<Promise<void> | null>(null);
-  useApplicationErrorDialog(error, {
-    language: surfaceSettings.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
 
   useEffect(() => window.zeus?.onMenuBarUsageSettingsChanged?.(setSurfaceSettings), []);
 
@@ -203,7 +198,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   // 顶部时间表示本次用量读取完成时间，供应源数据的新鲜度仍由卡片单独提示。
   const updatedAt = snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
-  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, error ? text.stale : text.refreshed) : loading ? text.loading : error ? text.failed : text.loading;
+  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : '') : loading ? text.loading : error ? text.failed : text.loading;
 
   return (
     <main className="menu-bar-usage-root" data-appearance={surfaceSettings.appearance} lang={surfaceSettings.language} aria-label={surfaceSettings.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
@@ -315,9 +310,6 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
             : text.api;
         return (
           <button key={provider.providerId} type="button" title={provider.deleted ? fullName : undefined} onClick={() => props.onSelect(provider.providerId)}>
-            <span className="menu-bar-usage-provider-symbol" aria-hidden="true">
-              {fullName.slice(0, 1).toUpperCase()}
-            </span>
             <span className="menu-bar-usage-provider-copy">
               <strong title={provider.deleted ? fullName : undefined}>{fullName}</strong>
               <small>{providerDetail}</small>
@@ -367,14 +359,11 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   );
 }
 
-type ProviderStatusTone = 'success' | 'warning' | 'danger' | 'info';
-
 /** 完整展示官方额度窗口，避免备用额度的较低余额遮住重置后的主额度。 */
 function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
   const text = copy[language];
   const name = providerDisplayName(provider);
-  const status = providerStatus(provider, language);
   const todayValue = formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language);
   /** 无官方额度时保留原有空态；多项额度按官方顺序逐一显示。 */
   const windows = provider.rateLimitWindows.length ? provider.rateLimitWindows : [undefined];
@@ -382,19 +371,7 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   const quotaSummary = provider.rateLimitWindows.map((window) => `${windowRemainingLabel(window, language)} ${formatPercent(window.remainingPercent / 100, language)}`).join('，') || text.noQuota;
   const source = provider.rateLimitWindows.length ? text.officialAndLocal : provider.officialState === 'signed_out' ? text.localQuotaSignIn : text.localQuotaUnavailable;
   return (
-    <section className="menu-bar-usage-account-card" data-status={status.tone} aria-label={`${name}，${status.label}，${quotaSummary}，${text.todayToken} ${todayValue}`}>
-      <header className="menu-bar-usage-account-header">
-        <span className="menu-bar-usage-account-identity">
-          <span className="menu-bar-usage-account-symbol" aria-hidden="true">
-            {name.slice(0, 1).toUpperCase()}
-          </span>
-          <strong>{name}</strong>
-        </span>
-        <span className="menu-bar-usage-account-state" data-tone={status.tone}>
-          {status.label}
-        </span>
-      </header>
-
+    <section className="menu-bar-usage-account-card" aria-label={`${name}，${quotaSummary}，${text.todayToken} ${todayValue}`}>
       <div className="menu-bar-usage-account-body">
         <div className="menu-bar-usage-account-quotas">
           {windows.map((window, index) => {
@@ -415,9 +392,9 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
                       {window.resetsAt ? formatResetTime(window.resetsAt, language) : '—'}
                     </time>
                   </>
-                ) : (
-                  <small>{provider.officialState === 'signed_out' ? text.signedOut : text.localOnly}</small>
-                )}
+                ) : provider.officialState === 'signed_out' ? (
+                  <small>{text.signedOut}</small>
+                ) : null}
               </div>
             );
           })}
@@ -433,16 +410,6 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
       </small>
     </section>
   );
-}
-
-function providerStatus(provider: UsageProviderSummary, language: Language): { label: string; tone: ProviderStatusTone } {
-  const text = copy[language];
-  if (provider.deleted) return { label: text.removedStatus, tone: 'danger' };
-  if (provider.stale) return { label: text.staleStatus, tone: 'info' };
-  if (provider.officialState === 'available') return { label: text.available, tone: 'success' };
-  if (provider.officialState === 'signed_out') return { label: text.signedOut, tone: 'warning' };
-  if (provider.officialState === 'unavailable') return { label: text.unavailableStatus, tone: 'danger' };
-  return { label: text.localOnly, tone: 'warning' };
 }
 
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
@@ -529,10 +496,11 @@ function Chevron() {
   );
 }
 
+/** 双箭头留出清晰开口，小尺寸下仍可辨识刷新方向。 */
 function RefreshIcon() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M13 4.5V1.75m0 0h-2.75M13 1.75l-1.6 1.6A5 5 0 1 0 12.78 8" />
+      <path d="M13.5 2v4h-4M2.5 14v-4h4M3.1 5.5a5.2 5.2 0 0 1 8.6-1.7L13.5 6M2.5 10l1.8 2.2a5.2 5.2 0 0 0 8.6-1.7" />
     </svg>
   );
 }
@@ -633,8 +601,9 @@ function formatResetTime(timestamp: number, language: Language): string {
   return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000));
 }
 
+/** 正常状态仅显示时间；读取失败时保留过期数据说明。 */
 function formatUpdatedAt(value: string, language: Language, prefix: string): string {
-  return `${prefix} ${new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))}`;
+  return `${prefix ? `${prefix} ` : ''}${new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))}`;
 }
 
 function formatShortDate(value: string, language: Language): string {

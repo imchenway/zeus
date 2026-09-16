@@ -427,7 +427,8 @@ function ConversationResourceCard(
   );
 }
 
-function OpenWithMenu(props: { resource: ConversationResource; language: SessionUiLanguage; disabled: boolean; onOpen: (target: ConversationOpenTarget) => void | Promise<void> }) {
+/** 资源卡和文件工具栏复用同一套可用应用检测及键盘菜单。 */
+export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean; resource: ConversationResource; language: SessionUiLanguage; disabled: boolean; onOpen: (target: ConversationOpenTarget) => void | Promise<void> }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -499,7 +500,7 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
         conversationId: props.resource.conversationId,
         resourceId: props.resource.id,
       });
-      setTargets(result.targets);
+      setTargets(props.applicationsOnly ? result.targets.filter((target) => target.available && (target.id === 'system_default' || target.id.startsWith('editor:') || target.id.startsWith('terminal:'))) : result.targets);
     } catch (loadError) {
       setError(loadError);
     } finally {
@@ -551,7 +552,7 @@ function OpenWithMenu(props: { resource: ConversationResource; language: Session
           else menuButtons(menuRef.current)[0]?.focus();
         }}
       >
-        <span>{props.language === 'zh-CN' ? '打开方式' : 'Open with'}</span>
+        <span>{props.label ?? (props.language === 'zh-CN' ? '打开方式' : 'Open with')}</span>
         <CaretDown aria-hidden="true" weight="bold" />
       </button>
       {menuPresent

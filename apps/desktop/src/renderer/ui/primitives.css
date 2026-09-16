@@ -1,7 +1,7 @@
 /* Zeus 交互原语层最后加载。业务页面可以选择显式变体，但不能重新定义核心状态。 */
 .macos-ai-app {
-  /* 输入焦点贴合原边框，不向外叠加光圈，也不改变控件尺寸。 */
-  --zeus-field-focus: inset 0 0 0 1px var(--zeus-focus-line);
+  /* 文本输入只加深原有边界，不叠加第二层焦点圈或改变尺寸。 */
+  --zeus-field-focus: none;
   --zeus-motion-duration-state: 120ms;
   --zeus-motion-duration-object: 180ms;
   --zeus-motion-duration-workspace: 240ms;

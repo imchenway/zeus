@@ -17722,11 +17722,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .pending-resource-strip {
-  --pending-resource-card-bg: color-mix(in oklch, var(--zeus-product-panel) 96%, var(--zeus-product-panel-muted));
-  --pending-resource-card-border: var(--zeus-product-line);
-  --pending-resource-visual-bg: color-mix(in oklch, var(--zeus-product-panel-muted) 82%, var(--zeus-product-panel));
-  --pending-resource-remove-bg: oklch(18% 0.004 255);
-  --pending-resource-remove-fg: oklch(98.5% 0.002 255);
+  /* 附件使用极浅平面底色，避免输入区内再叠加描边和投影。 */
+  --pending-resource-card-bg: color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-panel));
+  --pending-resource-visual-bg: transparent;
+  --pending-resource-remove-bg: transparent;
+  --pending-resource-remove-fg: var(--zeus-product-muted);
   display: flex;
   align-items: stretch;
   gap: 8px;
@@ -17745,28 +17745,32 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .pending-resource-card {
+  box-sizing: border-box;
+  max-inline-size: 100%;
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 0 0 224px;
-  block-size: 54px;
+  block-size: 52px;
   min-inline-size: 0;
-  padding: 6px 31px 6px 6px;
-  border: 1px solid var(--pending-resource-card-border);
+  padding: 8px 32px 8px 10px;
+  border: 0;
   border-radius: 12px;
   background: var(--pending-resource-card-bg);
   color: var(--zeus-product-text);
-  box-shadow: 0 1px 1px oklch(20% 0.004 255 / 0.025);
+  box-shadow: none;
   scroll-snap-align: start;
 }
 
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] {
-  grid-template-columns: 40px;
-  flex-basis: 54px;
-  inline-size: 54px;
-  padding: 6px;
+  grid-template-columns: 1fr;
+  flex-basis: 64px;
+  inline-size: 64px;
+  block-size: 64px;
+  padding: 0;
+  overflow: hidden;
 }
 
 .macos-ai-app .pending-resource-activate {
@@ -17803,8 +17807,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 40px;
-  block-size: 40px;
+  inline-size: 28px;
+  block-size: 28px;
   border-radius: 9px;
   background: var(--pending-resource-visual-bg);
   color: var(--zeus-product-muted);
@@ -17865,8 +17869,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
   overflow: hidden;
   color: var(--zeus-product-text);
-  font-size: 14px;
-  font-weight: 620;
+  font-size: 13px;
+  font-weight: 550;
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -17883,7 +17887,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
   overflow: hidden;
   color: var(--zeus-product-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 480;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -17909,7 +17913,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .pending-resource-remove {
   position: absolute;
-  inset-block-start: 4px;
+  inset-block-start: calc(50% - 12px);
   inset-inline-end: 4px;
   display: inline-flex;
   align-items: center;
@@ -17935,11 +17939,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border-radius: 999px;
   background: var(--pending-resource-remove-bg);
   color: var(--pending-resource-remove-fg);
-  box-shadow: 0 1px 3px oklch(18% 0.004 255 / 0.16);
+  box-shadow: none;
 }
 
 .macos-ai-app .pending-resource-remove:hover:not(:disabled):not([aria-disabled='true']) .pending-resource-remove-glyph {
-  filter: brightness(1.16);
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
 }
 
 .macos-ai-app .pending-resource-activate:focus-visible,
@@ -17949,16 +17954,17 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   outline-offset: 2px;
 }
 
-.macos-ai-app.theme-dark .pending-resource-strip {
-  --pending-resource-remove-bg: oklch(94% 0.003 255);
-  --pending-resource-remove-fg: oklch(22% 0.004 255);
+/* 图片直接显示缩略图；移除入口留在图内，使用浅色底保证任意图片上的辨识度。 */
+.macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual {
+  inline-size: 64px;
+  block-size: 64px;
+  border-radius: 12px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .macos-ai-app.theme-system .pending-resource-strip {
-    --pending-resource-remove-bg: oklch(94% 0.003 255);
-    --pending-resource-remove-fg: oklch(22% 0.004 255);
-  }
+.macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-remove {
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  background: color-mix(in srgb, var(--zeus-product-panel) 92%, transparent);
 }
 
 .macos-ai-app .task-attachment-preview-list {

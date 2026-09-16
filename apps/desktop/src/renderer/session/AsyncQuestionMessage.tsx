@@ -3,7 +3,7 @@ import { asyncMessageQuestions, classifyAssistantMessage, validateCanonicalReque
 import type { AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { clearRuiDraft, normalizeRequestQuestions, RequestUserInputPanel } from './PendingRequestSurface.js';
 import { itemRole, ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
-import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
+import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 
 /** 通过原问题身份寻找答复，不把相同文字或别的轮次当作已回答证据。 */
 export function asyncQuestionReply(item: NativeSessionItemBuffer, state: NativeSessionState): NativeSessionItemBuffer | undefined {
@@ -23,7 +23,10 @@ export function asyncQuestionAnswerHistory(item: NativeSessionItemBuffer, items:
   /** 沿用表单的题目与答案校验，无法可靠还原时继续展示原消息。 */
   const questions = answer.questions ?? (question ? asyncMessageQuestions(question.payload) : []);
   if (questions.length === 0 || validateCanonicalRequestUserInputAnswers({ questions }, answer.answers) || Object.keys(answer.answers).length === 0) return undefined;
-  return { payload: { questions }, response: { answers: answer.answers }, containsSecret: false };
+  /** 附件正文与题目分组一起恢复，避免已回答卡片只剩“见附件”。 */
+  const attachments = Array.isArray(item.payload.attachments) ? item.payload.attachments : [];
+  const answerAttachments = Object.fromEntries(Object.entries(answer.answerAttachmentIndices ?? {}).map(([id, indices]) => [id, indices.map((index) => attachments[index]).filter(Boolean)]));
+  return { payload: { questions }, response: { answers: answer.answers, answerAttachments }, containsSecret: false };
 }
 
 /** 答案草稿和底部选择共用原会话、轮次与问题身份，不依赖时间线行键。 */
@@ -195,7 +198,9 @@ export function AsyncQuestionPanel(props: {
   item: NativeSessionItemBuffer;
   state: NativeSessionState;
   language: SessionUiLanguage;
-  onAnswer: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean) => Promise<void>;
+  onAnswer: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
+  /** 附件选择与普通会话共用原生入口。 */
+  onChooseAttachments?: () => Promise<NativeConversationAttachment[]>;
   onDismiss: () => void;
 }) {
   /** 当前问题与语言。 */
@@ -214,7 +219,7 @@ export function AsyncQuestionPanel(props: {
   /** 接收成功才释放底部；失败由共用表单保留草稿并显示错误弹窗。 */
   async function respond(_requestId: string, response: Record<string, unknown>): Promise<void> {
     try {
-      await props.onAnswer(item, response.answers as AsyncQuestionAnswer['answers'], closed);
+      await props.onAnswer(item, response.answers as AsyncQuestionAnswer['answers'], closed, response.answerAttachments as Record<string, NativeConversationAttachment[]> | undefined);
       props.onDismiss();
     } catch (failure) {
       /** 只认可已存在的明确轮次拒绝码，不推测是否需要另发。 */
@@ -231,7 +236,7 @@ export function AsyncQuestionPanel(props: {
       language={language}
       autoFocus
       busy={status.pending}
-      answerAttachmentsSupported={false}
+      onChooseAttachments={props.onChooseAttachments}
       confirmSelection={closed}
       retainDraft
       submitLabel={closed ? (zh ? '作为新消息发送' : 'Send as new message') : zh ? '提交回答' : 'Submit answer'}

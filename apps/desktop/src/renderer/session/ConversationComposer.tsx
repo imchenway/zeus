@@ -2,7 +2,7 @@ import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
@@ -656,43 +656,14 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
   );
 }
 
+/** 浏览器批注可展开查看全文与截图，移除操作独立于预览。 */
 function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
-  const screenshot = props.submission.attachments[0];
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const firstComment = props.submission.comments[0];
-  const pageTitle = firstComment?.anchor.pageTitle || firstComment?.anchor.pageUrl || (props.language === 'zh-CN' ? '浏览器页面' : 'Browser page');
-  const count = props.submission.commentIds.length;
-
-  useEffect(() => {
-    let active = true;
-    setPreviewUrl(null);
-    if (!screenshot?.localPath || !window.zeus?.getBrowserCommentPreview)
-      return () => {
-        active = false;
-      };
-    void window.zeus
-      .getBrowserCommentPreview(screenshot.localPath)
-      .then((preview) => {
-        if (active) setPreviewUrl(preview?.previewUrl ?? null);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [screenshot?.localPath]);
-
   return (
     <section className="session-composer-browser-submission" aria-label={props.language === 'zh-CN' ? '待发送浏览器批注' : 'Pending browser comments'}>
-      <div className="session-browser-preview-card" title={pageTitle}>
-        {previewUrl ? <img src={previewUrl} alt={pageTitle} /> : <GlobeSimple aria-hidden="true" weight="regular" />}
-        <button type="button" aria-label={props.language === 'zh-CN' ? '移除浏览器批注' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
-          <span aria-hidden="true">×</span>
-        </button>
-      </div>
-      <span className="session-browser-comment-chip">
-        <ChatCircle aria-hidden="true" weight="regular" />
-        <strong>{props.language === 'zh-CN' ? `${count} 条注释` : `${count} ${count === 1 ? 'comment' : 'comments'}`}</strong>
-      </span>
+      <BrowserCommentPreview comments={props.submission.comments} zh={props.language === 'zh-CN'} />
+      <button type="button" aria-label={props.language === 'zh-CN' ? '移除浏览器批注' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
+        <X aria-hidden="true" />
+      </button>
     </section>
   );
 }

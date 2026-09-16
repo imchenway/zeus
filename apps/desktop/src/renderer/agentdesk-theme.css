@@ -372,7 +372,6 @@
     .session-quick-actions-card,
     .session-turn-change-card,
     .browser-approval-card,
-    .session-browser-preview-card,
     .git-review-workbench,
     .project-settings-card,
     .model-definition-card,
@@ -417,18 +416,7 @@
 }
 
 .macos-ai-app.zeus-shell
-  :where(
-    .settings-section-badge,
-    .settings-row-status,
-    .task-git-current-conversation-badge,
-    .skill-list-managed-badge,
-    .im-health-pill,
-    .session-context-draft-chip,
-    .session-browser-comment-chip,
-    .task-status-chip,
-    .task-detail-tag-list > span,
-    .task-table-view-pill
-  ) {
+  :where(.settings-section-badge, .settings-row-status, .task-git-current-conversation-badge, .skill-list-managed-badge, .im-health-pill, .session-context-draft-chip, .task-status-chip, .task-detail-tag-list > span, .task-table-view-pill) {
   border-radius: var(--agentdesk-radius-pill);
 }
 
@@ -1113,7 +1101,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .task-board-card,
     .session-resource-card,
     .session-turn-change-card,
-    .session-browser-preview-card,
     .browser-approval-card,
     .session-goal-panel
   ) {
@@ -1419,8 +1406,9 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--zeus-product-muted);
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-search-field:focus-within {
-  border-color: var(--agentdesk-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agentdesk-accent) 14%, transparent);
+  /* 搜索焦点只加深现有边界，不叠加品牌光圈。 */
+  border-color: var(--zeus-focus-line);
+  box-shadow: none;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-search-field svg {
   flex: 0 0 14px;
@@ -3320,8 +3308,9 @@ body:has(.macos-ai-app.zeus-shell) {
 
 .macos-ai-app.zeus-shell .project-global-search.is-open .project-global-search-field,
 .macos-ai-app.zeus-shell .project-global-search-field:focus-within {
-  border-color: color-mix(in srgb, var(--agentdesk-accent) 56%, var(--zeus-product-line));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agentdesk-accent) 12%, transparent);
+  /* 展开与聚焦共用中性边缘，避免双层轮廓。 */
+  border-color: var(--zeus-focus-line);
+  box-shadow: none;
   background: var(--zeus-control-bg);
 }
 

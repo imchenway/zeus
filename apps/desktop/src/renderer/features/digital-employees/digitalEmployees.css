@@ -2271,10 +2271,6 @@
 .macos-ai-app .task-team-plan textarea {
   resize: vertical;
 }
-.macos-ai-app .task-team-plan :where(input, textarea):focus-visible {
-  outline: 2px solid var(--zeus-product-accent);
-  outline-offset: 2px;
-}
 .macos-ai-app .task-plan-starting-points {
   display: flex;
   align-items: center;
