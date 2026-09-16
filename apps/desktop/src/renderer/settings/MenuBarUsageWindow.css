@@ -1139,12 +1139,12 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-/* 浮窗使用不透明主题表面，避免系统浅色模糊材质透入应用深色模式。 */
+/* 独立用量窗口共用面板底色，避免大面积灰底及系统模糊材质透入。 */
 .menu-bar-usage-root,
 .menu-bar-usage-root[data-appearance='dark'],
 .menu-bar-usage-root[data-appearance='system'] {
   background: var(--usage-bg);
-  --usage-bg: #f7f8fa;
+  --usage-bg: var(--usage-panel);
   --usage-panel: #fff;
   --usage-panel-strong: #fff;
   --usage-panel-inset: rgb(120 128 140 / 8%);
@@ -1152,7 +1152,6 @@ body:has(.menu-bar-usage-root),
   --usage-edge: var(--usage-line);
 }
 .menu-bar-usage-root[data-appearance='dark'] {
-  --usage-bg: #17191d;
   --usage-panel: #24272c;
   --usage-panel-strong: #24272c;
   --usage-panel-inset: rgb(0 0 0 / 10%);
@@ -1161,7 +1160,6 @@ body:has(.menu-bar-usage-root),
 }
 @media (prefers-color-scheme: dark) {
   .menu-bar-usage-root[data-appearance='system'] {
-    --usage-bg: #17191d;
     --usage-panel: #24272c;
     --usage-panel-strong: #24272c;
     --usage-panel-inset: rgb(0 0 0 / 10%);

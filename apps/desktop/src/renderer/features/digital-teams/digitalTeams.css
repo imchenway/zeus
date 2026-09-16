@@ -592,10 +592,11 @@
   cursor: pointer;
 }
 
+/* 交互状态独立于页面底色，统一表面后仍能辨识当前位置。 */
 .digital-team-run-list > button:hover,
 .digital-team-run-list > button.is-active {
   border-color: var(--zeus-product-line);
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .digital-team-run-list > button small,

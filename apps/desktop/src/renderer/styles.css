@@ -1,10 +1,10 @@
 @import './ui/brand.css';
 
 :root {
-  /* 设置尚未加载时随系统，避免启动阶段固定显示白底。 */
+  /* 设置尚未加载时使用系统对应的统一表面色，避免启动阶段出现另一层灰底。 */
   color-scheme: light dark;
   color: light-dark(#202124, #ebedf0);
-  background: light-dark(#f7f8fa, #17191d);
+  background: light-dark(#fff, #24272c);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -657,7 +657,7 @@ body {
   max-inline-size: 100vw;
   min-block-size: 100vh;
   min-inline-size: 0;
-  background: light-dark(#f7f8fa, #17191d);
+  background: light-dark(#fff, #24272c);
   overflow: hidden;
 }
 
@@ -15976,8 +15976,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   background: var(--zeus-interaction-hover);
 }
 
+/* 交互状态独立于页面底色，统一表面后仍能辨识当前位置。 */
 .macos-ai-app .task-git-review-file-tree li.is-active label {
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-git-review-file-tree button {
@@ -19674,8 +19675,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   justify-content: flex-start;
 }
 
+/* 交互状态独立于页面底色，统一表面后仍能辨识当前位置。 */
 .macos-ai-app .task-detail-more-popover > .zeus-button[data-zeus-primitive='button']:hover:not(:disabled) {
-  background: var(--zeus-product-panel-muted);
+  background: var(--zeus-interaction-hover);
 }
 
 .macos-ai-app .task-detail-more-popover > .zeus-button[data-zeus-primitive='button']:focus-visible {

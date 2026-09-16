@@ -57,7 +57,7 @@ body {
 }
 
 .qa-error-layout-heading [aria-pressed='true'] {
-  background: var(--session-selected);
+  background: var(--zeus-interaction-hover);
   border-color: var(--session-text-muted);
 }
 
