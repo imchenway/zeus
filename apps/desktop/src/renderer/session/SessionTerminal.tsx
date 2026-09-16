@@ -1,4 +1,6 @@
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
+import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TerminalIcon as TerminalGlyph } from '@phosphor-icons/react/dist/csr/Terminal';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -24,6 +26,12 @@ const integratedTerminalScript = 'exec "${SHELL:-sh}" -l';
 const integratedTerminalArgs = ['-lc', integratedTerminalScript] as const;
 const terminalHeightStorageKey = 'zeus.session-terminal.height.v1';
 const defaultTerminalHeight = 284;
+/** 右侧面板默认宽度，实际尺寸仍受当前会话宽度约束。 */
+const defaultTerminalWidth = 480;
+/** 保留终端基本可读宽度；窄窗口最多占用一半空间。 */
+const minimumTerminalWidth = 240;
+/** 位置偏好按项目隔离，未选择时从右侧打开。 */
+type TerminalPosition = 'right' | 'bottom';
 const minimumTerminalHeight = 160;
 const maximumTerminalTabs = 8;
 const maximumTerminalInputChunk = 32 * 1024;
@@ -71,6 +79,9 @@ const terminalCopy = {
   'zh-CN': {
     panel: '终端',
     resize: '调整终端高度',
+    resizeWidth: '调整终端宽度',
+    moveBottom: '移到底部',
+    moveRight: '移到右侧',
     closePanel: '隐藏终端',
     loading: '正在连接终端服务…',
     starting: '正在启动终端…',
@@ -88,6 +99,9 @@ const terminalCopy = {
   'en-US': {
     panel: 'Terminal',
     resize: 'Resize terminal height',
+    resizeWidth: 'Resize terminal width',
+    moveBottom: 'Move to bottom',
+    moveRight: 'Move to right',
     closePanel: 'Hide terminal',
     loading: 'Connecting to the terminal service…',
     starting: 'Starting terminal…',
@@ -115,8 +129,18 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [height, setHeight] = useState(readStoredTerminalHeight);
+  /** 项目身份由外层 key 隔离，重新进入会话时读取已保存的位置。 */
+  const positionStorageKey = `zeus.session-terminal.position:${encodeURIComponent(props.projectId)}`;
+  /** 位置切换只更新布局，保留现有终端、输出与输入内容。 */
+  const [position, setPosition] = useState<TerminalPosition>(() => readStoredTerminalPosition(positionStorageKey));
+  /** 宽度与底部高度独立，往返切换不互相覆盖。 */
+  const [width, setWidth] = useState(defaultTerminalWidth);
+  /** 当前方向决定分隔线使用的坐标轴。 */
+  const right = position === 'right';
+  /** 切换按钮描述点击后的目标位置。 */
+  const moveLabel = right ? copy.moveBottom : copy.moveRight;
   const panelRef = useRef<HTMLElement | null>(null);
-  const resizeStateRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
+  const resizeStateRef = useRef<{ pointerId: number; startCoordinate: number; startSize: number } | null>(null);
   const activeSurfaceRef = useRef<TerminalSurfaceHandle | null>(null);
   const mountedRef = useRef(true);
   const loadRevisionRef = useRef(0);
@@ -200,6 +224,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     if (!panel || !root) return;
     const observer = new ResizeObserver(() => {
       setHeight((current) => clampTerminalHeight(current, root.getBoundingClientRect().height));
+      setWidth((current) => Math.min(Math.max(minimumTerminalWidth, current), root.getBoundingClientRect().width * 0.5));
     });
     observer.observe(root);
     return () => observer.disconnect();
@@ -232,7 +257,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       };
       const confirmation = await props.client.createRuntimeConfirmation({
         action: 'start_generic_session',
-        reason: `用户在会话底部终端中确认启动项目 Shell：${props.projectName}`,
+        reason: `用户在会话终端中确认启动项目 Shell：${props.projectName}`,
         session: request,
       });
       const confirmed = await props.client.confirmRuntimeOperation(confirmation.id);
@@ -298,13 +323,31 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     setSessions((current) => current.map((session) => (session.id === sessionId && session.status !== status ? { ...session, status } : session)));
   }
 
-  function terminalMaximumHeight(): number {
-    const rootHeight = panelRef.current?.closest('.session-workspace-root')?.getBoundingClientRect().height ?? (typeof window === 'undefined' ? defaultTerminalHeight / 0.66 : window.innerHeight);
-    return maximumTerminalHeight(rootHeight);
+  /** 当前方向的尺寸上限始终为正文保留空间。 */
+  function terminalMaximumSize(): number {
+    /** 会话根节点覆盖终端与正文，避免根据自身尺寸反复收缩。 */
+    const bounds = panelRef.current?.closest('.session-workspace-root')?.getBoundingClientRect();
+    return right ? (bounds?.width ?? window.innerWidth) * 0.5 : maximumTerminalHeight(bounds?.height ?? window.innerHeight);
   }
 
-  function commitHeight(nextHeight: number): void {
-    const clamped = Math.min(terminalMaximumHeight(), Math.max(minimumTerminalHeight, Math.round(nextHeight)));
+  /** 窄窗口优先保留正文，分隔线的最小值不超过实际可用上限。 */
+  const minimumSize = right ? Math.min(minimumTerminalWidth, terminalMaximumSize()) : minimumTerminalHeight;
+  /** 当前方向的已选尺寸，用于键盘及指针调整。 */
+  const size = right ? width : height;
+
+  /** 拖动和键盘共用边界处理，避免越界尺寸写回终端。 */
+  function clampSize(nextSize: number): number {
+    return Math.min(terminalMaximumSize(), Math.max(minimumSize, Math.round(nextSize)));
+  }
+
+  /** 完成拖动后继续沿用底部高度的既有持久化行为。 */
+  function commitSize(nextSize: number): void {
+    /** 只保存当前方向的有效尺寸。 */
+    const clamped = clampSize(nextSize);
+    if (right) {
+      setWidth(clamped);
+      return;
+    }
     setHeight(clamped);
     try {
       window.localStorage.setItem(terminalHeightStorageKey, String(clamped));
@@ -313,7 +356,20 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     }
   }
 
-  const panelStyle = { '--session-terminal-height': `${height}px` } as CSSProperties;
+  /** 用户点击后立即切换，并把选择写入当前项目的本机偏好。 */
+  function togglePosition(): void {
+    /** 两种停靠方向互相切换，不创建或结束后台进程。 */
+    const next = right ? 'bottom' : 'right';
+    setPosition(next);
+    try {
+      window.localStorage.setItem(positionStorageKey, next);
+    } catch {
+      // 存储不可用时仍允许本次切换，下次打开使用默认位置。
+    }
+  }
+
+  /** 两个方向分别保留尺寸，仅 CSS 决定当前使用哪一个。 */
+  const panelStyle = { '--session-terminal-height': `${height}px`, '--session-terminal-width': `${width}px` } as CSSProperties;
 
   return (
     <section
@@ -324,36 +380,38 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       aria-hidden={!props.visible}
       inert={!props.visible}
       data-open={props.visible}
+      data-position={position}
       data-resizing={resizeStateRef.current ? 'true' : undefined}
     >
       <div
         className="session-terminal-resizer"
         role="separator"
-        aria-label={copy.resize}
-        aria-orientation="horizontal"
-        aria-valuemin={minimumTerminalHeight}
-        aria-valuemax={terminalMaximumHeight()}
-        aria-valuenow={height}
+        aria-label={right ? copy.resizeWidth : copy.resize}
+        aria-orientation={right ? 'vertical' : 'horizontal'}
+        aria-valuemin={minimumSize}
+        aria-valuemax={terminalMaximumSize()}
+        aria-valuenow={size}
         tabIndex={0}
-        onDoubleClick={() => commitHeight(defaultTerminalHeight)}
+        onDoubleClick={() => commitSize(right ? defaultTerminalWidth : defaultTerminalHeight)}
         onPointerDown={(event) => {
-          resizeStateRef.current = { pointerId: event.pointerId, startY: event.clientY, startHeight: height };
+          resizeStateRef.current = { pointerId: event.pointerId, startCoordinate: right ? event.clientX : event.clientY, startSize: size };
           event.currentTarget.setPointerCapture(event.pointerId);
           panelRef.current?.setAttribute('data-resizing', 'true');
         }}
         onPointerMove={(event) => {
           const state = resizeStateRef.current;
           if (!state || state.pointerId !== event.pointerId) return;
-          setHeight(Math.min(terminalMaximumHeight(), Math.max(minimumTerminalHeight, state.startHeight + state.startY - event.clientY)));
+          (right ? setWidth : setHeight)(clampSize(state.startSize + state.startCoordinate - (right ? event.clientX : event.clientY)));
         }}
         onPointerUp={(event) => {
           const state = resizeStateRef.current;
           if (!state || state.pointerId !== event.pointerId) return;
-          const nextHeight = state.startHeight + state.startY - event.clientY;
+          /** 松开时读取当前轴坐标，避免丢失最后一次移动。 */
+          const nextSize = state.startSize + state.startCoordinate - (right ? event.clientX : event.clientY);
           resizeStateRef.current = null;
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           panelRef.current?.removeAttribute('data-resizing');
-          commitHeight(nextHeight);
+          commitSize(nextSize);
         }}
         onPointerCancel={(event) => {
           resizeStateRef.current = null;
@@ -361,15 +419,19 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           panelRef.current?.removeAttribute('data-resizing');
         }}
         onKeyDown={(event) => {
-          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          /** 水平布局使用左右键，底部布局使用上下键。 */
+          const growKey = right ? 'ArrowLeft' : 'ArrowUp';
+          /** 向正文反方向移动会缩小终端。 */
+          const shrinkKey = right ? 'ArrowRight' : 'ArrowDown';
+          if (event.key === growKey || event.key === shrinkKey) {
             event.preventDefault();
-            commitHeight(height + (event.key === 'ArrowUp' ? 20 : -20));
+            commitSize(size + (event.key === growKey ? 20 : -20));
           } else if (event.key === 'Home') {
             event.preventDefault();
-            commitHeight(minimumTerminalHeight);
+            commitSize(minimumSize);
           } else if (event.key === 'End') {
             event.preventDefault();
-            commitHeight(terminalMaximumHeight());
+            commitSize(terminalMaximumSize());
           }
         }}
       />
@@ -388,6 +450,9 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           onNew={() => void startTerminal()}
           onClose={requestCloseSession}
         />
+        <button type="button" className="zeus-terminal-action" aria-label={moveLabel} title={moveLabel} onClick={togglePosition}>
+          {right ? <Rows aria-hidden="true" /> : <SidebarSimple aria-hidden="true" style={{ transform: 'scaleX(-1)' }} />}
+        </button>
         <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} title={copy.closePanel} onClick={props.onClose}>
           <X aria-hidden="true" />
         </button>
@@ -799,6 +864,15 @@ function resolveTerminalCwd(projectPath: string, candidate: string | null | unde
 
 function normalizeComparablePath(value: string): string {
   return value.trim().replaceAll('\\', '/').replace(/\/+$/u, '');
+}
+
+/** 只接受明确保存的底部选择；缺失、损坏或不可读取时默认右侧。 */
+function readStoredTerminalPosition(storageKey: string): TerminalPosition {
+  try {
+    return window.localStorage.getItem(storageKey) === 'bottom' ? 'bottom' : 'right';
+  } catch {
+    return 'right';
+  }
 }
 
 function readStoredTerminalHeight(): number {

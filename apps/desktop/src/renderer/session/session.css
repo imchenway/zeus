@@ -2143,10 +2143,26 @@
   }
 }
 
+/* 正文与顶栏保持在同一栏，浏览器顶栏和网页在终端展开后仍然对齐。 */
+.session-codex-parity-v1 .session-primary-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+/* 仅改变同一组节点的排列方向，切换位置不卸载终端或正文。 */
+.session-codex-parity-v1 .session-workspace-root:has(> .session-terminal-panel[data-position='right']) {
+  flex-direction: row;
+}
+
 /* 会话终端复用 Runtime PTY；面板只负责可恢复的标签、尺寸与交互呈现。 */
 .session-codex-parity-v1 .session-terminal-panel {
   background: var(--session-canvas);
   border-block-start: 0 solid var(--session-line);
+  box-sizing: border-box;
   block-size: 0;
   color: var(--session-text);
   display: flex;
@@ -2162,6 +2178,7 @@
   /* 沿用浏览器侧栏的尺寸与淡入节奏，正文随底部面板连续让出空间。 */
   transition:
     block-size 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    inline-size 180ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 120ms ease-out,
     visibility 0s linear 180ms;
   visibility: hidden;
@@ -2176,11 +2193,31 @@
   visibility: visible;
 }
 
-/* 首次挂载也从底部展开；后续重开直接接续当前过渡。 */
+/* 右侧终端铺满高度，宽度受会话区域约束，正文至少保留一半空间。 */
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] {
+  block-size: auto;
+  border-block-start-width: 0;
+  border-inline-start: 0 solid var(--session-line);
+  inline-size: 0;
+  max-block-size: none;
+  max-inline-size: 50%;
+}
+
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'][data-open='true'] {
+  border-inline-start-width: 1px;
+  inline-size: var(--session-terminal-width, 480px);
+}
+
+/* 首次挂载沿当前方向展开；后续重开直接接续当前过渡。 */
 @starting-style {
-  .session-codex-parity-v1 .session-terminal-panel[data-open='true'] {
+  .session-codex-parity-v1 .session-terminal-panel[data-position='bottom'][data-open='true'] {
     border-block-start-width: 0;
     block-size: 0;
+    opacity: 0;
+  }
+
+  .session-codex-parity-v1 .session-terminal-panel[data-position='right'][data-open='true'] {
+    inline-size: 0;
     opacity: 0;
   }
 }
@@ -2223,6 +2260,21 @@
   transition: background 120ms ease;
 }
 
+/* 右侧分隔线沿左边缘响应拖动与键盘调整。 */
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] .session-terminal-resizer {
+  block-size: auto;
+  cursor: col-resize;
+  inline-size: 9px;
+  inset-block: 0;
+  inset-inline: -5px auto;
+}
+
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] .session-terminal-resizer::after {
+  block-size: auto;
+  inline-size: 2px;
+  inset: 42% auto 42% 3px;
+}
+
 .session-codex-parity-v1 .session-terminal-resizer:hover::after,
 .session-codex-parity-v1 .session-terminal-resizer:focus-visible::after,
 .session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] .session-terminal-resizer::after {
@@ -2231,7 +2283,7 @@
 
 .session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] {
   /* 手动调整高度时立即跟手，与浏览器拖动分隔线一致。 */
-  transition-duration: 0s, 120ms, 0s;
+  transition-duration: 0s, 0s, 120ms, 0s;
   user-select: none;
 }
 
