@@ -56,8 +56,16 @@ export function ResponseSelectionActions(props: {
   const [editorHeight, setEditorHeight] = useState(0);
 
   useLayoutEffect(() => {
-    if (candidate) toolbarRef.current?.showPopover();
-  }, [candidate]);
+    if (!candidate || !toolbarRef.current) return;
+    toolbarRef.current.showPopover();
+    /** 浮层挂载后用实际尺寸校正边界，兼容中英文按钮宽度。 */
+    const article = props.articleRef.current;
+    const view = article?.ownerDocument.defaultView;
+    const selection = view?.getSelection();
+    if (!article || !selection?.rangeCount) return;
+    const point = selectionToolbarPoint(selection.getRangeAt(0).getBoundingClientRect(), article, view ?? null, toolbarRef.current);
+    if (point && (point.left !== candidate.point.left || point.top !== candidate.point.top || point.placement !== candidate.point.placement)) setCandidate({ ...candidate, point });
+  }, [candidate, props.articleRef]);
 
   useEffect(() => {
     const article = props.articleRef.current;
@@ -87,7 +95,7 @@ export function ResponseSelectionActions(props: {
           setCandidate(null);
           return;
         }
-        const point = selectionToolbarPoint(rect, article, article.ownerDocument.defaultView ?? null);
+        const point = selectionToolbarPoint(rect, article, article.ownerDocument.defaultView ?? null, toolbarRef.current);
         setCandidate(point ? { anchor: { itemId: props.itemId, startOffset, endOffset, selectedText }, point } : null);
       });
     };
@@ -122,7 +130,7 @@ export function ResponseSelectionActions(props: {
         const selectedRange = selection.getRangeAt(0);
         if (!root.contains(selectedRange.startContainer) || !root.contains(selectedRange.endContainer) || selectedRange.toString() !== current.anchor.selectedText) return null;
         /** 原生选区提供滚动及换行后的实际位置，越界时仍关闭入口。 */
-        const point = selectionToolbarPoint(selectedRange.getBoundingClientRect(), article, view);
+        const point = selectionToolbarPoint(selectedRange.getBoundingClientRect(), article, view, toolbarRef.current);
         return point ? { ...current, point } : null;
       });
       setRevision((value) => value + 1);
@@ -205,7 +213,7 @@ export function ResponseSelectionActions(props: {
                 if (id) setEditingId(id);
               }}
             >
-              {props.language === 'zh-CN' ? '添加到对话' : 'Add to chat'}
+              {props.language === 'zh-CN' ? '评论' : 'Comment'}
             </button>
           </PopoverSurface>
         ) : null}
@@ -326,18 +334,20 @@ function rangeEndRect(range: Range): DOMRect | null {
   );
 }
 
-function selectionToolbarPoint(rect: DOMRect, article: HTMLElement, view: Window | null): SelectionCandidate['point'] | null {
+/** 评论入口右对齐选区，按实际尺寸避开会话边界。 */
+function selectionToolbarPoint(rect: DOMRect, article: HTMLElement, view: Window | null, toolbar: HTMLElement | null): SelectionCandidate['point'] | null {
+  /** 会话可见范围同时约束短选区和窄分栏。 */
   const bounds = visibleOverlayBounds(article, view);
   if (!rectFitsVisibleBounds(rect, bounds)) return null;
-  const toolbarHalfWidth = 190;
-  const roomAbove = rect.top - bounds.top;
-  const placement = roomAbove >= 44 ? 'above' : 'below';
-  const minimumCenter = bounds.left + toolbarHalfWidth;
-  const maximumCenter = bounds.right - toolbarHalfWidth;
-  const center = rect.left + rect.width / 2;
+  /** 首次挂载前尺寸为零，布局阶段会在绘制前校正。 */
+  const width = toolbar?.offsetWidth ?? 0;
+  const height = toolbar?.offsetHeight ?? 0;
+  /** 浮层与选区间保留轻量间隔，顶部放不下时移到下方。 */
+  const gap = 6;
+  const placement = rect.top - bounds.top >= height + gap ? 'above' : 'below';
   return {
-    left: maximumCenter >= minimumCenter ? Math.min(Math.max(center, minimumCenter), maximumCenter) : bounds.left + (bounds.right - bounds.left) / 2,
-    top: placement === 'above' ? rect.top : rect.bottom + 12,
+    left: Math.min(bounds.right, Math.max(rect.right, bounds.left + width)),
+    top: placement === 'above' ? rect.top - gap : rect.bottom + gap,
     placement,
   };
 }

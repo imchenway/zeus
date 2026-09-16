@@ -1649,43 +1649,39 @@
   opacity: 1;
 }
 
-/* 回答选区的两个动作与本地注释锚点保持轻量，不遮挡正文。 */
+/* 评论入口仅由按钮自身提供留白，右边缘对齐选区。 */
 .session-selection-toolbar {
   inset: auto;
   margin: 0;
+  padding: 0;
   background: color-mix(in srgb, var(--session-canvas, #fff) 96%, transparent);
   border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgb(0 0 0 / 14%);
+  border-radius: 7px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
   display: flex;
   overflow: hidden;
   position: fixed;
-  transform: translate(-50%, calc(-100% - 12px));
+  transform: translate(-100%, -100%);
   z-index: 1000;
 }
 
 .session-selection-toolbar[data-placement='below'] {
-  transform: translate(-50%, 0);
+  transform: translate(-100%, 0);
 }
 
 .session-selection-toolbar > button {
   appearance: none;
   background: transparent;
   border: 0;
-  border-inline-end: 1px solid var(--session-line, rgb(0 0 0 / 10%));
   color: var(--session-text, #171717);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
-  min-block-size: 30px;
-  padding-inline: 12px;
+  min-block-size: 26px;
+  padding: 4px 8px;
   white-space: nowrap;
-}
-
-.session-selection-toolbar > button:last-child {
-  border-inline-end: 0;
 }
 
 .session-selection-toolbar > button:hover:not(:disabled):not([aria-disabled='true']),
@@ -2086,8 +2082,8 @@
 @media (max-width: 760px) {
   .session-selection-toolbar > button {
     font-size: 12px;
-    min-block-size: 28px;
-    padding-inline: 10px;
+    min-block-size: 26px;
+    padding-inline: 8px;
   }
 
   .session-codex-parity-v1 .session-code-comment-panel,

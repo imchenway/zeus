@@ -693,7 +693,7 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--agentdesk-space-2);
 }
 
-.macos-ai-app.zeus-shell :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .settings-action-rail, .session-selection-toolbar, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
+.macos-ai-app.zeus-shell :is(.project-source-toolbar, .project-git-toolbar, .runtime-log-toolbar, .settings-action-rail, .zeus-action-rail, .zeus-mode-rail, .zeus-decision-rail) {
   gap: var(--agentdesk-space-2);
   padding-inline: var(--agentdesk-space-3);
 }
