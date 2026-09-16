@@ -861,7 +861,16 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     () => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks).map(projectTaskModelPushManagementStatus),
     [activeProjectId, projectTaskModelPushManagementStatus, snapshot.tasks],
   );
-  const currentProjectTaskIdsSignature = useMemo(() => JSON.stringify(currentProjectTasks.map((task) => task.id)), [currentProjectTasks]);
+  /** 上游侧栏同时展示所有项目，只加载列表摘要；当前布局仍按当前项目读取。 */
+  const conversationChoiceScopeSignature = useMemo(
+    () =>
+      JSON.stringify(
+        orderedProjects
+          .filter((project) => appShellSettings.mainLayout === 'upstream' || (project.id === activeProjectId && (activeProjectSection === 'sessions' || activeProjectSection === 'tasks')))
+          .map((project) => ({ projectId: project.id, taskIds: snapshot.tasks.filter((task) => task.projectId === project.id).map((task) => task.id) })),
+      ),
+    [activeProjectId, activeProjectSection, appShellSettings.mainLayout, orderedProjects, snapshot.tasks],
+  );
   const terminalTaskIds = useMemo(
     () =>
       new Set(
@@ -1090,73 +1099,68 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   );
 
   useEffect(() => {
+    /** 各项目独立接收列表结果，沿用请求序号保护，切换项目不会丢掉其他项目的任务入口。 */
     const client = props.nativeConversationClient;
-    if (!client || (activeProjectSection !== 'sessions' && activeProjectSection !== 'tasks') || !activeProjectId) return;
+    if (!client) return;
+    /** 范围变化后忽略旧响应，避免删除项目或任务后又写回过期列表。 */
     let cancelled = false;
-    const projectId = activeProjectId;
-    const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
-    const taskLoads = (JSON.parse(currentProjectTaskIdsSignature) as string[]).map((taskId) => ({ taskId, requestVersion: nativeConversationChoiceLoadCoordinator.begin(taskId) }));
-    setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
-    setNativeConversationChoiceTaskStates((current) => ({
-      ...current,
-      ...Object.fromEntries(taskLoads.map(({ taskId }) => [taskId, beginNativeConversationChoiceTaskLoad(current[taskId])])),
-    }));
+    for (const { projectId, taskIds } of JSON.parse(conversationChoiceScopeSignature) as { projectId: string; taskIds: string[] }[]) {
+      const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
+      const taskLoads = taskIds.map((taskId) => ({ taskId, requestVersion: nativeConversationChoiceLoadCoordinator.begin(taskId) }));
+      setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
+      setNativeConversationChoiceTaskStates((current) => ({
+        ...current,
+        ...Object.fromEntries(taskLoads.map(({ taskId }) => [taskId, beginNativeConversationChoiceTaskLoad(current[taskId])])),
+      }));
 
-    void client.loadProjectConversationChoiceGroups(projectId).then(
-      (snapshot) => {
-        if (cancelled) return;
-        const mergedProjectChoices = nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)
-          ? nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, snapshot.projectChoices)
-          : null;
-        const mergedTaskChoices = taskLoads.flatMap(({ taskId, requestVersion }) => {
-          const loaded = snapshot.taskChoicesByTaskId[taskId] ?? {
-            taskId,
-            projectId,
-            hasHistory: false,
-            requiresChoice: false,
-            choices: [],
-            items: [],
-          };
-          const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, loaded);
-          return merged ? ([[taskId, merged]] as const) : [];
-        });
-        if (mergedProjectChoices) setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: mergedProjectChoices }));
-        if (mergedTaskChoices.length > 0) setNativeConversationChoicesByTask((current) => ({ ...current, ...Object.fromEntries(mergedTaskChoices) }));
-        reconcileNativeConversationProjectionStates([...(mergedProjectChoices?.choices ?? []), ...mergedTaskChoices.flatMap(([, choices]) => choices.choices)]);
-        if (mergedProjectChoices) setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
-        if (mergedTaskChoices.length > 0) {
+      void client.loadProjectConversationChoiceGroups(projectId).then(
+        (snapshot) => {
+          if (cancelled) return;
+          const mergedProjectChoices = nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)
+            ? nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, snapshot.projectChoices)
+            : null;
+          const mergedTaskChoices = taskLoads.flatMap(({ taskId, requestVersion }) => {
+            const loaded = snapshot.taskChoicesByTaskId[taskId] ?? {
+              taskId,
+              projectId,
+              hasHistory: false,
+              requiresChoice: false,
+              choices: [],
+              items: [],
+            };
+            const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, loaded);
+            return merged ? ([[taskId, merged]] as const) : [];
+          });
+          if (mergedProjectChoices) setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: mergedProjectChoices }));
+          if (mergedTaskChoices.length > 0) setNativeConversationChoicesByTask((current) => ({ ...current, ...Object.fromEntries(mergedTaskChoices) }));
+          reconcileNativeConversationProjectionStates([...(mergedProjectChoices?.choices ?? []), ...mergedTaskChoices.flatMap(([, choices]) => choices.choices)]);
+          if (mergedProjectChoices) setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
+          if (mergedTaskChoices.length > 0) {
+            setNativeConversationChoiceTaskStates((current) => ({
+              ...current,
+              ...Object.fromEntries(mergedTaskChoices.map(([taskId]) => [taskId, completeNativeConversationChoiceTaskLoad(current[taskId])])),
+            }));
+          }
+        },
+        (error) => {
+          if (cancelled) return;
+          const message = errorToLocalUiMessage(error, errorLanguageRef.current);
+          if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) {
+            setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
+          }
           setNativeConversationChoiceTaskStates((current) => ({
             ...current,
-            ...Object.fromEntries(mergedTaskChoices.map(([taskId]) => [taskId, completeNativeConversationChoiceTaskLoad(current[taskId])])),
+            ...Object.fromEntries(
+              taskLoads.filter(({ taskId, requestVersion }) => nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)).map(({ taskId }) => [taskId, failNativeConversationChoiceTaskLoad(current[taskId], message)]),
+            ),
           }));
-        }
-      },
-      (error) => {
-        if (cancelled) return;
-        const message = errorToLocalUiMessage(error, errorLanguageRef.current);
-        if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) {
-          setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
-        }
-        setNativeConversationChoiceTaskStates((current) => ({
-          ...current,
-          ...Object.fromEntries(
-            taskLoads.filter(({ taskId, requestVersion }) => nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)).map(({ taskId }) => [taskId, failNativeConversationChoiceTaskLoad(current[taskId], message)]),
-          ),
-        }));
-      },
-    );
+        },
+      );
+    }
     return () => {
       cancelled = true;
     };
-  }, [
-    activeProjectId,
-    activeProjectSection,
-    currentProjectTaskIdsSignature,
-    nativeConversationChoiceLoadCoordinator,
-    nativeProjectConversationChoiceLoadCoordinator,
-    props.nativeConversationClient,
-    reconcileNativeConversationProjectionStates,
-  ]);
+  }, [conversationChoiceScopeSignature, nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient, reconcileNativeConversationProjectionStates]);
 
   const reconcileNativeConversationProjectSnapshot = useCallback(
     async (projectId: string): Promise<void> => {
