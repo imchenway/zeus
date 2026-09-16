@@ -431,7 +431,7 @@ export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
     {
       type: 'namespace',
       name: 'zeus',
-      description: 'Zeus-managed conversation artifacts. Reads existing immutable results and never re-runs the original tool.',
+      description: 'Read stored conversation tool results and images by their Zeus handles.',
       tools: [
         {
           type: 'function',

@@ -2791,6 +2791,7 @@ function compactObject<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
+/** 提交前校验工具身份与协议长度，错误中保留工具组名称以便定位。 */
 function validateDynamicTools(specs: readonly CodexDynamicToolSpec[] | undefined): void {
   const rootNames = new Set<string>();
   for (const spec of specs ?? []) {
@@ -2800,6 +2801,11 @@ function validateDynamicTools(specs: readonly CodexDynamicToolSpec[] | undefined
     if (spec.type === 'function') {
       if (spec.deferLoading) throw managerError('ZEUS_CODEX_DYNAMIC_TOOL_NAMESPACE_REQUIRED', `Deferred Codex dynamic tool must belong to a namespace: ${name}.`);
       continue;
+    }
+    /** 按 Unicode 码点计数，与 Codex 的字符上限保持一致，不能使用 UTF-16 长度。 */
+    const descriptionLength = Array.from(spec.description).length;
+    if (descriptionLength > 1024) {
+      throw managerError('ZEUS_CODEX_DYNAMIC_TOOL_INVALID', `工具组「${name}」的说明为 ${descriptionLength} 个字符，超过 1024 字符上限；请将完整规则放入具体工具说明。`);
     }
     const toolNames = new Set<string>();
     for (const tool of spec.tools) {

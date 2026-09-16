@@ -7,19 +7,18 @@ export interface TaskWorkToolPort {
   invoke(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult>;
 }
 
-/** 原始 Provider 工具用于编排真实工作，不生成模型内部不可见的伪员工。 */
+/** 工具组说明工作能力；查询入口提供真实身份，执行条件和授权边界分别放在对应工具。 */
 export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
   return [
     {
       type: 'namespace',
       name: 'zeus_work',
-      description:
-        '在当前任务中读取工作、把用户明确的执行要求正式指派、按已授权成员范围委派及记录部署凭证。先 inspect 核对来源和现有安排。讨论和建议不自动变成执行要求；用户明确要求开始执行时才 assign。已有工作内的拆分只用 delegate。暂停和未知外部结果不会自动重放。',
+      description: '查询与安排当前任务的工作，记录部署凭证、经验提案和数字团队计划或结果。',
       tools: [
         {
           type: 'function',
           name: 'inspect',
-          description: '读取当前任务讨论的用户请求身份、实际员工和现有分工；执行会话返回当前工作、允许委派成员、子成果、命令证据和部署凭证。',
+          description: '读取当前任务讨论的用户请求身份、实际员工和现有分工；执行会话返回当前工作、允许委派成员、子成果、命令证据和部署凭证。安排工作前先核对这里的来源与状态；遇到暂停或未知外部结果，先核对，不自动重放。',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
         },
         {
@@ -80,7 +79,7 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'delegate',
-          description: '为允许的员工创建一份有边界的子分工。必须给出目标与完成标准；依赖只能引用 inspect 返回的同轮子工作。保存后由任务安排统一调度，同一工具调用不会重复创建。',
+          description: '仅在已有工作内，为 inspect 返回的已授权员工创建有边界的子分工。给出目标与完成标准；依赖只能引用同轮子工作。保存后由任务安排统一调度，同一工具调用不会重复创建。',
           inputSchema: {
             type: 'object',
             properties: { employeeId: { type: 'string' }, title: { type: 'string', maxLength: 240 }, description: { type: 'string', maxLength: 4000 }, dependencyIds: { type: 'array', items: { type: 'string' }, maxItems: 24 } },
