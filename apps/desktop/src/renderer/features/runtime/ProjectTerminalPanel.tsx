@@ -11,14 +11,41 @@ import { TerminalTabs } from './TerminalTabs.js';
 import { observeTerminalTheme, terminalDisplayOptions } from './terminalPresentation.js';
 import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
 
+/** 终端面板状态持久化存储键前缀。 */
+const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
+
+/** 从本地存储读取终端面板状态。 */
+function readTerminalPanelState(projectId: string): { open: boolean; heightShare: number } {
+  try {
+    const stored = window.localStorage.getItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`);
+    if (!stored) return { open: false, heightShare: 42 };
+    const parsed = JSON.parse(stored);
+    return {
+      open: typeof parsed.open === 'boolean' ? parsed.open : false,
+      heightShare: typeof parsed.heightShare === 'number' ? Math.min(70, Math.max(25, parsed.heightShare)) : 42,
+    };
+  } catch {
+    return { open: false, heightShare: 42 };
+  }
+}
+
+/** 将终端面板状态保存到本地存储。 */
+function saveTerminalPanelState(projectId: string, state: { open: boolean; heightShare: number }): void {
+  try {
+    window.localStorage.setItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`, JSON.stringify(state));
+  } catch {
+    // 忽略存储失败
+  }
+}
+
 /** 命令页入口打开底部停靠面板，沿用浏览器分屏方式，收起不结束后台进程。 */
 export function ProjectTerminalPanel(props: { project: ProjectRecord; client: DashboardClient; language: 'zh-CN' | 'en-US'; dockHost: HTMLDivElement | null }) {
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
-  /** 面板与后台会话的生命周期分开。 */
-  const [open, setOpen] = useState(false);
-  /** 默认占工作区下方四成，上方命令页仍能操作。 */
-  const [heightShare, setHeightShare] = useState(42);
+  /** 面板打开状态按项目ID持久化，切换项目时保持各项目独立状态。 */
+  const [open, setOpen] = useState(() => readTerminalPanelState(props.project.id).open);
+  /** 高度比例按项目ID持久化。 */
+  const [heightShare, setHeightShare] = useState(() => readTerminalPanelState(props.project.id).heightShare);
   /** 收起后把键盘焦点还给入口。 */
   const entryRef = useRef<HTMLButtonElement>(null);
   /** 标签与输出面板的无障碍关联保持唯一。 */
@@ -48,6 +75,19 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   /** 异步关闭完成时读取最新列表，保留期间新发现的终端。 */
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  /** 当项目ID变化时，从持久化存储恢复状态。 */
+  useEffect(() => {
+    const savedState = readTerminalPanelState(props.project.id);
+    setOpen(savedState.open);
+    setHeightShare(savedState.heightShare);
+  }, [props.project.id]);
+
+  /** 持久化打开状态和高度。 */
+  useEffect(() => {
+    saveTerminalPanelState(props.project.id, { open, heightShare });
+  }, [props.project.id, open, heightShare]);
+
   useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
 
   useEffect(() => {
@@ -313,7 +353,6 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     let disposed = false;
     let terminal: import('@xterm/xterm').Terminal | undefined;
     let observer: ResizeObserver | undefined;
-    /** 只更新显示主题，不重建终端或改变运行中的 shell。 */
     let disposeTheme: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     let pollTimer: number | undefined;
@@ -322,10 +361,8 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     let offset: number | undefined;
     let ready = false;
     let inputFailed = false;
-    /** 同一终端内输入和 resize 不并发，避免租约序号冲突。 */
     let writes = Promise.resolve();
 
-    /** 写入不确定时停止后续输入，用户重连后根据真实输出决定下一步。 */
     function send(operation: () => Promise<unknown>): void {
       writes = writes.then(async () => {
         if (disposed || inputFailed || !runningRef.current) return;
@@ -333,15 +370,14 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
           await operation();
         } catch {
           inputFailed = true;
-          if (!disposed) {
-            terminal!.options.disableStdin = true;
+          if (!disposed && terminal) {
+            terminal.options.disableStdin = true;
             setState('input_failed');
           }
         }
       });
     }
 
-    /** 从实际字符格测量尺寸，不额外引入适配依赖。 */
     function resize(): void {
       if (!terminal || !containerRef.current || !ready || !runningRef.current) return;
       const screen = containerRef.current.querySelector('.xterm-screen');
@@ -353,7 +389,6 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
       send(() => props.client.resizeRuntimeSession(props.session.id, { cols, rows }));
     }
 
-    /** 输出按持久游标追赶，等待 xterm 消化后再取下一页。 */
     async function refresh(): Promise<void> {
       if (disposed || loading || !terminal) return;
       loading = true;
@@ -361,7 +396,6 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
         if (offset === undefined) {
           const head = await props.client.loadRuntimeSessionLogsPage(props.session.id, { limit: 1 });
           if (disposed) return;
-          // ponytail: 重连只回放最近 2000 条；需要无损全屏程序恢复时增加终端屏幕快照。
           offset = Math.max(0, head.total - 2_000);
           if (offset > 0) terminal.writeln(props.zh ? '…仅回放最近的终端输出。' : '…Replaying recent terminal output only.');
         }
@@ -393,7 +427,6 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
       }
     }
 
-    /** 合并输出通知；分页追赶也让出浏览器线程。 */
     function scheduleRefresh(): void {
       if (disposed || refreshTimer !== undefined) return;
       refreshTimer = window.setTimeout(() => {
@@ -405,15 +438,7 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     void import('@xterm/xterm')
       .then(({ Terminal }) => {
         if (disposed || !containerRef.current) return;
-        /** 内容区显示配置与会话入口共享，输入与日志仍由当前入口管理。 */
-        terminal = new Terminal({
-          ...terminalDisplayOptions,
-          disableStdin: true,
-          screenReaderMode: true,
-          scrollback: 5_000,
-          rows: 24,
-          cols: 100,
-        });
+        terminal = new Terminal({ ...terminalDisplayOptions, disableStdin: true, screenReaderMode: true, scrollback: 5_000, rows: 24, cols: 100 });
         disposeTheme = observeTerminalTheme(terminal, containerRef.current);
         terminal.open(containerRef.current);
         terminal.textarea?.setAttribute('aria-label', props.zh ? '终端输入' : 'Terminal input');
