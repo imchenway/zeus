@@ -10,6 +10,9 @@ export const terminalDisplayOptions: ITerminalOptions = {
   lineHeight: 1,
   minimumContrastRatio: 4.5,
   theme: {
+    // 明暗背景均使用蓝色选区；失焦后保留高亮，便于核对即将复制的内容。
+    selectionBackground: '#2563eb80',
+    selectionInactiveBackground: '#2563eb59',
     black: '#1d1f21',
     red: '#cc6666',
     green: '#b5bd68',

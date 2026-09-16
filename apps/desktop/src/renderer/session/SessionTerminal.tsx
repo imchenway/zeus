@@ -316,7 +316,16 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const panelStyle = { '--session-terminal-height': `${height}px` } as CSSProperties;
 
   return (
-    <section ref={panelRef} className="session-terminal-panel" style={panelStyle} aria-label={copy.panel} data-resizing={resizeStateRef.current ? 'true' : undefined} hidden={!props.visible}>
+    <section
+      ref={panelRef}
+      className="session-terminal-panel"
+      style={panelStyle}
+      aria-label={copy.panel}
+      aria-hidden={!props.visible}
+      inert={!props.visible}
+      data-open={props.visible}
+      data-resizing={resizeStateRef.current ? 'true' : undefined}
+    >
       <div
         className="session-terminal-resizer"
         role="separator"
@@ -536,6 +545,8 @@ function TerminalViewport(props: {
           if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
           resizeFrame = requestAnimationFrame(() => {
             resizeFrame = null;
+            // 收起立即停止同步尺寸，保留后台终端大小，不把退出动画中的零高度写回 Shell。
+            if (!host || host.closest('[inert]') || host.clientHeight === 0) return;
             const proposed = fitAddon.proposeDimensions();
             if (!proposed || (proposed.cols === terminal.cols && proposed.rows === terminal.rows)) return;
             fitAddon.fit();
