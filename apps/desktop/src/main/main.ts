@@ -1087,6 +1087,16 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
     openPath: (path: string) => shell.openPath(path),
     showItemInFolder: (path: string) => shell.showItemInFolder(path),
     writeClipboardText: (text: string) => clipboard.writeText(text),
+    /** 只读取宿主已确认的本机应用图标，失败时由菜单展示通用图标。 */
+    getApplicationIcon: async (path: string) => {
+      try {
+        /** 空图像也按读取失败处理，避免菜单出现破损图片。 */
+        const icon = await app.getFileIcon(path, { size: 'small' });
+        return icon.isEmpty() ? undefined : icon.toDataURL();
+      } catch {
+        return undefined;
+      }
+    },
     openBrowser: async (input: { conversationId: string; url: string }) => {
       if (!browserHost) throw new Error('Zeus BrowserHost is not ready.');
       return browserHost.openConversationResource(requestingWindow, input);

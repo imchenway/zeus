@@ -20,6 +20,10 @@ import { FileTsIcon as FileTs } from '@phosphor-icons/react/dist/csr/FileTs';
 import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
+import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
@@ -583,7 +587,24 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
                           void props.onOpen(target.id);
                         }}
                       >
-                        <span>{localizedTargetLabel(target, props.language)}</span>
+                        <span className="session-open-with-target-label">
+                          {target.iconDataUrl ? (
+                            <img src={target.iconDataUrl} alt="" width={20} height={20} />
+                          ) : target.id.startsWith('terminal:') ? (
+                            <TerminalWindow aria-hidden="true" />
+                          ) : target.id === 'copy_path' || target.id === 'copy_link' ? (
+                            <Copy aria-hidden="true" />
+                          ) : target.id === 'file_manager' ? (
+                            <Folder aria-hidden="true" />
+                          ) : target.id === 'zeus_browser' ? (
+                            <GlobeSimple aria-hidden="true" />
+                          ) : target.id === 'zeus_source' ? (
+                            <FileCode aria-hidden="true" />
+                          ) : (
+                            <AppWindow aria-hidden="true" />
+                          )}
+                          {localizedTargetLabel(target, props.language)}
+                        </span>
                         {target.exactLocation && target.available ? <small>{props.language === 'zh-CN' ? '精确到行' : 'Exact line'}</small> : null}
                       </button>
                     ))
