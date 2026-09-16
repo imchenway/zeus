@@ -10,14 +10,41 @@ import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
 
+/** 终端面板状态持久化存储键前缀。 */
+const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
+
+/** 从本地存储读取终端面板状态。 */
+function readTerminalPanelState(projectId: string): { open: boolean; heightShare: number } {
+  try {
+    const stored = window.localStorage.getItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`);
+    if (!stored) return { open: false, heightShare: 42 };
+    const parsed = JSON.parse(stored);
+    return {
+      open: typeof parsed.open === 'boolean' ? parsed.open : false,
+      heightShare: typeof parsed.heightShare === 'number' ? Math.min(70, Math.max(25, parsed.heightShare)) : 42,
+    };
+  } catch {
+    return { open: false, heightShare: 42 };
+  }
+}
+
+/** 将终端面板状态保存到本地存储。 */
+function saveTerminalPanelState(projectId: string, state: { open: boolean; heightShare: number }): void {
+  try {
+    window.localStorage.setItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`, JSON.stringify(state));
+  } catch {
+    // 忽略存储失败
+  }
+}
+
 /** 命令页入口打开底部停靠面板，沿用浏览器分屏方式，收起不结束后台进程。 */
 export function ProjectTerminalPanel(props: { project: ProjectRecord; client: DashboardClient; language: 'zh-CN' | 'en-US'; dockHost: HTMLDivElement | null }) {
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
-  /** 面板与后台会话的生命周期分开。 */
-  const [open, setOpen] = useState(false);
-  /** 默认占工作区下方四成，上方命令页仍能操作。 */
-  const [heightShare, setHeightShare] = useState(42);
+  /** 面板打开状态按项目ID持久化，切换项目时保持各项目独立状态。 */
+  const [open, setOpen] = useState(() => readTerminalPanelState(props.project.id).open);
+  /** 高度比例按项目ID持久化。 */
+  const [heightShare, setHeightShare] = useState(() => readTerminalPanelState(props.project.id).heightShare);
   /** 收起后把键盘焦点还给入口。 */
   const entryRef = useRef<HTMLButtonElement>(null);
   /** 标签与输出面板的无障碍关联保持唯一。 */
@@ -40,6 +67,19 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   const selected = sessions.find((session) => session.id === selectedId);
   /** 启停结果不能被更早发出的列表读取覆盖。 */
   const revisionRef = useRef(0);
+
+  /** 当项目ID变化时，从持久化存储恢复状态。 */
+  useEffect(() => {
+    const savedState = readTerminalPanelState(props.project.id);
+    setOpen(savedState.open);
+    setHeightShare(savedState.heightShare);
+  }, [props.project.id]);
+
+  /** 持久化打开状态和高度。 */
+  useEffect(() => {
+    saveTerminalPanelState(props.project.id, { open, heightShare });
+  }, [props.project.id, open, heightShare]);
+
   useEffect(() => {
     if (open) selectedTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [open, selectedId]);
@@ -300,203 +340,129 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
   useEffect(() => {
     /** 异步导入、查询和队列都检查卸载状态。 */
     let disposed = false;
-    let terminal: import('@xterm/xterm').Terminal | undefined;
-    let observer: ResizeObserver | undefined;
-    /** 只更新显示主题，不重建终端或改变运行中的 shell。 */
-    let themeObserver: MutationObserver | undefined;
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
-    let unsubscribe: (() => void) | undefined;
-    let pollTimer: number | undefined;
-    let refreshTimer: number | undefined;
-    let loading = false;
-    let offset: number | undefined;
-    let ready = false;
-    let inputFailed = false;
-    /** 同一终端内输入和 resize 不并发，避免租约序号冲突。 */
-    let writes = Promise.resolve();
+    let xterm: Awaited<typeof import('@xterm/xterm')>['Terminal'] | null = null;
+    let fitAddon: Awaited<typeof import('@xterm/addon-fit')>['FitAddon'] | null = null;
+    let webglAddon: Awaited<typeof import('@xterm/addon-webgl')>['WebglAddon'] | null = null;
+    let connectionDispose: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let fitFrame: number | undefined;
+    const queuedInputs: Array<{ data: string; id: number }> = [];
+    let nextInputId = 0;
+    let sending = false;
 
-    /** 写入不确定时停止后续输入，用户重连后根据真实输出决定下一步。 */
-    function send(operation: () => Promise<unknown>): void {
-      writes = writes.then(async () => {
-        if (disposed || inputFailed || !runningRef.current) return;
-        try {
-          await operation();
-        } catch {
-          inputFailed = true;
-          if (!disposed) {
-            terminal!.options.disableStdin = true;
-            setState('input_failed');
-          }
-        }
+    async function connect(): Promise<void> {
+      const [{ Terminal }, { FitAddon }, { WebglAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), import('@xterm/addon-webgl')]);
+      if (disposed) return;
+      xterm = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace",
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#d4d4d4',
+          cursor: '#d4d4d4',
+          selectionBackground: '#264f78',
+        },
+        scrollback: 10000,
       });
-    }
-
-    /** 读取 Zeus 已解析的主题色，同时适配显式主题与跟随系统。 */
-    function applyTheme(): void {
-      if (!terminal || !containerRef.current || disposed) return;
-      const colors = getComputedStyle(containerRef.current);
-      terminal.options.theme = { ...terminal.options.theme, background: colors.backgroundColor, foreground: colors.color, cursor: colors.color, cursorAccent: colors.backgroundColor };
-    }
-
-    /** 从实际字符格测量尺寸，不额外引入适配依赖。 */
-    function resize(): void {
-      if (!terminal || !containerRef.current || !ready || !runningRef.current) return;
-      const screen = containerRef.current.querySelector('.xterm-screen');
-      const bounds = screen?.getBoundingClientRect();
-      if (!bounds?.width || !bounds.height) return;
-      const cols = Math.max(2, Math.floor(containerRef.current.clientWidth / (bounds.width / terminal.cols)));
-      const rows = Math.max(2, Math.floor(containerRef.current.clientHeight / (bounds.height / terminal.rows)));
-      terminal.resize(cols, rows);
-      send(() => props.client.resizeRuntimeSession(props.session.id, { cols, rows }));
-    }
-
-    /** 输出按持久游标追赶，等待 xterm 消化后再取下一页。 */
-    async function refresh(): Promise<void> {
-      if (disposed || loading || !terminal) return;
-      loading = true;
+      fitAddon = new FitAddon();
+      xterm.loadAddon(fitAddon);
       try {
-        if (offset === undefined) {
-          const head = await props.client.loadRuntimeSessionLogsPage(props.session.id, { limit: 1 });
-          if (disposed) return;
-          // ponytail: 重连只回放最近 2000 条；需要无损全屏程序恢复时增加终端屏幕快照。
-          offset = Math.max(0, head.total - 2_000);
-          if (offset > 0) terminal.writeln(props.zh ? '…仅回放最近的终端输出。' : '…Replaying recent terminal output only.');
-        }
-        const page = await props.client.loadRuntimeSessionLogsPage(props.session.id, { offset, limit: 200 });
-        if (disposed) return;
-        const output = page.items
-          .filter((entry) => entry.stream !== 'system')
-          .map((entry) => entry.text)
-          .join('');
-        if (output) await new Promise<void>((resolve) => terminal!.write(output, resolve));
-        if (disposed) return;
-        offset += page.items.length;
-        const caughtUp = offset >= page.total;
-        terminal.options.disableStdin = !caughtUp || !runningRef.current || inputFailed;
-        if (caughtUp && !ready) {
-          ready = true;
-          resize();
-          terminal.focus();
-        }
-        if (!inputFailed) setState(caughtUp ? 'ready' : 'connecting');
-        if (!caughtUp && page.items.length) scheduleRefresh();
+        webglAddon = new WebglAddon();
+        xterm.loadAddon(webglAddon);
       } catch {
-        if (!disposed) {
-          terminal.options.disableStdin = true;
-          if (!inputFailed) setState('disconnected');
-        }
-      } finally {
-        loading = false;
+        // WebGL 不可用时回退到 canvas 渲染
       }
-    }
-
-    /** 合并输出通知；分页追赶也让出浏览器线程。 */
-    function scheduleRefresh(): void {
-      if (disposed || refreshTimer !== undefined) return;
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = undefined;
-        void refresh();
-      }, 50);
-    }
-
-    void import('@xterm/xterm')
-      .then(({ Terminal }) => {
-        if (disposed || !containerRef.current) return;
-        /** 沿用本机 Ghostty 的字体与默认 ANSI 调色板，提示符由用户 shell 主题生成。 */
-        terminal = new Terminal({
-          cursorBlink: true,
-          disableStdin: true,
-          screenReaderMode: true,
-          scrollback: 5_000,
-          rows: 24,
-          cols: 100,
-          fontFamily: '"Sarasa Term SC", "MesloLGS Nerd Font", "SFMono-Regular", monospace',
-          fontSize: 15,
-          /** 浅底下提高 ANSI 字符对比度，保留用户提示符的配色关系。 */
-          minimumContrastRatio: 4.5,
-          theme: {
-            black: '#1d1f21',
-            red: '#cc6666',
-            green: '#b5bd68',
-            yellow: '#f0c674',
-            blue: '#81a2be',
-            magenta: '#b294bb',
-            cyan: '#8abeb7',
-            white: '#c5c8c6',
-            brightBlack: '#666666',
-            brightRed: '#d54e53',
-            brightGreen: '#b9ca4a',
-            brightYellow: '#e7c547',
-            brightBlue: '#7aa6da',
-            brightMagenta: '#c397d8',
-            brightCyan: '#70c0b1',
-            brightWhite: '#eaeaea',
-          },
-        });
-        applyTheme();
-        terminal.open(containerRef.current);
-        /** 跟随现有根节点主题标记和系统偏好，卸载时统一取消订阅。 */
-        themeObserver = new MutationObserver(applyTheme);
-        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-zeus-theme'] });
-        const shell = containerRef.current.closest('.zeus-shell');
-        if (shell) themeObserver.observe(shell, { attributes: true, attributeFilter: ['class'] });
-        systemTheme.addEventListener('change', applyTheme);
-        terminal.textarea?.setAttribute('aria-label', props.zh ? '终端输入' : 'Terminal input');
-        terminal.onData((input) => {
-          if (!terminal!.options.disableStdin) send(() => props.client.sendRuntimeInput(props.session.id, input));
-        });
-        observer = new ResizeObserver(resize);
-        observer.observe(containerRef.current);
-        unsubscribe = props.client.subscribeEvents(
-          (event) => {
-            if (event.payload.sessionId === props.session.id) scheduleRefresh();
-          },
-          (connection) => {
-            if (connection === 'connected') scheduleRefresh();
-            else {
-              terminal!.options.disableStdin = true;
-              if (!inputFailed) setState('disconnected');
-            }
-          },
-        );
-        pollTimer = window.setInterval(() => void refresh(), 1_000);
-        void refresh();
-      })
-      .catch(() => {
-        if (!disposed) setState('disconnected');
+      if (!containerRef.current || disposed) return;
+      xterm.open(containerRef.current);
+      fitAddon.fit();
+      /** 连接终端输出流。 */
+      const {
+        dispose: disposeConnection,
+        sendInput,
+        resize: resizeTerminal,
+      } = await props.client.connectRuntimeTerminal(props.session.id, {
+        onData: (data) => {
+          if (!disposed && xterm) xterm.write(data);
+        },
+        onExit: () => {
+          if (!disposed) setState('disconnected');
+        },
       });
+      if (disposed) {
+        disposeConnection();
+        return;
+      }
+      connectionDispose = disposeConnection;
+      /** 发送输入的有序队列，避免并发打乱顺序。 */
+      function flushQueue(): void {
+        if (sending || queuedInputs.length === 0) return;
+        sending = true;
+        const next = queuedInputs.shift()!;
+        void sendInput(next.data).finally(() => {
+          sending = false;
+          if (!disposed) flushQueue();
+        });
+      }
+      xterm.onData((data) => {
+        if (!runningRef.current) {
+          setState('input_failed');
+          return;
+        }
+        queuedInputs.push({ data, id: nextInputId++ });
+        flushQueue();
+      });
+      /** 终端尺寸变更通过防抖批量发送，避免高频 resize 压垮后端。 */
+      let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+      xterm.onResize(({ cols, rows }) => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (!disposed) void resizeTerminal(cols, rows);
+        }, 100);
+      });
+      /** 容器尺寸变化时重新适配。 */
+      resizeObserver = new ResizeObserver(() => {
+        if (fitAddon && !disposed) {
+          cancelAnimationFrame(fitFrame);
+          fitFrame = window.requestAnimationFrame(() => {
+            if (fitAddon && !disposed) {
+              fitAddon.fit();
+            }
+          });
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+      setState('ready');
+    }
+
+    void connect();
     return () => {
       disposed = true;
-      observer?.disconnect();
-      themeObserver?.disconnect();
-      systemTheme.removeEventListener('change', applyTheme);
-      unsubscribe?.();
-      window.clearInterval(pollTimer);
-      window.clearTimeout(refreshTimer);
-      terminal?.dispose();
+      cancelAnimationFrame(fitFrame);
+      clearTimeout(resizeTimer);
+      resizeObserver?.disconnect();
+      connectionDispose?.dispose();
+      webglAddon?.dispose();
+      fitAddon?.dispose();
+      xterm?.dispose();
     };
-  }, [props.client, props.session.id, props.zh]);
+  }, [props.client, props.session.id, props.session.status]);
 
+  const zh = props.zh;
   return (
-    <>
-      <div className="project-terminal-screen" ref={containerRef} />
-      {state !== 'ready' || props.session.status !== 'running' ? (
-        <p role="status">
-          {state === 'input_failed'
-            ? props.zh
-              ? '输入发送失败，未自动重发。请重新连接并检查终端输出。'
-              : 'Input failed and was not replayed. Reconnect and check the output.'
-            : state === 'disconnected'
-              ? props.zh
-                ? '连接中断，正在重连；暂不可输入。'
-                : 'Disconnected. Reconnecting; input is paused.'
-              : state === 'connecting'
-                ? props.zh
-                  ? '正在连接终端…'
-                  : 'Connecting…'
-                : `${props.zh ? '会话已结束' : 'Session ended'}${props.session.exitCode == null ? '' : ` · ${props.zh ? '退出码' : 'Exit code'} ${props.session.exitCode}`}`}
-        </p>
+    <div className="interactive-terminal-pane">
+      <div ref={containerRef} className="interactive-terminal-container" />
+      {state === 'connecting' ? <div className="interactive-terminal-overlay">{zh ? '正在连接…' : 'Connecting…'}</div> : null}
+      {state === 'disconnected' ? (
+        <div className="interactive-terminal-overlay interactive-terminal-disconnected">
+          <span>{zh ? '会话已结束' : 'Session ended'}</span>
+        </div>
       ) : null}
-    </>
+      {state === 'input_failed' ? (
+        <div className="interactive-terminal-overlay interactive-terminal-input-failed">
+          <span>{zh ? '输入不可用，终端已结束' : 'Input unavailable, terminal ended'}</span>
+        </div>
+      ) : null}
+    </div>
   );
 }
