@@ -36,6 +36,8 @@ export interface ZeusSkillService {
   list(input: { cwd: string; forceReload?: boolean }): Promise<ZeusSkillCatalog>;
   /** 普通 Skill 每轮复制到受管产物目录，元数据和参考文件一起冻结。 */
   freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog>;
+  /** 只读已冻结的技能清单，供历史过程显示当时的名称。 */
+  readFrozen(snapshotId: string): Promise<ZeusSkillCatalog>;
   install(input: { cwd: string; source: ZeusSkillInstallSource }): Promise<{ skill: ZeusSkillDescriptor; installedAt: string }>;
   remove(input: { cwd: string; skillId: string }): Promise<{ removed: true; skillId: string; name: string }>;
   resolve(input: { cwd: string; skillId: string }): Promise<{ id: string; name: string; description: string; path: string }>;
@@ -208,7 +210,20 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
     }
   }
 
-  return { list, freeze, install, remove, resolve: resolveSkill };
+  /** 仅接受受管快照编号，禁止将请求参数作为任意文件路径读取。 */
+  async function readFrozen(snapshotId: string): Promise<ZeusSkillCatalog> {
+    if (typeof snapshotId !== 'string' || !/^[a-f0-9]{64}$/u.test(snapshotId)) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INPUT_INVALID', '技能快照编号无效。');
+    /** 历史展示只读取清单，不重建快照或启动服务。 */
+    const root = options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources');
+    try {
+      return JSON.parse(await readFile(join(root, snapshotId, 'catalog.json'), 'utf8')) as ZeusSkillCatalog;
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_NOT_FOUND', '技能快照已不存在。', 404);
+      throw error;
+    }
+  }
+
+  return { list, freeze, readFrozen, install, remove, resolve: resolveSkill };
 }
 
 async function materializeSource(source: ZeusSkillInstallSource, stagingRoot: string): Promise<string> {

@@ -91,9 +91,11 @@ export function registerCodexPublicCommandRoutes(options: {
 }): void {
   const { server, application } = options;
 
-  server.get('/api/skills', async (request: FastifyRequest<{ Querystring: { projectId?: string; forceReload?: string } }>, reply) => {
+  server.get('/api/skills', async (request: FastifyRequest<{ Querystring: { projectId?: string; forceReload?: string; snapshotId?: string } }>, reply) => {
     if (!options.skills) return unavailable(reply, 'ZEUS_SKILLS_UNAVAILABLE', 'Zeus Skill 管理不可用。');
     try {
+      // 历史名称来自当轮冻结清单，不混入当前安装的技能和插件。
+      if (request.query.snapshotId !== undefined) return await options.skills.readFrozen(request.query.snapshotId);
       const projectId = optionalProjectId(request.query.projectId);
       const forceReload = request.query.forceReload === 'true';
       if (request.query.forceReload !== undefined && request.query.forceReload !== 'true' && request.query.forceReload !== 'false') {
