@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createZeusDataLayout } from '../packages/local-server/src/zeusDataLayout.js';
+import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import {
   expectedBundleIdForDataRootProfile,
   prepareZeusDataRootIdentity,
@@ -96,6 +97,32 @@ try {
     markerAbsent: true,
     sentinel: 'must-survive\n',
   });
+
+  /** 开发目录同样拒绝非空无标记根，但必须提供开发模式可执行的恢复说明。 */
+  const developmentRecovery = rejectionCode(() => {
+    try {
+      claimEmptyRoot(customRoot, 'development');
+    } catch (error) {
+      assert.match((error as Error).message, /ZEUS_USER_DATA_DIR.*新的空目录/u);
+      assert.match((error as Error).message, /ZEUS_TEST_DISPLAY_ID/u);
+      assert.match((error as Error).message, /不支持开发目录/u);
+      /** 跨进程丢失 code 属性后，仍能从消息前缀识别原因，详情保留恢复说明。 */
+      const explanation = describeUserFacingError(new Error(`Error invoking remote method 'zeus:get-local-server-config': Error: ${(error as Error).message}`), 'zh-CN', '启动未能完成，请查看错误详情。');
+      assert.equal(explanation.message, '无法确认本地数据目录的归属，启动已停止。');
+      assert.match(explanation.details, /ZEUS_USER_DATA_DIR/u);
+      assert.equal(describeUserFacingError(error, 'en').message, 'Startup stopped because the local data folder could not be identified.');
+      throw error;
+    }
+  });
+  assert.equal(developmentRecovery, 'ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED');
+  assert.equal(await pathExists(zeusDataRootIdentityPath(customRoot)), false);
+  assert.equal(await readFile(sentinel, 'utf8'), 'must-survive\n');
+  observed.developmentRecovery = developmentRecovery;
+  /** 未识别错误在启动页使用简述，默认调用方仍保留既有原因解释。 */
+  const unknownStartupError = 'unrecognized startup diagnostic /private/tmp/example';
+  assert.equal(describeUserFacingError(unknownStartupError, 'zh-CN', '启动未能完成，请查看错误详情。').message, '启动未能完成，请查看错误详情。');
+  assert.equal(describeUserFacingError(unknownStartupError).message, unknownStartupError);
+  assert.equal(describeUserFacingError(unknownStartupError, 'zh-CN', '启动未能完成，请查看错误详情。').details, unknownStartupError);
 
   const knownLegacyRoot = join(probeRoot, 'known-production-legacy-root');
   await mkdir(knownLegacyRoot, { mode: 0o700 });

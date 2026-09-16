@@ -16,7 +16,8 @@ if [[ "${ZEUS_DEV_SERVER_READY:-}" != "1" ]]; then
   exec node "$ROOT_DIR/apps/desktop/scripts/dev.mjs" "$MODE"
 fi
 DESKTOP_DIR="$ROOT_DIR/apps/desktop"
-ELECTRON_BIN="$(node -p "require('electron')")"
+# 只从独立描述符读取路径；首次下载的标准输出继续作为日志，不能混入可执行文件名。
+ELECTRON_BIN="$(node -e "require('node:fs').writeSync(3, require('electron'))" 3>&1 1>&2)"
 export ZEUS_USER_DATA_DIR="${ZEUS_USER_DATA_DIR:-$ROOT_DIR/.tmp/electron-development-data}"
 export ZEUS_DESKTOP_DIR="$DESKTOP_DIR"
 export ZEUS_PROJECT_ROOT="$ROOT_DIR"
