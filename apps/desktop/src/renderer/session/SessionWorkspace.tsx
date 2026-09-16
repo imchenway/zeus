@@ -1,3 +1,4 @@
+import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
@@ -164,7 +165,7 @@ export interface SessionWorkspaceActions {
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
   onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
-  onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
+  onLoadSkills?: import('../features/codex/codexApiClient.js').CodexApiClient['loadSkills'];
   onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
   /** 任务讨论沿用当前任务的有效配置。 */
   onLoadTaskWorkSettings?: (taskId: string) => Promise<import('@zeus/shared').EmployeeWorkSettings>;
@@ -3065,7 +3066,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       )}
     </section>
   );
-  return <FilePreviewOpenContext.Provider value={props.conversation ? openFilePreview : null}>{workspace}</FilePreviewOpenContext.Provider>;
+  return (
+    <ActivitySkillCatalogContext.Provider value={actions.onLoadSkills}>
+      <FilePreviewOpenContext.Provider value={props.conversation ? openFilePreview : null}>{workspace}</FilePreviewOpenContext.Provider>
+    </ActivitySkillCatalogContext.Provider>
+  );
 }
 
 export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {

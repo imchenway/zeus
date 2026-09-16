@@ -112,7 +112,8 @@ export interface CodexApiClient {
   inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
   importCodexConfig: () => Promise<CodexConfigImportResult>;
   activateCodexConfig: (input?: { syncSubscriptionModels?: boolean }) => Promise<CodexConfigActivationResult>;
-  loadSkills: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
+  /** 历史展示可指定冻结清单；省略时读取当前技能目录。 */
+  loadSkills: (projectId?: string, forceReload?: boolean, snapshotId?: string) => Promise<SkillCatalog>;
   installSkill: (source: SkillInstallSource, projectId?: string) => Promise<SkillInstallResult>;
   removeSkill: (skillId: string, projectId?: string) => Promise<{ removed: true; skillId: string; name: string }>;
   loadPlugins: (projectId?: string) => Promise<import('./codexContracts.js').PluginDescriptor[]>;
@@ -138,6 +139,8 @@ export interface CodexApiClient {
 }
 
 export function createCodexApiClient(transport: LocalApiTransport): CodexApiClient {
+  /** 同一冻结清单共享请求，最多保留最近 64 轮，随客户端连接隔离。 */
+  const frozenSkills = new Map<string, Promise<SkillCatalog>>();
   const loadUsageOverview = async (): Promise<UsageOverviewSnapshot> => {
     try {
       return await transport.request<UsageOverviewSnapshot>('/api/usage-overview');
@@ -380,7 +383,20 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       globalThis.window?.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
       return activation;
     },
-    loadSkills: (projectId, forceReload = false) => {
+    loadSkills: (projectId, forceReload = false, snapshotId) => {
+      if (snapshotId) {
+        /** 冻结清单不可变；失败移除缓存，后续打开仍可重新读取。 */
+        let pending = frozenSkills.get(snapshotId);
+        if (!pending) {
+          pending = transport.request<SkillCatalog>(`/api/skills?snapshotId=${encodeURIComponent(snapshotId)}`).catch((error: unknown) => {
+            frozenSkills.delete(snapshotId);
+            throw error;
+          });
+          if (frozenSkills.size >= 64) frozenSkills.delete(frozenSkills.keys().next().value!);
+          frozenSkills.set(snapshotId, pending);
+        }
+        return pending;
+      }
       const query = new URLSearchParams();
       if (projectId) query.set('projectId', projectId);
       if (forceReload) query.set('forceReload', 'true');
