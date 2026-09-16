@@ -2144,22 +2144,43 @@
 /* 会话终端复用 Runtime PTY；面板只负责可恢复的标签、尺寸与交互呈现。 */
 .session-codex-parity-v1 .session-terminal-panel {
   background: var(--session-canvas);
-  border-block-start: 1px solid var(--session-line);
-  block-size: var(--session-terminal-height, 284px);
+  border-block-start: 0 solid var(--session-line);
+  block-size: 0;
   color: var(--session-text);
   display: flex;
-  flex: 0 0 var(--session-terminal-height, 284px);
+  flex: 0 0 auto;
   flex-direction: column;
   inline-size: 100%;
   max-block-size: 66%;
-  min-block-size: 160px;
+  min-block-size: 0;
   min-inline-size: 0;
+  opacity: 0;
+  overflow: hidden;
   position: relative;
+  /* 沿用浏览器侧栏的尺寸与淡入节奏，正文随底部面板连续让出空间。 */
+  transition:
+    block-size 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 120ms ease-out,
+    visibility 0s linear 180ms;
+  visibility: hidden;
   z-index: 12;
 }
 
-.session-codex-parity-v1 .session-terminal-panel[hidden] {
-  display: none;
+.session-codex-parity-v1 .session-terminal-panel[data-open='true'] {
+  border-block-start-width: 1px;
+  block-size: var(--session-terminal-height, 284px);
+  opacity: 1;
+  transition-delay: 0s;
+  visibility: visible;
+}
+
+/* 首次挂载也从底部展开；后续重开直接接续当前过渡。 */
+@starting-style {
+  .session-codex-parity-v1 .session-terminal-panel[data-open='true'] {
+    border-block-start-width: 0;
+    block-size: 0;
+    opacity: 0;
+  }
 }
 
 .session-codex-parity-v1 .session-terminal-panel button {
@@ -2207,6 +2228,8 @@
 }
 
 .session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] {
+  /* 手动调整高度时立即跟手，与浏览器拖动分隔线一致。 */
+  transition-duration: 0s, 120ms, 0s;
   user-select: none;
 }
 
@@ -9471,7 +9494,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-browser-sidecar {
+  .session-codex-parity-v1 .session-browser-sidecar,
+  .session-codex-parity-v1 .session-terminal-panel {
     transition: none;
   }
 
