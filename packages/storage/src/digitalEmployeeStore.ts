@@ -234,6 +234,16 @@ export interface CreateDigitalEmployeeExecutionInput {
 
 const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTemplateInput & { id: string }> = [
   {
+    id: 'digital_employee_template_cto',
+    name: 'CTO 数字员工',
+    description: '负责研发计划、权限边界、集成取舍与最终汇总。',
+    role: 'CTO',
+    domain: '研发管理',
+    skillIds: [],
+    prompt: '你是 CTO 数字员工。先核对任务事实、代码基线与授权边界，再提交按流程节点绑定的结构化计划；执行结束后只基于已核验成果和命令证据做汇总。',
+    permissionMode: 'read-only',
+  },
+  {
     id: 'digital_employee_template_product',
     name: '产品数字员工',
     description: '分析需求、业务规则、取舍与验收标准。',
@@ -443,6 +453,13 @@ export function migrateDigitalEmployeeSchema(db: ZeusDatabasePort): void {
       '20260909_digital_employee_portraits',
       '数字员工模板和项目员工增加预置头像',
       `sha256:${createHash('sha256').update('digital_employee_templates:avatar_id:text;digital_employees:avatar_id:text').digest('hex')}`,
+      new Date().toISOString(),
+    ]);
+    /** CTO 作为研发流程的默认规划与汇总角色，独立登记且不改写旧迁移。 */
+    db.execute('INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      '20260915_digital_employee_cto_template',
+      '数字团队研发流程增加 CTO 内置角色',
+      `sha256:${createHash('sha256').update('digital_employee_template_cto:read-only').digest('hex')}`,
       new Date().toISOString(),
     ]);
     const timestamp = new Date().toISOString();

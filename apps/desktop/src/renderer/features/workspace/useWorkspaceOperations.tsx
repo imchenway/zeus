@@ -872,6 +872,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   }
 
   function requestWorkspaceLeave(leave: () => void, cancel?: () => void, kind: 'navigation' | 'close' = 'navigation'): void {
+    // 数字团队草稿自行提供保存和重开；导航只负责阻止静默卸载，窗口关闭仍由 beforeunload 保护。
+    if (kind === 'navigation' && document.querySelector('[data-digital-team-dirty="true"]')) {
+      window.dispatchEvent(new Event('zeus:digital-team-unsaved-leave'));
+      cancel?.();
+      return;
+    }
     const pendingKind = pendingWorkspaceLeaveKindRef.current;
     if (pendingKind) {
       // 只保留第一次离开意图；后到的操作收到取消，重复关闭请求则等待第一次关闭响应，不能向 Main 重复回传。
@@ -1656,7 +1662,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   } as CSSProperties;
   const workspaceDrawerPortalStyle = {
     // 会话抽屉避开活动栏与来源列表；其他模式只避开固定活动栏。
-    '--zeus-drawer-sidebar-inline-size': `${activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions' ? projectSidebarWidth + 49 : 49}px`,
+    '--zeus-drawer-sidebar-inline-size': `${activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions' ? projectSidebarWidth + 49 : 49}px`,
   } as CSSProperties;
   const projectDrawerVisualProps = projectPanel === 'config' ? ({ presentation: 'floating', backdrop: 'dimmed', size: 'wide' } as const) : ({ presentation: 'sheet', backdrop: 'dimmed', size: 'wide' } as const);
 

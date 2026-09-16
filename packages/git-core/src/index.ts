@@ -18,6 +18,7 @@ const projectGitExecution = new AsyncLocalStorage<{ signal?: AbortSignal; env?: 
  */
 export const gitMutatingCapabilityNames = [
   'prepareTaskWorktree',
+  'prepareWorkflowCandidate',
   'cleanupPreparedTaskWorktree',
   'refreshConflictTaskWorkspace',
   'fetchGitRemote',
@@ -120,6 +121,44 @@ export interface PreparedTaskWorktree {
   localChangesApplied: boolean;
   /** 原目录完整保留的位置；上层必须记录，不能把残留文件静默当作已恢复的代码。 */
   preservedDirectory?: string;
+}
+
+/** 从冻结代码事实准备数字团队内部候选版本的输入。 */
+export interface PrepareWorkflowCandidateInput {
+  /** 已登记项目仓库或其中任意工作区的路径。 */
+  repositoryPath: string;
+  /** 用于隔离候选工作区目录的项目标识。 */
+  projectSlug: string;
+  /** 当前工作流候选的稳定身份；相同身份只恢复同一物理工作区。 */
+  candidateId: string;
+  /** 仅供当前工作流内部使用的稳定候选分支。 */
+  branchName: string;
+  /** 创建候选分支所依据的冻结提交。 */
+  baseSha: string;
+  /** 按工作流拓扑顺序排列的精确上游交付提交。 */
+  upstreamCommitShas: string[];
+}
+
+/** 数字团队内部候选工作区的可恢复结果。 */
+export interface PreparedWorkflowCandidate {
+  /** 项目真实 Git 根目录。 */
+  topLevel: string;
+  /** 稳定候选 worktree 的绝对路径。 */
+  worktreePath: string;
+  /** 候选 worktree 绑定的本地分支。 */
+  branchName: string;
+  /** 已校验存在的冻结基础提交。 */
+  baseSha: string;
+  /** 已校验存在且保持调用顺序的上游提交。 */
+  upstreamCommitShas: string[];
+  /** 无冲突时的候选提交；冲突现场尚未形成候选提交时为空。 */
+  candidateSha: string | null;
+  /** 候选已经可验证，或仍保留待处理冲突。 */
+  state: 'ready' | 'conflicted';
+  /** 以 Git 原始相对路径返回的未解决冲突文件。 */
+  conflictFiles: string[];
+  /** 是否复用了已经登记的候选分支或 worktree。 */
+  reused: boolean;
 }
 
 export interface TaskWorkspaceReview {
@@ -1188,6 +1227,138 @@ export async function discardTaskWorktree(input: {
   const removedLocalBranch = refreshed.localBranches.includes(input.branchName);
   if (removedLocalBranch) await runGit(context.topLevel, ['branch', '-D', input.branchName]);
   return { branchName: input.branchName, removedWorktree, removedLocalBranch };
+}
+
+/**
+ * 从冻结基础提交创建或恢复数字团队内部候选，并按给定顺序合入精确上游提交。
+ * 该能力只维护独立候选分支和 worktree，不更新目标分支、不推送，也不触发正式交付。
+ */
+export async function prepareWorkflowCandidate(input: PrepareWorkflowCandidateInput): Promise<PreparedWorkflowCandidate> {
+  /** 真实仓库上下文用于约束候选分支和 worktree 身份。 */
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
+  /** 候选分支沿用 Zeus 任务分支命名边界，避免接管普通业务分支。 */
+  const branchName = await assertValidGitBranchName(context.topLevel, input.branchName);
+  /** 候选身份必须生成非空目录段，防止多个无效身份落到同一路径。 */
+  const candidateSegment = safePathSegment(input.candidateId);
+  if (!candidateSegment) throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_ID_INVALID', 'Workflow candidate ID must contain a safe path segment.');
+  /** 基础提交只接受并解析调用方冻结的完整对象 ID。 */
+  const baseSha = await resolveCommit(context.topLevel, requireGitObjectId(input.baseSha, 'workflow candidate base'));
+  /** 上游提交逐项解析为仓库中的真实提交，同时保留调用方给定顺序。 */
+  const upstreamCommitShas = await Promise.all(input.upstreamCommitShas.map((sha, index) => resolveCommit(context.topLevel, requireGitObjectId(sha, `workflow candidate upstream ${index + 1}`))));
+  /** 候选目录完全由仓库、项目和候选身份决定，重启后不会漂移。 */
+  const worktreePath = join(dirname(context.topLevel), '.zeus-worktrees', safePathSegment(input.projectSlug || basename(context.topLevel)), '.workflow-candidates', candidateSegment);
+  /** 同一路径只能属于当前候选分支。 */
+  const registeredByPath = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(worktreePath));
+  /** 同一候选分支只能绑定当前稳定路径。 */
+  const registeredByBranch = context.worktrees.find((entry) => entry.branch === branchName);
+  if (registeredByPath && (registeredByPath.detached || registeredByPath.branch !== branchName)) {
+    throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_WORKTREE_MISMATCH', 'Workflow candidate path is registered to another branch or a detached worktree.');
+  }
+  if (registeredByBranch && canonicalFilesystemPath(registeredByBranch.path) !== canonicalFilesystemPath(worktreePath)) {
+    throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_WORKTREE_MISMATCH', 'Workflow candidate branch is registered at another worktree path.');
+  }
+  /** 已存在的候选分支或登记工作区均视为恢复，不重新创建提交。 */
+  const reused = Boolean(registeredByPath || registeredByBranch || context.localBranches.includes(branchName));
+
+  if (!registeredByPath) {
+    /** 未登记目录只能是不存在或空目录，任何现有文件都原样保留并拒绝接管。 */
+    const existingPath = await lstat(worktreePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (existingPath && (!existingPath.isDirectory() || existingPath.isSymbolicLink() || (await readdir(worktreePath)).length > 0)) {
+      throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_PATH_OCCUPIED', `候选工作目录已有未登记内容，已保留原文件：${worktreePath}`);
+    }
+    /** Git worktree add 要求目标目录不存在；这里只移除已确认的空普通目录。 */
+    if (existingPath) await rm(worktreePath, { recursive: true });
+    await mkdir(dirname(worktreePath), { recursive: true });
+    if (context.localBranches.includes(branchName)) await runGit(context.topLevel, ['worktree', 'add', worktreePath, branchName]);
+    else await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, baseSha]);
+  }
+
+  /** worktree 必须仍附着于持久化候选分支，不能在恢复期间变成游离 HEAD。 */
+  const activeBranch = await requireGitStdout(worktreePath, ['branch', '--show-current']);
+  if (activeBranch !== branchName) throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_BRANCH_MISMATCH', 'Workflow candidate worktree is not attached to its recorded branch.');
+
+  /** 未完成 merge 的另一端必须正好是有序输入中的下一项。 */
+  const mergeHeadSha = await readGitStdout(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (mergeHeadSha) {
+    /** 既有第一父链决定本次应恢复哪一个上游提交。 */
+    const nextIndex = await readWorkflowCandidateProgress(worktreePath, baseSha, upstreamCommitShas);
+    if (nextIndex >= upstreamCommitShas.length || mergeHeadSha !== upstreamCommitShas[nextIndex]) {
+      throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_INPUT_MISMATCH', 'Workflow candidate merge state does not match its frozen upstream commits.');
+    }
+    /** 未解决冲突保持 Git 原始现场，等待显式处理。 */
+    const conflictFiles = await readTaskIntegrationConflictPaths(worktreePath);
+    if (conflictFiles.length > 0) {
+      return { topLevel: context.topLevel, worktreePath, branchName, baseSha, upstreamCommitShas, candidateSha: null, state: 'conflicted', conflictFiles, reused };
+    }
+    /** 冲突已全部暂存后完成原 merge；额外未暂存或未跟踪文件不得混入候选。 */
+    const review = await getTaskWorkspaceReview(worktreePath);
+    if (review.unstagedFiles.length > 0 || review.untrackedFiles.length > 0) {
+      throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_DIRTY', 'Workflow candidate contains changes outside the recorded merge resolution.');
+    }
+    await runGit(worktreePath, ['commit', '--no-edit']);
+  } else if (!(await getGitWorktreeClean(worktreePath))) {
+    throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_DIRTY', 'Workflow candidate contains uncommitted changes outside a recorded merge.');
+  }
+
+  /** 每轮重新读取已完成前缀，既能跳过祖先提交，也能从进程中断点继续。 */
+  let nextIndex = await readWorkflowCandidateProgress(worktreePath, baseSha, upstreamCommitShas);
+  while (nextIndex < upstreamCommitShas.length) {
+    /** 当前轮只合入有序输入中的一个精确提交。 */
+    const upstreamCommitSha = upstreamCommitShas[nextIndex]!;
+    /** 候选已核对内容干净；合并阶段忽略易抖动的亚秒级文件元数据，避免新工作区被 Git 误判为需要 stash。 */
+    await runGitPreservingConflict(worktreePath, ['-c', 'core.checkStat=minimal', '-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', upstreamCommitSha]);
+    /** Git 报冲突时直接返回，绝不自动清理或切换输入。 */
+    const conflictFiles = await readTaskIntegrationConflictPaths(worktreePath);
+    if (conflictFiles.length > 0) {
+      return { topLevel: context.topLevel, worktreePath, branchName, baseSha, upstreamCommitShas, candidateSha: null, state: 'conflicted', conflictFiles, reused };
+    }
+    nextIndex = await readWorkflowCandidateProgress(worktreePath, baseSha, upstreamCommitShas);
+  }
+
+  /** 最终候选 SHA 只来自隔离分支 HEAD，不同步任何目标引用。 */
+  const candidateSha = await resolveCommit(worktreePath, 'HEAD');
+  return { topLevel: context.topLevel, worktreePath, branchName, baseSha, upstreamCommitShas, candidateSha, state: 'ready', conflictFiles: [], reused };
+}
+
+/**
+ * 按第一父链校验候选是否严格由基础提交和有序上游提交生成，并返回下一项输入位置。
+ * 非候选提交、乱序提交或不同输入生成的旧分支都会被拒绝恢复。
+ */
+async function readWorkflowCandidateProgress(cwd: string, baseSha: string, upstreamCommitShas: string[]): Promise<number> {
+  /** 当前候选分支头用于界定已经形成的第一父链。 */
+  const headSha = await resolveCommit(cwd, 'HEAD');
+  if (!(await gitCommitIsAncestor(cwd, baseSha, headSha))) {
+    throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_BASE_MISMATCH', 'Workflow candidate is not based on its frozen base commit.');
+  }
+  /** 正序第一父提交应当逐个对应本能力创建的双亲 merge。 */
+  const firstParentCommits = splitLines(await readGitStdout(cwd, ['rev-list', '--first-parent', '--reverse', `${baseSha}..${headSha}`]));
+  /** 已验证候选链的游标从冻结基础提交开始。 */
+  let cursorSha = baseSha;
+  /** 第一父提交游标与上游输入游标分离，祖先输入不会生成多余提交。 */
+  let historyIndex = 0;
+  for (let upstreamIndex = 0; upstreamIndex < upstreamCommitShas.length; upstreamIndex += 1) {
+    /** 当前有序上游提交必须保持调用方冻结的精确对象身份。 */
+    const upstreamCommitSha = upstreamCommitShas[upstreamIndex]!;
+    if (await gitCommitIsAncestor(cwd, upstreamCommitSha, cursorSha)) continue;
+    /** 第一父链耗尽表示应从当前上游输入继续执行。 */
+    const mergeCommitSha = firstParentCommits[historyIndex];
+    if (!mergeCommitSha) return upstreamIndex;
+    /** 候选 merge 必须只有“前一候选 + 当前精确上游”两个父提交。 */
+    const parents = (await requireGitStdout(cwd, ['show', '-s', '--format=%P', mergeCommitSha])).split(/\s+/u).filter(Boolean);
+    if (parents.length !== 2 || parents[0] !== cursorSha || parents[1] !== upstreamCommitSha) {
+      throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_INPUT_MISMATCH', 'Workflow candidate history does not match its frozen upstream commit order.');
+    }
+    cursorSha = mergeCommitSha;
+    historyIndex += 1;
+  }
+  if (historyIndex !== firstParentCommits.length || cursorSha !== headSha) {
+    throw gitCoreError('ZEUS_WORKFLOW_CANDIDATE_INPUT_MISMATCH', 'Workflow candidate contains commits outside its frozen upstream inputs.');
+  }
+  return upstreamCommitShas.length;
 }
 
 /**

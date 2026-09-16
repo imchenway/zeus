@@ -9,6 +9,7 @@ import { captureTaskWorkEvidence, captureDeploymentCommands } from './taskWorkEv
 import { mergeEmployeeWorkSettings, type EmployeeWorkSettings, type EmployeeWorkStageInput, type EmployeeTeamRecipe } from '@zeus/shared';
 import { LongTermMemoryRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository, TurnChangeSetRepository, ConversationProviderItemRepository, TaskWorkPlanningRepository } from '@zeus/storage';
 import { createHash } from 'node:crypto';
+import { attachDigitalTeamTaskPushPolicy } from './digitalTeamWorkflowExecutionPolicy.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
@@ -95,7 +96,7 @@ type TaskWorkSupplementalAttachmentInput = {
   uploadRef?: string;
 };
 
-export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'existing'; environmentId: string } | { mode: 'local'; branchName: string };
+export type TaskWorkWorkspaceChoice = { mode: 'create' } | { mode: 'direct' } | { mode: 'existing'; environmentId: string } | { mode: 'local'; branchName: string };
 
 export interface TaskWorkPreview {
   previewSha256: string;
@@ -229,6 +230,32 @@ export interface TaskWorkManagementController {
   /** 自动领取只绑定现行安排中的待领分工。 */
   claimPlannedWork(taskId: string, employeeId: string): boolean;
   createAutomatedWorkItem(input: { taskId: string; employeeId: string; sourceRef: string }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
+  /** 数字团队按冻结节点创建工作项，旧自动调度器不会接管此来源。 */
+  createWorkflowWorkItem(input: {
+    taskId: string;
+    employeeId: string;
+    /** 创建运行时冻结的完整员工配置。 */
+    employeeSnapshot: DigitalEmployeeRecord;
+    sourceRef: string;
+    title: string;
+    /** 工作项列表展示的节点目标，不承载完整冻结上下文。 */
+    description: string;
+    /** 发给实际员工的完整冻结输入，独立保存在运行入口快照。 */
+    supplementalInfo: string;
+    workspace: TaskWorkWorkspaceChoice;
+    purpose: 'plan' | 'work' | 'verify' | 'summary';
+    executionMode: 'read_only' | 'isolated_write' | 'candidate_read_only';
+  }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
+  /** 数字团队显式派发已准备运行，并返回耐久会话与提交身份。 */
+  dispatchWorkflowRun(runId: string): Promise<{ run: TaskWorkRunRecord; submissionId: string | null; turnId: string | null }>;
+  /** CTO 汇总和员工返工继续原会话，并返回新的准确提交与轮次。 */
+  continueWorkflowConversation(input: { taskId: string; conversationId: string; content: string; operationIdentity: string }): Promise<{ submissionId: string; turnId: string | null }>;
+  /** 数字团队暂停或返工时停止准确工作项现场。 */
+  stopWorkflowWorkItem(workItemId: string, operationIdentity: string): Promise<void>;
+  /** 结构化结果验真后同步旧工作项投影，不从最终文字生成交付。 */
+  settleWorkflowWorkItem(workRunId: string, outcome: 'succeeded' | 'failed', message?: string): void;
+  /** 运行期绑定数字团队结构化工具，避免初始化循环依赖。 */
+  bindDigitalTeamTools(tools: TaskWorkToolPort): void;
   close(): Promise<void>;
 }
 
@@ -237,6 +264,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let active: Promise<void> | null = null;
   let closed = false;
+  /** 数字团队工具在两个协调器都完成构造后绑定。 */
+  let digitalTeamTools: TaskWorkToolPort | null = null;
 
   const schedule = (delay = tickMs): void => {
     if (closed || timer) return;
@@ -677,6 +706,89 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       kick();
       return created;
     },
+    createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, supplementalInfo, workspace, purpose, executionMode }) => {
+      const replay = options.items.getBySource('manual', sourceRef);
+      if (replay?.currentRunId) {
+        const run = options.runs.getById(replay.currentRunId);
+        if (run) return { item: replay, run };
+      }
+      const task = requireTaskOrThrow(options, taskId);
+      if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
+      const employee = structuredClone(employeeSnapshot);
+      const preview = await resolvePreview(options, task, { employeeId, supplementalInfo, workspace }, employee);
+      if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
+      /** 节点职责随真实 TaskWorkRun 冻结，Provider 权限只能由服务端读取该字段。 */
+      preview.entrypoint = { ...(preview.entrypoint ?? {}), digitalTeamPurpose: purpose, digitalTeamExecutionMode: executionMode };
+      /** 角色顶层授权和 Agent 策略取交集；验证可运行测试，但始终不能改代码或提交。 */
+      preview.authority = {
+        ...preview.authority,
+        allowCodeChanges: preview.authority.allowCodeChanges === true && employee.allowCodeChanges,
+        allowTests: preview.authority.allowTests === true && employee.allowTests,
+        allowCommit: preview.authority.allowCommit === true && employee.deliveryGrants.allowCommit,
+      };
+      if (purpose !== 'work') {
+        preview.authority = {
+          ...preview.authority,
+          permissionMode: purpose === 'verify' ? preview.authority.permissionMode : 'read-only',
+          allowCodeChanges: false,
+          allowTests: purpose === 'verify' && preview.authority.allowTests === true,
+          allowCommit: false,
+        };
+      }
+      const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
+      const itemId = stableIdentity('task_work_item', sourceRef);
+      const created = createWorkItemFromPreview(options, task, employee, preview, itemId, { source: 'manual', sourceRef, title, description }, skillResources);
+      await options.save();
+      publishChanged(options, task.id, created.item.id, 'workflow_created');
+      return created;
+    },
+    dispatchWorkflowRun: async (runId) => {
+      const run = options.runs.getById(runId);
+      const item = run ? options.items.getById(run.workItemId) : undefined;
+      if (!run || !item || !isDigitalTeamWorkItem(item)) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_WORK_RUN_NOT_FOUND', '数字团队工作运行不存在。', 404);
+      if (run.status === 'prepared') options.runs.update(run.id, { status: 'dispatching', startedAt: options.now().toISOString() });
+      const dispatched = await dispatchAgent(options, options.runs.getById(run.id)!, false);
+      const currentItem = options.items.getById(item.id);
+      if (currentItem?.status === 'queued') options.items.update(currentItem.id, { status: 'active' });
+      const submission = dispatched.run.conversationId ? options.conversationSubmissions.listByConversation(dispatched.run.conversationId).find((candidate) => candidate.id === dispatched.submissionId) : undefined;
+      const turn = submission && dispatched.run.conversationId ? options.conversationTurns.listByConversation(dispatched.run.conversationId).find((candidate) => candidate.clientSubmissionId === submission.id) : undefined;
+      return { run: dispatched.run, submissionId: submission?.id ?? null, turnId: turn?.id ?? null };
+    },
+    continueWorkflowConversation: async ({ taskId, conversationId, content, operationIdentity }) => {
+      const task = requireTaskOrThrow(options, taskId);
+      const project = options.projects.getById(task.projectId);
+      const conversation = options.conversations.getById(conversationId);
+      if (!project || !conversation || conversation.taskId !== task.id || conversation.projectId !== project.id) {
+        throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_CONVERSATION_NOT_FOUND', '数字团队原会话不存在或不属于当前任务。', 404);
+      }
+      const accepted = await options.executeTaskConversationIdempotent(project, task, { mode: 'resume', conversationId, content }, operationIdentity);
+      const response = isRecord(accepted.body) ? accepted.body : {};
+      const submissionProjection = isRecord(response.submission) ? response.submission : {};
+      const submissionId = typeof submissionProjection.id === 'string' ? submissionProjection.id : null;
+      if (!submissionId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACCEPTANCE_NOT_DURABLE', '继续会话没有返回耐久提交身份。');
+      const turn = options.conversationTurns.listByConversation(conversationId).find((candidate) => candidate.clientSubmissionId === submissionId);
+      return { submissionId, turnId: turn?.id ?? null };
+    },
+    stopWorkflowWorkItem: async (workItemId, operationIdentity) => {
+      const item = options.items.getById(workItemId);
+      if (!item || !isDigitalTeamWorkItem(item)) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_WORK_ITEM_NOT_FOUND', '数字团队工作项不存在。', 404);
+      await stopWorkItemRuntime(options, item, operationIdentity);
+    },
+    settleWorkflowWorkItem: (workRunId, outcome, message) => {
+      const run = options.runs.getById(workRunId);
+      const item = run ? options.items.getById(run.workItemId) : undefined;
+      if (!run || !item || !isDigitalTeamWorkItem(item)) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_WORK_RUN_NOT_FOUND', '数字团队工作运行不存在。', 404);
+      const completedAt = options.now().toISOString();
+      if (!['succeeded', 'failed'].includes(run.status))
+        options.runs.update(run.id, { status: outcome, completedAt, ...(outcome === 'failed' ? { errorCode: 'ZEUS_DIGITAL_TEAM_RESULT_FAILED', errorMessage: message ?? '数字团队节点结果未通过验真。' } : {}) });
+      const currentItem = options.items.getById(item.id)!;
+      if (currentItem.status === 'queued') options.items.update(currentItem.id, { status: 'active' });
+      const activeItem = options.items.getById(item.id)!;
+      if (!['completed', 'failed', 'cancelled'].includes(activeItem.status)) options.items.update(activeItem.id, { status: outcome === 'succeeded' ? 'completed' : 'failed', completedAt });
+    },
+    bindDigitalTeamTools: (tools) => {
+      digitalTeamTools = tools;
+    },
     close: async () => {
       closed = true;
       if (timer) clearTimeout(timer);
@@ -688,6 +800,11 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   /** 模型工具只在原生轮次绑定的工作内生效，调用方不能传入其他任务身份。 */
   async function invokeWorkTool(call: Parameters<TaskWorkToolPort['invoke']>[0]): ReturnType<TaskWorkToolPort['invoke']> {
     try {
+      /** 结构化计划与结果只由数字团队 attempt 账本判定归属。 */
+      if (call.tool === 'submit_team_plan' || call.tool === 'submit_team_result') {
+        if (!digitalTeamTools) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_TOOL_UNAVAILABLE', '数字团队协调器尚未就绪。');
+        return digitalTeamTools.invoke(call);
+      }
       /** 从原会话及轮次核对工具来源。 */
       const conversation = options.conversations.getRecordById(call.conversationId);
       const turn = options.conversationTurns.listByConversation(call.conversationId).find((candidate) => candidate.providerThreadId === call.threadId && candidate.providerTurnId === call.turnId);
@@ -944,6 +1061,9 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       if (closed) return;
       const current = options.runs.getById(runRecord.id);
       if (!current || options.items.getById(current.workItemId)?.arrangement?.cancellationRequested) continue;
+      /** 数字团队运行由 DAG 协调器依据 node attempt 派发，旧循环不得抢跑或按最终文字收口。 */
+      const currentItem = options.items.getById(current.workItemId);
+      if (currentItem && isDigitalTeamWorkItem(currentItem)) continue;
       try {
         if (current.entrypointKind === 'agent') await processAgentRun(options, current);
         else await processCommandRun(options, current);
@@ -1024,7 +1144,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   }
 }
 
-async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTaskRecord, selection: TaskWorkPreviewSelection): Promise<TaskWorkPreview> {
+async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTaskRecord, selection: TaskWorkPreviewSelection, employeeSnapshot?: DigitalEmployeeRecord): Promise<TaskWorkPreview> {
   /** 保留显式请求，复核预览时不重复追加工作目标。 */
   const requestedSelection = structuredClone(selection);
   /** 对照分工身份解析每一层配置，独立会话不会虚构阶段。 */
@@ -1034,7 +1154,11 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   const stage = planned?.arrangement?.stageId ? plan?.stages.find((candidate) => candidate.id === planned.arrangement!.stageId) : null;
   const effective = mergeEmployeeWorkSettings(plan?.settings, stage?.settings, planned?.arrangement?.settings, { ...selection, workMode: selection.workMode ?? undefined, permissionMode: selection.permissionMode ?? undefined });
   const requiredSkills = stage?.requiredSkillIds ?? [];
-  selection = { ...selection, ...effective, ...(requiredSkills.length ? { skillIds: Array.from(new Set([...(effective.skillIds ?? options.employees.getById(selection.employeeId)?.skillIds ?? []), ...requiredSkills])) } : {}) };
+  selection = {
+    ...selection,
+    ...effective,
+    ...(requiredSkills.length ? { skillIds: Array.from(new Set([...(effective.skillIds ?? employeeSnapshot?.skillIds ?? options.employees.getById(selection.employeeId)?.skillIds ?? []), ...requiredSkills])) } : {}),
+  };
   if (planned) {
     /** 执行输入同步实际成果约束，员工可以知道部署凭证等必要交付内容。 */
     const outputLabels = {
@@ -1075,7 +1199,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     );
   }
   const blockers: TaskWorkPreview['blockers'] = [];
-  const employee = options.employees.getById(selection.employeeId);
+  const employee = employeeSnapshot ?? options.employees.getById(selection.employeeId);
   if (!employee || employee.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
   if (options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') blockers.push({ code: 'ZEUS_TASK_WORK_TASK_TERMINAL', message: '终态任务不能创建新工作项。' });
   if (!employee.enabled) blockers.push({ code: 'ZEUS_DIGITAL_EMPLOYEE_DISABLED', message: '数字员工已停用。' });
@@ -1180,6 +1304,8 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
 
 function resolveTaskWorkWorkspaceSnapshot(choice: TaskWorkWorkspaceChoice | undefined, capabilities: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): TaskWorkWorkspaceSnapshot {
   const repositories = Array.isArray(capabilities.repositories) ? capabilities.repositories.filter(isRecord) : [];
+  /** 规划和汇总只读会话可明确使用项目目录，不提前创建任务分支。 */
+  if (choice?.mode === 'direct') return { mode: 'direct' };
   if (repositories.length === 0) {
     if (choice?.mode === 'existing' || choice?.mode === 'local') blockers.push({ code: 'ZEUS_TASK_WORK_ENVIRONMENT_INVALID', message: '当前任务没有可继续的任务分支。' });
     return { mode: 'direct' };
@@ -1415,7 +1541,7 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
   if (!existing) await captureAgentDeliverable(options, run, conversation.messages);
 }
 
-async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<void> {
+async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, processAttached = true): Promise<{ run: TaskWorkRunRecord; submissionId: string | null }> {
   const task = requireTaskOrThrow(options, run.taskId);
   const project = options.projects.getById(run.projectId);
   if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
@@ -1455,9 +1581,25 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     workspace,
     ...(pluginReferences.length > 0 ? { pluginReferences } : {}),
   };
+  /** Symbol 形式的服务端策略不会从 HTTP JSON 注入，接纳层会再次与任务授权取交集。 */
+  const digitalTeamPurpose = typeof run.entrypointSnapshot.digitalTeamPurpose === 'string' ? run.entrypointSnapshot.digitalTeamPurpose : null;
+  if (digitalTeamPurpose && ['plan', 'work', 'verify', 'summary'].includes(digitalTeamPurpose)) {
+    const workNode = digitalTeamPurpose === 'work' && run.entrypointSnapshot.digitalTeamExecutionMode === 'isolated_write';
+    const verificationNode = digitalTeamPurpose === 'verify' && run.entrypointSnapshot.digitalTeamExecutionMode === 'candidate_read_only';
+    body.permissionMode = (workNode || verificationNode) && authority.permissionMode !== 'read-only' ? authority.permissionMode : 'read-only';
+    attachDigitalTeamTaskPushPolicy(body, {
+      purpose: digitalTeamPurpose as 'plan' | 'work' | 'verify' | 'summary',
+      allowCodeChanges: workNode && authority.allowCodeChanges === true,
+      allowTests: (workNode || verificationNode) && authority.allowTests === true,
+      allowGitCommit: workNode && authority.allowCommit === true,
+    });
+  }
   const accepted = await options.executeTaskConversationIdempotent(project, task, body, `task-work-run:${run.id}`);
   const response = isRecord(accepted.body) ? accepted.body : {};
   const projection = isRecord(response.conversation) ? response.conversation : {};
+  /** 耐久 submission 身份供数字团队绑定准确轮次，普通工作仍可忽略。 */
+  const submissionProjection = isRecord(response.submission) ? response.submission : {};
+  const submissionId = typeof submissionProjection.id === 'string' ? submissionProjection.id : null;
   const conversationId = typeof projection.id === 'string' ? projection.id : null;
   if (!conversationId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACCEPTANCE_NOT_DURABLE', '任务推送没有返回耐久会话身份。');
   const persistedConversation = options.conversations.getById(conversationId);
@@ -1467,7 +1609,8 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   if (workspace.mode === 'direct' && environmentId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ENVIRONMENT_MISMATCH', '项目目录直连会话意外绑定了任务环境。');
   const attached = options.runs.update(run.id, { status: 'active', conversationId, environmentId });
   publishChanged(options, run.taskId, run.workItemId, 'agent_started');
-  await processAgentRun(options, attached);
+  if (processAttached) await processAgentRun(options, attached);
+  return { run: attached, submissionId };
 }
 
 function blockAgentRunForUnknownOutcome(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, code: string, message: string): void {
@@ -2545,6 +2688,10 @@ function isCapabilityModel(value: unknown): value is ConversationCapabilityModel
 }
 function normalizeIdentities(value: unknown[]): string[] {
   return [...new Set(value.map((entry) => requiredText(entry, '身份无效。', 512)))];
+}
+/** 数字团队来源使用稳定前缀隔离，旧线性工作调度器不得接管。 */
+function isDigitalTeamWorkItem(item: TaskWorkItemRecord): boolean {
+  return item.source === 'manual' && item.sourceRef?.startsWith('digital-team:') === true;
 }
 function requiredText(value: unknown, message: string, maximum: number): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > maximum) throw new TaskWorkStoreError('ZEUS_TASK_WORK_INPUT_INVALID', message, 400);

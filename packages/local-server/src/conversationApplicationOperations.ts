@@ -78,6 +78,7 @@ import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import type { ZeusPluginService } from './zeusPluginService.js';
+import { readDigitalTeamTaskPushPolicy } from './digitalTeamWorkflowExecutionPolicy.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 
@@ -3013,6 +3014,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         const executionCwd = taskEnvironment?.cwd ?? project.localPath;
         const skill = taskEnvironment && projectSkill ? await resolveWorkflowSkill(projectSkill.id, executionCwd) : projectSkill;
+        /** 数字团队权限只读取不可序列化的服务端冻结策略，并再次与任务授权取交集。 */
+        const digitalTeamPolicy = readDigitalTeamTaskPushPolicy(body);
+        const digitalTeamWriteNode = digitalTeamPolicy?.purpose === 'work';
+        const digitalTeamVerificationNode = digitalTeamPolicy?.purpose === 'verify';
+        const allowDigitalTeamCodeChanges = Boolean(digitalTeamWriteNode && digitalTeamPolicy.allowCodeChanges && task.allowCodeChanges);
+        const allowDigitalTeamTests = Boolean((digitalTeamWriteNode || digitalTeamVerificationNode) && digitalTeamPolicy?.allowTests && task.allowTests);
+        const allowDigitalTeamGitCommit = Boolean(digitalTeamWriteNode && digitalTeamPolicy.allowGitCommit && task.allowGitCommit);
         moveTaskToPushedManagementStatus(task.id);
         await db.save();
         nativeOperation = await startTaskStageConversation(
@@ -3042,10 +3050,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
                 }
               : {}),
             executionWorkspaceMode: directWorkspace ? 'direct' : 'worktree',
-            writableRoots: taskEnvironment?.writableRoots ?? [project.localPath],
-            allowCodeChanges: false,
-            allowTests: false,
-            allowGitCommit: false,
+            writableRoots: digitalTeamPolicy && !allowDigitalTeamCodeChanges && !allowDigitalTeamTests ? [] : (taskEnvironment?.writableRoots ?? [project.localPath]),
+            allowCodeChanges: allowDigitalTeamCodeChanges,
+            allowTests: allowDigitalTeamTests,
+            allowGitCommit: allowDigitalTeamGitCommit,
             attachments: taskPushAttachments,
             allowedAttachmentRoots: attachmentInput.allowedRoots,
             idempotencyKey,

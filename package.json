@@ -28,6 +28,7 @@
     "verify:execution-host-v2-crash-recovery": "tsx scripts/verify-execution-host-v2-crash-recovery.ts",
     "verify:command-center-command": "tsx scripts/verify-command-center-command-behavior.ts",
     "verify:work-management-command": "tsx scripts/verify-work-management-command-behavior.ts",
+    "verify:digital-team-workflow": "tsx scripts/verify-digital-team-workflow-behavior.ts",
     "verify:runtime-session-command": "tsx scripts/verify-runtime-session-command-behavior.ts",
     "verify:subagent-detail": "tsx scripts/verify-subagent-detail-behavior.ts",
     "verify:conversation-command": "tsx scripts/verify-conversation-command-behavior.ts",

@@ -4,6 +4,7 @@ import { createCommandCenterApiClient, type CommandCenterApiClient } from './fea
 import { createConversationApiClient, type ConversationApiClient } from './features/conversations/conversationApiClient.js';
 import { createDashboardApiClient, type DashboardApiClient } from './features/dashboard/dashboardApiClient.js';
 import { createDigitalEmployeeApiClient, type DigitalEmployeeApiClient } from './features/digital-employees/digitalEmployeeApiClient.js';
+import { createDigitalTeamApiClient, type DigitalTeamApiClient } from './features/digital-teams/digitalTeamApiClient.js';
 import { createGitApiClient, type GitApiClient } from './features/git/gitApiClient.js';
 import { createIntegrationApiClient, type IntegrationApiClient } from './features/integrations/integrationApiClient.js';
 import { createMemoryApiClient, type MemoryApiClient } from './features/memory/memoryApiClient.js';
@@ -22,6 +23,7 @@ export interface DashboardClient
     DashboardApiClient,
     AutomationApiClient,
     DigitalEmployeeApiClient,
+    DigitalTeamApiClient,
     CodexApiClient,
     CommandCenterApiClient,
     ConversationApiClient,
@@ -69,6 +71,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   const automations = createAutomationApiClient(transport);
   const conversations = createConversationApiClient(transport);
   const digitalEmployees = createDigitalEmployeeApiClient(transport);
+  /** 数字团队只组合独立的图模板与运行 API，不扩展旧员工编排语义。 */
+  const digitalTeams = createDigitalTeamApiClient(transport);
   const projects = createProjectApiClient(transport);
   const tasks = createTaskApiClient(transport);
   const git = createGitApiClient(transport, () => currentOptions.projectGitWorkbench);
@@ -85,6 +89,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     settings,
     remoteControl,
     ...digitalEmployees,
+    ...digitalTeams,
     subscribeEvents: createLocalApiEventSubscription({
       transport,
       refreshConnection: refreshConnection ? async () => void (await refreshConnection()) : undefined,

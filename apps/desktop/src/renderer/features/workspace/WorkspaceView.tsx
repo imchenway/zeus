@@ -25,7 +25,7 @@ import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
 import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { Suspense, useEffect, useId, useMemo, useState } from 'react';
 import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
@@ -593,12 +593,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const upstreamMainLayout = appShellSettings.mainLayout === 'upstream';
   const projectWorkspaceNavigationVisible = !upstreamMainLayout && Boolean(selectedProject);
   /** 会话使用项目/会话来源列表；其他模式由各自工作区提供紧邻活动栏的上下文导航。 */
-  const projectSessionSourceListVisible = !upstreamMainLayout && Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
-  const sessionCodexParityVisible = upstreamMainLayout ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' : projectSessionSourceListVisible;
+  const projectSessionSourceListVisible =
+    !upstreamMainLayout && Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
+  const sessionCodexParityVisible = upstreamMainLayout
+    ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
+    : projectSessionSourceListVisible;
 
   return (
     <main
-      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${upstreamMainLayout ? ' main-layout-upstream' : ' main-layout-current'}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${sessionCodexParityVisible ? ' session-codex-parity-v1' : ''}${projectSessionSourceListVisible ? ' project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
+      className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${upstreamMainLayout ? ' main-layout-upstream' : ' main-layout-current'}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'digital-teams' ? ' digital-teams-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${sessionCodexParityVisible ? ' session-codex-parity-v1' : ''}${projectSessionSourceListVisible ? ' project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-main-layout={appShellSettings.mainLayout}
@@ -876,15 +879,30 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
         {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
-          <ProjectStartGuide
-            language={appShellSettings.appLanguage}
-            busy={projectDirectoryChoosing || creatingProjectBusy}
-            available={Boolean(props.onCreateCurrentProject)}
-            onStartTemporary={() => prepareNewConversationDraft(true)}
-            onChooseFolder={() => void chooseProjectDirectoryForCreate()}
-          />
+          <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
         ) : null}
         {activeNavTarget === 'skills' ? <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
+        {activeNavTarget === 'digital-teams' ? (
+          <Suspense
+            fallback={
+              <p className="digital-team-page-loading" role="status">
+                {appShellSettings.appLanguage === 'zh-CN' ? '正在打开数字团队…' : 'Opening digital teams…'}
+              </p>
+            }
+          >
+            <toolPages.digitalTeams
+              client={props.commandClient ?? null}
+              projects={snapshot.projects}
+              initialProjectId={activeProjectId}
+              language={appShellSettings.appLanguage}
+              onOpenConversation={async (projectId, conversationId) => {
+                if (!props.nativeConversationClient) return;
+                const choice = await props.nativeConversationClient.loadNativeConversationChoice(projectId, conversationId);
+                await selectNativeConversation(choice);
+              }}
+            />
+          </Suspense>
+        ) : null}
         {activeNavTarget === 'automations' ? (
           <toolPages.automations
             client={props.commandClient ?? null}
@@ -897,7 +915,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }}
           />
         ) : null}
-        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && selectedProject ? (
+        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
             projects={orderedProjects}
@@ -913,7 +931,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }}
           />
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
               {projectCodeWorkspaceMode === 'source' ? (
@@ -939,7 +957,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
           <section className="workspace-view workspace-view-project-git">
             <ProjectGitWorkbench
               key={selectedProject.id}
@@ -952,7 +970,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && activeProjectSection === 'project-settings' ? (
+        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && activeProjectSection === 'project-settings' ? (
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
@@ -998,7 +1016,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </section>
           </section>
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
+        {activeNavTarget !== 'settings' &&
+        activeNavTarget !== 'skills' &&
+        activeNavTarget !== 'digital-teams' &&
+        activeNavTarget !== 'automations' &&
+        snapshot.projects.length > 0 &&
+        (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
           <section
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
             aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}

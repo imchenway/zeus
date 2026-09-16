@@ -34,6 +34,7 @@ import { migrateTaskWorkReviewSchema } from './taskWorkReviewStore.js';
 import { migrateTaskWorkDeploymentSchema } from './taskWorkDeploymentStore.js';
 import { migrateTaskWorkPlanningSchema } from './taskWorkPlanningStore.js';
 import { migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
+import { migrateDigitalTeamWorkflowSchema } from './digitalTeamWorkflowStore.js';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { type DbCodexUsageLedgerRow, deriveConversationStageProjection, isPlainRecord, ProviderEventReceiptRepository, subtractTokenUsageBreakdown, validateTokenUsageBreakdown } from './conversationStore.js';
 
@@ -67,6 +68,7 @@ export * from './taskWorkStore.js';
 export * from './taskWorkPlanningStore.js';
 export * from './taskWorkReviewStore.js';
 export * from './taskWorkDeploymentStore.js';
+export * from './digitalTeamWorkflowStore.js';
 export * from './projectionDatabaseCandidate.js';
 export * from './projectionDatabaseRuntime.js';
 export * from './recoveryBackup.js';
@@ -1021,6 +1023,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateTaskWorkPlanningSchema(zeusDb);
     migrateTaskWorkReviewSchema(zeusDb);
     migrateTaskWorkDeploymentSchema(zeusDb);
+    migrateDigitalTeamWorkflowSchema(zeusDb);
     migrateDigitalEmployeeLegacyRetirement(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);

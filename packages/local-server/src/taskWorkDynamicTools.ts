@@ -88,6 +88,80 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
             additionalProperties: false,
           },
         },
+        {
+          type: 'function',
+          name: 'submit_team_plan',
+          description: '仅供数字团队当前 CTO 规划节点提交结构化计划。计划必须逐一引用冻结流程中的员工 nodeId，并给出目标、范围、禁止事项和验收标准；本工具只登记当前轮次结果，不能批准计划或启动后继节点。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              summary: { type: 'string', maxLength: 4_000 },
+              assignments: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 64,
+                items: {
+                  type: 'object',
+                  properties: {
+                    nodeId: { type: 'string', maxLength: 256 },
+                    objective: { type: 'string', maxLength: 4_000 },
+                    scope: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
+                    excludedScope: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
+                    acceptanceCriteria: { type: 'array', items: { type: 'string', maxLength: 1_000 }, minItems: 1, maxItems: 64 },
+                    expectedDeliverables: { type: 'array', items: { type: 'string', maxLength: 1_000 }, minItems: 1, maxItems: 64 },
+                  },
+                  required: ['nodeId', 'objective', 'scope', 'excludedScope', 'acceptanceCriteria', 'expectedDeliverables'],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ['summary', 'assignments'],
+            additionalProperties: false,
+          },
+        },
+        {
+          type: 'function',
+          name: 'submit_team_result',
+          description: '仅供数字团队当前节点提交结构化结果。必须如实列出产物、代码提交和验证状态；Core 会在轮次终态后从当前准确轮次生成命令、消息和变化证据并核对代码版本，不能用完成文字代替验真。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              outcome: { type: 'string', enum: ['succeeded', 'failed', 'blocked'] },
+              summary: { type: 'string', maxLength: 4_000 },
+              verification: { type: 'string', enum: ['passed', 'failed', 'not_run'] },
+              repositoryResults: {
+                type: 'array',
+                description: '仅 isolated_write 开发节点填写本节点产生的新提交；只读验证和汇总节点必须传空数组。已验证的候选填写 verifiedCandidates。',
+                maxItems: 64,
+                items: {
+                  type: 'object',
+                  properties: {
+                    repositoryId: { type: 'string', maxLength: 256 },
+                    baseSha: { type: 'string', pattern: '^[0-9a-fA-F]{40,64}$' },
+                    headSha: { type: 'string', pattern: '^[0-9a-fA-F]{40,64}$' },
+                  },
+                  required: ['repositoryId', 'baseSha', 'headSha'],
+                  additionalProperties: false,
+                },
+              },
+              verifiedCandidates: {
+                type: 'array',
+                description: '候选验证节点填写已经验证的当前候选 repositoryId 与 headSha；这不是新代码提交。',
+                maxItems: 64,
+                items: {
+                  type: 'object',
+                  properties: { repositoryId: { type: 'string', maxLength: 256 }, headSha: { type: 'string', pattern: '^[0-9a-fA-F]{40,64}$' } },
+                  required: ['repositoryId', 'headSha'],
+                  additionalProperties: false,
+                },
+              },
+              artifactRefs: { type: 'array', items: { type: 'object', additionalProperties: true }, maxItems: 64 },
+              remainingIssues: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
+            },
+            required: ['outcome', 'summary', 'verification', 'repositoryResults', 'verifiedCandidates', 'artifactRefs', 'remainingIssues'],
+            additionalProperties: false,
+          },
+        },
       ],
     },
   ];

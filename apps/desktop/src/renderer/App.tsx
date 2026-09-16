@@ -102,6 +102,7 @@ function routeFromHash(hash: string | undefined): MainNavTarget {
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
   if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
+  if (target === 'digital-teams') return 'digital-teams';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target.startsWith('settings-')) return 'settings';
   return 'conversations';
