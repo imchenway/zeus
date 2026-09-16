@@ -1,4 +1,4 @@
-import { createAiRuntimeSessionManager, parseModelRef } from '@zeus/ai-runtime';
+import { createAiRuntimeSessionManager, parseModelRef, type AiRuntimeSession } from '@zeus/ai-runtime';
 import {
   buildGitPatchExport,
   buildTaskBranchName,
@@ -90,6 +90,8 @@ export type GitIntegrationOperationDependencies = Record<string, any> & {
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
   runtimeSessions: RuntimeSessionRepository;
+  /** 复用运行管理的跨重启进程清理，任务结束时无需用户另行停止。 */
+  stopPersistedOrphanRuntimeSession(sessionId: string): Promise<AiRuntimeSession | null>;
   /** 创建环境前复验当前目录是否已有完整发现结果。 */
   settings: SettingRepository;
   taskEnvironments: TaskEnvironmentRepository;
@@ -138,6 +140,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     resolveProjectModelServiceTierPlan,
     resolveTaskEnvironmentWritableRoots,
     runtimeSessions,
+    stopPersistedOrphanRuntimeSession,
     sendNativeConversationApiError,
     startNativeTaskConversationFromPlan,
     taskConflictAiOperations,
@@ -832,28 +835,28 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return hasPendingWrite || providerBusy;
   }
 
+  /** 自动完成进程停止和资源回收，让一次任务状态操作直接完成。 */
   async function closeTaskResourcesForTerminalStatus(taskId: string, cleanup: Awaited<ReturnType<typeof inspectTaskTerminalCleanup>>): Promise<void> {
-    const activeRuntimeSessions = cleanup.runtimeSessions.filter((session) => !runtimeSessionIsConfirmedTerminal(session));
-    if (activeRuntimeSessions.length > 0) {
-      const persistedOnly: string[] = [];
-      for (const session of activeRuntimeSessions) {
+    await Promise.all(
+      cleanup.runtimeSessions.map(async (session) => {
+        /** 检查准备清理之后的最新状态，已退出的进程无需再次停止。 */
+        const latest = runtimeSessions.getById(session.id);
+        if (!latest || runtimeSessionIsConfirmedTerminal(latest)) return;
+        /** 当前宿主持有进程时等待现有停止流程，否则复用跨重启清理。 */
         const managed = aiRuntimeManager.getSession(session.id);
         if (!managed) {
-          persistedOnly.push(session.id);
-          continue;
-        }
-        if (managed.status === 'running') {
-          aiRuntimeManager.stopSession(session.id);
-          aiRuntimeManager.killSession(session.id, 'SIGKILL');
-        } else if (managed.status === 'orphan_detected') {
-          aiRuntimeManager.stopSession(session.id);
+          await stopPersistedOrphanRuntimeSession(session.id);
         } else {
-          aiRuntimeManager.killSession(session.id, 'SIGKILL');
+          if (managed.status === 'running' || managed.status === 'orphan_detected') aiRuntimeManager.stopSession(session.id);
+          else if (!runtimeSessionIsConfirmedTerminal(managed)) aiRuntimeManager.killSession(session.id, 'SIGKILL');
+          // 管理器已有温和停止、强制终止和退出确认；等待其完成，不把正常等待当成错误。
+          await aiRuntimeManager.waitForSessionCompletion(session.id, 10_000);
         }
-      }
-      const persistedHint = persistedOnly.length > 0 ? `；以下跨重启会话需先在 Runtime 中单独停止：${persistedOnly.join('、')}` : '';
-      throw nativeApiError('ZEUS_TASK_RUNTIME_CLEANUP_BUSY', `已向活动 Runtime 发出终止请求，请等待进程树进入确认终态后重试任务状态变更${persistedHint}`);
-    }
+        /** 退出确认必须先于工作目录删除，避免仍存活的进程继续写入。 */
+        const stopped = runtimeSessions.getById(session.id);
+        if (stopped && !runtimeSessionIsConfirmedTerminal(stopped)) throw nativeApiError('ZEUS_TASK_RUNTIME_CLEANUP_FAILED', `任务进程 ${session.id} 未能停止，工作目录已保留。`);
+      }),
+    );
 
     let interrupted = 0;
     let cancelled = 0;
