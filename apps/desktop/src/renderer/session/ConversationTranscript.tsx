@@ -447,8 +447,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [navigation.snapshot, liveNavigationEntries]);
   /** 普通发言和已提交答题卡合计至少两次互动才显示刻度，单次互动保留原生滚动。 */
   const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 1);
-  /** 只有接入目录的主会话添加历史占位，其他调用方沿用原列表。 */
-  const turnRows = useMemo(() => (props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows), [baseTurnRows, navigationEntries, props.onLoadNavigation]);
+  /** 失败记录与历史占位一同进入时间线，后续发言不能越过已发生的错误。 */
+  const turnRows = useMemo(
+    () => projectTranscriptFailureRows(props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows, props.state.turnsByProviderId),
+    [baseTurnRows, navigationEntries, props.onLoadNavigation, props.state.turnsByProviderId],
+  );
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
   const navigationKeyByRow = useMemo(() => {
     /** 目录身份同时标记已加载行与未加载占位。 */
@@ -539,12 +542,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     return anchors;
   }, [completionAnchorKeyByTurn, transcriptRows]);
-  const orphanFailedTurns = useMemo(() => {
-    const visibleTurnIds = new Set(transcriptRows.map(transcriptRowTurnId).filter((turnId): turnId is string => Boolean(turnId)));
-    return Object.values(props.state.turnsByProviderId)
-      .filter((turn) => turn.status === 'failed' && turn.error && !visibleTurnIds.has(turn.providerTurnId ?? ''))
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  }, [props.state.turnsByProviderId, transcriptRows]);
   const showActiveStatus = !props.historyOnly && shouldShowTranscriptThinking(props.state, items);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
@@ -991,6 +988,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, []);
 
   const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
+    if (row.kind === 'turn_failure') return <TurnFailureCard failure={row.failure} language={props.language} />;
     if (row.kind === 'navigation_placeholder') return <NavigationHistoryPlaceholder entry={row.entry} language={props.language} onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined} />;
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
@@ -1248,9 +1246,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   : 'Send a message to start a conversation.'}
             </p>
           ) : null}
-          {orphanFailedTurns.map((turn) => (
-            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
-          ))}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showStandaloneActiveStatus && activeStatusKind ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
@@ -1518,7 +1513,58 @@ export interface TranscriptTurnProcessSegment {
 export type TranscriptTurnRow = TranscriptRow | TranscriptTurnWorkRow;
 
 /** 目录补齐尚未读取的发言位置，不伪造一条可编辑或可发送的消息。 */
-type TranscriptViewportRow = TranscriptTurnRow | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry };
+type TranscriptViewportRow =
+  | TranscriptTurnRow
+  | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry }
+  | { kind: 'turn_failure'; key: string; turnId: string; occurredAt: string; failure: NativeTurnFailureSnapshot };
+
+/** 失败属于发生时的会话记录，不依附最后一条消息或整个列表的底部。 */
+export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRow[], turns: NativeSessionState['turnsByProviderId']): TranscriptViewportRow[] {
+  /** 本地与服务端身份可能指向同一轮，失败记录按持久轮次身份去重。 */
+  const failures: Extract<TranscriptViewportRow, { kind: 'turn_failure' }>[] = [...new Map(Object.values(turns).map((turn) => [turn.id, turn])).values()]
+    .filter((turn) => turn.status === 'failed' && turn.error)
+    .map<Extract<TranscriptViewportRow, { kind: 'turn_failure' }>>((turn) => ({
+      kind: 'turn_failure',
+      key: `turn-failure:${turn.id}`,
+      turnId: turn.providerTurnId ?? turn.id,
+      occurredAt: turn.completedAt ?? turn.updatedAt ?? turn.createdAt,
+      failure: turn.error!,
+    }))
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+  /** 顺序归并只插入失败记录，不重排既有消息、过程或历史占位。 */
+  const result: TranscriptViewportRow[] = [];
+  /** 每条失败只消费一次，长历史不会逐轮重复扫描。 */
+  let cursor = 0;
+  for (const row of rows) {
+    /** 结束时间不会被后续流式刷新覆盖，普通记录使用首次进入时间线的时间。 */
+    const occurredAt = transcriptViewportRowTime(row);
+    while (cursor < failures.length) {
+      /** 未被模型接手的后续消息仍属于队尾，即使排队提交早于本轮失败。 */
+      const failure = failures[cursor]!;
+      /** 同轮开场消息不能因缺少原生身份而被误判为下一次待发送消息。 */
+      const pendingAfterFailure = row.kind === 'item' && row.item.optimistic && !row.item.providerItemId && row.item.turnId !== failure.turnId;
+      if (!pendingAfterFailure && (occurredAt < failure.occurredAt || (occurredAt === failure.occurredAt && transcriptTurnRowTurnId(row) === failure.turnId))) break;
+      result.push(failure);
+      cursor += 1;
+    }
+    result.push(row);
+  }
+  result.push(...failures.slice(cursor));
+  return result;
+}
+
+/** 各类可见行共用稳定时间，折叠过程取首条记录，缺页占位取持久发言时间。 */
+function transcriptViewportRowTime(row: TranscriptViewportRow): string {
+  if (row.kind === 'turn_failure') return row.occurredAt;
+  if (row.kind === 'navigation_placeholder') return row.entry.occurredAt;
+  if (row.kind === 'turn_work') {
+    /** 空过程没有可用于提前插入记录的时间。 */
+    const first = row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows])[0];
+    return first ? transcriptViewportRowTime(first) : '';
+  }
+  if (row.kind === 'answered_request') return row.request.resolvedAt ?? row.request.createdAt;
+  return transcriptTimelineAt(row.kind === 'item' ? row.item : row.items[0]!);
+}
 
 /** 真实正文行提供目录所需的身份、状态和短摘录。 */
 function transcriptNavigationEntries(rows: readonly TranscriptTurnRow[], state: NativeSessionState): TranscriptNavigationEntry[] {
@@ -1610,7 +1656,7 @@ function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: read
     /** 过程组以首条记录的时间确定其在用户发言之间的位置。 */
     const first = row.kind === 'turn_work' ? row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows])[0] : row;
     /** 稳定首次时间来自既有投影，不使用流式文本更新时间重排。 */
-    const timestamp = !first ? '' : first.kind === 'answered_request' ? (first.request.resolvedAt ?? first.request.createdAt) : transcriptTimelineAt(first.kind === 'item' ? first.item : first.items[0]!);
+    const timestamp = transcriptViewportRowTime(row);
     /** 持久消息优先比较会话顺序，批量恢复的相同时间不能把后续占位提前。 */
     const sequence = first && first.kind !== 'answered_request' ? (first.kind === 'item' ? first.item : first.items[0])?.payload.v2Sequence : undefined;
     while (cursor < pending.length && (!pending[cursor]!.requestId && typeof sequence === 'number' && sequence > 0 ? pending[cursor]!.sequence < sequence : pending[cursor]!.occurredAt <= timestamp)) {
@@ -1979,7 +2025,6 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
       {changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
         <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
       ) : null}
-      {turn.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} /> : null}
     </>
   );
 }
@@ -2273,7 +2318,7 @@ function defaultExpandedTurnProcessKeys(
 
 function transcriptTurnRowTurnId(row: TranscriptViewportRow): string | null {
   if (row.kind === 'navigation_placeholder') return row.entry.providerTurnId ?? row.entry.turnId;
-  return row.kind === 'turn_work' ? row.turnId : transcriptRowTurnId(row);
+  return row.kind === 'turn_work' || row.kind === 'turn_failure' ? row.turnId : transcriptRowTurnId(row);
 }
 
 function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | undefined): boolean {
