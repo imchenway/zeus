@@ -40,6 +40,41 @@ export function TerminalTabs(props: TerminalTabsProps) {
   const zh = props.language === 'zh-CN';
   /** 选中标签变化后让它进入可视区域。 */
   const selectedRef = useRef<HTMLButtonElement>(null);
+  /** 两个终端入口共用焦点归属和原生关闭动作。 */
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!props.visible) return;
+    /** 面板包含标签与终端输入区，点击任意位置都切换快捷键归属。 */
+    const panel = tabsRef.current?.closest('.session-terminal-panel, .project-terminal');
+    if (!panel) return;
+    /** 记录本面板是否曾取得焦点，避免覆盖其他工作面的通知。 */
+    let active = false;
+    /** 冒泡阶段在会话父容器通知之后更新终端归属。 */
+    const updateActivity = (event?: Event): void => {
+      /** 初次挂载读取当前焦点；后续采用真实事件目标。 */
+      const target = event?.target ?? document.activeElement;
+      /** 仅当前可见面板消费快捷键。 */
+      const next = target instanceof Node && panel.contains(target);
+      if (next || active) window.zeus?.notifyTerminalActivity?.(next);
+      active = next;
+    };
+    document.addEventListener('focusin', updateActivity);
+    document.addEventListener('pointerdown', updateActivity);
+    updateActivity();
+    /** 关闭复用标签按钮的流程和并发门禁。 */
+    const unsubscribe = window.zeus?.onNativeCloseActiveTerminalTab?.(() => {
+      if (!active || props.closeDisabled) return;
+      /** 只关闭当前选中的后台会话。 */
+      const session = props.sessions.find((item) => item.id === props.activeId);
+      if (session) props.onClose(session);
+    });
+    return () => {
+      document.removeEventListener('focusin', updateActivity);
+      document.removeEventListener('pointerdown', updateActivity);
+      unsubscribe?.();
+      if (active) window.zeus?.notifyTerminalActivity?.(false);
+    };
+  }, [props.visible, props.activeId, props.sessions, props.closeDisabled, props.onClose]);
   /** 同目录的多个终端按当前显示顺序编号。 */
   const nameCounts = new Map<string, number>();
   /** 后台状态对应完整的可访问文字。 */
@@ -56,7 +91,7 @@ export function TerminalTabs(props: TerminalTabsProps) {
   }, [props.visible, props.activeId]);
 
   return (
-    <div className="zeus-terminal-tabs" role="tablist" aria-label={zh ? '终端' : 'Terminal'}>
+    <div ref={tabsRef} className="zeus-terminal-tabs" role="tablist" aria-label={zh ? '终端' : 'Terminal'}>
       {props.sessions.map((session, index) => {
         /** 路径最后一段作为短标题，完整路径保留在悬浮提示。 */
         const base =

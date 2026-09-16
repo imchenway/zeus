@@ -7250,10 +7250,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .browser-native-viewport {
-  /* 原生网页尚未覆盖时，占位面仍跟随应用主题。 */
+  /* 原生网页按剩余高度收缩；最小高度会越过终端边界，父层裁切无法约束原生视图。 */
   background: var(--session-canvas);
   flex: 1 1 auto;
-  min-block-size: 120px;
+  min-block-size: 0;
   min-inline-size: 0;
   position: relative;
 }

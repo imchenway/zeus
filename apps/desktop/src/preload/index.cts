@@ -295,6 +295,8 @@ contextBridge.exposeInMainWorld('zeus', {
   notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
   setUnsavedChangeState: (key: string, dirty: boolean) => ipcRenderer.send('zeus:unsaved-change-state', { key, dirty }),
   notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => ipcRenderer.send('zeus:sensitive-request-draft-changed', payload),
+  /** 将终端焦点单独交给主进程路由快捷键。 */
+  notifyTerminalActivity: (active: boolean) => ipcRenderer.send('zeus:terminal-activity-changed', active),
   notifySessionContextActivity: (payload: unknown) => ipcRenderer.send('zeus:session-context-activity-changed', payload),
   notifyAppCloseLayerActivity: (active: boolean) => ipcRenderer.send('zeus:app-close-layer-activity-changed', active),
   resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', { proceed }),
@@ -317,6 +319,13 @@ contextBridge.exposeInMainWorld('zeus', {
     const handler = () => listener();
     ipcRenderer.on('zeus:native-new-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:native-new-conversation', handler);
+  },
+  /** 终端与浏览器使用独立关闭事件，避免一次快捷键关闭两个标签。 */
+  onNativeCloseActiveTerminalTab: (listener: () => void) => {
+    /** 监听主进程菜单分发的关闭动作。 */
+    const handler = () => listener();
+    ipcRenderer.on('zeus:terminal-close-active-tab', handler);
+    return () => ipcRenderer.removeListener('zeus:terminal-close-active-tab', handler);
   },
   onNativeCloseActiveContextTab: (listener: () => void) => {
     const handler = () => listener();

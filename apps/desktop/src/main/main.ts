@@ -99,6 +99,8 @@ const projectGitDiffWindows = new Set<BrowserWindow>();
 const taskGitDeliveryTaskByWindowId = new Map<number, string>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
 type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none';
+/** 终端焦点独立于右侧工作面，离开终端不能清除浏览器或审阅的焦点归属。 */
+const terminalActivityByWindow = new Map<number, boolean>();
 const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
 const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
@@ -895,6 +897,7 @@ async function createWindow(): Promise<void> {
     projectSourceWatchers.delete(sourceWatcherKey);
     mainWindowTaskGitContexts.delete(window.id);
     sessionContextActivityByWindow.delete(window.id);
+    terminalActivityByWindow.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
@@ -971,7 +974,7 @@ function setupMenu(): void {
   );
 }
 
-/** Cmd+W 依次关闭最上层模态层、活动的会话右侧标签和当前 macOS 窗口。 */
+/** Cmd+W 依次关闭最上层模态层、获得焦点的终端或右侧标签，最后才关闭窗口。 */
 function closeFocusedWindowOrContextTab(): void {
   const window = BrowserWindow.getFocusedWindow();
   if (!window || window.isDestroyed()) return;
@@ -980,6 +983,10 @@ function closeFocusedWindowOrContextTab(): void {
     return;
   }
   const contextActivity = sessionContextActivityByWindow.get(window.id);
+  if (terminalActivityByWindow.get(window.id) && !browserHost?.isVisibleTabFocused(window)) {
+    window.webContents.send('zeus:terminal-close-active-tab');
+    return;
+  }
   if (browserHost?.isVisibleTabFocused(window) || contextActivity?.active) {
     window.webContents.send('zeus:session-context-close-active-tab');
     return;
@@ -1710,6 +1717,13 @@ function setupIpc(): void {
     else requestIds.delete(requestId);
     if (requestIds.size > 0) sensitiveRequestDraftIdsByWindow.set(requestingWindow.id, requestIds);
     else sensitiveRequestDraftIdsByWindow.delete(requestingWindow.id);
+  });
+  // 只接收可信主窗口的终端焦点通知，避免影响其他窗口。
+  ipcMain.on('zeus:terminal-activity-changed', (event, active: unknown) => {
+    /** 按 Renderer 所属窗口隔离快捷键归属。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || typeof active !== 'boolean') return;
+    terminalActivityByWindow.set(requestingWindow.id, active);
   });
   ipcMain.on('zeus:session-context-activity-changed', (event, payload: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
