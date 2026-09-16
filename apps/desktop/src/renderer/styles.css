@@ -16249,6 +16249,35 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+/* 新增仓库独立占据内容行并限高，保留文件审查区域的可用高度。 */
+.macos-ai-app .task-git-delivery-content.has-pending-repositories {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+/* 补入是所有仓库共用的正常流程，使用中性提示并允许长路径换行。 */
+.macos-ai-app .task-git-delivery-target-issues.task-git-delivery-pending {
+  max-block-size: 220px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 0 20px 12px;
+  color: inherit;
+  background: var(--zeus-product-panel);
+}
+
+/* 仓库身份与补入动作分列，长分支或相对路径仍能换行。 */
+.macos-ai-app .task-git-delivery-pending-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 名称与分支分行显示，避免紧贴按钮或重复路径。 */
+.macos-ai-app .task-git-delivery-pending-row > span {
+  display: grid;
+  min-inline-size: 0;
+}
+
 .macos-ai-app .task-git-delivery-scopebar {
   display: flex;
   align-items: center;

@@ -410,7 +410,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               </div>
               <div>
                 <dt>{zh ? '远端' : 'Remote'}</dt>
-                <dd>{!activeWorkspaceIndex ? '—' : !activeWorkspaceIndex.remoteName ? (zh ? '纯本地模式' : 'Local-only mode') : `${activeWorkspaceIndex.remoteName}/${activeWorkspaceIndex.remoteBranch}`}</dd>
+                <dd>{!activeWorkspaceIndex ? '—' : !activeWorkspaceIndex.remoteName ? (zh ? '未配置远端' : 'No remote configured') : `${activeWorkspaceIndex.remoteName}/${activeWorkspaceIndex.remoteBranch}`}</dd>
               </div>
               <div>
                 <dt>{zh ? '领先 / 落后' : 'Ahead / behind'}</dt>
@@ -526,7 +526,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               </Button>
             ) : canReclaimUnchanged ? (
               <Button variant="primary" size="regular" busy={busy} onClick={() => void reclaimWithoutCommit()} disabled={busy}>
-                {zh ? '确认无变更并回收' : 'Confirm unchanged and reclaim'}
+                {zh ? '保留本地分支并回收目录' : 'Keep local branch and remove working folder'}
               </Button>
             ) : (
               <Button variant="primary" size="regular" busy={busy} onClick={() => void commit()} disabled={busy || !activeWorkspace || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}>
@@ -557,7 +557,7 @@ function fileStatusLabel(file: TaskGitFileStatus, zh: boolean): string {
 }
 
 function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: TaskWorkspaceSnapshot | undefined, loadState: 'loading' | 'error' | undefined, zh: boolean): string {
-  if (workspace.state === 'reclaimed') return zh ? '已推送 · 独立工作目录已移除' : 'Pushed · separate working folder removed';
+  if (workspace.state === 'reclaimed') return zh ? '本地分支已保留 · 独立工作目录已移除' : 'Local branch preserved · separate working folder removed';
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (loadState === 'loading') return zh ? '正在读取…' : 'Loading…';

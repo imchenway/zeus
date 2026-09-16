@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -108,6 +108,8 @@ export interface PrepareTaskWorktreeInput {
   ignoredPaths?: string[];
   /** 仅恢复已交付或已回收的任务时，允许完整保留失去 Git 登记的残留目录后重建。 */
   preserveUnregisteredDirectory?: boolean;
+  /** 补入新增仓库时只挂接 Git 身份，保留既有普通任务目录的全部文件。 */
+  adoptUnregisteredDirectory?: { nestedPaths: string[] };
 }
 
 export interface PreparedTaskWorktree {
@@ -646,6 +648,9 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   });
   /** 仅普通非空目录可能属于失败回收的残留；符号链接和文件始终拒绝接管。 */
   const occupiedDirectory = existingPath?.isDirectory() && (await readdir(worktreePath)).length > 0;
+  if (occupiedDirectory && input.adoptUnregisteredDirectory && !input.existingBranch) {
+    return adoptTaskDirectory(context, worktreePath, branchName, sourceBranch, sourceHeadSha, input.adoptUnregisteredDirectory.nestedPaths);
+  }
   /** 包括嵌套仓库在内，任何 Git 身份都不能随回收残留移动；递归读取不跟随符号链接。 */
   const containsGitIdentity = occupiedDirectory && input.existingBranch && input.preserveUnregisteredDirectory && (await readdir(worktreePath, { recursive: true, withFileTypes: true })).some((entry) => entry.name === '.git');
   /** Git 仍登记该路径时，即使标记文件丢失，也不能移动另一个分支或游离工作区。 */
@@ -706,6 +711,37 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   } catch (error) {
     if (worktreeCreated) await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath, branchName, removeBranch: !input.existingBranch }).catch(() => undefined);
     if (preservedDirectory) throw new Error(`任务工作区恢复未完成；原目录保留在 ${preservedDirectory}。${commandFailureDetail(error)}`, { cause: error });
+    throw error;
+  }
+}
+
+/** 为已有普通目录挂接独立工作区；只新增 .git 和索引，不检出或覆盖任何业务文件。 */
+async function adoptTaskDirectory(context: GitRepositoryContext, worktreePath: string, branchName: string, sourceBranch: string, sourceHeadSha: string, nestedPaths: string[]): Promise<PreparedTaskWorktree> {
+  if (
+    context.worktrees.some((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(worktreePath)) ||
+    (await readdir(worktreePath, { recursive: true, withFileTypes: true })).some((entry) => entry.name === '.git' && !nestedPaths.some((path) => resolve(worktreePath, requireSafeWorkspacePath(path)) === resolve(entry.parentPath)))
+  ) {
+    throw gitCoreError('ZEUS_TASK_WORKTREE_PATH_OCCUPIED', '任务目录已包含 Git 身份，不能作为普通目录补入。');
+  }
+  /** 临时工作区只建立 Git 元数据，最终目录中的代码始终留在原处。 */
+  const temporaryPath = await mkdtemp(join(dirname(worktreePath), '.zeus-attach-'));
+  /** 挂接后失败必须保留现场，不能用通用回滚删除用户目录或分支。 */
+  let attached = false;
+  /** 只清理本次确实创建的 Git 登记，禁止误删已有同名分支。 */
+  let created = false;
+  try {
+    await runGit(context.topLevel, ['worktree', 'add', '--no-checkout', '-b', branchName, temporaryPath, sourceHeadSha]);
+    created = true;
+    await runGit(temporaryPath, ['read-tree', 'HEAD']);
+    await copyFile(join(temporaryPath, '.git'), join(worktreePath, '.git'), constants.COPYFILE_EXCL);
+    attached = true;
+    await runGit(context.topLevel, ['worktree', 'repair', worktreePath]);
+    await rm(temporaryPath, { recursive: true, force: true });
+    return { topLevel: context.topLevel, worktreePath, branchName, sourceBranch, sourceHeadSha, headSha: sourceHeadSha, reused: false, localChangesApplied: false };
+  } catch (error) {
+    if (attached) throw new Error(`任务目录的原文件已保留；Git 挂接尚未确认完成，请检查 ${worktreePath} 和 ${temporaryPath}。${commandFailureDetail(error)}`, { cause: error });
+    if (created) await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath: temporaryPath, branchName, removeBranch: true });
+    else await rm(temporaryPath, { recursive: true, force: true });
     throw error;
   }
 }
@@ -1141,7 +1177,7 @@ async function pushBranchHead(cwd: string, remoteName: string, remoteBranch: str
   return remoteHeadSha;
 }
 
-/** 仅当 worktree 干净且远端精确包含本地 HEAD 时回收物理目录。 */
+/** 仅当工作区干净且本地命名分支保留完整提交时回收目录；不依赖远端。 */
 export async function reclaimTaskWorktree(input: {
   repositoryPath: string;
   worktreePath: string;
@@ -1153,16 +1189,15 @@ export async function reclaimTaskWorktree(input: {
   const review = await getTaskWorkspaceReview(input.worktreePath, input.ignoredPaths);
   if (!review.clean) throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', 'Task worktree still contains uncommitted changes.');
   const unchanged = review.headSha === input.sourceHeadSha;
-  const remoteHeadSha = unchanged ? null : await readRemoteHead(input.worktreePath, input.remoteName, input.remoteBranch);
-  if (!unchanged && (!remoteHeadSha || remoteHeadSha !== review.headSha)) {
-    throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote branch does not exactly match the task worktree HEAD.');
-  }
   const context = await getGitRepositoryContext(input.repositoryPath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
   if (!registered) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree is not registered in the project repository.');
+  if (!registered.branch || (await getGitBranchHead(context.topLevel, registered.branch)) !== review.headSha) {
+    throw gitCoreError('ZEUS_TASK_LOCAL_BRANCH_UNAVAILABLE', '本地任务分支未完整保留当前提交，不能回收工作目录。');
+  }
   await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
   await rm(input.worktreePath, { recursive: true, force: true });
-  return { headSha: review.headSha, remoteHeadSha, unchanged };
+  return { headSha: review.headSha, remoteHeadSha: null, unchanged };
 }
 
 /** 目标分支已完成交付后回收干净的任务 worktree；任务分支不要求存在远端副本。 */

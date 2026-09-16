@@ -18,6 +18,7 @@ type EmptyInput = Record<string, never>;
 
 export const workspaceGitCommandRoutePolicy = {
   externalOperations: [
+    'POST /api/tasks/:taskId/git-workspaces/attach-repository',
     'POST /api/projects/:projectId/git/workbench/repositories/:repositoryId/actions',
     'POST /api/tasks/:taskId/git-workspaces/commit-all',
     'POST /api/tasks/:taskId/git-workspaces/push-all',
@@ -82,6 +83,16 @@ export function registerWorkspaceGitCommandRoutes(options: {
   sendError(reply: FastifyReply, error: unknown): unknown;
 }): void {
   const { server } = options;
+
+  server.post('/api/tasks/:taskId/git-workspaces/attach-repository', async (request: FastifyRequest<{ Params: TaskParams; Body: WorkspaceGitMutationRequest<{ environmentId: string; repositoryId: string }> }>, reply) =>
+    execute(request, reply, {
+      commandType: workspaceGitCommandTypes.taskRepositoryAttach,
+      scopeKind: 'task',
+      scopeId: request.params.taskId,
+      ids: request.params,
+      allowedInputKeys: ['environmentId', 'repositoryId'],
+    }),
+  );
 
   server.post('/api/projects/:projectId/git/workbench/repositories/:repositoryId/actions', async (request: FastifyRequest<{ Params: ProjectRepositoryParams; Body: WorkspaceGitMutationRequest<Record<string, unknown>> }>, reply) =>
     execute(request, reply, {
