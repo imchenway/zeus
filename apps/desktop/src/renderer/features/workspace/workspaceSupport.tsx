@@ -280,6 +280,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'acknowledgeNativeConversationAttention'
     | 'loadTaskGitWorkspaces'
     | 'loadTaskGitWorkspaceIndex'
+    | 'attachTaskRepository'
     | 'loadTaskGitWorkspaceSnapshot'
     | 'loadTaskWorkspaceFileDiff'
     | 'commitTaskWorkspace'

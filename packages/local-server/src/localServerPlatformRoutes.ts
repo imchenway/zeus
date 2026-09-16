@@ -1,4 +1,5 @@
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
+import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -73,6 +74,7 @@ import {
   type ZeusProjectRecord,
   type ZeusTaskIntegrationAttemptRecord,
   type ZeusTaskRecord,
+  type ZeusTaskEnvironmentRecord,
 } from '@zeus/storage';
 import { type TaskStatus } from './taskCore.js';
 import { createTelegramBotMessageClient, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from './telegramAdapter.js';
@@ -2041,7 +2043,20 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       ...workspace,
       activeConversationCount: countTaskWorkspaceActiveConversations(workspace),
     }));
-    return { taskId: task.id, projectId: project.id, items, workspaces: items };
+    /** 新增仓库按任务环境展示，不因缺少任务工作区记录而从交付页消失。 */
+    const pendingRepositories = taskEnvironments.listByTask(task.id).flatMap((environment: ZeusTaskEnvironmentRecord) => {
+      /** 已关闭环境保留历史成果，不重新扩展其仓库成员。 */
+      const members = taskWorkspaces.listByEnvironment(environment.id);
+      if (!environment.rootPath || environment.state !== 'ready' || !members.some((member) => member.kind !== 'conflict' && member.state !== 'discarded')) return [];
+      return missingTaskRepositories(projectRepositories.listByProject(project.id), members).map((repository) => ({
+        environmentId: environment.id,
+        repositoryId: repository.id,
+        repositoryName: repository.name,
+        relativePath: repository.relativePath,
+        branchName: members.find((member) => member.kind !== 'conflict' && member.state !== 'discarded')?.branchName ?? '',
+      }));
+    });
+    return { taskId: task.id, projectId: project.id, items, workspaces: items, pendingRepositories };
   });
 
   server.get('/api/tasks/:taskId/git-workspaces/:workspaceId/snapshot', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string } }>, reply) => {

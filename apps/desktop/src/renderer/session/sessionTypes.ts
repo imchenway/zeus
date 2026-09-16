@@ -1244,6 +1244,8 @@ export interface TaskWorkspaceIndexSnapshot extends TaskWorkspaceRecord {
 }
 
 export interface TaskWorkspaceIndexCollection {
+  /** 已发现但尚未加入对应任务环境的仓库，所有仓库采用相同补入流程。 */
+  pendingRepositories?: Array<{ environmentId: string; repositoryId: string; repositoryName: string; relativePath: string; branchName: string }>;
   taskId: string;
   projectId: string;
   items: TaskWorkspaceIndexSnapshot[];

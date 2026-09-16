@@ -3,6 +3,8 @@ import { buildRendererCommandRequest, commandInputSha256, randomIdentity, type R
 
 export const workspaceGitClientCommandTypes = {
   workbenchAction: 'git.workbench.repository.action',
+  /** 将项目新增仓库补入既有任务环境，与是否配置远端无关。 */
+  taskRepositoryAttach: 'git.task_repository.attach',
   taskWorkspaceCommitAll: 'git.task_workspace.commit_all',
   taskWorkspacePushAll: 'git.task_workspace.push_all',
   taskWorkspaceCommit: 'git.task_workspace.commit',

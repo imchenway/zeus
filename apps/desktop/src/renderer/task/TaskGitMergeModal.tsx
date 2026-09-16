@@ -26,6 +26,7 @@ import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDoc
 type DeliveryClient = Pick<
   DashboardClient,
   | 'loadTaskGitWorkspaceIndex'
+  | 'attachTaskRepository'
   | 'loadTaskGitWorkspaceSnapshot'
   | 'loadTaskWorkspaceFileDiff'
   | 'commitTaskWorkspace'
@@ -41,7 +42,7 @@ type DeliveryClient = Pick<
 >;
 
 type DiffScope = 'committed' | 'working';
-type BusyAction = 'loading' | 'commit' | 'push' | 'merge' | 'conflict' | 'ai' | null;
+type BusyAction = 'attach' | 'loading' | 'commit' | 'push' | 'merge' | 'conflict' | 'ai' | null;
 
 interface DeliveryFile {
   path: string;
@@ -423,6 +424,23 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       cancelled = true;
     };
   }, [interactionOpen, props.task?.id, props.client, activeConflict?.id, conflictPath, zh]);
+
+  /** 补入成功后从权威索引重载，新增仓库立即复用审查、提交和合入操作。 */
+  async function attachRepository(environmentId: string, repositoryId: string): Promise<void> {
+    if (!props.client || busy) return;
+    setBusyAction('attach');
+    setError(null);
+    try {
+      /** 成功结果给出本次新成员身份，刷新后直接定位该仓库。 */
+      const result = await props.client.attachTaskRepository(props.task.id, { environmentId, repositoryId });
+      await reload(result.workspace.id);
+      await props.onChanged?.();
+    } catch (reason) {
+      setError(errorMessage(reason, zh));
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
     if (!props.task || !props.client) return;
@@ -997,8 +1015,31 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           ) : conflictReadyToFinalize && activeConflict ? (
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />
           ) : (
-            <div className="task-git-delivery-content">
+            <div className={`task-git-delivery-content${workspaceIndex.pendingRepositories?.length ? ' has-pending-repositories' : ''}`}>
               <DeliveryScopeBar selectedRepositories={selectedWorkspaceIds.length} totalRepositories={workspaceIndex.items.length} selectedFiles={selectedCommitFileCount} zh={zh} />
+              {workspaceIndex.pendingRepositories?.length ? (
+                <section className="task-git-delivery-target-issues task-git-delivery-pending" aria-label={zh ? '新增仓库' : 'New repositories'}>
+                  <strong>{zh ? '项目新增仓库' : 'New project repositories'}</strong>
+                  <small>
+                    {zh
+                      ? '补入同一任务分支后即可审查、提交和合入。已有任务目录保留原文件；没有任务目录则带入仓库当前分支及本机修改。'
+                      : 'Attach to the same task branch to review, commit and merge. Existing task files are preserved; a new folder includes the current source branch and local changes.'}
+                  </small>
+                  {workspaceIndex.pendingRepositories.map((repository) => (
+                    <div className="task-git-delivery-pending-row" key={`${repository.environmentId}:${repository.repositoryId}`}>
+                      <span>
+                        <strong>{repository.repositoryName}</strong>
+                        <small>
+                          {repository.branchName} · {repository.relativePath}
+                        </small>
+                      </span>
+                      <Button variant="secondary" size="regular" disabled={busy || props.executionReady === false} onClick={() => void attachRepository(repository.environmentId, repository.repositoryId)}>
+                        {zh ? '补入任务' : 'Attach to task'}
+                      </Button>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
               <div className="task-git-review-layout task-git-delivery-layout">
                 <DeliveryRepositoryFileTree
                   groups={repositoryGroups}

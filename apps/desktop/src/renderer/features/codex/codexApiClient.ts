@@ -56,6 +56,8 @@ export interface CodexApiClient {
     operationIdentity: string;
   }>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
+  /** 原地补入新增仓库，沿用任务开发线并保留已有文件。 */
+  attachTaskRepository: (taskId: string, input: { environmentId: string; repositoryId: string }) => Promise<{ workspace: { id: string } }>;
   loadTaskGitWorkspaceIndex: (taskId: string) => Promise<TaskWorkspaceIndexCollection>;
   loadTaskGitWorkspaceSnapshot: (taskId: string, workspaceId: string) => Promise<TaskWorkspaceSnapshotResponse>;
   loadTaskWorkspaceFileDiff: (
@@ -240,6 +242,12 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
         method: 'POST',
         body: JSON.stringify(body),
       });
+    },
+    /** 使用既有 Git 命令信封补入仓库，连接重发沿用同一身份。 */
+    attachTaskRepository: async (taskId, input) => {
+      /** 固定本次补入的任务、环境和仓库输入。 */
+      const body = await buildWorkspaceGitCommandRequest({ commandType: workspaceGitClientCommandTypes.taskRepositoryAttach, scopeKind: 'task', scopeId: taskId, value: input });
+      return transport.request<{ workspace: { id: string } }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/attach-repository`, { method: 'POST', body: JSON.stringify(body) });
     },
     commitAllTaskWorkspaces: async (taskId, input) => {
       const body = await buildWorkspaceGitCommandRequest({ commandType: workspaceGitClientCommandTypes.taskWorkspaceCommitAll, scopeKind: 'task', scopeId: taskId, value: input });

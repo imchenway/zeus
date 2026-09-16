@@ -61,7 +61,9 @@ import {
 import { type FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, realpath, readlink, unlink, symlink } from 'node:fs/promises';
+import { missingTaskRepositories } from './taskRepositoryMembership.js';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseJsonObject } from './localServerPlatformSupport.js';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
@@ -291,6 +293,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if (environment.state === 'reclaimed') throw nativeApiError('ZEUS_TASK_ENVIRONMENT_CLOSED', 'Reclaimed task environments cannot be selected again.');
       assertTaskEnvironmentWritable(environment);
       const members = taskWorkspaces.listByEnvironment(environment.id);
+      if (missingTaskRepositories(projectRepositories.listByProject(project.id), members).length) {
+        throw nativeApiError('ZEUS_TASK_REPOSITORIES_MISSING', '项目有新增仓库，请在代码交付页补入当前任务后继续。');
+      }
       const restored: Array<{ workspace: ZeusTaskWorkspaceRecord; prepared: Awaited<ReturnType<typeof prepareTaskWorktree>> }> = [];
       try {
         for (const workspace of members) {
@@ -630,6 +635,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const members = taskWorkspaces.listByEnvironment(environment.id);
     if (members.length === 0 || members.some((workspace) => workspace.worktreePath || !['reclaimed', 'merged', 'discarded'].includes(workspace.state))) return;
     const project = projects.getById(environment.projectId);
+    // 新增仓库目录尚未加入成员时保留环境，防止按旧清单删除其文件。
+    if (project && missingTaskRepositories(projectRepositories.listByProject(project.id), members).length) return;
     if (environment.rootPath && project && resolve(environment.rootPath) !== resolve(project.localPath)) {
       rmSync(environment.rootPath, { recursive: true, force: true });
     }
@@ -987,7 +994,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         if (!task || task.projectId !== project.id) workspaceGitReject(404, 'ZEUS_TASK_NOT_FOUND', 'Task not found');
         opaque.taskId = task.id;
       }
-    } else if (input.commandType === workspaceGitCommandTypes.taskWorkspaceCommitAll || input.commandType === workspaceGitCommandTypes.taskWorkspacePushAll) {
+    } else if (input.commandType === workspaceGitCommandTypes.taskRepositoryAttach || input.commandType === workspaceGitCommandTypes.taskWorkspaceCommitAll || input.commandType === workspaceGitCommandTypes.taskWorkspacePushAll) {
       const taskId = requireWorkspaceGitIdentity(input.taskId, 'taskId');
       const task = tasks.getById(taskId);
       if (!task) workspaceGitReject(404, 'ZEUS_TASK_NOT_FOUND', 'Task not found');
@@ -1044,6 +1051,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   async function executeWorkspaceGitCommand(input: { commandType: WorkspaceGitCommandType; operationIdentity: string; prepared: PreparedWorkspaceGitCommand; value: Record<string, unknown> }): Promise<WorkspaceGitRouteExecution> {
     const opaque = input.prepared.opaque as WorkspaceGitPreparedOpaque;
     switch (input.commandType) {
+      case workspaceGitCommandTypes.taskRepositoryAttach:
+        return executeTaskRepositoryAttach(opaque, input.value);
       case workspaceGitCommandTypes.workbenchAction:
         return executeWorkspaceGitWorkbenchAction(opaque, input.value);
       case workspaceGitCommandTypes.taskWorkspaceCommitAll:
@@ -1313,12 +1322,132 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     });
   }
 
+  /** 同一环境补入期间拒绝另一次挂接；结果不明时保留锁直到重启核对。 */
+  const attachingEnvironments = new Set<string>();
+
+  /** 使用既有耐久 Git 命令边界补入仓库，原目录与任务目录各自保留真实内容。 */
+  async function executeTaskRepositoryAttach(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>): Promise<WorkspaceGitRouteExecution> {
+    /** 所有身份只从当前任务及其项目仓库清单解析。 */
+    const task = requirePreparedTask(opaque);
+    /** 任务所属项目决定仓库的允许范围。 */
+    const project = projects.getById(task.projectId)!;
+    /** 客户端只提交已登记环境身份。 */
+    const environmentId = requireWorkspaceGitIdentity(value.environmentId, 'environmentId');
+    /** 客户端只提交已登记仓库身份。 */
+    const repositoryId = requireWorkspaceGitIdentity(value.repositoryId, 'repositoryId');
+    /** 从持久记录确认环境归属与状态。 */
+    const environment = taskEnvironments.getById(environmentId);
+    /** 从项目清单解析真实来源目录。 */
+    const repository = projectRepositories.getById(repositoryId);
+    if (!environment || environment.taskId !== task.id || environment.projectId !== project.id || !environment.rootPath || environment.state !== 'ready')
+      workspaceGitReject(409, 'ZEUS_TASK_ENVIRONMENT_INVALID', '只能向当前任务可用的隔离环境补入仓库。');
+    if (!repository || repository.projectId !== project.id || !isPathInsideRoot(repository.localPath, project.localPath)) workspaceGitReject(404, 'ZEUS_PROJECT_REPOSITORY_NOT_FOUND', '项目仓库不存在或路径已变化。');
+    assertTaskEnvironmentWritable(environment);
+    if (attachingEnvironments.has(environment.id)) workspaceGitReject(409, 'ZEUS_TASK_ENVIRONMENT_BUSY', '任务仓库正在补入，或上次补入结果尚待核对。');
+    /** 已登记的同一真实仓库不重复创建分支。 */
+    const members = taskWorkspaces.listByEnvironment(environment.id);
+    if (!missingTaskRepositories([repository], members).length) return workspaceGitResponse({ workspace: members.find((member) => resolve(member.repositoryPath) === resolve(repository.localPath)) });
+    /** 同一环境沿用现有开发线；不把冲突分支当成普通任务分支。 */
+    const branchName = members.find((member) => member.kind !== 'conflict' && member.state !== 'discarded')?.branchName;
+    if (!branchName) workspaceGitReject(409, 'ZEUS_TASK_ENVIRONMENT_INVALID', '当前环境没有可继续的任务分支。');
+    attachingEnvironments.add(environment.id);
+    /** Git 写出后不自动重试或删除目录，交由耐久命令保留未知结果。 */
+    let writeStarted = false;
+    try {
+      /** 来源只接受项目内真实仓库，且必须已有命名分支和首次提交。 */
+      const context = await getGitRepositoryContext(repository.localPath);
+      if (!context.isRepository || context.detached || !context.headSha || (await realpath(context.topLevel)) !== (await realpath(repository.localPath)))
+        workspaceGitReject(409, 'ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', '请先为仓库建立首次提交并检出一个本地分支。');
+      /** 环境根与最近存在的父目录均复验，拒绝通过符号链接写入原项目或其他任务。 */
+      const root = await realpath(environment.rootPath);
+      /** 任务目录必须位于项目约定的隔离根内。 */
+      const container = await realpath(join(dirname(project.localPath), '.zeus-worktrees'));
+      /** 按项目相对布局定位新增任务工作目录。 */
+      const target = resolve(root, repository.relativePath);
+      if (!isPathInsideRoot(root, container) || (target !== root && !isPathInsideRoot(target, root))) workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_PATH_INVALID', '新增仓库必须位于当前隔离环境内部。');
+      /** 逐级检查最近存在的父目录，防止穿过外部链接。 */
+      let parent = target === root ? root : dirname(target);
+      while (!existsSync(parent) && parent !== root) parent = dirname(parent);
+      if (!isPathInsideRoot(await realpath(parent), root) && (await realpath(parent)) !== root) workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_PATH_INVALID', '仓库父目录指向当前任务以外的位置。');
+      /** 只允许把原仓库的镜像链接替换为隔离目录，其他链接一律拒绝。 */
+      const entry = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      /** 保留原链接目标，失败且目标空缺时可恢复链接。 */
+      const originalLink = entry?.isSymbolicLink() ? await readlink(target) : null;
+      if (originalLink !== null && (await realpath(target)) !== (await realpath(repository.localPath))) workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_PATH_OCCUPIED', '该目录链接到其他位置，不能补入仓库。');
+      if (context.localBranches.includes(branchName)) workspaceGitReject(409, 'ZEUS_TASK_BRANCH_ALREADY_EXISTS', '新增仓库已有同名任务分支，请先核对其归属和上次补入结果。');
+      /** 环境与仓库共同决定稳定身份，与有无远端无关。 */
+      const workspaceId = `task_workspace_${createHash('sha256').update(`${environment.id}\0${repository.id}`).digest('hex').slice(0, 24)}`;
+      writeStarted = true;
+      if (originalLink !== null) await unlink(target);
+      /** 既有普通目录原地挂接；新目录复用已有的本机修改复制能力。 */
+      const prepared = await prepareTaskWorktree({
+        repositoryPath: repository.localPath,
+        repositoryContext: context,
+        projectSlug: project.slug,
+        taskCode: task.taskCode,
+        taskTitle: task.title,
+        workspaceId,
+        branchName: branchName,
+        sourceRef: context.branch,
+        sourceKind: 'local',
+        sourceBranch: context.branch,
+        existingBranch: false,
+        worktreePath: target,
+        adoptUnregisteredDirectory: {
+          nestedPaths: members.filter((member) => member.worktreePath && resolve(member.worktreePath) !== target && isPathInsideRoot(member.worktreePath, target)).map((member) => relative(target, member.worktreePath!)),
+        },
+        includeLocalChanges: !entry || originalLink !== null,
+        ignoredPaths: projectRepositoryIgnoredPaths(project.id, repository.id, repository.localPath),
+      }).catch(async (error: unknown) => {
+        // 挂接失败只在目标仍为空缺时恢复原链接，绝不覆盖已产生的代码或 Git 现场。
+        if (originalLink !== null && !existsSync(target)) await symlink(originalLink, target, 'dir');
+        throw error;
+      });
+      /** 文件操作完成后，业务成员与命令成功凭证在同一事务保存。 */
+      const workspace = {
+        id: workspaceId,
+        projectId: project.id,
+        taskId: task.id,
+        environmentId: environment.id,
+        repositoryId: repository.id,
+        repositoryName: repository.name,
+        repositoryRelativePath: repository.relativePath,
+        repositoryPath: repository.localPath,
+        branchName: prepared.branchName,
+        sourceBranch: prepared.sourceBranch,
+        sourceHeadSha: prepared.sourceHeadSha,
+        remoteName: context.remotes.includes('origin') ? 'origin' : (context.remotes[0] ?? ''),
+        remoteBranch: prepared.branchName,
+        worktreePath: prepared.worktreePath,
+        headSha: prepared.headSha,
+        state: 'ready' as const,
+      };
+      return workspaceGitResponse({ workspace }, 200, () => {
+        taskWorkspaces.create(workspace);
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_workspace.repository_attached',
+          title: `仓库已补入任务：${repository.name}`,
+          payload: { workspaceId, environmentId, repositoryId, worktreePath: target, sourceBranch: context.branch },
+        });
+        attachingEnvironments.delete(environment.id);
+      });
+    } catch (error) {
+      if (!writeStarted) attachingEnvironments.delete(environment.id);
+      throw error;
+    }
+  }
+
   async function executeTaskWorkspaceReclaim(opaque: WorkspaceGitPreparedOpaque): Promise<WorkspaceGitRouteExecution> {
     const { task, project, workspace } = requirePreparedWorkspace(opaque);
     if (!workspace.worktreePath) {
       if (workspace.state === 'reclaimed') return workspaceGitResponse({ workspace });
       workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_UNAVAILABLE', 'Task worktree is not available.');
     }
+    assertNestedTaskWorktreesReclaimed(workspace);
     const result = await reclaimTaskWorktree({
       repositoryPath: workspace.repositoryPath || project.localPath,
       worktreePath: workspace.worktreePath,

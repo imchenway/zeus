@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile, chmod, symlink, lstat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -16,11 +16,24 @@ import {
   ProjectSharedPathRepository,
   TaskRepository,
   TaskWorkspaceRepository,
+  TaskEnvironmentRepository,
   TaskIntegrationRepository,
   TaskIntegrationAttemptRepository,
   type ZeusDatabase,
 } from '../packages/storage/src/index.js';
-import { getTaskWorkspaceReview, prepareWorkflowCandidate, startTaskIntegrationAttempt, writeTaskIntegrationResolution } from '../packages/git-core/src/index.js';
+import {
+  startTaskBranchIntegration,
+  finalizeTaskBranchIntegration,
+  cleanupTaskIntegrationWorktree,
+  discoverGitRepositories,
+  prepareTaskWorktree,
+  reclaimTaskWorktree,
+  getTaskWorkspaceReview,
+  prepareWorkflowCandidate,
+  startTaskIntegrationAttempt,
+  writeTaskIntegrationResolution,
+} from '../packages/git-core/src/index.js';
+import { missingTaskRepositories } from '../packages/local-server/src/taskRepositoryMembership.js';
 import { createGitIntegrationOperations, type GitIntegrationOperationDependencies } from '../packages/local-server/src/gitIntegrationOperations.js';
 import type { TaskWorkspaceConflictRecovery } from '../packages/shared/src/index.js';
 import {
@@ -171,10 +184,11 @@ try {
       '错误 evidence 必须 UTF-8 有界且脱敏。',
     );
     assertProbe(rejectedResult.statusCode === 409 && rejectedAttempt.receipt.outcome === 'explicitly_rejected', '独立危险确认拒绝必须进入 explicitly_rejected。');
-    assertProbe(workspaceGitCommandRoutePolicy.externalOperations.length === 16 && workspaceGitCommandRoutePolicy.automaticRetryAfterUnknown === false, '路由政策必须精确覆盖 16 条且 unknown 不自动重试。');
+    assertProbe(workspaceGitCommandRoutePolicy.externalOperations.length === 17 && workspaceGitCommandRoutePolicy.automaticRetryAfterUnknown === false, '路由政策必须精确覆盖 17 条且 unknown 不自动重试。');
     assertProbe(observed.quickCheck === 'ok', '临时 SQLite quick_check 必须通过。');
     assertProbe(observed.boundaryProbeStartedExternalOperations === false, '前述命令边界场景不能启动外部操作。');
 
+    observed.repositoryAttachment = await verifyRepositoryAttachment(db, application);
     observed.workflowCandidate = await verifyWorkflowCandidate();
     observed.conflictDelivery = await verifyConflictDelivery(db, application, deliveries);
 
@@ -242,6 +256,192 @@ function assertProbe(condition: unknown, message: string): asserts condition {
 }
 
 /** 在临时仓库验证数字团队候选只生成隔离提交，不更新 main 或访问远端。 */
+/** 用真实磁盘、Git 和耐久命令验证本地仓库与带远端仓库采用同一任务交付规则。 */
+async function verifyRepositoryAttachment(db: ZeusDatabase, application: WorkspaceGitCommandApplication) {
+  /** 所有分支、文件与数据库仅存在于探针临时根目录。 */
+  const root = join(probeRoot, 'attachment-project');
+  const environmentRoot = join(probeRoot, '.zeus-worktrees', 'attachment', 'task');
+  const execute = promisify(execFile);
+  /** 禁用外部 Git 配置、签名及钩子，不联系任何网络。 */
+  const git = async (cwd: string, ...args: string[]) =>
+    (
+      await execute('git', ['-c', 'user.name=Zeus Probe', '-c', 'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], {
+        cwd,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+      })
+    ).stdout.trim();
+  const projects = new ProjectRepository(db);
+  const repositories = new ProjectRepositoryRegistrationRepository(db);
+  const tasks = new TaskRepository(db);
+  const environments = new TaskEnvironmentRepository(db);
+  const workspaces = new TaskWorkspaceRepository(db);
+  await mkdir(root, { recursive: true });
+  await mkdir(environmentRoot, { recursive: true });
+  const project = projects.create({ name: '仓库一致性探针', localPath: root });
+  const task = tasks.create({ projectId: project.id, title: '仓库补入', taskType: 'defect', description: '', createdFrom: 'probe', sourceContext: {} });
+  const environment = environments.create({ projectId: project.id, taskId: task.id, rootPath: environmentRoot });
+  const branchName = 'zeus/attachment-task-01';
+  /** 既有目录、有远端的新目录、镜像链接分别覆盖三种补入现场。 */
+  const names = ['baseline', 'local', 'remote', 'linked'];
+  for (const name of names) {
+    const path = join(root, name);
+    await mkdir(path);
+    await git(path, 'init', '-b', 'main');
+    await writeFile(join(path, 'code.txt'), 'base\n');
+    await git(path, 'add', '.');
+    await git(path, 'commit', '-m', '基础');
+    if (name === 'remote') await git(path, 'remote', 'add', 'origin', join(probeRoot, 'unavailable-remote'));
+    if (name !== 'baseline') await writeFile(join(path, 'code.txt'), 'source dirty\n');
+  }
+  const registered = repositories.replaceForProject(
+    project.id,
+    names.map((name) => ({ projectId: project.id, name, relativePath: name, localPath: join(root, name) })),
+  );
+  const baseline = registered.find((repository) => repository.name === 'baseline')!;
+  const prepared = await prepareTaskWorktree({
+    repositoryPath: baseline.localPath,
+    projectSlug: project.slug,
+    taskCode: task.taskCode,
+    taskTitle: task.title,
+    workspaceId: 'baseline',
+    branchName,
+    sourceRef: 'main',
+    sourceKind: 'local',
+    existingBranch: false,
+    worktreePath: join(environmentRoot, 'baseline'),
+  });
+  workspaces.create({
+    projectId: project.id,
+    taskId: task.id,
+    environmentId: environment.id,
+    repositoryId: baseline.id,
+    repositoryName: baseline.name,
+    repositoryRelativePath: baseline.relativePath,
+    repositoryPath: baseline.localPath,
+    ...prepared,
+    remoteName: '',
+    remoteBranch: branchName,
+    state: 'ready',
+  });
+  await mkdir(join(environmentRoot, 'local'));
+  await writeFile(join(environmentRoot, 'local', 'code.txt'), 'task own content\n');
+  await writeFile(join(environmentRoot, 'local', 'untracked.txt'), 'keep me\n');
+  await symlink(join(root, 'linked'), join(environmentRoot, 'linked'), 'dir');
+  const operations = createGitIntegrationOperations({
+    db,
+    projects,
+    tasks,
+    taskEnvironments: environments,
+    taskWorkspaces: workspaces,
+    projectRepositories: repositories,
+    projectSharedPaths: new ProjectSharedPathRepository(db),
+    conversations: new ConversationRepository(db),
+    conversationSubmissions: new ConversationSubmissionRepository(db),
+    recordTaskEvent: () => undefined,
+  } as GitIntegrationOperationDependencies);
+  assertProbe(missingTaskRepositories(registered, workspaces.listByEnvironment(environment.id)).length === 3, '带远端与无远端的新增仓库都必须被发现。');
+  assertProbe((await discoverGitRepositories(root)).length === 4, '仓库发现不能过滤无远端仓库。');
+  for (const name of names.slice(1)) {
+    const repository = registered.find((item) => item.name === name)!;
+    const value = { environmentId: environment.id, repositoryId: repository.id };
+    const identity = `attach-${name}`;
+    const commandType = workspaceGitCommandTypes.taskRepositoryAttach;
+    const request = commandRequest({ label: identity, commandType, scopeKind: 'task', scopeId: task.id, operationIdentity: identity, input: value });
+    const parsed = application.parse({ value: request.body, commandType, scopeKind: 'task', scopeId: task.id });
+    const command = await operations.prepareWorkspaceGitCommand({ commandType, operationIdentity: identity, taskId: task.id, value });
+    let accepted: (() => void) | undefined;
+    /** 同一信封重复发送只读取成功凭证，不能重新挂接。 */
+    let executions = 0;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await application.executeExternal({
+        parsed,
+        ...command,
+        invoke: async () => {
+          executions += 1;
+          const result = await operations.executeWorkspaceGitCommand({ commandType, operationIdentity: identity, prepared: command, value });
+          accepted = result.commitAccepted;
+          return result.response;
+        },
+        mutateAcceptedBusinessState: () => accepted?.(),
+        isExplicitRejection: operations.isWorkspaceGitExplicitRejection,
+      });
+    }
+    assertProbe(executions === 1, '补入命令成功后重复投递不能重放 Git 写入。');
+    const workspace = workspaces.listByEnvironment(environment.id).find((item) => item.repositoryId === repository.id)!;
+    const target = workspace.worktreePath!;
+    assertProbe((await git(target, 'branch', '--show-current')) === branchName, '新增仓库必须沿用原任务分支。');
+    assertProbe((await readFile(join(root, name, 'code.txt'), 'utf8')) === 'source dirty\n', '补入操作不能修改原项目文件。');
+    assertProbe((await readFile(join(target, 'code.txt'), 'utf8')) === (name === 'local' ? 'task own content\n' : 'source dirty\n'), '既有任务内容应保留，新目录应复制本机修改。');
+    if (name === 'linked') assertProbe(!(await lstat(target)).isSymbolicLink(), '镜像链接必须变为独立工作区。');
+    await reclaimTaskWorktree({ repositoryPath: repository.localPath, worktreePath: target, remoteName: workspace.remoteName, remoteBranch: branchName, sourceHeadSha: workspace.sourceHeadSha }).then(
+      () => {
+        throw new Error('脏工作目录不应允许回收。');
+      },
+      (error: unknown) => assertProbe(String(error).includes('uncommitted'), '脏目录必须明确拒绝且保留文件。'),
+    );
+    await git(target, 'add', '.');
+    await git(target, 'commit', '-m', '任务成果');
+    const head = await git(target, 'rev-parse', 'HEAD');
+    const reclaimed = await reclaimTaskWorktree({ repositoryPath: repository.localPath, worktreePath: target, remoteName: workspace.remoteName, remoteBranch: branchName, sourceHeadSha: workspace.sourceHeadSha });
+    assertProbe(!reclaimed.unchanged && reclaimed.headSha === head && (await git(repository.localPath, 'rev-parse', branchName)) === head, '未推送的新提交必须完整保留在本地分支后才允许回收。');
+    const restored = await prepareTaskWorktree({
+      repositoryPath: repository.localPath,
+      projectSlug: project.slug,
+      taskCode: task.taskCode,
+      taskTitle: task.title,
+      workspaceId: workspace.id,
+      branchName,
+      sourceRef: workspace.sourceHeadSha,
+      sourceBranch: 'main',
+      existingBranch: true,
+      worktreePath: target,
+    });
+    assertProbe(restored.headSha === head, '恢复不得依赖远端或回退到来源旧提交。');
+    await git(repository.localPath, 'branch', 'delivery', 'main');
+    /** 合入未检出的本地目标分支，不接触来源目录中的未提交修改。 */
+    const integration = await startTaskBranchIntegration({
+      repositoryPath: repository.localPath,
+      projectSlug: project.slug,
+      integrationId: `attach-${name}`,
+      targetBranch: 'delivery',
+      taskBranch: branchName,
+      mode: 'merge',
+      commitMessage: '本地合入探针',
+    });
+    assertProbe(integration.state === 'ready' && integration.resultHeadSha, '所有仓库均应支持纯本地合入。');
+    await finalizeTaskBranchIntegration({ repositoryPath: repository.localPath, integrationPath: integration.integrationPath, targetBranch: 'delivery', targetHeadSha: integration.targetHeadSha, resultHeadSha: integration.resultHeadSha });
+    assertProbe((await git(repository.localPath, 'rev-parse', 'delivery')) === integration.resultHeadSha, '本地目标分支必须收到任务成果。');
+    await cleanupTaskIntegrationWorktree({ repositoryPath: repository.localPath, integrationPath: integration.integrationPath });
+  }
+  assertProbe(missingTaskRepositories(registered, workspaces.listByEnvironment(environment.id)).length === 0, '补入后任务清单必须完整。');
+  /** 新增父仓库时保留已经登记的嵌套任务仓库，拒绝未知 Git 身份。 */
+  await git(root, 'init', '-b', 'main');
+  await writeFile(join(root, 'root.txt'), 'parent baseline\n');
+  await git(root, 'add', 'root.txt');
+  await git(root, 'commit', '-m', '父仓基础');
+  await writeFile(join(environmentRoot, 'root.txt'), 'parent task\n');
+  const parent = await prepareTaskWorktree({
+    repositoryPath: root,
+    projectSlug: project.slug,
+    taskCode: task.taskCode,
+    taskTitle: task.title,
+    workspaceId: 'parent',
+    branchName,
+    sourceRef: 'main',
+    sourceKind: 'local',
+    existingBranch: false,
+    worktreePath: environmentRoot,
+    adoptUnregisteredDirectory: { nestedPaths: names },
+    ignoredPaths: names,
+  });
+  assertProbe(
+    parent.worktreePath === environmentRoot && (await readFile(join(environmentRoot, 'root.txt'), 'utf8')) === 'parent task\n' && (await git(join(environmentRoot, 'local'), 'branch', '--show-current')) === branchName,
+    '父仓补入不能覆盖已有子仓或任务文件。',
+  );
+
+  return { repositories: names.length, preservedTaskContent: true, sourceUnchanged: true, replayedWithoutWrite: true, reclaimAndRestoreWithoutRemote: true };
+}
+
 async function verifyWorkflowCandidate() {
   /** 临时仓库的 Git 命令隔离用户配置、签名和钩子。 */
   const execute = promisify(execFile);
