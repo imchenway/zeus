@@ -1,7 +1,8 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChatCircleTextIcon as ChatCircleText } from '@phosphor-icons/react/dist/csr/ChatCircleText';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
+import { SlidersHorizontalIcon as SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -219,7 +220,7 @@ export function ResponseSelectionActions(props: {
           aria-expanded={editingId === annotation.id}
           onClick={() => setEditingId(annotation.id)}
         >
-          <ChatCircleText aria-hidden="true" weight="fill" />
+          {index + 1}
         </button>
       ))}
       <MotionPresence>
@@ -240,6 +241,7 @@ export function ResponseSelectionActions(props: {
   );
 }
 
+/** 回答批注沿用浏览器的胶囊编辑框，次要操作收进调整面板。 */
 function ResponseAnnotationEditor(props: {
   /** 供定位逻辑读取实际浮层高度。 */
   editorRef: RefObject<HTMLDivElement | null>;
@@ -250,8 +252,21 @@ function ResponseAnnotationEditor(props: {
   onUpdate?: (id: string, note: string) => void;
   onRemove?: (id: string) => void;
 }) {
+  /** 本地编辑内容在确认后写入会话草稿。 */
   const [note, setNote] = useState(props.annotation?.note ?? '');
+  /** 调整面板保留删除和取消，默认只展示输入与确认。 */
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  /** 多行文字按实际内容增长，避免固定大输入框。 */
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    /** 先恢复单行高度，再测量换行后的实际内容。 */
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = '28px';
+    textarea.style.height = `${Math.min(112, textarea.scrollHeight)}px`;
+  }, [note]);
   useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
+  /** 操作文案与会话语言一致。 */
   const zh = props.language === 'zh-CN';
   return (
     <PopoverSurface
@@ -259,36 +274,43 @@ function ResponseAnnotationEditor(props: {
       popover="manual"
       className="session-response-annotation-editor"
       data-placement={props.point.placement}
+      data-expanded={optionsOpen || note.includes('\n') || undefined}
       style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
       aria-label={zh ? '回答批注' : 'Response annotation'}
     >
-      <header>
-        <strong>{zh ? '添加评论' : 'Add comment'}</strong>
-        <button type="button" onClick={props.onClose} aria-label={zh ? '关闭' : 'Close'}>
-          ×
+      <div className="session-response-annotation-row">
+        <button type="button" aria-label={zh ? '批注选项' : 'Annotation options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
+          <SlidersHorizontal aria-hidden="true" />
         </button>
-      </header>
-      <textarea autoFocus rows={2} value={note} placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
-      <footer>
+        <textarea ref={textareaRef} autoFocus rows={1} value={note} aria-label={zh ? '批注内容' : 'Annotation text'} placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
         <button
           type="button"
-          onClick={() => {
-            props.onRemove?.(props.annotation.id);
-            props.onClose();
-          }}
-        >
-          {zh ? '删除' : 'Delete'}
-        </button>
-        <button
-          type="button"
+          className="session-response-annotation-save"
+          aria-label={zh ? '完成批注' : 'Save annotation'}
           onClick={() => {
             props.onUpdate?.(props.annotation.id, note);
             props.onClose();
           }}
         >
-          {zh ? '完成' : 'Done'}
+          <Check aria-hidden="true" weight="bold" />
         </button>
-      </footer>
+      </div>
+      {optionsOpen ? (
+        <div className="session-response-annotation-options">
+          <button
+            type="button"
+            onClick={() => {
+              props.onRemove?.(props.annotation.id);
+              props.onClose();
+            }}
+          >
+            {zh ? '删除批注' : 'Delete annotation'}
+          </button>
+          <button type="button" onClick={props.onClose}>
+            {zh ? '取消' : 'Cancel'}
+          </button>
+        </div>
+      ) : null}
     </PopoverSurface>
   );
 }
@@ -326,7 +348,7 @@ function annotationEditorPoint(rect: DOMRect, view: Window | null, overlayBounds
   const margin = 12;
   const gap = 10;
   const availableWidth = Math.max(1, overlayBounds.right - overlayBounds.left - margin * 2);
-  const editorWidth = Math.min(300, viewportWidth - margin * 2, availableWidth);
+  const editorWidth = Math.min(296, viewportWidth - margin * 2, availableWidth);
   /** 整个编辑框保留在会话可见区域内，空间不足时内部滚动。 */
   const maxHeight = Math.max(1, overlayBounds.bottom - overlayBounds.top - margin * 2);
   const minimumLeft = overlayBounds.left + margin;

@@ -1693,17 +1693,20 @@
   background: var(--session-control-hover, rgb(0 0 0 / 6%));
 }
 
+/* 与浏览器批注一致：蓝底白边编号、白色胶囊和黑色确认按钮。 */
 .macos-ai-app .session-response-annotation-marker {
   align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  box-shadow: none;
-  color: var(--zeus-brand-text);
+  background: #1689e8;
+  border: 2px solid white;
+  border-radius: 999px;
+  box-shadow: 0 3px 12px rgb(15 23 42 / 24%);
+  color: white;
   cursor: pointer;
   display: flex;
   font:
-    700 10px/1 system-ui,
+    650 11px/1 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
     sans-serif;
   block-size: 24px;
   inline-size: 24px;
@@ -1713,27 +1716,19 @@
   justify-content: center;
   position: absolute;
   transform: translate(5px, -5px);
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    color 120ms ease;
+  transition: box-shadow 120ms ease;
   z-index: 998;
 }
 
-.macos-ai-app .session-response-annotation-marker:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .session-response-annotation-marker:hover:not(:disabled),
 .macos-ai-app .session-response-annotation-marker[aria-expanded='true'] {
-  background: var(--session-control-hover, rgb(0 0 0 / 6%));
+  background: #1689e8;
+  box-shadow: 0 4px 16px rgb(22 137 232 / 38%);
 }
 
-/* 气泡直接表达评论语义，保留完整点击范围。 */
-.session-response-annotation-marker > svg {
-  inline-size: 22px;
-  block-size: 22px;
-}
-
-.session-response-annotation-marker:focus-visible {
-  outline: 2px solid var(--session-focus-outline, var(--session-accent, var(--zeus-brand-primary)));
+.session-response-annotation-marker:focus-visible,
+.session-response-annotation-editor button:focus-visible {
+  outline: 2px solid #0b82f6;
   outline-offset: 2px;
 }
 
@@ -1741,133 +1736,121 @@
   box-sizing: border-box;
   inset: auto;
   margin: 0;
-  background: var(--session-canvas, #fff);
-  border: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
-  border-radius: 10px;
-  box-shadow:
-    0 12px 30px var(--session-shadow, rgb(0 0 0 / 12%)),
-    0 2px 6px var(--session-shadow-soft, rgb(0 0 0 / 8%));
-  color: var(--session-text, #171717);
-  display: grid;
-  gap: 0;
-  inline-size: min(300px, calc(100vw - 24px));
+  background: rgb(255 255 255 / 98%);
+  border: 1px solid rgb(23 23 23 / 10%);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 18%);
+  backdrop-filter: blur(20px);
+  color: #202124;
+  color-scheme: light;
+  font:
+    14px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  inline-size: min(296px, calc(100vw - 24px));
   overflow: auto;
-  padding: 0;
+  padding: 4px 5px;
   position: fixed;
   z-index: 1001;
+}
+
+.session-response-annotation-editor[data-expanded='true'] {
+  border-radius: 20px;
 }
 
 .session-response-annotation-editor[data-placement='above'] {
   transform: translateY(-100%);
 }
 
-.session-response-annotation-editor header,
-.session-response-annotation-editor footer {
+.session-response-annotation-row {
   align-items: center;
   display: flex;
-  justify-content: space-between;
+  gap: 3px;
+  min-block-size: 36px;
 }
 
-.session-response-annotation-editor header {
-  padding: 7px 7px 7px 10px;
-}
-
-.session-response-annotation-editor header strong {
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 17px;
-}
-
-/* 批注输入区自行管理边框与留白，避免通用表单圆角、投影覆盖后贴住弹层边缘。 */
-.macos-ai-app.zeus-shell .session-response-annotation-editor > textarea {
+/* 显式覆盖通用输入样式，保持浏览器同款无边框文本区。 */
+.macos-ai-app.zeus-shell .session-response-annotation-row > textarea {
   background: transparent;
-  border: 1px solid var(--session-line-soft, var(--session-line, rgb(0 0 0 / 10%)));
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
   box-sizing: border-box;
-  color: inherit;
+  color: #202124;
+  flex: 1 1 auto;
   font: inherit;
-  font-size: 13px;
-  inline-size: auto;
-  line-height: 18px;
-  margin: 8px 10px 0;
-  max-block-size: 120px;
-  min-block-size: 62px;
+  inline-size: 100%;
+  margin: 0;
+  max-block-size: 112px;
+  min-block-size: 28px;
   min-inline-size: 0;
   outline: 0;
-  padding: 8px 9px;
-  resize: vertical;
+  overflow-y: auto;
+  padding: 4px 5px;
+  resize: none;
 }
 
-/* 聚焦沿用主题焦点色，只加深单层边线，不绘制外扩光圈。 */
-.macos-ai-app.zeus-shell .session-response-annotation-editor > textarea:focus-visible {
-  border-color: var(--session-focus-outline, var(--session-text-muted, #60656f));
-  box-shadow: none;
-  outline: 0;
-}
-
-/* 系统强制配色时用内收轮廓保留焦点辨识，不越出输入区。 */
-@media (forced-colors: active) {
-  .macos-ai-app.zeus-shell .session-response-annotation-editor > textarea:focus-visible {
-    outline: 1px solid Highlight;
-    outline-offset: -2px;
-  }
+.session-response-annotation-row > textarea::placeholder {
+  color: #8b8b8b;
 }
 
 .session-response-annotation-editor button {
   appearance: none;
+  align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
-  color: inherit;
+  border-radius: 999px;
+  color: #737373;
   cursor: pointer;
-  font-size: 11px;
-  min-block-size: 26px;
-  padding-inline: 7px;
-}
-
-.session-response-annotation-editor footer {
-  gap: 4px;
-  justify-content: flex-end;
-  padding: 7px 8px;
-}
-
-.session-response-annotation-editor footer > button:first-child {
-  color: var(--session-text-muted, #60656f);
-  margin-inline-end: auto;
-}
-
-.session-response-annotation-editor footer > button:last-child {
-  background: var(--zeus-product-accent);
-  color: white;
-  font-weight: 650;
-  padding-inline: 10px;
-}
-
-.session-response-annotation-editor button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--session-control-hover, rgb(0 0 0 / 6%));
-}
-
-.session-response-annotation-editor footer > button:first-child:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--session-danger, #c43d3d) 9%, transparent);
-  color: var(--session-danger, #c43d3d);
-}
-
-.session-response-annotation-editor footer > button:last-child:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-interaction-primary-hover);
-  color: white;
-}
-
-.session-response-annotation-editor button:focus-visible {
-  outline: 2px solid var(--session-focus-outline, var(--session-accent, var(--zeus-brand-primary)));
-  outline-offset: 1px;
-}
-
-.session-response-annotation-editor header > button {
-  color: var(--session-text-muted, #60656f);
-  font-size: 17px;
-  inline-size: 26px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  block-size: 30px;
+  inline-size: 30px;
+  min-block-size: 30px;
+  justify-content: center;
   padding: 0;
+}
+
+.session-response-annotation-editor button > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.session-response-annotation-editor button:hover:not(:disabled) {
+  background: rgb(0 0 0 / 6%);
+  color: #202124;
+}
+
+.session-response-annotation-editor .session-response-annotation-save {
+  background: #181818;
+  color: white;
+}
+
+.session-response-annotation-editor .session-response-annotation-save:hover:not(:disabled) {
+  background: #000;
+  color: white;
+}
+
+/* 次要操作按需展开，保留原有删除和取消能力。 */
+.session-response-annotation-options {
+  border-top: 1px solid rgb(32 33 36 / 10%);
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 5px 5px;
+  padding-top: 6px;
+}
+
+.session-response-annotation-options > button {
+  inline-size: auto;
+  padding-inline: 8px;
+}
+
+@media (forced-colors: active) {
+  .macos-ai-app.zeus-shell .session-response-annotation-row > textarea:focus-visible {
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 /* 评论和回答注释共享一个输入框上下文胶囊，发送后仍可在用户消息中辨认。 */
@@ -12134,8 +12117,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 /* 主提交控件的按下反馈保持品牌色和白字对比。 */
 .session-codex-parity-v1 .session-user-message-editor > footer .session-user-message-editor-submit:active:not(:disabled),
-.session-codex-parity-v1 .session-rui-inline-actions button[type='submit']:active:not(:disabled),
-.session-response-annotation-editor footer > button:last-child:active:not(:disabled) {
+.session-codex-parity-v1 .session-rui-inline-actions button[type='submit']:active:not(:disabled) {
   background: var(--zeus-interaction-primary-pressed);
   color: white;
 }
