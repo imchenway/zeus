@@ -3123,6 +3123,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const gitIntegrationOperations = createGitIntegrationOperations({
     settings,
     aiRuntimeManager,
+    stopPersistedOrphanRuntimeSession,
     appendAuditLog,
     codexNativeCoordinator,
     conversationSubmissions,

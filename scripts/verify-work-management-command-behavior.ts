@@ -1,8 +1,21 @@
 import { access, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createAiRuntimeSessionManager } from '../packages/ai-runtime/src/index.js';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
-import { CommandDeliveryRepository, createZeusDatabase, ProjectRepository, TaskEventFileProjectionRepository, TaskEventRepository, TaskRepository } from '../packages/storage/src/index.js';
+import {
+  CommandDeliveryRepository,
+  createZeusDatabase,
+  ProjectRepository,
+  RuntimeSessionRepository,
+  TaskEventFileProjectionRepository,
+  TaskEventRepository,
+  TaskRepository,
+  type ZeusDatabase,
+  type ZeusTaskRecord,
+} from '../packages/storage/src/index.js';
+import { createGitIntegrationOperations, type GitIntegrationOperationDependencies } from '../packages/local-server/src/gitIntegrationOperations.js';
+import { runtimeSessionIsConfirmedTerminal } from '../packages/local-server/src/runtimeQueryApplication.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type WorkManagementCommandPayload } from '../packages/local-server/src/workManagementCommandApplication.js';
 import { TaskEventFileProjectionService } from '../packages/local-server/src/taskEventFileProjectionService.js';
 
@@ -586,6 +599,7 @@ try {
       controlTimeline.includes('line-1\\u000aline-2\\u0001') &&
       controlTimeline.includes('taskId=task_projection_control\\u000d\\u000aidentity');
 
+    observed.terminalCleanup = await verifyTaskTerminalCleanup(db, application, tasks.getById(acceptedTask.result.id)!);
     observed.quickCheck = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
     assertProbe(createCalls === 1 && replay.replayed && observed.immutableReplayName === projectInput.name && observed.currentProjectName === '后续真实修改', 'Core accepted replay 必须只 mutation 一次并返回不可变结果');
@@ -634,6 +648,76 @@ try {
 }
 
 console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
+
+/** 用真实子进程检查任务结束能一次完成停止、归档和状态保存，不要求用户重试。 */
+async function verifyTaskTerminalCleanup(db: ZeusDatabase, application: WorkManagementCommandApplication, task: ZeusTaskRecord) {
+  /** 临时数据库保存真实运行状态，退出回调沿用产品的持久化顺序。 */
+  const runtimeSessions = new RuntimeSessionRepository(db);
+  /** 进程只在本探针的隔离目录启动。 */
+  const aiRuntimeManager = createAiRuntimeSessionManager({
+    allowedRoot: probeRoot,
+    onSessionChange: (session) => {
+      if (runtimeSessions.getById(session.id)) runtimeSessions.updateStatus(session.id, { status: session.status, endedAt: session.endedAt, exitCode: session.exitCode });
+      else runtimeSessions.create(session);
+    },
+    onProcessStarted: ({ sessionId, pid }) => {
+      runtimeSessions.updateStatus(sessionId, { status: 'running', pid });
+    },
+  });
+  try {
+    /** 两个存活进程验证并行停止，短进程验证准备之后自然退出的情况。 */
+    const sessions = await Promise.all([60, 60, 0].map((seconds) => aiRuntimeManager.startSession({ projectId: task.projectId, taskId: task.id, command: '/bin/sleep', args: [String(seconds)], cwd: probeRoot })));
+    /** 调用正式清理实现；本场景没有工作目录和会话通知。 */
+    const operations = createGitIntegrationOperations({ aiRuntimeManager, runtimeSessions, recordTaskEvent: () => undefined } as GitIntegrationOperationDependencies);
+    /** 保留准备时快照，确保清理阶段会重新读取已经自然退出的会话。 */
+    const cleanup = { workspaces: [], conversations: [], runtimeSessions: runtimeSessions.list({ taskId: task.id }), activeConversationCount: 0, activeRuntimeSessionCount: 3, requiresConfirmation: true };
+    await aiRuntimeManager.waitForSessionCompletion(sessions[2]!.id, 5_000);
+    /** 正式命令账本必须直接收到成功结果，重复请求复用已有结果。 */
+    const parsed = application.parse<{ status: string }>({
+      value: commandRequest({
+        commandId: 'command_work_management_terminal_cleanup_probe',
+        commandType: workManagementCommandTypes.taskManagementStatusUpdate,
+        scope: { kind: 'task', id: task.id },
+        operationIdentity: 'work_management_terminal_cleanup_probe',
+        input: { status: 'completed' },
+      }),
+      commandType: workManagementCommandTypes.taskManagementStatusUpdate,
+      scopeKind: 'task',
+      expectedScopeId: () => task.id,
+    });
+    /** 记录清理次数，确认成功回放不会重复操作进程。 */
+    let cleanupCalls = 0;
+    /** 使用真实外部操作与状态落库路径，不把模拟成功当作退出证据。 */
+    const execute = () =>
+      application.executeExternal({
+        parsed,
+        destinationId: 'work-management-task-management-status-external',
+        resourceId: task.id,
+        externalOperationId: `task-management-status:${parsed.operationIdentity}`,
+        invoke: async () => {
+          cleanupCalls += 1;
+          await operations.closeTaskResourcesForTerminalStatus(task.id, cleanup);
+        },
+        mutateAcceptedBusinessState: () => new TaskRepository(db).updateManagementStatus(task.id, 'completed', task.updatedAt),
+      });
+    /** 首次操作应等待进程退出后直接成功。 */
+    const completed = await execute();
+    /** 同一操作再次到达时不得重新停止进程。 */
+    const replay = await execute();
+    assertProbe(completed.result.managementStatus === 'completed' && replay.replayed && cleanupCalls === 1, '结束任务必须一次成功，重复请求不得重新清理。');
+    assertProbe(
+      sessions.every((session) => {
+        /** 以退出后的持久状态核实归档，不能只看已发送停止信号。 */
+        const saved = runtimeSessions.getById(session.id);
+        return Boolean(saved?.archived && runtimeSessionIsConfirmedTerminal(saved));
+      }),
+      '三个真实进程必须确认退出并归档。',
+    );
+    return { processes: sessions.length, managementStatus: completed.result.managementStatus, cleanupCalls, replayed: replay.replayed };
+  } finally {
+    await aiRuntimeManager.close();
+  }
+}
 
 function commandRequest<TInput extends object>(input: {
   commandId: string;
