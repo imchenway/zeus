@@ -3348,12 +3348,11 @@ body:has(.macos-ai-app.zeus-shell) {
     0 3px 10px color-mix(in srgb, #111827 10%, transparent);
   box-sizing: border-box;
   inset-block-start: calc(100% + 7px);
-  inset-inline-start: 50%;
+  inset-inline-end: 0;
   max-block-size: min(520px, calc(100vh - 72px));
   overflow: auto;
   padding: 6px;
   position: absolute;
-  transform: translateX(-50%);
   inline-size: min(560px, calc(100vw - 32px));
 }
 
@@ -3851,6 +3850,8 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell.project-navigation-rail-shell > .project-workspace-project-switcher {
   /* 顶栏与工作区共用主题底色，保持连续的平面。 */
   background: var(--zeus-page-background);
+  /* 搜索与主内容卡片共用右边界，避开右侧预留工具轨道。 */
+  padding-inline-end: calc(var(--zeus-workspace-right-rail-width) + 8px);
   padding-inline-start: 92px;
 }
 
