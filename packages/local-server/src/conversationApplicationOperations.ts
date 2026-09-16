@@ -34,6 +34,7 @@ import {
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
+  ConversationTranscriptRepository,
   ConversationTurnRepository,
   DigitalEmployeeRepository,
   IdempotencyRequestRepository,
@@ -103,6 +104,8 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
   conversationSubmissions: ConversationSubmissionRepository;
+  /** 问答投影读取与正文相同的持久显示身份。 */
+  conversationTranscripts: ConversationTranscriptRepository;
   conversationTurns: ConversationTurnRepository;
   conversations: ConversationRepository;
   digitalEmployees: DigitalEmployeeRepository;
@@ -233,6 +236,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     conversationProviderItems,
     conversationRequests,
     conversationSubmissions,
+    conversationTranscripts,
     conversationTurns,
     conversations,
     digitalEmployees,
@@ -1136,6 +1140,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             conversation,
             projectRoot,
             providerItems: conversationProviderItems,
+            transcripts: conversationTranscripts,
           }
         : undefined,
     );

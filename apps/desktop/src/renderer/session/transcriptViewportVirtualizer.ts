@@ -5,6 +5,17 @@ export const transcriptViewportRowGapPx = 14;
 export const transcriptViewportOverscanPx = 900;
 export const transcriptViewportMaximumWindowRows = 48;
 export const transcriptViewportMeasurementCacheLimit = 384;
+/** 最近访问的会话测量缓存上限，避免切换会话后重新估高。 */
+export const transcriptViewportConversationCacheLimit = 6;
+
+/** 一份会话缓存同时记录适用宽度，宽度变化会使 Markdown 高度失效。 */
+interface TranscriptConversationMeasurementCache {
+  measurements: TranscriptRowMeasurementCache;
+  width: number | null;
+}
+
+/** 模块级小型 LRU，只保存数值测量，不持有 DOM 或正文。 */
+const transcriptConversationMeasurementCaches = new Map<string, TranscriptConversationMeasurementCache>();
 
 export type TranscriptViewportSlot = { kind: 'row'; key: string; rowKey: string; index: number } | { kind: 'spacer'; key: string; height: number; startIndex: number; endIndex: number };
 
@@ -218,6 +229,7 @@ interface RowBinding {
 }
 
 export interface TranscriptViewportAnchor {
+  itemKey: string | null;
   rowKey: string | null;
   topOffset: number | null;
   scrollHeight: number;
@@ -226,12 +238,17 @@ export interface TranscriptViewportAnchor {
 
 export function captureTranscriptViewportAnchor(container: HTMLElement): TranscriptViewportAnchor {
   const containerRect = container.getBoundingClientRect();
-  const anchorElement = [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => {
-    const rowRect = row.getBoundingClientRect();
-    return rowRect.bottom >= containerRect.top && rowRect.top <= containerRect.bottom;
-  });
+  /** 先锚定过程组内的真实条目，找不到时再退回虚拟行。 */
+  const visible = (element: HTMLElement): boolean => {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom >= containerRect.top && rect.top <= containerRect.bottom;
+  };
+  const itemElement = [...container.querySelectorAll<HTMLElement>('[data-transcript-item-key]')].find(visible);
+  const anchorElement = itemElement ?? [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find(visible);
+  const rowElement = anchorElement?.closest<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]');
   return {
-    rowKey: anchorElement?.dataset.transcriptRowKey ?? null,
+    itemKey: itemElement?.dataset.transcriptItemKey ?? null,
+    rowKey: rowElement?.dataset.transcriptRowKey ?? null,
     topOffset: anchorElement ? anchorElement.getBoundingClientRect().top - containerRect.top : null,
     scrollHeight: container.scrollHeight,
     scrollTop: container.scrollTop,
@@ -240,7 +257,11 @@ export function captureTranscriptViewportAnchor(container: HTMLElement): Transcr
 
 /** 历史分页和异步高度测量共用同一条稳定行补偿规则。 */
 export function compensateTranscriptViewportAnchor(container: HTMLElement, anchor: TranscriptViewportAnchor): number {
-  const anchorElement = anchor.rowKey ? [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchor.rowKey) : undefined;
+  const anchorElement = anchor.itemKey
+    ? [...container.querySelectorAll<HTMLElement>('[data-transcript-item-key]')].find((item) => item.dataset.transcriptItemKey === anchor.itemKey)
+    : anchor.rowKey
+      ? [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchor.rowKey)
+      : undefined;
   const previousScrollTop = container.scrollTop;
   if (anchorElement && anchor.topOffset !== null) {
     const nextOffset = anchorElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
@@ -262,7 +283,7 @@ export function useTranscriptViewportVirtualizer(input: {
   suspendAutomaticAnchor?: boolean;
 }) {
   const scopeRef = useRef(input.scopeKey);
-  const cacheRef = useRef(new TranscriptRowMeasurementCache());
+  const cacheRef = useRef(conversationMeasurementCache(input.scopeKey).measurements);
   const layoutRef = useRef(new TranscriptViewportLayout());
   const bindingsRef = useRef(new Map<string, RowBinding>());
   const rowObserverRef = useRef<ResizeObserver | null>(null);
@@ -277,7 +298,7 @@ export function useTranscriptViewportVirtualizer(input: {
   if (scopeRef.current !== input.scopeKey) {
     rowObserverRef.current?.disconnect();
     bindingsRef.current.clear();
-    cacheRef.current = new TranscriptRowMeasurementCache();
+    cacheRef.current = conversationMeasurementCache(input.scopeKey).measurements;
     layoutRef.current = new TranscriptViewportLayout();
     measurementAnchorRef.current = null;
     scopeRef.current = input.scopeKey;
@@ -342,6 +363,16 @@ export function useTranscriptViewportVirtualizer(input: {
   useLayoutEffect(() => {
     const container = input.containerRef.current;
     if (!container) return;
+    const cached = conversationMeasurementCache(input.scopeKey);
+    const width = container.clientWidth;
+    if (cached.width !== null && Math.abs(cached.width - width) > 1) {
+      cached.measurements = new TranscriptRowMeasurementCache();
+      cacheRef.current = cached.measurements;
+      layoutRef.current = new TranscriptViewportLayout();
+      layoutRef.current.syncKeys(input.rowKeys, cacheRef.current);
+      setLayoutRevision((revision) => revision + 1);
+    }
+    cached.width = width;
     setViewport((current) => ({
       scopeKey: input.scopeKey,
       scrollTop: current.scopeKey === input.scopeKey ? current.scrollTop : null,
@@ -349,12 +380,24 @@ export function useTranscriptViewportVirtualizer(input: {
     }));
     if (typeof ResizeObserver !== 'function') return;
     const observer = new ResizeObserver(() => {
+      const nextCache = conversationMeasurementCache(input.scopeKey);
+      const nextWidth = container.clientWidth;
+      if (nextCache.width !== null && Math.abs(nextCache.width - nextWidth) > 1) {
+        nextCache.measurements = new TranscriptRowMeasurementCache();
+        nextCache.width = nextWidth;
+        cacheRef.current = nextCache.measurements;
+        layoutRef.current = new TranscriptViewportLayout();
+        layoutRef.current.syncKeys(input.rowKeys, cacheRef.current);
+        setLayoutRevision((revision) => revision + 1);
+      } else {
+        nextCache.width = nextWidth;
+      }
       setViewport((current) => ({ ...current, viewportHeight: positiveMetric(container.clientHeight, current.viewportHeight) }));
       if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [input.containerRef, input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.scopeKey]);
+  }, [input.containerRef, input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.rowKeys, input.scopeKey]);
 
   useLayoutEffect(() => {
     if (typeof ResizeObserver !== 'function') return;
@@ -450,6 +493,25 @@ export function useTranscriptViewportVirtualizer(input: {
     synchronizeViewport,
     measurementCacheSize: cacheRef.current.size,
   };
+}
+
+/** 读取并刷新一份会话级 LRU 测量缓存。 */
+function conversationMeasurementCache(scopeKey: string | null): TranscriptConversationMeasurementCache {
+  const key = scopeKey ?? 'unbound-conversation';
+  const existing = transcriptConversationMeasurementCaches.get(key);
+  if (existing) {
+    transcriptConversationMeasurementCaches.delete(key);
+    transcriptConversationMeasurementCaches.set(key, existing);
+    return existing;
+  }
+  const created = { measurements: new TranscriptRowMeasurementCache(), width: null };
+  transcriptConversationMeasurementCaches.set(key, created);
+  while (transcriptConversationMeasurementCaches.size > transcriptViewportConversationCacheLimit) {
+    const oldest = transcriptConversationMeasurementCaches.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    transcriptConversationMeasurementCaches.delete(oldest);
+  }
+  return created;
 }
 
 function positiveMetric(value: number | undefined, fallback: number): number {

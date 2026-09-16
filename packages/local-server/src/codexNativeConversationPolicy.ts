@@ -16,6 +16,7 @@ import type {
   ConversationProviderItemRepository,
   ConversationServerRequestKind,
   ConversationServerRequestRepository,
+  ConversationTranscriptRepository,
   ProviderEventReceiptInput,
   ZeusConversationServerRequestRecord,
   ZeusConversationSubmissionRecord,
@@ -82,6 +83,7 @@ export function nativePendingRequestProjection(
     conversation: ZeusConversationRecord;
     projectRoot: string | null;
     providerItems: ConversationProviderItemRepository;
+    transcripts: ConversationTranscriptRepository;
   },
 ): Record<string, unknown> {
   const payload = parseJsonRecord(request.payloadJson);
@@ -100,6 +102,13 @@ export function nativePendingRequestProjection(
     autoResolutionState: request.autoResolutionState,
     createdAt: request.createdAt,
     resolvedAt: request.resolvedAt,
+    transcript: authority?.transcripts.envelopeForSource({
+      conversationId: request.conversationId,
+      sourceDomain: 'request',
+      sourceScope: request.turnId ?? request.transportGenerationId,
+      sourceId: request.id,
+      facet: 'request_answer',
+    }),
     ...(request.requestKind === 'file' && authority
       ? {
           fileApproval: inspectFileApprovalTargets(payload, authority.conversation, authority.projectRoot, authority.providerItems),

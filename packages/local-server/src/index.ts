@@ -62,6 +62,7 @@ import {
   ConversationRuntimeRepository,
   ConversationServerRequestRepository,
   ConversationSnapshotV2Repository,
+  ConversationTranscriptRepository,
   ConversationSubmissionRepository,
   ConversationSyncEventRepository,
   ConversationTurnRepository,
@@ -101,6 +102,7 @@ import {
   type ZeusDatabase,
   type ZeusProjectRecord,
   type ZeusTaskRecord,
+  providerFacet,
 } from '@zeus/storage';
 import { type TaskStatus } from './taskCore.js';
 import { type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
@@ -214,6 +216,8 @@ const nativeConversationAttentionEventTypes = new Set([
   'conversation.goal.updated',
   'conversation.goal.cleared',
 ]);
+/** 只有条目事件需要附加显示位置，其他事件保持原有有界载荷。 */
+const nativeConversationTranscriptItemEventTypes = new Set(['conversation.item.started', 'conversation.item.delta', 'conversation.item.completed']);
 
 function providerToolSchemaRejection(payload: Record<string, unknown>): boolean {
   const error = isObjectLike(payload.error) ? payload.error : payload;
@@ -747,6 +751,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationSubmissions = new ConversationSubmissionRepository(db);
   const conversationExecution = new ConversationExecutionRepository(db);
   const conversationSnapshotV2 = new ConversationSnapshotV2Repository(db, artifactStore);
+  /** 实时事件只读取单条来源别名，不重新装载会话历史。 */
+  const conversationTranscripts = new ConversationTranscriptRepository(db);
   const conversationSyncEvents = new ConversationSyncEventRepository(db);
   const longTermMemories = new LongTermMemoryRepository(db);
   const conversationRequests = new ConversationServerRequestRepository(db);
@@ -1265,6 +1271,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         providerItems: conversationProviderItems,
         submissions: conversationSubmissions,
         requests: conversationRequests,
+        transcripts: conversationTranscripts,
         planActions: conversationPlanActions,
         executeSubagentTool: (input) => conversationOperations.executeSubagentTool(input),
         stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
@@ -1781,6 +1788,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       changeSets: turnChangeSetService,
       submissions: conversationSubmissions,
       requests: conversationRequests,
+      transcripts: conversationTranscripts,
       planActions: conversationPlanActions,
       goals: conversationGoals,
       goalControls: conversationRuntime,
@@ -2708,8 +2716,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
       const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
+      /** Provider 写入完成后立即附加同一显示身份，Renderer 不再按到达时间猜位置。 */
+      const transcript =
+        nativeConversationTranscriptItemEventTypes.has(mappedType) && typeof payload.itemId === 'string' && typeof (payload.threadId ?? payload.providerThreadId) === 'string'
+          ? conversationTranscripts.envelopeForSource({
+              conversationId,
+              sourceDomain: 'provider_item',
+              sourceScope: String(payload.threadId ?? payload.providerThreadId),
+              sourceId: payload.itemId,
+              facet: providerFacet(typeof payload.itemType === 'string' ? payload.itemType : 'agentMessage'),
+            })
+          : null;
       const eventPayload = {
         ...payload,
+        ...(transcript ? { transcript } : {}),
         ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.usageSnapshot(conversationId) } : {}),
         ...(mappedType === 'conversation.sessionMetrics.changed' ? { sessionMetrics: conversationExecution.sessionMetrics(conversationId) } : {}),
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
@@ -3026,6 +3046,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     conversationProviderItems,
     conversationRequests,
     conversationSubmissions,
+    conversationTranscripts,
     conversationTurns,
     conversations,
     digitalEmployees,

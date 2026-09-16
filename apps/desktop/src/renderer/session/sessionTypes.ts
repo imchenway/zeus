@@ -7,6 +7,8 @@ import type {
   conversationSnapshotV2StructureGeneration,
   ConversationSnapshotV2BoundedContent,
   ConversationSnapshotV2Page as SharedConversationSnapshotV2Page,
+  ConversationTranscriptEnvelope,
+  ConversationTranscriptPlacementBatch,
   NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
   TaskPushParentContextOption,
   TaskPushParentContextSelection,
@@ -161,6 +163,8 @@ export interface NativeItemSnapshot {
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+  /** 快照、实时与分页共用的持久显示位置。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 export type NativeSubagentStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'unknown';
@@ -360,6 +364,8 @@ export interface NativePendingRequest {
   autoResolutionState?: 'none' | 'scheduled' | 'snoozed';
   createdAt: string;
   resolvedAt: string | null;
+  /** 已回答问题在会话正文中的持久显示身份；旧协议记录可以暂时缺失。 */
+  transcript?: ConversationTranscriptEnvelope;
   fileApproval?: {
     status: 'auditable' | 'outside_project' | 'provider_root_scope' | 'unavailable';
     paths: string[];
@@ -634,6 +640,8 @@ export interface NativeConversationActiveItemV2 {
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+  /** 活动投影与后续确认历史共用的显示位置。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 export interface NativeConversationSnapshotV2 {
@@ -642,6 +650,8 @@ export interface NativeConversationSnapshotV2 {
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
   throughEventSeq: number;
   eventStreamGeneration: string | null;
+  /** 当前会话持久显示位置代次。 */
+  orderEpoch: number;
   conversation: {
     id: string;
     projectId: string;
@@ -732,6 +742,8 @@ export interface NativeConversationModelHistoryV2Item {
     projectionTruncated: boolean;
     redacted: boolean;
   } | null;
+  /** 确认历史的持久显示位置和来源修订。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 export interface NativeConversationProcessV2Item {
@@ -753,6 +765,8 @@ export interface NativeConversationProcessV2Item {
   presentation: Record<string, unknown> | null;
   detail: NativeBoundedContentProjection;
   toolResult: NativeConversationModelHistoryV2Item['toolResult'];
+  /** 过程条目的持久显示位置和来源修订。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 export interface NativeConversationResourceV2Item {
@@ -774,6 +788,8 @@ export interface NativeConversationResourceV2Item {
   createdAt: string;
   updatedAt: string;
   accessPolicy: 'authorized_open_intent_or_preview';
+  /** 资源条目的持久显示位置和来源修订。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 export interface NativeConversationChangeSetV2Summary {
@@ -820,7 +836,7 @@ export interface NativeConversationChangeFileV2Item {
 
 export interface NativeConversationContentV2Page {
   schemaVersion: 2;
-  structureGeneration: '2026-09-03-conversation-stage-identity';
+  structureGeneration: typeof conversationSnapshotV2StructureGeneration;
   conversationId: string;
   kind: 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
   mimeType: string;
@@ -1622,6 +1638,8 @@ type NativeItemEventPayload = NativeEventIdentity & {
   stageId?: string | null;
   textContent?: string;
   itemResources?: ConversationResource[];
+  /** 服务端写入完成后附加的持久显示位置。 */
+  transcript?: ConversationTranscriptEnvelope;
 };
 
 export interface NativeExpertExecutionProjection {
@@ -1644,6 +1662,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
+  | NativeEvent<'conversation.transcript.placement.changed', NativeEventIdentity & NativeConversationTranscriptPlacementBatch>
   | NativeEvent<'conversation.expert.round.changed', NativeEventIdentity & { submissionId: string; turnId: string; executions: NativeExpertExecutionProjection[] }>
   | NativeEvent<'conversation.expert.execution.changed', NativeEventIdentity & { turnId?: string; execution: NativeExpertExecutionProjection }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
@@ -1727,6 +1746,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.item.started',
   'conversation.item.delta',
   'conversation.item.completed',
+  'conversation.transcript.placement.changed',
   'conversation.expert.round.changed',
   'conversation.expert.execution.changed',
   'conversation.settings.changed',
@@ -1776,7 +1796,12 @@ export interface NativeSessionItemBuffer {
   /** 条目首次进入会话顺序的稳定时间，后续流式更新不得覆盖。 */
   timelineAt?: string;
   updatedAt?: string;
+  /** 已接纳条目的持久显示位置；乐观队列消息在接纳前可以为空。 */
+  transcript?: ConversationTranscriptEnvelope;
 }
+
+/** Renderer 位置核对接口的共享响应。 */
+export type NativeConversationTranscriptPlacementBatch = ConversationTranscriptPlacementBatch;
 
 /** 明确交付给用户的资源必须脱离工具过程折叠，刷新后也保持在会话正文中。 */
 export function isAssistantDeliverableItem(item: Pick<NativeSessionItemBuffer, 'resources'>): boolean {

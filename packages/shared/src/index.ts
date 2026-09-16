@@ -12,6 +12,7 @@ export * from './readOnlyValidation.js';
 export * from './terminalOutput.js';
 export * from './conversationDispatchWire.js';
 export * from './conversationSnapshotV2Wire.js';
+export * from './conversationTranscriptWire.js';
 export * from './im.js';
 export * from './skillIdentity.js';
 export * from './userFacingError.js';

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { randomId } from './randomId.js';
+import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 
 export type ConversationExpertExecutionStatus = 'queued' | 'dispatching' | 'running' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 
@@ -126,7 +127,13 @@ export function migrateConversationExpertSchema(db: ZeusDatabasePort): void {
 }
 
 export class ConversationExpertRepository {
-  constructor(private readonly db: ZeusDatabasePort) {}
+  /** 专家投影与普通 Provider 消息共用持久显示位置。 */
+  private readonly transcript: ConversationTranscriptRepository;
+
+  /** 绑定共享数据库和会话显示位置索引。 */
+  constructor(private readonly db: ZeusDatabasePort) {
+    this.transcript = new ConversationTranscriptRepository(db);
+  }
 
   getParticipant(conversationId: string, employeeId: string): ConversationExpertParticipantRecord | undefined {
     const row = this.db.get<ParticipantRow>(`SELECT * FROM conversation_expert_participants WHERE conversation_id = ? AND employee_id = ?`, [conversationId, employeeId]);
@@ -240,6 +247,8 @@ export class ConversationExpertRepository {
         : null;
       const timelineSequence = this.nextSequence(input.conversationId, 'timeline_sequence');
       const userSequence = this.nextSequence(input.conversationId, 'model_history_sequence');
+      /** 用户正文先取得持久身份，后续专家结果都归属该输入。 */
+      const userHistoryId = `conversation_model_history_${randomId(12)}`;
       this.db.execute(
         `INSERT INTO conversation_runtime_segments
          (id, conversation_id, runtime_kind, state, execution_snapshot_id, provider_id, native_session_id, native_session_path,
@@ -293,7 +302,7 @@ export class ConversationExpertRepository {
           tool_pair_id, capability_loss_json, confirmed_at, actor_kind, actor_id, actor_snapshot_json, expert_execution_id)
          VALUES (?, ?, ?, ?, ?, ?, 'user', ?, NULL, NULL, NULL, ?, 'user', NULL, NULL, NULL)`,
         [
-          `conversation_model_history_${randomId(12)}`,
+          userHistoryId,
           input.conversationId,
           userSequence,
           turnId,
@@ -303,6 +312,20 @@ export class ConversationExpertRepository {
           input.createdAt,
         ],
       );
+      const userEnvelope = this.transcript.registerSource({
+        conversationId: input.conversationId,
+        sourceDomain: 'model_history',
+        sourceScope: segmentId,
+        sourceId: userHistoryId,
+        facet: 'body',
+        preferredEntryId: `user-message:${input.clientMessageId}`,
+        kind: 'ordinary_input',
+        turnId,
+        segmentId,
+        firstSeenAt: input.createdAt,
+        orderingEvidence: 'live',
+        contentHash: hashConversationTranscriptContent([input.content, input.displayText]),
+      });
       this.db.execute(
         `INSERT INTO conversation_messages
          (id, conversation_id, role, content, source, metadata_json, created_at, provider_thread_id, provider_turn_id, provider_item_id, client_message_id)
@@ -330,6 +353,21 @@ export class ConversationExpertRepository {
             input.createdAt,
           ],
         );
+        this.transcript.registerSource({
+          conversationId: input.conversationId,
+          sourceDomain: 'expert_execution',
+          sourceScope: input.submissionId,
+          sourceId: execution.id,
+          facet: 'body',
+          preferredEntryId: `expert:${execution.id}`,
+          kind: 'content',
+          turnId,
+          segmentId,
+          openingInputId: userEnvelope.placement.entryId,
+          firstSeenAt: input.createdAt,
+          orderingEvidence: 'live',
+          contentHash: hashConversationTranscriptContent(['queued', execution.employeeSnapshot]),
+        });
       }
       this.db.execute(`UPDATE conversations SET status = 'open', stage = 'running', stage_updated_at = ?, updated_at = ? WHERE id = ?`, [input.createdAt, input.createdAt, input.conversationId]);
       return { submissionId: input.submissionId, turnId, segmentId, userSequence, executions: this.listExecutionsBySubmission(input.submissionId) };
@@ -416,18 +454,22 @@ export class ConversationExpertRepository {
   }
 
   setExecutionStatus(input: { executionId: string; status: ConversationExpertExecutionStatus; updatedAt: string; childSubmissionId?: string | null; answer?: string | null; error?: unknown }): ConversationExpertExecutionRecord {
-    const startedAt = input.status === 'dispatching' || input.status === 'running' || input.status === 'waiting' ? input.updatedAt : null;
-    const completedAt = ['completed', 'failed', 'interrupted', 'cancelled'].includes(input.status) ? input.updatedAt : null;
-    this.db.execute(
+    return this.db.transaction(() => {
+      const startedAt = input.status === 'dispatching' || input.status === 'running' || input.status === 'waiting' ? input.updatedAt : null;
+      const completedAt = ['completed', 'failed', 'interrupted', 'cancelled'].includes(input.status) ? input.updatedAt : null;
+      this.db.execute(
       `UPDATE conversation_expert_executions
           SET status = ?, child_submission_id = COALESCE(?, child_submission_id), answer = COALESCE(?, answer),
               error_json = ?, updated_at = ?, started_at = COALESCE(started_at, ?), completed_at = COALESCE(completed_at, ?)
         WHERE id = ?`,
       [input.status, input.childSubmissionId ?? null, input.answer ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.updatedAt, startedAt, completedAt, input.executionId],
     );
-    const row = this.db.get<ExecutionRow>(`SELECT * FROM conversation_expert_executions WHERE id = ?`, [input.executionId]);
-    if (!row) throw expertStoreError('ZEUS_EXPERT_EXECUTION_NOT_FOUND', '专家执行不存在。');
-    return mapExecution(row);
+      const row = this.db.get<ExecutionRow>(`SELECT * FROM conversation_expert_executions WHERE id = ?`, [input.executionId]);
+      if (!row) throw expertStoreError('ZEUS_EXPERT_EXECUTION_NOT_FOUND', '专家执行不存在。');
+      const execution = mapExecution(row);
+      this.registerExpertExecutionTranscript(execution);
+      return execution;
+    });
   }
 
   appendExpertAnswer(input: { executionId: string; answer: string; completedAt: string }): ConversationExpertExecutionRecord {
@@ -454,7 +496,11 @@ export class ConversationExpertRepository {
           WHERE id = ?`,
         [updatedAt, executionId],
       );
+      const removedHistory = this.db.select<{ id: string; segment_id: string }>(`SELECT id, segment_id FROM conversation_model_history WHERE expert_execution_id = ?`, [executionId]);
       this.db.execute(`DELETE FROM conversation_model_history WHERE expert_execution_id = ?`, [executionId]);
+      for (const history of removedHistory) {
+        this.transcript.removeSource({ conversationId: execution.conversationId, sourceDomain: 'model_history', sourceScope: history.segment_id, sourceId: history.id, facet: 'body' });
+      }
       this.db.execute(`DELETE FROM conversation_messages WHERE conversation_id = ? AND provider_item_id = ? AND source = 'expert_group_answer'`, [execution.conversationId, executionId]);
       this.db.execute(
         `UPDATE conversation_submissions
@@ -483,7 +529,9 @@ export class ConversationExpertRepository {
         [queued ? 'queued' : 'running', queued ? null : updatedAt, updatedAt, execution.submissionId],
       );
       this.db.execute(`UPDATE conversations SET stage = 'running', stage_updated_at = ?, updated_at = ? WHERE id = ?`, [updatedAt, updatedAt, execution.conversationId]);
-      return this.getExecution(executionId)!;
+      const retried = this.getExecution(executionId)!;
+      this.registerExpertExecutionTranscript(retried);
+      return retried;
     });
   }
 
@@ -516,13 +564,15 @@ export class ConversationExpertRepository {
       const text = execution.answer ?? (execution.status === 'interrupted' || execution.status === 'cancelled' ? '本轮专家执行已停止。' : `专家执行失败：${errorMessage(error)}`);
       const confirmedAt = execution.completedAt ?? execution.updatedAt;
       const sequence = this.nextSequence(execution.conversationId, 'model_history_sequence');
+      /** 确认历史只是同一专家结果的新来源，不创建新的显示条目。 */
+      const historyId = `conversation_model_history_${randomId(12)}`;
       this.db.execute(
         `INSERT INTO conversation_model_history
          (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json, reasoning_source_json,
           tool_pair_id, capability_loss_json, confirmed_at, actor_kind, actor_id, actor_snapshot_json, expert_execution_id)
          VALUES (?, ?, ?, ?, ?, ?, 'assistant', ?, NULL, NULL, NULL, ?, 'digital_employee', ?, ?, ?)`,
         [
-          `conversation_model_history_${randomId(12)}`,
+          historyId,
           execution.conversationId,
           sequence,
           turn.id,
@@ -535,6 +585,23 @@ export class ConversationExpertRepository {
           execution.id,
         ],
       );
+      const expertEnvelope = this.transcript.envelopeForSource({ conversationId: execution.conversationId, sourceDomain: 'expert_execution', sourceScope: execution.submissionId, sourceId: execution.id, facet: 'body' });
+      this.transcript.registerSource({
+        conversationId: execution.conversationId,
+        sourceDomain: 'model_history',
+        sourceScope: userHistory.segment_id,
+        sourceId: historyId,
+        facet: 'body',
+        preferredEntryId: expertEnvelope?.placement.entryId ?? `expert:${execution.id}`,
+        kind: 'content',
+        turnId: turn.id,
+        segmentId: userHistory.segment_id,
+        openingInputId: expertEnvelope?.placement.openingInputId,
+        firstSeenAt: confirmedAt,
+        orderingEvidence: 'provider',
+        contentHash: hashConversationTranscriptContent([text, execution.status, confirmedAt]),
+        inheritedContentRevision: expertEnvelope?.sources.find((source) => source.domain === 'expert_execution')?.contentRevision,
+      });
       this.db.execute(
         `INSERT INTO conversation_messages
          (id, conversation_id, role, content, source, metadata_json, created_at, provider_thread_id, provider_turn_id, provider_item_id, client_message_id)
@@ -549,6 +616,32 @@ export class ConversationExpertRepository {
         ],
       );
     }
+  }
+
+  /** 专家状态或正文更新只推进来源修订，不改变初次分配的位置。 */
+  private registerExpertExecutionTranscript(execution: ConversationExpertExecutionRecord): void {
+    const turn = this.db.get<{ id: string; segment_id: string }>(
+      `SELECT turn.id, history.segment_id
+         FROM conversation_turns AS turn
+         JOIN conversation_model_history AS history ON history.submission_id = turn.client_submission_id AND history.role = 'user'
+        WHERE turn.client_submission_id = ? ORDER BY history.sequence LIMIT 1`,
+      [execution.submissionId],
+    );
+    if (!turn) return;
+    this.transcript.registerSource({
+      conversationId: execution.conversationId,
+      sourceDomain: 'expert_execution',
+      sourceScope: execution.submissionId,
+      sourceId: execution.id,
+      facet: 'body',
+      preferredEntryId: `expert:${execution.id}`,
+      kind: 'content',
+      turnId: turn.id,
+      segmentId: turn.segment_id,
+      firstSeenAt: execution.createdAt,
+      orderingEvidence: 'provider',
+      contentHash: hashConversationTranscriptContent([execution.status, execution.answer, execution.errorJson, execution.updatedAt]),
+    });
   }
 
   runtimeFingerprint(input: { employeeRevision: number; model: string; modelSourceId: string | null; pluginReferences: unknown; skillReferences: unknown }): string {

@@ -32,9 +32,7 @@ export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemB
     /** 同时比较两端，保证已确认历史位于待发队列之前。 */
     const rightPosition = queuePosition(right);
     if (leftPosition === undefined && rightPosition === undefined) {
-      // 同时落盘仍按持久序号区分先后，其他历史沿用上游顺序。
-      if ((left.timelineAt ?? left.updatedAt) === (right.timelineAt ?? right.updatedAt) && typeof left.payload.v2Sequence === 'number' && typeof right.payload.v2Sequence === 'number')
-        return left.payload.v2Sequence - right.payload.v2Sequence;
+      // 已接纳历史已经由持久显示位置排好，队列层不得跨来源再次排序。
       return 0;
     }
     if (leftPosition === undefined) return -1;

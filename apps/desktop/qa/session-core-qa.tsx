@@ -2809,7 +2809,7 @@ function GoalHistoryQa(props: { initialGoal: NativeGoalSnapshot }) {
     const readable: NativeConversationReadableSnapshot = {
       snapshot: {
         schemaVersion: 2,
-        structureGeneration: '2026-09-03-conversation-stage-identity',
+        structureGeneration: '2026-09-16-transcript-placement',
         conversationSchemaGeneration: '2026-08-16-unified-conversation-segments',
         throughEventSeq: 0,
         eventStreamGeneration: null,
@@ -2823,7 +2823,7 @@ function GoalHistoryQa(props: { initialGoal: NativeGoalSnapshot }) {
       },
       history: {
         schemaVersion: 2,
-        structureGeneration: '2026-09-03-conversation-stage-identity',
+        structureGeneration: '2026-09-16-transcript-placement',
         conversationId: 'qa',
         kind: 'model_history',
         throughEventSeq: 0,

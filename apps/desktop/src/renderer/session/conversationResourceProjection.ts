@@ -57,7 +57,9 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
   for (const [itemId, resources] of resourcesByItemId) {
     const deliverables = resources.filter((resource) => resource.delivery === 'assistant');
     if (deliverables.length === 0 || actualDeliveryItemIds.has(itemId) || syntheticDeliveryItemIds.has(itemId)) continue;
-    items.push(syntheticAssistantDeliverableItem(snapshot, itemId, deliverables));
+    const transcript = metadata.find((item) => item.itemId === itemId)?.transcript;
+    if (!transcript) continue;
+    items.push(syntheticAssistantDeliverableItem(snapshot, itemId, deliverables, transcript));
     changed = true;
   }
   return changed ? { ...snapshot, items: items.sort(compareV2ResourceItems) } : snapshot;
@@ -67,7 +69,12 @@ function syntheticAssistantDeliverableItemId(item: NativeItemSnapshot): string |
   return typeof item.payload.v2SyntheticAssistantDeliverableItemId === 'string' ? item.payload.v2SyntheticAssistantDeliverableItemId : null;
 }
 
-function syntheticAssistantDeliverableItem(snapshot: NativeConversationSnapshot, itemId: string, resources: ConversationResource[]): NativeItemSnapshot {
+function syntheticAssistantDeliverableItem(
+  snapshot: NativeConversationSnapshot,
+  itemId: string,
+  resources: ConversationResource[],
+  transcript: NativeConversationResourceV2Item['transcript'],
+): NativeItemSnapshot {
   const orderedResources = [...resources].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   const first = orderedResources[0]!;
   const last = orderedResources[orderedResources.length - 1]!;
@@ -86,11 +93,13 @@ function syntheticAssistantDeliverableItem(snapshot: NativeConversationSnapshot,
     startedAt: first.createdAt,
     completedAt: last.updatedAt,
     updatedAt: last.updatedAt,
+    transcript,
   };
 }
 
+/** 合成交付项仍按资源的持久位置排列，不使用资源更新时间。 */
 function compareV2ResourceItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
-  return (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt) || left.id.localeCompare(right.id);
+  return (left.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) - (right.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id);
 }
 
 async function conversationProviderItemStateId(providerThreadId: string, providerItemId: string): Promise<string> {

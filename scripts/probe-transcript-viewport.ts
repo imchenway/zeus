@@ -4,9 +4,10 @@ import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { createZeusDatabase, ProjectRepository, ConversationRepository, ConversationSnapshotV2Repository } from '../packages/storage/src/index.js';
+import { createZeusDatabase, ProjectRepository, ConversationRepository, ConversationSnapshotV2Repository, ConversationTranscriptRepository } from '../packages/storage/src/index.js';
 import { registerConversationSnapshotV2Api } from '../packages/local-server/src/conversationSnapshotV2Api.js';
 import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
+import { reconcileTranscriptItems } from '../apps/desktop/src/renderer/session/transcriptReconciliation.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
 import type { ConversationNavigationSnapshot } from '@zeus/shared';
@@ -33,10 +34,20 @@ registerHooks({
     return nextLoad(url, context);
   },
 });
+/** tsx 探针不经过 Vite 的 JSX 自动运行时，显式提供组件模块需要的 React 命名空间。 */
+(globalThis as typeof globalThis & { React: typeof import('react') }).React = await import('react');
 /** 将历史过程分页串联到正式行编号和轮次分组，覆盖同轮多段思考。 */
 const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 /** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
 const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
+
+/** 为探针条目建立与正式协议相同的最小持久位置。 */
+function probeTranscript(entryId: string, order: number, openingInputId: string | null = 'probe-input', displayStageId: string | null = null, revision = order) {
+  return {
+    placement: { entryId, order, orderEpoch: 1, placementRevision: revision, turnId: 'turn', openingInputId, displayStageId },
+    sources: [{ domain: 'probe', scope: 'turn', sourceId: entryId, facet: 'body', revision, contentRevision: revision }],
+  };
+}
 
 /** 失败记录必须早于后续发言，不能随缺页、排队或重复身份移动到底部。 */
 function verifyFailureOrder(): void {
@@ -108,6 +119,7 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
       startedAt: '2026-09-14T03:00:00Z',
       completedAt: '2026-09-14T03:00:01Z',
       detail: { preview: truncated ? '{"block":{"thinking":"已确认性能瓶颈' : JSON.stringify({ block: { type: 'thinking', thinking: '已确认性能瓶颈' } }), truncated },
+      transcript: probeTranscript('thinking', 1, 'probe-input', 'stage'),
     } as NativeConversationProcessV2Item;
     /** 过程页沿用正式入口，不启动模型或读写正式会话。 */
     const snapshot = { id: 'thinking-probe', items: [], turns: [], snapshotV2: { structureGeneration: 1 }, v2Paging: {} } as unknown as NativeConversationSnapshot;
@@ -117,7 +129,11 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
       conversationId: snapshot.id,
       structureGeneration: 1,
       kind: 'process',
-      items: [processItem, { ...processItem, id: 'thinking-next', sourceEventId: 'pi:block:105:0' }, { ...processItem, id: 'codex-summary', protocolFamily: 'openai_responses', sourceEventId: 'codex:item:summary' }],
+      items: [
+        processItem,
+        { ...processItem, id: 'thinking-next', sourceEventId: 'pi:block:105:0', transcript: probeTranscript('thinking-next', 2, 'probe-input', 'stage') },
+        { ...processItem, id: 'codex-summary', protocolFamily: 'openai_responses', sourceEventId: 'codex:item:summary', transcript: probeTranscript('codex-summary', 3, 'probe-input', 'stage') },
+      ],
     } as NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>;
     /** 真实分页必须保留详情身份和可读文字；界面展开交互由浏览器另行检查。 */
     const items = mergeConversationProcessV2(snapshot, 'turn', page).items;
@@ -139,7 +155,7 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
         /** 两段正文和最新摘要共存；历史模式只隐藏状态摘要。 */
         const rows = projectTranscriptRows([...reasoningItems, replacementSummary], [], 'turn', historyOnly);
         assertProbe(
-          rows.map((row) => row.key).join('|') === (historyOnly ? 'thinking|thinking-next' : 'thinking|thinking-next|reasoning-summary:turn'),
+          rows.map((row) => row.key).join('|') === (historyOnly ? 'transcript:thinking|transcript:thinking-next' : 'transcript:thinking|transcript:thinking-next|transcript:codex-summary'),
           `思考正文须各自保留，最新状态摘要独立且编号稳定：${protocolFamily}/${presentation}/${historyOnly}/${rows.map((row) => row.key).join('|')}`,
         );
         /** 同时核对未分组和已结束轮次，重复编号不能进入布局索引。 */
@@ -308,13 +324,32 @@ assertProbe(!hotCache.has(oversizedConversationId), '超过单会话字节上限
 /** 完整目录、按轮读取与前端身份共同经过真实存储和接口。 */
 const navigationProbe = await probeNavigation();
 /** 同时落盘的消息必须按持久顺序排列，不能按 key 字母顺序颠倒提问和回答。 */
-const equalTimeItems = [3, 1, 2].map((sequence) => ({ key: `reverse-${4 - sequence}`, updatedAt: '2026-01-01T00:00:00Z', payload: { v2Sequence: sequence } }) as NativeSessionItemBuffer);
+const equalTimeItems = [1, 2, 3].map((sequence) => ({ key: `entry-${sequence}`, updatedAt: '2026-01-01T00:00:00Z', payload: { v2Sequence: 4 - sequence }, transcript: probeTranscript(`entry-${sequence}`, sequence) }) as NativeSessionItemBuffer);
 assertProbe(
   orderTranscriptItemsWithQueue(equalTimeItems, null)
-    .map((item) => item.payload.v2Sequence)
+    .map((item) => item.transcript?.placement.order)
     .join(',') === '1,2,3',
-  '同时间戳必须沿用持久顺序',
+  '队列层必须沿用上游持久顺序，不能按来源序号再次改排',
 );
+
+/** 实时、快照和分页乱序到达时只按显示位置合并，旧来源修订不能覆盖新正文。 */
+const transcriptItem = (entryId: string, order: number, revision: number, text: string): import('../apps/desktop/src/renderer/session/sessionTypes.js').NativeItemSnapshot => ({
+  id: entryId,
+  turnId: 'turn',
+  providerItemId: entryId,
+  type: 'agentMessage',
+  status: 'completed',
+  phase: 'final_answer',
+  text,
+  payload: {},
+  resources: [],
+  startedAt: '2026-01-01T00:00:00Z',
+  completedAt: '2026-01-01T00:00:01Z',
+  updatedAt: '2026-01-01T00:00:01Z',
+  transcript: probeTranscript(entryId, order, 'probe-input', null, revision),
+});
+const reconciled = reconcileTranscriptItems([transcriptItem('second', 2, 3, '新正文')], [transcriptItem('first', 1, 2, '第一条'), transcriptItem('second', 2, 1, '旧正文')]);
+assertProbe(reconciled.items.map((item) => item.id).join(',') === 'first,second' && reconciled.items[1]?.text === '新正文', '统一合并必须按持久位置排序并拒绝旧来源覆盖');
 
 console.log(
   JSON.stringify(
@@ -466,6 +501,15 @@ async function probeNavigation() {
         ],
       );
     }
+    /** 探针故意模拟升级前直写数据，再走正式旧数据初始化建立显示位置。 */
+    new ConversationTranscriptRepository(db).initializeConversation(conversation.id);
+    /** 超过十个初始化批次后必须原子就绪，并清理持久暂存事实。 */
+    const initialization = db.get<{ initialization_state: string; reconstructed_count: number }>(
+      'SELECT initialization_state, reconstructed_count FROM conversation_transcript_state WHERE conversation_id = ?',
+      [conversation.id],
+    );
+    assertProbe(initialization?.initialization_state === 'ready' && initialization.reconstructed_count === count * 4 + 1 + processCount, '旧数据必须按 512 条批次完整初始化');
+    assertProbe(db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_initialization_facts WHERE conversation_id = ?', [conversation.id])?.count === 0, '初始化就绪后必须清理暂存事实');
     await db.save();
     /** 查询前后核对写入计数，GET 不改变消息送达。 */
     const changes = db.get<{ count: number }>('SELECT total_changes() AS count')!.count;
@@ -575,7 +619,7 @@ async function probeNavigation() {
     assertProbe(scroll.onExplicitLatestRequest().type === 'scroll_to_bottom', '返回最新必须恢复跟随');
     scroll.onExplicitHistoryRequest();
     assertProbe(scroll.onMessageSubmitted().type === 'scroll_to_bottom', '主动发送必须恢复跟随');
-    return { entries: count, unfilledPlaceholders: count - 1, distantRenderedRows: distant.renderedRowCount, elapsedMs: Math.round(performance.now() - started), writes: 0 };
+    return { entries: count, initializedSources: initialization.reconstructed_count, unfilledPlaceholders: count - 1, distantRenderedRows: distant.renderedRowCount, elapsedMs: Math.round(performance.now() - started), writes: 0 };
   } finally {
     await server.close();
     await db.close();

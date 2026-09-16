@@ -382,7 +382,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const providerTurnIdByLocalId = new Map(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => [turn.id, turn.providerTurnId!]));
   const providerItemIdByLocalId = new Map(snapshot.items.filter((item) => item.providerItemId).map((item) => [item.id, item.providerItemId!]));
   const items: Record<string, NativeSessionItemBuffer> = {};
-  const orderedItems: Array<{ key: string; timestamp: string; stableIndex: number }> = [];
+  const orderedItems: Array<{ key: string; order: number | null; stableIndex: number }> = [];
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
@@ -460,9 +460,10 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
+      transcript: item.transcript,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
     };
-    orderedItems.push({ key, timestamp: timelineAt, stableIndex: stableIndexForClient(itemClientId) });
+    orderedItems.push({ key, order: item.transcript.placement.order, stableIndex: stableIndexForClient(itemClientId) });
     if (item.providerItemId) providerItemKeyById.set(item.providerItemId, key);
     if (itemClientId) {
       durableClientIds.add(itemClientId);
@@ -499,7 +500,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     items[key] = previous;
     orderedItems.push({
       key,
-      timestamp: previous.timelineAt ?? previous.updatedAt ?? snapshot.updatedAt,
+      order: previous.transcript?.placement.order ?? null,
       stableIndex: previousItemStableIndexes.get(key) ?? stableIndex++,
     });
   }
@@ -555,7 +556,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       timelineAt: message.createdAt,
       updatedAt: message.createdAt,
     };
-    orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
+    orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
   // Provider 尚未回放精确 userMessage 时，从持久 submission 恢复同一条用户消息。
@@ -592,7 +593,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
           payload: mergeStableUserMessagePresentation(previousUserItem.payload, submissionItem.payload),
         }
       : submissionItem;
-    orderedItems.push({ key, timestamp: submission.createdAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(clientUserMessageId) });
+    orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
     durableClientIds.add(clientUserMessageId);
   }
 
@@ -608,7 +609,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     if (knownSubmission && shouldDiscardSubmissionProjection(knownSubmission)) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
-    orderedItems.push({ key, timestamp: item.timelineAt ?? item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
+    orderedItems.push({ key, order: item.transcript?.placement.order ?? null, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
   }
 
   const activeTurnId = activeTurnFromSnapshot(snapshot);
@@ -622,7 +623,14 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     }
   }
   const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
-  const projectedItemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
+  const projectedItemOrder = orderedItems
+    .sort((left, right) => {
+      if (left.order !== null && right.order !== null) return left.order - right.order;
+      if (left.order !== null) return -1;
+      if (right.order !== null) return 1;
+      return left.stableIndex - right.stableIndex;
+    })
+    .map((entry) => entry.key);
   const stableItems = reuseEquivalentSessionItems(state.items, items);
   const itemOrder = sameStringArray(state.itemOrder, projectedItemOrder) ? state.itemOrder : projectedItemOrder;
   const activeTurnChanged = Boolean(activeTurnId && state.activeTurnId !== activeTurnId);
@@ -706,6 +714,14 @@ function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, acti
 }
 
 function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: NativeSessionItemBuffer, canonicalKey: string): NativeSessionItemBuffer {
+  if (
+    previous.transcript &&
+    projected.transcript &&
+    (projected.transcript.placement.orderEpoch < previous.transcript.placement.orderEpoch ||
+      (projected.transcript.placement.orderEpoch === previous.transcript.placement.orderEpoch && transcriptRevision(projected.transcript) < transcriptRevision(previous.transcript)))
+  ) {
+    return canonicalKey === previous.key ? previous : { ...previous, key: canonicalKey };
+  }
   const previousProcessDetail = stringValue(previous.payload.v2ContentKind) === 'process_detail';
   const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
   const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
@@ -721,6 +737,7 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
     resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,
     timelineAt: previous.timelineAt ?? projected.timelineAt,
     updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
+    transcript: mergeSessionTranscriptEnvelope(previous.transcript, projected.transcript),
   };
   const completeContent = matchingCompleteContent(previous, projected) ?? matchingCompleteContent(projected, previous);
   return completeContent
@@ -730,6 +747,27 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
         payload: preserveCompleteContentPayload(merged.payload, completeContent),
       }
     : merged;
+}
+
+/** 分页的内容优先级不能丢掉更新的位置代次和来源修订。 */
+function mergeSessionTranscriptEnvelope(
+  previous: NativeSessionItemBuffer['transcript'],
+  projected: NativeSessionItemBuffer['transcript'],
+): NativeSessionItemBuffer['transcript'] {
+  if (!previous) return projected;
+  if (!projected) return previous;
+  const placement =
+    projected.placement.orderEpoch > previous.placement.orderEpoch ||
+    (projected.placement.orderEpoch === previous.placement.orderEpoch && projected.placement.placementRevision >= previous.placement.placementRevision)
+      ? projected.placement
+      : previous.placement;
+  const sources = new Map<string, (typeof previous.sources)[number]>();
+  for (const source of [...previous.sources, ...projected.sources]) {
+    const identity = `${source.domain}\u0000${source.scope}\u0000${source.sourceId}\u0000${source.facet}`;
+    const current = sources.get(identity);
+    if (!current || source.revision > current.revision) sources.set(identity, source);
+  }
+  return { placement, sources: [...sources.values()] };
 }
 
 /** 判断热缓存中的完整内容能否安全复用于同一个不可变句柄。 */
@@ -830,15 +868,22 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
     const canonicalKey = canonicalOrderKey(key);
     if (!previousOrder.has(canonicalKey)) previousOrder.set(canonicalKey, index);
   });
-  const itemOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder].map(canonicalOrderKey))]
+  const stableOrder = [...new Set([...state.itemOrder, ...hydrated.itemOrder].map(canonicalOrderKey))];
+  const stableOrderIndex = new Map(stableOrder.map((key, index) => [key, index]));
+  const itemOrder = stableOrder
     .filter((key) => Boolean(items[key]))
     .sort((leftKey, rightKey) => {
       const left = items[leftKey];
       const right = items[rightKey];
       if (!left || !right) return left ? -1 : right ? 1 : 0;
-      const chronology = (left.timelineAt ?? left.updatedAt ?? '').localeCompare(right.timelineAt ?? right.updatedAt ?? '');
-      if (chronology !== 0) return chronology;
-      return (previousOrder.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? Number.MAX_SAFE_INTEGER) || leftKey.localeCompare(rightKey);
+      const leftPlacement = left.transcript?.placement;
+      const rightPlacement = right.transcript?.placement;
+      if (leftPlacement?.order !== null && leftPlacement?.order !== undefined && rightPlacement?.order !== null && rightPlacement?.order !== undefined) {
+        return leftPlacement.order - rightPlacement.order || leftPlacement.entryId.localeCompare(rightPlacement.entryId);
+      }
+      if (leftPlacement?.order !== null && leftPlacement?.order !== undefined) return -1;
+      if (rightPlacement?.order !== null && rightPlacement?.order !== undefined) return 1;
+      return (previousOrder.get(leftKey) ?? stableOrderIndex.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? stableOrderIndex.get(rightKey) ?? Number.MAX_SAFE_INTEGER);
     });
 
   const turnsByProviderId = { ...hydrated.turnsByProviderId };
@@ -1131,6 +1176,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.item.delta':
     case 'conversation.item.completed':
       return reduceItemEvent(base, event);
+    case 'conversation.transcript.placement.changed':
+      return reduceTranscriptPlacementEvent(base, event);
     case 'conversation.expert.round.changed':
     case 'conversation.expert.execution.changed':
       return reduceExpertEvent(base, event);
@@ -1371,7 +1418,10 @@ function planImplementationStatus(value: unknown): NativePlanImplementationReque
   return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
 }
 
-function reduceItemEvent(state: NativeSessionState, event: NativeConversationEvent): NativeSessionState {
+function reduceItemEvent(
+  state: NativeSessionState,
+  event: Extract<NativeConversationEvent, { type: 'conversation.item.started' | 'conversation.item.delta' | 'conversation.item.completed' }>,
+): NativeSessionState {
   const payload = event.payload;
   const conversationId = stringValue(payload.conversationId) ?? state.conversationId;
   const threadId = stringValue(payload.threadId) ?? state.providerThreadId;
@@ -1379,7 +1429,9 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const itemId = stringValue(payload.itemId);
   if (!conversationId || !threadId || !turnId || !itemId) return state;
 
-  const providerKey = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
+  const incomingTranscript = payload.transcript;
+  const stableItemId = incomingTranscript?.placement.entryId ?? itemId;
+  const providerKey = nativeSessionItemKey(conversationId, threadId, turnId, stableItemId);
   const providerItem = state.items[providerKey];
   const completed = event.type === 'conversation.item.completed';
   const incomingText = stringValue(payload.textContent) ?? '';
@@ -1395,9 +1447,13 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     : undefined;
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
-  const matchedKey = matchedUserEntry?.[0];
+  const transcriptEntry = incomingTranscript
+    ? Object.entries(state.items).find(([, item]) => item.transcript?.placement.entryId === incomingTranscript.placement.entryId)
+    : undefined;
+  const matchedKey = matchedUserEntry?.[0] ?? transcriptEntry?.[0];
   const key = matchedKey ?? providerKey;
-  const previous = state.items[key] ?? providerItem;
+  const previous = state.items[key] ?? providerItem ?? transcriptEntry?.[1];
+  if (previous?.transcript && incomingTranscript && transcriptRevision(incomingTranscript) < transcriptRevision(previous.transcript)) return state;
   if (previous && isTerminalItemStatus(previous.status) && !completed) return state;
   const optimisticText = optimisticEntry?.[1].text ?? '';
   const matchedUserText = matchedUserItem?.text ?? '';
@@ -1434,11 +1490,13 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
     timelineAt: previous?.timelineAt ?? matchedUserItem?.timelineAt ?? event.createdAt,
     updatedAt: event.createdAt,
+    ...(incomingTranscript || previous?.transcript ? { transcript: incomingTranscript ?? previous?.transcript } : {}),
   };
   const isNew = previous === undefined;
   const items = { ...state.items, [key]: next };
   if (matchedKey && matchedKey !== key) delete items[matchedKey];
-  const itemOrder = matchedKey && matchedKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === matchedKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
+  const candidateOrder = matchedKey && matchedKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === matchedKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
+  const itemOrder = sortSessionItemOrder(candidateOrder, items);
   const phase = next.phase === 'final_answer' ? 'active_final_answer' : 'active_prework';
   const terminal = Boolean(state.terminalTurnIds[turnId]);
   const visibleFeedbackEpoch = itemProvidesVisibleFeedback(next) ? state.feedbackEpoch : state.visibleFeedbackEpoch;
@@ -1451,6 +1509,41 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     visibleFeedbackEpoch,
     conversationState: terminal ? state.conversationState : phase,
   };
+}
+
+/** 位置重排在完整批次到达后一次接管，避免逐条更新产生中间闪烁。 */
+function reduceTranscriptPlacementEvent(state: NativeSessionState, event: Extract<NativeConversationEvent, { type: 'conversation.transcript.placement.changed' }>): NativeSessionState {
+  const placements = new Map(event.payload.placements.map((placement) => [placement.entryId, placement]));
+  if (placements.size === 0 && event.payload.removedEntryIds.length === 0) return state;
+  const removed = new Set(event.payload.removedEntryIds);
+  const items = Object.fromEntries(
+    Object.entries(state.items).flatMap(([key, item]) => {
+      const entryId = item.transcript?.placement.entryId;
+      if (!entryId || removed.has(entryId)) return entryId && removed.has(entryId) ? [] : [[key, item]];
+      const placement = placements.get(entryId);
+      return [[key, placement ? { ...item, transcript: { ...item.transcript!, placement } } : item]];
+    }),
+  );
+  const candidateOrder = state.itemOrder.filter((key) => key in items);
+  return { ...state, items, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
+}
+
+/** 实时条目只按持久位置插入；无位置的乐观队列继续保留当前相对顺序。 */
+function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<string, NativeSessionItemBuffer>>): string[] {
+  const previousIndex = new Map(order.map((key, index) => [key, index]));
+  return [...order].sort((leftKey, rightKey) => {
+    const left = items[leftKey]?.transcript?.placement.order ?? null;
+    const right = items[rightKey]?.transcript?.placement.order ?? null;
+    if (left !== null && right !== null) return left - right || (items[leftKey]?.transcript?.placement.entryId ?? leftKey).localeCompare(items[rightKey]?.transcript?.placement.entryId ?? rightKey);
+    if (left !== null) return -1;
+    if (right !== null) return 1;
+    return (previousIndex.get(leftKey) ?? 0) - (previousIndex.get(rightKey) ?? 0);
+  });
+}
+
+/** 比较实时来源和位置的最高修订，拒绝晚到的旧事件。 */
+function transcriptRevision(transcript: NonNullable<NativeSessionItemBuffer['transcript']>): number {
+  return Math.max(transcript.placement.placementRevision, ...transcript.sources.map((source) => source.revision));
 }
 
 function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {

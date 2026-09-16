@@ -46,6 +46,7 @@ import type {
   ConversationRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
+  ConversationTranscriptRepository,
   ConversationTurnRepository,
   ZeusConversationServerRequestRecord,
   ZeusConversationWithMessagesRecord,
@@ -127,6 +128,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   providerItems: ConversationProviderItemRepository;
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
+  /** Pi 问答事件与快照共用持久显示身份。 */
+  transcripts: ConversationTranscriptRepository;
   /** 两条执行链共用正式计划与确认记录。 */
   planActions: ConversationPlanActionRepository;
   modelConnections: ModelConnectionService;
@@ -2281,7 +2284,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (request.signal?.aborted) abort();
     try {
       await options.db.save();
-      publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted) });
+      publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted, options.transcripts) });
       if (kind !== 'request_user_input' && context.permissionMode === 'auto-review') {
         // 审查与人工回答竞争同一持久请求；先解决者生效，迟到结果不得覆盖。
         void (async () => {
@@ -2319,7 +2322,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           finish(decision);
         })().catch(() => {
           // 审查记录失败保留人工请求，绝不默认放行。
-          publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted) });
+          publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted, options.transcripts) });
         });
       }
       const answered = await response;
@@ -3097,7 +3100,7 @@ function readApprovalDecision(value: unknown): boolean {
   return record.decision === 'accept' || record.decision === 'acceptForSession' || record.action === 'accept';
 }
 
-function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord): Record<string, unknown> {
+function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord, transcripts: ConversationTranscriptRepository): Record<string, unknown> {
   return {
     id: request.id,
     conversationId: request.conversationId,
@@ -3113,6 +3116,13 @@ function nativePendingRequestProjection(request: ZeusConversationServerRequestRe
     autoResolutionState: request.autoResolutionState,
     createdAt: request.createdAt,
     resolvedAt: request.resolvedAt,
+    transcript: transcripts.envelopeForSource({
+      conversationId: request.conversationId,
+      sourceDomain: 'request',
+      sourceScope: request.turnId ?? request.transportGenerationId,
+      sourceId: request.id,
+      facet: 'request_answer',
+    }),
   };
 }
 

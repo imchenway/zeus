@@ -1,7 +1,8 @@
 import { parseCanonicalRequestUserInputQuestions } from './requestUserInput.js';
+import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacement } from './conversationTranscriptWire.js';
 
 /** Snapshot V2 的服务端、桌面端与存储层共用协议代次。 */
-export const conversationSnapshotV2StructureGeneration = '2026-09-03-conversation-stage-identity' as const;
+export const conversationSnapshotV2StructureGeneration = '2026-09-16-transcript-placement' as const;
 
 export type ConversationSnapshotV2PageKind = 'timeline' | 'model_history' | 'process' | 'commands' | 'resources' | 'change_files';
 
@@ -31,6 +32,8 @@ export interface ConversationSnapshotV2Page<T> {
   kind: ConversationSnapshotV2PageKind;
   throughEventSeq: number;
   throughSequence: number;
+  /** 本页显示位置所属的持久代次。 */
+  orderEpoch: number;
   items: T[];
   hasMore: boolean;
   nextCursor: string | null;
@@ -61,6 +64,8 @@ export interface ConversationNavigationEntry {
   response: string;
   /** 所属轮次的真实状态。 */
   status: string;
+  /** 目录与正文共用的稳定显示位置。 */
+  placement?: ConversationTranscriptPlacement;
 }
 
 /** 完整目录的只读结果；事件进度只用于判断新旧，不能推进实时同步游标。 */
@@ -69,8 +74,16 @@ export interface ConversationNavigationSnapshot {
   conversationId: string;
   /** 同步读取目录时的事件进度。 */
   throughEventSeq: number;
+  /** 目录显示位置所属的持久代次。 */
+  orderEpoch: number;
   /** 按发言顺序排列的完整目录。 */
   entries: ConversationNavigationEntry[];
+}
+
+/** 为 Snapshot V2 可见条目附加稳定位置和来源修订。 */
+export interface ConversationSnapshotV2TranscriptItem {
+  /** 条目当前持久位置和来源修订。 */
+  transcript: ConversationTranscriptEnvelope;
 }
 
 /** 摘录按字符截断，避免拆开表情；只合并空白，不执行 Markdown 或 HTML。 */

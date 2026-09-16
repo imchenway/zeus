@@ -255,6 +255,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           conversation,
           projectRoot: approvalContext.projectLocalPath,
           providerItems: options.providerItems,
+          transcripts: options.transcripts,
         }),
       });
     }
@@ -1518,6 +1519,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
                 conversation,
                 projectRoot: (contexts.get(conversation.id) ?? contextFromConversation(conversation)).projectLocalPath,
                 providerItems: options.providerItems,
+                transcripts: options.transcripts,
               }),
               notificationEligible: !options.goals.get(conversation.id),
             },

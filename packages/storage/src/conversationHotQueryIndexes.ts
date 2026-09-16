@@ -195,4 +195,22 @@ export const conversationQueryPlanDefinitions: readonly ConversationQueryPlanDef
     scannedTable: 'conversation_model_requests',
     scanBudgetRows: 0,
   },
+  {
+    id: 'transcript-turn-order',
+    description: '轮次持久显示顺序',
+    sql: 'SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND turn_id = ? ORDER BY display_order',
+    params: ['conversation-plan-check', 'turn-plan-check'],
+    expectedIndex: 'idx_conversation_transcript_turn_order',
+    scannedTable: 'conversation_transcript_entries',
+    scanBudgetRows: 0,
+  },
+  {
+    id: 'transcript-entry-sources',
+    description: '显示条目来源修订',
+    sql: 'SELECT * FROM conversation_transcript_aliases WHERE conversation_id = ? AND entry_id = ? ORDER BY source_revision, source_domain, source_id, facet',
+    params: ['conversation-plan-check', 'entry-plan-check'],
+    expectedIndex: 'idx_conversation_transcript_alias_entry',
+    scannedTable: 'conversation_transcript_aliases',
+    scanBudgetRows: 0,
+  },
 ];

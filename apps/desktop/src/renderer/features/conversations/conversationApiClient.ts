@@ -21,6 +21,7 @@ import type {
   NativeConversationSnapshotV2Page,
   NativeConversationStartDispatchResult,
   NativeConversationToolResultPage,
+  NativeConversationTranscriptPlacementBatch,
   NativeGoalResponse,
   NativeNextTurnSettings,
   NativeOperationAcceptance,
@@ -64,6 +65,8 @@ export interface ConversationApiClient {
   /** 一次取得同一事件进度下的会话结构与消息尾页。 */
   loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string) => Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
+  /** 有界核对已加载条目的持久位置代次。 */
+  loadNativeConversationTranscriptPlacements: (projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number) => Promise<NativeConversationTranscriptPlacementBatch>;
   /** 单独刷新执行现场，避免命令事件触发正文重载。 */
   loadNativeConversationExecutionContext: (projectId: string, conversationId: string) => Promise<NativeConversationExecutionContext>;
   loadNativeConversationModelHistoryV2: (
@@ -200,6 +203,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       }),
     loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
+    loadNativeConversationTranscriptPlacements: (projectId, conversationId, entryIds, expectedOrderEpoch) =>
+      transport.request<NativeConversationTranscriptPlacementBatch>(`${conversationPath(projectId, conversationId)}/transcript/placements`, {
+        ...jsonRequest('POST', { entryIds, ...(expectedOrderEpoch === undefined ? {} : { expectedOrderEpoch }) }),
+      }),
     loadNativeConversationExecutionContext: (projectId, conversationId) => transport.request<NativeConversationExecutionContext>(`${conversationPath(projectId, conversationId)}/execution-context`),
     loadNativeConversationModelHistoryV2: (projectId, conversationId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>>(`${conversationPath(projectId, conversationId)}/model-history${pageQuery(options)}`),

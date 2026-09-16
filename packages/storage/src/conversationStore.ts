@@ -4,6 +4,7 @@ import { randomId } from './randomId.js';
 import { type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type TokenUsageBreakdown } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
+import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -2063,21 +2064,32 @@ export class CodexUsageLedgerRepository {
 }
 
 export class ConversationResourceRepository {
-  constructor(private readonly db: ZeusDatabasePort) {}
+  /** 会话显示身份与位置索引。 */
+  private readonly transcript: ConversationTranscriptRepository;
+
+  /** 绑定共享 SQLite，使资源替换与显示位置共享事务。 */
+  constructor(private readonly db: ZeusDatabasePort) {
+    this.transcript = new ConversationTranscriptRepository(db);
+  }
 
   replaceForItem(itemId: string, resources: Array<Omit<ZeusConversationResourceRecord, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }>, updatedAt: string): ZeusConversationResourceRecord[] {
     return this.db.transaction(() => {
+      const removed = this.listByItem(itemId);
       this.db.execute(`DELETE FROM conversation_resources WHERE item_id = ?`, [itemId]);
+      for (const resource of removed) {
+        this.transcript.removeSource({ conversationId: resource.conversationId, sourceDomain: 'resource', sourceScope: resource.turnId, sourceId: resource.id, facet: 'resource' });
+      }
       for (const resource of resources) {
         const kind = assertEnum(resource.kind, ['file', 'website', 'attachment'] as const, 'conversation resource kind');
         const presentation = assertEnum(resource.presentation, ['inline', 'card'] as const, 'conversation resource presentation');
+        const resourceId = resource.id ?? `conversation_resource_${randomId(12)}`;
         this.db.execute(
           `INSERT INTO conversation_resources
              (id, project_id, conversation_id, turn_id, item_id, source_index, canonical_target_digest,
               kind, presentation, display_json, target_json, authority_json, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            resource.id ?? `conversation_resource_${randomId(12)}`,
+            resourceId,
             resource.projectId,
             resource.conversationId,
             resource.turnId,
@@ -2093,6 +2105,20 @@ export class ConversationResourceRepository {
             updatedAt,
           ],
         );
+        this.transcript.registerSource({
+          conversationId: resource.conversationId,
+          sourceDomain: 'resource',
+          sourceScope: resource.turnId,
+          sourceId: resourceId,
+          facet: 'resource',
+          preferredEntryId: `resource:${resourceId}`,
+          kind: 'resource',
+          turnId: resource.turnId,
+          segmentId: null,
+          firstSeenAt: updatedAt,
+          orderingEvidence: 'live',
+          contentHash: hashConversationTranscriptContent([itemId, resource.sourceIndex, resource.displayJson, resource.targetJson, resource.authorityJson]),
+        });
       }
       return this.listByItem(itemId);
     });
@@ -2386,7 +2412,13 @@ export class ConversationSubmissionRepository {
 }
 
 export class ConversationServerRequestRepository {
-  constructor(private readonly db: ZeusDatabasePort) {}
+  /** 会话显示身份与位置索引。 */
+  private readonly transcript: ConversationTranscriptRepository;
+
+  /** 绑定共享 SQLite，使问答状态与显示身份共享事务。 */
+  constructor(private readonly db: ZeusDatabasePort) {
+    this.transcript = new ConversationTranscriptRepository(db);
+  }
 
   upsert(input: {
     conversationId: string;
@@ -2404,7 +2436,8 @@ export class ConversationServerRequestRepository {
     createdAt: string;
     resolvedAt?: string | null;
   }): ZeusConversationServerRequestRecord {
-    const requestKind = assertEnum(input.requestKind, ['command', 'file', 'permissions', 'request_user_input', 'mcp'] as const, 'conversation server request kind');
+    return this.db.transaction(() => {
+      const requestKind = assertEnum(input.requestKind, ['command', 'file', 'permissions', 'request_user_input', 'mcp'] as const, 'conversation server request kind');
     const status = assertEnum(input.status, ['pending', 'resolved', 'declined', 'expired', 'failed'] as const, 'conversation server request status');
     const providerRequestIdJson = serializeProviderRequestId(input.providerRequestId);
     const existing = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
@@ -2443,18 +2476,25 @@ export class ConversationServerRequestRepository {
     if (!stored) throw new Error('Conversation server request insert did not persist a record.');
     assertConversationServerRequestIdentity(stored, requestKind, payload, containsSecret);
     syncConversationStage(this.db, input.conversationId, input.createdAt);
-    return mapConversationServerRequestRow(stored);
+    const record = mapConversationServerRequestRow(stored);
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   resolve(id: string, input: { response: unknown; isSecret?: boolean; questionIds?: string[]; answerCount?: number; resolvedAt: string }): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     const persistedPayload = parseStoredJson(existing.payloadJson);
     const secret = input.isSecret === true || existing.containsSecret || hasSecretUserInputQuestion(persistedPayload);
     const responseJson = secret ? JSON.stringify(createSecretResponseSummary(persistedPayload, input.response, input.questionIds, input.answerCount)) : JSON.stringify(input.response);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, contains_secret = ?, resolved_at = ? WHERE id = ?`, [responseJson, secret ? 1 : 0, input.resolvedAt, id]);
     syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   /**
@@ -2485,7 +2525,8 @@ export class ConversationServerRequestRepository {
       currentGenerationId?: string | null;
     },
   ): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(
       `UPDATE conversation_server_requests
@@ -2506,7 +2547,10 @@ export class ConversationServerRequestRepository {
       ],
     );
     syncConversationStage(this.db, existing.conversationId, input.restoredAt);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   /** 记录请求已由 Codex 的其他已授权客户端回答；Zeus 不持久化它看不到的答案正文。 */
@@ -2518,7 +2562,8 @@ export class ConversationServerRequestRepository {
       answerRecovery?: 'rollout_path_unavailable' | 'rollout_thread_mismatch' | 'request_call_missing' | 'request_call_ambiguous' | 'answer_output_missing' | 'answer_output_ambiguous' | 'answer_output_invalid';
     },
   ): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`, [
       JSON.stringify({ type: 'external_resolution', source: input.source, ...(input.answerRecovery ? { answerRecovery: input.answerRecovery } : {}) }),
@@ -2526,31 +2571,46 @@ export class ConversationServerRequestRepository {
       id,
     ]);
     syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   fail(id: string, input: { error: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'failed', response_json = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(input.error), input.resolvedAt, id]);
     syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   expire(id: string, input: { response: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
     syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   snooze(id: string): ZeusConversationServerRequestRecord {
-    const existing = this.getById(id);
+    return this.db.transaction(() => {
+      const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     if (existing.status !== 'pending') throw Object.assign(new Error('Only a pending request can be snoozed.'), { code: 'ZEUS_CODEX_SERVER_REQUEST_NOT_PENDING' as const });
     this.db.execute(`UPDATE conversation_server_requests SET auto_resolution_state = 'snoozed', expires_at = NULL WHERE id = ?`, [id]);
-    return this.getById(id)!;
+    const record = this.getById(id)!;
+    this.registerRequestTranscript(record);
+      return record;
+    });
   }
 
   getById(id: string): ZeusConversationServerRequestRecord | undefined {
@@ -2576,6 +2636,24 @@ export class ConversationServerRequestRepository {
 
   listPending(): ZeusConversationServerRequestRecord[] {
     return this.db.select<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE status = 'pending' ORDER BY created_at, id`).map(mapConversationServerRequestRow);
+  }
+
+  /** 问题创建与回答只更新同一张问答卡，不形成普通用户输入边界。 */
+  private registerRequestTranscript(record: ZeusConversationServerRequestRecord): void {
+    this.transcript.registerSource({
+      conversationId: record.conversationId,
+      sourceDomain: 'request',
+      sourceScope: record.turnId ?? record.transportGenerationId,
+      sourceId: record.id,
+      facet: 'request_answer',
+      preferredEntryId: `request:${record.id}`,
+      kind: 'question',
+      turnId: record.turnId,
+      segmentId: null,
+      firstSeenAt: record.createdAt,
+      orderingEvidence: 'live',
+      contentHash: hashConversationTranscriptContent([record.payloadJson, record.responseJson, record.status, record.resolvedAt, record.autoResolutionState]),
+    });
   }
 }
 

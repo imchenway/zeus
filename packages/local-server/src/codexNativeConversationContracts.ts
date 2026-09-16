@@ -16,6 +16,7 @@ import type {
   ConversationResourceRepository,
   ConversationServerRequestRepository,
   ConversationSubmissionRepository,
+  ConversationTranscriptRepository,
   ConversationTurnRepository,
   ProviderEventReceiptRepository,
   SettingRepository,
@@ -45,6 +46,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   changeSets: TurnChangeSetService;
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
+  /** 请求投影与正文共用的持久显示索引。 */
+  transcripts: ConversationTranscriptRepository;
   planActions: ConversationPlanActionRepository;
   goals: ConversationGoalRepository;
   /** 双执行链交接目标时记录唯一控制来源。 */

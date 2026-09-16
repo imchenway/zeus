@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ConversationSnapshotV2Error, type ConversationSnapshotV2ExecutionContext, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
+import type { ConversationTranscriptPlacementRequest } from '@zeus/shared';
 
 interface ConversationOwnershipRecord {
   id: string;
@@ -134,6 +135,22 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       return sendSnapshotV2Error(reply, error);
     }
   });
+
+  // 重新编号或缓存恢复只核对客户端已经加载的身份，未知身份不代表删除。
+  server.post(
+    '/api/projects/:projectId/conversations/:conversationId/transcript/placements',
+    async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationTranscriptPlacementRequest }>, reply) => {
+      if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+      markV2Response(reply);
+      try {
+        const entryIds = Array.isArray(request.body?.entryIds) && request.body.entryIds.every((entryId) => typeof entryId === 'string') ? request.body.entryIds : null;
+        if (!entryIds) throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', 'entryIds 必须为字符串数组。', 400);
+        return repository.readTranscriptPlacements(request.params.conversationId, entryIds);
+      } catch (error) {
+        return sendSnapshotV2Error(reply, error);
+      }
+    },
+  );
 
   server.get('/api/projects/:projectId/conversations/:conversationId/timeline', async (request: FastifyRequest<{ Params: ConversationParams; Querystring: PageQuery }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
@@ -333,6 +350,18 @@ function conversationNotFound(reply: FastifyReply): FastifyReply {
 function sendSnapshotV2Error(reply: FastifyReply, error: unknown): FastifyReply {
   if (error instanceof ConversationSnapshotV2Error) {
     return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+  }
+  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;
+  if (code?.startsWith('ZEUS_CONVERSATION_SNAPSHOT_V2_')) {
+    const statusCode = error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
+    return reply.code(statusCode).send({ error: code, message: error instanceof Error ? error.message : 'Snapshot V2 read failed.' });
+  }
+  if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING') {
+    reply.header('retry-after', '1');
+    return reply.code(503).send({ error: code, message: error instanceof Error ? error.message : '会话显示位置正在初始化。' });
+  }
+  if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_BATCH_TOO_LARGE' || code === 'ZEUS_CONVERSATION_TRANSCRIPT_INVALID_IDENTITY') {
+    return reply.code(400).send({ error: code, message: error instanceof Error ? error.message : '会话显示位置请求无效。' });
   }
   return reply.code(500).send({
     error: 'ZEUS_CONVERSATION_SNAPSHOT_V2_READ_FAILED',

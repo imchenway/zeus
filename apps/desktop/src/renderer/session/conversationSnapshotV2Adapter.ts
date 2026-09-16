@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, conversationProcessPresentation } from '@zeus/shared';
+import { classifyAssistantMessage, conversationProcessPresentation, conversationSnapshotV2StructureGeneration } from '@zeus/shared';
 import type {
   NativeConversationActiveItemV2,
   NativeConversationChoice,
@@ -16,6 +16,7 @@ import type {
   NativeTurnSnapshot,
   NativeUnifiedUsageSnapshot,
 } from './sessionTypes.js';
+import { reconcileTranscriptItems } from './transcriptReconciliation.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
 
@@ -163,7 +164,7 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
   return items.map((item) => {
     const parsedPayload = parseProjection(item.payload.preview, item.payload.truncated);
     return {
-      id: item.id,
+      id: item.transcript.placement.entryId,
       turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
       providerItemId: item.providerItemId,
       type: item.itemType,
@@ -190,6 +191,7 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
       startedAt: item.startedAt,
       completedAt: item.completedAt,
       updatedAt: item.updatedAt,
+      transcript: item.transcript,
     };
   });
 }
@@ -452,34 +454,7 @@ export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnaps
  * Provider 身份是跨分页稳定主键；过程详情比模型历史预览完整，冲突时保持过程详情。
  */
 function mergeItemsByProviderIdentity(current: readonly NativeItemSnapshot[], incoming: readonly NativeItemSnapshot[]): NativeItemSnapshot[] {
-  const byId = new Map<string, NativeItemSnapshot>();
-  const byProviderItemId = new Map<string, NativeItemSnapshot>();
-  const add = (item: NativeItemSnapshot): void => {
-    const previous = item.providerItemId ? byProviderItemId.get(item.providerItemId) : byId.get(item.id);
-    if (previous && previous.payload.v2ContentKind === 'process_detail' && item.payload.v2ContentKind !== 'process_detail') return;
-    if (previous && previous.id !== item.id) byId.delete(previous.id);
-    // Pi 旧记录把调用和结果分开保存；同一身份归并时同时保留参数和最终结果。
-    const pendingCommand = previous?.payload.command && previous.payload.v2ContentTruncated === true && !item.payload.command;
-    // 旧结果单独存储时仍保留调用正文句柄，展开长命令才能读取完整参数。
-    const merged =
-      previous?.payload.provider === 'pi' && item.payload.provider === 'pi'
-        ? {
-            ...item,
-            startedAt: previous.startedAt,
-            payload: {
-              ...previous.payload,
-              ...item.payload,
-              toolResult: item.payload.toolResult ?? previous.payload.toolResult,
-              ...(pendingCommand ? { v2ContentHandle: previous.payload.v2ContentHandle, v2ContentTruncated: true, v2ContentBytes: previous.payload.v2ContentBytes } : {}),
-            },
-          }
-        : item;
-    byId.set(item.id, merged);
-    if (item.providerItemId) byProviderItemId.set(item.providerItemId, merged);
-  };
-  for (const item of current) add(item);
-  for (const item of incoming) add(item);
-  return [...byId.values()].sort(compareNativeItems);
+  return reconcileTranscriptItems(current, incoming).items;
 }
 
 export function updateConversationV2Paging(snapshot: NativeConversationSnapshot, update: (paging: NonNullable<NativeConversationSnapshot['v2Paging']>) => NonNullable<NativeConversationSnapshot['v2Paging']>): NativeConversationSnapshot {
@@ -490,7 +465,7 @@ export function updateConversationV2Paging(snapshot: NativeConversationSnapshot,
 function assertSnapshotV2Identity(snapshot: NativeConversationSnapshotV2, history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>, choice: NativeConversationChoice): void {
   if (
     snapshot.schemaVersion !== 2 ||
-    snapshot.structureGeneration !== '2026-09-03-conversation-stage-identity' ||
+    snapshot.structureGeneration !== conversationSnapshotV2StructureGeneration ||
     snapshot.conversationSchemaGeneration !== '2026-08-16-unified-conversation-segments' ||
     history.schemaVersion !== 2 ||
     history.structureGeneration !== snapshot.structureGeneration ||
@@ -553,11 +528,11 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
     // 不能因为缺少新版元数据就折叠进“处理过程”。
     const missingPhase = item.phase === null || item.phase === undefined || item.phase === '';
-    const phase = item.role === 'assistant' && classifyAssistantMessage({ ...item.assistantMessage }, missingPhase && !persistedPlan && !reasoning ? 'final_answer' : item.phase) === 'final' ? 'final_answer' : 'prework';
+    const phase = reasoning ? 'prework' : item.role === 'assistant' && classifyAssistantMessage({ ...item.assistantMessage }, missingPhase && !persistedPlan ? 'final_answer' : item.phase) === 'final' ? 'final_answer' : 'prework';
     const historicalUserPayload = historicalUserPresentation(content, item.role === 'user');
     return [
       {
-        id: item.id,
+        id: item.transcript.placement.entryId,
         turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
         providerItemId: item.providerItemId,
         type: item.role === 'user' ? 'userMessage' : persistedPlan ? 'plan' : reasoning ? 'reasoning' : 'agentMessage',
@@ -600,6 +575,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
         startedAt: item.confirmedAt,
         completedAt: item.confirmedAt,
         updatedAt: item.confirmedAt,
+        transcript: item.transcript,
       },
     ];
   });
@@ -634,7 +610,7 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
     const type = presentation.type;
     const text = processProjectionText(item, detail);
     return {
-      id: item.id,
+      id: item.transcript.placement.entryId,
       turnId: providerTurnByLocalId.get(item.turnId) ?? item.turnId,
       providerItemId: item.providerItemId,
       type,
@@ -664,6 +640,7 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
       startedAt: item.startedAt,
       completedAt: item.completedAt,
       updatedAt: item.completedAt ?? item.startedAt,
+      transcript: item.transcript,
     };
   });
 }
@@ -742,13 +719,4 @@ function textFragments(value: unknown, depth = 0): string[] {
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function compareNativeItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
-  const timestampOrder = (left.startedAt ?? left.updatedAt).localeCompare(right.startedAt ?? right.updatedAt);
-  if (timestampOrder !== 0) return timestampOrder;
-  const leftSequence = typeof left.payload.v2Sequence === 'number' ? left.payload.v2Sequence : null;
-  const rightSequence = typeof right.payload.v2Sequence === 'number' ? right.payload.v2Sequence : null;
-  if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) return leftSequence - rightSequence;
-  return left.id.localeCompare(right.id);
 }

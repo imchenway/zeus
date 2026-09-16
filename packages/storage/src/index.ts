@@ -25,6 +25,7 @@ import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStage
 import { migrateDigitalEmployeeLegacyRetirement } from './digitalEmployeeLegacyRetirementMigration.js';
 import { migrateConversationExpertSchema } from './conversationExpertStore.js';
 import { migrateConversationRuntimeSchema } from './conversationRuntimeStore.js';
+import { initializeConversationTranscriptIndexes, migrateConversationTranscriptStoreSchema } from './conversationTranscriptStore.js';
 import { migrateEmployeeMemorySchema } from './employeeMemoryMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
@@ -56,6 +57,7 @@ export * from './conversationItemTypes.js';
 export * from './conversationExecutionStore.js';
 export * from './conversationExpertStore.js';
 export * from './conversationRuntimeStore.js';
+export * from './conversationTranscriptStore.js';
 export * from './conversationLegacyCutover.js';
 export * from './conversationProviderItemStore.js';
 export * from './conversationSnapshotV2.js';
@@ -1033,6 +1035,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateConversationProviderItemStoreSchema(zeusDb);
     migrateCompletedProviderPlansToConversationHistory(zeusDb);
     migrateConfirmedUserMessageHistory(zeusDb);
+    migrateConversationTranscriptStoreSchema(zeusDb);
+    initializeConversationTranscriptIndexes(zeusDb);
     migrateArtifactStoreSchema(zeusDb);
     migrateConversationSyncEventStoreSchema(zeusDb);
     migrateConversationSyncProtocolV2(zeusDb);

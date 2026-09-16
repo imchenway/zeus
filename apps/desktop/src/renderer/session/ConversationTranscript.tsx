@@ -717,7 +717,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const target = entry?.parentRowKey ? parent?.querySelector<HTMLElement>(`[data-navigation-row-key="${CSS.escape(navigationTargetKey)}"]`) : parent;
     if (!target || !parent || !entry?.loaded) return;
     container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
-    staticReadingAnchorRef.current = { rowKey: parentKey, topOffset: parent.getBoundingClientRect().top - container.getBoundingClientRect().top, scrollHeight: container.scrollHeight, scrollTop: container.scrollTop };
+    staticReadingAnchorRef.current = {
+      itemKey: target.closest<HTMLElement>('[data-transcript-item-key]')?.dataset.transcriptItemKey ?? null,
+      rowKey: parentKey,
+      topOffset: parent.getBoundingClientRect().top - container.getBoundingClientRect().top,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+    };
     setStaticReadingAnchorRowKey(parentKey);
     setNavigationTargetKey(null);
     viewportVirtualizer.synchronizeViewport(container);
@@ -1566,6 +1572,11 @@ function transcriptViewportRowTime(row: TranscriptViewportRow): string {
   return transcriptTimelineAt(row.kind === 'item' ? row.item : row.items[0]!);
 }
 
+/** 时间只用于失败提示和导航摘录，不参与正文条目排序。 */
+function transcriptTimelineAt(item: NativeSessionItemBuffer): string {
+  return item.timelineAt ?? item.updatedAt ?? '';
+}
+
 /** 真实正文行提供目录所需的身份、状态和短摘录。 */
 function transcriptNavigationEntries(rows: readonly TranscriptTurnRow[], state: NativeSessionState): TranscriptNavigationEntry[] {
   /** 同轮补充发言共享最终答复，正式计划只作次选。 */
@@ -2041,7 +2052,7 @@ export function projectTranscriptTurnRows(
   /** 活动轮次和已结束轮次共用消息边界，展开与收起都不能改变发言顺序。 */
   const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
   /** 每次普通用户输入开启一段过程；结构化问题答案继续留在原过程内。 */
-  type ProcessGroup = { openingUserRowKey: string | null; rows: TranscriptRow[]; workRow?: TranscriptTurnWorkRow };
+  type ProcessGroup = { openingInputId: string | null; openingUserRowKey: string | null; rows: TranscriptRow[]; workRow?: TranscriptTurnWorkRow };
   /** 同轮的各段按实际出现顺序保存，首段兼容过程先于开场消息到达。 */
   const groupsByTurn = new Map<string, ProcessGroup[]>();
   /** 输入行和过程行都直接关联所属段，避免输出时跨过中途引导。 */
@@ -2052,12 +2063,13 @@ export function projectTranscriptTurnRows(
     if (!turnId || !projectedTurnIds.has(turnId)) continue;
     /** 只有普通用户消息构成发言边界。 */
     const isUserInput = row.kind === 'item' && !row.questionAnswer && itemRole(row.item) === 'user';
-    /** 使用同轮最近一段；新输入只分开已有开场消息的段。 */
+    /** 持久输入身份直接决定分组；旧记录才沿用同轮最近一段。 */
     const groups = groupsByTurn.get(turnId) ?? [];
-    /** 前置过程与稍后到达的首条用户消息仍属于首段。 */
-    let group = groups.at(-1);
-    if (!group || (isUserInput && group.openingUserRowKey)) {
-      group = { openingUserRowKey: null, rows: [] };
+    const openingInputId = transcriptRowOpeningInputId(row);
+    /** 前置过程与稍后到达的首条用户消息通过同一 openingInputId 汇合。 */
+    let group = openingInputId ? groups.find((candidate) => candidate.openingInputId === openingInputId) : groups.at(-1);
+    if (!group || (!openingInputId && isUserInput && group.openingUserRowKey)) {
+      group = { openingInputId, openingUserRowKey: null, rows: [] };
       groups.push(group);
       groupsByTurn.set(turnId, groups);
     }
@@ -2071,8 +2083,8 @@ export function projectTranscriptTurnRows(
       if (!group.rows.length && !processAvailableTurnIds.has(turnId)) return;
       group.workRow = {
         kind: 'turn_work',
-        // 首段沿用原身份；后续段绑定用户消息，流式追加不会重建已有过程。
-        key: `turn-work:${encodeURIComponent(turnId)}${index === 0 ? '' : `:after:${encodeURIComponent(group.openingUserRowKey!)}`}`,
+        // 已接纳条目直接使用持久输入身份；旧记录保留原有兼容键。
+        key: group.openingInputId ? `turn-work:${encodeURIComponent(group.openingInputId)}` : `turn-work:${encodeURIComponent(turnId)}${index === 0 ? '' : `:after:${encodeURIComponent(group.openingUserRowKey!)}`}`,
         turnId,
         segments: segmentTurnProcessRows(turnId, group.rows),
         live: turnId === activeTurnId && !terminalTurnIds[turnId],
@@ -2167,6 +2179,13 @@ function transcriptRowStageId(row: TranscriptRow): string | null {
   if (row.kind === 'answered_request') return null;
   const items = row.kind === 'item' ? [row.item] : row.items;
   return items.map(itemStageId).find((stageId): stageId is string => Boolean(stageId)) ?? null;
+}
+
+/** 读取一行过程内容所属的持久普通输入。 */
+function transcriptRowOpeningInputId(row: TranscriptRow): string | null {
+  if (row.kind === 'answered_request') return null;
+  const items = row.kind === 'item' ? [row.item] : row.items;
+  return items.map(itemOpeningInputId).find((openingInputId): openingInputId is string => Boolean(openingInputId)) ?? null;
 }
 
 function mergeStageActivityRows(rows: readonly TranscriptRow[], turnId: string, stageIdentity: string): TranscriptRow[] {
@@ -2342,7 +2361,13 @@ function itemProviderPhase(item: NativeSessionItemBuffer): string {
 
 /** 读取条目在投影边界确定的稳定展示阶段。 */
 function itemStageId(item: NativeSessionItemBuffer): string | null {
-  const value = item.stageId ?? item.payload.stageId;
+  const value = item.transcript?.placement.displayStageId ?? item.stageId ?? item.payload.stageId;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** 持久输入身份跨分页保持不变，缺失时不从时间猜测。 */
+function itemOpeningInputId(item: NativeSessionItemBuffer): string | null {
+  const value = item.transcript?.placement.openingInputId;
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
@@ -2375,12 +2400,19 @@ export function projectTranscriptRows(
   const effectiveActiveTurnId = candidateActiveTurnId && !terminalTurnIds[candidateActiveTurnId] ? candidateActiveTurnId : null;
   const currentActivityItemKey = latestCurrentActivityItemKey(items, effectiveActiveTurnId);
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
-  for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
+  for (const request of [...answeredRequests].sort((left, right) => {
+    const leftOrder = left.transcript?.placement.order ?? null;
+    const rightOrder = right.transcript?.placement.order ?? null;
+    if (leftOrder !== null && rightOrder !== null) return leftOrder - rightOrder || left.id.localeCompare(right.id);
+    if (leftOrder !== null) return -1;
+    if (rightOrder !== null) return 1;
+    return left.id.localeCompare(right.id);
+  })) {
     // 缺少轮次身份的旧记录不能靠时间猜测归属，也不能重新污染主会话时间线。
     if (!request.turnId) continue;
-    const requestTimelineAt = request.resolvedAt ?? request.createdAt;
-    // 已回答询问按答案提交时间落位；普通条目使用首次进入时间线的稳定时间，不能用流式更新后的时间重排。
-    const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.timelineAt ?? entry.item.updatedAt ?? '') >= requestTimelineAt);
+    const requestOrder = request.transcript?.placement.order ?? null;
+    // 已回答询问与正文共用持久位置；旧协议缺少位置时只追加，不再根据时间猜测。
+    const insertionIndex = requestOrder === null ? -1 : timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.transcript?.placement.order ?? Number.MAX_SAFE_INTEGER) > requestOrder);
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
 
@@ -2393,8 +2425,10 @@ export function projectTranscriptRows(
   timeline.forEach((entry, index) => {
     const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
     if (!turnId) return;
+    const persistentOpeningInputId = entry.kind === 'item' ? itemOpeningInputId(entry.item) : null;
+    if (persistentOpeningInputId) inputBoundaryByTurn.set(turnId, persistentOpeningInputId);
     if (entry.kind === 'item' && itemRole(entry.item) === 'user' && !questionAnswers.get(entry.item.key)) {
-      inputBoundaryByTurn.set(turnId, `${turnId}\u0000input:${transcriptItemRenderKey(entry.item)}`);
+      inputBoundaryByTurn.set(turnId, persistentOpeningInputId ?? `${turnId}\u0000input:${transcriptItemRenderKey(entry.item)}`);
       currentStageIdentityByTurn.delete(turnId);
     }
     /** 展示阶段在本次输入范围内有效，不能吸走后续引导后的工具。 */
@@ -2523,6 +2557,8 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
 
 /** 状态摘要沿用轮次身份，持久思考正文和普通消息保留各自的稳定身份。 */
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
+  const entryId = item.transcript?.placement.entryId;
+  if (entryId) return `transcript:${encodeURIComponent(entryId)}`;
   // 活动轮次只投影一条当前摘要；Provider 换 item 时仍沿用轮次级 DOM 身份，
   // 让文字原位更新并固定在过程底部，不因新 item 被卸载后重新跳位。
   // Pi 持久思考正文及旧折叠记录可在同轮出现多段，必须保留各自的条目身份。
@@ -2583,11 +2619,15 @@ function projectPersistedTurnPlans(state: NativeSessionState, items: readonly Na
     ];
   });
   if (planItems.length === 0) return [...items];
-  return [...items, ...planItems].sort((left, right) => transcriptTimelineAt(left).localeCompare(transcriptTimelineAt(right)) || left.key.localeCompare(right.key));
-}
-
-function transcriptTimelineAt(item: NativeSessionItemBuffer): string {
-  return item.timelineAt ?? item.updatedAt ?? '';
+  const projected = [...items];
+  for (const plan of planItems) {
+    let lastTurnIndex = -1;
+    for (let index = 0; index < projected.length; index += 1) {
+      if (projected[index]?.turnId === plan.turnId) lastTurnIndex = index;
+    }
+    projected.splice(lastTurnIndex < 0 ? projected.length : lastTurnIndex + 1, 0, plan);
+  }
+  return projected;
 }
 
 function transcriptPayloadString(item: NativeSessionItemBuffer, key: string): string | undefined {

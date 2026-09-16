@@ -797,6 +797,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}
+      data-transcript-item-key={props.item.transcript?.placement.entryId ?? props.item.key}
       data-question-answer={Boolean(props.questionAnswer) || undefined}
       data-queued-submission={props.queuedSubmissionId || undefined}
       data-motion-active={props.motionActive || undefined}

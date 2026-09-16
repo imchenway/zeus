@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { randomId } from './randomId.js';
 import type { ArtifactRef } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { conversationProcessProviderItemId } from '@zeus/shared';
+import { ConversationTranscriptRepository, hashConversationTranscriptContent, providerEntryId } from './conversationTranscriptStore.js';
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
@@ -576,7 +578,13 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
 
 /** 统一会话账本仓储；运行适配器不得自行维护产品队列或切换状态。 */
 export class ConversationExecutionRepository {
-  constructor(private readonly db: ZeusDatabasePort) {}
+  /** 会话显示身份与位置索引。 */
+  private readonly transcript: ConversationTranscriptRepository;
+
+  /** 绑定共享 SQLite，并确保业务事实与显示位置处于同一事务。 */
+  constructor(private readonly db: ZeusDatabasePort) {
+    this.transcript = new ConversationTranscriptRepository(db);
+  }
 
   setDispatchEnabled(enabled: boolean): void {
     this.db.execute(`UPDATE conversation_store_metadata SET dispatch_enabled = ? WHERE singleton = 1 AND schema_generation = ?`, [enabled ? 1 : 0, conversationSchemaGeneration]);
@@ -1077,7 +1085,8 @@ export class ConversationExecutionRepository {
     capabilityLoss?: unknown;
     confirmedAt: string;
   }): ConversationModelHistoryRecord {
-    if (input.role === 'user') {
+    return this.db.transaction(() => {
+      if (input.role === 'user') {
       /** 本地提交或同轮原生消息均可确认身份；旧问题答复的原生身份保存在来源字段中。 */
       const providerItemId = stringOrNull(parseJsonRecord(input.content).providerItemId) ?? stringOrNull(parseJsonRecord(input.reasoningSource).itemId);
       /** 仅复用用户历史，不把同一提交的模型回复或工具活动合并进来。 */
@@ -1097,12 +1106,14 @@ export class ConversationExecutionRepository {
           this.db.execute(`UPDATE conversation_model_history SET submission_id = ? WHERE id = ?`, [input.submissionId, existing.id]);
           existing.submission_id = input.submissionId;
         }
-        return mapModelHistory(existing);
+        const record = mapModelHistory(existing);
+        this.registerModelHistoryTranscript(record, input);
+        return record;
       }
     }
-    const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
-    const id = `conversation_model_history_${randomId(12)}`;
-    this.db.execute(
+      const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
+      const id = `conversation_model_history_${randomId(12)}`;
+      this.db.execute(
       `INSERT INTO conversation_model_history
        (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
         reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at)
@@ -1122,7 +1133,10 @@ export class ConversationExecutionRepository {
         input.confirmedAt,
       ],
     );
-    return this.modelHistoryById(id)!;
+      const record = this.modelHistoryById(id)!;
+      this.registerModelHistoryTranscript(record, input);
+      return record;
+    });
   }
 
   confirmedModelHistory(conversationId: string, throughSequence?: number): ConversationModelHistoryRecord[] {
@@ -1245,26 +1259,32 @@ export class ConversationExecutionRepository {
     startedAt: string;
     completedAt?: string | null;
   }): ConversationProcessItemRecord {
-    const existing = input.sourceEventId ? this.processItemBySourceEventId(input.segmentId, input.sourceEventId) : undefined;
-    if (existing) {
+    return this.db.transaction(() => {
+      const existing = input.sourceEventId ? this.processItemBySourceEventId(input.segmentId, input.sourceEventId) : undefined;
+      if (existing) {
       this.db.execute(
         `UPDATE conversation_process_items
             SET status = ?, title = ?, detail_json = ?, completed_at = COALESCE(?, completed_at)
           WHERE id = ?`,
         [input.status, input.title, JSON.stringify(input.detail), input.completedAt ?? null, existing.id],
       );
-      return this.processItemById(existing.id)!;
+      const record = this.processItemById(existing.id)!;
+      this.registerProcessTranscript(record, input.detail);
+      return record;
     }
-    const processSequence = this.nextSequence(input.conversationId, 'process_sequence');
-    const id = `conversation_process_${randomId(12)}`;
-    this.db.execute(
+      const processSequence = this.nextSequence(input.conversationId, 'process_sequence');
+      const id = `conversation_process_${randomId(12)}`;
+      this.db.execute(
       `INSERT INTO conversation_process_items
        (id, conversation_id, turn_id, segment_id, process_sequence, kind, status, title,
         detail_json, source_event_id, started_at, completed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.conversationId, input.turnId, input.segmentId, processSequence, input.kind, input.status, input.title, JSON.stringify(input.detail), input.sourceEventId ?? null, input.startedAt, input.completedAt ?? null],
     );
-    return this.processItemById(id)!;
+      const record = this.processItemById(id)!;
+      this.registerProcessTranscript(record, input.detail);
+      return record;
+    });
   }
 
   /** 按运行分段和调用身份恢复过程，供后续结果补齐同一条调用。 */
@@ -1582,6 +1602,76 @@ export class ConversationExecutionRepository {
     );
   }
 
+  /** 把确认历史关联到首次出现时已经确定的显示身份与位置。 */
+  private registerModelHistoryTranscript(
+    record: ConversationModelHistoryRecord,
+    input: {
+      conversationId: string;
+      turnId: string;
+      segmentId: string;
+      role: 'user' | 'assistant' | 'tool';
+      content: unknown;
+      submissionId?: string | null;
+      reasoningSource?: unknown;
+      toolPairId?: string | null;
+      capabilityLoss?: unknown;
+      confirmedAt: string;
+    },
+  ): void {
+    const content = parseJsonRecord(input.content);
+    const reasoning = parseJsonRecord(input.reasoningSource);
+    const providerItemId = stringOrNull(content.providerItemId) ?? stringOrNull(reasoning.itemId) ?? stringOrNull(reasoning.providerItemId);
+    const reasoningBlock = input.role === 'assistant' && reasoning.readableSummary === true;
+    const facet = input.toolPairId ? 'tool_activity' : reasoningBlock ? 'reasoning_block' : 'body';
+    const clientMessageId = input.submissionId
+      ? this.db.get<{ client_message_id: string | null }>(`SELECT client_message_id FROM conversation_submissions WHERE id = ? AND conversation_id = ?`, [input.submissionId, input.conversationId])?.client_message_id ?? null
+      : null;
+    const preferredEntryId = input.role === 'user' && clientMessageId ? `user-message:${clientMessageId}` : providerItemId ? providerEntryId(input.segmentId, providerItemId, facet) : `history:${record.id}`;
+    const existingEnvelope = this.transcript.envelopeForEntry(input.conversationId, preferredEntryId);
+    const inheritedContentRevision = existingEnvelope?.sources.reduce((maximum, source) => Math.max(maximum, source.contentRevision), 0) || null;
+    this.transcript.registerSource({
+      conversationId: input.conversationId,
+      sourceDomain: 'model_history',
+      sourceScope: input.segmentId,
+      sourceId: record.id,
+      facet,
+      preferredEntryId,
+      kind: input.role === 'user' ? 'ordinary_input' : input.toolPairId ? 'tool_activity' : 'content',
+      turnId: input.turnId,
+      segmentId: input.segmentId,
+      displayStageId: stringOrNull(content.stageId) ?? stringOrNull(reasoning.stageId),
+      startsStage: reasoningBlock,
+      firstSeenAt: input.confirmedAt,
+      orderingEvidence: providerItemId ? 'provider' : 'live',
+      contentHash: hashConversationTranscriptContent([input.content, input.reasoningSource, input.toolPairId, input.capabilityLoss]),
+      inheritedContentRevision,
+    });
+  }
+
+  /** 把过程开始、进度与终态持续更新到同一显示条目。 */
+  private registerProcessTranscript(record: ConversationProcessItemRecord, detail: unknown): void {
+    const detailRecord = parseJsonRecord(detail);
+    const providerItemId = conversationProcessProviderItemId(record.sourceEventId);
+    const facet = record.kind === 'reasoning' ? 'reasoning_block' : 'tool_activity';
+    this.transcript.registerSource({
+      conversationId: record.conversationId,
+      sourceDomain: 'process',
+      sourceScope: record.segmentId,
+      sourceId: record.id,
+      facet,
+      preferredEntryId: providerItemId ? providerEntryId(record.segmentId, providerItemId, facet) : `process:${record.id}`,
+      kind: 'tool_activity',
+      turnId: record.turnId,
+      segmentId: record.segmentId,
+      displayStageId: stringOrNull(detailRecord.stageId),
+      startsStage: record.kind === 'reasoning',
+      firstSeenAt: record.startedAt,
+      orderingEvidence: providerItemId ? 'provider' : 'live',
+      contentHash: hashConversationTranscriptContent([record.kind, record.status, record.title, record.detailJson, record.completedAt]),
+    });
+  }
+
+  /** 分配原业务集合自己的递增序号；这些序号不参与跨集合展示排序。 */
   private nextSequence(conversationId: string, column: 'timeline_sequence' | 'model_history_sequence' | 'sync_event_sequence' | 'process_sequence' | 'model_request_sequence'): number {
     this.db.execute(`INSERT OR IGNORE INTO conversation_sequence_counters (conversation_id) VALUES (?)`, [conversationId]);
     this.db.execute(`UPDATE conversation_sequence_counters SET ${column} = ${column} + 1 WHERE conversation_id = ?`, [conversationId]);
