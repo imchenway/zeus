@@ -56,6 +56,8 @@ export function registerConversationStartCommandRoutes(options: {
           'clientUserMessageId',
           'collaborationMode',
           'computerUseRequested',
+          'workspaceMode',
+          'worktree',
           'content',
           'displayText',
           'effort',

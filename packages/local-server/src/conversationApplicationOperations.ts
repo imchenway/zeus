@@ -1,3 +1,4 @@
+import { prepareProjectConversationWorkspace } from './projectConversationWorkspace.js';
 import { routeFingerprint } from './conversationExecutionCoordinator.js';
 import { effectiveToolPermission, restrictToolPermission } from './conversationToolPolicy.js';
 import type { ConversationSubagentSummary } from './codexSubagentQueryApplication.js';
@@ -455,8 +456,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel) ?? null;
     const skillReferences = normalizeSkillReferences(input.body.skillReferences);
     if (skillReferences.length > 0 && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
-    // 新建讨论明确使用项目目录；继续讨论必须继承原会话身份，不能静默回退目录。
-    const executionRoot = input.conversation ? resolveNativeConversationExecutionRoot(input.conversation) : input.project.localPath;
+    // 继续讨论继承原目录；新建项目讨论遵循显式选择的工作位置。
+    const executionRoot = input.conversation
+      ? resolveNativeConversationExecutionRoot(input.conversation)
+      : input.task
+        ? input.project.localPath
+        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree);
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
     const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : undefined;
     if (!executionRoot || (input.task && !executionWorkspaceMode)) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '讨论会话的工作目录身份不可用。');
@@ -2356,6 +2361,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         return providerWriteLifecycle.markRpcStarted(resourceId);
       },
     };
+    const executionRoot = await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree);
     const resolvedRoute = await resolveConversationExecutionRoute({
       agentKind: selectedAgentKind,
       modelSourceId: selectedModel.sourceId ?? null,
@@ -2366,7 +2372,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       collaborationMode,
       projectId: project.id,
       taskId: null,
-      executionRoot: project.localPath,
+      executionRoot,
     });
     const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
       conversationId: reservation.conversationId,
@@ -2387,7 +2393,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
-            cwd: project.localPath,
+            cwd: executionRoot,
+            executionWorkspaceMode: body.workspaceMode === 'worktree' ? 'worktree' : 'direct',
             ...(goalObjective ? { goalObjective } : {}),
             prompt: providerContent,
             ...(displayText !== providerContent ? { displayText } : {}),
@@ -2411,7 +2418,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             conversationId: reservation.conversationId,
             submissionId: reservation.submissionId,
             projectId: project.id,
-            projectLocalPath: project.localPath,
+            projectLocalPath: executionRoot,
+            executionWorkspaceMode: body.workspaceMode === 'worktree' ? 'worktree' : 'direct',
             prompt: providerContent,
             ...(displayText !== providerContent ? { displayText } : {}),
             attachments,

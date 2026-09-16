@@ -1,3 +1,4 @@
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type {
   ConversationAttentionKind,
   ConversationRepository,
@@ -221,8 +222,26 @@ export class ConversationChoiceQueryApplication {
 
   toSummary(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {
     const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id) ?? null;
+    const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
+    const execution = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
+    const projectPath = this.ports.projects.getById(conversation.projectId)?.localPath;
+    const workspace = conversation.workspaceId ? (context.workspaceById.get(conversation.workspaceId) ?? this.ports.workspaces.getById(conversation.workspaceId)) : undefined;
+    const executionPath = isRecord(execution) && typeof execution.projectLocalPath === 'string' ? execution.projectLocalPath : (workspace?.worktreePath ?? projectPath ?? null);
+    const relativeWorktreePath = projectPath && executionPath ? relative(join(dirname(resolve(projectPath)), '.zeus-worktrees'), resolve(executionPath)) : null;
+    const managedWorktree = relativeWorktreePath !== null && relativeWorktreePath !== '' && relativeWorktreePath !== '..' && !relativeWorktreePath.startsWith('../') && !isAbsolute(relativeWorktreePath);
+    const workspaceMode: 'direct' | 'worktree' | null =
+      isRecord(execution) && (execution.executionWorkspaceMode === 'direct' || execution.executionWorkspaceMode === 'worktree')
+        ? execution.executionWorkspaceMode
+        : conversation.workspaceId || conversation.environmentId || managedWorktree
+          ? 'worktree'
+          : projectPath && executionPath && resolve(projectPath) === resolve(executionPath)
+            ? 'direct'
+            : null;
+
     return {
       id: conversation.id,
+      workspaceMode,
+      executionPath,
       /** 列表与创建回执共用持久创建身份，使提前到达的真实会话归入同一次推送。 */
       creationOperationIdentity: this.ports.submissions.getFirstOperationIdentityByConversation(conversation.id),
       projectId: conversation.projectId,
