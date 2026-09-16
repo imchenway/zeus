@@ -624,6 +624,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     onChooseAttachments: connectedActions.onChooseAttachments,
                     onAddAttachments: connectedActions.onAddAttachments,
                     onRemoveAttachment: connectedActions.onRemoveAttachment,
+                    // 历史会话继续输入时，浏览器批注与普通附件使用同一份草稿。
+                    onStageBrowserComments: connectedActions.onStageBrowserComments,
                     onRemoveBrowserSubmission: connectedActions.onRemoveBrowserSubmission,
                     onContextDraftChange: connectedActions.onContextDraftChange,
                     onNextTurnSettingsChange: connectedActions.onNextTurnSettingsChange,
@@ -2886,7 +2888,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           conversationId={props.state?.conversationId ?? props.conversation.id}
                           initialSnapshot={browserSnapshotRef.current}
                           language={props.language}
-                          disabled={interactionReadOnly || nonResumableNative || !actions.onStageBrowserComments}
+                          disabled={composerReadOnly || !actions.onStageBrowserComments}
                           expanded={contextFullWidth}
                           canSplit={browserLayoutWidth > 840}
                           onClose={closeContextWorkspace}
