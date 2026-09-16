@@ -3337,7 +3337,10 @@ body:has(.macos-ai-app.zeus-shell) {
   gap: 7px;
   min-block-size: 28px;
   padding: 0 10px;
-  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .macos-ai-app.zeus-shell .project-global-search.is-open .project-global-search-field,
@@ -3377,15 +3380,16 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-card-background);
   border: 1px solid var(--zeus-card-border);
   border-radius: 10px;
-  box-shadow: 0 16px 40px color-mix(in srgb, #111827 18%, transparent), 0 3px 10px color-mix(in srgb, #111827 10%, transparent);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, #111827 18%, transparent),
+    0 3px 10px color-mix(in srgb, #111827 10%, transparent);
   box-sizing: border-box;
   inset-block-start: calc(100% + 7px);
-  inset-inline-start: 50%;
+  inset-inline-end: 0;
   max-block-size: min(520px, calc(100vh - 72px));
   overflow: auto;
   padding: 6px;
   position: absolute;
-  transform: translateX(-50%);
   inline-size: min(560px, calc(100vw - 32px));
 }
 
@@ -3862,6 +3866,8 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell.project-navigation-rail-shell > .project-workspace-project-switcher {
   /* 顶栏属于外层工作台，下面的大模块作为独立卡片浮在其上。 */
   background: var(--zeus-page-background);
+  /* 搜索与主内容卡片共用右边界，避开右侧预留工具轨道。 */
+  padding-inline-end: calc(var(--zeus-workspace-right-rail-width) + 8px);
   padding-inline-start: 92px;
 }
 
