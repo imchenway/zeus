@@ -210,9 +210,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
       <section className="menu-bar-usage-surface">
         <header className="menu-bar-usage-header">
           <span className="menu-bar-usage-identity">
-            <span className="menu-bar-usage-mark" aria-hidden="true">
-              Z
-            </span>
+            <span className="menu-bar-usage-mark" aria-hidden="true" />
             <strong>Zeus</strong>
           </span>
           <span className="menu-bar-usage-refresh-status">

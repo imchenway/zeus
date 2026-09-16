@@ -2336,6 +2336,8 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
   positionMenuBarUsageWindow(window, placement);
   window.show();
   window.focus();
+  // 菜单栏点击可能发生在其他应用前台；先激活 Zeus，浮窗才能获得焦点并在外部点击时触发失焦收起。
+  app.focus({ steal: true });
   console.info(
     'Zeus menu bar usage window placement',
     JSON.stringify({

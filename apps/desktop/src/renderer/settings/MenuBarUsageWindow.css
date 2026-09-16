@@ -112,19 +112,12 @@ body:has(.menu-bar-usage-root),
   white-space: nowrap;
 }
 
+/* 复用启动页品牌资源，小尺寸保持完整轮廓，不再叠加字母底框。 */
 .menu-bar-usage-mark {
-  display: grid;
   inline-size: 24px;
   block-size: 24px;
   flex: 0 0 24px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--usage-accent) 25%, transparent);
-  border-radius: var(--usage-radius-control, 8px);
-  background: var(--usage-accent-soft);
-  color: var(--zeus-brand-text);
-  font-size: 14px;
-  font-weight: 800;
-  font-style: italic;
+  background: url('../../../dist/branding/startup-mark.png') center / contain no-repeat;
 }
 
 /* 时间与刷新按钮作为一组，长文案省略但保留完整悬浮提示。 */
@@ -889,14 +882,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars figcaption dt,
 .menu-bar-usage-bars-plot small {
   color: var(--usage-muted);
-}
-
-/* 浮窗装饰沿用主题分隔线，不再叠加固定白色高光。 */
-.menu-bar-usage-mark {
-  border-color: var(--usage-accent-border);
-  background: var(--usage-accent-soft);
-  box-shadow: 0 8px 18px -15px color-mix(in srgb, var(--usage-accent) 70%, transparent);
-  color: var(--zeus-brand-text);
 }
 
 .menu-bar-usage-freshness[data-stale='true'] {
