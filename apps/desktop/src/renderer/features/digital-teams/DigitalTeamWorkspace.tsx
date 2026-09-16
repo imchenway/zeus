@@ -182,6 +182,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const selectedNode = draft.definition.nodes.find((node) => node.id === selectedNodeId) ?? null;
   /** 当前运行冻结图兼容 Core 投影的两个稳定字段名。 */
   const selectedRunRecord = selectedRun?.run ?? null;
+  /** 运行失败直接显示原因，避免成功创建提示掩盖后续派发失败。 */
+  const runError = view === 'runs' && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
   /** 运行图严格使用创建时冻结的定义。 */
   const runDefinition = selectedRunRecord?.definitionSnapshot ?? null;
   /** 当前运行尝试按节点建立展示索引。 */
@@ -608,13 +610,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       </header>
 
       <div className="digital-team-messages">
-        {error ? (
+        {error || runError ? (
           <p className="digital-team-message is-error" role="alert">
-            {error}
+            {error || runError}
           </p>
         ) : null}
         <p className="digital-team-message" role="status" aria-live="polite">
-          {loading ? (zh ? '正在读取真实模板、角色和运行…' : 'Loading templates, roles, and runs…') : status}
+          {loading ? (zh ? '正在读取真实模板、角色和运行…' : 'Loading templates, roles, and runs…') : runError ? '' : status}
         </p>
       </div>
       {view === 'editor' ? (
