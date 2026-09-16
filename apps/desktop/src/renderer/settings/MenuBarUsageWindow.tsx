@@ -307,12 +307,13 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
   return (
     <section className="menu-bar-usage-provider-list" aria-label={text.allProviders}>
       {props.providers.map((provider) => {
-        const urgent = findMostUrgentWindow(provider.rateLimitWindows);
         const fullName = providerDisplayName(provider);
         const providerDetail = provider.deleted
           ? text.deleted
           : provider.kind === 'subscription'
-            ? [provider.planType || text.subscription, urgent ? `${text.quota} ${formatPercent(urgent.remainingPercent / 100, props.language)}` : null].filter(Boolean).join(' · ')
+            ? [provider.planType || text.subscription, provider.rateLimitWindows.length ? (props.language === 'zh-CN' ? `${provider.rateLimitWindows.length} 项官方额度` : `${provider.rateLimitWindows.length} quota windows`) : null]
+                .filter(Boolean)
+                .join(' · ')
             : text.api;
         return (
           <button key={provider.providerId} type="button" title={provider.deleted ? fullName : undefined} onClick={() => props.onSelect(provider.providerId)}>
@@ -338,12 +339,11 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
 function ProviderDetail(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
   const text = copy[language];
-  const urgent = findMostUrgentWindow(provider.rateLimitWindows);
   const cacheAvailable = provider.cacheUsageAvailable ?? (provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0);
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
   return (
     <article className="menu-bar-usage-detail">
-      <ProviderSummaryCard provider={provider} window={urgent} language={language} />
+      <ProviderSummaryCard provider={provider} language={language} />
 
       <dl className="menu-bar-usage-metrics">
         <Metric
@@ -371,17 +371,20 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
 
 type ProviderStatusTone = 'success' | 'warning' | 'danger' | 'info';
 
-function ProviderSummaryCard(props: { provider: UsageProviderSummary; window?: CodexOfficialRateWindow; language: Language }) {
+/** 完整展示官方额度窗口，避免备用额度的较低余额遮住重置后的主额度。 */
+function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
   const text = copy[language];
   const name = providerDisplayName(provider);
   const status = providerStatus(provider, language);
-  const quotaHeading = props.window ? windowRemainingLabel(props.window, language) : language === 'zh-CN' ? '额度' : 'Quota';
   const todayValue = formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language);
-  const quotaValue = props.window ? formatPercent(props.window.remainingPercent / 100, language) : text.noQuota;
-  const source = props.window ? text.officialAndLocal : provider.officialState === 'signed_out' ? text.localQuotaSignIn : text.localQuotaUnavailable;
+  /** 无官方额度时保留原有空态；多项额度按官方顺序逐一显示。 */
+  const windows = provider.rateLimitWindows.length ? provider.rateLimitWindows : [undefined];
+  /** 读屏摘要覆盖全部额度，不将某一项伪装成当前模型额度。 */
+  const quotaSummary = provider.rateLimitWindows.map((window) => `${windowRemainingLabel(window, language)} ${formatPercent(window.remainingPercent / 100, language)}`).join('，') || text.noQuota;
+  const source = provider.rateLimitWindows.length ? text.officialAndLocal : provider.officialState === 'signed_out' ? text.localQuotaSignIn : text.localQuotaUnavailable;
   return (
-    <section className="menu-bar-usage-account-card" data-status={status.tone} aria-label={`${name}，${status.label}，${quotaHeading} ${quotaValue}，${text.todayToken} ${todayValue}`}>
+    <section className="menu-bar-usage-account-card" data-status={status.tone} aria-label={`${name}，${status.label}，${quotaSummary}，${text.todayToken} ${todayValue}`}>
       <header className="menu-bar-usage-account-header">
         <span className="menu-bar-usage-account-identity">
           <span className="menu-bar-usage-account-symbol" aria-hidden="true">
@@ -395,21 +398,31 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; window?: C
       </header>
 
       <div className="menu-bar-usage-account-body">
-        <div className="menu-bar-usage-account-quota" data-empty={props.window ? 'false' : 'true'}>
-          <small>{quotaHeading}</small>
-          <strong>{quotaValue}</strong>
-          {props.window ? (
-            <>
-              <span className="menu-bar-usage-progress" role="progressbar" aria-label={quotaHeading} aria-valuemin={0} aria-valuemax={100} aria-valuenow={props.window.remainingPercent}>
-                <i style={{ inlineSize: `${Math.max(0, Math.min(100, props.window.remainingPercent))}%` }} />
-              </span>
-              <time dateTime={props.window.resetsAt ? new Date(props.window.resetsAt * 1_000).toISOString() : undefined} title={props.window.resetsAt ? formatReset(props.window.resetsAt, language, text.resets) : undefined}>
-                {props.window.resetsAt ? formatResetTime(props.window.resetsAt, language) : '—'}
-              </time>
-            </>
-          ) : (
-            <small>{provider.officialState === 'signed_out' ? text.signedOut : text.localOnly}</small>
-          )}
+        <div className="menu-bar-usage-account-quotas">
+          {windows.map((window, index) => {
+            /** 名称包含额度池和周期，同名的短期与长期额度也能区分。 */
+            const quotaHeading = window ? windowRemainingLabel(window, language) : text.quota;
+            /** 百分比使用该窗口的官方余额，空态不推算额度。 */
+            const quotaValue = window ? formatPercent(window.remainingPercent / 100, language) : text.noQuota;
+            return (
+              <div key={`${window?.limitId ?? 'default'}-${window?.kind ?? 'empty'}-${index}`} className="menu-bar-usage-account-quota" data-empty={window ? 'false' : 'true'}>
+                <small title={quotaHeading}>{quotaHeading}</small>
+                <strong>{quotaValue}</strong>
+                {window ? (
+                  <>
+                    <span className="menu-bar-usage-progress" role="progressbar" aria-label={quotaHeading} aria-valuemin={0} aria-valuemax={100} aria-valuenow={window.remainingPercent}>
+                      <i style={{ inlineSize: `${Math.max(0, Math.min(100, window.remainingPercent))}%` }} />
+                    </span>
+                    <time dateTime={window.resetsAt ? new Date(window.resetsAt * 1_000).toISOString() : undefined} title={window.resetsAt ? formatReset(window.resetsAt, language, text.resets) : undefined}>
+                      {window.resetsAt ? formatResetTime(window.resetsAt, language) : '—'}
+                    </time>
+                  </>
+                ) : (
+                  <small>{provider.officialState === 'signed_out' ? text.signedOut : text.localOnly}</small>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="menu-bar-usage-account-today">
           <small>{text.todayToken}</small>
@@ -531,10 +544,6 @@ function RefreshPendingIcon() {
   return <span className="menu-bar-usage-spinner" aria-hidden="true" />;
 }
 
-function findMostUrgentWindow(windows: CodexOfficialRateWindow[]): CodexOfficialRateWindow | undefined {
-  return windows.reduce<CodexOfficialRateWindow | undefined>((selected, candidate) => (!selected || candidate.remainingPercent < selected.remainingPercent ? candidate : selected), undefined);
-}
-
 function providerDisplayName(provider: UsageProviderSummary, compact = false): string {
   const name = provider.deleted ? provider.sourceId.trim() || provider.providerId : provider.name;
   if (!compact || !provider.deleted || name.length <= 22) return name;
@@ -571,11 +580,27 @@ function localDateKey(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/** 同时标明额度池和周期，缺少名称时保留官方标识，不猜测对应模型。 */
 function windowRemainingLabel(window: CodexOfficialRateWindow, language: Language): string {
-  if (window.limitName) return language === 'zh-CN' ? `${window.limitName}剩余` : `${window.limitName} remaining`;
-  if (!window.windowDurationMins) return copy[language].quota;
-  if (window.windowDurationMins >= 24 * 60) return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 1_440)} 日剩余` : `${Math.round(window.windowDurationMins / 1_440)} day remaining`;
-  return language === 'zh-CN' ? `${Math.round(window.windowDurationMins / 60)} 小时剩余` : `${Math.round(window.windowDurationMins / 60)} hour remaining`;
+  /** 官方名称优先，标识只在没有名称时补充。 */
+  const name = window.limitName || window.limitId;
+  /** 官方未提供时长时使用窗口类别，避免同一额度池出现无法区分的两行。 */
+  const duration = !window.windowDurationMins
+    ? window.kind === 'primary'
+      ? language === 'zh-CN'
+        ? '主要窗口'
+        : 'Primary window'
+      : language === 'zh-CN'
+        ? '次要窗口'
+        : 'Secondary window'
+    : window.windowDurationMins >= 1_440
+      ? language === 'zh-CN'
+        ? `${window.windowDurationMins / 1_440} 日`
+        : `${window.windowDurationMins / 1_440} day`
+      : language === 'zh-CN'
+        ? `${window.windowDurationMins / 60} 小时`
+        : `${window.windowDurationMins / 60} hour`;
+  return `${name ? `${name} · ` : ''}${duration}${language === 'zh-CN' ? '剩余' : ' remaining'}`;
 }
 
 function formatTokens(value: number, language: Language): string {
