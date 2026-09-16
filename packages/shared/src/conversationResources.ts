@@ -72,6 +72,8 @@ export interface ConversationResourceOpenTarget {
   label: string;
   available: boolean;
   exactLocation: boolean;
+  /** 宿主读取的本机应用图标，仅用于打开方式菜单。 */
+  iconDataUrl?: string;
   reason?: string;
 }
 

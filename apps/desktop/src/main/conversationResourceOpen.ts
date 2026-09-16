@@ -65,6 +65,8 @@ export interface ConversationResourceOpenServices {
   openPath: (path: string) => Promise<string>;
   showItemInFolder: (path: string) => void;
   writeClipboardText: (text: string) => void;
+  /** 从已检测到的应用路径读取图标，失败不阻止打开文件。 */
+  getApplicationIcon: (path: string) => Promise<string | undefined>;
   openBrowser: (input: { conversationId: string; url: string }) => Promise<unknown>;
   executeFile: (file: string, args: string[]) => Promise<unknown>;
   applicationHome: string;
@@ -106,10 +108,11 @@ const terminalTargets = [
 
 export async function listConversationResourceOpenTargets(request: ConversationResourceRequest, services: ConversationResourceOpenServices): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
   const intent = await loadConversationResourceIntent(request, services);
-  return listOpenTargetsForIntent(intent, services);
+  return listOpenTargetsForIntent(intent, services, true);
 }
 
-async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, services: ConversationResourceOpenServices): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
+/** 只有展示菜单时读取图标，复制和实际打开仍只核对可用性。 */
+async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, services: ConversationResourceOpenServices, includeIcons = false): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
   const targets: ConversationResourceOpenTarget[] = [];
   if (intent.kind === 'website') {
     const url = authorizedWebsiteUrl(intent);
@@ -152,19 +155,33 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
   }
   if (sourcePreviewable) {
     for (const editor of editorTargets) {
-      const available = await editorAvailable(editor, services);
+      /** 图标和可用性取自同一个已安装应用路径。 */
+      const applicationPath = await findInstalledApplication(editor, services);
+      /** 对外仍保留布尔可用状态。 */
+      const available = Boolean(applicationPath);
       targets.push({
         id: editor.id,
         label: editor.label,
         available,
         exactLocation: available,
+        ...(includeIcons && applicationPath ? { iconDataUrl: await services.getApplicationIcon(applicationPath) } : {}),
         ...(!available ? { reason: 'application_not_installed' } : {}),
       });
     }
   }
   for (const terminal of terminalTargets) {
-    const available = await editorAvailable(terminal, services);
-    targets.push({ id: terminal.id, label: terminal.label, available, exactLocation: false, ...(!available ? { reason: 'application_not_installed' } : {}) });
+    /** 终端与编辑器采用同一检测路径。 */
+    const applicationPath = await findInstalledApplication(terminal, services);
+    /** 找到本机应用后才允许用户选择。 */
+    const available = Boolean(applicationPath);
+    targets.push({
+      id: terminal.id,
+      label: terminal.label,
+      available,
+      exactLocation: false,
+      ...(includeIcons && applicationPath ? { iconDataUrl: await services.getApplicationIcon(applicationPath) } : {}),
+      ...(!available ? { reason: 'application_not_installed' } : {}),
+    });
   }
   targets.push({ id: 'system_default', label: 'System default', available: true, exactLocation: false });
   targets.push({ id: 'file_manager', label: 'Show in Finder', available: true, exactLocation: false });
@@ -235,13 +252,13 @@ async function openResourceIntent(
   if (target.startsWith('terminal:')) {
     /** 目标固定在受支持应用列表内，目录来自宿主复验后的文件。 */
     const terminal = terminalTargets.find((candidate) => candidate.id === target);
-    if (!terminal || !(await editorAvailable(terminal, services))) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected terminal is not installed.');
+    if (!terminal || !(await findInstalledApplication(terminal, services))) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected terminal is not installed.');
     await services.executeFile('/usr/bin/open', target === 'terminal:ghostty' ? ['-na', terminal.appName, '--args', `--working-directory=${dirname(file.absolutePath)}`] : ['-a', terminal.appName, dirname(file.absolutePath)]);
     return { opened: true, resourceId: intent.id, target, mode: 'external' };
   }
   if (target.startsWith('editor:')) {
     const editor = editorTargets.find((candidate) => candidate.id === target);
-    if (!editor || !(await editorAvailable(editor, services))) {
+    if (!editor || !(await findInstalledApplication(editor, services))) {
       throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor is not installed.');
     }
     const location = normalizeLocation(request.location) ?? normalizeLocation(intent.target.location);
@@ -368,10 +385,13 @@ async function realPath(path: string): Promise<string | null> {
   }
 }
 
-async function editorAvailable(editor: { readonly appPaths: readonly string[] }, services: ConversationResourceOpenServices): Promise<boolean> {
+/** 返回实际安装位置，兼顾系统应用目录和用户应用目录。 */
+async function findInstalledApplication(editor: { readonly appPaths: readonly string[] }, services: ConversationResourceOpenServices): Promise<string | null> {
+  /** 按系统目录优先查找，与已有打开方式检测顺序一致。 */
   const paths = [...editor.appPaths, ...editor.appPaths.map((path) => resolve(services.applicationHome, 'Applications', basename(path)))];
+  /** 并行检查候选路径，不因添加图标重复扫描目录。 */
   const results = await Promise.all(paths.map((path) => services.pathExists(path)));
-  return results.some(Boolean);
+  return paths.find((_, index) => results[index]) ?? null;
 }
 
 /** 外部编辑器打开前核实行号，读取量受流缓冲区限制。 */

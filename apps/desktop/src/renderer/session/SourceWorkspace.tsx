@@ -1,5 +1,6 @@
 import type { ConversationResource } from '@zeus/shared';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { OpenWithMenu } from './ConversationResources.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { ConversationOpenTarget } from '@zeus/shared';
@@ -91,11 +92,24 @@ function SourceWorkspaceView(props: {
   const [openTarget, setOpenTarget] = useState<ConversationOpenTarget>('system_default');
   /** 展示宿主打开失败，不吞掉权限或应用错误。 */
   const [openError, setOpenError] = useState<unknown>(null);
+  /** 成功提示绑定资源，切换文件不会显示上一文件的复制结果。 */
+  const [copiedResourceId, setCopiedResourceId] = useState<string | null>(null);
+  /** 复制提示短暂显示，卸载或提示变更时取消定时器。 */
+  useEffect(() => {
+    if (!copiedResourceId) return;
+    /** 提示持续到期后恢复复制入口。 */
+    const timeout = window.setTimeout(() => setCopiedResourceId(null), 1600);
+    return () => window.clearTimeout(timeout);
+  }, [copiedResourceId]);
+  /** 工具栏只展示当前文件的复制结果。 */
+  const copied = copiedResourceId === props.preview.resource.id;
   useApplicationErrorDialog(openError, { language: zh ? 'zh-CN' : 'en' });
   /** 统一处理复制与外部应用打开。 */
   async function openResource(target: ConversationOpenTarget): Promise<void> {
     try {
+      if (target === 'copy_path') setCopiedResourceId(null);
       await props.onOpen?.(target, props.preview.resource);
+      if (target === 'copy_path' && props.onOpen) setCopiedResourceId(props.preview.resource.id);
     } catch (error) {
       setOpenError(error);
     }
@@ -207,23 +221,25 @@ function SourceWorkspaceView(props: {
             </button>
           </div>
         ))}
-        <select
-          className="session-source-add-tab"
-          aria-label={zh ? '打开文件标签' : 'Open file tab'}
-          value=""
-          disabled={!props.onOpenFile || !props.resources?.length}
-          onChange={(event) => {
-            const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
-            if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
-          }}
-        >
-          <option value="">＋</option>
-          {props.resources?.map((resource) => (
-            <option key={resource.id} value={resource.id}>
-              {resource.displayName}
-            </option>
-          ))}
-        </select>
+        {props.onOpenFile && props.resources?.length ? (
+          <select
+            className="session-source-add-tab"
+            aria-label={zh ? '打开文件标签' : 'Open file tab'}
+            value=""
+            title={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
+            onChange={(event) => {
+              const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
+              if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
+            }}
+          >
+            <option value="">{zh ? '打开文件…' : 'Open file…'}</option>
+            {props.resources?.map((resource) => (
+              <option key={resource.id} value={resource.id}>
+                {resource.displayName}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </div>
       <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
         <button
@@ -234,9 +250,6 @@ function SourceWorkspaceView(props: {
           onClick={() => props.onFullWidthChange(!props.fullWidth)}
         >
           {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-        </button>
-        <button type="button" aria-label={zh ? '关闭源码预览' : 'Close source preview'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
-          <X aria-hidden="true" />
         </button>
       </nav>
     </header>
@@ -264,8 +277,11 @@ function SourceWorkspaceView(props: {
             </button>
           ) : null}
           <button type="button" aria-label={zh ? '复制路径' : 'Copy path'} title={zh ? '复制路径' : 'Copy path'} disabled={!props.onOpen} onClick={() => void openResource('copy_path')}>
-            <Copy aria-hidden="true" />
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           </button>
+          <span role="status" className="session-source-copy-status">
+            {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
+          </span>
           <div className="session-source-open-group">
             <button type="button" disabled={!props.onOpen} onClick={() => void openResource(openTarget)}>
               {zh ? '打开' : 'Open'}

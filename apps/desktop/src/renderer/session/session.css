@@ -12129,7 +12129,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-/* 文件与浏览器顶栏沿用会话底色，保持上下连续且不叠加分栏细线。 */
+/* 文件与浏览器顶栏沿用会话底色，分隔线与正文连续。 */
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] {
   align-items: stretch;
   background: var(--zeus-card-background, var(--session-canvas));
@@ -12151,6 +12151,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
   align-items: center;
   border-inline-start: 0;
+  /* 正文拖动细线位于右栏外侧一像素，顶栏沿用相同位置且不挤占标签宽度。 */
+  box-shadow: -1px 0 0 var(--session-line);
   padding: 6px 8px;
 }
 
@@ -12160,6 +12162,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
   border-inline-start: 0;
+  box-shadow: none;
   grid-column: 2;
 }
 
@@ -12690,18 +12693,44 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 新标签使用原生选择菜单，保留键盘、Escape 与外部点击关闭。 */
-.session-source-add-tab {
-  flex: 0 0 32px;
-  width: 32px;
-  appearance: none;
-  border: 0;
-  background: transparent;
+/* 为原生菜单保留文字和系统箭头的空间，避免全局输入框内边距挤空内容。 */
+.session-codex-parity-v1 .session-source-add-tab {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 112px;
+  height: 32px;
+  appearance: auto;
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  background: var(--session-canvas);
   color: inherit;
   font: inherit;
-  font-size: 24px;
+  font-size: 12px;
   cursor: pointer;
-  padding: 0;
+  padding: 0 8px;
+}
+
+/* 复制反馈与操作同排显示，空状态不额外占用工具栏宽度。 */
+.session-source-copy-status {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.session-source-copy-status:empty {
+  display: none;
+}
+
+/* 本机应用图标和通用操作图标共用尺寸，保持菜单名称对齐。 */
+.session-open-with-target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.session-open-with-target-label > :is(img, svg) {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .session-source-tabs {
