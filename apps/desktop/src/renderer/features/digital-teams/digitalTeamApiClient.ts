@@ -28,6 +28,10 @@ export interface DigitalTeamRunProjection {
 
 /** 创建运行时原子冻结模板、任务事实和当前项目基线。 */
 export interface DigitalTeamRunCreateInput {
+  /** 指定已有任务时复用其身份，省略则新建任务。 */
+  taskId?: string;
+  /** 已有任务的读取时间戳，拒绝使用过期任务内容。 */
+  expectedTaskUpdatedAt?: string;
   /** 已保存模板身份。 */
   templateId: string;
   /** 用户看到的模板修订。 */
@@ -49,7 +53,7 @@ export interface DigitalTeamApiClient {
   /** 按修订删除模板。 */
   deleteDigitalTeamTemplate(projectId: string, templateId: string, expectedRevision: number): Promise<DigitalTeamWorkflowTemplateRecord>;
   /** 读取项目运行列表。 */
-  loadDigitalTeamRuns(projectId: string): Promise<DigitalTeamWorkflowRunRecord[]>;
+  loadDigitalTeamRuns(projectId: string, taskId?: string): Promise<DigitalTeamWorkflowRunRecord[]>;
   /** 读取单个运行完整投影。 */
   loadDigitalTeamRun(runId: string): Promise<DigitalTeamRunProjection>;
   /** 原子创建任务并冻结运行。 */
@@ -117,7 +121,7 @@ export function createDigitalTeamApiClient(transport: LocalApiTransport): Digita
       });
       return transport.request(`${digitalTeamTemplatesPath(projectId)}/${encodeURIComponent(templateId)}`, jsonRequest('DELETE', body));
     },
-    loadDigitalTeamRuns: async (projectId) => rememberRuns(await transport.request<DigitalTeamWorkflowRunRecord[]>(`${digitalTeamRunsPath(projectId)}`)),
+    loadDigitalTeamRuns: async (projectId, taskId) => rememberRuns(await transport.request<DigitalTeamWorkflowRunRecord[]>(`${digitalTeamRunsPath(projectId)}${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ''}`)),
     loadDigitalTeamRun: async (runId) => {
       const projection = normalizeRunProjection(await transport.request<unknown>(digitalTeamRunPath(runId)));
       rememberRun(projection.run);

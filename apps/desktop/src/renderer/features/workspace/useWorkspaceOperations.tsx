@@ -1,5 +1,5 @@
 import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
@@ -1507,8 +1507,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
   }
 
+  /** 任务入口上下文只在数字团队页面使用，不改变任务和项目归属。 */
+  const [digitalTeamTask, setDigitalTeamTask] = useState<TaskRecord | undefined>();
+
   function handleMainNavigate(target: WorkspaceViewId): void {
     const navigate = () => {
+      setDigitalTeamTask(undefined);
       setActiveNavTarget(target);
       if (typeof window !== 'undefined') {
         // 只更新地址栏语义，不触发浏览器原生锚点滚动，避免左栏和主工作区一起跳到底部。
@@ -2003,6 +2007,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
         }
+        onUseDigitalTeam={() => {
+          setDigitalTeamTask(taskDetailPaneTask);
+          closeTaskDetail();
+          setActiveNavTarget('digital-teams');
+        }}
         digitalEmployeeClient={props.commandClient ?? null}
         digitalEmployeeSkillClient={props.nativeConversationClient ?? null}
         conversations={taskDetailPaneConversations}
@@ -2108,6 +2117,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     );
   }
   return {
+    digitalTeamTask,
+    returnFromDigitalTeam: () => {
+      if (!digitalTeamTask) return;
+      setActiveNavTarget('projects');
+      setTaskDetail(digitalTeamTask);
+      setDigitalTeamTask(undefined);
+    },
     activateCodexConfig,
     archiveRuntimeSession,
     beginSaveTaskTableLayoutAndLeave,

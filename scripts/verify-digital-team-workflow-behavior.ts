@@ -1,3 +1,4 @@
+import { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOptions } from '../packages/local-server/src/digitalTeamWorkflowCoordinator.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,6 +84,62 @@ try {
     assert(validateDigitalTeamWorkflowDefinition(bypassedDefinition).length > 0, '绕过规划批准的流程必须被拒绝。');
     /** 保存后的流程模板。 */
     const template = templates.create({ projectId: project.id, name: '标准研发协作', description: '探针模板', definition });
+    /** 仅验证运行创建事务，不启动调度器或 Provider。 */
+    const coordinator = new DigitalTeamWorkflowCoordinator({
+      readOnlyValidation: true,
+      templates,
+      runs,
+      attempts,
+      projects,
+      tasks,
+      isTaskTerminal: (record) => record.managementStatus === 'done',
+      now: () => new Date(),
+      taskCreation: {
+        create: () => {
+          throw new Error('已有任务入口不得创建另一任务。');
+        },
+      },
+    } as DigitalTeamWorkflowCoordinatorOptions);
+    /** 专门验证已有任务绑定与事实冻结。 */
+    const existingTask = tasks.create({ projectId: project.id, title: '现有任务真实标题', description: '现有任务真实说明', taskType: 'requirement', createdFrom: 'digital-team-probe', sourceContext: {} });
+    /** 客户端旧标题不得替换服务端任务事实。 */
+    const existingInput = {
+      taskId: existingTask.id,
+      expectedTaskUpdatedAt: existingTask.updatedAt,
+      templateId: template.id,
+      templateRevision: template.revision,
+      title: '不可信标题',
+      description: '不可信说明',
+      taskFacts: { confirmCommittedBaseline: true, allowGitCommit: true },
+    };
+    /** 此阶段只覆盖事务，基线预检保持已有读 Git 入口。 */
+    const prepared = { templateId: template.id, templateRevision: template.revision, baseRevisions: [{ repositoryId: project.id, sourceRef: 'main', baseSha }], repositories: [] };
+    /** 用户发起的可审计创建身份。 */
+    const context = { commandId: 'existing-task-command', operationIdentity: 'existing-task-operation', actor: { kind: 'user', id: 'probe' } } as Parameters<typeof coordinator.createRun>[2];
+    assert(captureCode(() => coordinator.createRun(project.id, { ...existingInput, expectedTaskUpdatedAt: 'stale' }, context, prepared)) === 'ZEUS_DIGITAL_TEAM_TASK_CONFLICT', '过期任务必须拒绝。');
+    assert(captureCode(() => coordinator.createRun('another-project', existingInput, context, { ...prepared })) === 'ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '跨项目绑定必须拒绝。');
+    /** 另一项目的现存任务不能被当前模板接管。 */
+    const otherProject = projects.create({ name: '另一项目', localPath: join(probeRoot, 'other') });
+    /** 跨项目任务保持独立身份。 */
+    const otherTask = tasks.create({ projectId: otherProject.id, title: '另一项目任务', description: '', taskType: 'requirement', createdFrom: 'digital-team-probe', sourceContext: {} });
+    assert(
+      captureCode(() => coordinator.createRun(project.id, { ...existingInput, taskId: otherTask.id, expectedTaskUpdatedAt: otherTask.updatedAt }, context, prepared)) === 'ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND',
+      '不能把其他项目的任务绑定到当前流程。',
+    );
+    /** 终态任务保持只读，重新打开后才能使用流程。 */
+    const closedTask = tasks.create({ projectId: project.id, title: '已结束任务', description: '', taskType: 'requirement', createdFrom: 'digital-team-probe', sourceContext: {}, managementStatus: 'done' });
+    assert(captureCode(() => coordinator.createRun(project.id, { ...existingInput, taskId: closedTask.id, expectedTaskUpdatedAt: closedTask.updatedAt }, context, prepared)) === 'ZEUS_DIGITAL_TEAM_TASK_TERMINAL', '终态任务必须拒绝新运行。');
+    coordinator.createRun(project.id, existingInput, context, prepared);
+    /** 读取真实 SQLite 冻结记录核对身份、事实和权限。 */
+    const boundRun = runs.listByTask(existingTask.id)[0];
+    assert(boundRun?.taskId === existingTask.id && boundRun.taskFacts.title === existingTask.title && boundRun.taskFacts.description === existingTask.description, '必须复用当前任务并冻结真实内容。');
+    assert(boundRun.taskFacts.allowGitCommit === existingTask.allowGitCommit, '客户端不能扩大任务权限。');
+    assert(
+      (coordinator.listRuns(project.id, existingTask.id) as Array<{ taskId: string }>).every((record) => record.taskId === existingTask.id),
+      '任务入口只返回本任务的运行。',
+    );
+    assert(captureCode(() => coordinator.listRuns(project.id, 'missing-task')) === 'ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务运行查询必须校验归属。');
+    assert(captureCode(() => coordinator.createRun(project.id, existingInput, { ...context, operationIdentity: 'duplicate-task-operation' }, prepared)) === 'ZEUS_DIGITAL_TEAM_TASK_RUNNING', '当前任务的活动运行必须阻止重复创建。');
     /** 创建时冻结画布、角色、任务事实和基线的运行。 */
     let run = runs.create({
       projectId: project.id,
@@ -164,13 +221,15 @@ try {
     /** 重启后的尝试仓储。 */
     const reopenedAttempts = new DigitalTeamNodeAttemptRepository(reopened);
     /** 重启后恢复的唯一运行。 */
-    const recoveredRun = reopenedRuns.listRecoverable()[0];
+    const recoveredRun = reopenedRuns.listRecoverable().find((record) => record.taskId === 'task_digital_team_probe');
     assert(recoveredRun?.controlState === 'paused', '重启后必须恢复暂停控制状态。');
     assert(reopenedAttempts.getCurrentByNode(recoveredRun.id, 'worker_one')?.status === 'prepared', '重启后必须恢复返工尝试。');
   } finally {
     await reopened.close();
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, checks: ['validation', 'authority', 'verification-commands', 'snapshot', 'parallel-rework', 'read-only-result', 'late-result', 'restart'] })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ ok: true, checks: ['validation', 'authority', 'verification-commands', 'snapshot', 'parallel-rework', 'read-only-result', 'late-result', 'existing-task-binding', 'existing-task-conflict', 'existing-task-authority', 'restart'] })}\n`,
+  );
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
 }
