@@ -2,14 +2,13 @@ import { MotionPresence } from '../ui/MotionPresence.js';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
-import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
 import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import type { EditorView } from '@codemirror/view';
 import type { CodeTextChange } from '../code/CodeEditor.js';
 
 /** 冲突文件打开时才加载代码编辑器。 */
@@ -415,23 +414,14 @@ function FocusedConflictColumns(props: {
   const sourceSnippet = useMemo(() => buildSideSnippet(props.document.source, props.block, 'source'), [props.document.source, props.block]);
   const taskSnippet = useMemo(() => buildSideSnippet(props.document.task, props.block, 'task'), [props.document.task, props.block]);
   const resultSnippet = useMemo(() => buildOffsetSnippet(props.document.visibleContent, props.block.visibleStart, props.block.visibleEnd), [props.document.visibleContent, props.block.visibleStart, props.block.visibleEnd]);
-  const sourceRef = useRef<EditorView>(null);
-  const resultRef = useRef<EditorView>(null);
-  const taskRef = useRef<EditorView>(null);
-
-  function syncScroll(source: EditorView): void {
-    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
-      if (!pane || pane === source) continue;
-      if (Math.abs(pane.scrollDOM.scrollTop - source.scrollDOM.scrollTop) > 1) pane.scrollDOM.scrollTop = source.scrollDOM.scrollTop;
-      if (Math.abs(pane.scrollDOM.scrollLeft - source.scrollDOM.scrollLeft) > 1) pane.scrollDOM.scrollLeft = source.scrollDOM.scrollLeft;
-    }
-  }
+  /** 同一组三栏共用冲突对齐与滚动，不与其他文件串联。 */
+  const alignment = useMemo(() => ({}), []);
 
   return (
     <div className="task-git-conflict-columns is-focused">
       <FocusedSidePane
         zh={props.zh}
-        paneRef={sourceRef}
+        alignment={alignment}
         title={props.targetTitle}
         path={props.path}
         snippet={sourceSnippet}
@@ -439,17 +429,16 @@ function FocusedConflictColumns(props: {
         side="source"
         state={props.block.sourceState}
         disabled={props.disabled}
-        onScroll={syncScroll}
         onSideAction={props.onSideAction}
       />
       <FocusedResultEditor
         zh={props.zh}
-        textareaRef={resultRef}
+        alignment={alignment}
         title={props.resultTitle}
         path={props.path}
         snippet={resultSnippet}
+        block={props.block}
         disabled={props.disabled}
-        onScroll={syncScroll}
         onChange={(content, change) =>
           props.onResultChange(`${props.document.visibleContent.slice(0, resultSnippet.startOffset)}${content}${props.document.visibleContent.slice(resultSnippet.endOffset)}`, {
             ...change,
@@ -460,7 +449,7 @@ function FocusedConflictColumns(props: {
       />
       <FocusedSidePane
         zh={props.zh}
-        paneRef={taskRef}
+        alignment={alignment}
         title={props.taskTitle}
         path={props.path}
         snippet={taskSnippet}
@@ -468,7 +457,6 @@ function FocusedConflictColumns(props: {
         side="task"
         state={props.block.taskState}
         disabled={props.disabled}
-        onScroll={syncScroll}
         onSideAction={props.onSideAction}
       />
     </div>
@@ -479,7 +467,8 @@ function FocusedConflictColumns(props: {
 function FocusedSidePane(props: {
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
-  paneRef: RefObject<EditorView | null>;
+  /** 三栏共用的布局身份。 */
+  alignment: object;
   title: string;
   path: string;
   snippet: CodeSnippet;
@@ -490,7 +479,6 @@ function FocusedSidePane(props: {
   disabled: boolean;
   /** 行旁按钮修改父页面的冲突草稿。 */
   onSideAction: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
-  onScroll: (source: EditorView) => void;
 }) {
   /** 单个冲突的标记身份不随其他页面状态变化。 */
   const blocks = useMemo(() => [props.block], [props.block]);
@@ -514,27 +502,29 @@ function FocusedSidePane(props: {
           onSideAction={props.onSideAction}
           lineOffset={props.snippet.startLine - 1}
           range={{ from: props.snippet.conflictStartLine, to: props.snippet.conflictEndLine }}
-          onView={(view) => {
-            props.paneRef.current = view;
-          }}
-          onScroll={props.onScroll}
+          alignment={props.alignment}
         />
       </Suspense>
     </section>
   );
 }
 
+/** 聚焦结果保留真实文件偏移，并与两侧对齐。 */
 function FocusedResultEditor(props: {
+  /** 当前冲突块身份。 */
+  block: ConflictBlock;
   /** 沿用当前界面的操作语言。 */
   zh: boolean;
-  textareaRef: RefObject<EditorView | null>;
+  /** 三栏共用的布局身份。 */
+  alignment: object;
   title: string;
   path: string;
   snippet: CodeSnippet;
   disabled: boolean;
   onChange: (content: string, change: CodeTextChange) => void;
-  onScroll: (source: EditorView) => void;
 }) {
+  /** 保持冲突数组身份稳定，避免输入外的重复配置。 */
+  const blocks = useMemo(() => [props.block], [props.block]);
   return (
     <section className="task-git-conflict-result-pane">
       <strong>{props.title}</strong>
@@ -545,13 +535,12 @@ function FocusedResultEditor(props: {
           label={props.title}
           content={props.snippet.text}
           readOnly={props.disabled}
+          blocks={blocks}
+          contentOffset={props.snippet.startOffset}
           lineOffset={props.snippet.startLine - 1}
           range={{ from: props.snippet.conflictStartLine, to: props.snippet.conflictEndLine }}
-          onView={(view) => {
-            props.textareaRef.current = view;
-          }}
+          alignment={props.alignment}
           onChange={props.onChange}
-          onScroll={props.onScroll}
         />
       </Suspense>
     </section>
@@ -572,19 +561,10 @@ function FullFileColumns(props: {
   onResultChange: (content: string, change: CodeTextChange) => void;
   onSideAction: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
 }) {
-  const sourceRef = useRef<EditorView>(null);
-  const resultRef = useRef<EditorView>(null);
-  const taskRef = useRef<EditorView>(null);
+  /** 同一组三栏共用冲突对齐与滚动，不与其他文件串联。 */
+  const alignment = useMemo(() => ({}), []);
   /** 只在导航到另一个冲突时定位，连续编辑不重复扫描前文。 */
   const initialLine = useMemo(() => countLines(props.document?.visibleContent ?? '', props.initialBlock?.visibleStart ?? 0), [props.path, props.initialBlock?.id]);
-
-  function syncScroll(source: EditorView): void {
-    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
-      if (!pane || pane === source) continue;
-      if (Math.abs(pane.scrollDOM.scrollTop - source.scrollDOM.scrollTop) > 1) pane.scrollDOM.scrollTop = source.scrollDOM.scrollTop;
-      if (Math.abs(pane.scrollDOM.scrollLeft - source.scrollDOM.scrollLeft) > 1) pane.scrollDOM.scrollLeft = source.scrollDOM.scrollLeft;
-    }
-  }
 
   if (!props.document) return <div className="task-git-conflict-columns is-full" />;
   return (
@@ -593,7 +573,7 @@ function FullFileColumns(props: {
         revealLine={countLines(props.document.source, Math.max(0, props.initialBlock?.sourceStart ?? 0))}
         zh={props.zh}
         path={props.path}
-        textareaRef={sourceRef}
+        alignment={alignment}
         title={props.targetTitle}
         content={props.document.source}
         readOnly
@@ -601,25 +581,23 @@ function FullFileColumns(props: {
         actionsDisabled={props.disabled}
         blocks={props.document.blocks}
         onSideAction={props.onSideAction}
-        onScroll={syncScroll}
       />
       <FullFilePane
         revealLine={initialLine}
         zh={props.zh}
         path={props.path}
-        textareaRef={resultRef}
+        alignment={alignment}
         title={props.resultTitle}
         content={props.document.visibleContent}
         readOnly={props.disabled}
         onChange={props.onResultChange}
-        onScroll={syncScroll}
         blocks={props.document.blocks}
       />
       <FullFilePane
         revealLine={countLines(props.document.task, Math.max(0, props.initialBlock?.taskStart ?? 0))}
         zh={props.zh}
         path={props.path}
-        textareaRef={taskRef}
+        alignment={alignment}
         title={props.taskTitle}
         content={props.document.task}
         readOnly
@@ -627,7 +605,6 @@ function FullFileColumns(props: {
         actionsDisabled={props.disabled}
         blocks={props.document.blocks}
         onSideAction={props.onSideAction}
-        onScroll={syncScroll}
       />
     </div>
   );
@@ -640,7 +617,8 @@ function FullFilePane(props: {
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
   path: string;
-  textareaRef: RefObject<EditorView | null>;
+  /** 三栏共用的布局身份。 */
+  alignment: object;
   title: string;
   content: string;
   readOnly: boolean;
@@ -651,7 +629,6 @@ function FullFilePane(props: {
   blocks?: ConflictBlock[];
   onChange?: (content: string, change: CodeTextChange) => void;
   onSideAction?: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
-  onScroll: (source: EditorView) => void;
 }) {
   return (
     <section className={`task-git-conflict-code-pane task-git-conflict-full-pane${props.side ? '' : ' is-result'}`}>
@@ -669,10 +646,7 @@ function FullFilePane(props: {
           actionsDisabled={props.actionsDisabled}
           onSideAction={props.onSideAction}
           onChange={props.onChange}
-          onView={(view) => {
-            props.textareaRef.current = view;
-          }}
-          onScroll={props.onScroll}
+          alignment={props.alignment}
         />
       </Suspense>
     </section>
