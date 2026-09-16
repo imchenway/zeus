@@ -2494,19 +2494,20 @@
   }
 }
 
-/* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
+/* 操作组摘要随会话列宽换行，展开后显示明细和图片缩略图。 */
 .session-codex-parity-v1 .session-activity-group > details > summary {
   justify-content: flex-start;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
   min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
+  /* 长摘要折行时保留完整的展开箭头。 */
+  flex: 0 0 auto;
   margin-inline-start: 0;
 }
 
@@ -2519,11 +2520,12 @@
   cursor: pointer;
   font: inherit;
   max-inline-size: min(72ch, 100%);
-  overflow: hidden;
+  /* 文件名和技能名完整显示，连续路径也能在窄栏内折行。 */
+  overflow-wrap: anywhere;
   padding: 0;
-  text-overflow: ellipsis;
+  text-align: start;
   vertical-align: baseline;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link:hover:not(:disabled):not([aria-disabled='true']) {
@@ -4952,9 +4954,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-activity-live > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 运行描述随栏宽完整换行，长命令不再越过会话边界。 */
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-skills {
@@ -5021,9 +5024,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-size: 14px;
   line-height: 1.45;
   min-inline-size: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  /* 展开后的操作标题与实时描述使用相同的换行规则。 */
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-item-summary {
