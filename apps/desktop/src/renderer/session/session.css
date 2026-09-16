@@ -1689,11 +1689,11 @@
   background: var(--session-control-hover, rgb(0 0 0 / 6%));
 }
 
-/* 批注编号与确认操作统一使用品牌色，保持白色数字和图标对比。 */
-.macos-ai-app .session-response-annotation-marker {
+/* 批注主操作沿用发送按钮的品牌底色和白色前景，优先于会话通用按钮继承规则。 */
+.macos-ai-app.zeus-shell .session-response-annotation-marker {
   align-items: center;
   background: var(--zeus-brand-primary);
-  border: 2px solid white;
+  border: 2px solid var(--session-canvas);
   border-radius: 999px;
   box-shadow: 0 3px 12px rgb(15 23 42 / 24%);
   color: white;
@@ -1716,8 +1716,7 @@
   z-index: 998;
 }
 
-.macos-ai-app .session-response-annotation-marker:hover:not(:disabled),
-.macos-ai-app .session-response-annotation-marker[aria-expanded='true'] {
+.macos-ai-app.zeus-shell .session-response-annotation-marker[aria-expanded='true'] {
   background: var(--zeus-brand-primary);
   box-shadow: 0 4px 16px color-mix(in srgb, var(--zeus-brand-primary) 38%, transparent);
 }
@@ -1732,13 +1731,13 @@
   box-sizing: border-box;
   inset: auto;
   margin: 0;
-  background: rgb(255 255 255 / 98%);
-  border: 1px solid rgb(23 23 23 / 10%);
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
   border-radius: 999px;
-  box-shadow: 0 8px 28px rgb(15 23 42 / 18%);
+  box-shadow: var(--zeus-card-shadow);
   backdrop-filter: blur(20px);
-  color: #202124;
-  color-scheme: light;
+  color: var(--session-text);
+  color-scheme: inherit;
   font:
     14px/1.4 -apple-system,
     BlinkMacSystemFont,
@@ -1766,14 +1765,14 @@
   min-block-size: 36px;
 }
 
-/* 显式覆盖通用输入样式，保持浏览器同款无边框文本区。 */
-.macos-ai-app.zeus-shell .session-response-annotation-row > textarea {
+/* 输入区继承浮层主题；优先于深色会话的通用输入规则，避免出现异色矩形。 */
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-row > textarea {
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   box-sizing: border-box;
-  color: #202124;
+  color: var(--session-text);
   flex: 1 1 auto;
   font: inherit;
   inline-size: 100%;
@@ -1788,16 +1787,16 @@
 }
 
 .session-response-annotation-row > textarea::placeholder {
-  color: #8b8b8b;
+  color: var(--session-text-muted);
 }
 
-.session-response-annotation-editor button {
+.macos-ai-app.zeus-shell .session-response-annotation-editor button {
   appearance: none;
   align-items: center;
   background: transparent;
   border: 0;
   border-radius: 999px;
-  color: #737373;
+  color: var(--session-text-muted);
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
@@ -1813,24 +1812,31 @@
   inline-size: 18px;
 }
 
-.session-response-annotation-editor button:hover:not(:disabled) {
-  background: rgb(0 0 0 / 6%);
-  color: #202124;
+.macos-ai-app.zeus-shell .session-response-annotation-editor button:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover);
+  color: var(--session-text);
 }
 
-.session-response-annotation-editor .session-response-annotation-save {
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save {
   background: var(--zeus-brand-primary);
   color: white;
 }
 
-.session-response-annotation-editor .session-response-annotation-save:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--zeus-brand-primary) 90%, black);
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save:hover:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-marker:hover:not(:disabled) {
+  background: var(--zeus-interaction-primary-hover);
   color: white;
+}
+
+/* 按下反馈与会话发送按钮使用同一个主题值。 */
+.macos-ai-app.zeus-shell .session-response-annotation-marker:active:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save:active:not(:disabled) {
+  background: var(--zeus-interaction-primary-pressed);
 }
 
 /* 次要操作按需展开，保留原有删除和取消能力。 */
 .session-response-annotation-options {
-  border-top: 1px solid rgb(32 33 36 / 10%);
+  border-top: 1px solid var(--session-line);
   display: flex;
   justify-content: space-between;
   margin: 2px 5px 5px;
