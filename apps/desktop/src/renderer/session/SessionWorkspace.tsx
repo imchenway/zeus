@@ -1701,7 +1701,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 环境卡在浏览器旁占用实际空间，避免遮盖原生网页。 */
   const [browserEnvironmentHost, setBrowserEnvironmentHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
-  const [browserPaneShare, setBrowserPaneShare] = useState(56);
+  /** 分栏比例属于本机阅读偏好，跨会话和重启恢复。 */
+  const [browserPaneShare, setBrowserPaneShare] = useState(() => {
+    try {
+      /** 非法或缺失的偏好回退到默认比例。 */
+      const saved = Number(browserConversationStorage()?.getItem('zeus.session-context.pane-share'));
+      return Number.isFinite(saved) && saved >= 38 && saved <= 72 ? saved : 56;
+    } catch {
+      return 56;
+    }
+  });
   const [browserResizing, setBrowserResizing] = useState(false);
   const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -2135,6 +2144,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
+  useEffect(() => {
+    if (browserResizing) return;
+    try {
+      browserConversationStorage()?.setItem('zeus.session-context.pane-share', String(browserPaneShare));
+    } catch {
+      // 存储不可用时仍允许调整当前布局。
+    }
+  }, [browserPaneShare, browserResizing]);
+
+  /** 拖拽只更新显示比例，松手后统一保存。 */
   function updateBrowserPaneShare(clientX: number): void {
     const split = browserSplitRef.current;
     if (!split) return;

@@ -281,6 +281,8 @@ declare global {
       notifyTaskTableLayoutDirty: (dirty: boolean) => void;
       setUnsavedChangeState: (key: string, dirty: boolean) => void;
       notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
+      /** 终端焦点不覆盖右侧工作面的独立归属。 */
+      notifyTerminalActivity: (active: boolean) => void;
       notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none' }) => void;
       notifyAppCloseLayerActivity: (active: boolean) => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
@@ -298,6 +300,8 @@ declare global {
       moveWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean; x?: number; y?: number }>;
       endWindowDrag: () => Promise<{ dragging: false }>;
       onNativeNewConversation: (listener: () => void) => () => void;
+      /** 原生关闭快捷键仅交给获得焦点的终端。 */
+      onNativeCloseActiveTerminalTab: (listener: () => void) => () => void;
       onNativeCloseActiveContextTab: (listener: () => void) => () => void;
       onNativeCloseFrontmostLayer: (listener: () => void) => () => void;
       /** 系统菜单保持原生网页可见，并返回选择或取消。 */

@@ -251,7 +251,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       void bridge.setBrowserLayout!({
         conversationId: props.conversationId,
         tabId,
-        visible: !isSuspended(),
+        // 无剩余空间时隐藏原生网页，不能把零高区域归一化为可见窗口。
+        visible: !isSuspended() && rect.width > 0 && rect.height > 0,
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       }).catch(setError);
     };
