@@ -1,6 +1,6 @@
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import MarkdownRender, { MermaidBlockNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
+import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
 import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
@@ -40,6 +40,9 @@ const labels = {
   'zh-CN': {
     copied: '已复制',
     copyCode: '复制代码',
+    copyTable: '复制表格 Markdown',
+    copyDiagram: '复制图表源码',
+    copyFailed: '复制失败，请重试',
     image: '图片',
     imageUnavailable: '图片不可用',
     contentTruncated: '内容过于复杂，已截断',
@@ -48,6 +51,9 @@ const labels = {
   'en-US': {
     copied: 'Copied',
     copyCode: 'Copy code',
+    copyTable: 'Copy table Markdown',
+    copyDiagram: 'Copy diagram source',
+    copyFailed: 'Copy failed, try again',
     image: 'Image',
     imageUnavailable: 'Image unavailable',
     contentTruncated: 'Content complexity truncated',
@@ -291,8 +297,28 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
   const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
   return (
     <div className="session-code-block">
-      <ConversationMarkdownCopyButton label={languageLabels.copyCode} copiedLabel={languageLabels.copied} text={props.node.code} />
+      <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
       <MermaidBlockNode {...props} loading={Boolean(props.node.loading)} />
+    </div>
+  );
+}
+
+/** 表格沿用原生渲染与横向滚动；复制可重新解析的 Markdown，保留对齐和内联格式。 */
+function ConversationTableNode(props: ComponentProps<typeof TableNode>) {
+  /** 跟随会话语言提供明确的复制格式说明。 */
+  const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
+  /** 解析器会移除分隔行和竖线转义，按单元格重建完整表格语法。 */
+  const header: MarkstreamNode[] = props.node.header?.cells ?? [];
+  /** 单元格原文保留内联格式；恢复被表格解析器消耗的竖线转义。 */
+  const rows = [header, ...(props.node.rows ?? []).map((row: MarkstreamNode) => row.cells ?? [])].map((cells: MarkstreamNode[]) => `| ${cells.map((cell) => (cell.raw ?? '').replaceAll('|', '\\|')).join(' | ')} |`);
+  /** 分隔行保留每列显式对齐方式。 */
+  const separator = `| ${header.map((cell) => (cell.align === 'center' ? ':---:' : cell.align === 'right' ? '---:' : cell.align === 'left' ? ':---' : '---')).join(' | ')} |`;
+  /** 空表头尚未完成时不提供无效的复制内容。 */
+  const markdown = header.length ? [rows[0], separator, ...rows.slice(1)].join('\n') : '';
+  return (
+    <div className="session-code-block session-markdown-table-block">
+      <ConversationMarkdownCopyButton label={languageLabels.copyTable} copiedLabel={languageLabels.copied} text={markdown} />
+      <TableNode {...props} />
     </div>
   );
 }
@@ -344,6 +370,7 @@ export const conversationMarkdownComponents = {
   link: SecureLinkNode,
   image: SecureImageNode,
   code_block: SecureCodeBlockNode,
+  table: ConversationTableNode,
   // 所有服务商共用图表预览；普通代码块仍保留原有复制与长度限制。
   mermaid: ConversationMermaidNode,
   infographic: SecureCodeBlockNode,
@@ -356,23 +383,41 @@ export const conversationMarkdownComponents = {
 setCustomComponents(CUSTOM_COMPONENTS_ID, conversationMarkdownComponents);
 setCustomComponents(STRUCTURED_CUSTOM_COMPONENTS_ID, { ...conversationMarkdownComponents, text: StructuredTextNode } as CustomComponentMap);
 
+/** 共用复制入口只在写入成功后确认，并向键盘和辅助阅读用户报告失败。 */
 function ConversationMarkdownCopyButton(props: { label: string; copiedLabel: string; text: string }) {
-  const [copied, setCopied] = useState(false);
+  /** 状态绑定复制时的文本，流式内容更新后不会继续宣称新内容已复制。 */
+  const [result, setResult] = useState<{ text: string; written: boolean } | null>(null);
+  /** 错误反馈与会话语言一致。 */
+  const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
+  /** 当前内容对应的成功状态。 */
+  const copied = result?.text === props.text && result.written;
+  /** 按钮与读屏提示共用相同状态文案。 */
+  const feedback = result?.text === props.text ? (result.written ? props.copiedLabel : languageLabels.copyFailed) : '';
   useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1_400);
+    if (!result) return;
+    const timer = setTimeout(() => setResult(null), 1_400);
     return () => clearTimeout(timer);
-  }, [copied]);
+  }, [result]);
   return (
     <button
       type="button"
       className="session-copy-button"
-      aria-label={copied ? props.copiedLabel : props.label}
-      title={copied ? props.copiedLabel : props.label}
+      aria-label={feedback || props.label}
+      title={feedback || props.label}
       data-copied={copied || undefined}
-      onClick={async () => setCopied(await copyText(props.text))}
+      disabled={!props.text}
+      onClick={async () => {
+        try {
+          setResult({ text: props.text, written: await copyText(props.text) });
+        } catch {
+          setResult({ text: props.text, written: false });
+        }
+      }}
     >
       {copied ? <MessageCheckIcon /> : <Copy aria-hidden="true" weight="regular" />}
+      <span className="session-sr-only" role="status">
+        {feedback}
+      </span>
     </button>
   );
 }

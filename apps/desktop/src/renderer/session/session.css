@@ -12645,3 +12645,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-source-tabs {
   overflow-x: auto;
 }
+
+/* 表格复用代码块的悬停复制图标，外层承接间距以保证按钮贴合表头。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block {
+  margin-block: 14px 18px;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block .table-node-wrapper {
+  margin-block: 0;
+}
+
+/* 表头末列为复制按钮留出点击空间，不让图标压住列名。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block th:last-child {
+  padding-inline-end: 48px;
+}
