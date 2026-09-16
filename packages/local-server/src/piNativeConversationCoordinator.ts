@@ -156,6 +156,7 @@ export interface CreatePiNativeConversationCoordinatorOptions {
 }
 
 export interface StartPiConversationInput {
+  executionWorkspaceMode?: 'direct' | 'worktree';
   conversationId: string;
   submissionId: string;
   projectId: string;
@@ -399,6 +400,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             projectId: input.projectId,
             taskId: input.taskId ?? null,
             projectLocalPath: input.cwd,
+            ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
             agentKind: 'pi',
@@ -476,6 +478,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectLocalPath: input.cwd,
+            ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
             agentKind: 'pi',

@@ -868,6 +868,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: null,
+      ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
       model: input.model,
       modelSourceId: input.modelSourceId ?? null,
       ...(input.effort ? { effort: input.effort } : {}),

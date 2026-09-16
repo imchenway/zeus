@@ -3866,6 +3866,8 @@ body:has(.macos-ai-app.zeus-shell) {
   .macos-ai-app.zeus-shell .project-workspace-project-switcher {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(220px, clamp(220px, 24vw, 320px));
+    /* 下方内容区另有 8px 顶部留白，控件下移其一半，使距窗口顶部与内容区的间距相等。 */
+    padding-block: 9px 1px;
     padding-inline-end: 12px;
   }
 

@@ -1,6 +1,6 @@
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import type { AsyncQuestionAnswer } from '@zeus/shared';
+import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -140,6 +140,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  worktree?: ConversationWorktreeOptions;
+  workspaceMode?: 'direct' | 'worktree';
   owner: Extract<SessionConversationOwner, { kind: 'project' }>;
   content: string;
   attachments: NativeConversationAttachment[];
@@ -1020,6 +1022,8 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
   const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: conversation.id,
+    workspaceMode: conversation.workspaceMode === 'direct' || conversation.workspaceMode === 'worktree' ? conversation.workspaceMode : undefined,
+    executionPath: nullableStringField(conversation.executionPath),
     projectId: stringField(conversation.projectId) ?? owner.projectId,
     taskId: null,
     title: stringField(conversation.title) ?? owner.projectName,
@@ -1065,6 +1069,7 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
+  choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
   try {
     return { choice, request, acceptance, refreshResult: await options.refresh(options.input.owner.projectId), refreshError: null };
@@ -1077,6 +1082,8 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
   if (!input.content.trim() && input.attachments.length === 0) throw new Error('Project conversation start content or attachments are required.');
   return {
     mode: 'create',
+    workspaceMode: input.workspaceMode ?? 'direct',
+    ...(input.workspaceMode === 'worktree' && input.worktree ? { worktree: input.worktree } : {}),
     content: input.content,
     attachments: input.attachments,
     permissionMode: input.permissionMode ?? 'auto',
@@ -1113,6 +1120,8 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
   if (!isRecord(value)) return false;
   return (
     value.mode === 'create' &&
+    (value.workspaceMode === undefined || value.workspaceMode === 'direct' || value.workspaceMode === 'worktree') &&
+    (value.worktree === undefined || isConversationWorktreeOptions(value.worktree)) &&
     typeof value.content === 'string' &&
     Array.isArray(value.attachments) &&
     (Boolean(value.content.trim()) || value.attachments.length > 0) &&
@@ -1434,6 +1443,8 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
+  worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
+  workspaceMode?: 'direct' | 'worktree';
   content: string;
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
@@ -3205,6 +3216,16 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'direct' | 'worktree'>(() => restoredDraft?.workspaceMode ?? 'direct');
+  const [worktreeDrafts, setWorktreeDrafts] = useState<Record<string, ConversationWorktreeOptions>>(() => restoredDraft?.worktreeDrafts ?? {});
+  const worktreeProjectId = props.owner?.kind === 'project' ? props.owner.projectId : undefined;
+  const worktree = worktreeProjectId ? worktreeDrafts[worktreeProjectId] : undefined;
+  const updateWorktree = useCallback(
+    (options: ConversationWorktreeOptions) => {
+      if (worktreeProjectId) setWorktreeDrafts((current) => ({ ...current, [worktreeProjectId]: options }));
+    },
+    [worktreeProjectId],
+  );
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
   /** 接入结果只属于原草稿，切换项目或卸载时取消。 */
@@ -3213,8 +3234,8 @@ export function NewConversationComposer(props: {
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
-    props.drafts?.set(draftKey, { content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft });
-  }, [props.drafts, draftKey, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
+    props.drafts?.set(draftKey, { workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft });
+  }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
@@ -3363,6 +3384,10 @@ export function NewConversationComposer(props: {
       setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
       return;
     }
+    if (props.owner.kind === 'project' && props.owner.projectId !== temporaryWorkspaceId && workspaceMode === 'worktree' && !isConversationWorktreeOptions(worktree)) {
+      setLocalError(props.language === 'zh-CN' ? '请选择来源分支并填写工作树分支名。' : 'Choose a source branch and enter a worktree branch name.');
+      return;
+    }
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -3371,6 +3396,8 @@ export function NewConversationComposer(props: {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
         accepted = await props.onStartProject({
           owner: props.owner,
+          workspaceMode: props.owner.projectId === temporaryWorkspaceId ? 'direct' : workspaceMode,
+          ...(props.owner.projectId !== temporaryWorkspaceId && workspaceMode === 'worktree' && worktree ? { worktree } : {}),
           content: submittedContent,
           attachments,
           permissionMode,
@@ -3450,6 +3477,10 @@ export function NewConversationComposer(props: {
             language={props.language}
             projectId={props.owner.projectId}
             projects={props.projects}
+            workspaceMode={workspaceMode}
+            worktree={worktree}
+            onWorktreeChange={updateWorktree}
+            onWorkspaceModeChange={setWorkspaceMode}
             disabled={submitting}
             onSelectProject={props.onSelectProject}
             onLoadProjectGit={props.onLoadProjectGit}

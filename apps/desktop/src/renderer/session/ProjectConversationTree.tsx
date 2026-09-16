@@ -1,3 +1,4 @@
+import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -203,6 +204,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
+      const worktree = conversation.workspaceMode === 'worktree' || Boolean(conversation.workspaceId || conversation.environmentId);
+      const workspaceLabel = worktree ? (props.language === 'zh-CN' ? '工作树' : 'Worktree') : props.language === 'zh-CN' ? '项目目录' : 'Project folder';
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       const archiving = archivingConversationId === conversation.id;
@@ -225,6 +228,15 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             }}
             onContextMenu={(event) => handleContextMenu(event, conversation)}
           >
+            <span
+              className="session-conversation-workspace-icon"
+              data-workspace-mode={worktree ? 'worktree' : 'direct'}
+              role="img"
+              aria-label={workspaceLabel}
+              title={[workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ')}
+            >
+              {worktree ? <GitBranch aria-hidden="true" /> : <Folder aria-hidden="true" />}
+            </span>
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}
             </span>

@@ -335,6 +335,7 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  executionWorkspaceMode?: 'direct' | 'worktree';
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;

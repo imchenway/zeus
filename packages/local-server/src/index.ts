@@ -1,3 +1,4 @@
+import type { ConversationWorktreeOptions } from '@zeus/shared';
 import { createDistributionContext, type DistributionConfig } from '@zeus/shared';
 
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -593,6 +594,8 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  worktree?: ConversationWorktreeOptions;
+  workspaceMode?: 'direct' | 'worktree';
   mode: 'create';
   content?: string;
   attachments?: NativeConversationAttachment[];
