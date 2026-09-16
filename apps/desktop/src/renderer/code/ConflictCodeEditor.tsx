@@ -4,6 +4,7 @@ import { EditorState } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, lineNumbers, type ViewUpdate } from '@codemirror/view';
 import type { ConflictBlock, ConflictSide, ConflictSideState } from '../task/taskConflictModel.js';
 import { CodeEditor, type CodeTextChange } from './CodeEditor.js';
+import { conflictAlignmentExtension } from './conflictAlignment.js';
 
 /** 聚焦冲突和完整文件共用一套编辑器，操作仍修改原有冲突模型。 */
 interface ConflictCodeEditorProps {
@@ -35,10 +36,8 @@ interface ConflictCodeEditorProps {
   onChange?: (content: string, change: CodeTextChange) => void;
   /** 四种选入与忽略操作保持原有语义。 */
   onSideAction?: (block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>) => void;
-  /** 登记实例，卸载时释放父级引用。 */
-  onView: (view: EditorView | null) => void;
-  /** 多栏同步滚动直接更新编辑器，不触发 React 重绘。 */
-  onScroll: (view: EditorView) => void;
+  /** 三栏共用的布局身份，显示空白不进入草稿。 */
+  alignment: object;
 }
 
 /** 完整冲突不再叠加 textarea 和三份全文行节点。 */
@@ -64,6 +63,8 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
     () => [
       // 冲突模型以原文字符定位；保留 CR 字符，避免 CRLF 被折叠后编辑偏移失准。
       EditorState.lineSeparator.of('\n'),
+      EditorView.lineWrapping,
+      conflictAlignmentExtension(props.alignment, regions),
       lineNumbers({ formatNumber: (number: number) => String(number + (props.lineOffset ?? 0)) }),
       ViewPlugin.define(
         (view) => ({
@@ -85,7 +86,6 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
             },
           })
         : [],
-      EditorView.domEventHandlers({ scroll: (_event, view) => current.current.onScroll(view) }),
       EditorView.theme({
         '.cm-line.is-conflict': { backgroundColor: 'color-mix(in srgb, #d74733 16%, transparent)' },
         '.cm-line.is-conflict-resolved': { backgroundColor: 'color-mix(in srgb, var(--zeus-brand-primary) 12%, transparent)' },
@@ -100,7 +100,7 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
         '.conflict-code-actions button:disabled': { opacity: '0.45', cursor: 'not-allowed' },
       }),
     ],
-    [regions, props.blocks, props.range, props.lineOffset, props.side, props.actionsDisabled, props.zh],
+    [props.alignment, regions, props.blocks, props.range, props.lineOffset, props.side, props.actionsDisabled, props.zh],
   );
   return (
     <CodeEditor
@@ -119,7 +119,6 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
           container.removeAttribute('aria-hidden');
           for (const column of container.children) column.setAttribute('aria-hidden', String(!column.classList.contains('conflict-code-actions')));
         }
-        props.onView(view);
       }}
     />
   );

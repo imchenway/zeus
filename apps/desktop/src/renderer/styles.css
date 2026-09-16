@@ -17340,7 +17340,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-side-pane {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  position: relative;
 }
 
 .macos-ai-app .task-git-conflict-pane-header {
@@ -17355,13 +17356,18 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-pane-header > strong {
+  padding-inline-end: 64px;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 处理状态放在标题行，保持三栏编辑区从同一高度开始。 */
 .macos-ai-app .task-git-conflict-side-state {
+  position: absolute;
+  inset-block-start: 7px;
+  inset-inline-end: 0;
   min-block-size: 18px;
   padding: 0 10px 3px;
   color: var(--zeus-product-muted);
