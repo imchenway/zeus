@@ -12,6 +12,10 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
+import { BrowserIcon as Browser } from '@phosphor-icons/react/dist/csr/Browser';
+import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
+import { CubeIcon as Cube } from '@phosphor-icons/react/dist/csr/Cube';
+import { activityOutcome, activityOutcomeLabel, nativeActivityTitle, nativeActivityTool } from './activityPresentation.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { ConversationResourceCards, defaultOpenTarget, isImageResource } from './ConversationResources.js';
 import { isAssistantDeliverableItem, type NativeConversationToolResultPage, type NativePendingRequest, type NativeSessionItemBuffer, type NativeTurnPlanSnapshot, type NativeTurnSnapshot } from './sessionTypes.js';
@@ -106,7 +110,7 @@ interface SessionActivityGroupProps {
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   /** 摘要、活动行与展开详情使用同一份名称投影。 */
   const items = useNamedSkillItems(props.items);
-  const liveItem = [...items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
+  const liveItem = [...items].reverse().find((item) => activityOutcome(item) === 'running') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(items, props.language, active);
   const imageResources = activityImageResources(items);
@@ -231,7 +235,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
     <span className="session-activity-item-title">{title}</span>
   );
   return (
-    <li data-status={props.item.status} data-motion-active={props.motionActive || undefined}>
+    <li data-status={activityOutcome(props.item)} data-motion-active={props.motionActive || undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>
@@ -648,6 +652,19 @@ export function SessionTurnProcessDisclosure(props: {
 
 /** 折叠摘要使用当轮技能名称；无法解析时只说明读取技能及数量。 */
 function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLanguage, active = false): string {
+  /** 单条原生操作直接显示具体对象，不必展开才能识别。 */
+  const nativeTitle = items.length === 1 ? nativeActivityTitle(items[0]!, language === 'zh-CN') : null;
+  if (nativeTitle) return nativeTitle;
+  /** 结束不等于成功，折叠时仍能看到失败、接管与未确认结果。 */
+  const outcomes = items.map(activityOutcome);
+  /** 只调整摘要文字，保留原有分组、顺序与展开行为。 */
+  const exceptions = [...new Set(outcomes)].filter((outcome) => outcome !== 'running' && outcome !== 'completed');
+  if (exceptions.length > 0) {
+    return [
+      language === 'zh-CN' ? (active ? '正在处理' : '操作记录') : active ? 'Working' : 'Activity',
+      ...exceptions.map((outcome) => `${outcomes.filter((value) => value === outcome).length} ${language === 'zh-CN' ? '项' : '·'}${activityOutcomeLabel(outcome, language === 'zh-CN')}`),
+    ].join(' · ');
+  }
   const compactions = items.filter((item) => normalizeType(item.type) === 'contextcompaction');
   if (compactions.length === items.length) {
     return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
@@ -664,7 +681,11 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
     if (activitySkillNames([item]).length > 0 && actions.every((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? '')))) return false;
     return actions.some((action) => !['read', 'listfiles', 'search'].includes(normalizeType(primitive(action.type) ?? '')));
   }).length;
-  const otherTools = items.filter((item) => !['commandexecution', 'command', 'websearch', 'imageview', 'filechange', 'file', 'contextcompaction'].includes(normalizeType(item.type))).length;
+  /** 原生工具按真实来源显示，不与文件和命令动作串成同一个工具名。 */
+  const browserTools = items.some((item) => nativeActivityTool(item.payload)?.kind === 'browser');
+  /** 桌面操作使用独立来源，具体应用名称保留在每条操作上。 */
+  const computerTools = items.some((item) => nativeActivityTool(item.payload)?.kind === 'computer');
+  const otherTools = items.filter((item) => !nativeActivityTool(item.payload) && !['commandexecution', 'command', 'websearch', 'imageview', 'filechange', 'file', 'contextcompaction'].includes(normalizeType(item.type))).length;
   if (language === 'zh-CN') {
     if (active) {
       const activeParts = [
@@ -675,6 +696,8 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
         skills.length > 0 ? '读取技能' : null,
         imageViews > 0 ? '查看图像' : null,
         genericCommandCount > 0 ? '运行命令' : null,
+        browserTools ? '浏览器操作' : null,
+        computerTools ? '桌面操作' : null,
         otherTools > 0 ? '使用工具' : null,
       ].filter(Boolean);
       return `正在处理：${activeParts.join('、')}`;
@@ -687,6 +710,8 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
       skills.length > 0 ? `读取了${skills.length === 1 ? (skills[0] ? ` ${skills[0]} ` : '') : ` ${skills.length} 个`}技能` : null,
       imageViews > 0 ? `查看了 ${imageViews} 张图像` : null,
       genericCommandCount > 0 ? '运行了命令' : null,
+      browserTools ? '已进行浏览器操作' : null,
+      computerTools ? '已进行桌面操作' : null,
       otherTools > 0 ? '使用了工具' : null,
     ].filter(Boolean);
     return completedParts.join('、') || '完成了处理';
@@ -699,6 +724,8 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
     skills.length > 0 ? `${active ? 'reading' : 'read'} ${skills.length === 1 ? `${skills[0] ? `${skills[0]} ` : ''}skill` : `${skills.length} skills`}` : null,
     imageViews > 0 ? `${active ? 'viewing' : 'viewed'} ${imageViews} ${imageViews === 1 ? 'image' : 'images'}` : null,
     genericCommandCount > 0 ? (active ? 'running commands' : 'ran commands') : null,
+    browserTools ? (active ? 'browser operations' : 'performed browser operations') : null,
+    computerTools ? (active ? 'desktop operations' : 'performed desktop operations') : null,
     otherTools > 0 ? (active ? 'using tools' : 'used tools') : null,
   ].filter(Boolean);
   return `${active ? 'Working: ' : ''}${englishParts.join(', ') || (active ? 'processing' : 'completed work')}`;
@@ -720,10 +747,14 @@ function activityImageResources(items: NativeSessionItemBuffer[]): ConversationR
   return [...unique.values()];
 }
 
+/** 纯来源使用专属图标，混合组仍按已有类别展示。 */
 function activityGroupIcon(items: NativeSessionItemBuffer[], liveItem: NativeSessionItemBuffer | null) {
+  if (items.every((item) => nativeActivityTool(item.payload)?.kind === 'browser')) return Browser;
+  if (items.every((item) => nativeActivityTool(item.payload)?.kind === 'computer')) return Desktop;
+  if (items.some((item) => nativeActivityTool(item.payload))) return Wrench;
   if (items.some((item) => ['filechange', 'file'].includes(normalizeType(item.type)))) return PencilSimple;
   if (items.every((item) => normalizeType(item.type) === 'imageview')) return Image;
-  if (items.every((item) => activitySkillNames([item]).length > 0)) return Wrench;
+  if (items.every((item) => activitySkillNames([item]).length > 0)) return Cube;
   if (liveItem) return activityItemIcon(liveItem);
   if (items.some((item) => commandActions(item).some((action) => normalizeType(primitive(action.type) ?? '') === 'search') || normalizeType(item.type) === 'websearch')) return MagnifyingGlass;
   if (items.some((item) => commandActions(item).some((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? ''))))) return BookOpen;
@@ -748,6 +779,16 @@ function activitySkillNames(items: NativeSessionItemBuffer[]): Array<string | nu
 
 /** 实时行和展开详情共享技能标题，未知名称不回退到内部目录标识。 */
 function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLanguage): string {
+  /** 原生工具按来源、动作和真实结果展示，内部名称留在详情。 */
+  const nativeTitle = nativeActivityTitle(item, language === 'zh-CN');
+  if (nativeTitle) return nativeTitle;
+  /** 非成功结果不再沿用“已读取”“已编辑”等成功式措辞。 */
+  const outcome = activityOutcome(item);
+  if (outcome !== 'completed' && outcome !== 'running') {
+    /** 失败状态仍保留原命令或文件目标，便于直接定位问题。 */
+    const target = commandText(item.payload.command) ?? primitive(item.payload.path ?? item.payload.filePath ?? commandActions(item)[0]?.path ?? item.payload.toolName ?? item.payload.tool);
+    return `${activityOutcomeLabel(outcome, language === 'zh-CN')} · ${target ? truncate(singleLine(target), 120) : language === 'zh-CN' ? '操作' : 'Operation'}`;
+  }
   const skills = activitySkillNames([item]);
   if (skills.length > 0) {
     const active = item.status !== 'completed' && item.status !== 'failed';
@@ -804,6 +845,8 @@ function activityItemTarget(
   title: string;
   resource: ConversationResource;
 } | null {
+  // 原生标题已经包含来源、目标和动作，资源链接不能将其覆盖为“已使用”。
+  if (nativeActivityTool(item.payload)) return null;
   const resource = item.resources.find((candidate) => candidate.kind === 'file' || candidate.kind === 'website');
   if (!resource) return null;
   const type = normalizeType(item.type);
@@ -842,14 +885,19 @@ function activityItemTarget(
               ? 'Using'
               : 'Used';
   return {
-    prefix,
+    prefix: ['completed', 'running'].includes(activityOutcome(item)) ? prefix : activityOutcomeLabel(activityOutcome(item), language === 'zh-CN'),
     label: resource.displayName,
     title: resource.kind === 'file' ? resource.projectRelativePath : resource.url,
     resource,
   };
 }
 
+/** 同一类别的实时行与历史行共用图标，技能与普通文件读取明确区分。 */
 function activityItemIcon(item: NativeSessionItemBuffer) {
+  /** 名称必须命中原生注册命名空间才显示操作环境图标。 */
+  const tool = nativeActivityTool(item.payload);
+  if (tool) return tool.kind === 'browser' ? Browser : Desktop;
+  if (activitySkillNames([item]).length > 0) return Cube;
   const type = normalizeType(item.type);
   if (type === 'commandexecution' || type === 'command') {
     const actionType = primitive(commandActions(item)[0]?.type);
@@ -871,9 +919,19 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
   cwd: string | null;
   output: string | null;
 } | null {
-  const command = commandText(item.payload.command);
+  /** 原始工具身份保留在展开详情，摘要不暴露内部命名。 */
+  const nativeTool = nativeActivityTool(item.payload);
+  const command = commandText(item.payload.command) ?? (nativeTool ? `zeus_${nativeTool.kind}.${nativeTool.method}` : null);
   const cwd = primitive(item.payload.cwd);
-  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? presentationLiveText(item);
+  /** 原生工具的文本返回同样可以展开，图片仍走已有资源预览。 */
+  const nativeOutput = Array.isArray(item.payload.contentItems)
+    ? item.payload.contentItems
+        .filter(isRecord)
+        .filter((part) => part.type === 'inputText')
+        .map((part) => primitive(part.text) ?? '')
+        .join('\n')
+    : null;
+  const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? nativeOutput ?? presentationLiveText(item);
   return command || cwd || output ? { command, cwd, output } : null;
 }
 

@@ -159,7 +159,9 @@ export function ConversationInlineResource(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
-  const location = rawLocation && !/\(\s*lines?\s+\d+/iu.test(props.label) ? rawLocation : null;
+  /** 已有英文行号由结构化位置统一本地化，避免正文重复追加。 */
+  const label = rawLocation ? props.label.replace(/\s*\(\s*lines?\s+\d+(?:\s*[–-]\s*\d+)?\s*\)\s*$/iu, '') : props.label;
+  const location = rawLocation && !label.endsWith(rawLocation) ? rawLocation : null;
   const title = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.kind === 'website' ? props.resource.url : props.resource.displayName;
 
   useApplicationErrorDialog(error, {
@@ -181,9 +183,9 @@ export function ConversationInlineResource(
 
   return (
     <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-      <button type="button" className="session-inline-resource" title={title} aria-label={`${props.label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
+      <button type="button" className="session-inline-resource" title={title} aria-label={`${label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
         <ResourceIcon resource={props.resource} />
-        <span>{props.label}</span>
+        <span>{label}</span>
         {location ? <span className="session-inline-resource-location">{location}</span> : null}
       </button>
     </span>
@@ -665,18 +667,20 @@ function fileIcon(kind: ConversationFileIconKind): ComponentType<{ weight?: 'duo
 
 const sourceIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'css']);
 
+/** 行号依照界面语言显示，实际打开仍使用原始位置字段。 */
 function locationLabel(resource: Extract<ConversationResource, { kind: 'file' }>, language: SessionUiLanguage): string | null {
   const line = resource.location?.line;
   const endLine = resource.location?.endLine;
   if (!line) return null;
-  if (endLine && endLine > line) return language === 'zh-CN' ? `(lines ${line}–${endLine})` : `(lines ${line}–${endLine})`;
-  return `(line ${line})`;
+  if (endLine && endLine > line) return language === 'zh-CN' ? `第 ${line}–${endLine} 行` : `(lines ${line}–${endLine})`;
+  return language === 'zh-CN' ? `第 ${line} 行` : `(line ${line})`;
 }
 
+/** 本地网页不能用“网站”暗示已发布，线上资源继续展示域名。 */
 function resourceSubtitle(resource: ConversationResource, language: SessionUiLanguage): string {
   if (resource.kind === 'website') return language === 'zh-CN' ? `网站 · ${resource.domain}` : `Website · ${resource.domain}`;
   if (resource.kind === 'file' && resource.presentation === 'card' && resource.iconKind === 'html') {
-    return language === 'zh-CN' ? '网站' : 'Website';
+    return language === 'zh-CN' ? '本地网页' : 'Local web page';
   }
   const kind = resource.iconKind;
   const zh: Record<ConversationFileIconKind, string> = {

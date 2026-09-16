@@ -7538,6 +7538,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   margin: 0;
   min-block-size: 0;
   min-inline-size: 0;
+  /* 行内资源在窄窗口也限制于正文列宽。 */
+  max-inline-size: 100%;
   padding: 0 1px;
   text-align: start;
   vertical-align: baseline;
@@ -7569,6 +7571,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-inline-resource-location {
   font-weight: inherit;
+  /* 行号作为完整位置保留，长文件名仍可自然换行。 */
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-inline-resource > span:first-of-type {
+  /* 不含空格的长路径也不能撑破正文宽度。 */
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-resource-card-list {

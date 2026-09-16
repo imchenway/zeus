@@ -1,4 +1,5 @@
 import { conversationProcessPresentation } from '../packages/shared/src/conversationProcessPresentation.js';
+import { activityOutcome, nativeActivityTitle, nativeActivityTool } from '../apps/desktop/src/renderer/session/activityPresentation.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -179,6 +180,42 @@ for (const [name, expected] of [
 /** 受管命令的真实非零退出码必须进入公共展示，不能因工具已返回而丢失失败依据。 */
 const failedCommand = conversationProcessPresentation('tool', { provider: 'pi', payload: { toolName: 'bash', result: { details: { exitCode: 7 } } } });
 assertProbe(failedCommand.payload.exitCode === 7, '命令失败退出码必须在实时与历史共用的转换中保留。');
+/** 原生身份和状态经历史转换后仍能驱动真实组件，未知名称不得误分类。 */
+for (const [name, kind] of [
+  ['zeus_browser_open', 'browser'],
+  ['zeus_computer__click', 'computer'],
+  ['zeus_browser.snapshot', 'browser'],
+]) {
+  assertProbe(nativeActivityTool({ toolName: name })?.kind === kind, '两个 Provider 的原生工具命名必须映射到同一展示类别。');
+}
+assertProbe(nativeActivityTool({ toolName: 'plugin_zeus_browser_open' }) === null, '插件名称包含原生工具字样也不能冒充原生操作。');
+/** 使用原生观察的应用名称，禁止从内部标识猜测产品。 */
+const desktopPresentation = conversationProcessPresentation('tool', {
+  itemType: 'dynamicToolCall',
+  payload: { namespace: 'zeus_computer', tool: 'get_app_state', arguments: { app: 'com.github.electron' }, contentItems: [{ type: 'inputText', text: JSON.stringify({ application: { name: 'Zeus Test' } }) }], success: true },
+});
+assertProbe(nativeActivityTitle({ status: 'completed', payload: desktopPresentation.payload }, true)?.includes('Zeus Test') === true, '历史投影必须保留工具身份和真实应用元信息。');
+assertProbe(
+  !nativeActivityTitle({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'get_app_state', arguments: { app: 'com.github.electron' } } }, true)?.includes('com.github.electron'),
+  '缺少真实名称时不得在摘要暴露内部标识。',
+);
+/** 已完成返回、用户接管与动作结果未知是不同的展示状态。 */
+for (const [result, expected] of [
+  [{ status: 'waiting_for_user' }, 'waiting'],
+  [{ status: 'user_control_resumed' }, 'observe'],
+  [{ action: { outcome: 'unknown' } }, 'unknown'],
+] as const) {
+  assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', contentItems: [{ type: 'inputText', text: JSON.stringify(result) }] } }) === expected, '调用已返回不能覆盖实际接管或未确认结果。');
+}
+assertProbe(activityOutcome({ status: 'completed', payload: { success: false } }) === 'failed' && activityOutcome({ status: 'completed', payload: { status: 'cancelled' } }) === 'cancelled', '结束记录仍保留失败与取消的真实状态。');
+assertProbe(activityOutcome({ status: 'completed', payload: failedCommand.payload }) === 'failed', '非零退出码不能显示已完成。');
+assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', v2ContentTruncated: true } }) === 'unknown', '桌面结果截断时不能丢失潜在的接管状态并误报完成。');
+/** 工具展示可单独检查，不依赖后续长历史游标与数据库场景。 */
+if (process.argv.includes('--activity-presentation')) {
+  await probeNavigation();
+  console.log('工具展示探针通过：原生身份、应用名称、失败、取消、接管与未确认结果。');
+  process.exit(0);
+}
 assertProbe(
   conversationProcessPresentation('waiting', { provider: 'pi' }).type === 'commentary' && conversationProcessPresentation('retry', { provider: 'pi' }).type === 'commentary',
   'Pi 等待和重试只显示状态说明，不伪装工具或可回答问题。',
@@ -456,10 +493,14 @@ async function probeNavigation() {
           'turn-0',
           'probe-segment',
           index,
-          index % 2 ? 'reasoning' : 'command',
+          index === 2 ? 'tool' : index % 2 ? 'reasoning' : 'command',
           'completed',
           `过程 ${index}`,
-          JSON.stringify({ text: '完整过程内容'.repeat(500) }),
+          JSON.stringify(
+            index === 2
+              ? { provider: 'codex', itemType: 'dynamicToolCall', payload: { output: '工具长结果'.repeat(3000), namespace: 'zeus_browser', tool: 'click', success: false, arguments: { surface: 'edge' } } }
+              : { text: '完整过程内容'.repeat(500) },
+          ),
           `codex:item:long-${index}`,
           '2026-01-01T00:00:00Z',
           '2026-01-01T00:00:01Z',
@@ -471,6 +512,13 @@ async function probeNavigation() {
     const changes = db.get<{ count: number }>('SELECT total_changes() AS count')!.count;
     /** 目录、正文页均由同一正式仓库提供。 */
     const repository = new ConversationSnapshotV2Repository(db);
+    /** 原生身份位于长结果之后，正文截断时仍必须从有界元信息恢复。 */
+    const nativeItem = repository.listProcessPage({ conversationId: conversation.id, turnId: 'turn-0', entryLimit: 3 }).items.find((item) => item.id === 'long-process-2');
+    assertProbe(nativeItem?.detail.truncated === true, '原生展示探针必须实际覆盖长结果截断。');
+    /** 使用与真实历史列表一致的共享转换检查身份和失败状态。 */
+    const nativePresentation = conversationProcessPresentation(nativeItem.kind, nativeItem.presentation);
+    assertProbe(nativeActivityTitle({ status: nativeItem.status, payload: nativePresentation.payload }, true) === 'Edge · 点击 · 失败', '截断历史必须保留原生来源、具体动作与失败结果。');
+    if (process.argv.includes('--activity-presentation')) return { entries: count, unfilledPlaceholders: count - 1, distantRenderedRows: 0, elapsedMs: 0, writes: 0 };
     registerConversationSnapshotV2Api({
       server,
       repository,
