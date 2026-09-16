@@ -30,6 +30,7 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
+import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -1571,6 +1572,20 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   };
 }
 
+/** 迟到的已接纳提交按首次发言位置插入，已有历史顺序和待发队尾保持不变。 */
+function insertSubmissionTimelineItem(order: string[], items: NativeSessionState['items'], item: NativeSessionItemBuffer): string[] {
+  /** 未接纳消息继续交给队列排序；缺少首次时间时不猜测历史位置。 */
+  const timestamp = item.timelineAt;
+  if (isUnacceptedTranscriptMessage(item) || !timestamp) return [...order, item.key];
+  /** 只寻找插入点，不对整段历史重新排序，避免扰动原生消息与答题记录。 */
+  const index = order.findIndex((key) => {
+    /** 待发消息不作为历史时间锚点，其展示位置继续由队列决定。 */
+    const existing = items[key];
+    return Boolean(existing && !isUnacceptedTranscriptMessage(existing) && (existing.timelineAt ?? existing.updatedAt ?? '') > timestamp);
+  });
+  return index < 0 ? [...order, item.key] : [...order.slice(0, index), item.key, ...order.slice(index)];
+}
+
 function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
   let items = state.items;
   let itemOrder = state.itemOrder;
@@ -1615,7 +1630,7 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
       if (previous && equivalentSessionItem(previous, next)) continue;
       if (items === state.items) items = { ...state.items };
       items[key] = next;
-      if (!previous) itemOrder = [...itemOrder, key];
+      if (!previous) itemOrder = insertSubmissionTimelineItem(itemOrder, items, next);
       transcriptChanged = true;
     }
   }
@@ -1674,7 +1689,7 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
       : {}),
   };
   const items = { ...state.items, [key]: item };
-  const itemOrder = previousKey || state.itemOrder.includes(key) ? state.itemOrder : [...state.itemOrder, key];
+  const itemOrder = previousKey || state.itemOrder.includes(key) ? state.itemOrder : insertSubmissionTimelineItem(state.itemOrder, items, item);
   return {
     ...state,
     items,
