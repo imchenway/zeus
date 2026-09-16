@@ -463,6 +463,10 @@
 .digital-team-inspector-content,
 .digital-team-inspector-empty {
   display: grid;
+  /* 长错误和命令路径必须在面板内换行，不能撑宽隐式网格列。 */
+  grid-template-columns: minmax(0, 1fr);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
   align-content: start;
   gap: 14px;
 }

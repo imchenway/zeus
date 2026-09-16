@@ -130,7 +130,11 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
     setNodes((current) => {
       /** 身份索引保留测量结果，同时避免逐节点重复扫描。 */
       const byId = new Map(current.map((node) => [node.id, node]));
-      return projectedNodes.map((node) => ({ ...byId.get(node.id), ...node }));
+      return projectedNodes.map((node) => {
+        /** 拖动尚未落盘时，上层选择或状态刷新不能把位置拉回旧坐标。 */
+        const previous = byId.get(node.id);
+        return { ...previous, ...node, position: previous?.dragging ? previous.position : node.position };
+      });
     });
   }, [props.definition.nodes, props.employeeNames, props.selectedNodeId, props.issues, props.runtimeStateByNodeId]);
 
