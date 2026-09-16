@@ -34,9 +34,63 @@ registerHooks({
   },
 });
 /** 将历史过程分页串联到正式行编号和轮次分组，覆盖同轮多段思考。 */
-const { projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 /** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
 const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
+
+/** 失败记录必须早于后续发言，不能随缺页、排队或重复身份移动到底部。 */
+function verifyFailureOrder(): void {
+  /** 固定时间覆盖同刻结束与后续轮次、缺失结束时间两种边界。 */
+  const at = (second: number) => new Date(Date.UTC(2026, 8, 16, 0, 0, second)).toISOString();
+  /** 最小消息直接经过生产行投影，保留普通输入身份。 */
+  const message = (id: string, turnId: string, second: number): NativeSessionItemBuffer => ({
+    key: id,
+    itemId: id,
+    turnId,
+    conversationId: 'failure-order',
+    threadId: 'failure-order',
+    type: 'userMessage',
+    phase: 'user',
+    status: 'completed',
+    text: id,
+    payload: {},
+    resources: [],
+    timelineAt: at(second),
+    updatedAt: at(second),
+  });
+  /** 无原生轮次身份时也必须能按本地轮次恢复失败位置。 */
+  for (const providerTurnId of ['failed', null]) {
+    /** 失败轮次别名由同一持久身份去重。 */
+    const turn: NativeSessionState['turnsByProviderId'][string] = {
+      id: 'failed',
+      providerTurnId,
+      submissionId: null,
+      status: 'failed',
+      startedAt: at(0),
+      createdAt: at(0),
+      completedAt: at(1),
+      updatedAt: at(1),
+      error: { category: 'rate_limit', code: 'insufficient_quota', message: '额度不足', providerStatus: 'failed', additionalDetails: [] },
+    };
+    for (const orphan of [false, true]) {
+      for (const completedAt of [at(1), null]) {
+        /** 报错前提交但仍未发送的队列消息也应位于失败提示之后。 */
+        const queued = { ...message('queued', 'pending', 0), optimistic: true, status: 'queued' };
+        /** 同轮继续输入、下一轮输入和队尾均保持各自顺序。 */
+        const items = [...(orphan ? [] : [message('opening', 'failed', 0)]), message('same-turn-after', 'failed', 2), message('next-turn', 'next', 3), queued];
+        /** 两个别名只能生成一条失败行。 */
+        const turns = { failed: { ...turn, completedAt }, alias: { ...turn, completedAt } };
+        /** 重建投影等同重新进入会话，不依赖组件内临时记忆。 */
+        const rows = projectTranscriptFailureRows(projectTranscriptTurnRows(projectTranscriptRows(items), null, { failed: 'failed' }), turns);
+        assertProbe(rows.map((row) => row.key).join('|') === [...(orphan ? [] : ['opening']), 'turn-failure:failed', 'same-turn-after', 'next-turn', 'queued'].join('|'), '失败位置必须保持在原输入之后、后续发言之前，且不重复。');
+        /** 队尾消息早于失败提交时，也不能跑到失败提示上方。 */
+        const pendingRows = projectTranscriptFailureRows(projectTranscriptRows([queued]), turns);
+        assertProbe(pendingRows[0]?.kind === 'turn_failure', '未被模型接手的排队消息必须位于失败记录之后。');
+      }
+    }
+  }
+}
+verifyFailureOrder();
 
 // 通过历史分页投影检查各协议的 Pi 思考；截断预览也必须保留入口。
 for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthropic_messages']) {

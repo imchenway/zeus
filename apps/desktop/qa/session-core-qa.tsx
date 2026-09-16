@@ -57,6 +57,7 @@ const scenes: QaScene[] = [
   { query: 'model-select', title: '模型选择与置顶', summary: '共享选择框的分组、焦点、搜索和持久置顶。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
   { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
+  { query: 'error-order', title: '报错后的消息顺序', summary: '失败记录固定在发生位置。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
@@ -166,6 +167,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'queue-actions') return <QueueActionsQa />;
   if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'model-select') return <ModelSelectQa />;
+  if (props.scene.query === 'error-order') return <ErrorOrderQa />;
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
   if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
@@ -1091,6 +1093,75 @@ function ThreadLayoutQa(props: { state: NativeSessionState; subagent: boolean; l
         </>
       )}
     </div>
+  );
+}
+
+/** 用真实时间线复现失败后继续发送，支持没有消息可依附的失败轮次。 */
+function ErrorOrderQa() {
+  /** 后续发言由按钮追加，便于观察旧错误是否被移动。 */
+  const [sent, setSent] = useState(0);
+  /** 缺失消息的轮次沿用同一份失败事实。 */
+  const [orphan, setOrphan] = useState(false);
+  /** 主题切换覆盖错误条的两种外观。 */
+  const [dark, setDark] = useState(false);
+  /** 固定时间隔离真实账号与模型，不向服务端提交消息。 */
+  const at = (second: number) => new Date(Date.UTC(2026, 8, 16, 0, 0, second)).toISOString();
+  /** 每条消息保留自己的首次显示时间与轮次身份。 */
+  const message = (id: string, turnId: string, text: string, second: number): NativeSessionItemBuffer => ({
+    key: id,
+    itemId: id,
+    providerItemId: id,
+    conversationId: 'qa-error-order',
+    threadId: 'qa-error-order',
+    turnId,
+    type: 'userMessage',
+    phase: 'user',
+    status: 'completed',
+    text,
+    payload: {},
+    resources: [],
+    timelineAt: at(second),
+    updatedAt: at(second),
+  });
+  /** 失败之后的输入使用独立轮次，也覆盖连续多次追加。 */
+  const items = [...(orphan ? [] : [message('opening', 'failed-turn', '报错前发送的消息', 0)]), ...Array.from({ length: sent }, (_, index) => message(`after-${index}`, `next-${index}`, `报错后发送的消息 ${index + 1}`, index + 2))];
+  /** 生产组件仅消费合成快照；失败详情仍走正式弹窗。 */
+  const state: NativeSessionState = {
+    ...createInitialSessionState(),
+    conversationId: 'qa-error-order',
+    transportState: 'ready',
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    terminalTurnIds: { 'failed-turn': 'failed' },
+    turnsByProviderId: {
+      'failed-turn': {
+        id: 'local-failed-turn',
+        providerTurnId: 'failed-turn',
+        submissionId: null,
+        status: 'failed',
+        createdAt: at(0),
+        startedAt: at(0),
+        completedAt: at(1),
+        updatedAt: at(1),
+        error: { category: 'rate_limit', code: 'insufficient_quota', message: 'You exceeded your current quota, please check your plan and billing details.', providerStatus: 'failed', additionalDetails: [] },
+      },
+    },
+  };
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <h1>报错后的消息顺序</h1>
+        <nav aria-label="预览操作">
+          <Button onClick={() => setSent((count) => count + 1)}>追加后续消息</Button>
+          <Button aria-pressed={orphan} onClick={() => setOrphan(!orphan)}>
+            切换缺失原消息
+          </Button>
+          <Button onClick={() => setDark(!dark)}>{dark ? '浅色' : '深色'}</Button>
+        </nav>
+      </header>
+      <ConversationTranscript state={state} language="zh-CN" transcriptHydrated />
+      <ApplicationErrorDialogHost language="zh-CN" />
+    </main>
   );
 }
 
