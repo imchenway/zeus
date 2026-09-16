@@ -32,7 +32,7 @@ import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, ty
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { canSteerActiveTurn } from './ConversationComposer.js';
-import { isSubmissionWaitingInQueue, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
+import { isSubmissionWaitingInQueue, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 
@@ -1542,7 +1542,7 @@ export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRo
       /** 未被模型接手的后续消息仍属于队尾，即使排队提交早于本轮失败。 */
       const failure = failures[cursor]!;
       /** 同轮开场消息不能因缺少原生身份而被误判为下一次待发送消息。 */
-      const pendingAfterFailure = row.kind === 'item' && row.item.optimistic && !row.item.providerItemId && row.item.turnId !== failure.turnId;
+      const pendingAfterFailure = row.kind === 'item' && isUnacceptedTranscriptMessage(row.item) && row.item.turnId !== failure.turnId;
       if (!pendingAfterFailure && (occurredAt < failure.occurredAt || (occurredAt === failure.occurredAt && transcriptTurnRowTurnId(row) === failure.turnId))) break;
       result.push(failure);
       cursor += 1;

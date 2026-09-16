@@ -4492,8 +4492,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-markdown pre {
-  background: var(--session-code);
-  border: 0;
+  /* 代码使用实色主题表面与边界，避免浅色页面中只剩等宽文字。 */
+  background: var(--session-selected);
+  border: 1px solid var(--session-line);
   border-radius: 8px;
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
   font-size: 12px;
@@ -4504,8 +4505,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-markdown :not(pre) > code {
-  background: var(--session-control-hover);
+  /* 行内代码是持续可见的内容标记，不使用低对比度的悬停色。 */
+  background: var(--session-selected);
+  border: 1px solid var(--session-line);
   border-radius: 4px;
+  box-decoration-break: clone;
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
   font-size: 0.91em;
   padding: 1px 4px;
@@ -12328,11 +12332,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 /* 读取反馈局部呈现，正文失败保留原有阅读锚点与重试入口。 */
 .session-codex-parity-v1 .session-navigation-status {
   position: absolute;
-  left: 48px;
+  /* 目录反馈沿用正文列起点，不能固定贴在宽会话外壳的左侧。 */
+  left: max(var(--session-gutter), calc((100% - var(--session-thread-max)) / 2));
   bottom: 12px;
-  right: 16px;
   width: fit-content;
-  max-width: calc(100% - 64px);
+  max-width: min(var(--session-thread-max), calc(100% - 2 * var(--session-gutter)));
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -12342,6 +12347,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   background: var(--session-canvas);
   color: var(--session-text-muted);
   font-size: 12px;
+}
+/* 长错误允许换行，重试入口保留完整可点击宽度。 */
+.session-codex-parity-v1 .session-navigation-status > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.session-codex-parity-v1 .session-navigation-status > button {
+  flex-shrink: 0;
+}
+/* 浏览旧消息时为返回按钮让出一行，窄分栏也不会互相遮挡。 */
+.session-codex-parity-v1 .session-transcript-shell:has(> .session-return-latest[data-visible='true']) > .session-navigation-status {
+  bottom: 56px;
 }
 .session-codex-parity-v1 .session-navigation-placeholder {
   /* 保留可观察的读取锚点，后台补读不制造多条空白消息。 */

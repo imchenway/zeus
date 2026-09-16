@@ -2,6 +2,7 @@ import { createSessionController, type SessionControllerClient, sessionRealtimeB
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import { orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 
 const projectId = 'renderer-event-flow-project';
@@ -552,6 +553,63 @@ function verifyTruncatedTaskPushIdentityCoalescing() {
   });
   assert(repeated.items.filter((item) => item.type === 'userMessage').length === 2, 'Identical text with distinct durable identities must remain two user messages.');
   return { mergedUserItems: userItems.length, taskLayoutPreserved: true, attachmentCount: 1, deliberateRepeats: 2 };
+}
+
+/** 任务首发、连续引导与下一条排队消息在冷开和热恢复后保持同一顺序。 */
+function verifyRestoredSubmissionOrder() {
+  /** 固定时间让更新队列状态不能伪装成新消息。 */
+  const at = (second: number) => new Date(Date.parse(occurredAt) + second * 1000).toISOString();
+  /** 复用正式快照适配器构造完整会话，消息身份刻意等待原生回显。 */
+  const base = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 持久的任务首发已经被模型接手；后续两次引导也已经进入同轮。 */
+  const submissions = ['任务推送提示词', '第一次引导', '第二次引导', '待发消息'].map((content, index) => ({
+    id: `order-submission-${index}`,
+    clientUserMessageId: `order-client-${index}`,
+    content,
+    status: index === 0 ? 'active' : index === 3 ? 'queued' : 'resolved',
+    delivery: index === 0 || index === 3 ? ('queue' as const) : ('steer_now' as const),
+    position: index + 1,
+    pausedReason: null,
+    providerTurnId: index === 3 ? null : 'order-turn',
+    createdAt: at(index * 2),
+    updatedAt: at(20),
+  }));
+  /** 正文穿插两次引导，测试不能把首发或引导挪到正文、队尾之后。 */
+  const replies = [1, 3, 5].map((second) => ({
+    id: `reply-${second}`,
+    turnId: 'order-turn',
+    providerItemId: `reply-${second}`,
+    type: 'agentMessage',
+    phase: 'commentary',
+    status: 'completed',
+    text: `回复 ${second}`,
+    payload: {},
+    resources: [],
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  }));
+  /** 每次切回都从同一权威提交重建，不能依赖上一屏的临时条目。 */
+  const snapshot = { ...base, items: replies, submissions, queue: { ...queue, submissions } };
+  /** 冷恢复和带缓存的恢复都经过真实状态归并。 */
+  let state = createHydratedSessionState(snapshot);
+  for (let pass = 0; pass < 3; pass += 1) {
+    state = sessionReducer(state, { type: 'snapshot_hydrated', snapshot });
+    /** 再收到队列快照时，同一条首发也不能被重新推入待发区域。 */
+    state = sessionReducer(state, { type: 'queue_hydrated', queue: snapshot.queue });
+    /** 已接纳的普通发送与引导统一保持原始发言位置。 */
+    const ordered = orderTranscriptItemsWithQueue(
+      state.itemOrder.map((key) => state.items[key]!),
+      state.queue,
+    );
+    assert(ordered.map((item) => item.text).join('|') === '任务推送提示词|回复 1|第一次引导|回复 3|第二次引导|回复 5|待发消息', '切回会话后，任务首发和多次引导必须留在对应回复之前。');
+    for (const status of ['completed', 'resolved']) {
+      /** 终态已确认但原生身份仍未补齐的分页合并结果也不能进入队尾。 */
+      const terminal = ordered.map((item) => (item.clientUserMessageId === submissions[0]!.clientUserMessageId ? { ...item, status } : item));
+      assert(orderTranscriptItemsWithQueue(terminal, state.queue)[0]?.text === '任务推送提示词', '终态消息不能因保留乐观标记被误当成待发送消息。');
+    }
+  }
+  return { coldAndWarmRestoration: true, steeringMessages: 2, queuedMessages: 1, acceptedWithoutNativeEcho: true };
 }
 
 function verifyInternalPayloadsStayOutOfTranscript() {
@@ -1159,15 +1217,18 @@ const turnChangeReview = await verifyTurnChangeReviewHydration();
 const queuedRetryReconciliation = await verifyQueuedRetryReconciliation();
 /** 补读与答题刷新共用同一稳定性核验。 */
 const stableHydrationPages = verifyStableHydrationPages();
+/** 会话恢复专项同时核对已接纳消息与待发队列的边界。 */
+const restoredSubmissionOrder = verifyRestoredSubmissionOrder();
 /** 默认仍执行既有全量入口；专项参数只缩小本地验收范围。 */
 const result =
   process.argv.includes('--queue-retry-only') || process.argv.includes('--session-recovery-only')
-    ? { queuedRetryReconciliation, stableHydrationPages }
+    ? { queuedRetryReconciliation, stableHydrationPages, restoredSubmissionOrder }
     : process.argv.includes('--change-review-only')
       ? { turnChangeReview }
       : {
           turnChangeReview,
           budget: sessionRealtimeBufferBudget,
+          restoredSubmissionOrder,
           truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
           internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
           processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
