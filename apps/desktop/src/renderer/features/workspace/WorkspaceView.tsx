@@ -879,13 +879,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
         {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
-          <ProjectStartGuide
-            language={appShellSettings.appLanguage}
-            busy={projectDirectoryChoosing || creatingProjectBusy}
-            available={Boolean(props.onCreateCurrentProject)}
-            onStartTemporary={() => prepareNewConversationDraft(true)}
-            onChooseFolder={() => void chooseProjectDirectoryForCreate()}
-          />
+          <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
         ) : null}
         {activeNavTarget === 'skills' ? <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
         {activeNavTarget === 'digital-teams' ? (

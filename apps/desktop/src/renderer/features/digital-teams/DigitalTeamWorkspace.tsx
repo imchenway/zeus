@@ -54,8 +54,8 @@ const noProjectValue = '__no_digital_team_project__';
 /** 尚未配置真实角色时保留节点槽位，运行前会显示并阻止缺失角色。 */
 const unassignedEmployeeId = '__unassigned_digital_team_employee__';
 
-/** 编辑器右栏切换抽屉的窄窗口阈值。 */
-const compactInspectorQuery = '(max-width: 1160px)';
+/** 扣除项目侧栏后统一切换双列与详情抽屉，样式直接复用此状态。 */
+const compactInspectorQuery = '(max-width: 1420px)';
 
 /** 运行状态的人话标签。 */
 const runStatusLabels: Record<string, string> = {
@@ -539,7 +539,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   }
 
   return (
-    <section className="digital-team-workspace" aria-labelledby="digital-team-title" data-digital-team-dirty={dirty ? 'true' : undefined}>
+    <section className="digital-team-workspace" aria-labelledby="digital-team-title" data-digital-team-dirty={dirty ? 'true' : undefined} data-compact-inspector={compactInspector ? 'true' : undefined}>
       <header className="digital-team-header">
         <div>
           <p>{zh ? '研发协作流程' : 'Development workflow'}</p>
@@ -1147,12 +1147,12 @@ function RunInspector(props: {
   });
   /** 返工影响范围只按冻结图计算一次。 */
   const reworkNodeIds = descendantNodeIds(props.run, props.node.id);
-  /** 只有可执行节点且受影响范围没有在途或未知副作用时才开放返工。 */
+  /** 在途工作阻止返工；未知结果通过明确确认弃用，保留历史后创建新尝试。 */
   const reworkAvailable =
     !terminalRunStatuses.has(props.run.status) &&
     (props.node.type === 'employee' || props.node.type === 'code_integration') &&
     Boolean(props.attempt) &&
-    !props.attempts.some((attempt) => reworkNodeIds.has(attempt.nodeId) && ['dispatching', 'active', 'outcome_unknown'].includes(attempt.status));
+    !props.attempts.some((attempt) => reworkNodeIds.has(attempt.nodeId) && ['dispatching', 'active'].includes(attempt.status));
   return (
     <div className="digital-team-inspector-content">
       <div className="digital-team-section-heading">
@@ -1523,7 +1523,10 @@ function decisionTitle(kind: RunDecision['kind'], zh: boolean): string {
 
 /** 人工决定说明明确失效规则。 */
 function decisionDescription(kind: RunDecision['kind'], zh: boolean, node: DigitalTeamNode | null): string {
-  if (kind === 'rework') return zh ? '目标节点及其全部后继当前结果将失效；未受影响的并行分支继续保留。' : 'The target and all descendants are invalidated; unaffected parallel branches remain.';
+  if (kind === 'rework')
+    return zh
+      ? '确认后弃用目标节点及其全部后继的当前结果（包括结果未知的尝试），保留历史并重新执行；未受影响的并行分支继续保留。'
+      : 'Confirm to discard current results, including unknown outcomes, for this node and all descendants. History and unaffected parallel branches are retained before a new attempt starts.';
   if (kind === 'approve' && node?.type === 'human_confirmation' && node.data.purpose === 'plan_approval') {
     return zh
       ? '批准会固定当前计划，并授权本任务创建独立 worktree、分支、本地提交和内部候选集成；不包含推送、主分支合入或发布。'

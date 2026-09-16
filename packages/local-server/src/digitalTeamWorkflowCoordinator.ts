@@ -351,7 +351,9 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (input.state === 'running' && this.options.attempts.listByRun(run.id).some((attempt) => attempt.status === 'outcome_unknown')) {
       throw routeError('ZEUS_DIGITAL_TEAM_UNKNOWN_OUTCOME', '仍有结果未知的外部操作，核对前不能继续派发。');
     }
-    this.options.runs.update(run.id, { expectedRevision: run.revision, controlState: input.state, error: input.state === 'paused' ? { code: 'ZEUS_DIGITAL_TEAM_STOPPING', message: '已停止新派发，正在核对在途工作。' } : null });
+    /** 暂停或继续只更新控制提示，保留仍需返工或人工核对的真实失败原因。 */
+    const controlError = input.state === 'paused' ? (run.error ?? { code: 'ZEUS_DIGITAL_TEAM_STOPPING', message: '已停止新派发，正在核对在途工作。' }) : run.error?.code === 'ZEUS_DIGITAL_TEAM_STOPPING' ? null : run.error;
+    this.options.runs.update(run.id, { expectedRevision: run.revision, controlState: input.state, error: controlError });
     return this.getRunProjection(run.id);
   }
 
@@ -371,7 +373,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     }
     const unrelatedUnknown = this.currentAttempts(run).some((attempt) => attempt.status === 'outcome_unknown' && !affected.has(attempt.nodeId));
     if (unrelatedUnknown) throw routeError('ZEUS_DIGITAL_TEAM_UNKNOWN_OUTCOME', '未受本次返工影响的并行节点仍有未知结果，请先明确处置对应节点。');
-    this.options.attempts.invalidateCurrentAndDescendants({ runId: run.id, nodeId: node.id, reason });
+    this.options.attempts.invalidateCurrentAndDescendants({ runId: run.id, nodeId: node.id, reason, invalidatedByAttemptId: this.options.attempts.getCurrentByNode(run.id, node.id)?.id });
     const targetStage = reworkRunStatus(node);
     const clearsCandidate = targetStage === 'planning' || targetStage === 'executing';
     this.options.runs.update(run.id, { expectedRevision: run.revision, status: targetStage, ...(clearsCandidate ? { candidateRevisions: [] } : {}), error: null });
@@ -566,7 +568,18 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
               .filter((candidate) => Boolean(candidate.conversationId) && candidate.conversationId === run.mainConversationId && candidate.id !== attempt.id)
               .at(-1) ?? null)
           : null;
-      const prompt = buildNodePrompt(run, node, attempt, this.currentAttempts(run));
+      /** 最新失效尝试携带本次人工返工要求，不能只保存历史而让新员工重复旧目标。 */
+      /** 只传递直接针对本节点的返工要求；上游失效原因不能冒充下游的新指令。 */
+      const priorAttempt = this.options.attempts
+        .listByRun(run.id)
+        .filter((candidate) => candidate.nodeId === node.id && candidate.attempt < attempt.attempt && candidate.status === 'invalidated')
+        .sort((left, right) => right.attempt - left.attempt)[0];
+      /** 人工拒绝规划或最终验收时，由对应确认节点明确退回规划或汇总。 */
+      const invalidationSource = priorAttempt?.invalidatedByAttemptId ? this.options.attempts.getById(priorAttempt.invalidatedByAttemptId) : null;
+      /** 自身返工和对应人工退回拥有明确的节点归属，历史无来源原因不作为指令重放。 */
+      const directlyReworked = invalidationSource?.id === priorAttempt?.id || (invalidationSource?.nodeType === 'human_confirmation' && (node.data.purpose === 'plan' || node.data.purpose === 'summary'));
+      const reworkReason = directlyReworked ? (priorAttempt?.invalidationReason ?? null) : null;
+      const prompt = buildNodePrompt(run, node, attempt, this.currentAttempts(run), reworkReason);
       if (continued?.conversationId) {
         externalOutcomeUncertain = true;
         const accepted = await this.options.taskWork.continueWorkflowConversation({ taskId: run.taskId, conversationId: continued.conversationId, content: prompt, operationIdentity: `digital-team-turn:${attempt.id}` });
@@ -593,7 +606,9 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
           employeeSnapshot: this.frozenEmployee(run, node.data.employeeId),
           sourceRef: `digital-team:${run.id}:${node.id}:attempt:${attempt.attempt}`,
           title: node.data.title,
-          description: prompt,
+          // 工作项说明仅作列表摘要；完整节点要求和上游证据仍保存在 supplementalInfo。
+          description: node.data.instructions.slice(0, 4_000),
+          supplementalInfo: prompt,
           workspace: workspace ? { mode: 'existing', environmentId: workspace.environmentId! } : { mode: 'direct' },
           purpose: node.data.purpose,
           executionMode: node.data.executionMode,
@@ -654,7 +669,8 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     const prepared = await prepareWorkflowCandidate({
       repositoryPath: repository.localPath,
       projectSlug: this.requireProject(run.projectId).slug,
-      candidateId: `${run.id}-${node.id}-${attempt.attempt}`,
+      // 使用已持久化的短唯一尝试身份，避免长节点名称截断后丢失返工次数。
+      candidateId: attempt.id,
       branchName: workflowBranchName(run, node, attempt, repository.id),
       baseSha: base.baseSha,
       upstreamCommitShas,
@@ -680,7 +696,8 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       const prepared = await prepareWorkflowCandidate({
         repositoryPath: repository.localPath,
         projectSlug: this.requireProject(run.projectId).slug,
-        candidateId: `${run.id}-${node.id}-${attempt.attempt}`,
+        // 目录与本次尝试一一对应，不依赖可被截断的可读节点名称。
+        candidateId: attempt.id,
         branchName: workflowBranchName(run, node, attempt, repository.id),
         baseSha: base.baseSha,
         upstreamCommitShas,
@@ -831,7 +848,16 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         if (!item || item.status !== evidence.status || sha256(item.textContent) !== evidence.sha256) throw new Error(`证据 ${evidence.id} 不属于当前轮次或摘要不一致。`);
         if (evidence.kind === 'command' && item.status === 'completed') {
           const payload = parseJsonRecord(item.payloadJson);
-          if (payload.exitCode === 0 && typeof payload.command === 'string') successfulVerificationCommands.push(payload.command);
+          if (payload.exitCode === 0 && typeof payload.command === 'string') {
+            successfulVerificationCommands.push(payload.command);
+            /** 单个 unknown 动作保留 Provider 原始完整命令，避免展示用 shell 包装造成误拒绝；不拆分组合命令或采用读写摘要。 */
+            const actions = payload.commandActions;
+            if (Array.isArray(actions) && actions.length === 1) {
+              /** 只接受 Provider 原始命令动作，不把多个子动作的整体成功误当逐条成功。 */
+              const action = actions[0];
+              if (action && typeof action === 'object' && action.type === 'unknown' && typeof action.command === 'string') successfulVerificationCommands.push(action.command);
+            }
+          }
         }
       } else if (evidence.kind === 'change_set') {
         if (!change || change.id !== evidence.id || sha256(change.unifiedDiff) !== evidence.sha256 || change.state !== evidence.status) throw new Error(`变化证据 ${evidence.id} 不属于当前轮次。`);
@@ -887,6 +913,9 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         if (!attempt.artifactRef) this.options.attempts.update(attempt.id, { expectedRevision: attempt.revision, artifactRef: next });
       } else if (call.tool === 'submit_team_result') {
         if (!isStructuredResultSubmission(call.arguments)) throw routeError('ZEUS_DIGITAL_TEAM_RESULT_INVALID', '结构化结果字段不完整。', 400);
+        /** 在写入待核验结果前反馈职责字段错误，让只读节点在当前轮次纠正，避免结束后才发现无法采用。 */
+        if (node.data.executionMode !== 'isolated_write' && call.arguments.repositoryResults.length > 0)
+          throw routeError('ZEUS_DIGITAL_TEAM_RESULT_INVALID', '只读节点的 repositoryResults 必须为空数组；请将已验证候选填写到 verifiedCandidates 后重新提交。', 400);
         /** 先保存业务结论；准确证据在轮次终态后由 Core 补齐。 */
         const result = { ...structuredClone(call.arguments), evidence: [] } as DigitalTeamStructuredResult;
         if (attempt.result && stableJson(attempt.result) !== stableJson(result)) throw routeError('ZEUS_DIGITAL_TEAM_TOOL_REPLAY_CONFLICT', '当前尝试已提交不同结果。');
@@ -1139,14 +1168,14 @@ function inputDigest(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamNode, c
 }
 
 /** 构造节点提示并明确只接受结构化工具提交。 */
-function buildNodePrompt(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamEmployeeNode, attempt: DigitalTeamNodeAttemptRecord, attempts: DigitalTeamNodeAttemptRecord[]): string {
+function buildNodePrompt(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamEmployeeNode, attempt: DigitalTeamNodeAttemptRecord, attempts: DigitalTeamNodeAttemptRecord[], reworkReason: string | null): string {
   const assignment = run.plan?.assignments.find((candidate) => candidate.nodeId === node.id) ?? null;
   const predecessorIds = new Set(directPredecessorIds(run, node.id));
   const upstream = attempts
     .filter((candidate) => predecessorIds.has(candidate.nodeId) && candidate.status === 'succeeded')
     .map((candidate) => ({ nodeId: candidate.nodeId, attempt: candidate.attempt, result: candidate.result, artifactRef: candidate.artifactRef }));
   const action = node.data.purpose === 'plan' ? '请使用 zeus_work.submit_team_plan 提交逐 nodeId 计划。' : '请使用 zeus_work.submit_team_result 提交结构化结果；最终文字不会推进流程。';
-  return `${node.data.instructions}\n\n数字团队冻结上下文：\n${stableJson({ runId: run.id, nodeId: node.id, attempt: attempt.attempt, taskFacts: run.taskFacts, baseRevisions: run.baseRevisions, candidateRevisions: run.candidateRevisions, verificationCommands: node.data.purpose === 'verify' ? node.data.verificationCommands : undefined, assignment, upstream })}\n\n${action}`;
+  return `${node.data.instructions}\n\n数字团队冻结上下文：\n${stableJson({ runId: run.id, nodeId: node.id, attempt: attempt.attempt, executionMode: node.data.executionMode, reworkReason, taskFacts: run.taskFacts, baseRevisions: run.baseRevisions, candidateRevisions: run.candidateRevisions, verificationCommands: node.data.purpose === 'verify' ? node.data.verificationCommands : undefined, assignment, upstream })}\n\n${action}`;
 }
 
 /** 构造符合现有分支约束的短稳定名字。 */

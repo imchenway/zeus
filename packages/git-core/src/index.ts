@@ -1309,7 +1309,8 @@ export async function prepareWorkflowCandidate(input: PrepareWorkflowCandidateIn
   while (nextIndex < upstreamCommitShas.length) {
     /** 当前轮只合入有序输入中的一个精确提交。 */
     const upstreamCommitSha = upstreamCommitShas[nextIndex]!;
-    await runGitPreservingConflict(worktreePath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', upstreamCommitSha]);
+    /** 候选已核对内容干净；合并阶段忽略易抖动的亚秒级文件元数据，避免新工作区被 Git 误判为需要 stash。 */
+    await runGitPreservingConflict(worktreePath, ['-c', 'core.checkStat=minimal', '-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', upstreamCommitSha]);
     /** Git 报冲突时直接返回，绝不自动清理或切换输入。 */
     const conflictFiles = await readTaskIntegrationConflictPaths(worktreePath);
     if (conflictFiles.length > 0) {

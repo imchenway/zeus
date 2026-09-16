@@ -10327,6 +10327,13 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   padding-inline: 0;
 }
 
+/* 底部入口独立锚定，空项目时无需用空列表撑开侧栏。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-footer {
+  flex: 0 0 auto;
+  margin-block-start: auto;
+  min-inline-size: 0;
+}
+
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings {
   flex: 0 0 auto;
   padding-block-start: 8px;
@@ -22895,15 +22902,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   letter-spacing: -0.025em;
   text-wrap: balance;
 }
-.macos-ai-app .project-start-description {
-  max-inline-size: 44ch;
-  margin: 14px auto 24px;
-  font-size: 14px;
-  line-height: 1.75;
-  color: var(--zeus-product-muted);
-  text-wrap: pretty;
-}
 .macos-ai-app .project-start-action {
+  margin-block-start: 24px;
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -22926,13 +22926,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-.macos-ai-app .project-start-note {
-  margin: 16px 0 0;
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--zeus-product-muted);
-  text-wrap: balance;
 }
 .macos-ai-app .task-flow-context {
   margin: 0;

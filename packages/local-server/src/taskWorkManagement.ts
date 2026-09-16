@@ -238,7 +238,10 @@ export interface TaskWorkManagementController {
     employeeSnapshot: DigitalEmployeeRecord;
     sourceRef: string;
     title: string;
+    /** 工作项列表展示的节点目标，不承载完整冻结上下文。 */
     description: string;
+    /** 发给实际员工的完整冻结输入，独立保存在运行入口快照。 */
+    supplementalInfo: string;
     workspace: TaskWorkWorkspaceChoice;
     purpose: 'plan' | 'work' | 'verify' | 'summary';
     executionMode: 'read_only' | 'isolated_write' | 'candidate_read_only';
@@ -703,7 +706,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       kick();
       return created;
     },
-    createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, workspace, purpose, executionMode }) => {
+    createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, supplementalInfo, workspace, purpose, executionMode }) => {
       const replay = options.items.getBySource('manual', sourceRef);
       if (replay?.currentRunId) {
         const run = options.runs.getById(replay.currentRunId);
@@ -712,7 +715,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const task = requireTaskOrThrow(options, taskId);
       if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
       const employee = structuredClone(employeeSnapshot);
-      const preview = await resolvePreview(options, task, { employeeId, supplementalInfo: description, workspace }, employee);
+      const preview = await resolvePreview(options, task, { employeeId, supplementalInfo, workspace }, employee);
       if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
       /** 节点职责随真实 TaskWorkRun 冻结，Provider 权限只能由服务端读取该字段。 */
       preview.entrypoint = { ...(preview.entrypoint ?? {}), digitalTeamPurpose: purpose, digitalTeamExecutionMode: executionMode };

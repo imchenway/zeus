@@ -423,7 +423,7 @@ export class DigitalTeamWorkflowRunRepository {
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.execute(
       "UPDATE digital_team_workflow_runs SET final_approved_candidate_set_sha256 = candidate_set_sha256, final_approved_by = ?, final_approved_at = ?, status = 'completed', completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND final_approved_candidate_set_sha256 IS NULL",
-      [identity(input.actorId, 'actorId'), timestamp, timestamp, timestamp, timestamp, current.id, current.revision],
+      [identity(input.actorId, 'actorId'), timestamp, timestamp, timestamp, current.id, current.revision],
     );
     assertChanged(this.db, '最终验收已经被其他操作处理。');
     return this.getById(current.id)!;

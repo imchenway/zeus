@@ -131,6 +131,7 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
               verification: { type: 'string', enum: ['passed', 'failed', 'not_run'] },
               repositoryResults: {
                 type: 'array',
+                description: '仅 isolated_write 开发节点填写本节点产生的新提交；只读验证和汇总节点必须传空数组。已验证的候选填写 verifiedCandidates。',
                 maxItems: 64,
                 items: {
                   type: 'object',
@@ -145,6 +146,7 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
               },
               verifiedCandidates: {
                 type: 'array',
+                description: '候选验证节点填写已经验证的当前候选 repositoryId 与 headSha；这不是新代码提交。',
                 maxItems: 64,
                 items: {
                   type: 'object',

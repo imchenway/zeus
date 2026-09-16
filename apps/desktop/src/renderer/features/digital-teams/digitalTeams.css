@@ -635,12 +635,10 @@
   color: var(--zeus-product-muted);
 }
 
-/* 中等窗口需扣除项目侧栏宽度，把检查器移入焦点受控抽屉，避免遮住画布操作。 */
-@media (max-width: 1420px) {
-  .digital-team-editor-layout,
-  .digital-team-run-layout {
-    grid-template-columns: 254px minmax(420px, 1fr);
-  }
+/* 列数复用组件的抽屉状态，避免样式与面板显隐断点不一致。 */
+.digital-team-workspace:where([data-compact-inspector='true']) > .digital-team-editor-layout,
+.digital-team-workspace:where([data-compact-inspector='true']) > .digital-team-run-layout {
+  grid-template-columns: 254px minmax(420px, 1fr);
 }
 
 /* 更窄窗口允许纵向重排，所有操作仍可到达。 */
@@ -669,8 +667,8 @@
     inline-size: min(100%, 300px);
   }
 
-  .digital-team-editor-layout,
-  .digital-team-run-layout {
+  .digital-team-workspace > .digital-team-editor-layout,
+  .digital-team-workspace > .digital-team-run-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(560px, 1fr);
     overflow: visible;

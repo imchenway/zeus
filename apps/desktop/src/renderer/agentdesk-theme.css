@@ -3337,7 +3337,10 @@ body:has(.macos-ai-app.zeus-shell) {
   gap: 7px;
   min-block-size: 28px;
   padding: 0 10px;
-  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .macos-ai-app.zeus-shell .project-global-search.is-open .project-global-search-field,
@@ -3377,7 +3380,9 @@ body:has(.macos-ai-app.zeus-shell) {
   background: var(--zeus-card-background);
   border: 1px solid var(--zeus-card-border);
   border-radius: 10px;
-  box-shadow: 0 16px 40px color-mix(in srgb, #111827 18%, transparent), 0 3px 10px color-mix(in srgb, #111827 10%, transparent);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, #111827 18%, transparent),
+    0 3px 10px color-mix(in srgb, #111827 10%, transparent);
   box-sizing: border-box;
   inset-block-start: calc(100% + 7px);
   inset-inline-start: 50%;
@@ -3674,8 +3679,9 @@ body:has(.macos-ai-app.zeus-shell) {
   margin-block-end: 6px;
 }
 
-/* 无项目时活动栏不可用，保留全局入口作为空状态导航兜底。 */
+/* 无项目时保留全局入口；按内容确定高度，避免继承通用导航的全高规则。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-tools {
+  block-size: auto;
   border-block-start: 1px solid var(--zeus-product-line-soft);
   display: grid;
   flex: 0 0 auto;
