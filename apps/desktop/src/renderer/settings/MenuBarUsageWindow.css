@@ -468,6 +468,13 @@ body:has(.menu-bar-usage-root),
   gap: 14px;
 }
 
+/* 各额度独立排列，保留余额和重置时间；内容超高时复用浮窗滚动区域。 */
+.menu-bar-usage-account-quotas {
+  display: grid;
+  min-inline-size: 0;
+  gap: 10px;
+}
+
 .menu-bar-usage-account-quota,
 .menu-bar-usage-account-today {
   display: grid;
