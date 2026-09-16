@@ -1,3 +1,8 @@
+import type { ConversationResource } from '@zeus/shared';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { OpenWithMenu } from './ConversationResources.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import type { ConversationOpenTarget } from '@zeus/shared';
 import { FilePreview, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -22,11 +27,53 @@ export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePrev
   return supportsMarkdownPreview(preview) ? 'preview' : 'source';
 }
 
+/** 同一预览面板保留已打开文件，关闭当前标签后回到相邻文件。 */
+export function SourceWorkspace(props: Parameters<typeof SourceWorkspaceView>[0]) {
+  /** 每个标签保留自己的预览模式和已授权资源。 */
+  const [tabs, setTabs] = useState([{ preview: props.preview, mode: props.viewMode }]);
+  /** 当前标签独立于最近收到的打开请求。 */
+  const [activeId, setActiveId] = useState(props.preview.resource.id);
+  useEffect(() => {
+    setTabs((current) => [...current.filter((tab) => tab.preview.resource.id !== props.preview.resource.id), { preview: props.preview, mode: props.viewMode }]);
+    setActiveId(props.preview.resource.id);
+  }, [props.preview]);
+  /** 外部预览到达但状态尚未同步时仍显示真实文件。 */
+  const active = tabs.find((tab) => tab.preview.resource.id === activeId) ?? tabs[0]!;
+  return (
+    <SourceWorkspaceView
+      {...props}
+      preview={active.preview}
+      viewMode={active.mode}
+      tabs={tabs.map((tab) => tab.preview)}
+      onSelectTab={(preview) => setActiveId(preview.resource.id)}
+      onViewModeChange={(mode) => setTabs((current) => current.map((tab) => (tab.preview.resource.id === activeId ? { ...tab, mode } : tab)))}
+      onCloseTab={(preview) => {
+        const remaining = tabs.filter((tab) => tab.preview.resource.id !== preview.resource.id);
+        if (!remaining.length) {
+          props.onClose();
+          return;
+        }
+        setTabs(remaining);
+        if (preview.resource.id === activeId) setActiveId(remaining.at(-1)!.preview.resource.id);
+      }}
+    />
+  );
+}
+
 /** 会话资源共用的预览入口，源码交给可视区域渲染，图片与 Markdown 保持原有展示。 */
-export function SourceWorkspace(props: {
+function SourceWorkspaceView(props: {
   /** 文件标题与浏览器标签共用会话顶栏位置。 */
   toolbarHost?: HTMLElement | null;
   preview: ConversationResourcePreview;
+  /** 外部打开与复制沿用宿主的资源授权。 */
+  onOpen?: (target: ConversationOpenTarget, resource?: ConversationResource) => void | Promise<void>;
+  /** 多文件标签由外层持有，正文组件只负责当前文件。 */
+  tabs?: ConversationResourcePreview[];
+  onSelectTab?: (preview: ConversationResourcePreview) => void;
+  onCloseTab?: (preview: ConversationResourcePreview) => void;
+  /** 新增标签从本会话已有授权文件中选择。 */
+  resources?: ConversationResource[];
+  onOpenFile?: (resource: ConversationResource) => void | Promise<void>;
   viewMode: SourceWorkspaceViewMode;
   onViewModeChange: (viewMode: SourceWorkspaceViewMode) => void;
   language: SessionUiLanguage;
@@ -40,8 +87,21 @@ export function SourceWorkspace(props: {
 }) {
   /** 当前界面文案与资源展示信息。 */
   const zh = props.language === 'zh-CN';
+  /** 分段打开按钮保留本次预览选择的外部应用。 */
+  const [openTarget, setOpenTarget] = useState<ConversationOpenTarget>('system_default');
+  /** 展示宿主打开失败，不吞掉权限或应用错误。 */
+  const [openError, setOpenError] = useState<unknown>(null);
+  useApplicationErrorDialog(openError, { language: zh ? 'zh-CN' : 'en' });
+  /** 统一处理复制与外部应用打开。 */
+  async function openResource(target: ConversationOpenTarget): Promise<void> {
+    try {
+      await props.onOpen?.(target, props.preview.resource);
+    } catch (error) {
+      setOpenError(error);
+    }
+  }
   /** 打开资源时供键盘用户定位预览标题。 */
-  const titleRef = useRef<HTMLSpanElement | null>(null);
+  const titleRef = useRef<HTMLButtonElement | null>(null);
   /** 图片资源不参与源码或 Markdown 渲染。 */
   const sourcePreview = props.preview.kind === 'source' ? props.preview : null;
   /** 文件用项目相对路径，附件使用显示名称。 */
@@ -113,25 +173,59 @@ export function SourceWorkspace(props: {
 
   /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
   const header = (
-    <header className="session-context-workspace-header">
-      <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
-        {props.preview.kind === 'image' ? <FileImage aria-hidden="true" weight="regular" /> : <FileCode aria-hidden="true" weight="regular" />}
-        <span>
-          <strong>{basename(displayPath)}</strong>
-          {displayPath !== basename(displayPath) ? <small title={displayPath}>{displayPath}</small> : null}
-        </span>
-      </span>
+    <header className="session-context-workspace-header session-source-header">
+      <div
+        className="session-source-tabs"
+        role="tablist"
+        aria-label={zh ? '已打开文件' : 'Open files'}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return;
+          event.preventDefault();
+          const tabs = props.tabs ?? [props.preview];
+          const index = tabs.findIndex((tab) => tab.resource.id === props.preview.resource.id);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          props.onSelectTab?.(tabs[next]!);
+          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+        }}
+      >
+        {(props.tabs ?? [props.preview]).map((preview) => (
+          <div className={`session-context-workspace-title${preview.resource.id === props.preview.resource.id ? ' active' : ''}`} key={preview.resource.id}>
+            <button
+              type="button"
+              ref={preview.resource.id === props.preview.resource.id ? titleRef : undefined}
+              role="tab"
+              tabIndex={preview.resource.id === props.preview.resource.id ? 0 : -1}
+              aria-selected={preview.resource.id === props.preview.resource.id}
+              title={preview.resource.displayName}
+              onClick={() => props.onSelectTab?.(preview)}
+            >
+              {preview.kind === 'image' ? <FileImage aria-hidden="true" /> : <FileCode aria-hidden="true" />}
+              <span>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
+            </button>
+            <button type="button" className="session-source-tab-close" aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`} onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}>
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        ))}
+        <select
+          className="session-source-add-tab"
+          aria-label={zh ? '打开文件标签' : 'Open file tab'}
+          value=""
+          disabled={!props.onOpenFile || !props.resources?.length}
+          onChange={(event) => {
+            const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
+            if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
+          }}
+        >
+          <option value="">＋</option>
+          {props.resources?.map((resource) => (
+            <option key={resource.id} value={resource.id}>
+              {resource.displayName}
+            </option>
+          ))}
+        </select>
+      </div>
       <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
-        {markdownPreview ? (
-          <>
-            <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={renderedMarkdown} onClick={() => props.onViewModeChange('preview')}>
-              {zh ? '预览' : 'Preview'}
-            </button>
-            <button type="button" className="session-context-text-action session-source-view-action" aria-pressed={!renderedMarkdown} onClick={() => props.onViewModeChange('source')}>
-              {zh ? '源码' : 'Source'}
-            </button>
-          </>
-        ) : null}
         <button
           type="button"
           aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
@@ -154,20 +248,44 @@ export function SourceWorkspace(props: {
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
-      <div className="session-source-meta" role="status">
-        {props.preview.kind === 'image' ? (
-          <>
-            <span>{props.preview.mimeType}</span>
-            <span>{formatBytes(props.preview.byteLength)}</span>
-          </>
-        ) : (
-          <>
-            <span>{props.preview.language ?? (zh ? '纯文本' : 'Plain text')}</span>
-            <span>{zh ? `${props.preview.lineCount} 行` : `${props.preview.lineCount} lines`}</span>
-            {props.preview.truncated ? <span>{zh ? '预览已截断' : 'Preview truncated'}</span> : null}
-          </>
-        )}
+      <div className="session-source-toolbar">
+        <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} title={displayPath}>
+          {displayPath.split('/').map((part, index) => (
+            <span key={index}>
+              {index > 0 ? <span aria-hidden="true">›</span> : null}
+              {part}
+            </span>
+          ))}
+        </nav>
+        <div className="session-source-actions">
+          {markdownPreview ? (
+            <button type="button" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
+              {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
+            </button>
+          ) : null}
+          <button type="button" aria-label={zh ? '复制路径' : 'Copy path'} title={zh ? '复制路径' : 'Copy path'} disabled={!props.onOpen} onClick={() => void openResource('copy_path')}>
+            <Copy aria-hidden="true" />
+          </button>
+          <div className="session-source-open-group">
+            <button type="button" disabled={!props.onOpen} onClick={() => void openResource(openTarget)}>
+              {zh ? '打开' : 'Open'}
+            </button>
+            <OpenWithMenu
+              key={props.preview.resource.id}
+              resource={props.preview.resource}
+              language={props.language}
+              disabled={!props.onOpen}
+              applicationsOnly
+              onOpen={(target) => {
+                setOpenTarget(target);
+                return openResource(target);
+              }}
+              label=""
+            />
+          </div>
+        </div>
       </div>
+      {sourcePreview?.truncated ? <div role="status">{zh ? '预览已截断' : 'Preview truncated'}</div> : null}
       <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
         {props.preview.kind === 'image' ? (
           <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
@@ -251,13 +369,6 @@ function basename(path: string): string {
   /** 统一路径分隔符后取文件名。 */
   const normalized = path.replaceAll('\\', '/');
   return normalized.split('/').filter(Boolean).at(-1) ?? path;
-}
-
-/** 图片信息沿用简短的字节大小展示。 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1_024) return `${bytes} B`;
-  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
-  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
 }
 
 /** 通用文件沿用会话右侧审阅容器，预览组件负责授权读取、格式展示和失败重试。 */

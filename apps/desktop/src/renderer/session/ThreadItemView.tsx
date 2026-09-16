@@ -1,3 +1,5 @@
+import { BrowserCommentPreview } from './BrowserCommentPreview.js';
+import type { ZeusBrowserComment } from '@zeus/shared';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -316,6 +318,8 @@ function TaskPushMessageContent(
 
 /** 按实际交付阶段显示提示；内部入队不等同于用户需要等待。 */
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage, conversationRestoring = false, waitingInQueue = false): string | null {
+  // 接纳或终态已由权威记录确认，不再展示发送途中的提示。
+  if (item.providerItemId || item.status === 'active' || item.status === 'completed' || item.status === 'resolved') return null;
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
   if (conversationRestoring && (item.status === 'queued' || item.status === 'paused')) return labels.restoringConversation;
@@ -448,7 +452,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const role = itemRole(props.item);
   const recoveredRequestUserInput = role === 'request' && normalizeType(props.item.type) === 'requestuserinput' && props.item.payload.recovery === 'content_only';
   const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
-  const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
+  /** 持久批注自带截图身份，统一交给专属预览，普通附件继续原有流程。 */
+  const browserComments = role === 'user' && Array.isArray(props.item.payload.browserComments) ? (props.item.payload.browserComments as ZeusBrowserComment[]) : [];
+  /** 防止同一批注截图又出现一张无法读取的普通附件卡。 */
+  const browserScreenshotNames = new Set(browserComments.flatMap((comment) => (comment.screenshotPath ? [comment.screenshotPath.split('/').pop()] : [])));
+  const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments).filter((attachment) => !browserScreenshotNames.has(attachment.name)) : [];
   const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
@@ -469,7 +477,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         const key = resourceTaskPushAttachmentKey(resource);
         return !key || !taskPushAttachmentKeys.has(key);
       })
-    : props.item.resources;
+    : props.item.resources.filter((resource) => !browserScreenshotNames.has(resource.displayName));
   const unplacedResources = isAssistantDeliverableItem(props.item) ? itemResources.filter((resource) => resource.delivery === 'assistant') : itemResources;
   /** 子智能体输入保留发送方，原文不可读时展示本地化说明。 */
   const subagentInput = role === 'user' && isRecord(props.item.payload.subagentInput) ? props.item.payload.subagentInput : null;
@@ -596,14 +604,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           ) : null}
         </header>
       ) : null}
-      {showUserMessageAttachmentGroup ? (
+      {/* 结构化问答已按题展示附件，提交中也不重复绘制普通消息附件区。 */}
+      {showUserMessageAttachmentGroup && !props.questionAnswer ? (
         <div className="session-user-message-attachments">
-          <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} />
+          <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} />
           <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
           <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
           <ItemImages item={props.item} label={labels.conversationImage} />
         </div>
       ) : null}
+      {browserComments.length > 0 ? <BrowserCommentPreview comments={browserComments} zh={props.language === 'zh-CN'} /> : null}
       {editing ? (
         <form className="session-user-message-editor" onSubmit={(event) => void submitEditedMessage(event)}>
           <label className="session-sr-only" htmlFor={`session-edit-${props.item.itemId}`}>
@@ -716,7 +726,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
-      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && role !== 'image' ? (
         <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
@@ -1334,11 +1344,11 @@ function itemFacts(item: NativeSessionItemBuffer, role: ThreadItemRole): Array<[
   return pairs.flatMap(([label, value]) => (primitiveText(value) ? [[label, primitiveText(value)!]] : []));
 }
 
-function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string; hideImages?: boolean }) {
+function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string; hideImages?: boolean; excludedNames?: Set<string | undefined> }) {
   if (props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card')) return null;
   const raw = Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : [];
   const attachments = raw.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
+    if (!isRecord(entry) || props.excludedNames?.has(primitiveText(entry.name) ?? undefined)) return [];
     const mime = primitiveText(entry.mime ?? entry.mimeType);
     const kind = primitiveText(entry.kind);
     if (props.hideImages && (kind === 'image' || mime?.startsWith('image/'))) return [];

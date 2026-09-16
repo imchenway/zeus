@@ -607,7 +607,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     if (knownSubmission && shouldDiscardSubmissionProjection(knownSubmission)) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
-    orderedItems.push({ key, timestamp: item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
+    orderedItems.push({ key, timestamp: item.timelineAt ?? item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
   }
 
   const activeTurnId = activeTurnFromSnapshot(snapshot);
@@ -713,6 +713,8 @@ function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: Nat
     ...fallback,
     ...presentation,
     key: canonicalKey,
+    // 持久记录接管后清除本地临时标记，不能从旧引导气泡继承发送状态。
+    optimistic: previous.optimistic === true && projected.optimistic === true,
     status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
     payload: { ...fallback.payload, ...presentation.payload },
     resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,

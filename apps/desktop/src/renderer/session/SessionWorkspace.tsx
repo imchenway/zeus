@@ -194,7 +194,7 @@ export interface SessionWorkspaceActions {
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   /** 异步问题答复与普通 Composer 消息分开取草稿，共用提交通道。 */
-  onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean) => Promise<void>;
+  onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
   onRecoverQueue?: () => void | Promise<void>;
@@ -850,8 +850,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onSendQueuedNow: async (submissionId) => {
       await input.controller.sendQueuedNow(submissionId);
     },
-    onAnswerAsyncQuestion: async (item, answers, asNewMessage) => {
-      await input.controller.answerAsyncQuestion(item, answers, asNewMessage);
+    onAnswerAsyncQuestion: async (item, answers, asNewMessage, answerAttachments) => {
+      await input.controller.answerAsyncQuestion(item, answers, asNewMessage, answerAttachments);
     },
     onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
@@ -2523,6 +2523,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             state={props.state}
             language={props.language}
             onAnswer={actions.onAnswerAsyncQuestion}
+            onChooseAttachments={actions.onChooseStartAttachments}
             onDismiss={() => asyncQuestionDock.dismiss(dockedAsyncQuestion)}
           />
         </section>
@@ -2958,6 +2959,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           canSplit={browserLayoutWidth > 840}
                           toolbarHost={contextToolbarHost}
                           preview={contextWorkspace.preview}
+                          onOpen={transcriptReadActionsEnabled ? (target, resource) => openConversationResource(resource ?? contextWorkspace.preview.resource, target) : undefined}
+                          resources={[
+                            ...new Map(
+                              Object.values(props.state?.items ?? {})
+                                .flatMap((item) => item.resources)
+                                .filter((resource) => resource.kind === 'file' && isConversationSourcePreviewable(resource.projectRelativePath))
+                                .map((resource) => [resource.id, resource]),
+                            ).values(),
+                          ]}
+                          onOpenFile={transcriptReadActionsEnabled ? (resource) => openConversationResource(resource, 'zeus_source') : undefined}
                           viewMode={contextWorkspace.viewMode}
                           onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
                           language={props.language}

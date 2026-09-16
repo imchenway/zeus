@@ -309,7 +309,7 @@ export interface SessionController {
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
   /** 回答绑定原问题，独立于 Composer 普通消息草稿。 */
-  answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean): Promise<NativeOperationAcceptance | void>;
+  answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>): Promise<NativeOperationAcceptance | void>;
   retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -2822,19 +2822,27 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return acceptance;
       });
     },
-    async answerAsyncQuestion(item, answers, asNewMessage = false) {
+    async answerAsyncQuestion(item, answers, asNewMessage = false, answerAttachments = {}) {
       const questions = asyncMessageQuestions(item.payload);
       const validation = validateCanonicalRequestUserInputAnswers({ questions }, answers);
       if (validation || !questions.length || !Object.keys(answers).length) throw new Error(validation ?? '请完整回答原问题。');
       const providerItemId = item.providerItemId ?? item.itemId;
       const providerTurnId = item.turnId;
-      const questionAnswer: AsyncQuestionAnswer = { providerItemId, providerTurnId, answers, ...(asNewMessage ? { asNewMessage: true } : {}) };
+      /** 沿用普通消息附件链路，分组仅保存位置，不复制附件或创建第二次发送。 */
+      const attachments = Object.values(answerAttachments).flat();
+      let attachmentOffset = 0;
+      const answerAttachmentIndices = Object.fromEntries(
+        Object.entries(answerAttachments)
+          .filter(([, entries]) => entries.length > 0)
+          .map(([id, entries]) => [id, entries.map(() => attachmentOffset++)]),
+      );
+      const questionAnswer: AsyncQuestionAnswer = { providerItemId, providerTurnId, answers, ...(attachments.length ? { answerAttachmentIndices } : {}), ...(asNewMessage ? { asNewMessage: true } : {}) };
       // 同一问题在重复点击和重启后保持提交身份；明确新消息拥有独立身份。
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([options.conversationId, providerTurnId, providerItemId, asNewMessage])));
       const identity = `question:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-      const content = formatAsyncQuestionAnswer(questions, answers);
+      const content = formatAsyncQuestionAnswer(questions, answers, answerAttachments);
       const delivery = asNewMessage ? ('queue' as const) : ('steer_now' as const);
-      const fingerprint = JSON.stringify({ questionAnswer, content, delivery });
+      const fingerprint = JSON.stringify({ questionAnswer, content, delivery, attachments });
       if (activeOperation) {
         if (pendingSend?.fingerprint === fingerprint) return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
         throw new Error('上一条提交仍在确认中，请稍后回答。');
@@ -2850,7 +2858,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         content,
         displayText: content,
         draft: content,
-        attachments: [],
+        attachments,
         composerAttachments: [],
         browserSubmission: null,
         contextDraft: structuredClone(emptyConversationContextDraft),

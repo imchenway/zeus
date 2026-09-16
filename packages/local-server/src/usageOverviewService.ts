@@ -32,10 +32,28 @@ export interface UsageOverviewService {
 export function createUsageOverviewService(options: CreateUsageOverviewServiceOptions): UsageOverviewService {
   const now = options.now ?? (() => new Date());
 
-  /** 主动读取时更新官方用量；运行时不可用时由现有服务返回缓存及过期状态。 */
+  /** 官方网络读取最多占用两秒；后台请求继续复用，慢响应不阻塞本地统计。 */
+  async function readOfficialUsage(): Promise<Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>> {
+    /** 超时只结束本次等待，不取消其他读取者共享的官方刷新。 */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        options.codexUsage.refreshOfficialUsage(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('官方用量仍在刷新')), 2_000);
+        }),
+      ]);
+    } catch (error) {
+      return { ...options.codexUsage.readCachedOfficialUsage(), stale: true, error: error instanceof Error ? error.message : '暂时无法刷新官方用量' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 主动读取时优先更新官方用量，超过等待预算则展示缓存和本地统计。 */
   async function read(): Promise<UsageOverviewSnapshot> {
     /** 官方读取复用现有运行时与请求去重，不会为统计启动新的外部进程。 */
-    const official = await options.codexUsage.refreshOfficialUsage();
+    const official = await readOfficialUsage();
     const readAt = now();
     const allRows = options.ledger.list();
     const connections = options.modelConnections.listMetadata();
@@ -93,7 +111,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
 
   async function readAnalytics(input: Parameters<UsageOverviewService['readAnalytics']>[0]): Promise<UsageAnalyticsSnapshot> {
     const readAt = now();
-    const official = await options.codexUsage.refreshOfficialUsage();
+    const official = await readOfficialUsage();
     const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
@@ -101,7 +119,9 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const groups = new Map<string, CodexUsageLedgerRecord[]>();
     for (const row of allRows) {
       const providerId = canonicalUsageProviderId(row.providerId);
-      groups.set(providerId, [...(groups.get(providerId) ?? []), row]);
+      const entries = groups.get(providerId);
+      if (entries) entries.push(row);
+      else groups.set(providerId, [row]);
     }
     for (const connection of connections) {
       if (!groups.has(`api:${connection.id}`)) groups.set(`api:${connection.id}`, []);
@@ -242,7 +262,13 @@ function sumBreakdowns(values: readonly TokenUsageBreakdown[]): TokenUsageBreakd
 
 function groupRows(rows: readonly CodexUsageLedgerRecord[], key: (row: CodexUsageLedgerRecord) => string): Array<[string, CodexUsageLedgerRecord[]]> {
   const groups = new Map<string, CodexUsageLedgerRecord[]>();
-  for (const row of rows) groups.set(key(row), [...(groups.get(key(row)) ?? []), row]);
+  for (const row of rows) {
+    /** 原地追加，避免历史记录较多时反复复制整个分组。 */
+    const groupKey = key(row);
+    const entries = groups.get(groupKey);
+    if (entries) entries.push(row);
+    else groups.set(groupKey, [row]);
+  }
   return [...groups.entries()];
 }
 

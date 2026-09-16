@@ -16,6 +16,8 @@ export interface AsyncQuestionAnswer {
   providerItemId: string;
   providerTurnId: string;
   answers: Record<string, { answers: string[] }>;
+  /** 各题附件在同一提交附件列表中的位置，历史展示复用已验证的附件。 */
+  answerAttachmentIndices?: Record<string, number[]>;
   /** 回答携带经服务端核对的原题，历史分页未载入原提问时仍可完整回显。 */
   questions?: CanonicalRequestUserInputQuestion[];
   asNewMessage?: boolean;
@@ -66,6 +68,12 @@ export function assistantMessageMetadata(payload: Record<string, unknown>, fallb
 }
 
 /** 关联问题的文本沿用普通引导输入，模型可以明确对应每个回答。 */
-export function formatAsyncQuestionAnswer(questions: CanonicalRequestUserInputQuestion[], answers: AsyncQuestionAnswer['answers']): string {
-  return questions.map((question) => `${question.question}\n${answers[question.id]?.answers.join('\n') ?? ''}`).join('\n\n');
+export function formatAsyncQuestionAnswer(questions: CanonicalRequestUserInputQuestion[], answers: AsyncQuestionAnswer['answers'], answerAttachments: Record<string, readonly { name: string }[]> = {}): string {
+  return questions
+    .map((question) => {
+      /** 文件名紧随所属答案，模型无需猜测多题附件的对应关系。 */
+      const names = answerAttachments[question.id]?.map((attachment) => attachment.name) ?? [];
+      return `${question.question}\n${answers[question.id]?.answers.join('\n') ?? ''}${names.length ? `\n附件：${names.join('、')}` : ''}`;
+    })
+    .join('\n\n');
 }

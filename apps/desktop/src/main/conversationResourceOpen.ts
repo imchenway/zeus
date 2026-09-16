@@ -1,6 +1,6 @@
 import { isConversationSourcePreviewable } from '@zeus/shared';
 import { createReadStream } from 'node:fs';
-import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget, ZeusBrowserSettings } from '@zeus/shared';
 import type { RendererLocalServerConfig } from './localServerRuntime.js';
@@ -98,6 +98,12 @@ const editorTargets: EditorTargetDescriptor[] = [
   },
 ];
 
+/** 终端只打开已授权文件所在目录，不执行文件或拼接 shell 命令。 */
+const terminalTargets = [
+  { id: 'terminal:terminal', label: 'Terminal', appName: 'Terminal', appPaths: ['/System/Applications/Utilities/Terminal.app'] },
+  { id: 'terminal:ghostty', label: 'Ghostty', appName: 'Ghostty', appPaths: ['/Applications/Ghostty.app'] },
+] as const;
+
 export async function listConversationResourceOpenTargets(request: ConversationResourceRequest, services: ConversationResourceOpenServices): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
   const intent = await loadConversationResourceIntent(request, services);
   return listOpenTargetsForIntent(intent, services);
@@ -155,6 +161,10 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
         ...(!available ? { reason: 'application_not_installed' } : {}),
       });
     }
+  }
+  for (const terminal of terminalTargets) {
+    const available = await editorAvailable(terminal, services);
+    targets.push({ id: terminal.id, label: terminal.label, available, exactLocation: false, ...(!available ? { reason: 'application_not_installed' } : {}) });
   }
   targets.push({ id: 'system_default', label: 'System default', available: true, exactLocation: false });
   targets.push({ id: 'file_manager', label: 'Show in Finder', available: true, exactLocation: false });
@@ -221,6 +231,13 @@ async function openResourceIntent(
   if (target === 'copy_path') {
     services.writeClipboardText(file.absolutePath);
     return { opened: true, resourceId: intent.id, target, mode: 'clipboard' };
+  }
+  if (target.startsWith('terminal:')) {
+    /** 目标固定在受支持应用列表内，目录来自宿主复验后的文件。 */
+    const terminal = terminalTargets.find((candidate) => candidate.id === target);
+    if (!terminal || !(await editorAvailable(terminal, services))) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected terminal is not installed.');
+    await services.executeFile('/usr/bin/open', target === 'terminal:ghostty' ? ['-na', terminal.appName, '--args', `--working-directory=${dirname(file.absolutePath)}`] : ['-a', terminal.appName, dirname(file.absolutePath)]);
+    return { opened: true, resourceId: intent.id, target, mode: 'external' };
   }
   if (target.startsWith('editor:')) {
     const editor = editorTargets.find((candidate) => candidate.id === target);
@@ -351,7 +368,7 @@ async function realPath(path: string): Promise<string | null> {
   }
 }
 
-async function editorAvailable(editor: EditorTargetDescriptor, services: ConversationResourceOpenServices): Promise<boolean> {
+async function editorAvailable(editor: { readonly appPaths: readonly string[] }, services: ConversationResourceOpenServices): Promise<boolean> {
   const paths = [...editor.appPaths, ...editor.appPaths.map((path) => resolve(services.applicationHome, 'Applications', basename(path)))];
   const results = await Promise.all(paths.map((path) => services.pathExists(path)));
   return results.some(Boolean);

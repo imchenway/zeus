@@ -1358,6 +1358,13 @@ function PlanImplementationQa() {
 
 /** 固定附件只进入预览草稿，不读取用户文件或打开原生文件选择器。 */
 async function chooseComposerQaAttachments(): Promise<NativeConversationAttachment[]> {
+  // 同一生产附件组件覆盖长文件名、多文件与图片缩略图布局。
+  if (new URLSearchParams(window.location.search).has('attachment-gallery'))
+    return [
+      { name: '会话交互与附件展示优化说明.pdf', kind: 'file', mime: 'application/pdf', size: 245760, uploadRef: `qa:${crypto.randomUUID()}` },
+      { name: '页面参考.png', kind: 'image', mime: 'image/png', size: 18240, uploadRef: `qa:${crypto.randomUUID()}` },
+      { name: '一份用于确认窄分栏中文长文件名不会撑破布局的补充材料.md', kind: 'file', mime: 'text/markdown', size: 2048, uploadRef: `qa:${crypto.randomUUID()}` },
+    ];
   return [{ name: '对齐检查.txt', kind: 'file', mime: 'text/plain', size: 12, uploadRef: `qa:${crypto.randomUUID()}` }];
 }
 
@@ -1799,6 +1806,12 @@ function QuestionQa() {
   const language = parameters.has('en') ? 'en-US' : 'zh-CN';
   /** 场景通过地址参数切换，刷新可重置本次提交次数。 */
   const scenario = parameters.get('case') ?? 'single';
+  /** 保留生产表单交出的附件，供提交与历史回显核对。 */
+  const [answerAttachments, setAnswerAttachments] = useState<Record<string, NativeConversationAttachment[]>>({});
+  /** 预览消息使用同一附件顺序构建每题位置。 */
+  const attachments = Object.values(answerAttachments).flat();
+  let attachmentOffset = 0;
+  const answerAttachmentIndices = Object.fromEntries(Object.entries(answerAttachments).map(([id, entries]) => [id, entries.map(() => attachmentOffset++)]));
   /** PLAN 真实已答题记录用于对照，跨轮次场景复现用户反馈。 */
   const synchronous = scenario === 'plan' || scenario === 'multiple' || scenario === 'plan-freeform';
   /** 另发消息属于新的执行轮次，不能依赖原题仍在首屏。 */
@@ -1856,7 +1869,8 @@ function QuestionQa() {
     text: formatAsyncQuestionAnswer(asyncMessageQuestions(item.payload), answers),
     payload: {
       delivery: asNewMessage ? 'queue' : 'steer_now',
-      questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers, questions: asyncMessageQuestions(item.payload), ...(asNewMessage ? { asNewMessage: true } : {}) },
+      attachments,
+      questionAnswer: { providerItemId: identity, providerTurnId: item.turnId, answers, answerAttachmentIndices, questions: asyncMessageQuestions(item.payload), ...(asNewMessage ? { asNewMessage: true } : {}) },
     },
   };
   /** 单独保留账本模式，避免只验同一页同时有问答的情况。 */
@@ -1883,7 +1897,7 @@ function QuestionQa() {
               type: 'request_user_input',
               status: 'resolved',
               payload: { questions: asyncMessageQuestions(item.payload) },
-              response: { answers },
+              response: { answers, answerAttachments },
               containsSecret: false,
               expiresAt: null,
               createdAt: '',
@@ -1894,7 +1908,10 @@ function QuestionQa() {
   };
 
   /** 模拟有延迟的接收；失败场景必须保留真实表单中的选择和输入。 */
-  async function accept(_item: NativeSessionItemBuffer, nextAnswers: Record<string, { answers: string[] }>): Promise<void> {
+  async function accept(_item: NativeSessionItemBuffer, nextAnswers: Record<string, { answers: string[] }>, _asNewMessage: boolean, nextAttachments: Record<string, NativeConversationAttachment[]> = {}): Promise<void> {
+    /** 附件验收模式要求实际表单提交文件，防止开了入口却漏传。 */
+    if (parameters.has('attachments') && !Object.values(nextAttachments).some((entries) => entries.length > 0)) throw new Error('附件未随答案提交');
+    setAnswerAttachments(nextAttachments);
     setCalls((count) => count + 1);
     await new Promise((resolve) => window.setTimeout(resolve, 800));
     if (scenario === 'failed') throw Object.assign(new Error('验收用提交失败'), { code: 'ZEUS_COMMAND_DELIVERY_IDEMPOTENCY_CONFLICT' });
@@ -1938,12 +1955,12 @@ function QuestionQa() {
                 autoFocus
                 onChooseAttachments={chooseComposerQaAttachments}
                 onRespond={async (_id, response) => {
-                  await accept(item, response.answers as typeof answers);
+                  await accept(item, response.answers as typeof answers, false, response.answerAttachments as Record<string, NativeConversationAttachment[]> | undefined);
                   setOpen(false);
                 }}
               />
             ) : (
-              <AsyncQuestionPanel item={item} state={state} language={language} onAnswer={accept} onDismiss={() => setOpen(false)} />
+              <AsyncQuestionPanel item={item} state={state} language={language} onChooseAttachments={chooseComposerQaAttachments} onAnswer={accept} onDismiss={() => setOpen(false)} />
             )}
           </div>
         ) : null}

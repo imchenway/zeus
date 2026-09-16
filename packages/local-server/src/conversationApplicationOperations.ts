@@ -1516,6 +1516,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
     reservedSubmissionId?: string,
   ) {
+    const project = projects.getById(conversation.projectId);
+    if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
+    const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
     let delivery = body.delivery ?? 'queue';
     // 回答来自已落账的问题，客户端不能伪造问题内容、轮次或发送目标。
     let questionAnswer: AsyncQuestionAnswer | undefined;
@@ -1530,7 +1533,25 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (!questions.length || validation || !Object.keys(answer.answers ?? {}).length) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', validation ?? '无法确认原问题及完整回答。');
       // 原题始终来自已落账的 Provider 记录，不接受客户端传入的题目内容。
       questionAnswer = { providerItemId: answer.providerItemId, providerTurnId: answer.providerTurnId, questions, answers: answer.answers, ...(answer.asNewMessage === true ? { asNewMessage: true } : {}) };
-      content = formatAsyncQuestionAnswer(questions, questionAnswer.answers);
+      /** 附件只能归属本次非敏感题目；每个附件恰好出现一次，拒绝越界和漏传。 */
+      if (answer.answerAttachmentIndices !== undefined || attachments.length > 0) {
+        const groups = answer.answerAttachmentIndices;
+        if (!isNativeApiRecord(groups) || attachments.length > 100) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答附件分组无效或数量超过限制。');
+        const used = new Set<number>();
+        const indices: Record<string, number[]> = {};
+        for (const [id, entries] of Object.entries(groups)) {
+          const question = questions.find((entry) => entry.id === id);
+          if (!question || question.isSecret || !Array.isArray(entries) || entries.length === 0) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '附件必须属于当前可回答的非敏感问题。');
+          indices[id] = entries.map((index) => {
+            if (!Number.isSafeInteger(index) || index < 0 || index >= attachments.length || used.has(index)) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答附件的位置无效或重复。');
+            used.add(index);
+            return index as number;
+          });
+        }
+        if (used.size !== attachments.length) throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答存在未归属题目的附件。');
+        questionAnswer.answerAttachmentIndices = indices;
+      }
+      content = formatAsyncQuestionAnswer(questions, questionAnswer.answers, Object.fromEntries(Object.entries(questionAnswer.answerAttachmentIndices ?? {}).map(([id, indices]) => [id, indices.map((index) => attachments[index]!)])));
       if ((questionAnswer.asNewMessage ? 'queue' : 'steer_now') !== delivery || (!questionAnswer.asNewMessage && body.expectedTurnId !== questionAnswer.providerTurnId)) {
         throw nativeApiError('ZEUS_ASYNC_QUESTION_INVALID', '回答必须进入原轮次；作为新消息发送需要明确选择。');
       }
@@ -1542,16 +1563,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
         );
       });
       if (existing) {
-        if (parseJsonObject(existing.inputJson).text !== content) throw nativeApiError('ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED', '该问题已有另一份回答，请等待送达确认后使用普通消息补充。');
+        /** 相同文字但附件不同不算重试，防止悄悄复用上一份答案。 */
+        const previousInput = parseJsonObject(existing.inputJson);
+        if (
+          previousInput.text !== content ||
+          JSON.stringify(previousInput.attachments ?? []) !== JSON.stringify(attachments) ||
+          JSON.stringify((previousInput.questionAnswer as AsyncQuestionAnswer).answerAttachmentIndices ?? {}) !== JSON.stringify(questionAnswer.answerAttachmentIndices ?? {})
+        )
+          throw nativeApiError('ZEUS_ASYNC_QUESTION_ALREADY_SUBMITTED', '该问题已有另一份回答，请等待送达确认后使用普通消息补充。');
         if (existing.status === 'paused') throw nativeApiError('ZEUS_NATIVE_RECOVERY_REQUIRED', '上一份回答的送达结果尚未确认，请先恢复会话。');
         if (existing.status === 'cancelled' || existing.status === 'failed') throw nativeApiError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已结束，回答草稿已保留，请选择作为新消息发送。');
         if (existing.status !== 'deleted') return toNativeDurableAcceptance(stableOperationId, idempotencyKey, conversation, existing);
       }
     }
     if (delivery !== 'queue' && delivery !== 'steer_now') throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Message delivery must be queue or steer_now.');
-    const project = projects.getById(conversation.projectId);
-    if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
-    const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
     const browserComments = normalizeNativeBrowserComments(body.browserComments);
     const composerDraft =
       body.composerDraft === undefined
