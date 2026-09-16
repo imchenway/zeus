@@ -416,6 +416,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     rejectGenericRuntimeConfirmation,
     renderNativeConversationWorkspace,
     renderTaskDetailPaneContent,
+    digitalTeamTask,
+    returnFromDigitalTeam,
     repositoryPickerLabel,
     resetProjectSidebarWidth,
     resizeRuntimeSession,
@@ -891,6 +893,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }
           >
             <toolPages.digitalTeams
+              key={digitalTeamTask?.id ?? 'team'}
+              task={digitalTeamTask}
+              onBackToTask={digitalTeamTask ? returnFromDigitalTeam : undefined}
+              onManageEmployees={(projectId) => {
+                /** 角色权限始终在所属项目的现有设置入口修改。 */
+                const project = snapshot.projects.find((candidate) => candidate.id === projectId);
+                if (project) openProjectSection(project, 'project-settings');
+              }}
               client={props.commandClient ?? null}
               projects={snapshot.projects}
               initialProjectId={activeProjectId}

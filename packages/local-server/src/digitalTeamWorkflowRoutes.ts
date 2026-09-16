@@ -8,6 +8,10 @@ export type DigitalTeamTemplateSaveInput = Record<string, unknown> & { id?: stri
 
 /** 数字团队运行创建输入与 Renderer 固定调用保持一致。 */
 export interface DigitalTeamRunCreateInput {
+  /** 指定已有任务时复用其身份，省略则新建任务。 */
+  taskId?: string;
+  /** 已有任务的读取时间戳，拒绝使用过期任务内容。 */
+  expectedTaskUpdatedAt?: string;
   /** 已保存模板身份。 */
   templateId: string;
   /** 用户打开模板时看到的修订，避免静默使用较新定义。 */
@@ -71,7 +75,7 @@ export interface DigitalTeamWorkflowRouteCoordinator {
   /** 删除模板。 */
   deleteTemplate(projectId: string, templateId: string, expectedRevision: number): unknown;
   /** 列出项目运行。 */
-  listRuns(projectId: string): unknown;
+  listRuns(projectId: string, taskId?: string): unknown;
   /** 读取含节点尝试的运行投影。 */
   getRunProjection(runId: string): unknown;
   /** 读取运行所属真实任务，用于校验 Command Envelope 作用域。 */
@@ -108,7 +112,9 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   save(): Promise<void>;
 }): void {
   options.server.get('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.listTemplates(request.params.projectId));
-  options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.listRuns(request.params.projectId));
+  options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>) =>
+    options.coordinator.listRuns(request.params.projectId, request.query.taskId),
+  );
   options.server.get('/api/digital-team-runs/:runId', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
     const projection = options.coordinator.getRunProjection(request.params.runId);
     return projection ?? reply.code(404).send({ error: 'ZEUS_DIGITAL_TEAM_RUN_NOT_FOUND', message: '数字团队运行不存在。' });

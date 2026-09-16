@@ -28,7 +28,7 @@ import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
+import type { TaskRecord } from '../tasks/taskContracts.js';
 import { DigitalEmployeeAvatar } from '../digital-employees/DigitalEmployeeAvatar.js';
 import type { DigitalEmployeeRecord } from '../digital-employees/digitalEmployeeContracts.js';
 import type { ProjectRecord } from '../projects/projectContracts.js';
@@ -55,7 +55,7 @@ const noProjectValue = '__no_digital_team_project__';
 const unassignedEmployeeId = '__unassigned_digital_team_employee__';
 
 /** 扣除项目侧栏后统一切换双列与详情抽屉，样式直接复用此状态。 */
-const compactInspectorQuery = '(max-width: 1420px)';
+const compactInspectorQuery = '(max-width: 1180px)';
 
 /** 运行状态的人话标签。 */
 const runStatusLabels: Record<string, string> = {
@@ -83,6 +83,12 @@ export interface DigitalTeamWorkspaceProps {
   projects: ProjectRecord[];
   /** 从当前工作区继承的项目。 */
   initialProjectId?: string;
+  /** 从任务详情进入时，运行直接绑定该任务。 */
+  task?: TaskRecord;
+  /** 返回原任务详情。 */
+  onBackToTask?(): void;
+  /** 打开当前项目的角色权限配置。 */
+  onManageEmployees?(projectId: string): void;
   /** 应用语言。 */
   language: 'zh-CN' | 'en-US';
   /** 从节点详情打开已绑定的真实会话。 */
@@ -96,7 +102,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** DashboardClient 完成组合后才开放真实操作。 */
   const api = hasDigitalTeamApi(props.client) ? props.client : null;
   /** 初始项目优先沿用当前工作区。 */
-  const [projectId, setProjectId] = useState(() => validInitialProjectId(props.projects, props.initialProjectId));
+  const [projectId, setProjectId] = useState(() => validInitialProjectId(props.projects, props.task?.projectId ?? props.initialProjectId));
   /** 页面默认进入流程编辑器。 */
   const [view, setView] = useState<DigitalTeamView>('editor');
   /** 当前项目的已保存模板。 */
@@ -163,9 +169,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           !employee.deliveryGrants.allowCommit ||
           !employee.entrypoint.authorityPolicy.allowCommit)
       ) {
-        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '独立写入节点绑定的角色缺少代码修改或本地提交权限。', nodeId: node.id });
+        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在项目设置的数字员工中开启“允许修改代码”和“提交”，并将权限设为可执行命令。', nodeId: node.id });
       } else if (node.data.purpose === 'verify' && (employee.permissionMode === 'read-only' || employee.entrypoint.authorityPolicy.permissionMode === 'read-only' || !employee.allowTests || !employee.entrypoint.authorityPolicy.allowTests)) {
-        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '真实验证节点绑定的角色缺少验证权限。', nodeId: node.id });
+        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在项目设置的数字员工中开启“允许执行验证”，并将权限从“只读”改为“请求批准”或“完全访问”。', nodeId: node.id });
       }
     }
     return issues;
@@ -202,16 +208,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setLoading(true);
       setError(null);
       try {
-        const [nextTemplates, nextEmployees, nextRuns] = await Promise.all([api.loadDigitalTeamTemplates(projectId), api.loadProjectDigitalEmployees(projectId), api.loadDigitalTeamRuns(projectId)]);
+        const [nextTemplates, nextEmployees, nextRuns] = await Promise.all([api.loadDigitalTeamTemplates(projectId), api.loadProjectDigitalEmployees(projectId), api.loadDigitalTeamRuns(projectId, props.task?.id)]);
         if (revision !== loadRevisionRef.current) return;
         setTemplates(nextTemplates);
         setEmployees(nextEmployees.filter((employee) => employee.enabled));
-        setRuns(nextRuns);
+        /** 任务入口只展示当前任务运行；团队入口仍展示项目记录。 */
+        const visibleRuns = props.task ? nextRuns.filter((run) => run.taskId === props.task!.id) : nextRuns;
+        setRuns(visibleRuns);
         const nextTemplate = nextTemplates.find((template) => template.id === preferredTemplateId) ?? nextTemplates.find((template) => template.id === draft.id) ?? nextTemplates[0];
-        setDraft(nextTemplate ? templateDraft(nextTemplate) : emptyTemplateDraft());
+        setDraft(nextTemplate ? templateDraft(nextTemplate) : standardTemplateDraft(nextEmployees.filter((employee) => employee.enabled)));
         setCanvasGeneration((current) => current + 1);
         setDirty(false);
-        const nextRun = nextRuns.find((run) => run.id === preferredRunId) ?? nextRuns.find((run) => run.id === selectedRun?.run.id) ?? null;
+        const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === selectedRun?.run.id) ?? (props.task ? visibleRuns[0] : null);
+        if (props.task && nextRun) setView('runs');
         /** 刷新选中运行时重新读取尝试历史，不能只替换运行标题行。 */
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
         if (revision !== loadRevisionRef.current) return;
@@ -292,8 +301,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   }, [api, selectedRun?.run.id, view, zh]);
 
   /** 所有画布与表单修改共用脏状态。 */
-  const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition): void => {
-    setDraft((current) => ({ ...current, definition }));
+  const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition | ((current: DigitalTeamWorkflowDefinition) => DigitalTeamWorkflowDefinition)): void => {
+    setDraft((current) => ({ ...current, definition: typeof definition === 'function' ? definition(current.definition) : definition }));
     setDirty(true);
     setStatus('');
   }, []);
@@ -348,7 +357,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         expectedRevision: draft.revision,
         name: draft.name.trim(),
         description: draft.description.trim(),
-        definition: draft.definition,
+        definition: {
+          ...draft.definition,
+          // 编辑时保留换行；保存边界统一去除空行，避免点击保存与失焦先后影响结果。
+          nodes: draft.definition.nodes.map((node) =>
+            node.type === 'employee' && node.data.purpose === 'verify' ? { ...node, data: { ...node.data, verificationCommands: (node.data.verificationCommands ?? []).map((command) => command.trim()).filter(Boolean) } } : node,
+          ),
+        },
       });
       setTemplates((current) => [saved, ...current.filter((template) => template.id !== saved.id)]);
       setDraft(templateDraft(saved));
@@ -403,7 +418,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 重开恢复最近一次服务端保存的完整画布与视口。 */
   const reopenTemplate = (): void => {
     if (!selectedTemplate) {
-      setDraft(emptyTemplateDraft());
+      setDraft(standardTemplateDraft(employees));
       setDirty(false);
     } else {
       setDraft(templateDraft(selectedTemplate));
@@ -423,6 +438,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setError(null);
     try {
       const projection = await api.createDigitalTeamRun(projectId, {
+        ...(props.task ? { taskId: props.task.id, expectedTaskUpdatedAt: props.task.updatedAt } : {}),
         templateId: selectedTemplate.id,
         templateRevision: selectedTemplate.revision,
         title: runDraft.title.trim(),
@@ -507,6 +523,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const inspector =
     view === 'editor' ? (
       <NodeInspector
+        key={selectedNodeId}
         node={selectedNode}
         definition={draft.definition}
         employees={employees}
@@ -539,13 +556,28 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   }
 
   return (
-    <section className="digital-team-workspace" aria-labelledby="digital-team-title" data-digital-team-dirty={dirty ? 'true' : undefined} data-compact-inspector={compactInspector ? 'true' : undefined}>
+    <section
+      className="digital-team-workspace"
+      aria-labelledby="digital-team-title"
+      data-digital-team-dirty={dirty ? 'true' : undefined}
+      data-compact-inspector={compactInspector ? 'true' : undefined}
+      data-inspector-open={selectedNodeId ? 'true' : undefined}
+    >
       <header className="digital-team-header">
         <div>
-          <p>{zh ? '研发协作流程' : 'Development workflow'}</p>
+          {props.task ? (
+            <p>
+              {props.task.taskCode} · {props.task.title}
+            </p>
+          ) : null}
           <h1 id="digital-team-title">{zh ? '数字团队' : 'Digital teams'}</h1>
         </div>
         <div className="digital-team-header-actions">
+          {props.onBackToTask ? (
+            <Button size="compact" disabled={dirty || busy} onClick={props.onBackToTask}>
+              返回任务
+            </Button>
+          ) : null}
           <div className="digital-team-view-switch" aria-label={zh ? '数字团队视图' : 'Digital team view'}>
             <button type="button" aria-pressed={view === 'editor'} onClick={() => setView('editor')}>
               {zh ? '流程设计' : 'Workflow'}
@@ -556,6 +588,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           </div>
           <ZeusSelect
             ariaLabel={zh ? '选择数字团队项目' : 'Choose digital team project'}
+            disabled={Boolean(props.task)}
             value={projectId || noProjectValue}
             options={props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath }))}
             onChange={(value) => {
@@ -574,17 +607,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         </div>
       </header>
 
-      {error ? (
-        <p className="digital-team-message is-error" role="alert">
-          {error}
+      <div className="digital-team-messages">
+        {error ? (
+          <p className="digital-team-message is-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <p className="digital-team-message" role="status" aria-live="polite">
+          {loading ? (zh ? '正在读取真实模板、角色和运行…' : 'Loading templates, roles, and runs…') : status}
         </p>
-      ) : null}
-      <p className="digital-team-message" role="status" aria-live="polite">
-        {loading ? (zh ? '正在读取真实模板、角色和运行…' : 'Loading templates, roles, and runs…') : status}
-      </p>
-
+      </div>
       {view === 'editor' ? (
-        <div className="digital-team-editor-layout">
+        <div className="digital-team-editor-layout" inert={busy || loading}>
           <aside className="digital-team-library" aria-label={zh ? '模板与角色库' : 'Templates and role library'}>
             <section>
               <div className="digital-team-section-heading">
@@ -617,6 +651,11 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 </Button>
               </div>
             </section>
+            {props.onManageEmployees ? (
+              <Button size="compact" disabled={dirty || busy} title={dirty ? '请先保存流程，再管理角色权限' : undefined} onClick={() => props.onManageEmployees!(projectId)}>
+                管理角色与权限
+              </Button>
+            ) : null}
             <RolePalette employees={employees} onAdd={(payload) => addNode(payload)} />
           </aside>
 
@@ -628,7 +667,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   value={draft.name}
                   maxLength={120}
                   onChange={(event) => {
-                    setDraft((current) => ({ ...current, name: event.currentTarget.value }));
+                    /** 先读取输入，避免延迟更新时事件目标已失效。 */
+                    const name = event.currentTarget.value;
+                    setDraft((current) => ({ ...current, name }));
                     setDirty(true);
                   }}
                 />
@@ -639,7 +680,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   value={draft.description}
                   maxLength={500}
                   onChange={(event) => {
-                    setDraft((current) => ({ ...current, description: event.currentTarget.value }));
+                    /** 说明与名称共用安全的值更新方式。 */
+                    const description = event.currentTarget.value;
+                    setDraft((current) => ({ ...current, description }));
                     setDirty(true);
                   }}
                 />
@@ -648,20 +691,20 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <Button size="compact" onClick={reopenTemplate} disabled={!dirty || busy}>
                   {zh ? '重开' : 'Reopen'}
                 </Button>
-                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || !dirty} onClick={() => void saveTemplate()}>
+                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || (!dirty && Boolean(selectedTemplate))} onClick={() => void saveTemplate()}>
                   {zh ? '保存' : 'Save'}
                 </Button>
                 <Button
                   size="compact"
                   variant="primary"
-                  disabled={!selectedTemplate || dirty || validationIssues.length > 0 || busy}
+                  disabled={!selectedTemplate || dirty || validationIssues.length > 0 || busy || runs.some((run) => props.task && !terminalRunStatuses.has(run.status))}
                   onClick={() => {
-                    setRunDraft({ title: draft.name, description: draft.description, confirmCommittedBaseline: false });
+                    setRunDraft({ title: props.task?.title ?? draft.name, description: props.task?.description ?? draft.description, confirmCommittedBaseline: false });
                     setRunDialogOpen(true);
                   }}
                 >
                   <Play aria-hidden="true" />
-                  {zh ? '创建运行' : 'Create run'}
+                  {props.task ? (zh ? '用于当前任务' : 'Use for this task') : zh ? '创建运行' : 'Create run'}
                 </Button>
               </div>
             </div>
@@ -675,9 +718,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               onSelectNode={setSelectedNodeId}
               onAdd={addNode}
             />
-            <ValidationPanel issues={validationIssues} />
+            <ValidationPanel issues={validationIssues} onSelectNode={setSelectedNodeId} />
           </main>
-          {!compactInspector ? <aside className="digital-team-inspector">{inspector}</aside> : null}
+          {selectedNodeId ? (
+            <aside className="digital-team-inspector">
+              {compactInspector ? (
+                <Button size="compact" onClick={() => setSelectedNodeId(null)}>
+                  关闭节点配置
+                </Button>
+              ) : null}
+              {inspector}
+            </aside>
+          ) : null}
         </div>
       ) : (
         <div className="digital-team-run-layout">
@@ -733,26 +785,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               </div>
             )}
           </main>
-          {!compactInspector ? <aside className="digital-team-inspector">{inspector}</aside> : null}
+          {selectedNodeId ? (
+            <aside className="digital-team-inspector">
+              {compactInspector ? (
+                <Button size="compact" onClick={() => setSelectedNodeId(null)}>
+                  关闭节点配置
+                </Button>
+              ) : null}
+              {inspector}
+            </aside>
+          ) : null}
         </div>
       )}
 
-      <MotionPresence>
-        {compactInspector && (view === 'editor' ? selectedNode : selectedRunNode) ? (
-          <WorkspaceDrawer
-            presentation="sheet"
-            backdrop="dimmed"
-            size="standard"
-            label={zh ? '节点配置' : 'Node details'}
-            backdropLabel={zh ? '关闭节点配置' : 'Close node details'}
-            closeLabel={zh ? '关闭' : 'Close'}
-            className="digital-team-inspector-drawer"
-            onClose={() => setSelectedNodeId(null)}
-          >
-            {inspector}
-          </WorkspaceDrawer>
-        ) : null}
-      </MotionPresence>
       <MotionPresence>
         {pendingDelete ? (
           <FormDialog
@@ -771,7 +816,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         {runDialogOpen ? (
           <FormDialog
             title={zh ? '创建数字团队运行' : 'Create digital team run'}
-            description={zh ? '创建后冻结当前模板修订、全部角色配置、任务事实和项目基线。' : 'This freezes the template revision, role settings, task facts, and project baseline.'}
+            description={
+              zh
+                ? props.task
+                  ? '使用所选流程执行当前任务，保留任务身份和说明。创建后冻结流程、角色与已提交代码基线。'
+                  : '创建后冻结当前模板修订、全部角色配置、任务事实和项目基线。'
+                : 'This freezes the template revision, role settings, task facts, and project baseline.'
+            }
             zh={zh}
             busy={busy}
             submitLabel={zh ? '创建并开始规划' : 'Create and start planning'}
@@ -781,14 +832,40 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           >
             <label>
               <span>{zh ? '任务标题' : 'Task title'}</span>
-              <input required maxLength={160} value={runDraft.title} onChange={(event) => setRunDraft((current) => ({ ...current, title: event.currentTarget.value }))} />
+              <input
+                required
+                readOnly={Boolean(props.task)}
+                maxLength={160}
+                value={runDraft.title}
+                onChange={(event) => {
+                  const title = event.currentTarget.value;
+                  setRunDraft((current) => ({ ...current, title }));
+                }}
+              />
             </label>
             <label>
               <span>{zh ? '需求与验收事实' : 'Requirements and acceptance facts'}</span>
-              <textarea required rows={7} maxLength={20000} value={runDraft.description} onChange={(event) => setRunDraft((current) => ({ ...current, description: event.currentTarget.value }))} />
+              <textarea
+                required={!props.task}
+                readOnly={Boolean(props.task)}
+                rows={7}
+                maxLength={20000}
+                value={runDraft.description}
+                onChange={(event) => {
+                  const description = event.currentTarget.value;
+                  setRunDraft((current) => ({ ...current, description }));
+                }}
+              />
             </label>
             <label className="digital-team-baseline-confirmation">
-              <input type="checkbox" checked={runDraft.confirmCommittedBaseline} onChange={(event) => setRunDraft((current) => ({ ...current, confirmCommittedBaseline: event.currentTarget.checked }))} />
+              <input
+                type="checkbox"
+                checked={runDraft.confirmCommittedBaseline}
+                onChange={(event) => {
+                  const confirmCommittedBaseline = event.currentTarget.checked;
+                  setRunDraft((current) => ({ ...current, confirmCommittedBaseline }));
+                }}
+              />
               <span>{zh ? '我确认本次基线只包含当前已提交版本；工作目录中的未提交修改不会进入数字团队运行。' : 'I confirm this run uses the current committed revision only; uncommitted working-tree changes are excluded.'}</span>
             </label>
           </FormDialog>
@@ -916,7 +993,7 @@ function NodeInspector(props: {
       {node.type === 'human_confirmation' ? <ApprovalNodeFields node={node} onChange={props.onChange} /> : null}
       {node.type === 'code_integration' ? (
         <>
-          <p className="digital-team-field-note">候选固定使用合并提交；首期不并行维护压缩或变基语义。</p>
+          <p className="digital-team-field-note">自动整合上游开发成果，生成供验证的候选代码。</p>
           <label>
             <span>集成核对要求</span>
             <textarea rows={6} maxLength={12000} value={node.data.instructions} onChange={(event) => props.onChange({ ...node, data: { ...node.data, instructions: event.currentTarget.value } })} />
@@ -1048,18 +1125,7 @@ function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: D
             rows={5}
             maxLength={16000}
             value={(props.node.data.verificationCommands ?? []).join('\n')}
-            onChange={(event) =>
-              props.onChange({
-                ...props.node,
-                data: {
-                  ...props.node.data,
-                  verificationCommands: event.currentTarget.value
-                    .split('\n')
-                    .map((command) => command.trim())
-                    .filter(Boolean),
-                },
-              })
-            }
+            onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, verificationCommands: event.currentTarget.value.split('\n') } })}
           />
         </label>
       ) : null}
@@ -1091,14 +1157,22 @@ function ApprovalNodeFields(props: { node: DigitalTeamHumanConfirmationNode; onC
 }
 
 /** 共享校验问题保留节点定位信息，草稿可保存但不能启动。 */
-function ValidationPanel(props: { issues: Array<{ code: string; message: string; nodeId?: string }> }) {
+function ValidationPanel(props: { issues: Array<{ code: string; message: string; nodeId?: string }>; onSelectNode(nodeId: string): void }) {
   return (
     <section className={`digital-team-validation${props.issues.length ? ' has-issues' : ' is-ready'}`} aria-live="polite">
       <strong>{props.issues.length ? `还需处理 ${props.issues.length} 项` : '流程可以创建运行'}</strong>
       {props.issues.length ? (
         <ul>
-          {props.issues.slice(0, 5).map((issue) => (
-            <li key={`${issue.code}_${issue.nodeId ?? ''}`}>{issue.message}</li>
+          {props.issues.map((issue, index) => (
+            <li key={`${issue.code}_${issue.nodeId ?? ''}_${index}`}>
+              {issue.nodeId ? (
+                <button type="button" onClick={() => props.onSelectNode(issue.nodeId!)}>
+                  {issue.message}
+                </button>
+              ) : (
+                issue.message
+              )}
+            </li>
           ))}
         </ul>
       ) : (
@@ -1321,9 +1395,11 @@ function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraf
   /** 验证优先绑定测试角色，没有专职角色时仍使用真实员工并允许手动修改。 */
   const verifierId = employees.find((employee) => matchesRole(employee, /qa|test|测试|验证|质量/iu))?.id ?? employees.at(-1)?.id ?? unassignedEmployeeId;
   /** 开发节点优先使用两个非 CTO 员工，人员不足时复用已有真实身份而不制造员工。 */
-  const workerIds = employees.filter((employee) => employee.id !== ctoId && employee.id !== verifierId).map((employee) => employee.id);
-  const firstWorkerId = workerIds[0] ?? employees.find((employee) => employee.id !== ctoId)?.id ?? ctoId;
-  const secondWorkerId = workerIds[1] ?? employees.find((employee) => employee.id !== ctoId && employee.id !== firstWorkerId)?.id ?? firstWorkerId;
+  const workerIds = employees
+    .filter((employee) => employee.id !== ctoId && employee.id !== verifierId && employee.allowCodeChanges && employee.deliveryGrants.allowCommit && employee.permissionMode !== 'read-only')
+    .map((employee) => employee.id);
+  const firstWorkerId = workerIds[0] ?? unassignedEmployeeId;
+  const secondWorkerId = workerIds[1] ?? firstWorkerId;
   /** 标准定义把批准、集成、验证和最终验收固定在所有结束路径上。 */
   const definition: DigitalTeamWorkflowDefinition = {
     schemaGeneration: digitalTeamWorkflowSchemaGeneration,

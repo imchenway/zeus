@@ -23,6 +23,7 @@ import {
   type TurnChangeSetRepository,
   type ZeusProjectRepositoryRecord,
   type ZeusTaskWorkspaceRecord,
+  type ZeusTaskRecord,
 } from '@zeus/storage';
 import type { BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
 import type {
@@ -81,6 +82,8 @@ export interface DigitalTeamWorkflowCoordinatorOptions {
   projects: Pick<ProjectRepository, 'getById'>;
   /** 任务仓储。 */
   tasks: Pick<TaskRepository, 'getById'>;
+  /** 复用项目自定义的任务完成与取消状态。 */
+  isTaskTerminal(task: ZeusTaskRecord): boolean;
   /** 项目仓库登记。 */
   projectRepositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
   /** 数字员工仓储。 */
@@ -167,9 +170,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   }
 
   /** 列出项目运行。 */
-  listRuns(projectId: string): unknown {
+  listRuns(projectId: string, taskId?: string): unknown {
     this.requireProject(projectId);
-    return this.options.runs.listByProject(projectId);
+    if (taskId === undefined) return this.options.runs.listByProject(projectId);
+    /** 当前任务单独读取全部运行，避免被项目最近一百条记录挤出入口。 */
+    const task = this.options.tasks.getById(requiredText(taskId, '任务身份无效。', 512));
+    if (!task || task.projectId !== projectId) throw routeError('ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务不存在或不属于当前项目。', 404);
+    return this.options.runs.listByTask(task.id);
   }
 
   /** 返回运行、完整历史和每节点当前尝试。 */
@@ -219,6 +226,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (!requiredText(input.title, '任务名称不能为空。', 240) || typeof input.description !== 'string' || !isRecord(input.taskFacts)) {
       throw routeError('ZEUS_DIGITAL_TEAM_RUN_INVALID', '任务名称、说明和任务事实无效。', 400);
     }
+    this.requireExistingTask(projectId, input);
     const repositories = this.options.projectRepositories.listByProject(project.id);
     if (repositories.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_REPOSITORY_REQUIRED', '项目尚未登记可冻结的 Git 仓库。');
     if (repositories.length !== 1) throw routeError('ZEUS_DIGITAL_TEAM_MULTI_REPOSITORY_UNSUPPORTED', '首期数字团队运行只支持一个 Git 仓库，请调整项目仓库登记后再创建运行。');
@@ -243,22 +251,27 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '流程模板在预检后发生变化。');
     }
     const runId = stableIdentity('digital_team_run', context.operationIdentity);
-    const taskId = stableIdentity('task', `${context.operationIdentity}\0digital-team`);
-    const taskFacts = structuredClone(input.taskFacts);
-    this.options.taskCreation.create(
-      {
-        projectId,
-        title: requiredText(input.title, '任务名称不能为空。', 240),
-        taskType: 'requirement',
-        description: input.description,
-        sourceContext: { digitalTeamRunId: runId, taskFacts },
-        allowCodeChanges: taskFactBoolean(taskFacts, 'allowCodeChanges', true),
-        allowTests: taskFactBoolean(taskFacts, 'allowTests', true),
-        allowGitCommit: taskFactBoolean(taskFacts, 'allowGitCommit', true),
-      },
-      taskId,
-      context,
-    );
+    /** 事务内重新核对任务修订及运行占用，关闭异步预检后的竞态窗口。 */
+    const existingTask = this.requireExistingTask(projectId, input);
+    /** 已有任务不复制或改写身份。 */
+    const taskId = existingTask?.id ?? stableIdentity('task', `${context.operationIdentity}\0digital-team`);
+    /** 任务事实必须来自服务端现存记录，客户端只能确认基线。 */
+    const taskFacts = existingTask ? { ...structuredClone(existingTask), confirmCommittedBaseline: input.taskFacts.confirmCommittedBaseline === true } : structuredClone(input.taskFacts);
+    if (!existingTask)
+      this.options.taskCreation.create(
+        {
+          projectId,
+          title: requiredText(input.title, '任务名称不能为空。', 240),
+          taskType: 'requirement',
+          description: input.description,
+          sourceContext: { digitalTeamRunId: runId, taskFacts },
+          allowCodeChanges: taskFactBoolean(taskFacts, 'allowCodeChanges', true),
+          allowTests: taskFactBoolean(taskFacts, 'allowTests', true),
+          allowGitCommit: taskFactBoolean(taskFacts, 'allowGitCommit', true),
+        },
+        taskId,
+        context,
+      );
     const run = this.options.runs.create({
       id: runId,
       projectId,
@@ -274,6 +287,18 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     const activeStart = this.options.attempts.update(start.id, { expectedRevision: start.revision, status: 'active', commandId: context.commandId, startedAt: this.options.now().toISOString() });
     this.options.attempts.update(activeStart.id, { expectedRevision: activeStart.revision, status: 'succeeded', completedAt: this.options.now().toISOString() });
     return this.getRunProjection(run.id);
+  }
+
+  /** 任务入口与新建入口共用创建链路；现有任务必须仍可执行且没有活动运行。 */
+  private requireExistingTask(projectId: string, input: DigitalTeamRunCreateInput): ZeusTaskRecord | null {
+    if (input.taskId === undefined) return null;
+    /** 按真实身份读取，禁止跨项目绑定。 */
+    const task = this.options.tasks.getById(requiredText(input.taskId, '任务身份无效。', 512));
+    if (!task || task.projectId !== projectId) throw routeError('ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务不存在或不属于当前项目。', 404);
+    if (!input.expectedTaskUpdatedAt || task.updatedAt !== input.expectedTaskUpdatedAt) throw routeError('ZEUS_DIGITAL_TEAM_TASK_CONFLICT', '任务内容已变化，请返回任务详情刷新后重试。');
+    if (this.options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') throw routeError('ZEUS_DIGITAL_TEAM_TASK_TERMINAL', '请先重新打开任务，再使用数字团队流程。');
+    if (this.options.runs.listByTask(task.id).some((run) => !['completed', 'failed', 'cancelled'].includes(run.status))) throw routeError('ZEUS_DIGITAL_TEAM_TASK_RUNNING', '当前任务已有未结束的团队运行，请先查看现有运行。');
+    return task;
   }
 
   /** 人工批准只处理当前精确 attempt，并核对上游终态和绑定摘要。 */

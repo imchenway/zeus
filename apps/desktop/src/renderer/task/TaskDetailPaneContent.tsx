@@ -101,6 +101,8 @@ export interface TaskDetailPaneContentProps {
   conversationWorkspace?: ReactNode;
   /** 首次讨论复用原新建会话输入与耐久接纳。 */
   newConversationWorkspace?: ReactNode;
+  /** 从任务详情选择已保存的团队流程。 */
+  onUseDigitalTeam?(): void;
   /** 打开当前项目员工管理，补齐可指派员工。 */
   onManageEmployees?(): void;
   onPushNewConversation: (taskId: string) => void;
@@ -1312,6 +1314,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </span>
       </div>
+      {props.onUseDigitalTeam ? (
+        <div className="task-detail-arrangement">
+          <span className="task-detail-summary-row">
+            <small>{zh ? '数字团队' : 'Digital team'}</small>
+            <Button size="compact" onClick={props.onUseDigitalTeam}>
+              {zh ? '选择工作流 / 查看运行' : 'Choose workflow / view runs'}
+            </Button>
+          </span>
+        </div>
+      ) : null}
       <div className="task-detail-workspace">
         <aside className="task-detail-sidebar" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
           {taskOverview}

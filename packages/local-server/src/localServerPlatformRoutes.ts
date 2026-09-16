@@ -2988,6 +2988,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   /** 数字团队复用现有任务、会话、证据与 Git 能力，只新增冻结图和节点尝试账本。 */
   digitalTeamWorkflowCoordinator = new DigitalTeamWorkflowCoordinator({
+    isTaskTerminal: taskManagementStatusIsTerminal,
     templates: new DigitalTeamWorkflowTemplateRepository(db, () => now().toISOString()),
     runs: new DigitalTeamWorkflowRunRepository(db, () => now().toISOString()),
     attempts: new DigitalTeamNodeAttemptRepository(db, () => now().toISOString()),
