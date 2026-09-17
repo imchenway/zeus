@@ -1,3 +1,6 @@
+/** Git blame 公共契约由 Git Core 统一定义，渲染层只消费只读数据。 */
+export type { GitBlameLine, GitFileBlame } from '@zeus/git-core';
+
 export interface GitDiffSummary {
   isRepository: boolean;
   files: string[];

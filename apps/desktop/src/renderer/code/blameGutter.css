@@ -1,0 +1,88 @@
+/* GitLens 风格的行尾归属信息：低对比度保留代码阅读优先级，悬停时提高辨识度。 */
+.session-source-blame-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 34px;
+  padding: 4px 12px;
+  border-block-end: 1px solid color-mix(in srgb, var(--session-text-muted, #8b93a1) 18%, transparent);
+  background: var(--session-canvas, #fff);
+  color: var(--session-text-muted, #6b7280);
+  font-size: 11px;
+}
+
+.session-source-blame-toggle {
+  appearance: none;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.session-source-blame-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--session-text-muted, #6b7280) 12%, transparent);
+  color: var(--session-text, #1f2937);
+}
+
+.session-source-blame-toggle:focus-visible {
+  outline: 2px solid var(--session-accent, #408bd8);
+  outline-offset: 1px;
+}
+
+.session-source-blame-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--session-accent, #408bd8) 14%, transparent);
+  color: var(--session-text, #1f2937);
+}
+
+.session-source-blame-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 让编辑器和控制条在源码滚动容器中垂直分配空间。 */
+.session-source-scroll:has(> .session-source-code-preview) {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-source-code-preview {
+  flex: 1 1 auto;
+  block-size: auto;
+  min-block-size: 0;
+}
+
+.session-source-blame-inline {
+  display: inline-block;
+  max-inline-size: min(68vw, 720px);
+  margin-inline-start: 2em;
+  overflow: hidden;
+  color: var(--session-text-muted, #8b93a1);
+  cursor: help;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 11px;
+  line-height: inherit;
+  opacity: 0.72;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.session-source-blame-inline:hover,
+.session-source-blame-inline:focus-visible {
+  color: var(--session-text, #1f2937);
+  opacity: 1;
+}
+
+.session-source-blame-inline:focus-visible {
+  outline: 1px solid var(--session-accent, #408bd8);
+  outline-offset: 2px;
+}

@@ -1,11 +1,15 @@
-import { memo, useEffect, useRef, type RefObject } from 'react';
+import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, keymap, lineNumbers, type ViewUpdate } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
+import { blameDecorations } from './blameDecorations.js';
+import { GitBlameToolbar, type SourceBlameLabels } from './GitBlameToolbar.js';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
+import { useGitBlame } from './useGitBlame.js';
+import './blameGutter.css';
 
 /** 评论继续由 React 管理，代码视图只负责把容器放在对应行之后。 */
 interface SourceLineWidget {
@@ -21,6 +25,10 @@ interface SourceCodePreviewProps {
   content: string;
   language: string | null;
   label: string;
+  projectId?: string;
+  conversationId?: string;
+  resourceId?: string;
+  blameLabels?: SourceBlameLabels;
   location?: ConversationFileLocation;
   widgets: SourceLineWidget[];
   /** 新打开的评论容器，完成代码区布局后再聚焦。 */
@@ -42,8 +50,22 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const languageSlot = useRef(new Compartment()).current;
   /** 评论装饰单独更新。 */
   const widgetSlot = useRef(new Compartment()).current;
+  /** Git blame 装饰单独更新，不因异步读取结果重建编辑器。 */
+  const blameSlot = useRef(new Compartment()).current;
   /** 只读历史仍可查看代码，无评论权限时不创建加号入口。 */
   const commentsEnabled = Boolean(props.onComment);
+  const blameLabels = useMemo<SourceBlameLabels>(
+    () =>
+      props.blameLabels ?? {
+        show: 'Show Git blame',
+        hide: 'Hide Git blame',
+        loading: 'Loading Git blame…',
+        unavailable: 'Git blame unavailable',
+        retry: 'Retry',
+      },
+    [props.blameLabels],
+  );
+  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -74,6 +96,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
           syntaxHighlighting(classHighlighter),
           languageSlot.of([]),
           widgetSlot.of([]),
+          blameSlot.of([]),
           selectedLines,
           commentsEnabled
             ? gutter({
@@ -90,7 +113,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
       viewRef.current = null;
       view.destroy();
     };
-  }, [props.content, props.path, props.label, commentsEnabled, languageSlot, widgetSlot]);
+  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, languageSlot, widgetSlot]);
 
   useEffect(() => {
     /** 先显示纯文本；加载高亮期间仍可滚动、选择和输入会话内容。 */
@@ -127,6 +150,13 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   }, [props.widgets, props.content, props.path, props.label, commentsEnabled, widgetSlot]);
 
   useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const extension = gitBlame.enabled && gitBlame.blame?.lines.length ? blameDecorations(gitBlame.blame.lines, blameLabels) : [];
+    view.dispatch({ effects: blameSlot.reconfigure(extension) });
+  }, [blameLabels, blameSlot, gitBlame.blame, gitBlame.enabled, props.content, props.path, props.label, commentsEnabled]);
+
+  useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */
     const view = viewRef.current;
     const widget = propsRef.current.widgets.find((candidate) => candidate.element === props.focusWidget);
@@ -157,7 +187,12 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(boundedLine).from, { y: 'center' }) });
   }, [props.location, props.content, props.path, props.label, commentsEnabled]);
 
-  return <div className="session-source-code-preview" ref={hostRef} />;
+  return (
+    <>
+      <GitBlameToolbar blame={gitBlame} labels={blameLabels} />
+      <div className="session-source-code-preview" ref={hostRef} />
+    </>
+  );
 });
 
 /** 只为可视代码行提供原有的加号与键盘可达的评论按钮。 */

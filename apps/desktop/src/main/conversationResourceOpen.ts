@@ -1,4 +1,5 @@
 import { isConversationSourcePreviewable } from '@zeus/shared';
+import { getFileBlame } from '@zeus/git-core';
 import { createReadStream } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,6 +23,14 @@ export interface ConversationResourceRequest {
   projectId: string;
   conversationId: string;
   resourceId: string;
+}
+
+/** 沿用资源授权解析真实工作树，不以项目主目录替代会话文件。 */
+export async function loadConversationSourceBlame(request: ConversationResourceRequest & { expectedSha256: string }, services: ConversationResourceOpenServices) {
+  const intent = await loadConversationResourceIntent(request, services);
+  if (intent.kind !== 'file') throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_INVALID', '仅源码文件支持查看归属。');
+  const file = await authorizedFile(intent);
+  return getFileBlame(file.allowedRoot, relative(file.allowedRoot, file.absolutePath).split(sep).join('/'), undefined, request.expectedSha256);
 }
 
 export interface OpenConversationResourceRequest extends ConversationResourceRequest {
