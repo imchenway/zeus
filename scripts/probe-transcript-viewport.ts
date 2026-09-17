@@ -502,6 +502,18 @@ async function verifyTranscriptStorageBoundaries(): Promise<void> {
       contentHash: 'result',
     });
     assertProbe(stageResult.placement.openingInputId === 'a', '阶段先开始、正文后完成时不能被中途插话吸走');
+    // 复现 Pi 将同一用户输入登记两次后，过程挂在 Provider 身份下的真实故障。
+    register('duplicate-a', 'a', 'ordinary_input');
+    repo.startStage({ conversationId: 'ordering', turnId: 'a', segmentId: 'segment', stageId: 'duplicate-stage', occurredAt: at });
+    register('duplicate-result', 'a');
+    repo.mergeSourceIdentity('ordering', 'duplicate-a', 'steer-a');
+    assertProbe(repo.envelopeForEntry('ordering', 'duplicate-result')?.placement.openingInputId === 'steer-a', '输入合并必须同步修正已有过程归属');
+    assertProbe(repo.envelopeForEntry('ordering', 'duplicate-stage')?.placement.openingInputId === 'steer-a', '输入合并必须同步修正阶段归属');
+    assertProbe(repo.envelopeForEntry('ordering', 'early-stage-result')?.placement.openingInputId === 'a', '输入合并不能跨越真实追加消息');
+    assertProbe(
+      db.get<{ current_stage_id: string }>('SELECT current_stage_id FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?', ['ordering', 'steer-a'])?.current_stage_id === 'duplicate-stage',
+      '输入合并必须保留后续工具继续使用的当前阶段',
+    );
     const beforeRollback = repo.revision('ordering');
     try {
       db.transaction(() => {

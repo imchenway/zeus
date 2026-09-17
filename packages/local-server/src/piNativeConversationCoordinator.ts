@@ -1828,6 +1828,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
+  /** Pi 各发送入口统一先确认用户身份，再登记 Provider 展示来源。 */
   function appendUserProjection(
     conversationId: string,
     threadId: string,
@@ -1841,6 +1842,19 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   ): void {
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
+    // 先保存客户端身份，Provider 来源才能与已接纳的用户历史共用同一过程归属。
+    options.conversations.appendMessage({
+      conversationId,
+      role: 'user',
+      content,
+      source: 'pi_sdk',
+      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      createdAt,
+      providerThreadId: threadId,
+      providerTurnId,
+      providerItemId: itemId,
+      clientMessageId,
+    });
     options.providerItems.upsertCompleted({
       conversationId,
       turnId,
@@ -1855,18 +1869,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       updatedAt: createdAt,
       agentKind: 'pi',
       nativeItemId: itemId,
-    });
-    options.conversations.appendMessage({
-      conversationId,
-      role: 'user',
-      content,
-      source: 'pi_sdk',
-      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
-      createdAt,
-      providerThreadId: threadId,
-      providerTurnId,
-      providerItemId: itemId,
-      clientMessageId,
     });
   }
 

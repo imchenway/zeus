@@ -216,6 +216,30 @@ export async function initializeConversationTranscriptIndexes(db: ZeusDatabasePo
     db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [repairId, '修正 Pi 历史与活动来源的明确身份关联', 'pi-stage-identity', new Date().toISOString()]);
   }
 
+  /** 已确认的客户端消息是用户输入的统一身份，修复先登记 Provider 来源造成的重复归属。 */
+  const inputRepairId = '20260917_transcript_confirmed_input_identity';
+  if (!db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [inputRepairId])) {
+    while (true) {
+      /** 只合并同一会话、同一轮次且已有明确消息别名的输入，不按正文或时间猜测。 */
+      const inputs = db.select<{ conversation_id: string; previous_id: string; canonical_id: string }>(
+        `SELECT source.conversation_id, source.entry_id AS previous_id, canonical.id AS canonical_id
+           FROM conversation_transcript_aliases AS source
+           JOIN conversation_message_provider_aliases AS alias ON alias.conversation_id = source.conversation_id AND alias.provider_item_id = source.source_id
+           JOIN conversation_messages AS message ON message.id = alias.message_id AND message.role = 'user' AND message.provider_thread_id = source.source_scope
+           JOIN conversation_transcript_entries AS previous ON previous.conversation_id = source.conversation_id AND previous.id = source.entry_id AND previous.kind = 'ordinary_input'
+           JOIN conversation_transcript_entries AS canonical ON canonical.conversation_id = source.conversation_id AND canonical.id = 'user-message:' || message.client_message_id
+            AND canonical.kind = 'ordinary_input' AND canonical.turn_id IS previous.turn_id AND canonical.removed_revision IS NULL
+          WHERE source.source_domain = 'provider_item' AND source.entry_id <> canonical.id LIMIT 512`,
+      );
+      if (!inputs.length) break;
+      db.transaction(() => {
+        for (const input of inputs) repository.mergeSourceIdentity(input.conversation_id, input.previous_id, input.canonical_id);
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [inputRepairId, '统一已确认用户输入及其过程归属', 'confirmed-input-identity', new Date().toISOString()]);
+  }
+
   const conversations = db.select<{ id: string }>(
     `SELECT conversation.id
        FROM conversations AS conversation
@@ -339,6 +363,11 @@ export class ConversationTranscriptRepository {
       this.db.execute(`UPDATE conversation_transcript_entries SET display_order = ?, placement_revision = ? WHERE conversation_id = ? AND id = ?`, [order, revision, conversationId, canonicalId]);
       this.db.execute(`UPDATE conversation_transcript_aliases SET entry_id = ? WHERE conversation_id = ? AND entry_id = ?`, [canonicalId, conversationId, previousId]);
       this.db.execute(`UPDATE conversation_transcript_entries SET summary_entry_id = ? WHERE conversation_id = ? AND summary_entry_id = ?`, [canonicalId, conversationId, previousId]);
+      // 输入合并时连同阶段和过程一起归位，避免删除重复入口后留下另一组过程。
+      if (previous.kind === 'ordinary_input' && canonical.kind === 'ordinary_input') {
+        this.db.execute(`UPDATE conversation_transcript_entries SET opening_input_id = ?, placement_revision = ? WHERE conversation_id = ? AND opening_input_id = ?`, [canonicalId, revision, conversationId, previousId]);
+        this.db.execute(`UPDATE conversation_transcript_entries SET current_stage_id = COALESCE(current_stage_id, ?) WHERE conversation_id = ? AND id = ?`, [previous.current_stage_id, conversationId, canonicalId]);
+      }
       this.db.execute(`UPDATE conversation_transcript_state SET order_epoch = order_epoch + 1 WHERE conversation_id = ?`, [conversationId]);
       placementChangeWriters.get(this.db)?.(conversationId, this.orderEpoch(conversationId), revision);
     });
