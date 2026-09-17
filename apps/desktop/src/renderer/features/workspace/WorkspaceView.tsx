@@ -613,6 +613,21 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-label={uiCopy.shellAriaLabel}
     >
       <MotionPresence>{modelSetup.step ? <ModelSetupDialog controller={modelSetup} /> : null}</MotionPresence>
+      {/* 删除确认属于工作台公共操作，会话中的任务详情也必须能立即显示。 */}
+      <MotionPresence>
+        {currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId) ? (
+          <TaskDeleteRelationshipDialog
+            task={currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId)}
+            allTasks={currentProjectTasks}
+            busy={updatingTaskBusy}
+            language={appShellSettings.appLanguage}
+            onCancel={() => setTaskDeleteDialogTaskId(null)}
+            onConfirm={(input) => {
+              if (taskDeleteDialogTaskId) void deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
+            }}
+          />
+        ) : null}
+      </MotionPresence>
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
@@ -1128,20 +1143,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     />
                   )}
 
-                  <MotionPresence>
-                    {currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId) ? (
-                      <TaskDeleteRelationshipDialog
-                        task={currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId)}
-                        allTasks={currentProjectTasks}
-                        busy={updatingTaskBusy}
-                        language={appShellSettings.appLanguage}
-                        onCancel={() => setTaskDeleteDialogTaskId(null)}
-                        onConfirm={(input) => {
-                          if (taskDeleteDialogTaskId) void deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
-                        }}
-                      />
-                    ) : null}
-                  </MotionPresence>
                   <ZentaoImportModal
                     open={zentaoImportOpen}
                     language={appShellSettings.appLanguage}
