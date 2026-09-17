@@ -3101,6 +3101,13 @@ body:has(.macos-ai-app.zeus-shell) {
   inline-size: 16px;
 }
 
+/* 会话状态占用原文件夹位置，不改变项目标签和关闭按钮的命中范围。 */
+.macos-ai-app.zeus-shell .project-workspace-project-slot-trigger .session-conversation-status-icon {
+  flex-basis: 16px;
+  block-size: 16px;
+  inline-size: 16px;
+}
+
 .macos-ai-app.zeus-shell .project-workspace-project-slot-trigger .zeus-select-value {
   grid-column: 3;
   grid-row: 1;
