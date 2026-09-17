@@ -60,7 +60,7 @@ export type PiZeusToolContentItem = { type: 'text'; text: string } | { type: 'im
 
 export interface PiZeusToolResult {
   text: string;
-  /** 当前 Provider 不支持图片工具结果时由 Pi SDK 返回真实能力错误，Zeus 不预先删图。 */
+  /** 图片工具结果完整交给模型接口，由接口返回实际结果，Zeus 不预先拦截或删图。 */
   contentItems?: PiZeusToolContentItem[];
   details?: unknown;
   isError?: boolean;
@@ -321,7 +321,6 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
       entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
     }
-    if (input.images?.length && entry.session.model && !entry.session.model.input.includes('image')) throw runtimeError('ZEUS_PI_MODEL_IMAGE_UNSUPPORTED', '当前模型接口已明确标记不支持图片输入，图片未被丢弃；请切换支持图片的模型后发送。');
     const nativeRunId = mode === 'steer' ? entry.activeRunId! : `pi_run_${randomUUID()}`;
     entry.activeRunId = nativeRunId;
     entry.pendingFailure = null;
@@ -692,8 +691,6 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     const result = await broker.execute({ requestId: `pi_tool_${randomUUID()}`, session: entry.identity, toolCallId, toolName, args, ...(signal ? { signal } : {}) });
     if (result.isError) throw runtimeError('ZEUS_PI_TOOL_EXECUTION_FAILED', result.text);
     // 部分 SDK 传输会跳过不受支持的工具图片，必须在此显式报错，保留 Zeus 已归档产物。
-    if (result.contentItems?.some((item) => item.type === 'image') && entry.session.model && !entry.session.model.input.includes('image'))
-      throw runtimeError('ZEUS_PI_MODEL_IMAGE_UNSUPPORTED', `当前模型接口明确不支持图片输入。工具图片已由 Zeus 保存，不能把图片当作已被模型读取。${result.text}`);
     return {
       content: result.contentItems?.length ? result.contentItems : [{ type: 'text' as const, text: result.text }],
       details: result.details ?? null,
@@ -1037,8 +1034,8 @@ function toPiModel(model: ConfiguredModelDefinition, providerId: string, connect
     baseUrl: modelConnectionRuntimeBaseUrl(connectionBaseUrl, model.protocolFamily),
     reasoning: model.capability.reasoning.state === 'supported',
     thinkingLevelMap,
-    // 明确不支持图片时只注册文本输入；目录未知时保留运行探测机会。
-    input: (model.capability.imageInput.state === 'unsupported' ? ['text'] : ['text', 'image']) as Array<'text' | 'image'>,
+    // 保留用户和工具图片的传输能力，避免 SDK 按目录标记删图；是否支持由模型接口实际返回。
+    input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
