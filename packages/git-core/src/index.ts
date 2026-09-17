@@ -3200,6 +3200,35 @@ function splitNullRecords(value: string): string[] {
   return value.split('\0').filter(Boolean);
 }
 
+/** 只读取指定文件相对 HEAD 的差异；没有提交或未跟踪时以空文件为基线。 */
+export async function getFileReviewDiff(absolutePath: string): Promise<GitFileDiff | null | undefined> {
+  /** Git 返回真实仓库路径，先统一 macOS 临时目录等符号链接别名。 */
+  absolutePath = await realpath(absolutePath);
+  /** 从文件目录识别所属仓库，支持嵌套仓库与独立工作树。 */
+  const cwd = dirname(absolutePath);
+  /** 非仓库文件保留普通预览，不伪装成干净仓库。 */
+  const root = await readGitStdout(cwd, ['rev-parse', '--show-toplevel']);
+  if (!root) return undefined;
+  /** 只允许字面量相对路径，不将文件名解释成 Git 路径表达式。 */
+  const path = requireSafeWorkspacePath(relative(root, absolutePath));
+  if (path.split('/').includes('.git')) throw new Error('不能审阅 Git 管理目录。');
+  /** HEAD 中存在该文件时合并展示暂存与未暂存结果。 */
+  const tracked = await readGitStdout(root, ['ls-tree', '-z', 'HEAD', '--', `:(literal)${path}`]);
+  /** 禁用外部差异程序与文本转换，避免读取文件时执行仓库配置的命令。 */
+  const args = tracked ? ['diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', `:(literal)${path}`] : ['diff', '--no-ext-diff', '--no-textconv', '--no-index', '--', '/dev/null', absolutePath];
+  /** no-index 的退出码 1 表示存在差异，其他失败必须报告。 */
+  let output: string;
+  try {
+    output = (await execFileAsync('git', args, { cwd: root, maxBuffer: 20 * 1024 * 1024 })).stdout;
+  } catch (error) {
+    if (!tracked && (error as { code?: unknown }).code === 1 && typeof (error as { stdout?: unknown }).stdout === 'string') output = (error as { stdout: string }).stdout;
+    else throw error;
+  }
+  /** 复用 Git 解析器，新增文件的显示路径仍保持仓库相对路径。 */
+  const diff = parseGitUnifiedDiff(output)[0];
+  return diff ? { ...diff, oldPath: tracked ? diff.oldPath : '/dev/null', newPath: path } : null;
+}
+
 /** 按差异语义解析可预览的两端；仅返回文件授权和固定对象，不读取二进制到补丁中。 */
 export async function getGitFilePreviewSources(
   cwd: string,

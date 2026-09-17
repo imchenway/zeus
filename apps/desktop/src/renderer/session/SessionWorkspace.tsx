@@ -1646,7 +1646,7 @@ type SessionContextWorkspace =
   | { kind: 'browser' }
   | { kind: 'subagents' }
   | { kind: 'plan'; item: NativeSessionItemBuffer }
-  | { kind: 'file'; request: FilePreviewRequest }
+  | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
 
@@ -2224,14 +2224,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   /** 图片使用弹窗并保留右侧内容，其他文件打开审阅并记录返回焦点。 */
-  const openFilePreview = useCallback((request: FilePreviewRequest, image = false): void => {
+  const openFilePreview = useCallback((request: FilePreviewRequest, image = false, location?: ConversationFileLocation): void => {
     if (image) {
       setImagePreviewRequest(request);
       return;
     }
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setContextFullWidth(false);
-    setContextWorkspace({ kind: 'file', request });
+    setContextWorkspace({ kind: 'file', request, location });
   }, []);
 
   /** 会话图片使用弹窗，其余资源进入右侧；显式的系统和编辑器操作按用户选择执行。 */
@@ -2241,7 +2241,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       /** 代码和文本保留行评论，其他格式交给通用文件预览。 */
       const path = resource.kind === 'file' ? resource.projectRelativePath : resource.displayName;
       if (isImageResource(resource) || !isConversationSourcePreviewable(path)) {
-        openFilePreview({ kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id }, isImageResource(resource));
+        openFilePreview(
+          { kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id },
+          isImageResource(resource),
+          location ?? (resource.kind === 'file' ? resource.location : undefined),
+        );
         return;
       }
     }
@@ -2253,7 +2257,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (!result.opened) throw new Error('conversation_resource_open_failed');
     if (result.mode === 'zeus_source' && result.preview) {
       setContextFullWidth(false);
-      setContextWorkspace({ kind: 'source', preview: result.preview, viewMode: defaultSourceWorkspaceViewMode(result.preview) });
+      /** 点击位置优先于资源首次登记的位置，重新打开同文件也产生新定位。 */
+      const preview = result.preview.kind === 'source' ? { ...result.preview, location: location ?? (resource.kind === 'file' ? resource.location : undefined) ?? result.preview.location } : result.preview;
+      setContextWorkspace({ kind: 'source', preview, viewMode: defaultSourceWorkspaceViewMode(preview) });
       return;
     }
     if (result.mode === 'zeus_browser') {
@@ -2930,6 +2936,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {contextWorkspace.kind === 'file' ? (
                         <FilePreviewWorkspace
                           request={contextWorkspace.request}
+                          location={contextWorkspace.location}
                           language={props.language}
                           toolbarHost={contextToolbarHost}
                           canSplit={browserLayoutWidth > 840}

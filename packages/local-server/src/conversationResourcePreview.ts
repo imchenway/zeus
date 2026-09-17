@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview, type FileReview } from '@zeus/shared';
+import { getFileReviewDiff } from '@zeus/git-core';
 import { toConversationResourceOpenIntent } from './conversationResources.js';
 
 export function isObjectLike(value: unknown): value is object {
@@ -60,6 +61,23 @@ export function sourcePreviewLineCount(content: string): number {
   const normalized = content.replace(/\r\n?/gu, '\n');
   if (normalized === '') return 1;
   return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n').length;
+}
+
+/** 两类审阅在授权根内读取同一份 Git 状态，失败不阻断源码阅读。 */
+export async function readConversationFileReview(resource: Exclude<ConversationResource, { kind: 'website' }>, intent: ReturnType<typeof toConversationResourceOpenIntent>): Promise<FileReview | undefined> {
+  if (resource.kind !== 'file') return undefined;
+  /** 行号来自登记资源，点击时可由渲染层覆盖本次定位。 */
+  const review: FileReview = { location: resource.location };
+  try {
+    /** Git 读取前再次校验真实文件路径，拒绝符号链接逃逸。 */
+    const root = realpathSync(String(intent.authority.allowedRoot || ''));
+    const path = realpathSync(String(intent.target.absolutePath || ''));
+    if (path === root || !isPathInsideRoot(path, root) || relative(root, path).split(sep).includes('.git')) throw new Error('文件不在允许审阅的目录内。');
+    review.diff = await getFileReviewDiff(path);
+  } catch (error) {
+    review.error = error instanceof Error ? error.message : 'Git 差异读取失败。';
+  }
+  return review;
 }
 
 /** 预览格式独立于模型图片输入格式，SVG 仅作为图片元素读取。 */

@@ -1,10 +1,10 @@
-import type { ConversationResource } from '@zeus/shared';
+import type { ConversationResource, ConversationFileLocation } from '@zeus/shared';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { OpenWithMenu } from './ConversationResources.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { ConversationOpenTarget } from '@zeus/shared';
-import { FilePreview, PreviewImage } from '../code/FilePreview.js';
+import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -25,6 +25,7 @@ export type SourceWorkspaceViewMode = 'preview' | 'source';
 
 /** Markdown 默认展示排版，其余文件直接展示源码。 */
 export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePreview): SourceWorkspaceViewMode {
+  if (preview.kind === 'source' && preview.location?.line) return 'source';
   return supportsMarkdownPreview(preview) ? 'preview' : 'source';
 }
 
@@ -302,68 +303,74 @@ function SourceWorkspaceView(props: {
         </div>
       </div>
       {sourcePreview?.truncated ? <div role="status">{zh ? '预览已截断' : 'Preview truncated'}</div> : null}
-      <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
-        {props.preview.kind === 'image' ? (
-          <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
-        ) : renderedMarkdown ? (
-          <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
-        ) : (
-          <Suspense fallback={<div role="status">{zh ? '正在打开源码…' : 'Opening source…'}</div>}>
-            <SourceCodePreview
-              key={props.preview.resource.id}
-              path={displayPath}
-              content={props.preview.content}
-              language={props.preview.language}
-              label={zh ? `${displayPath} 源码` : `${displayPath} source`}
-              location={props.preview.location}
-              widgets={widgets}
-              focusWidget={widgets.find((widget) => widget.line === activeCommentLine)?.element}
-              onComment={props.onCommentsChange ? beginComment : undefined}
-              commentLabel={commentLabel}
-            />
-            {widgets.map((widget) =>
-              createPortal(
-                <>
-                  {comments
-                    .filter((comment) => comment.position.line === widget.line)
-                    .map((comment) =>
-                      editingCommentId === comment.id ? (
-                        <CodeCommentPanel
-                          key={comment.id}
-                          language={props.language}
-                          position={comment.position}
-                          comment={comment}
-                          onCancel={() => setEditingCommentId(null)}
-                          onSave={(body) => saveComment(comment.position, body, comment.id)}
-                          onDelete={() => {
-                            props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
-                            setEditingCommentId(null);
-                          }}
-                        />
-                      ) : (
-                        <span key={comment.id} className="session-saved-code-comment">
-                          <strong>{zh ? '本地评论' : 'Local comment'}</strong>
-                          <span>{comment.body}</span>
-                          <span className="session-saved-code-comment-actions">
-                            <button type="button" onClick={() => setEditingCommentId(comment.id)}>
-                              {zh ? '编辑' : 'Edit'}
-                            </button>
-                            <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
-                              {zh ? '删除' : 'Delete'}
-                            </button>
+      <FileReviewContent
+        key={`${props.preview.resource.id}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
+        review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
+        zh={zh}
+      >
+        <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
+          {props.preview.kind === 'image' ? (
+            <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
+          ) : renderedMarkdown ? (
+            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
+          ) : (
+            <Suspense fallback={<div role="status">{zh ? '正在打开源码…' : 'Opening source…'}</div>}>
+              <SourceCodePreview
+                key={props.preview.resource.id}
+                path={displayPath}
+                content={props.preview.content}
+                language={props.preview.language}
+                label={zh ? `${displayPath} 源码` : `${displayPath} source`}
+                location={props.preview.location}
+                widgets={widgets}
+                focusWidget={widgets.find((widget) => widget.line === activeCommentLine)?.element}
+                onComment={props.onCommentsChange ? beginComment : undefined}
+                commentLabel={commentLabel}
+              />
+              {widgets.map((widget) =>
+                createPortal(
+                  <>
+                    {comments
+                      .filter((comment) => comment.position.line === widget.line)
+                      .map((comment) =>
+                        editingCommentId === comment.id ? (
+                          <CodeCommentPanel
+                            key={comment.id}
+                            language={props.language}
+                            position={comment.position}
+                            comment={comment}
+                            onCancel={() => setEditingCommentId(null)}
+                            onSave={(body) => saveComment(comment.position, body, comment.id)}
+                            onDelete={() => {
+                              props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
+                              setEditingCommentId(null);
+                            }}
+                          />
+                        ) : (
+                          <span key={comment.id} className="session-saved-code-comment">
+                            <strong>{zh ? '本地评论' : 'Local comment'}</strong>
+                            <span>{comment.body}</span>
+                            <span className="session-saved-code-comment-actions">
+                              <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                                {zh ? '编辑' : 'Edit'}
+                              </button>
+                              <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                                {zh ? '删除' : 'Delete'}
+                              </button>
+                            </span>
                           </span>
-                        </span>
-                      ),
-                    )}
-                  {draftPosition?.line === widget.line ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
-                </>,
-                widget.element,
-                String(widget.line),
-              ),
-            )}
-          </Suspense>
-        )}
-      </div>
+                        ),
+                      )}
+                    {draftPosition?.line === widget.line ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
+                  </>,
+                  widget.element,
+                  String(widget.line),
+                ),
+              )}
+            </Suspense>
+          )}
+        </div>
+      </FileReviewContent>
     </section>
   );
 }
@@ -390,6 +397,8 @@ function basename(path: string): string {
 /** 通用文件沿用会话右侧审阅容器，预览组件负责授权读取、格式展示和失败重试。 */
 export function FilePreviewWorkspace(props: {
   request: FilePreviewRequest;
+  /** 本次点击的位置独立于资源首次登记的行号。 */
+  location?: ConversationFileLocation;
   language: SessionUiLanguage;
   toolbarHost?: HTMLElement | null;
   fullWidth: boolean;
@@ -430,7 +439,7 @@ export function FilePreviewWorkspace(props: {
   return (
     <section className="session-context-workspace session-source-workspace" aria-label={zh ? '文件审阅' : 'File review'}>
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
-      <FilePreview request={props.request} zh={zh} />
+      <FilePreview request={props.request} location={props.location} zh={zh} />
     </section>
   );
 }

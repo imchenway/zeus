@@ -198,7 +198,7 @@ export function registerFilePreview(services: {
     const items = await Promise.all(
       intent.sides.slice(0, 2).map(async (source): Promise<FilePreviewItem> => {
         /** 当前已授权的文件描述。 */
-        const item: FilePreviewItem = { id: '', name: source.name, label: source.label, kind: 'unavailable', mime: filePreviewMime(source.name), byteLength: 0 };
+        const item: FilePreviewItem = { id: '', name: source.name, label: source.label, kind: 'unavailable', mime: filePreviewMime(source.name), byteLength: 0, review: source.review };
         /** 本次资源专属临时目录。 */
         let temporary: string | undefined;
         try {

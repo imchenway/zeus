@@ -177,7 +177,7 @@ export function ConversationInlineResource(
     setBusy(true);
     setError(null);
     try {
-      await props.onOpenResource(props.resource, defaultOpenTarget(props.resource));
+      await props.onOpenResource(props.resource, defaultOpenTarget(props.resource), props.resource.kind === 'file' ? props.resource.location : undefined);
     } catch (openError) {
       setError(openError);
     } finally {

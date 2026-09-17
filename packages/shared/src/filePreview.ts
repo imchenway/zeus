@@ -1,3 +1,35 @@
+import type { ConversationFileLocation } from './conversationResources.js';
+
+/** 文件审阅沿用 Git 差异视图的行结构。 */
+export interface FileReviewDiff {
+  /** 变更前后的仓库相对路径。 */
+  oldPath: string;
+  newPath: string;
+  /** Git 识别的变更种类与增删统计。 */
+  changeType: 'added' | 'deleted' | 'modified' | 'renamed' | 'copied';
+  addedLines: number;
+  deletedLines: number;
+  /** 原始行号与补丁片段，由受信后端解析。 */
+  hunks: Array<{
+    header: string;
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: Array<{ type: 'context' | 'addition' | 'deletion' | 'metadata'; content: string; oldLineNumber: number | null; newLineNumber: number | null }>;
+  }>;
+}
+
+/** 源码与通用文件审阅共用位置和当前 Git 状态。 */
+export interface FileReview {
+  /** 会话引用的原始位置。 */
+  location?: ConversationFileLocation;
+  /** null 表示仓库内没有差异，缺省表示不属于 Git 仓库。 */
+  diff?: FileReviewDiff | null;
+  /** Git 读取失败仍允许阅读源码，并明确展示原因。 */
+  error?: string;
+}
+
 /** 文件内容的展示方式，与模型附件上传能力独立。 */
 export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'audio' | 'video' | 'system' | 'unavailable';
 
@@ -12,6 +44,8 @@ export type FilePreviewRequest =
 
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
+  /** 会话文件的行定位与 Git 差异。 */
+  review?: FileReview;
   /** 展示名称保留原始扩展名。 */
   name: string;
   /** 明确区分工作区、索引与历史内容。 */
@@ -36,6 +70,8 @@ export interface FilePreviewIntent {
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */
 export interface FilePreviewItem {
+  /** 随授权内容返回审阅信息，不扩大文件读取权限。 */
+  review?: FileReview;
   /** 主进程生成的不可猜测资源身份。 */
   id: string;
   /** 原始文件名。 */
