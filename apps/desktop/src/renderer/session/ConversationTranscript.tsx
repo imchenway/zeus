@@ -2006,7 +2006,7 @@ function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage;
   );
 }
 
-/** 错误区只说明原因和提供详情，不追加恢复或重试操作行。 */
+/** 发送失败在原消息旁重试；送达未知时只核对状态，避免重复发送。 */
 export function MessageDeliveryOutcomeFeedback(props: {
   item: NativeSessionItemBuffer;
   submissionId?: string;
@@ -2021,6 +2021,10 @@ export function MessageDeliveryOutcomeFeedback(props: {
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
+  /** 操作期间禁用按钮，失败原因仍留在原消息旁。 */
+  const [pending, setPending] = useState(false);
+  /** 保留本次重试或核对的错误，不覆盖原消息的持久送达记录。 */
+  const [actionError, setActionError] = useState<unknown>(null);
   const pausedReason = props.item.payload.pausedReason;
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
   if (interactionResponseRecovery && props.item.status === 'queued') {
@@ -2040,12 +2044,53 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
-  if (!deliveryError || (!failed && !unconfirmed)) return null;
+  if (!failed && !unconfirmed) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
+  /** 确切的未知送达仅开放核对；普通重试也会由现有接口先检查未发送证据。 */
+  const checkOnly = Boolean(props.submissionId) && (props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown');
+  /** 已落库消息沿用提交身份，本地发送失败沿用原客户端消息身份。 */
+  const canAct = props.submissionId ? Boolean(checkOnly ? props.onRecoverQueue : props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
+  /** 复用现有重试与只读核对，不把失败正文重新作为一条普通新消息提交。 */
+  async function retryDelivery(): Promise<void> {
+    if (pending || !canAct) return;
+    setPending(true);
+    setActionError(null);
+    try {
+      if (props.submissionId) {
+        if (checkOnly) await props.onRecoverQueue?.();
+        else await props.onRetryQueuedSubmission?.(props.submissionId);
+      } else if (props.clientUserMessageId) {
+        await props.onRetryPendingSend?.(props.clientUserMessageId, checkOnly ? 'check' : 'continue');
+      }
+    } catch (error) {
+      setActionError(error);
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
     <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
-      <VisibleApplicationError className="session-message-delivery-error" error={deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+      {actionError || deliveryError ? (
+        <VisibleApplicationError className="session-message-delivery-error" error={actionError ?? deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+      ) : (
+        <span>
+          {unconfirmed && pausedReason !== 'recovered_unsent'
+            ? props.language === 'zh-CN'
+              ? '暂时无法确认消息的发送状态。'
+              : 'Message delivery status is not yet confirmed.'
+            : props.language === 'zh-CN'
+              ? '消息尚未发送。'
+              : 'This message has not been sent.'}
+        </span>
+      )}
+      {canAct ? (
+        <div className="session-message-delivery-actions">
+          <button type="button" disabled={pending} onClick={() => void retryDelivery()}>
+            {pending ? (props.language === 'zh-CN' ? '处理中…' : 'Working…') : checkOnly ? (props.language === 'zh-CN' ? '检查处理状态' : 'Check processing status') : props.language === 'zh-CN' ? '重试' : 'Retry'}
+          </button>
+        </div>
+      ) : null}
     </ConversationNotice>
   );
 }
@@ -2055,7 +2100,13 @@ function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer,
   if (item.status === 'failed' || item.status === 'unconfirmed') return true;
   if (item.status === 'queued') return false;
   if (item.status === 'paused')
-    return item.payload.pausedReason === 'outcome_unknown' || item.payload.pausedReason === 'recovery_required' || item.payload.pausedReason === 'provider_stop_pending' || item.payload.pausedReason === 'recovered_unsent';
+    return (
+      Boolean(item.payload.deliveryError || item.payload.error) ||
+      item.payload.pausedReason === 'outcome_unknown' ||
+      item.payload.pausedReason === 'recovery_required' ||
+      item.payload.pausedReason === 'provider_stop_pending' ||
+      item.payload.pausedReason === 'recovered_unsent'
+    );
   return !showActiveStatus;
 }
 

@@ -21,6 +21,8 @@ const apiToken = 'conversation-queue-restart-probe-token';
 const projectId = `project_${randomUUID().replaceAll('-', '')}`;
 const providerThreadId = `thread_${randomUUID().replaceAll('-', '')}`;
 const firstProviderTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
+/** 旧日志仍记为运行中的已结束轮次，分别覆盖防止回退和修复已有回退。 */
+const staleHistoricalTurnIds = [randomUUID(), randomUUID()];
 const secondProviderTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
 /** 额度故障恢复后必须在同一线程建立的新轮次。 */
 const quotaRecoveryTurnId = `turn_${randomUUID().replaceAll('-', '')}`;
@@ -118,6 +120,36 @@ try {
     const firstTurn = turns.listByConversation(conversationId).find((turn) => turn.providerTurnId === firstProviderTurnId);
     assertBehavior(firstSubmission, '重启前缺少首轮 submission。');
     assertBehavior(firstTurn, '重启前缺少首轮 turn。');
+    for (const [index, providerTurnId] of staleHistoricalTurnIds.entries()) {
+      /** 完整接纳和终结事实属于主提交，不能用引导或未知送达记录代替。 */
+      const historicalSubmission = submissions.createOrGet({
+        id: `historical_${providerTurnId}`,
+        conversationId,
+        idempotencyKey: providerTurnId,
+        requestHash: providerTurnId,
+        clientMessageId: providerTurnId,
+        kind: 'message',
+        requestedDelivery: 'queue',
+        status: 'active',
+        input: { ...JSON.parse(firstSubmission.inputJson), text: '已结束的历史主提交' },
+        createdAt: firstTurn.createdAt,
+      });
+      submissions.updateStatus(historicalSubmission.id, 'completed', {
+        providerTurnId,
+        resolvedAt: firstTurn.createdAt,
+      });
+      // 只为临时数据库补齐旧宿主已持久化的接纳事实。
+      database.execute('UPDATE conversation_submissions SET accepted_at = ? WHERE id = ?', [firstTurn.createdAt, historicalSubmission.id]);
+      turns.upsert({
+        ...firstTurn,
+        id: `historical_${providerTurnId}`,
+        providerTurnId,
+        nativeRunId: providerTurnId,
+        clientSubmissionId: historicalSubmission.id,
+        status: index === 0 ? 'interrupted' : 'running',
+        completedAt: index === 0 ? firstTurn.createdAt : null,
+      });
+    }
     submissions.updateStatus(firstSubmission.id, 'active', {
       providerTurnId: firstProviderTurnId,
       acceptedAt: firstSubmission.acceptedAt ?? new Date().toISOString(),
@@ -173,7 +205,8 @@ try {
   const restartedProvider = createRestartProbeManager({
     providerThreadId,
     turnIds: [secondProviderTurnId, quotaRecoveryTurnId, ...Array.from({ length: 8 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
-    initialTurns: [completedFirstTurn],
+    // 线程实时状态已空闲，但历史日志在进程退出前没有写下结束标记。
+    initialTurns: [...staleHistoricalTurnIds.map((id) => ({ id, threadId: providerThreadId, status: 'inProgress', items: [] })), completedFirstTurn],
   });
   runningServer = await startProbeServer(restartedProvider.manager, 'after-restart');
   /** 路由真正进入 Pi 校验后，原始队首错误和写前回执必须保留。 */
@@ -214,6 +247,15 @@ try {
   await waitFor(() => restartedProvider.startTurnInputs.length === 1, 'Provider 已确认 idle，但统一队列没有被 queue.changed 再次唤醒。', 8_000);
   const secondStart = restartedProvider.startTurnInputs[0];
   assertBehavior(secondStart?.clientUserMessageId === secondClientMessageId, '重启后 turn/start 没有消费新消息的稳定 clientUserMessageId。');
+  /** 读取临时服务的实际落库结果，验证旧轮次没有再次占据活动位置。 */
+  const historicalInspection = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    for (const providerTurnId of staleHistoricalTurnIds) {
+      assertBehavior(historicalInspection.prepare('SELECT status FROM conversation_turns WHERE provider_turn_id = ?').get(providerTurnId)?.status === 'interrupted', '已结束的旧历史不得恢复为运行中，也不得伪造为成功。');
+    }
+  } finally {
+    historicalInspection.close();
+  }
 
   const snapshot = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/snapshot-v2`);
   const snapshotBody = snapshot.body;
@@ -345,6 +387,7 @@ try {
         immutablePayloadProtected: true,
         restartCount: 1,
         staleLocalTurnReconciled: true,
+        terminalHistoricalTurnsStayEnded: true,
         providerAuthorityReads: restartedProvider.readThreadCalls,
         queueChangedRedispatch: true,
         secondProviderTurnId,

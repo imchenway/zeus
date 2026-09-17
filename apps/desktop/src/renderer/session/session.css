@@ -1333,6 +1333,8 @@
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
   min-block-size: 48px;
+  /* 网格内允许错误摘要收缩，窄分栏仍保留详情与重试按钮。 */
+  min-inline-size: 0;
   padding: 10px 16px;
 }
 
