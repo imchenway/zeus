@@ -669,7 +669,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
-    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
     // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
     if (isNonTextModelRequestOutput(itemType)) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
@@ -950,7 +949,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!providerTurnId || !providerItemId || !turn) return;
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
-    if (itemType === 'contextCompaction') options.execution.markTurnModelRequestsAsContextCompaction(conversation.id, turn.id);
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
@@ -973,6 +971,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       completedAt: event.receivedAt,
       updatedAt: event.receivedAt,
     });
+    if (itemType === 'contextCompaction') {
+      // 自动压缩可发生在普通轮次内部，只修正本次压缩期间的用量，保留同轮正常回答。
+      const compactionStartedAt = item.startedAt ?? (turn.clientSubmissionId === null ? (turn.startedAt ?? turn.createdAt) : null);
+      if (compactionStartedAt) options.execution.markModelRequestsAsContextCompaction(conversation.id, turn.id, compactionStartedAt, event.receivedAt);
+    }
     projectProcessItem({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -1275,7 +1278,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (segment && turn) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
       const latestRecordedRequest = recordedRequests.at(-1);
-      const contextCompactionTurn = options.providerItems.listByConversation(conversation.id).some((item) => item.turnId === turn.id && item.itemType === 'contextCompaction');
+      // 用最近的模型产物划分请求边界；同轮曾经压缩不代表后续正常回答也是压缩。
+      const turnModelItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id && item.itemType !== 'userMessage');
+      const latestModelItem = turnModelItems.reduce<ZeusConversationItemRecord | undefined>((latest, item) => (!latest || item.updatedAt > latest.updatedAt ? item : latest), undefined);
+      const contextCompactionRequest = turnModelItems.some((item) => item.itemType === 'contextCompaction' && item.status === 'in_progress') || latestModelItem?.itemType === 'contextCompaction';
       const exactRequest =
         latestRecordedRequest &&
         latestRecordedRequest.providerRequestId !== null &&
@@ -1287,16 +1293,21 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         latestRecordedRequest.totalTokens === last.totalTokens
           ? latestRecordedRequest
           : undefined;
-      // app-server 的兼容 token_count 事件通常不带 requestKind；同轮首个请求是推理，
-      // 后续请求只会在工具结果续跑后出现。显式 retry/compaction 标记仍优先。
+      // 显式请求类型优先；兼容事件根据当前产物判别，压缩后的首次回答仍属于推理。
       const requestKind =
-        tokenUsage.requestKind === 'context_compaction' || contextCompactionTurn
+        tokenUsage.requestKind === 'context_compaction'
           ? 'context_compaction'
           : tokenUsage.requestKind === 'retry'
             ? 'retry'
-            : tokenUsage.requestKind === 'tool_continuation' || recordedRequests.length > 0
-              ? 'tool_continuation'
-              : 'inference';
+            : tokenUsage.requestKind === 'inference'
+              ? 'inference'
+              : tokenUsage.requestKind === 'tool_continuation'
+                ? 'tool_continuation'
+                : contextCompactionRequest
+                  ? 'context_compaction'
+                  : recordedRequests.some((request) => request.requestKind !== 'context_compaction')
+                    ? 'tool_continuation'
+                    : 'inference';
       if (exactRequest) {
         options.execution.enrichModelRequest(exactRequest.id, { contextWindow: modelContextWindow, estimatedUsd: snapshot.lastApiEquivalentUsd });
       } else {

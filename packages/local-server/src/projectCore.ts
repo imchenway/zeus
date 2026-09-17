@@ -1,3 +1,5 @@
+import { assertContextCapacity } from '@zeus/shared';
+
 /** Local Server 的项目配置领域规则。 */
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type ProjectServiceTierPreference = 'standard' | 'priority';
@@ -10,6 +12,8 @@ export interface ProjectModelServiceTierPreference {
 
 export interface ProjectConfigSnapshot {
   projectId: string;
+  /** 仅影响后续新建会话；空值保留默认。 */
+  contextCapacityTokens: number | null;
   defaultModel: string | null;
   serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultWorkMode: ProjectWorkMode;
@@ -38,6 +42,8 @@ export interface ProjectConfigSnapshot {
 }
 
 export interface UpdateProjectConfigBody {
+  /** 外部输入需严格校验，不进行数字字符串转换。 */
+  contextCapacityTokens?: unknown;
   defaultModel?: unknown;
   serviceTierPreferences?: unknown;
   defaultWorkMode?: unknown;
@@ -55,6 +61,7 @@ export interface UpdateProjectConfigBody {
 export function createDefaultProjectConfig(projectId: string): ProjectConfigSnapshot {
   return {
     projectId,
+    contextCapacityTokens: null,
     defaultModel: null,
     serviceTierPreferences: [],
     defaultWorkMode: 'plan',
@@ -74,6 +81,13 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   if (value === undefined) return fallback;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as UpdateProjectConfigBody;
+  /** 缺省保留原设置，旧项目归一化为默认。 */
+  const contextCapacityTokens = raw.contextCapacityTokens === undefined ? (fallback.contextCapacityTokens ?? null) : raw.contextCapacityTokens;
+  try {
+    assertContextCapacity(contextCapacityTokens);
+  } catch {
+    return null;
+  }
   const defaultModel = normalizeOptionalSingleLine(raw.defaultModel, 80, fallback.defaultModel);
   const serviceTierPreferences = normalizeProjectModelServiceTierPreferences(raw.serviceTierPreferences, fallback.serviceTierPreferences);
   const languagePrimary = normalizeIdentifierText(raw.language?.primary, fallback.language.primary);
@@ -98,6 +112,7 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   return {
     projectId,
     defaultModel,
+    contextCapacityTokens: contextCapacityTokens as number | null,
     serviceTierPreferences,
     defaultWorkMode: isProjectWorkMode(raw.defaultWorkMode) ? raw.defaultWorkMode : fallback.defaultWorkMode,
     language: { primary: languagePrimary, additional: languageAdditional },

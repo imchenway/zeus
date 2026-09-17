@@ -4,6 +4,8 @@ import type { CodexModelCapability } from './codexAppServerManager.js';
 
 export interface CodexModelBudgetEvidence {
   readonly contextWindowTokens: number;
+  /** 引擎目录声明的最大窗口，与默认窗口分开。 */
+  readonly maximumContextWindowTokens?: number;
   readonly reservedOutputTokens: number;
   readonly contextWindowSource: string;
   readonly reservedOutputSource: string;
@@ -13,6 +15,8 @@ export interface CodexModelBudgetEvidence {
 interface CodexModelCacheSnapshot {
   fetchedAt: string;
   windows: ReadonlyMap<string, number>;
+  /** 同一目录中的可配置上限。 */
+  maximumWindows: ReadonlyMap<string, number>;
 }
 
 interface VerifiedBudget {
@@ -51,6 +55,7 @@ export function resolveCodexModelBudgetSnapshot(input: {
     const cacheSource = input.providerVersion ? `codex_cli_models_cache:${input.providerVersion}:${model.model}` : null;
     budgets[model.model] = Object.freeze({
       contextWindowTokens,
+      maximumContextWindowTokens: positiveIntegerOrNull(model.raw.max_context_window ?? model.raw.maxContextWindow) ?? cache?.maximumWindows.get(model.model) ?? contextWindowTokens,
       reservedOutputTokens,
       contextWindowSource: reportedContextWindow ? appServerSource : cachedContextWindow ? cacheSource! : verified!.evidenceSource,
       reservedOutputSource: reportedReservedOutput ? appServerSource : verified?.reservedOutputTokens ? verified.evidenceSource : 'zeus_conservative_window_eighth_max_32768',
@@ -82,12 +87,16 @@ function readCompatibleModelCache(codexHome: string | null, providerVersion: str
     const initializedAtMs = Date.parse(initializedAt);
     if (!Number.isFinite(fetchedAtMs) || !Number.isFinite(initializedAtMs) || initializedAtMs - fetchedAtMs > maximumCatalogAgeMs || fetchedAtMs - initializedAtMs > maximumFutureClockSkewMs) return null;
     const windows = new Map<string, number>();
+    /** 未声明最大窗口时仅提供已知窗口范围。 */
+    const maximumWindows = new Map<string, number>();
     for (const candidate of parsed.models) {
       if (!isRecord(candidate) || typeof candidate.slug !== 'string') continue;
       const contextWindow = positiveIntegerOrNull(candidate.context_window);
       if (contextWindow) windows.set(candidate.slug, contextWindow);
+      const maximum = positiveIntegerOrNull(candidate.max_context_window);
+      if (maximum) maximumWindows.set(candidate.slug, maximum);
     }
-    return windows.size > 0 ? { fetchedAt: new Date(fetchedAtMs).toISOString(), windows } : null;
+    return windows.size > 0 ? { fetchedAt: new Date(fetchedAtMs).toISOString(), windows, maximumWindows } : null;
   } finally {
     closeSync(fileDescriptor);
   }

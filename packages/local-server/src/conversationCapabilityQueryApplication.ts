@@ -43,6 +43,9 @@ export interface TaskPushGitReadPort {
 }
 
 interface ConversationCapabilityQueryPorts {
+  /** 已存在的目录与运行验收证据只读投影，不为查询启动引擎。 */
+  readContextCapacitySupport?: (model: ConversationCapabilityModel) => import('@zeus/shared').ContextCapacityCapability;
+  readProjectContextCapacity?: (projectId: string) => number | null;
   /** 只读取本地仓库发现的持久状态，不启动扫描。 */
   settings: Pick<SettingRepository, 'getJson'>;
   projects: Pick<ProjectRepository, 'getById'>;
@@ -69,6 +72,8 @@ interface ConversationCapabilityQueryPorts {
 }
 
 export interface ConversationCapabilityModel {
+  /** 服务端可验证的指定预算与不可用原因。 */
+  contextCapacity?: import('@zeus/shared').ContextCapacityCapability;
   id: string;
   model: string;
   displayName?: string;
@@ -94,6 +99,8 @@ export interface ConversationCapabilityModel {
 }
 
 export interface ConversationCapabilitiesSnapshot {
+  /** 仅用于展示，实际继承在服务端接纳时冻结。 */
+  projectContextCapacityTokens?: number | null;
   generationId: string;
   initializedAt: string;
   projectId: string;
@@ -135,7 +142,7 @@ export class ConversationCapabilityQueryApplication {
   async readDigitalEmployee(): Promise<DigitalEmployeeCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels());
+    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels()).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
     const snapshot = {
       goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
@@ -232,13 +239,14 @@ export class ConversationCapabilityQueryApplication {
     const connectionSelection = await this.ports.modelCatalog.getProjectSelection(project.id);
     const connectionCatalog = await this.ports.modelCatalog.listSelectableModels();
     const allowedConnectionModels = connectionCatalog.filter((model) => connectionSelection.allowedModelRefs.includes(model.id));
-    const models = mapConversationCapabilityModels(codexCapabilities, allowedConnectionModels);
+    const models = mapConversationCapabilityModels(codexCapabilities, allowedConnectionModels).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const configuredModel = this.ports.readConfiguredModel(project.id);
     // 已配置的模型失效时保留原引用，禁止读取目录顺带切换模型。
     const requestedModel = connectionSelection.defaultModelRef ?? configuredModel;
     const preferredModel = requestedModel ? (resolveModelCapability(models, requestedModel)?.id ?? requestedModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
+      projectContextCapacityTokens: this.ports.readProjectContextCapacity?.(project.id) ?? null,
       goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),

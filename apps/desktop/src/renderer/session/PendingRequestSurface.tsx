@@ -587,8 +587,6 @@ export interface RequestUserInputPanelProps extends Omit<PendingRequestSurfacePr
   questions: RequestQuestion[];
   /** 异步回答在 Provider 确认前保留草稿。 */
   retainDraft?: boolean;
-  /** 选择选项后显式提交，避免预选被误当作回答。 */
-  confirmSelection?: boolean;
   /** 历史轮次的答复通过明确的新消息动作发送。 */
   submitLabel?: string;
   /** 异步面板收起只改变展示，不产生跳过请求。 */
@@ -626,7 +624,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   const otherSelected = selectedValues.includes(otherAnswerControlValue(currentQuestion));
   const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
   const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
-  const showSubmitAction = props.confirmSelection === true || currentQuestion.kind !== 'single' || otherSelected;
+  /** 单选预设答案点击即提交；自由输入和多选仍保留提交按钮。 */
+  const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
 
   useApplicationErrorDialog(resourceError, {
     language: zh ? 'zh-CN' : 'en',
@@ -728,10 +727,12 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
     else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers, nextAttachments)) void finish(nextAnswers, nextOtherAnswers, nextAttachments);
   }
 
+  /** 单选点击确认当前答案并推进，多选点击只切换勾选状态。 */
   function selectOption(optionLabel: string): void {
     if (responding) return;
     snooze();
-    const checked = !selectedValues.includes(optionLabel);
+    /** 草稿恢复或提交失败后，再次点击同一单选答案也应直接发送。 */
+    const checked = currentQuestion.kind !== 'multiple' || !selectedValues.includes(optionLabel);
     const nextAnswers = updateQuestionAnswers(answers, currentQuestion, optionLabel, checked);
     const switchingFromOther = currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion) && currentAttachments.length > 0;
     const nextAttachments = switchingFromOther ? { ...answerAttachments, [currentQuestion.id]: [] } : answerAttachments;
@@ -740,7 +741,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
       setAnswerAttachments(nextAttachments);
       void discardAnswerAttachmentResources(currentAttachments);
     }
-    if (!props.confirmSelection && currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
+    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
   }
 
   function removeAnswerAttachment(questionId: string, attachment: NativeConversationAttachment): void {

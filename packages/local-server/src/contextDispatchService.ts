@@ -28,6 +28,8 @@ export interface ContextDispatchTask {
 }
 
 export interface ContextDispatchProviderSnapshot {
+  /** 可选资料额外受会话窗口容量约束；不会裁剪用户正文。 */
+  contextCapacityTokens?: number | null;
   id: string;
   modelId: string;
   contextWindowTokens: number;
@@ -201,15 +203,19 @@ export class ContextDispatchApplicationService {
       : { fragment: null, selection: { primary: null, candidates: [], truncatedDirectory: false }, page: null };
     const fragments = [taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment), ...selectedFragments].filter((fragment): fragment is ContextFragment => fragment !== null);
     const requestAccountingInput = normalizeRequestAccounting(input.provider.requestAccounting);
+    /** 缩小窗口时只收紧可选资料注入；既有历史交给引擎原生逻辑处理。 */
+    const contextWindowTokens = input.provider.contextCapacityTokens ?? input.provider.contextWindowTokens;
+    const reservedOutputTokens = Math.min(input.provider.reservedOutputTokens, contextWindowTokens);
+    const requestBudgetTokens = contextWindowTokens - reservedOutputTokens;
     const compile = (currentInputTokens: number) =>
       compileContext({
         asOf,
         operationRisk: input.operationRisk,
         provider: {
           id: input.provider.id,
-          contextWindowTokens: input.provider.contextWindowTokens,
-          reservedOutputTokens: input.provider.reservedOutputTokens,
-          currentInputTokens,
+          contextWindowTokens,
+          reservedOutputTokens,
+          currentInputTokens: Math.min(currentInputTokens, requestBudgetTokens),
           capabilities: input.provider.capabilities,
         },
         projectId: project.id,
@@ -232,10 +238,9 @@ export class ContextDispatchApplicationService {
       const firstRendered = renderCompiledContext(compiled);
       const renderedTokens = counter.count(JSON.stringify(firstRendered));
       const compilerEnvelopeTokens = Math.max(256, renderedTokens - compiled.usedTokens + 256);
-      const requestBudgetTokens = input.provider.contextWindowTokens - input.provider.reservedOutputTokens;
       const fixedRequestTokens = requestAccountingInput.historyBaselineTokens + requestAccountingInput.fixedInputTokens + requestAccountingInput.estimateSafetyMarginTokens + compilerEnvelopeTokens;
       const compilerCurrentInputTokens = Math.min(requestBudgetTokens, fixedRequestTokens);
-      if (compilerCurrentInputTokens !== input.provider.currentInputTokens) compiled = compile(compilerCurrentInputTokens);
+      if (compilerCurrentInputTokens !== input.provider.currentInputTokens || input.provider.contextCapacityTokens != null) compiled = compile(compilerCurrentInputTokens);
       requestAccounting = {
         ...requestAccountingInput,
         compilerEnvelopeTokens,

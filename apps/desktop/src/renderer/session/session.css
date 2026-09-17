@@ -10505,6 +10505,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 /* ZEUS-0212：输入优先，左侧保留权限与计划，右侧承载上下文占用、速度、完整模型名与推理强度。 */
 .session-codex-parity-v1 .session-composer-input-frame {
+  /* 按输入框实际宽度换行，兼顾窗口和浏览器分栏收窄。 */
+  container-name: session-composer;
+  container-type: inline-size;
   box-shadow:
     0 5px 18px var(--session-shadow-soft),
     0 1px 2px var(--session-shadow-soft);
@@ -10541,6 +10544,21 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   flex-wrap: wrap;
   justify-content: flex-end;
   min-inline-size: 0;
+}
+
+/* 容量文字完整保留；窄栏将设置组放到下一行，避免挤成纵向按钮列。 */
+.session-codex-parity-v1 .session-composer-capacity-dropdown {
+  flex: 0 0 auto;
+}
+
+@container session-composer (max-width: 560px) {
+  .session-codex-parity-v1 .session-composer-command-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-composer-trailing-actions {
+    inline-size: 100%;
+  }
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator {
@@ -11028,6 +11046,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
   .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
     max-inline-size: min(260px, 48vw);
+  }
+}
+
+/* 以输入框宽度覆盖模型框通用上限，给推理强度保留同一行的点击空间。 */
+@container session-composer (max-width: 560px) {
+  .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
+    max-inline-size: calc(100% - 56px);
   }
 }
 /* ZEUS-0288：消息从提交到 Provider 接管保持同一视觉身份，流式过程使用持续而非逐增量重启动画。 */

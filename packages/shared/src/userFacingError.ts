@@ -730,6 +730,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['AI 服务拒绝了这次请求的内容。请调整请求后再继续。', 'The AI service declined the content of this request. Revise it before continuing.'],
   ],
   [['ZEUS_UNIFIED_QUEUE_HEAD_FAILED'], ['这条消息的处理已暂停，Zeus 尚未确定具体原因。请查看错误详情。', 'Processing of this message is paused, and Zeus has not identified the cause. See the error details.']],
+  /** 队列调度失败不代表消息丢失，明确保留状态以免用户重复发送。 */
+  [
+    ['ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED'],
+    ['消息已保存，但处理已暂停。请在对话中检查状态并重新恢复，无需重复发送。', 'Your message is saved, but processing is paused. Check its status in the conversation and resume; do not send it again.', 'check'],
+  ],
   [['ZEUS_COMPUTER_SECURE_FIELD_BLOCKED'], ['密码、验证码等敏感字段需要由你在目标应用中填写。', 'Enter passwords, verification codes, and other sensitive fields yourself in the target app.']],
   [['ZEUS_COMPUTER_DISABLED'], ['尚未启用电脑操作。请在“设置 → 浏览器”中启用并授予系统权限。', 'Computer actions are disabled. Enable them and grant system permissions under Settings → Browser.', 'settings']],
   [

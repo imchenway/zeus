@@ -1,3 +1,4 @@
+import { assertContextCapacity } from '@zeus/shared';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -227,6 +228,8 @@ export interface CodexPerformanceTraceContext {
 }
 
 export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
+  /** 线程创建和恢复接受本轮上下文容量；不配置压缩时机。 */
+  contextCapacityTokens?: number | null;
   model: string;
   serviceTier?: string | null;
   cwd: string;
@@ -242,6 +245,8 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
 }
 
 export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
+  /** 线程创建和恢复接受本轮上下文容量；不配置压缩时机。 */
+  contextCapacityTokens?: number | null;
   threadId: string;
   cwd?: string;
   responsesRuntime?: CodexResponsesRuntime;
@@ -677,6 +682,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const pendingInterrupts = new Set<string>();
   const startedTurns = new Set<string>();
   const threadModels = new Map<string, string>();
+  /** 当前进程实际加载的会话容量；不能跨进程或跨线程复用。 */
+  const threadCapacities = new Map<string, { generationId: string; tokens: number | null }>();
   const threadResponsesProviders = new Map<string, CodexResponsesModelProvider>();
   let state: CodexTransportState = { type: 'idle' };
   let child: CodexAppServerProcess | null = null;
@@ -1592,6 +1599,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             // 原生线程及其子任务也不能隐式取得整个系统临时目录的写权限。
             config: {
               ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              ...contextCapacityConfig(input.contextCapacityTokens),
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,
               'sandbox_workspace_write.exclude_slash_tmp': true,
               // 原生新内核把主代理计入并发数；五个执行名额对应四个子代理。
@@ -1611,12 +1619,36 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : input.model;
       threadModels.set(thread.id, responseModel);
+      threadCapacities.set(thread.id, { generationId: capabilities.generationId, tokens: input.contextCapacityTokens ?? null });
       if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel);
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
       const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
+      /** 仅在容量变化时卸载空闲线程；保留原线程身份、历史和其他会话的运行。 */
+      const previousCapacity = threadCapacities.get(input.threadId);
+      const capacityChanged = previousCapacity?.generationId !== capabilities.generationId || previousCapacity.tokens !== (input.contextCapacityTokens ?? null);
+      let capacityApplied = !capacityChanged;
+      if (capacityChanged) {
+        const metadata = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: false }));
+        const status = parseThread(metadata.thread).status;
+        if (status && status.type !== 'active') {
+          if (status.type !== 'notLoaded') {
+            await rpc(capabilities.generationId, 'thread/unsubscribe', { threadId: input.threadId });
+            // 当前引擎约一分钟后卸载；只读确认完成后再恢复，不能把接纳配置误报为已生效。
+            const deadline = Date.now() + 90_000;
+            while (true) {
+              if (input.signal?.aborted) throw managerError('ZEUS_CONTEXT_CAPACITY_CANCELLED', '上下文容量更新已取消。');
+              const current = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: false }));
+              if (parseThread(current.thread).status?.type === 'notLoaded') break;
+              if (Date.now() >= deadline) throw managerError('ZEUS_CONTEXT_CAPACITY_PENDING', 'Codex 尚未释放空闲会话，请稍后重试容量更新。');
+              await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+            }
+          }
+          capacityApplied = true;
+        }
+      }
       const response = asRecord(
         await rpc(
           capabilities.generationId,
@@ -1629,6 +1661,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             modelProvider: responsesProvider?.id,
             config: {
               ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
+              ...contextCapacityConfig(input.contextCapacityTokens),
               // 恢复与新建遵守同一权限和子代理上限，不能恢复旧默认值。
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,
               'sandbox_workspace_write.exclude_slash_tmp': true,
@@ -1646,6 +1679,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : threadModels.get(thread.id);
       if (responseModel) threadModels.set(thread.id, responseModel);
+      if (capacityApplied) threadCapacities.set(thread.id, { generationId: capabilities.generationId, tokens: input.contextCapacityTokens ?? null });
       if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return responseModel ? attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel) : thread;
     },
@@ -1653,6 +1687,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity });
       threadModels.delete(input.threadId);
+      threadCapacities.delete(input.threadId);
       threadResponsesProviders.delete(input.threadId);
     },
     async unarchiveThread(input) {
@@ -2313,7 +2348,6 @@ function normalizeResponsesProvider(provider: CodexResponsesModelProvider): Code
 function responsesProviderConfig(provider: CodexResponsesModelProvider): Record<string, JsonValue> {
   return {
     model_provider: provider.id,
-    model_context_window: provider.modelContextWindow,
     model_providers: {
       [provider.id]: {
         name: provider.name,
@@ -2899,4 +2933,10 @@ function isAccountReadTransportFailure(error: unknown): boolean {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/** 仅覆盖此线程的上下文窗口；默认不指定窗口或压缩设置。 */
+function contextCapacityConfig(value: number | null | undefined): Record<string, number | string> {
+  assertContextCapacity(value ?? null);
+  return value == null ? {} : { model_context_window: value };
 }

@@ -739,7 +739,19 @@ function snapshotError(snapshot: AgentRuntimeFailureSnapshot): Error & { code: s
 
 function readAcceptance(value: unknown): AcceptedAgentRun {
   const record = asRecord(value);
-  return { nativeRunId: requiredString(record.nativeRunId, 'nativeRunId'), acceptedAt: requiredString(record.acceptedAt, 'acceptedAt') };
+  /** Worker 回执必须保留并校验预算读回，不能在跨进程规范化时丢弃。 */
+  const budget = record.contextCapacity == null ? null : asRecord(record.contextCapacity);
+  if (
+    budget &&
+    (!['contextWindow', 'reserveTokens', 'keepRecentTokens'].every((key) => Number.isSafeInteger(budget[key]) && Number(budget[key]) > 0) || (budget.contextCapacityTokens !== null && budget.contextWindow !== budget.contextCapacityTokens))
+  ) {
+    throw driverError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', 'Pi Worker 返回了无效的预算读回。');
+  }
+  return {
+    nativeRunId: requiredString(record.nativeRunId, 'nativeRunId'),
+    acceptedAt: requiredString(record.acceptedAt, 'acceptedAt'),
+    ...(budget ? { contextCapacity: budget as unknown as NonNullable<AcceptedAgentRun['contextCapacity']> } : {}),
+  };
 }
 
 function assertSameNativeIdentity(expected: AgentSessionIdentity, actual: AgentSessionIdentity): void {

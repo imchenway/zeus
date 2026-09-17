@@ -43,10 +43,7 @@ const activePiTurn = [{ agentKind: 'pi' }];
 assertBehavior(!mustWaitForInProcessRuntimeTurn('codex', staleCodexTurn), 'Codex 本地残留 active 状态必须进入 Provider authority 观察，不能在全局队列门禁提前返回。');
 assertBehavior(mustWaitForInProcessRuntimeTurn('codex', activePiTurn), 'Pi 活动轮次结束前不得派发后续 Codex 队首。');
 assertBehavior(mustWaitForInProcessRuntimeTurn('pi', staleCodexTurn), 'Pi 队首遇到任意活动轮次时必须等待进程内终态事件。');
-assertBehavior(
-  formatVisibleApplicationError({ error: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'internal detail' }) === 'Zeus 专属 Codex 尚未登录。请在终端执行 CODEX_HOME=$HOME/.Zeus/providers/codex codex login 完成登录，再重试。',
-  '已知且可操作的登录错误不得再降级成通用失败文案。',
-);
+assertBehavior(formatVisibleApplicationError({ error: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'internal detail' }) === '尚未登录 Codex，无法使用该服务。请在“设置 → AI 连接”中登录。', '已知且可操作的登录错误不得再降级成通用失败文案。');
 const visibleSchedulerFailure = formatVisibleApplicationError({ code: 'ZEUS_UNIFIED_QUEUE_SCHEDULER_FAILED', message: 'internal detail' });
 assertBehavior(visibleSchedulerFailure.includes('消息已保存') && visibleSchedulerFailure.includes('重新恢复'), '队列 owner 失败必须明确说明 Core 已保存消息并给出可见恢复动作，避免用户重复发送。');
 

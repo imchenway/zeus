@@ -98,6 +98,8 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     transportKind: snapshot.conversation.transportKind,
     providerId: choice.providerId,
     providerThreadId: snapshot.openSegment?.nativeSessionId ?? choice.providerThreadId,
+    contextCapacityTokens: snapshot.conversation.contextCapacityTokens ?? null,
+    contextCapacityEvidence: snapshot.conversation.contextCapacityEvidence ?? null,
     providerModel: snapshot.conversation.providerModel,
     providerState: snapshot.conversation.providerState,
     legacySourceConversationId: choice.legacySourceConversationId,

@@ -1,3 +1,4 @@
+import { contextCapacitySelectionAllowed, contextCapacitySelectionOptions, contextCapacitySelectionFromValue, contextCapacitySelectionValue } from '../session/contextCapacitySelection.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -39,6 +40,8 @@ import { SkillSelector } from '../features/skills/SkillSelector.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface TaskModelPushForm {
+  /** 缺省跟随项目，null 显式默认。 */
+  contextCapacityTokens?: number | null;
   stageId?: string;
   model: string;
   effort: string;
@@ -907,6 +910,17 @@ export function TaskModelPushModal(props: {
                   emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
                 />
               </label>
+              <label className="task-model-push-model-field">
+                <span>{zh ? '上下文容量' : 'Context capacity'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '上下文容量' : 'Context capacity'}
+                  value={contextCapacitySelectionValue(props.form.contextCapacityTokens, props.capabilities?.projectContextCapacityTokens)}
+                  options={contextCapacitySelectionOptions(selectedModel?.contextCapacity, zh)}
+                  disabled={busy}
+                  onChange={(value) => props.onChange((current) => ({ ...current, contextCapacityTokens: contextCapacitySelectionFromValue(value) }))}
+                />
+              </label>
               {selectedModel?.supportedReasoningEfforts.length ? (
                 <label className="task-model-push-effort-field">
                   <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
@@ -1432,6 +1446,7 @@ export function TaskModelPushModal(props: {
                 !props.capabilities ||
                 props.status === 'loading' ||
                 (!modelSetupRequired && (!props.form.model || !selectedModel)) ||
+                (!modelSetupRequired && !contextCapacitySelectionAllowed(props.form.contextCapacityTokens, props.capabilities?.projectContextCapacityTokens, selectedModel?.contextCapacity)) ||
                 (!modelSetupRequired &&
                   (props.form.workspaceMode === 'direct'
                     ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed

@@ -74,6 +74,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     writableRoots?: string[];
     executionWorkspaceMode?: 'direct' | 'worktree';
   } | null>;
+  /** 实际目标发送或恢复前校验冻结预算；不按旧模型替代新路由。 */
+  validateContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void;
   resolveResponsesRuntime: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
   /** 两条链路读取同一轮冻结的普通 Skill 目录。 */
   loadSkills?(cwd: string, identity: string): Promise<NativeConversationSkillInput[]>;
@@ -102,6 +104,8 @@ export type NativeConversationRunState =
     };
 
 export interface ConversationDispatchContext {
+  /** 会话创建时冻结的上下文容量，空值保留默认。 */
+  contextCapacityTokens?: number | null;
   projectId: string;
   projectLocalPath: string;
   taskId: string | null;
@@ -277,6 +281,8 @@ export interface NativeQuestionAnswerAttachmentInput {
 }
 
 export interface StartTaskConversationInput {
+  /** 会话创建时冻结的上下文容量，空值保留默认。 */
+  contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;
@@ -335,6 +341,8 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  /** 会话创建时冻结的上下文容量，空值保留默认。 */
+  contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;

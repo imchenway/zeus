@@ -729,6 +729,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
     return {
+      contextCapacityTokens: context.contextCapacityTokens ?? null,
       model: context.modelSourceId && context.modelSourceId !== 'codex' ? modelRef(context.modelSourceId, context.model) : context.model,
       ...(context.effort ? { effort: context.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
@@ -743,6 +744,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const selectedModelRef = parseModelRef(settings.model);
     const latest: ConversationDispatchContext = {
       ...context,
+      contextCapacityTokens: options.conversations.getRecordById(conversationId)?.contextCapacityTokens ?? null,
       model: selectedModelRef?.modelId ?? settings.model,
       modelSourceId: selectedModelRef?.sourceId ?? (settings.model === context.model ? context.modelSourceId : null),
       permissionMode: settings.permissionMode,
@@ -764,6 +766,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function dispatchContextForSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
     const latest = contextWithLatestNextTurnSettings(submission.conversationId, contextFromSubmission(submission));
+    /** 每次推送的容量随接纳快照冻结，排队期间的其他选择不回写此条消息。 */
+    const frozen = submission.executionSnapshotId ? options.execution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
+    if (frozen) latest.contextCapacityTokens = (parseJsonRecord(frozen.contextCapacityJson).contextCapacityTokens as number | null) ?? null;
     /** 目录准备已经核对持久身份；旧提交不能把实际执行路径改回回收前的快照。 */
     const prepared = contexts.get(submission.conversationId);
     if (prepared) {
@@ -788,6 +793,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? (input.allowCodeChanges ? 'auto' : 'read-only');
     const context: ConversationDispatchContext = {
+      contextCapacityTokens: existingConversation ? existingConversation.contextCapacityTokens : (input.contextCapacityTokens ?? null),
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: input.taskId,
@@ -822,6 +828,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const conversation =
       existingConversation ??
       options.conversations.create({
+        contextCapacityTokens: context.contextCapacityTokens,
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
         taskId: input.taskId,
@@ -865,6 +872,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
     const context: ConversationDispatchContext = {
+      contextCapacityTokens: existingConversation ? existingConversation.contextCapacityTokens : (input.contextCapacityTokens ?? null),
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: null,
@@ -884,6 +892,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const conversation =
       existingConversation ??
       options.conversations.create({
+        contextCapacityTokens: context.contextCapacityTokens,
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
         title,
@@ -922,7 +931,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', '当前应用的 Codex 尚未登录。请在“设置 → AI 连接”中完成登录，再重试。');
   }
 
-  async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model'>): Promise<CodexResponsesRuntime | null> {
+  async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model' | 'contextCapacityTokens'>): Promise<CodexResponsesRuntime | null> {
+    /** 根据当前目标校验；预算始终来自产品会话的冻结值。 */
+    options.validateContextCapacity(context.contextCapacityTokens ?? null, context.modelSourceId, context.model, 'codex');
     return options.resolveResponsesRuntime({ modelSourceId: context.modelSourceId, model: context.model });
   }
 
@@ -1056,6 +1067,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const context: ConversationDispatchContext = {
       ...previousContext,
+      contextCapacityTokens: options.conversations.getRecordById(conversation.id)?.contextCapacityTokens ?? null,
       permissionMode: input.permissionMode ?? previousContext.permissionMode,
       workMode: input.collaborationMode ?? conversation.collaborationMode,
       ...(input.model ? { model: input.model } : {}),
@@ -2120,7 +2132,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         if (!isProviderThreadAlreadyAvailableError(error)) throw error;
       }
       assertOpen();
-      const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath, ...(responsesRuntime ? { responsesRuntime } : {}), signal: archivedRecoveryAbortController.signal });
+      const resumed = await options.manager.resumeThread({
+        contextCapacityTokens: conversation.contextCapacityTokens,
+        threadId: providerThreadId,
+        cwd: context.projectLocalPath,
+        ...(responsesRuntime ? { responsesRuntime } : {}),
+        signal: archivedRecoveryAbortController.signal,
+      });
       assertOpen();
       if (resumed.id !== providerThreadId) {
         throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread while restoring the archived conversation.');

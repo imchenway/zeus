@@ -10,6 +10,7 @@ export function contextFromPersistedSubmission(submission: ZeusConversationSubmi
   const context = isRecord(parsed.context) ? parsed.context : {};
   const additionalContext = readCodexAdditionalContext(context.additionalContext);
   return {
+    contextCapacityTokens: conversation?.contextCapacityTokens ?? null,
     projectId: requiredString(typeof context.projectId === 'string' && context.projectId ? context.projectId : conversation?.projectId, 'submission projectId'),
     projectLocalPath: requiredString(context.projectLocalPath, 'submission projectLocalPath'),
     taskId: typeof context.taskId === 'string' ? context.taskId : null,

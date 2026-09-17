@@ -380,6 +380,8 @@ interface PendingSendEnvelope {
   model?: string;
   agentKind?: 'codex' | 'pi';
   effort?: string;
+  /** 本次发送冻结的窗口容量。 */
+  contextCapacityTokens?: number | null;
   serviceTier?: string | null;
   permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
@@ -1932,6 +1934,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ...(envelope.model ? { model: envelope.model } : {}),
             ...(envelope.agentKind ? { agentKind: envelope.agentKind } : {}),
             ...(envelope.effort ? { effort: envelope.effort } : {}),
+            ...(envelope.contextCapacityTokens !== undefined ? { contextCapacityTokens: envelope.contextCapacityTokens } : {}),
             ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
             ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
             collaborationMode: envelope.collaborationMode,
@@ -2684,6 +2687,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.agentKind === settings?.agentKind &&
           pendingSend.effort === settings?.effort &&
           pendingSend.serviceTier === settings?.serviceTier &&
+          pendingSend.contextCapacityTokens === settings?.contextCapacityTokens &&
           pendingSend.permissionMode === requestedPermissionMode &&
           pendingSend.collaborationMode === requestedCollaborationMode &&
           samePluginReferences(pendingSend.pluginReferences, settings?.pluginReferences) &&
@@ -2717,6 +2721,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
         ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
         ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
+        ...(appliedSettings?.contextCapacityTokens !== undefined ? { contextCapacityTokens: appliedSettings.contextCapacityTokens } : {}),
         ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
         ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
         collaborationMode: requestedCollaborationMode,
@@ -2737,6 +2742,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         sameContextDraft(pendingSend.contextDraft, contextDraft) &&
         pendingSend.delivery === delivery &&
         pendingSend.expectedTurnId === normalizedExpectedTurnId &&
+        pendingSend.contextCapacityTokens === appliedSettings?.contextCapacityTokens &&
         pendingSend.model === appliedSettings?.model &&
         pendingSend.agentKind === appliedSettings?.agentKind &&
         pendingSend.effort === appliedSettings?.effort &&
@@ -2778,6 +2784,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
           ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
           ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
+          ...(appliedSettings?.contextCapacityTokens !== undefined ? { contextCapacityTokens: appliedSettings.contextCapacityTokens } : {}),
           ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
           ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
           collaborationMode: requestedCollaborationMode,
@@ -3276,6 +3283,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.model === undefined || typeof pending.model === 'string') &&
     (pending.effort === undefined || typeof pending.effort === 'string') &&
     (pending.serviceTier === undefined || pending.serviceTier === null || typeof pending.serviceTier === 'string') &&
+    (pending.contextCapacityTokens === undefined || pending.contextCapacityTokens === null || (Number.isSafeInteger(pending.contextCapacityTokens) && pending.contextCapacityTokens > 0)) &&
     (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'auto-review' || pending.permissionMode === 'full-access') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     (pending.pluginReferences === undefined || isPluginSkillReferences(pending.pluginReferences)) &&

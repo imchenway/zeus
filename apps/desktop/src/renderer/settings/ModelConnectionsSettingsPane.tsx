@@ -741,25 +741,29 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
   const detailsId = useId();
   const zh = props.language === 'zh-CN';
   const model = props.model;
-  const contextDeclaration = (
-    <>
-      <input
-        type="checkbox"
-        aria-label={zh ? '支持 1M 上下文' : 'Supports 1M context'}
-        checked={model.supports1MContext}
-        onChange={(event) =>
-          props.onChange({
-            ...model,
-            supports1MContext: event.currentTarget.checked,
-            contextWindow: event.currentTarget.checked ? 1_000_000 : 256_000,
-            // 取消 1M 后旧 maxTokens 可能超过 256K 窗口，就地收敛避免保存报错。
-            maxTokens: event.currentTarget.checked ? model.maxTokens : Math.min(model.maxTokens, 256_000),
-          })
-        }
-      />
-      <span className="model-context-declaration-label">{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
-    </>
-  );
+  /** 目录已明确容量时展示真实值，避免手工勾选在保存后被目录恢复。 */
+  const contextDeclaration =
+    model.contextWindowSource === 'catalog' ? (
+      <span className="model-context-declaration-label">{model.contextWindow >= 1_000_000 ? `${model.contextWindow / 1_000_000}M` : `${model.contextWindow / 1_000}K`}</span>
+    ) : (
+      <>
+        <input
+          type="checkbox"
+          aria-label={zh ? '支持 1M 上下文' : 'Supports 1M context'}
+          checked={model.supports1MContext}
+          onChange={(event) =>
+            props.onChange({
+              ...model,
+              supports1MContext: event.currentTarget.checked,
+              contextWindow: event.currentTarget.checked ? 1_000_000 : 256_000,
+              // 取消 1M 后旧 maxTokens 可能超过 256K 窗口，就地收敛避免保存报错。
+              maxTokens: event.currentTarget.checked ? model.maxTokens : Math.min(model.maxTokens, 256_000),
+            })
+          }
+        />
+        <span className="model-context-declaration-label">{zh ? '支持 1M 上下文' : 'Supports 1M context'}</span>
+      </>
+    );
   return (
     <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
       <header className="model-definition-header">

@@ -5,6 +5,8 @@ import { applyPortableContextCompaction, planPortableContextCompaction, type Por
 import type { ManagedPortableContextStore } from './managedPortableContextStore.js';
 
 export interface ConversationExecutionRoute {
+  /** 上下文容量不参与路由指纹，不能因此隐式新建线程。 */
+  contextCapacity?: unknown;
   runtimeKind: ConversationRuntimeKind;
   connectionId: string | null;
   credentialSlotId: string | null;
@@ -148,6 +150,7 @@ export class ConversationExecutionCoordinator {
             permissionMode: input.route.permissionMode,
             collaborationMode: input.route.collaborationMode,
             workspaceIdentity: input.route.workspaceIdentity,
+            contextCapacity: input.route.contextCapacity,
             createdAt: this.options.now(),
           });
         executionSnapshotId = snapshot.id;
@@ -161,7 +164,7 @@ export class ConversationExecutionCoordinator {
             conversationId: input.conversationId,
             submissionId: submission.id,
             layer: 'selected',
-            configuration: routeConfiguration(input.route),
+            configuration: { ...routeConfiguration(input.route), contextCapacity: input.route.contextCapacity ?? null },
             evidence: { source: 'composer_request' },
             observedAt: snapshot.createdAt,
           });
@@ -169,7 +172,7 @@ export class ConversationExecutionCoordinator {
             conversationId: input.conversationId,
             submissionId: submission.id,
             layer: 'frozen',
-            configuration: routeConfiguration(input.route),
+            configuration: { ...routeConfiguration(input.route), contextCapacity: input.route.contextCapacity ?? null },
             evidence: { executionSnapshotId: snapshot.id, routeFingerprint: snapshot.routeFingerprint },
             observedAt: snapshot.createdAt,
           });

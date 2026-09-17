@@ -312,6 +312,10 @@ export interface ConversationSnapshotV2 {
   throughEventSeq: number;
   eventStreamGeneration: string | null;
   conversation: {
+    /** 下一轮上下文容量，不作为当前请求的实际用量分母。 */
+    contextCapacityTokens: number | null;
+    /** 最近的预算发送或原生读回证据。 */
+    contextCapacityEvidence: import('@zeus/shared').ContextCapacityEvidence | null;
     id: string;
     projectId: string;
     taskId: string | null;
@@ -375,6 +379,8 @@ export interface ConversationSnapshotV2ProviderSettings {
 }
 
 export interface ConversationSnapshotV2NextTurnSettings {
+  /** 下一轮选择的窗口容量。 */
+  contextCapacityTokens?: number | null;
   model: string;
   effort?: string;
   serviceTier?: string | null;
@@ -529,6 +535,8 @@ type BoundedContentProjection = ConversationSnapshotV2BoundedContent;
 type ConversationToolResultDescriptor = ConversationSnapshotV2ToolResult;
 
 interface ConversationRow {
+  /** 旧会话经增量迁移后保持空预算。 */
+  context_capacity_tokens: number | null;
   id: string;
   project_id: string;
   task_id: string | null;
@@ -834,7 +842,7 @@ export class ConversationSnapshotV2Repository {
               substr(next_turn_settings_json, 1, 4096) AS next_turn_settings_json,
               permission_mode,
               collaboration_mode,
-              agent_kind, created_at, updated_at
+              agent_kind, context_capacity_tokens, created_at, updated_at
          FROM conversations
         WHERE id = ?`,
       [conversationId],
@@ -879,6 +887,12 @@ export class ConversationSnapshotV2Repository {
     const activeItems = [...activeItemProjection.items];
     let activeItemsTruncated = activeItemProjection.truncated;
     const activeTurnSummary = activeTurn ? this.toTurnSummary(conversationId, activeTurn) : null;
+    /** 只取最新显式预算证据，不加载整段配置历史或向界面暴露原始回执。 */
+    const budgetEvidence = this.db.get<{ layer: string; evidence_json: string; configuration_json: string; observed_at: string }>(
+      `SELECT layer, evidence_json, configuration_json, observed_at FROM conversation_config_evidence WHERE conversation_id = ? AND configuration_json LIKE '%"kind":"context_capacity"%' AND layer IN ('adapter_serialized', 'runtime_acknowledged') ORDER BY observed_at DESC, rowid DESC LIMIT 1`,
+      [conversationId],
+    );
+    const budgetReadback = budgetEvidence ? (parseJsonRecordOrNull(budgetEvidence.evidence_json)?.readback as Record<string, unknown> | undefined) : null;
     const snapshotBase: ConversationSnapshotV2 = {
       schemaVersion: 2,
       structureGeneration: conversationSnapshotV2StructureGeneration,
@@ -897,9 +911,18 @@ export class ConversationSnapshotV2Repository {
         archived: conversation.archived === 1,
         transportKind: conversation.transport_kind,
         providerState: conversation.provider_state,
+        contextCapacityTokens: conversation.context_capacity_tokens,
+        contextCapacityEvidence: budgetEvidence
+          ? {
+              status: budgetEvidence.layer === 'runtime_acknowledged' ? 'confirmed' : 'sent',
+              observedAt: budgetEvidence.observed_at,
+              contextWindow: typeof budgetReadback?.contextWindow === 'number' ? budgetReadback.contextWindow : null,
+              contextCapacityTokens: (parseJsonRecordOrNull(budgetEvidence.configuration_json)?.contextCapacityTokens as number | null) ?? null,
+            }
+          : null,
         providerModel: conversation.provider_model,
         providerSettings,
-        nextTurnSettings,
+        nextTurnSettings: nextTurnSettings ? { ...nextTurnSettings, contextCapacityTokens: conversation.context_capacity_tokens } : null,
         agentKind: conversation.agent_kind,
         createdAt: conversation.created_at,
         updatedAt: conversation.updated_at,
@@ -2626,6 +2649,7 @@ function parseNextTurnSettings(value: string, permissionModeValue: string, colla
   const effort = boundedSettingString(settings.effort, 64);
   const serviceTier = settings.serviceTier === null ? null : boundedSettingString(settings.serviceTier, 64);
   return {
+    ...(settings.contextCapacityTokens === null || typeof settings.contextCapacityTokens === 'number' ? { contextCapacityTokens: settings.contextCapacityTokens } : {}),
     model,
     ...(effort ? { effort } : {}),
     ...(settings.serviceTier === null || serviceTier ? { serviceTier } : {}),

@@ -393,6 +393,8 @@ export interface NativeProviderSettingsSnapshot {
 }
 
 export interface NativeNextTurnSettings {
+  /** 下一轮选择的上下文容量。 */
+  contextCapacityTokens?: number | null;
   model: string;
   effort?: string;
   serviceTier?: string | null;
@@ -519,6 +521,10 @@ export interface NativeConversationExecutionContext {
 export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 
 export interface NativeConversationSnapshot {
+  /** 会话下次执行使用的容量，与本轮实际用量分开显示。 */
+  contextCapacityTokens?: number | null;
+  /** 原生窗口配置的最近发送或读回证据。 */
+  contextCapacityEvidence?: import('@zeus/shared').ContextCapacityEvidence | null;
   conversationSchemaGeneration: '2026-08-16-unified-conversation-segments';
   syncStreamGeneration: 'zeus-conversation-sync-v2';
   throughEventSeq: number;
@@ -643,6 +649,10 @@ export interface NativeConversationSnapshotV2 {
   throughEventSeq: number;
   eventStreamGeneration: string | null;
   conversation: {
+    /** 会话下一轮使用的窗口容量。 */
+    contextCapacityTokens?: number | null;
+    /** 原生窗口配置的最近发送或读回证据。 */
+    contextCapacityEvidence?: import('@zeus/shared').ContextCapacityEvidence | null;
     id: string;
     projectId: string;
     taskId: string | null;
@@ -883,6 +893,8 @@ export interface NativeConversationMessage {
 }
 
 export interface NativeConversationChoice {
+  /** 上下文窗口容量；空值使用默认。 */
+  contextCapacityTokens?: number | null;
   id: string;
   /** 首条提交的持久创建操作身份；只用于列表关联，缺失时不能推断会话已创建成功。 */
   creationOperationIdentity?: string | null;
@@ -990,6 +1002,8 @@ export interface ArchivedConversationChoicesSnapshot {
 }
 
 export interface CodexTaskPushModelCapability {
+  /** 按引擎能力和模型目录筛选的容量。 */
+  contextCapacity?: import('@zeus/shared').ContextCapacityCapability;
   id: string;
   model: string;
   displayName?: string;
@@ -1073,6 +1087,8 @@ export interface CodexChatGptLoginStatus {
 }
 
 export interface CodexTaskPushCapabilities {
+  /** 项目记住的上次容量选择。 */
+  projectContextCapacityTokens?: number | null;
   /** 本地仓库发现与模型加载分别表达；完成后的空清单才表示没有仓库。 */
   repositoryDiscovery: import('@zeus/shared').ProjectRepositoryDiscovery;
   generationId: string;
@@ -1376,6 +1392,8 @@ export interface TaskIntegrationConflictAiSession {
 export type TaskIntegrationConflictPermissionMode = Exclude<NativePermissionMode, 'read-only'>;
 
 export interface CodexConversationCapabilities {
+  /** 项目记住的上次容量选择。 */
+  projectContextCapacityTokens?: number | null;
   generationId: string;
   initializedAt: string;
   projectId: string;
@@ -1394,6 +1412,8 @@ export interface CodexConversationCapabilities {
 }
 
 export interface NativeTurnSettingsSelection {
+  /** 下一轮选择的上下文容量。 */
+  contextCapacityTokens?: number | null;
   model: string;
   agentKind?: 'codex' | 'pi';
   effort?: string;
@@ -1414,6 +1434,8 @@ export interface PluginSkillReference {
 }
 
 export interface StartTaskModelPushRequest {
+  /** 上下文窗口容量；空值使用默认。 */
+  contextCapacityTokens?: number | null;
   agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   source: 'task_push';
@@ -1452,6 +1474,8 @@ export interface StartTaskModelPushRequest {
 
 export type StartNativeConversationRequest =
   | {
+      /** 本次创建选择的上下文窗口容量。 */
+      contextCapacityTokens?: number | null;
       mode: 'create';
       source?: 'code_review';
       stageId?: string;
@@ -1496,6 +1520,8 @@ export type StartNativeConversationRequest =
     };
 
 export interface StartProjectConversationRequest {
+  /** 上下文窗口容量；空值使用默认。 */
+  contextCapacityTokens?: number | null;
   agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   content: string;
@@ -1516,6 +1542,8 @@ export interface StartProjectConversationRequest {
 }
 
 export interface SendNativeMessageRequest {
+  /** 本次发送的容量，独立于当前正在执行的轮次。 */
+  contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   agentKind?: 'codex' | 'pi' | 'claude';
