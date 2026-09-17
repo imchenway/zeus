@@ -1,4 +1,4 @@
-import { classifyAssistantMessage } from '@zeus/shared';
+import { classifyAssistantMessage, conversationFileLocationFromReference } from '@zeus/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, constants as fsConstants, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -812,21 +812,8 @@ function parseFileReference(rawReference: string, projectRoot: string): { absolu
       return null;
     }
   } else {
-    const hashIndex = reference.lastIndexOf('#');
-    if (hashIndex >= 0) {
-      location = locationFromHash(reference.slice(hashIndex));
-      if (location) reference = reference.slice(0, hashIndex);
-    }
-    if (!location) {
-      const suffix = /:(\d+)(?::(\d+))?$/u.exec(reference);
-      if (suffix) {
-        location = normalizeLocation({
-          line: Number(suffix[1]),
-          ...(suffix[2] ? { column: Number(suffix[2]) } : {}),
-        });
-        reference = reference.slice(0, suffix.index);
-      }
-    }
+    location = conversationFileLocationFromReference(reference);
+    if (location) reference = reference.replace(/(?:#L|:L)\d+(?:-L?\d+)?$|:\d+(?::\d+)?$/iu, '');
   }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) && !/^[A-Za-z]:[\\/]/u.test(reference)) {
     // Markdown URL schemes that are not explicitly authorized websites/files must

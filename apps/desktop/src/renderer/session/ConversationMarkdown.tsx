@@ -1,5 +1,6 @@
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { conversationFileLocationFromReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
 import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
@@ -547,7 +548,14 @@ function isMarkstreamNode(value: unknown): value is MarkstreamNode {
 }
 
 function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
-  return resources.find((resource) => resource.presentation === 'inline' && inlineResourceMatches(resource, label, href)) ?? null;
+  /** 标题完全一致的资源优先，避免同文件不同位置命中第一条记录。 */
+  const resource =
+    resources.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??
+    resources.find((candidate) => candidate.presentation === 'inline' && inlineResourceMatches(candidate, label, href));
+  if (!resource) return null;
+  /** 位置属于本次点击，访问权限始终使用已登记的资源身份。 */
+  const location = resource.kind === 'file' ? (conversationFileLocationFromReference(href) ?? conversationFileLocationFromReference(label) ?? resource.location) : undefined;
+  return resource.kind === 'file' && location ? { ...resource, location } : resource;
 }
 
 function inlineResourceHrefMatches(resource: ConversationResource, href: string): boolean {
@@ -588,6 +596,7 @@ function decodeReferencePath(href: string): string {
   let value = href
     .replace(/^file:\/\//iu, '')
     .replace(/#L\d+(?:-L?\d+)?$/iu, '')
+    .replace(/:L\d+(?:-L?\d+)?$/iu, '')
     .replace(/:\d+(?::\d+)?$/u, '');
   try {
     value = decodeURIComponent(value);

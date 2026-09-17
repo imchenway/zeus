@@ -1,6 +1,6 @@
 import { createContext, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
-import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type UserFacingErrorCause } from '@zeus/shared';
+import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type FileReview, type ConversationFileLocation, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './filePreview.css';
@@ -10,13 +10,57 @@ export const FilePreviewOpenContext = createContext<((request: FilePreviewReques
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
+/** Git 差异继续使用既有的虚拟化增删行视图。 */
+const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 /** Markdown 沿用受限渲染器，不加载任意活动 HTML。 */
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
+
+/** 两类文件审阅共用切换入口；带行号先定位源码，普通打开优先查看差异。 */
+export function FileReviewContent(props: { review?: FileReview; zh: boolean; children: ReactNode }) {
+  /** 用户选择只影响本次打开的文件。 */
+  const [showDiff, setShowDiff] = useState(Boolean(props.review?.diff && !props.review.location?.line));
+  useEffect(() => {
+    // 再次点击同一引用也回到源码，不能停留在上次切换的差异页。
+    if (props.review?.location?.line) setShowDiff(false);
+  }, [props.review?.location]);
+  return (
+    <>
+      {props.review?.diff ? (
+        <nav className="file-preview-toolbar" aria-label={props.zh ? 'Git 差异与源码' : 'Git diff and source'}>
+          <button type="button" aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
+            {props.zh ? 'Git 差异' : 'Git diff'}
+          </button>
+          <button type="button" aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
+            {props.zh ? '源码' : 'Source'}
+          </button>
+          <span>{props.zh ? 'HEAD → 当前文件（含暂存与未暂存）' : 'HEAD → Current file (staged and unstaged)'}</span>
+        </nav>
+      ) : props.review?.diff === null ? (
+        <p role="status">{props.zh ? '与 HEAD 相同，无 Git 差异。' : 'No Git diff from HEAD.'}</p>
+      ) : null}
+      {props.review?.error ? (
+        <p role="status">
+          {props.zh ? 'Git 差异读取失败：' : 'Could not read Git diff: '}
+          {props.review.error}
+        </p>
+      ) : null}
+      {showDiff && props.review?.diff ? (
+        <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+          <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
+        </Suspense>
+      ) : (
+        props.children
+      )}
+    </>
+  );
+}
 
 /** 所有文件入口共用加载、版本选择、失败重试和令牌释放。 */
 export function FilePreview(props: {
   /** 业务身份同时作为缓存与异步隔离边界。 */
   request: FilePreviewRequest;
+  /** 每次点击独立的位置，不作为文件读取权限发送。 */
+  location?: ConversationFileLocation;
   /** 中英文文案。 */
   zh: boolean;
   /** 文本继续复用原差异与评论界面。 */
@@ -27,14 +71,14 @@ export function FilePreview(props: {
   /** 序列化的请求避免父组件重渲染触发重复读取。 */
   const identity = JSON.stringify(props.request);
   return (
-    <FilePreviewBody key={`${identity}:${props.revision ?? ''}`} identity={identity} zh={props.zh}>
+    <FilePreviewBody key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`} identity={identity} location={props.location} zh={props.zh}>
       {props.children}
     </FilePreviewBody>
   );
 }
 
 /** 一个挂载周期只对应一个文件身份。 */
-function FilePreviewBody(props: { identity: string; zh: boolean; children?: ReactNode; /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void }) {
+function FilePreviewBody(props: { location?: ConversationFileLocation; identity: string; zh: boolean; children?: ReactNode; /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void }) {
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
@@ -145,7 +189,7 @@ function FilePreviewBody(props: { identity: string; zh: boolean; children?: Reac
       ) : (
         <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
           {(images ? items : current ? [current] : []).map((item, index) => (
-            <FilePreviewContent key={`${item.id}:${index}:${item.label}`} item={item} zh={props.zh} />
+            <FilePreviewContent key={`${item.id}:${index}:${item.label}`} item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item} zh={props.zh} />
           ))}
         </div>
       )}
@@ -213,7 +257,7 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
   /** 用户选择的源码展示状态。 */
-  const [source, setSource] = useState(false);
+  const [source, setSource] = useState(Boolean(item.review?.location?.line));
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** Markdown 使用已有受限阅读组件。 */
@@ -262,33 +306,35 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
         </p>
       ) : null}
       {item.reason ? <p role="status">{item.reason}</p> : item.id && item.byteLength === 0 ? <p role="status">{props.zh ? '此版本是空文件。' : 'This version is an empty file.'}</p> : null}
-      {(item.kind === 'text' || source) && item.content !== undefined ? (
-        <Suspense fallback={<p role="status">{props.zh ? '正在打开文本…' : 'Opening text…'}</p>}>
-          {markdown && !source ? (
-            <div className="file-preview-markdown">
-              <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} />
-            </div>
-          ) : (
-            <div className="file-preview-text">
-              <CodeEditor path={item.name} label={item.name} language={detectSourceLanguage(item.name)} content={item.content} readOnly />
-            </div>
-          )}
-        </Suspense>
-      ) : item.kind === 'image' && item.url ? (
-        <PreviewImage url={item.url} name={item.name} zh={props.zh} />
-      ) : item.kind === 'pdf' && item.url ? (
-        <iframe /* PDF 使用独立协议源隔离；HTML sandbox 会禁用 Chromium 的 PDF 阅读器。 */
-          className="file-preview-pdf"
-          src={item.url}
-          title={item.name}
-          referrerPolicy="no-referrer"
-          onError={() => setError(props.zh ? 'PDF 阅读器加载失败，请使用系统预览。' : 'PDF viewer failed. Try Quick Look.')}
-        />
-      ) : item.kind === 'audio' && item.url ? (
-        <audio controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '音频无法解码，请使用系统预览。' : 'Audio could not be decoded.')} />
-      ) : item.kind === 'video' && item.url ? (
-        <video controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '视频无法解码，请使用系统预览。' : 'Video could not be decoded.')} />
-      ) : null}
+      <FileReviewContent review={item.kind === 'text' ? item.review : undefined} zh={props.zh}>
+        {(item.kind === 'text' || source) && item.content !== undefined ? (
+          <Suspense fallback={<p role="status">{props.zh ? '正在打开文本…' : 'Opening text…'}</p>}>
+            {markdown && !source ? (
+              <div className="file-preview-markdown">
+                <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} />
+              </div>
+            ) : (
+              <div className="file-preview-text">
+                <CodeEditor path={item.name} label={item.name} language={detectSourceLanguage(item.name)} content={item.content} revealLine={item.review?.location?.line} readOnly />
+              </div>
+            )}
+          </Suspense>
+        ) : item.kind === 'image' && item.url ? (
+          <PreviewImage url={item.url} name={item.name} zh={props.zh} />
+        ) : item.kind === 'pdf' && item.url ? (
+          <iframe /* PDF 使用独立协议源隔离；HTML sandbox 会禁用 Chromium 的 PDF 阅读器。 */
+            className="file-preview-pdf"
+            src={item.url}
+            title={item.name}
+            referrerPolicy="no-referrer"
+            onError={() => setError(props.zh ? 'PDF 阅读器加载失败，请使用系统预览。' : 'PDF viewer failed. Try Quick Look.')}
+          />
+        ) : item.kind === 'audio' && item.url ? (
+          <audio controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '音频无法解码，请使用系统预览。' : 'Audio could not be decoded.')} />
+        ) : item.kind === 'video' && item.url ? (
+          <video controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '视频无法解码，请使用系统预览。' : 'Video could not be decoded.')} />
+        ) : null}
+      </FileReviewContent>
     </article>
   );
 }

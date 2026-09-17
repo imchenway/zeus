@@ -1,3 +1,5 @@
+import type { FileReview } from './filePreview.js';
+
 export type ConversationResourceKind = 'file' | 'website' | 'attachment';
 export type ConversationResourcePresentation = 'inline' | 'card';
 export type ConversationResourceDelivery = 'assistant';
@@ -6,6 +8,25 @@ export interface ConversationFileLocation {
   line?: number;
   column?: number;
   endLine?: number;
+}
+
+/** 只解析引用中的位置，不授予路径访问权限；支持常用冒号与锚点写法。 */
+export function conversationFileLocationFromReference(reference: string): ConversationFileLocation | undefined {
+  /** 百分号编码的路径也可能包含行号后缀，解码失败则保留原文。 */
+  let decoded = reference;
+  try {
+    decoded = decodeURIComponent(reference);
+  } catch {
+    /* 非法编码不影响其他已授权链接。 */
+  }
+  /** 锚点、带 L 的行号和行列定位分别保留原始含义。 */
+  const match = /(?:#L|:L)(\d+)(?:-L?(\d+))?$/iu.exec(decoded) ?? /:(\d+)(?::(\d+))?$/u.exec(decoded);
+  if (!match) return undefined;
+  /** 非安全整数不进入编辑器，范围终点不能早于起点。 */
+  const line = Number(match[1]);
+  const extra = match[2] ? Number(match[2]) : undefined;
+  if (!Number.isSafeInteger(line) || line < 1 || (extra !== undefined && (!Number.isSafeInteger(extra) || extra < 1))) return undefined;
+  return { line, ...(extra === undefined ? {} : /[Ll]/u.test(match[0]) ? (extra >= line ? { endLine: extra } : {}) : { column: extra }) };
 }
 
 export type ConversationFileIconKind = 'code' | 'java' | 'javascript' | 'typescript' | 'json' | 'markdown' | 'sql' | 'html' | 'css' | 'image' | 'pdf' | 'spreadsheet' | 'presentation' | 'document' | 'archive' | 'file';
@@ -78,6 +99,8 @@ export interface ConversationResourceOpenTarget {
 }
 
 export interface ConversationSourcePreview {
+  /** 当前文件的 Git 审阅状态。 */
+  review?: FileReview;
   kind: 'source';
   resource: ConversationFileResource | ConversationAttachmentResource;
   language: string | null;
