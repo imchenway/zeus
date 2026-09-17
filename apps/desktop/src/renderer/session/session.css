@@ -12662,31 +12662,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: var(--zeus-product-accent);
 }
 
-.macos-ai-app .session-conversation-tree-row {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.session-new-conversation-current-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-inline-size: 0;
-  padding: 0 8px;
-  color: var(--session-text-muted);
-}
-
-.session-new-conversation-current-branch svg {
-  flex: 0 0 auto;
-  inline-size: 16px;
-  block-size: 16px;
-}
-
-.session-new-conversation-current-branch > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .session-worktree-branch-popover .session-new-worktree-fields {
   display: grid;
   gap: 8px;

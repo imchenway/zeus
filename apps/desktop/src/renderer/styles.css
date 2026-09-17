@@ -10628,7 +10628,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border-radius: 7px;
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   inline-size: 100%;
   min-block-size: 38px;
   padding: 6px 8px 6px 32px;
