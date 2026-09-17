@@ -97,6 +97,7 @@ import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
+import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -1733,7 +1734,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   });
   const [browserResizing, setBrowserResizing] = useState(false);
   const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useSessionTerminalVisibility(props.conversation?.projectId, props.conversation?.id);
   const [terminalMounted, setTerminalMounted] = useState(false);
   const [terminalFocusRequest, setTerminalFocusRequest] = useState(0);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
@@ -1770,7 +1771,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const returnFocus = terminalReturnFocusRef.current;
     terminalReturnFocusRef.current = null;
     if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
-  }, []);
+  }, [setTerminalOpen]);
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.conversation?.resumable !== false && (props.state?.snapshot ? effectiveProviderState !== 'closed' : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
   // 列表和已水合快照可能跨一个归档操作短暂错代；任一权威来源声明归档都必须 fail-closed。
@@ -1887,8 +1888,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setGoalError(null);
     setBrowserResizing(false);
     setQuickActionsPopoverOpen(false);
-    setTerminalOpen(false);
     setTerminalMounted(false);
+    terminalReturnFocusRef.current = null;
     browserResizeActiveRef.current = false;
   }, [escapeController, props.conversation?.id]);
 
@@ -2001,7 +2002,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     };
     window.addEventListener('keydown', handleShortcut, { capture: true });
     return () => window.removeEventListener('keydown', handleShortcut, { capture: true });
-  }, [closeSessionTerminal, terminalAvailable, terminalOpen]);
+  }, [closeSessionTerminal, setTerminalOpen, terminalAvailable, terminalOpen]);
 
   useEffect(() => {
     if (contextWorkspace.kind === 'none') {
@@ -3039,7 +3040,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               </div>
             </div>
           </div>
-          {terminalMounted && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
+          {(terminalMounted || terminalOpen) && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
             <SessionTerminalPanel
               client={props.terminalClient}
               language={props.language}
