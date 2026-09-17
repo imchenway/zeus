@@ -137,20 +137,17 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
   });
 
   // 重新编号或缓存恢复只核对客户端已经加载的身份，未知身份不代表删除。
-  server.post(
-    '/api/projects/:projectId/conversations/:conversationId/transcript/placements',
-    async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationTranscriptPlacementRequest }>, reply) => {
-      if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
-      markV2Response(reply);
-      try {
-        const entryIds = Array.isArray(request.body?.entryIds) && request.body.entryIds.every((entryId) => typeof entryId === 'string') ? request.body.entryIds : null;
-        if (!entryIds) throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', 'entryIds 必须为字符串数组。', 400);
-        return repository.readTranscriptPlacements(request.params.conversationId, entryIds);
-      } catch (error) {
-        return sendSnapshotV2Error(reply, error);
-      }
-    },
-  );
+  server.post('/api/projects/:projectId/conversations/:conversationId/transcript/placements', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationTranscriptPlacementRequest }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    markV2Response(reply);
+    try {
+      const entryIds = Array.isArray(request.body?.entryIds) && request.body.entryIds.every((entryId) => typeof entryId === 'string') ? request.body.entryIds : null;
+      if (!entryIds) throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', 'entryIds 必须为字符串数组。', 400);
+      return repository.readTranscriptPlacements(request.params.conversationId, entryIds);
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
 
   server.get('/api/projects/:projectId/conversations/:conversationId/timeline', async (request: FastifyRequest<{ Params: ConversationParams; Querystring: PageQuery }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);

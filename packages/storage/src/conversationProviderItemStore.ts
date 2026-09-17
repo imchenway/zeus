@@ -365,7 +365,7 @@ export class ConversationProviderItemRepository {
       const truncated = text.truncated || payload.truncated;
       const id = providerItemStateId(input.providerThreadId, input.providerItemId);
       this.db.execute(
-      `INSERT INTO conversation_provider_item_states
+        `INSERT INTO conversation_provider_item_states
        (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id,
         item_type, status, phase, text_projection, payload_projection_json, projection_truncated,
         started_at, completed_at, updated_at, agent_kind, native_item_id, structure_generation)
@@ -386,27 +386,27 @@ export class ConversationProviderItemRepository {
          agent_kind = excluded.agent_kind,
          native_item_id = excluded.native_item_id,
          structure_generation = excluded.structure_generation`,
-      [
-        id,
-        input.conversationId,
-        input.turnId,
-        input.providerThreadId,
-        input.providerTurnId,
-        input.providerItemId,
-        input.itemType,
-        input.status,
-        input.phase,
-        text.value,
-        payload.value,
-        truncated ? 1 : 0,
-        input.startedAt,
-        input.completedAt,
-        input.updatedAt,
-        input.agentKind ?? 'codex',
-        input.nativeItemId ?? input.providerItemId,
-        conversationProviderItemStoreGeneration,
-      ],
-    );
+        [
+          id,
+          input.conversationId,
+          input.turnId,
+          input.providerThreadId,
+          input.providerTurnId,
+          input.providerItemId,
+          input.itemType,
+          input.status,
+          input.phase,
+          text.value,
+          payload.value,
+          truncated ? 1 : 0,
+          input.startedAt,
+          input.completedAt,
+          input.updatedAt,
+          input.agentKind ?? 'codex',
+          input.nativeItemId ?? input.providerItemId,
+          conversationProviderItemStoreGeneration,
+        ],
+      );
       const record = this.getByProvider(input.providerThreadId, input.providerItemId)!;
       this.registerTranscript(record);
       return record;
@@ -427,12 +427,12 @@ export class ConversationProviderItemRepository {
     const payloadRecord = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
     const userMessage = record.itemType === 'userMessage';
     const clientMessageId = userMessage
-      ? this.db.get<{ client_message_id: string | null }>(
+      ? (this.db.get<{ client_message_id: string | null }>(
           `SELECT client_message_id FROM conversation_messages
             WHERE conversation_id = ? AND provider_item_id = ? AND role = 'user'
             ORDER BY created_at, id LIMIT 1`,
           [record.conversationId, record.providerItemId],
-        )?.client_message_id ?? null
+        )?.client_message_id ?? null)
       : null;
     this.transcript.registerSource({
       conversationId: record.conversationId,

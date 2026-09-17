@@ -69,12 +69,7 @@ function syntheticAssistantDeliverableItemId(item: NativeItemSnapshot): string |
   return typeof item.payload.v2SyntheticAssistantDeliverableItemId === 'string' ? item.payload.v2SyntheticAssistantDeliverableItemId : null;
 }
 
-function syntheticAssistantDeliverableItem(
-  snapshot: NativeConversationSnapshot,
-  itemId: string,
-  resources: ConversationResource[],
-  transcript: NativeConversationResourceV2Item['transcript'],
-): NativeItemSnapshot {
+function syntheticAssistantDeliverableItem(snapshot: NativeConversationSnapshot, itemId: string, resources: ConversationResource[], transcript: NativeConversationResourceV2Item['transcript']): NativeItemSnapshot {
   const orderedResources = [...resources].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   const first = orderedResources[0]!;
   const last = orderedResources[orderedResources.length - 1]!;

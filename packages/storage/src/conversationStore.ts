@@ -2455,46 +2455,46 @@ export class ConversationServerRequestRepository {
   }): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const requestKind = assertEnum(input.requestKind, ['command', 'file', 'permissions', 'request_user_input', 'mcp'] as const, 'conversation server request kind');
-    const status = assertEnum(input.status, ['pending', 'resolved', 'declined', 'expired', 'failed'] as const, 'conversation server request status');
-    const providerRequestIdJson = serializeProviderRequestId(input.providerRequestId);
-    const existing = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
-    const persistedPayload = parseStoredJson(existing?.payload_json);
-    const containsSecret = input.containsSecret === true || existing?.contains_secret === 1 || hasSecretUserInputQuestion(input.payload) || hasSecretUserInputQuestion(persistedPayload);
-    const payload = containsSecret ? redactSecretValues(input.payload) : input.payload;
-    if (existing) {
-      assertConversationServerRequestIdentity(existing, requestKind, payload, containsSecret);
-      return mapConversationServerRequestRow(existing);
-    }
-    const id = `conversation_server_request_${randomId(12)}`;
-    const response = containsSecret && input.response !== undefined ? createSecretResponseSummary(input.payload, input.response) : input.response;
-    this.db.execute(
-      `INSERT INTO conversation_server_requests (id, conversation_id, turn_id, item_id, transport_generation_id, provider_request_id_json, request_kind, payload_json, status, response_json, contains_secret, expires_at, auto_resolution_state, created_at, resolved_at)
+      const status = assertEnum(input.status, ['pending', 'resolved', 'declined', 'expired', 'failed'] as const, 'conversation server request status');
+      const providerRequestIdJson = serializeProviderRequestId(input.providerRequestId);
+      const existing = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
+      const persistedPayload = parseStoredJson(existing?.payload_json);
+      const containsSecret = input.containsSecret === true || existing?.contains_secret === 1 || hasSecretUserInputQuestion(input.payload) || hasSecretUserInputQuestion(persistedPayload);
+      const payload = containsSecret ? redactSecretValues(input.payload) : input.payload;
+      if (existing) {
+        assertConversationServerRequestIdentity(existing, requestKind, payload, containsSecret);
+        return mapConversationServerRequestRow(existing);
+      }
+      const id = `conversation_server_request_${randomId(12)}`;
+      const response = containsSecret && input.response !== undefined ? createSecretResponseSummary(input.payload, input.response) : input.response;
+      this.db.execute(
+        `INSERT INTO conversation_server_requests (id, conversation_id, turn_id, item_id, transport_generation_id, provider_request_id_json, request_kind, payload_json, status, response_json, contains_secret, expires_at, auto_resolution_state, created_at, resolved_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(transport_generation_id, provider_request_id_json) DO NOTHING`,
-      [
-        id,
-        input.conversationId,
-        input.turnId ?? null,
-        input.itemId ?? null,
-        input.transportGenerationId,
-        providerRequestIdJson,
-        requestKind,
-        JSON.stringify(payload),
-        status,
-        response === undefined ? null : JSON.stringify(response),
-        containsSecret ? 1 : 0,
-        input.expiresAt ?? null,
-        assertEnum(input.autoResolutionState ?? 'none', ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
-        input.createdAt,
-        input.resolvedAt ?? null,
-      ],
-    );
-    const stored = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
-    if (!stored) throw new Error('Conversation server request insert did not persist a record.');
-    assertConversationServerRequestIdentity(stored, requestKind, payload, containsSecret);
-    syncConversationStage(this.db, input.conversationId, input.createdAt);
-    const record = mapConversationServerRequestRow(stored);
-    this.registerRequestTranscript(record);
+        [
+          id,
+          input.conversationId,
+          input.turnId ?? null,
+          input.itemId ?? null,
+          input.transportGenerationId,
+          providerRequestIdJson,
+          requestKind,
+          JSON.stringify(payload),
+          status,
+          response === undefined ? null : JSON.stringify(response),
+          containsSecret ? 1 : 0,
+          input.expiresAt ?? null,
+          assertEnum(input.autoResolutionState ?? 'none', ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
+          input.createdAt,
+          input.resolvedAt ?? null,
+        ],
+      );
+      const stored = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
+      if (!stored) throw new Error('Conversation server request insert did not persist a record.');
+      assertConversationServerRequestIdentity(stored, requestKind, payload, containsSecret);
+      syncConversationStage(this.db, input.conversationId, input.createdAt);
+      const record = mapConversationServerRequestRow(stored);
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2502,14 +2502,14 @@ export class ConversationServerRequestRepository {
   resolve(id: string, input: { response: unknown; isSecret?: boolean; questionIds?: string[]; answerCount?: number; resolvedAt: string }): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    const persistedPayload = parseStoredJson(existing.payloadJson);
-    const secret = input.isSecret === true || existing.containsSecret || hasSecretUserInputQuestion(persistedPayload);
-    const responseJson = secret ? JSON.stringify(createSecretResponseSummary(persistedPayload, input.response, input.questionIds, input.answerCount)) : JSON.stringify(input.response);
-    this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, contains_secret = ?, resolved_at = ? WHERE id = ?`, [responseJson, secret ? 1 : 0, input.resolvedAt, id]);
-    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      const persistedPayload = parseStoredJson(existing.payloadJson);
+      const secret = input.isSecret === true || existing.containsSecret || hasSecretUserInputQuestion(persistedPayload);
+      const responseJson = secret ? JSON.stringify(createSecretResponseSummary(persistedPayload, input.response, input.questionIds, input.answerCount)) : JSON.stringify(input.response);
+      this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, contains_secret = ?, resolved_at = ? WHERE id = ?`, [responseJson, secret ? 1 : 0, input.resolvedAt, id]);
+      syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2544,28 +2544,28 @@ export class ConversationServerRequestRepository {
   ): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    this.db.execute(
-      `UPDATE conversation_server_requests
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      this.db.execute(
+        `UPDATE conversation_server_requests
        SET status = 'pending', response_json = ?, resolved_at = NULL, auto_resolution_state = 'none'
        WHERE id = ?`,
-      [
-        JSON.stringify({
-          interactionRecoveryCheckpoint: true,
-          recoveryReason: input.recoveryReason,
-          ...(input.recoveryReason === 'host_handoff' ? { handoffCheckpoint: true } : {}),
-          ...(input.sourceInstanceId ? { sourceInstanceId: input.sourceInstanceId } : {}),
-          ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
-          ...(input.sourceGenerationId ? { sourceGenerationId: input.sourceGenerationId } : {}),
-          ...(input.currentGenerationId !== undefined ? { currentGenerationId: input.currentGenerationId } : {}),
-          restoredAt: input.restoredAt,
-        }),
-        id,
-      ],
-    );
-    syncConversationStage(this.db, existing.conversationId, input.restoredAt);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+        [
+          JSON.stringify({
+            interactionRecoveryCheckpoint: true,
+            recoveryReason: input.recoveryReason,
+            ...(input.recoveryReason === 'host_handoff' ? { handoffCheckpoint: true } : {}),
+            ...(input.sourceInstanceId ? { sourceInstanceId: input.sourceInstanceId } : {}),
+            ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
+            ...(input.sourceGenerationId ? { sourceGenerationId: input.sourceGenerationId } : {}),
+            ...(input.currentGenerationId !== undefined ? { currentGenerationId: input.currentGenerationId } : {}),
+            restoredAt: input.restoredAt,
+          }),
+          id,
+        ],
+      );
+      syncConversationStage(this.db, existing.conversationId, input.restoredAt);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2581,15 +2581,15 @@ export class ConversationServerRequestRepository {
   ): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`, [
-      JSON.stringify({ type: 'external_resolution', source: input.source, ...(input.answerRecovery ? { answerRecovery: input.answerRecovery } : {}) }),
-      input.resolvedAt,
-      id,
-    ]);
-    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`, [
+        JSON.stringify({ type: 'external_resolution', source: input.source, ...(input.answerRecovery ? { answerRecovery: input.answerRecovery } : {}) }),
+        input.resolvedAt,
+        id,
+      ]);
+      syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2597,11 +2597,11 @@ export class ConversationServerRequestRepository {
   fail(id: string, input: { error: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    this.db.execute(`UPDATE conversation_server_requests SET status = 'failed', response_json = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(input.error), input.resolvedAt, id]);
-    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      this.db.execute(`UPDATE conversation_server_requests SET status = 'failed', response_json = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(input.error), input.resolvedAt, id]);
+      syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2609,11 +2609,11 @@ export class ConversationServerRequestRepository {
   expire(id: string, input: { response: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
-    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
+      syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }
@@ -2621,11 +2621,11 @@ export class ConversationServerRequestRepository {
   snooze(id: string): ZeusConversationServerRequestRecord {
     return this.db.transaction(() => {
       const existing = this.getById(id);
-    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-    if (existing.status !== 'pending') throw Object.assign(new Error('Only a pending request can be snoozed.'), { code: 'ZEUS_CODEX_SERVER_REQUEST_NOT_PENDING' as const });
-    this.db.execute(`UPDATE conversation_server_requests SET auto_resolution_state = 'snoozed', expires_at = NULL WHERE id = ?`, [id]);
-    const record = this.getById(id)!;
-    this.registerRequestTranscript(record);
+      if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+      if (existing.status !== 'pending') throw Object.assign(new Error('Only a pending request can be snoozed.'), { code: 'ZEUS_CODEX_SERVER_REQUEST_NOT_PENDING' as const });
+      this.db.execute(`UPDATE conversation_server_requests SET auto_resolution_state = 'snoozed', expires_at = NULL WHERE id = ?`, [id]);
+      const record = this.getById(id)!;
+      this.registerRequestTranscript(record);
       return record;
     });
   }

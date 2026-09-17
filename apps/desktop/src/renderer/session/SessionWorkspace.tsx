@@ -3292,7 +3292,21 @@ export function NewConversationComposer(props: {
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
-    props.drafts?.set(draftKey, { workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, contextCapacityTokens, goalInputOpen, goalObjective, tokenDraft });
+    props.drafts?.set(draftKey, {
+      workspaceMode,
+      worktreeDrafts,
+      content,
+      attachments,
+      permissionMode,
+      collaborationMode,
+      selectedModelId,
+      selectedEffort,
+      serviceTierSelection,
+      contextCapacityTokens,
+      goalInputOpen,
+      goalObjective,
+      tokenDraft,
+    });
   }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, contextCapacityTokens, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',

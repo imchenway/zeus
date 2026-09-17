@@ -458,12 +458,12 @@ export class ConversationExpertRepository {
       const startedAt = input.status === 'dispatching' || input.status === 'running' || input.status === 'waiting' ? input.updatedAt : null;
       const completedAt = ['completed', 'failed', 'interrupted', 'cancelled'].includes(input.status) ? input.updatedAt : null;
       this.db.execute(
-      `UPDATE conversation_expert_executions
+        `UPDATE conversation_expert_executions
           SET status = ?, child_submission_id = COALESCE(?, child_submission_id), answer = COALESCE(?, answer),
               error_json = ?, updated_at = ?, started_at = COALESCE(started_at, ?), completed_at = COALESCE(completed_at, ?)
         WHERE id = ?`,
-      [input.status, input.childSubmissionId ?? null, input.answer ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.updatedAt, startedAt, completedAt, input.executionId],
-    );
+        [input.status, input.childSubmissionId ?? null, input.answer ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.updatedAt, startedAt, completedAt, input.executionId],
+      );
       const row = this.db.get<ExecutionRow>(`SELECT * FROM conversation_expert_executions WHERE id = ?`, [input.executionId]);
       if (!row) throw expertStoreError('ZEUS_EXPERT_EXECUTION_NOT_FOUND', '专家执行不存在。');
       const execution = mapExecution(row);

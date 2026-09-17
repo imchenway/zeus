@@ -999,7 +999,11 @@ export class ConversationTranscriptRepository {
         status: string;
         created_at: string;
         resolved_at: string | null;
-      }>(`SELECT id, turn_id, item_id, '{}' AS payload_json, NULL AS response_json, status, created_at, resolved_at FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?`, [conversationId, limit, offset])
+      }>(`SELECT id, turn_id, item_id, '{}' AS payload_json, NULL AS response_json, status, created_at, resolved_at FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?`, [
+        conversationId,
+        limit,
+        offset,
+      ])
       .map((row, index) => ({
         conversationId,
         sourceDomain: 'request',
@@ -1029,7 +1033,11 @@ export class ConversationTranscriptRepository {
         display_json: string;
         updated_at: string;
         created_at: string;
-      }>(`SELECT id, turn_id, item_id, source_index, '{}' AS display_json, updated_at, created_at FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id LIMIT ? OFFSET ?`, [conversationId, limit, offset])
+      }>(`SELECT id, turn_id, item_id, source_index, '{}' AS display_json, updated_at, created_at FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id LIMIT ? OFFSET ?`, [
+        conversationId,
+        limit,
+        offset,
+      ])
       .map((row) => ({
         conversationId,
         sourceDomain: 'resource',
