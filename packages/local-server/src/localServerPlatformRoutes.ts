@@ -1,3 +1,4 @@
+import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
@@ -24,6 +25,7 @@ import {
   getProjectGitCommitDetail,
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
+  getProjectGitHistory,
   getTaskBranchFileDiff,
   getTaskBranchComparison,
   getGitFilePreviewSources,
@@ -590,12 +592,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerStorageRecoveryPreflightApi({ server, db, artifacts: artifactStore });
 
   const projectGitQueries = new ProjectGitQueryApplication({
+    resolveConversationRepository: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
     projects,
     repositories: projectRepositories,
     effects: {
       workspaceHasGitDirectory: (localPath) => existsSync(join(localPath, '.git')),
       readStatus: readGitStatus,
       readDiff: readGitDiff,
+      readHistory: getProjectGitHistory,
       readRepositorySnapshot: (localPath) => getProjectGitRepositorySnapshot(localPath),
       readCommit: (localPath, commitHash) => getProjectGitCommitDetail(localPath, commitHash),
       readComparison: (localPath, ref, mode) => getProjectGitComparisonDiff(localPath, ref, mode),
@@ -657,7 +661,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       const generate = async () => {
         const started = performance.now();
         console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage: '读取暂存区', elapsedMs: 0 }));
-        const repository = await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
+        const repository =
+          typeof body.repositoryId === 'string' && body.repositoryId.startsWith('conversation:')
+            ? await resolveConversationGitWorkspace(project, body.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
+            : await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
         const context = await readGitCommitContext(repository.localPath);
         controller.signal.throwIfAborted();
         const prepared = performance.now();
@@ -2113,6 +2120,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const project = projects.getById(input.projectId);
         if (!project?.localPath || typeof input.path !== 'string') throw new Error('项目文件不可用。');
         intent = { sides: [{ name: input.path, label: '当前文件', root: project.localPath, path: resolve(project.localPath, input.path) }] };
+      } else if (input.kind === 'project-git') {
+        const project = projects.getById(input.projectId);
+        if (!project || typeof input.repositoryId !== 'string' || !input.repositoryId.startsWith('conversation:')) throw new Error('会话工作树预览身份无效。');
+        if (input.stage !== undefined && !['combined', 'staged', 'unstaged'].includes(input.stage)) throw new Error('文件预览暂存范围无效。');
+        if (input.comparisonMode !== undefined && !['current', 'working-tree'].includes(input.comparisonMode)) throw new Error('文件预览比较范围无效。');
+        const repository = await resolveConversationGitWorkspace(project, input.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions);
+        intent = { sides: await getGitFilePreviewSources(repository.localPath, input) };
       } else if (input.kind === 'task-git') {
         if (!['working', 'committed'].includes(input.scope)) throw new Error('交付预览范围无效。');
         const resolved = resolveTaskWorkspaceRequest(input.taskId, input.workspaceId);

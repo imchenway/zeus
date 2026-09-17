@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { GitDiffSummary, GitStatusSummary } from '@zeus/git-core';
-import type { ProjectRepository, ProjectRepositoryRegistrationRepository, ZeusProjectRecord, ZeusProjectRepositoryRecord } from '@zeus/storage';
+import type { ProjectRepository, ProjectRepositoryRegistrationRepository, ZeusProjectRecord } from '@zeus/storage';
 
 export interface ProjectGitReadEffectPort {
   /** 读取 workspace 是否具有 Git 元数据；不得创建目录或修复仓库。 */
@@ -10,6 +10,7 @@ export interface ProjectGitReadEffectPort {
   readDiff(localPath: string): Promise<GitDiffSummary>;
   readRepositorySnapshot(localPath: string): Promise<unknown>;
   readCommit(localPath: string, commitHash: string): Promise<unknown>;
+  readHistory(localPath: string, offset: number, ref?: string): Promise<unknown>;
   readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree'): Promise<unknown>;
 }
 
@@ -18,6 +19,7 @@ interface ProjectGitQueryPorts {
   repositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
   effects: ProjectGitReadEffectPort;
   now(): Date;
+  resolveConversationRepository(project: ZeusProjectRecord, conversationId: string): Promise<{ id: string; name: string; relativePath: string; localPath: string }>;
 }
 
 /** Project Git 查询拥有者：只组合已登记仓库与显式只读 Git effect。 */
@@ -37,9 +39,9 @@ export class ProjectGitQueryApplication {
     return this.ports.effects.readDiff(scope.path);
   }
 
-  async readWorkbench(projectId: string): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
+  async readWorkbench(projectId: string, conversationId?: string): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
     const project = this.requireProject(projectId);
-    const repositories = this.ports.repositories.listByProject(project.id);
+    const repositories = conversationId ? [await this.ports.resolveConversationRepository(project, conversationId)] : this.ports.repositories.listByProject(project.id);
     const items = await mapWithConcurrency(repositories, async (repository) => ({
       id: repository.id,
       name: repository.name,
@@ -51,15 +53,21 @@ export class ProjectGitQueryApplication {
   }
 
   async readCommit(projectId: string, repositoryId: string, commitHash: string): Promise<unknown> {
-    const repository = this.requireRepository(this.requireProject(projectId), repositoryId);
+    const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
     return this.ports.effects.readCommit(repository.localPath, commitHash);
   }
 
   async readComparison(projectId: string, repositoryId: string, rawRef: string | undefined, rawMode: string | undefined): Promise<unknown> {
-    const repository = this.requireRepository(this.requireProject(projectId), repositoryId);
+    const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
     const ref = rawRef?.trim();
     if (!ref) throw queryError('ZEUS_GIT_REF_REQUIRED', 'A comparison branch is required.');
     return this.ports.effects.readComparison(repository.localPath, ref, rawMode === 'working-tree' ? 'working-tree' : 'current');
+  }
+
+  async readHistory(projectId: string, repositoryId: string, offset: number, ref?: string) {
+    const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
+    if (!Number.isSafeInteger(offset) || offset < 0) throw queryError('ZEUS_GIT_OFFSET_INVALID', '历史分页位置无效。');
+    return this.ports.effects.readHistory(repository.localPath, offset, ref);
   }
 
   /** 旧项目级 Git 页面没有仓库选择器；多仓配置下必须明确暴露能力边界。 */
@@ -95,7 +103,8 @@ export class ProjectGitQueryApplication {
     return project;
   }
 
-  private requireRepository(project: ZeusProjectRecord, repositoryId: string): ZeusProjectRepositoryRecord {
+  private async requireRepository(project: ZeusProjectRecord, repositoryId: string) {
+    if (repositoryId.startsWith('conversation:')) return this.ports.resolveConversationRepository(project, repositoryId.slice('conversation:'.length));
     const repository = this.ports.repositories.listByProject(project.id).find((candidate) => candidate.id === repositoryId);
     if (!repository) throw queryError('ZEUS_GIT_REPOSITORY_NOT_FOUND', 'The selected repository is no longer part of this project.');
     return repository;

@@ -2877,7 +2877,7 @@ async function initializeApplication(): Promise<void> {
     },
     resolve: async (input) => {
       if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
-      if (input.kind === 'project-git') {
+      if (input.kind === 'project-git' && !(typeof input.repositoryId === 'string' && input.repositoryId.startsWith('conversation:'))) {
         if (!projectGitWorkbench) throw new Error('Git 文件服务尚未就绪。');
         return projectGitWorkbench.loadFilePreview(input);
       }

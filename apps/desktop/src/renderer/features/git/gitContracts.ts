@@ -128,6 +128,8 @@ export interface ProjectGitRepositorySnapshot {
 }
 
 export interface ProjectGitRepositoryWorkbenchItem {
+  /** 服务端校验过的会话工作树目录。 */
+  localPath?: string;
   id: string;
   name: string;
   relativePath: string;

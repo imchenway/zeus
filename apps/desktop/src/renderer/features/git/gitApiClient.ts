@@ -19,6 +19,7 @@ import { buildGitCommandRequest, gitClientCommandTypes } from './gitCommandClien
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from './workspaceGitCommandClient.js';
 
 export interface GitApiClient {
+  forConversationGit: (conversationId: string) => GitApiClient;
   /** 操作账本属于桌面实例，不能回退到独立执行宿主的其他记录。 */
   loadProjectGitOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
@@ -31,6 +32,7 @@ export interface GitApiClient {
   loadGitDiff: () => Promise<GitDiffSummary>;
   loadProjectGitStatus: (projectId: string) => Promise<GitStatusSummary>;
   loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  loadConversationGitHistory: (projectId: string, repositoryId: string, offset: number, ref?: string) => Promise<{ commits: NonNullable<GitStatusSummary['recentCommits']>; hasMore: boolean }>;
   loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
   loadProjectGitComparisonDiff: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
   executeProjectGitAction: (projectId: string, repositoryId: string, input: ProjectGitAction) => Promise<ProjectGitActionResponse>;
@@ -53,7 +55,11 @@ export interface GitApiClient {
   executeTaskGitRollback: (taskId: string, input: Omit<ExecuteGitOperationRequest, 'operation'>) => Promise<ExecutedGitOperationResult>;
 }
 
-export function createGitApiClient(transport: LocalApiTransport, bridge: () => ProjectGitWorkbenchBridge | undefined): GitApiClient {
+export function createGitApiClient(transport: LocalApiTransport, bridge: () => ProjectGitWorkbenchBridge | undefined, conversationId?: string): GitApiClient {
+  const scopedRepositoryId = (repositoryId: string): string => {
+    if (conversationId && repositoryId !== `conversation:${conversationId}`) throw new Error('会话工作树身份不匹配，请重新打开代码交付。');
+    return encodeURIComponent(repositoryId);
+  };
   const projectOperation = async (projectId: string, operation: string, commandType: Parameters<typeof buildGitCommandRequest>[0]['commandType'], input: object) => {
     const body = await buildGitCommandRequest({
       commandType,
@@ -65,6 +71,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     return transport.request<ExecutedGitOperationResult>(`${projectGitPath(projectId)}/${operation}`, jsonRequest('POST', body));
   };
   return {
+    forConversationGit: (id) => createGitApiClient(transport, () => undefined, id),
     /** 缺少桌面桥接时报告不可用，不能伪装为空历史。 */
     loadProjectGitOperations: async (projectId, cursor) => {
       /** 历史读取和工作台操作必须使用同一个桌面账本。 */
@@ -74,6 +81,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     },
     loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
     generateGitCommitMessage: async (projectId, input, onText, signal) => {
+      scopedRepositoryId(input.repositoryId);
       let result: { message: string; model: string; truncated?: boolean } | undefined;
       await transport.requestStream<{ type: string; text?: string; message?: string; model?: string; truncated?: boolean }>(
         `${projectGitPath(projectId)}/commit-message`,
@@ -89,14 +97,21 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     },
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => transport.request<GitStatusSummary>(`${projectGitPath(projectId)}/status`),
-    loadProjectGitWorkbench: (projectId) => bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench`),
-    loadProjectGitCommit: (projectId, repositoryId, commitHash) =>
+    loadProjectGitWorkbench: async (projectId) => {
+      const snapshot = await (bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ''}`));
+      if (conversationId && (snapshot.repositories.length !== 1 || snapshot.repositories[0]?.id !== `conversation:${conversationId}`)) throw new Error('当前执行宿主尚不支持会话工作树交付，请更新后重试。');
+      return snapshot;
+    },
+    loadConversationGitHistory: async (projectId, repositoryId, offset, ref) =>
+      transport.request(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/history?offset=${offset}${ref ? `&ref=${encodeURIComponent(ref)}` : ''}`),
+    loadProjectGitCommit: async (projectId, repositoryId, commitHash) =>
       bridge()?.loadCommit(projectId, repositoryId, commitHash) ??
-      transport.request<ProjectGitCommitDetail>(`${projectGitPath(projectId)}/workbench/repositories/${encodeURIComponent(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
-    loadProjectGitComparisonDiff: (projectId, repositoryId, ref, mode) =>
+      transport.request<ProjectGitCommitDetail>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
+    loadProjectGitComparisonDiff: async (projectId, repositoryId, ref, mode) =>
       bridge()?.loadComparison(projectId, repositoryId, ref, mode) ??
-      transport.request<GitDiffSummary>(`${projectGitPath(projectId)}/workbench/repositories/${encodeURIComponent(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),
+      transport.request<GitDiffSummary>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),
     executeProjectGitAction: async (projectId, repositoryId, input) => {
+      scopedRepositoryId(repositoryId);
       const nativeBridge = bridge();
       if (nativeBridge) return nativeBridge.execute(projectId, repositoryId, input);
       const body = await buildWorkspaceGitCommandRequest({
@@ -105,7 +120,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
         scopeId: repositoryId,
         value: input,
       });
-      return transport.request<ProjectGitActionResponse>(`${projectGitPath(projectId)}/workbench/repositories/${encodeURIComponent(repositoryId)}/actions`, jsonRequest('POST', body));
+      return transport.request<ProjectGitActionResponse>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/actions`, jsonRequest('POST', body));
     },
     loadProjectGitDiff: (projectId) => transport.request<GitDiffSummary>(`${projectGitPath(projectId)}/diff`),
     createProjectGitSnapshot: async (projectId, taskId) => {
