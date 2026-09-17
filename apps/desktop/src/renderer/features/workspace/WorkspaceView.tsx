@@ -808,6 +808,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onCreateConversation={() => prepareNewConversationDraft()}
           tasks={snapshot.tasks}
           conversationGroups={nativeConversationGroups}
+          conversationStates={nativeConversationRuntimeStates}
           onOpenTask={(task) => {
             const project = orderedProjects.find((candidate) => candidate.id === task.projectId);
             if (!project) return;

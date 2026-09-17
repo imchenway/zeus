@@ -25,7 +25,15 @@ import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dis
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
-import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree, resolveConversationTreeRuntimeState, taskRunStatusFromConversationTreeState } from '../../session/ProjectConversationTree.js';
+import {
+  type ConversationTreeRuntimeState,
+  type ProjectConversationGroup,
+  ProjectConversationTree,
+  ConversationStatusIcon,
+  summarizeProjectConversationStatuses,
+  resolveConversationTreeRuntimeState,
+  taskRunStatusFromConversationTreeState,
+} from '../../session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import { type AppLanguage } from './workspaceCopy.js';
@@ -670,6 +678,7 @@ export function ProjectWorkspaceNavigation(props: {
   onCreateConversation: () => void;
   tasks: TaskRecord[];
   conversationGroups: ProjectConversationGroup[];
+  conversationStates?: Record<string, ConversationTreeRuntimeState>;
   onOpenTask: (task: TaskRecord) => void;
   onOpenConversation: (conversation: NativeConversationChoice) => void;
   onOpenSourceMatch: (project: ProjectRecord, match: ProjectSourceContentMatch) => void;
@@ -697,6 +706,7 @@ export function ProjectWorkspaceNavigation(props: {
   const projectWorkspaceActive = props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
   /** 顶部允许并列打开多个项目槽位；每个槽位保留独立的项目下拉。 */
   const projectSlotSequenceRef = useRef(1);
+  const projectStatuses = useMemo(() => summarizeProjectConversationStatuses(props.conversationGroups, props.conversationStates, props.language), [props.conversationGroups, props.conversationStates, props.language]);
   const [projectSlots, setProjectSlots] = useState<Array<{ id: string; projectId: string }>>(() => [{ id: 'project-slot-0', projectId: props.project.id }]);
   const projectIdsKey = props.projects.map((project) => project.id).join('\u0000');
   useEffect(() => {
@@ -748,12 +758,15 @@ export function ProjectWorkspaceNavigation(props: {
               const slotProject = props.projects.find((project) => project.id === slot.projectId);
               const active = slotProject?.id === props.project.id;
               const emptyValue = `__empty_project_slot_${slot.id}`;
+              const projectStatus = projectStatuses.get(slot.projectId);
+              const selectLabel = slotProject ? (zh ? `选择项目 ${slotProject.name}` : `Select project ${slotProject.name}`) : zh ? '尚未选择项目' : 'No project selected';
               return (
                 <span key={slot.id} className={`project-workspace-project-slot${active ? ' is-active' : ''}`} data-project-slot-id={slot.id}>
                   <button
                     type="button"
                     className="project-workspace-project-slot-primary"
-                    aria-label={slotProject ? (zh ? `选择项目 ${slotProject.name}` : `Select project ${slotProject.name}`) : zh ? '尚未选择项目' : 'No project selected'}
+                    aria-label={projectStatus ? `${selectLabel}，${projectStatus.label}` : selectLabel}
+                    title={projectStatus?.label}
                     aria-pressed={active}
                     aria-disabled={!slotProject || undefined}
                     onClick={() => {
@@ -787,9 +800,9 @@ export function ProjectWorkspaceNavigation(props: {
                       if (project.id !== props.project.id) props.onSelectProject(project);
                     }}
                     triggerLabel={slotProject?.name ?? (zh ? '选择项目' : 'Select project')}
-                    triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
+                    triggerIcon={projectStatus ? <ConversationStatusIcon {...projectStatus} /> : <FolderOpen size={18} aria-hidden="true" />}
                     triggerClassName="project-workspace-project-slot-trigger"
-                    triggerTitle={zh ? '点击左侧箭头切换项目' : 'Use the left arrow to change project'}
+                    triggerTitle={[projectStatus?.label, zh ? '点击左侧箭头切换项目' : 'Use the left arrow to change project'].filter(Boolean).join(' · ')}
                     searchable
                     searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
                     emptyLabel={zh ? '没有可选择的项目' : 'No projects available'}

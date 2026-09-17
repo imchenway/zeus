@@ -3071,7 +3071,7 @@ a {
 .project-sidebar-conversations .session-conversation-archive-button {
   right: 4px;
 }
-.project-sidebar-conversations .session-conversation-status-icon {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon {
   align-items: center;
   background: transparent;
   border: 0;
@@ -3084,27 +3084,27 @@ a {
   padding: 0;
   transition: color 120ms var(--zeus-motion-ease-out);
 }
-.project-sidebar-conversations .session-conversation-status-icon > svg {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon > svg {
   block-size: 16px;
   inline-size: 16px;
 }
-.project-sidebar-conversations .session-conversation-status-icon:is(.is-connecting, .is-reconnecting, .is-running) {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon:is(.is-connecting, .is-reconnecting, .is-running) {
   color: var(--zeus-task-status-blue);
 }
-.project-sidebar-conversations .session-conversation-status-icon:is(.is-waiting_user, .is-waiting_approval, .is-paused) {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon:is(.is-waiting_user, .is-waiting_approval, .is-paused) {
   color: var(--zeus-task-status-amber);
 }
 
-.project-sidebar-conversations .session-conversation-status-icon.is-interrupted {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon.is-interrupted {
   color: var(--zeus-task-status-amber);
 }
-.project-sidebar-conversations .session-conversation-status-icon.is-failed {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon.is-failed {
   color: var(--zeus-danger-text);
 }
-.project-sidebar-conversations .session-conversation-status-icon.is-completed {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon.is-completed {
   color: var(--zeus-status-success-text);
 }
-.project-sidebar-conversations .session-conversation-status-icon.is-unread::before {
+:is(.project-sidebar-conversations, .macos-ai-app.zeus-shell .project-workspace-project-slot) .session-conversation-status-icon.is-unread::before {
   background: var(--session-accent);
   block-size: 7px;
   border-radius: 999px;
