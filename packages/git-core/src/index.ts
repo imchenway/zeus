@@ -291,6 +291,21 @@ export interface GitRecentCommit {
   parentHashes: string[];
 }
 
+/** 单行 Git blame 归属信息；时间使用 Git 返回的 Unix 秒级时间戳。 */
+export interface GitBlameLine {
+  commitHash: string;
+  shortHash: string;
+  author: string;
+  authorTime: number;
+  subject: string;
+  line: number;
+}
+
+export interface GitFileBlame {
+  path: string;
+  lines: GitBlameLine[];
+}
+
 export interface ProjectGitStashEntry {
   ref: string;
   hash: string;
@@ -2819,6 +2834,86 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
   const args =
     mode === 'working-tree' ? ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', revision, '--', '.'] : ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', `${revision}..HEAD`, '--', '.'];
   return diffSummaryFromText(await readGitStdout(context.topLevel, args));
+}
+
+/** 读取文件当前版本的逐行归属；只读命令不修改工作区、索引或引用。 */
+export async function getFileBlame(cwd: string, filePath: string, ref?: string): Promise<GitFileBlame> {
+  const projectRoot = canonicalFilesystemPath(cwd);
+  const requestedPath = filePath;
+  if (!requestedPath || requestedPath.includes('\0') || isAbsolute(requestedPath) || requestedPath.includes('\\')) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'A source file path must be a safe relative path.');
+  }
+  const normalizedPath = requestedPath;
+  const pathSegments = normalizedPath.split(sep).filter(Boolean);
+  if (pathSegments.some((segment) => segment === '.' || segment === '..' || segment === '.git')) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid source file path: ${filePath}`);
+  }
+  const absolutePath = canonicalFilesystemPath(resolve(projectRoot, normalizedPath));
+  if (!isPathInside(projectRoot, absolutePath) || absolutePath === projectRoot) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path escapes the selected project: ${filePath}`);
+  }
+
+  const context = await getGitRepositoryContext(projectRoot);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
+  const repositoryRoot = canonicalFilesystemPath(context.topLevel);
+  if (!isPathInside(repositoryRoot, absolutePath) || absolutePath === repositoryRoot) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path is outside the Git repository: ${filePath}`);
+  }
+  const repositoryPath = relative(repositoryRoot, absolutePath);
+  if (!repositoryPath || isAbsolute(repositoryPath) || repositoryPath === '..' || repositoryPath.startsWith(`..${sep}`)) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository-relative source path: ${filePath}`);
+  }
+
+  const revision = ref?.trim() ? await resolveCommit(repositoryRoot, ref) : undefined;
+  const args = ['-c', 'core.quotePath=false', '--no-pager', 'blame', '--line-porcelain', ...(revision ? [revision] : []), '--', repositoryPath];
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync('git', args, { cwd: repositoryRoot, timeout: 30_000, maxBuffer: 32 * 1024 * 1024 }));
+  } catch (error) {
+    throw gitCoreError('ZEUS_GIT_BLAME_FAILED', `Unable to read Git blame for ${filePath}.`, commandFailureDetail(error));
+  }
+  return {
+    path: relative(projectRoot, absolutePath).split(sep).join('/'),
+    lines: parseGitBlamePorcelain(stdout),
+  };
+}
+
+/** 解析 `git blame --line-porcelain` 的记录块，兼容多行归属块和逐行归属输出。 */
+export function parseGitBlamePorcelain(stdout: string): GitBlameLine[] {
+  const records = stdout.split('\n');
+  const result: GitBlameLine[] = [];
+  let index = 0;
+  while (index < records.length) {
+    const header = records[index]?.match(/^([0-9a-f]{40,64})\s+(\d+)\s+(\d+)(?:\s+(\d+))?$/u);
+    if (!header) {
+      index += 1;
+      continue;
+    }
+    index += 1;
+    const metadata: Record<string, string> = {};
+    while (index < records.length && !records[index]!.startsWith('\t')) {
+      const separator = records[index]!.indexOf(' ');
+      if (separator > 0) metadata[records[index]!.slice(0, separator)] = records[index]!.slice(separator + 1);
+      index += 1;
+    }
+    const firstLine = Number.parseInt(header[3]!, 10);
+    const lineCount = Math.max(1, Number.parseInt(header[4] ?? '1', 10) || 1);
+    const authorTime = Number.parseInt(metadata['author-time'] ?? '', 10);
+    for (let offset = 0; offset < lineCount && index < records.length; offset += 1) {
+      if (!records[index]!.startsWith('\t')) break;
+      index += 1;
+      const commitHash = header[1]!;
+      result.push({
+        commitHash,
+        shortHash: commitHash.slice(0, 8),
+        author: metadata.author?.trim() || 'Unknown',
+        authorTime: Number.isFinite(authorTime) ? authorTime : 0,
+        subject: metadata.summary?.trim() || '',
+        line: firstLine + offset,
+      });
+    }
+  }
+  return result;
 }
 
 function parseProjectGitStashes(stdout: string): ProjectGitStashEntry[] {

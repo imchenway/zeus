@@ -223,6 +223,7 @@ contextBridge.exposeInMainWorld('zeus', {
   listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
   searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
   searchProjectSourceContent: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-content', input),
+  loadProjectSourceBlame: (input: unknown) => ipcRenderer.invoke('zeus:project-source:blame', input),
 
   // 预览只传递业务身份，资源地址与系统操作均由主进程授权。
   loadFilePreview: (input: unknown) => ipcRenderer.invoke('zeus:file-preview:load', input),

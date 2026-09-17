@@ -1,11 +1,14 @@
-import { memo, useEffect, useRef, type RefObject } from 'react';
+import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, keymap, lineNumbers, type ViewUpdate } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
+import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
+import { useGitBlame } from './useGitBlame.js';
+import './blameGutter.css';
 
 /** 评论继续由 React 管理，代码视图只负责把容器放在对应行之后。 */
 interface SourceLineWidget {
@@ -21,12 +24,23 @@ interface SourceCodePreviewProps {
   content: string;
   language: string | null;
   label: string;
+  projectId?: string;
+  blameLabels?: SourceBlameLabels;
   location?: ConversationFileLocation;
   widgets: SourceLineWidget[];
   /** 新打开的评论容器，完成代码区布局后再聚焦。 */
   focusWidget?: HTMLElement;
   onComment?: (line: number, extendRange: boolean) => void;
   commentLabel: (line: number) => string;
+}
+
+interface SourceBlameLabels {
+  locale?: string;
+  show: string;
+  hide: string;
+  loading: string;
+  unavailable: string;
+  retry: string;
 }
 
 /** 复用 CodeMirror 的可视区域渲染和增量高亮，输入框更新不再遍历全文。 */
@@ -42,8 +56,22 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const languageSlot = useRef(new Compartment()).current;
   /** 评论装饰单独更新。 */
   const widgetSlot = useRef(new Compartment()).current;
+  /** Git blame 装饰单独更新，不因异步读取结果重建编辑器。 */
+  const blameSlot = useRef(new Compartment()).current;
   /** 只读历史仍可查看代码，无评论权限时不创建加号入口。 */
   const commentsEnabled = Boolean(props.onComment);
+  const blameLabels = useMemo<SourceBlameLabels>(
+    () =>
+      props.blameLabels ?? {
+        show: 'Show Git blame',
+        hide: 'Hide Git blame',
+        loading: 'Loading Git blame…',
+        unavailable: 'Git blame unavailable',
+        retry: 'Retry',
+      },
+    [props.blameLabels],
+  );
+  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.projectId ? props.path : undefined });
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -74,6 +102,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
           syntaxHighlighting(classHighlighter),
           languageSlot.of([]),
           widgetSlot.of([]),
+          blameSlot.of([]),
           selectedLines,
           commentsEnabled
             ? gutter({
@@ -90,7 +119,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
       viewRef.current = null;
       view.destroy();
     };
-  }, [props.content, props.path, props.label, commentsEnabled, languageSlot, widgetSlot]);
+  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, languageSlot, widgetSlot]);
 
   useEffect(() => {
     /** 先显示纯文本；加载高亮期间仍可滚动、选择和输入会话内容。 */
@@ -127,6 +156,13 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   }, [props.widgets, props.content, props.path, props.label, commentsEnabled, widgetSlot]);
 
   useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const extension = gitBlame.enabled && gitBlame.blame?.lines.length ? blameDecorations(gitBlame.blame.lines, blameLabels) : [];
+    view.dispatch({ effects: blameSlot.reconfigure(extension) });
+  }, [blameLabels, blameSlot, gitBlame.blame, gitBlame.enabled]);
+
+  useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */
     const view = viewRef.current;
     const widget = propsRef.current.widgets.find((candidate) => candidate.element === props.focusWidget);
@@ -157,7 +193,33 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(boundedLine).from, { y: 'center' }) });
   }, [props.location, props.content, props.path, props.label, commentsEnabled]);
 
-  return <div className="session-source-code-preview" ref={hostRef} />;
+  return (
+    <>
+      {gitBlame.available ? (
+        <div className="session-source-blame-toolbar" role="toolbar" aria-label="Git blame">
+          <button type="button" className="session-source-blame-toggle" aria-pressed={gitBlame.enabled} onClick={gitBlame.toggle}>
+            {gitBlame.enabled ? blameLabels.hide : blameLabels.show}
+          </button>
+          {gitBlame.loading ? (
+            <span className="session-source-blame-status" role="status">
+              {blameLabels.loading}
+            </span>
+          ) : null}
+          {gitBlame.error ? (
+            <>
+              <span className="session-source-blame-status" role="status">
+                {blameLabels.unavailable}
+              </span>
+              <button type="button" className="session-source-blame-toggle" onClick={gitBlame.reload}>
+                {blameLabels.retry}
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="session-source-code-preview" ref={hostRef} />
+    </>
+  );
 });
 
 /** 只为可视代码行提供原有的加号与键盘可达的评论按钮。 */
@@ -222,4 +284,87 @@ function selectedLineDecorations(view: EditorView, location?: ConversationFileLo
     }
   }
   return Decoration.set(decorations, true);
+}
+
+/** 只为当前可视行挂载行尾归属，长文件不会一次性创建全部 DOM 节点。 */
+function blameDecorations(lines: GitBlameLine[], labels: SourceBlameLabels) {
+  const byLine = new Map(lines.map((line) => [line.line, line]));
+  return ViewPlugin.define(
+    (view) => ({
+      decorations: visibleBlameDecorations(view, byLine, labels),
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) this.decorations = visibleBlameDecorations(update.view, byLine, labels);
+      },
+    }),
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
+function visibleBlameDecorations(view: EditorView, byLine: Map<number, GitBlameLine>, labels: SourceBlameLabels) {
+  const decorations = [];
+  for (const range of view.visibleRanges) {
+    for (let position = range.from; position <= range.to; ) {
+      const line = view.state.doc.lineAt(position);
+      const blame = byLine.get(line.number);
+      if (blame) decorations.push(Decoration.widget({ widget: new BlameWidget(blame, labels), side: 1 }).range(line.to));
+      if (line.to >= range.to) break;
+      position = line.to + 1;
+    }
+  }
+  return Decoration.set(decorations, true);
+}
+
+/** 行尾简要信息可直接阅读，原生 title 保留 commit、作者和绝对时间等完整信息。 */
+class BlameWidget extends WidgetType {
+  constructor(
+    private readonly blame: GitBlameLine,
+    private readonly labels: SourceBlameLabels,
+  ) {
+    super();
+  }
+
+  eq(other: BlameWidget): boolean {
+    return this.blame.commitHash === other.blame.commitHash && this.blame.line === other.blame.line && this.blame.subject === other.blame.subject;
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement('span');
+    const author = this.blame.author || 'Unknown';
+    const relativeTime = formatRelativeTime(this.blame.authorTime, this.labels.locale);
+    const subject = this.blame.subject || this.blame.shortHash;
+    element.className = 'session-source-blame-inline';
+    element.textContent = `${author}, ${relativeTime} • ${subject}`;
+    element.title = [author, formatAbsoluteTime(this.blame.authorTime, this.labels.locale), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
+    element.setAttribute('aria-label', `${author}, ${relativeTime}, ${subject}`);
+    return element;
+  }
+}
+
+function formatRelativeTime(timestamp: number, locale = 'en-US'): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return locale.startsWith('zh') ? '时间未知' : 'unknown time';
+  const elapsedSeconds = Math.max(0, (Date.now() - timestamp * 1_000) / 1_000);
+  const units = [
+    { seconds: 365 * 24 * 60 * 60, unit: 'year' as const },
+    { seconds: 30 * 24 * 60 * 60, unit: 'month' as const },
+    { seconds: 24 * 60 * 60, unit: 'day' as const },
+    { seconds: 60 * 60, unit: 'hour' as const },
+    { seconds: 60, unit: 'minute' as const },
+  ];
+  const selected = units.find((candidate) => elapsedSeconds >= candidate.seconds);
+  if (!selected) return locale.startsWith('zh') ? '刚刚' : 'just now';
+  const value = -Math.max(1, Math.floor(elapsedSeconds / selected.seconds));
+  try {
+    return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(value, selected.unit);
+  } catch {
+    return `${Math.abs(value)} ${selected.unit}${Math.abs(value) === 1 ? '' : 's'} ago`;
+  }
+}
+
+function formatAbsoluteTime(timestamp: number, locale = 'en-US'): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return locale.startsWith('zh') ? '时间未知' : 'Unknown time';
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp * 1_000));
+  } catch {
+    return new Date(timestamp * 1_000).toISOString();
+  }
 }

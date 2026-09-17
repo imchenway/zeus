@@ -62,6 +62,7 @@ import { createHomebrewUpdateController, type HomebrewUpdateController, type Hom
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { applyNetworkProxyAtStartup, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { getFileBlame } from '@zeus/git-core';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
@@ -1565,6 +1566,14 @@ function setupIpc(): void {
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
+  });
+  ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown }) => {
+    requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string' || (input.ref !== undefined && typeof input.ref !== 'string')) {
+      throw new TypeError('项目源码 blame 请求无效。');
+    }
+    const projectRoot = await loadProjectRootForSourceWorkspace(input.projectId);
+    return getFileBlame(projectRoot, input.relativePath, typeof input.ref === 'string' && input.ref.trim() ? input.ref : undefined);
   });
   ipcMain.handle('zeus:project-source:save-file', (event, request: MainCommandRequest<SaveProjectSourceFileInput>) => {
     const workspace = requireProjectSourceWorkspace(event);

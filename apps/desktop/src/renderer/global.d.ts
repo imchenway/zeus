@@ -1,4 +1,5 @@
 import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
+import type { GitFileBlame } from '@zeus/git-core';
 import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type {
@@ -146,6 +147,7 @@ declare global {
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
       searchProjectSourceContent: (input: { projectId: string; query: string }) => Promise<ProjectSourceContentSearchResult>;
+      loadProjectSourceBlame: (input: { projectId: string; relativePath: string; ref?: string }) => Promise<GitFileBlame>;
 
       /** 跨入口共用的受授权文件预览。 */
       loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;

@@ -299,6 +299,15 @@ function SourceWorkspaceView(props: {
               content={props.preview.content}
               language={props.preview.language}
               label={zh ? `${displayPath} 源码` : `${displayPath} source`}
+              projectId={props.preview.resource.kind === 'file' ? props.preview.resource.projectId : undefined}
+              blameLabels={{
+                locale: props.language,
+                show: zh ? '显示 Git blame' : 'Show Git blame',
+                hide: zh ? '隐藏 Git blame' : 'Hide Git blame',
+                loading: zh ? '正在加载 Git blame…' : 'Loading Git blame…',
+                unavailable: zh ? 'Git blame 暂不可用' : 'Git blame unavailable',
+                retry: zh ? '重试' : 'Retry',
+              }}
               location={props.preview.location}
               widgets={widgets}
               focusWidget={widgets.find((widget) => widget.line === activeCommentLine)?.element}
