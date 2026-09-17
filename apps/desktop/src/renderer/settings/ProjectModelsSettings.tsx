@@ -1,3 +1,4 @@
+import { contextCapacityChoices } from '@zeus/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, ProjectModelSelection, SelectablePiModel } from '../apiClient.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
@@ -7,10 +8,12 @@ import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 项目模型页只读取目录、读取选择并保存选择。 */
-type ProjectModelsClient = Pick<DashboardClient, 'loadSelectablePiModels' | 'loadProjectModelSelection' | 'saveProjectModelSelection'>;
+type ProjectModelsClient = Pick<DashboardClient, 'loadSelectablePiModels' | 'loadProjectModelSelection' | 'saveProjectModelSelection' | 'loadProjectConfig' | 'saveProjectConfig'>;
 
 /** 在有限列表中筛选和选择项目模型，保存操作始终留在视野内。 */
 export function ProjectModelsSettings(props: { projectId: string; language: 'zh-CN' | 'en-US'; client: ProjectModelsClient | null }) {
+  /** 项目预算只影响后续新会话；保存失败时保留未保存的草稿。 */
+  const [contextCapacityTokens, setContextCapacityTokens] = useState<number | null>(null);
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
   /** 从供应商配置读取的完整目录。 */
@@ -59,10 +62,11 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
         requestScope.current += 1;
       };
     }
-    void Promise.all([props.client.loadSelectablePiModels(), props.client.loadProjectModelSelection(props.projectId)])
-      .then(([catalog, nextSelection]) => {
+    void Promise.all([props.client.loadSelectablePiModels(), props.client.loadProjectModelSelection(props.projectId), props.client.loadProjectConfig(props.projectId)])
+      .then(([catalog, nextSelection, projectConfig]) => {
         if (!active) return;
         setModels(catalog);
+        setContextCapacityTokens(projectConfig.contextCapacityTokens ?? null);
         setSelection(nextSelection);
         setStatus('ready');
       })
@@ -169,7 +173,9 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       const saved = await props.client.saveProjectModelSelection(props.projectId, selection);
       if (scope !== requestScope.current) return;
       setSelection(saved);
-      setMessage(zh ? '项目可用模型已保存。' : 'Project models saved.');
+      await props.client.saveProjectConfig(props.projectId, { contextCapacityTokens });
+      if (scope !== requestScope.current) return;
+      setMessage(zh ? '项目模型与上下文容量已保存。' : 'Project models and context capacity saved.');
     } catch (error) {
       if (scope !== requestScope.current) return;
       setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
@@ -189,6 +195,22 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
           {zh ? '选择额外模型供应商提供的模型供此项目使用。Codex 模型由 AI 连接提供，不受此列表限制。' : 'Choose models from additional providers for this project. Codex models come from AI connections and are not restricted by this list.'}
         </p>
       </header>
+      <label className="project-model-default-field">
+        <span>{zh ? '上次选择的上下文容量' : 'Last selected context capacity'}</span>
+        <ZeusSelect
+          ariaLabel={zh ? '上次选择的上下文容量' : 'Last selected context capacity'}
+          size="regular"
+          disabled={status !== 'ready'}
+          value={contextCapacityTokens === null ? 'default' : String(contextCapacityTokens)}
+          options={[
+            { value: 'default', label: zh ? '默认' : 'Default' },
+            ...[...new Set([...contextCapacityChoices, ...(contextCapacityTokens === null ? [] : [contextCapacityTokens])])]
+              .sort((a, b) => a - b)
+              .map((budget) => ({ value: String(budget), label: budget >= 1_000_000 ? `${budget / 1_000_000}M` : `${budget / 1000}K` })),
+          ]}
+          onChange={(value) => setContextCapacityTokens(value === 'default' ? null : Number(value))}
+        />
+      </label>
       <div className="project-model-settings-toolbar">
         <label className="project-model-search-field">
           <span className="sr-only">{zh ? '搜索供应商或模型' : 'Search providers or models'}</span>

@@ -8,6 +8,10 @@ import { formatTokenCount } from './tokenUsageFormat.js';
 
 /** 会话与智能体共用的运行事实。 */
 interface RuntimeDetailsProps {
+  /** 冻结目标与引擎实际用量分别展示。 */
+  contextCapacityTokens?: number | null;
+  /** 展示引擎发送与读回的区别。 */
+  contextCapacityEvidence?: import('@zeus/shared').ContextCapacityEvidence | null;
   runtime: NativeRuntimeDetailsSnapshot;
   language: SessionUiLanguage;
   scope: 'session' | 'subagent';
@@ -61,6 +65,19 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeUsageRow label={zh ? '累计输入' : 'Cumulative input'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language, true)} />
           <RuntimeUsageRow label={zh ? '累计输出' : 'Cumulative output'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language, true)} />
           <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
+          {props.scope === 'session' ? <RuntimeUsageRow label={zh ? '上下文容量' : 'Context capacity'} value={props.contextCapacityTokens == null ? (zh ? '默认' : 'Default') : `${props.contextCapacityTokens / 1000}K Token`} /> : null}
+          {props.scope === 'session' ? (
+            <RuntimeUsageRow
+              label={zh ? '容量配置状态' : 'Capacity evidence'}
+              value={
+                props.contextCapacityEvidence && props.contextCapacityEvidence.contextCapacityTokens === (props.contextCapacityTokens ?? null)
+                  ? `${props.contextCapacityEvidence.status === 'confirmed' ? (zh ? 'SDK 已读回确认' : 'SDK readback confirmed') : zh ? '已发送窗口配置' : 'Window setting sent'} · ${props.contextCapacityEvidence.observedAt}${props.contextCapacityEvidence.contextWindow !== null ? ` · ${zh ? '会话局部窗口' : 'Session window'} ${props.contextCapacityEvidence.contextWindow}` : ''}`
+                  : zh
+                    ? '下一轮应用，等待引擎回报'
+                    : 'No native evidence yet'
+              }
+            />
+          ) : null}
           <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
           <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />

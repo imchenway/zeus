@@ -1,3 +1,7 @@
+import { assertContextCapacity, assertContextCapacitySupported } from '../packages/shared/src/contextCapacity.js';
+import { ConversationRepository, ProjectRepository, LongTermMemoryRepository, ConversationSnapshotV2Repository } from '../packages/storage/src/index.js';
+import { ContextDispatchApplicationService } from '../packages/local-server/src/contextDispatchService.js';
+import { readContextCapacitySupport } from '../packages/local-server/src/contextCapacitySupport.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +30,7 @@ try {
   const db = await createZeusDatabase(join(probeRoot, 'probe.db'));
   const server = Fastify({ logger: false });
   try {
+    await verifyContextCapacity(db);
     const deliveries = new CommandDeliveryRepository(db);
     const artifacts = new ArtifactStore(db, join(probeRoot, 'artifacts'), () => now().toISOString(), { minimumFreeBytes: 0 });
     const application = new ConversationStartCommandApplication({ db, deliveries, artifacts, redactSensitiveText, now });
@@ -231,6 +236,10 @@ async function verifyGraphRetirement(): Promise<void> {
       ['project.config.keep-project', { scan: {}, defaultTaskPrompt: 'old', database: { schemaPaths: ['/old'], connection: { enabled: false } }, defaultModel: 'keep-model' }],
     ] as const)
       legacy.execute('INSERT OR REPLACE INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)', [key, JSON.stringify(value), '2026-09-08']);
+    /** 模拟没有预算列的已落盘旧库，再由正常启动入口执行增量迁移。 */
+    new ConversationRepository(legacy).create({ id: 'old-budget-conversation', projectId: 'keep-project', title: '历史默认会话' });
+    legacy.execute('ALTER TABLE conversations DROP COLUMN context_capacity_tokens');
+    legacy.execute('ALTER TABLE conversation_execution_snapshots DROP COLUMN context_capacity_json');
   } finally {
     await legacy.close();
   }
@@ -244,10 +253,87 @@ async function verifyGraphRetirement(): Promise<void> {
       assertProbe(!migrated.get("SELECT 1 FROM settings WHERE key = 'codeMap.settings'"), '专用图谱设置必须移除。');
       assertProbe(migrated.get<{ value: string }>("SELECT json_extract(value_json, '$.appearance') AS value FROM settings WHERE key = 'app.shell.settings'")?.value === 'dark', '外观设置必须保留。');
       assertProbe(migrated.get<{ value: string }>("SELECT json_extract(value_json, '$.defaultModel') AS value FROM settings WHERE key = 'project.config.keep-project'")?.value === 'keep-model', '项目默认模型必须保留。');
+      assertProbe(new ConversationRepository(migrated).getById('old-budget-conversation')?.contextCapacityTokens === null, '旧库重启迁移不得把历史会话改为当前项目预算。');
+      assertProbe(
+        migrated.select<{ name: string }>('PRAGMA table_info(conversation_execution_snapshots)').some((column) => column.name === 'context_capacity_json'),
+        '旧执行快照必须恢复新增预算列。',
+      );
       assertProbe(migrated.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check === 'ok', '迁移后数据库必须完整。');
     } finally {
       await migrated.close();
     }
   }
   observed.retirement = { restarts: 2, derivedTablesRemoved: 4, historicalTaskPreserved: true, ordinarySettingsPreserved: true };
+}
+
+/** 在现有首发探针中核验预算边界、持久值及真实编译器；不伪造 Provider 验收。 */
+async function verifyContextCapacity(db: Awaited<ReturnType<typeof createZeusDatabase>>): Promise<void> {
+  /** 默认、指定与非法输入必须保持不同语义。 */
+  for (const value of [null, 64_000, 128_000, 256_000]) assertContextCapacity(value);
+  for (const value of [undefined, '64000', 0, -1, 64000.5, NaN, Infinity]) {
+    let code: unknown;
+    try {
+      assertContextCapacity(value);
+    } catch (error) {
+      code = (error as { code: string }).code;
+    }
+    assertProbe(code === 'ZEUS_CONTEXT_CAPACITY_INVALID', '非法预算不能隐式转为默认。');
+  }
+  assertContextCapacitySupported(64_000, 64_000);
+  for (const capacity of [63_999, null]) {
+    let code: unknown;
+    try {
+      assertContextCapacitySupported(64_000, capacity);
+    } catch (error) {
+      code = (error as { code: string }).code;
+    }
+    assertProbe(code === 'ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', '未知或不足容量必须拒绝。');
+  }
+  /** 使用真实仓储证明缺省为空，指定值不受其他设置变化影响。 */
+  const project = new ProjectRepository(db).create({ name: '预算专项检查', localPath: probeRoot });
+  const conversations = new ConversationRepository(db);
+  const original = conversations.create({ projectId: project.id, title: '默认会话' });
+  const specified = conversations.create({ projectId: project.id, title: '指定预算', contextCapacityTokens: 64_000 });
+  conversations.updateTitle(specified.id, '更名后仍冻结');
+  assertProbe(new ConversationSnapshotV2Repository(db).readSnapshot(specified.id).conversation.contextCapacityTokens === 64_000, '界面快照必须投影已冻结预算。');
+  assertProbe(conversations.getById(original.id)?.contextCapacityTokens === null && conversations.getById(specified.id)?.contextCapacityTokens === 64_000, '预算必须存入会话，旧式创建不得继承其他值。');
+  const policy = readContextCapacitySupport({ runtime: 'pi', runtimeVersion: 'pi-sdk-0.83.0', sourceId: 'probe', sourceRevision: 'probe', modelId: 'probe', contextWindow: 256_000 });
+  assertProbe(policy.choices.includes(256_000), '容量候选不扣除压缩预留，也不依赖用户写入探针数据。');
+  conversations.updateContextCapacity(specified.id, 128_000);
+  assertProbe(conversations.getById(specified.id)?.contextCapacityTokens === 128_000 && conversations.getById(original.id)?.contextCapacityTokens === null, '中途修改只更新本会话容量。');
+  conversations.updateContextCapacity(specified.id, null);
+  assertProbe(conversations.getById(specified.id)?.contextCapacityTokens === null, '必须能切回默认。');
+  /** 历史已超过目标时，只禁止可选资料继续膨胀，不改写用户正文。 */
+  const compiler = new ContextDispatchApplicationService({ memory: new LongTermMemoryRepository(db), now });
+  const base = {
+    project: { id: project.id, localPath: probeRoot },
+    operationRisk: 'read_only' as const,
+    provider: {
+      id: 'pi',
+      modelId: 'probe',
+      contextWindowTokens: 256_000,
+      reservedOutputTokens: 16_384,
+      currentInputTokens: 65_000,
+      contextCapacityTokens: 64_000,
+      preflightTokenCount: { state: 'unavailable' as const, exact: false as const, source: null, checkedAt: null, reason: '仅本地估算' },
+      requestAccounting: { historyBaselineTokens: 64_000, historyBaselineSource: 'probe', fixedInputTokens: 1000, estimateSafetyMarginTokens: 256 },
+    },
+    selectedFragments: [
+      {
+        id: 'probe-doc',
+        category: 'project_code' as const,
+        authority: 'project_document' as const,
+        status: 'current' as const,
+        content: '可选资料'.repeat(100),
+        sourceRef: 'probe',
+        sourceVersion: 'probe',
+        updatedAt: now().toISOString(),
+        projectId: project.id,
+      },
+    ],
+  };
+  const constrained = await compiler.preview(base);
+  const inherited = await compiler.preview({ ...base, provider: { ...base.provider, contextCapacityTokens: null } });
+  assertProbe(constrained.compiled.usedTokens === 0 && inherited.compiled.usedTokens > 0, '指定预算耗尽必须停止资料注入；默认模式保持原编译行为。');
+  observed.contextCapacity = { strictInputs: true, mutable: true, stored: true, modelCapacityGate: true, compilerSoftLimit: true, realProviderVerified: false };
 }

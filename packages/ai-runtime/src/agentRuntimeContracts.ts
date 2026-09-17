@@ -132,6 +132,8 @@ export interface AgentRunResourceSnapshot {
 }
 
 export interface StartAgentRunInput {
+  /** 产品会话已冻结的原生上下文容量，必须透传到隔离 Worker。 */
+  contextCapacityTokens?: number | null;
   /** 模型输入与工具权限共用的资源快照。 */
   resourceSnapshot?: AgentRunResourceSnapshot;
   session: AgentSessionIdentity;
@@ -218,6 +220,8 @@ export interface ReadAgentSessionInput {
 }
 
 export interface AcceptedAgentRun {
+  /** Pi 在本轮请求前从当前会话读回的配置，不代表远端已完成压缩。 */
+  contextCapacity?: { contextCapacityTokens: number | null; contextWindow: number; reserveTokens: number; keepRecentTokens: number };
   nativeRunId: string;
   acceptedAt: string;
 }

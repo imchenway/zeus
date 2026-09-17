@@ -28,6 +28,8 @@ export interface ConversationExecutionSnapshotRecord {
   permissionMode: string;
   collaborationMode: string;
   workspaceIdentityJson: string;
+  /** 冻结目标与能力来源；引擎实际回执另存配置证据。 */
+  contextCapacityJson: string;
   routeFingerprint: string;
   createdAt: string;
 }
@@ -270,6 +272,8 @@ interface ExecutionSnapshotInput {
   permissionMode: string;
   collaborationMode: string;
   workspaceIdentity: unknown;
+  /** 当前分段计划使用的预算与真实模型容量。 */
+  contextCapacity?: unknown;
   createdAt: string;
 }
 
@@ -339,6 +343,8 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
       workspace_identity_json TEXT NOT NULL, route_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL
     )
   `);
+  addColumn(db, 'conversations', 'context_capacity_tokens', 'INTEGER CHECK (context_capacity_tokens IS NULL OR context_capacity_tokens > 0)');
+  addColumn(db, 'conversation_execution_snapshots', 'context_capacity_json', "TEXT NOT NULL DEFAULT 'null'");
   db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_execution_snapshots ON conversation_execution_snapshots(conversation_id, created_at, id)`);
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_runtime_segments (
@@ -606,8 +612,8 @@ export class ConversationExecutionRepository {
       `INSERT INTO conversation_execution_snapshots
        (id, conversation_id, runtime_kind, connection_id, credential_slot_id, endpoint_identity,
         protocol_family, model_id, effort, service_tier, permission_mode, collaboration_mode,
-        workspace_identity_json, route_fingerprint, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        workspace_identity_json, route_fingerprint, created_at, context_capacity_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.conversationId,
@@ -624,6 +630,7 @@ export class ConversationExecutionRepository {
         workspaceIdentityJson,
         routeFingerprint,
         input.createdAt,
+        JSON.stringify(input.contextCapacity ?? null),
       ],
     );
     return this.getExecutionSnapshot(id)!;
@@ -1381,13 +1388,14 @@ export class ConversationExecutionRepository {
     return this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId]).map(mapModelRequest);
   }
 
-  /** Provider 可能先发送 usage、后发送 contextCompaction item；item 到达后统一修正该内部轮次的请求类型。 */
-  markTurnModelRequestsAsContextCompaction(conversationId: string, turnId: string): void {
+  /** 压缩完成项可能晚于用量到达；仅修正其起止范围内的请求，避免吞掉同轮普通回答的容量回报。 */
+  markModelRequestsAsContextCompaction(conversationId: string, turnId: string, startedAt: string, completedAt: string): void {
     this.db.execute(
       `UPDATE conversation_model_requests
           SET request_kind = 'context_compaction'
-        WHERE conversation_id = ? AND turn_id = ? AND request_kind <> 'context_compaction'`,
-      [conversationId, turnId],
+        WHERE conversation_id = ? AND turn_id = ? AND request_kind <> 'context_compaction'
+          AND occurred_at >= ? AND occurred_at <= ?`,
+      [conversationId, turnId, startedAt, completedAt],
     );
   }
 
@@ -2057,6 +2065,8 @@ interface ExecutionSnapshotRow {
   permission_mode: string;
   collaboration_mode: string;
   workspace_identity_json: string;
+  /** 不可变计划，不混入运行回执。 */
+  context_capacity_json: string;
   route_fingerprint: string;
   created_at: string;
 }
@@ -2205,6 +2215,7 @@ function mapExecutionSnapshot(row: ExecutionSnapshotRow): ConversationExecutionS
     permissionMode: row.permission_mode,
     collaborationMode: row.collaboration_mode,
     workspaceIdentityJson: row.workspace_identity_json,
+    contextCapacityJson: row.context_capacity_json,
     routeFingerprint: row.route_fingerprint,
     createdAt: row.created_at,
   };

@@ -264,7 +264,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (first.type === 'active' && hasCurrentSubscription(providerThreadId)) return first;
     const confirmed = first.type === 'active' ? first : await readAndProject(options.requireConversation(conversation.id));
     if (confirmed.type === 'active' && hasCurrentSubscription(providerThreadId)) return confirmed;
-    if (confirmed.type === 'idle' && confirmed.status.type !== 'notLoaded' && hasCurrentSubscription(providerThreadId)) return confirmed;
+    // 空闲时由管理器核对并应用本轮容量；容量未变不会卸载线程。
 
     const responsesRuntime = await options.responsesRuntimeFor(context);
     assertOpen();
@@ -273,6 +273,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     let resumed: CodexThreadSnapshot;
     try {
       resumed = await options.manager.resumeThread({
+        contextCapacityTokens: context.contextCapacityTokens ?? null,
         threadId: providerThreadId,
         ...(context.projectLocalPath ? { cwd: context.projectLocalPath } : {}),
         ...(responsesRuntime ? { responsesRuntime } : {}),

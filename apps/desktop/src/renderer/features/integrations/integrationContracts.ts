@@ -44,6 +44,8 @@ export interface ModelConnectionModel {
   enabled: boolean;
   supports1MContext: boolean;
   contextWindow: number;
+  /** 目录容量为只读事实，用户通过会话设置选择实际使用的容量。 */
+  contextWindowSource?: 'catalog';
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
   runtimeAdapter: 'codex_app_server' | 'pi_sdk';

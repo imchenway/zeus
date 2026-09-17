@@ -1,3 +1,5 @@
+import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
+import { assertContextCapacitySupported } from '@zeus/shared';
 import { createDistributionContext, type DistributionConfig } from '@zeus/shared';
 
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -495,6 +497,8 @@ export interface WorkspaceGitExplicitRejection extends Error {
 }
 
 export interface CreateConversationMessageBody {
+  /** 只在下一轮应用的窗口容量。 */
+  contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   content?: string;
@@ -534,6 +538,8 @@ export interface NativeConversationAttachment {
 export type StartTaskConversationBody = (
   | {
       mode: 'create';
+      /** 缺省继承项目；null 明确使用默认。 */
+      contextCapacityTokens?: number | null;
       content?: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
@@ -598,6 +604,8 @@ export type StartTaskConversationBody = (
 
 export interface StartProjectConversationBody {
   mode: 'create';
+  /** 缺省继承项目；null 明确使用默认。 */
+  contextCapacityTokens?: number | null;
   content?: string;
   attachments?: NativeConversationAttachment[];
   permissionMode?: ConversationPermissionMode;
@@ -616,6 +624,10 @@ export interface StartProjectConversationBody {
 }
 
 export interface TaskConversationAcceptanceReservation {
+  /** 接纳时冻结，命令重放不得重新读取项目默认。 */
+  contextCapacityTokens: number | null;
+  /** 仅解释冻结值的来源。 */
+  contextCapacitySource: import('@zeus/shared').ContextCapacitySource;
   scope: string;
   requestHash: string;
   operationId: string;
@@ -1162,6 +1174,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (input.providerHistoryOverride && (!Number.isSafeInteger(input.providerHistoryOverride.tokens) || input.providerHistoryOverride.tokens < 0 || !input.providerHistoryOverride.source.trim())) {
       throw nativeApiError('ZEUS_CONTEXT_HISTORY_BASELINE_INVALID', 'Provider 历史基线覆盖值无效，已拒绝上下文编译。');
     }
+    /** 排队后再次核验已冻结的目标；能力变化时停止，不静默降档。 */
+    const capacitySubmission = conversationSubmissions.getById(input.submissionId);
+    const capacitySnapshot = capacitySubmission?.executionSnapshotId ? conversationExecution.getExecutionSnapshot(capacitySubmission.executionSnapshotId) : undefined;
+    const contextCapacityTokens = capacitySnapshot ? ((JSON.parse(capacitySnapshot.contextCapacityJson)?.contextCapacityTokens as number | null) ?? null) : (conversations.getById(input.conversationId)?.contextCapacityTokens ?? null);
+    validateNativeContextCapacity(contextCapacityTokens, input.modelSourceId, input.modelId, input.provider);
     const latestRequest = input.providerHistoryMode === 'latest' && !input.providerHistoryOverride ? conversationExecution.usageSnapshot(input.conversationId).latestModelRequest : null;
     const latestTotalTokens = latestRequest?.totalTokens;
     const historyBaselineTokens =
@@ -1190,6 +1207,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         contextWindowTokens: budget.contextWindowTokens,
         reservedOutputTokens: budget.reservedOutputTokens,
         currentInputTokens,
+        contextCapacityTokens,
         requestAccounting: {
           historyBaselineTokens,
           historyBaselineSource,
@@ -1267,6 +1285,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const piSessionDirectory = readOnlyValidation ? dataLayout.piSessions : migrateRuntimeDirectory(join(dataLayout.root, 'pi-sessions'), dataLayout.piSessions);
   if (!readOnlyValidation) ensurePiGlobalAgentProjection(options.codexHome ?? dataLayout.codexHome, piAgentDirectory);
   /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */
+  /** 接纳与恢复使用真实目标身份，能力失效时不静默降档。 */
+  function validateNativeContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void {
+    if (budget === null) return;
+    const state = codexAppServerManager.getState();
+    const connection = modelConnections.listMetadata().find((entry) => entry.id === sourceId);
+    const policy = resolveContextCapacityPolicy(state.type === 'ready' ? state.capabilities : null, connection, modelId, runtime);
+    assertContextCapacitySupported(budget, policy.contextWindow);
+    if (!policy.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', policy.reason);
+  }
   let taskWorkTools: TaskWorkToolPort | null = null;
   /** 未完成初始化或停止时禁止工具绕开工作服务。 */
   const nativeWorkTools: TaskWorkToolPort = {
@@ -1280,6 +1307,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     : createPiNativeConversationCoordinator({
         // 延后到实际派发时读取已完成装配的共用恢复入口。
         ensureExecutionContext: (input) => ensureNativeConversationExecutionContext(input),
+        validateContextCapacity: validateNativeContextCapacity,
         db,
         commandDeliveries,
         conversations,
@@ -1515,6 +1543,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   const generatedImageRoot = codexHome ? join(codexHome, 'generated_images') : undefined;
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
+    /** 所有恢复入口共用预算门禁，禁止先恢复 Provider 再发现能力已失效。 */
+    validateContextCapacity: (conversation: import('@zeus/storage').ZeusConversationRecord) =>
+      validateNativeContextCapacity(conversation.contextCapacityTokens, conversation.modelSourceId, conversation.modelId ?? conversation.providerModel ?? '', conversation.agentKind === 'pi' ? 'pi' : 'codex'),
     conversationExperts,
     conversationSubmissions,
     conversations,
@@ -1837,6 +1868,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       artifactsDirectory: dataLayout.artifactsDirectory,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       ensureExecutionContext: ensureNativeConversationExecutionContext,
+      validateContextCapacity: validateNativeContextCapacity,
       preflightCodexModelBudget: ({ modelId, modelSourceId, providerGenerationId }) => {
         if (modelSourceId && modelSourceId !== 'codex') return;
         requireCodexDispatchModelBudget(modelId, providerGenerationId);
@@ -3040,6 +3072,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   traceStartup('runtime_sessions_ready');
 
   conversationOperations = createConversationApplicationOperations({
+    settings,
     conversationGoals,
     aiRuntimeManager,
     artifactStore,

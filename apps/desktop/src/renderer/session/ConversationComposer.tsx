@@ -1,3 +1,4 @@
+import { contextCapacitySelectionOptions, contextCapacitySelectionValue, contextCapacitySelectionFromValue } from './contextCapacitySelection.js';
 import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -38,6 +39,8 @@ import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
+  /** 下一轮选择的上下文容量。 */
+  contextCapacityTokens?: number | null;
   model: string;
   agentKind?: 'codex' | 'pi';
   effort?: string;
@@ -152,6 +155,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const [selectedModel, setSelectedModel] = useState(initialModel);
+  /** 已持久化的下一轮容量；正在执行的请求保持原容量。 */
+  const selectedCapacity = props.runtimeSettings?.contextCapacityTokens !== undefined ? props.runtimeSettings.contextCapacityTokens : (props.state.snapshot?.contextCapacityTokens ?? null);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
@@ -247,6 +252,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     const settings =
       nextDelivery === 'queue' && effectiveModel
         ? {
+            contextCapacityTokens: selectedCapacity,
             model: effectiveModel,
             agentKind: selectedCapability?.agentKind,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
@@ -556,7 +562,25 @@ export function ConversationComposer(props: ConversationComposerProps) {
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
-              <ContextUsageIndicator unifiedUsage={props.state.unifiedUsage} language={props.language} />
+              <ComposerDropdown
+                className="session-composer-capacity-dropdown"
+                label={props.language === 'zh-CN' ? '上下文容量' : 'Context capacity'}
+                value={contextCapacitySelectionValue(selectedCapacity)}
+                options={contextCapacitySelectionOptions(selectedCapability?.contextCapacity, props.language === 'zh-CN')}
+                disabled={props.readOnly === true || props.inputBlocked === true || !props.onRuntimeSettingsChange}
+                title={props.language === 'zh-CN' ? '下一轮生效；Codex 切换容量可能需约一分钟' : 'Applies next turn; Codex may take about a minute'}
+                onChange={(value) =>
+                  props.onRuntimeSettingsChange?.({
+                    model: effectiveModel,
+                    effort: selectedEffort,
+                    ...serviceTierWireOverride(selectedServiceTier),
+                    permissionMode: props.permissionMode,
+                    collaborationMode: props.collaborationMode,
+                    contextCapacityTokens: contextCapacitySelectionFromValue(value),
+                  })
+                }
+              />
+              <ContextUsageIndicator contextCapacityEvidence={props.state.snapshot?.contextCapacityEvidence} contextCapacityTokens={selectedCapacity} unifiedUsage={props.state.unifiedUsage} language={props.language} />
               <ServiceTierToggle
                 language={props.language}
                 model={selectedCapability}
@@ -564,7 +588,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 disabled={!settingsWritable}
                 onChange={(selection) => {
                   setSelectedServiceTier(selection);
-                  props.onRuntimeSettingsChange?.({ model: effectiveModel, effort: selectedEffort, ...serviceTierWireOverride(selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                  props.onRuntimeSettingsChange?.({
+                    contextCapacityTokens: selectedCapacity,
+                    model: effectiveModel,
+                    effort: selectedEffort,
+                    ...serviceTierWireOverride(selection),
+                    permissionMode: props.permissionMode,
+                    collaborationMode: props.collaborationMode,
+                  });
                   if (selectedCapability) void props.onServiceTierPreferenceChange?.(selectedCapability, selection);
                 }}
               />
@@ -587,7 +618,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   setSelectedModel(model);
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
-                  props.onRuntimeSettingsChange?.({ model, agentKind: capability?.agentKind, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                  props.onRuntimeSettingsChange?.({
+                    contextCapacityTokens: selectedCapacity,
+                    model,
+                    agentKind: capability?.agentKind,
+                    effort,
+                    ...serviceTierWireOverride(normalizedTier.selection),
+                    permissionMode: props.permissionMode,
+                    collaborationMode: props.collaborationMode,
+                  });
                 }}
               />
               {effortOptions.length > 0 ? (
@@ -599,7 +638,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!settingsWritable}
                   onChange={(effort) => {
                     setSelectedEffort(effort);
-                    props.onRuntimeSettingsChange?.({ model: effectiveModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                    props.onRuntimeSettingsChange?.({
+                      contextCapacityTokens: selectedCapacity,
+                      model: effectiveModel,
+                      effort,
+                      ...serviceTierWireOverride(selectedServiceTier),
+                      permissionMode: props.permissionMode,
+                      collaborationMode: props.collaborationMode,
+                    });
                   }}
                 />
               ) : null}

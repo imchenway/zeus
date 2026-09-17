@@ -1,3 +1,4 @@
+import { contextCapacitySelectionAllowed, contextCapacitySelectionOptions, contextCapacitySelectionFromValue, contextCapacitySelectionValue } from './contextCapacitySelection.js';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -116,6 +117,8 @@ export interface SessionWorkspaceTask {
 export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 
 export interface SessionWorkspaceStartInput {
+  /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
+  contextCapacityTokens?: number | null;
   mode: SessionStartMode;
   source?: 'code_review';
   stageId?: string;
@@ -141,6 +144,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
+  contextCapacityTokens?: number | null;
   owner: Extract<SessionConversationOwner, { kind: 'project' }>;
   content: string;
   attachments: NativeConversationAttachment[];
@@ -1085,6 +1090,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...serviceTierWireOverride(input.serviceTierSelection),
+    ...(input.contextCapacityTokens !== undefined ? { contextCapacityTokens: input.contextCapacityTokens } : {}),
     ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
     ...(input.pluginReferences?.length ? { pluginReferences: input.pluginReferences } : {}),
     ...(input.expertMentions?.length ? { expertMentions: input.expertMentions } : {}),
@@ -1308,6 +1314,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
       ...serviceTierWireOverride(input.serviceTierSelection),
+      ...(input.contextCapacityTokens !== undefined ? { contextCapacityTokens: input.contextCapacityTokens } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.agentKind ? { agentKind: input.agentKind } : {}),
@@ -1435,6 +1442,8 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
+  /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
+  contextCapacityTokens?: number | null;
   content: string;
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
@@ -1908,6 +1917,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const projectId = props.state?.projectId ?? props.conversation?.projectId;
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
     if (!props.state || !projectId || !conversationId || legacy || composerReadOnly) return;
+    settings = { ...composerRuntimeSettings, ...settings };
     composerRuntimeSettingsDirtyRef.current = true;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
     const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
@@ -3222,6 +3232,8 @@ export function NewConversationComposer(props: {
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
+  /** 本次覆盖只保存在新建草稿中，不写入已有会话下一轮设置。 */
+  const [contextCapacityTokens, setContextCapacityTokens] = useState<number | null | undefined>(() => restoredDraft?.contextCapacityTokens);
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3233,8 +3245,8 @@ export function NewConversationComposer(props: {
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
-    props.drafts?.set(draftKey, { content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft });
-  }, [props.drafts, draftKey, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
+    props.drafts?.set(draftKey, { content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, contextCapacityTokens, goalInputOpen, goalObjective, tokenDraft });
+  }, [props.drafts, draftKey, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, contextCapacityTokens, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
@@ -3396,6 +3408,7 @@ export function NewConversationComposer(props: {
           permissionMode,
           collaborationMode,
           serviceTierSelection,
+          contextCapacityTokens: contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens,
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
@@ -3416,6 +3429,7 @@ export function NewConversationComposer(props: {
           permissionMode,
           collaborationMode,
           serviceTierSelection,
+          contextCapacityTokens: contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens,
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
@@ -3652,7 +3666,16 @@ export function NewConversationComposer(props: {
           <span className="session-composer-trailing-actions">
             {selectedModel ? (
               <span className="session-composer-runtime-settings">
-                <ContextUsageIndicator unifiedUsage={null} language={props.language} />
+                <ZeusSelect
+                  size="compact"
+                  ariaLabel={props.language === 'zh-CN' ? '上下文容量' : 'Context capacity'}
+                  value={contextCapacitySelectionValue(contextCapacityTokens, capabilities?.projectContextCapacityTokens)}
+                  disabled={submitting || !props.owner}
+                  options={contextCapacitySelectionOptions(selectedModel.contextCapacity, props.language === 'zh-CN')}
+                  triggerTitle={selectedModel.contextCapacity?.reason}
+                  onChange={(value) => setContextCapacityTokens(contextCapacitySelectionFromValue(value))}
+                />
+                <ContextUsageIndicator contextCapacityTokens={contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens} unifiedUsage={null} language={props.language} />
                 {selectedModel.serviceTiers.length ? (
                   <ServiceTierToggle
                     language={props.language}
@@ -3710,6 +3733,7 @@ export function NewConversationComposer(props: {
                   inputResources.processing ||
                   !props.owner ||
                   (!selectedModel && !needsModelSetup) ||
+                  (!needsModelSetup && !contextCapacitySelectionAllowed(contextCapacityTokens, capabilities?.projectContextCapacityTokens, selectedModel?.contextCapacity)) ||
                   (!needsModelSetup && (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0))
                 }
                 aria-busy={submitting || undefined}
@@ -3762,6 +3786,7 @@ function readConversationNextTurnSettings(storage: Pick<Storage, 'getItem'> | un
       return null;
     }
     return {
+      ...(parsed.contextCapacityTokens === null || typeof parsed.contextCapacityTokens === 'number' ? { contextCapacityTokens: parsed.contextCapacityTokens } : {}),
       model: parsed.model,
       ...(parsed.effort ? { effort: parsed.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(parsed, 'serviceTier') ? { serviceTier: parsed.serviceTier } : {}),
@@ -3794,6 +3819,7 @@ function composerRuntimeSettingsFromState(
   const requestedServiceTier = hasSourceServiceTier ? source?.serviceTier : undefined;
   const serviceTier = typeof requestedServiceTier === 'string' && capability && !capability.serviceTiers.some((tier) => tier.id === requestedServiceTier) ? null : requestedServiceTier;
   return {
+    contextCapacityTokens: state.snapshot?.contextCapacityTokens ?? null,
     model,
     ...(effort ? { effort } : {}),
     ...(hasSourceServiceTier ? { serviceTier } : {}),
@@ -3891,7 +3917,16 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       nativeSessionPath: runtimeFact(nativeSession?.path ?? null, props.language === 'zh-CN' ? '暂无会话记录文件位置。' : 'The conversation record file location is unavailable.'),
     },
   };
-  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;
+  return (
+    <RuntimeDetails
+      contextCapacityEvidence={props.state.snapshot?.contextCapacityEvidence}
+      contextCapacityTokens={props.state.snapshot?.contextCapacityTokens ?? props.conversation?.contextCapacityTokens}
+      runtime={runtime}
+      language={props.language}
+      scope="session"
+      mcpStartup={mcpStartup}
+    />
+  );
 }
 
 function runtimeFact<T>(value: T | null | undefined, reason: string): NativeRuntimeFact<T> {

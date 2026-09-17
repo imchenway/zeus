@@ -47,6 +47,8 @@ export interface ConfiguredModelDefinition {
   enabled: boolean;
   supports1MContext: boolean;
   contextWindow: number;
+  /** 已知模型采用原生目录容量，自定义接入保留连接声明。 */
+  contextWindowSource?: 'catalog';
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
   runtimeAdapter: 'codex_app_server' | 'pi_sdk';
@@ -403,7 +405,7 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const id = normalizeSingleLine(value.id, '模型 ID', 200);
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
   const supports1MContext = value.supports1MContext === true;
-  const contextWindow = supports1MContext ? 1_000_000 : 256_000;
+  const contextWindow = normalizePositiveInteger(value.contextWindow, '上下文容量', 1, 10_000_000);
   // 有效窗口是权威值：历史配置可能保留超过 256K 的 maxTokens，取消 1M 后不应让整条连接不可保存。
   const requestedMaxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, 10_000_000);
   const maxTokens = Math.min(requestedMaxTokens, contextWindow);
@@ -436,7 +438,11 @@ function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, templ
     return {
       ...baseModel,
       displayName: catalogModel.name,
-      // 连接中持久化的窗口与输出限制属于该路由的执行配置；内置目录只补全能力证据，不能静默覆盖用户已经确认的限制。
+      // 已知模型采用 Pi 自带目录的窗口，清除旧界面统一生成的 256K 假定。
+      contextWindow: catalogModel.contextWindow,
+      contextWindowSource: 'catalog',
+      maxTokens: Math.min(baseModel.maxTokens, catalogModel.contextWindow),
+      supports1MContext: catalogModel.contextWindow >= 1_000_000,
       capability: {
         ...baseModel.capability,
         reasoning:

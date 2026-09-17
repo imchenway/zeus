@@ -195,6 +195,8 @@ export function createConversationExecutionContextOperations(dependencies: Conve
   }): Promise<{ projectLocalPath: string; writableRoots: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null> {
     const lockConversation = conversations.getById(input.conversationId);
     if (!lockConversation) return null;
+    /** 恢复线程和准备目录之前，重新核对冻结预算所依赖的引擎身份。 */
+    if (lockConversation.contextCapacityTokens != null && input.mode !== 'dispatch' && input.mode !== 'submit') dependencies.validateContextCapacity(lockConversation);
     // 共用目录准备可以合并，但各会话自己的归档边界不能被另一条会话的并发恢复绕过。
     if (lockConversation.archived) {
       if (input.mode !== 'restore') throw nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');

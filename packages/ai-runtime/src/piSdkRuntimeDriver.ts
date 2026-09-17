@@ -1,3 +1,4 @@
+import { assertContextCapacitySupported } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -208,13 +209,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const { runtime } = await loadModelRuntime();
     const requestedModel = 'model' in input ? input.model : undefined;
     const model = requestedModel ? resolveModel(runtime, requestedModel) : undefined;
-    const compactionContextWindow = model?.contextWindow ?? 256_000;
-    const compactionReserveTokens = Math.min(16_384, Math.max(1_024, Math.floor(compactionContextWindow * 0.125)));
-    const compactionKeepRecentTokens = Math.min(20_000, Math.max(1_000, Math.floor((compactionContextWindow - compactionReserveTokens) * 0.45)));
     const settingsManager = SettingsManager.inMemory(
       {
-        // Pi 的手工压缩也必须使用当前路由的真实窗口，否则小窗口模型会沿用 20K 默认保留量并错误判断为无内容可压缩。
-        compaction: { enabled: true, reserveTokens: compactionReserveTokens, keepRecentTokens: compactionKeepRecentTokens },
         // Provider 写出后的超时或断连无法证明请求未被接纳；Pi 的会话层与传输层都必须
         // 禁止自动重发。后续动作只能由 Zeus 的显式对账/重试命令以新的稳定身份发起。
         retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
@@ -303,11 +299,23 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     // 资源读取失败发生在接纳前，不留下没有请求实际运行的活动轮次。
     const explicitSkills = await Promise.all(selectedSkills.map(async (skill) => `本轮显式 Skill ${JSON.stringify({ name: skill.name, path: skill.path })}：\n${await readFile(skill.path, 'utf8')}`));
     const selectedSkill = selectedSkills[0];
+    /** 始终从注册目录取真实容量，不能用上轮会话副本反算预留。 */
+    const { runtime: budgetRuntime } = await loadModelRuntime();
+    const canonicalModel = input.model ? resolveModel(budgetRuntime, input.model) : entry.session.model ? budgetRuntime.getModel(entry.session.model.provider, entry.session.model.id) : undefined;
+    assertContextCapacitySupported(input.contextCapacityTokens ?? null, canonicalModel?.contextWindow);
     if (mode === 'prompt') await applyRunResources(entry, input.applicationContext, selectedSkill, input.resourceSnapshot?.skillCatalog ?? input.skillCatalog);
     if (input.model) {
       if (!entry.session.isIdle) throw runtimeError('ZEUS_PI_MODEL_CHANGE_IN_PROGRESS', 'Pi 模型只能在会话空闲时切换。');
       const { runtime } = await loadModelRuntime();
       await entry.session.setModel(resolveModel(runtime, input.model));
+    }
+    if (mode === 'prompt' && canonicalModel) {
+      // 资源重载后应用当前会话副本；默认重新采用目录模型，清除先前的窗口覆盖。
+      const contextWindow = input.contextCapacityTokens ?? canonicalModel.contextWindow;
+      await entry.session.setModel({ ...canonicalModel, contextWindow });
+      if (entry.session.model?.contextWindow !== contextWindow) {
+        throw runtimeError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', 'Pi 未能确认上下文容量，已停止本次发送。');
+      }
     }
     if (input.thinkingLevel) {
       if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
@@ -319,7 +327,20 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     entry.pendingFailure = null;
     const acceptedAt = now();
     const images = input.images?.map((image): { type: 'image'; data: string; mimeType: string } => ({ type: 'image', data: image.data, mimeType: image.mimeType }));
-    const acceptance = { nativeRunId, acceptedAt };
+    const acceptance: AcceptedAgentRun = {
+      nativeRunId,
+      acceptedAt,
+      ...(mode === 'prompt' && canonicalModel
+        ? {
+            contextCapacity: {
+              contextCapacityTokens: input.contextCapacityTokens ?? null,
+              contextWindow: entry.session.model!.contextWindow,
+              reserveTokens: entry.session.settingsManager.getCompactionSettings().reserveTokens,
+              keepRecentTokens: entry.session.settingsManager.getCompactionSettings().keepRecentTokens,
+            },
+          }
+        : {}),
+    };
     if (input.providerPayloadObserved) payloadObservers.set(entry.identity.nativeSessionId, input.providerPayloadObserved);
     let resolvePreflight: (() => void) | null = null;
     let rejectPreflight: ((error: unknown) => void) | null = null;
@@ -552,6 +573,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         state: entry.session.isIdle ? 'idle' : 'active',
         raw: {
           model: entry.session.model ? { sourceId: sourceIdFromPiProvider(entry.session.model.provider), modelId: entry.session.model.id } : null,
+          /** 会话实际窗口只用于核验整理策略，不能替代目录中的真实模型容量。 */
+          compaction: { contextWindow: entry.session.model?.contextWindow ?? null, ...entry.session.settingsManager.getCompactionSettings() },
           thinkingLevel: entry.session.thinkingLevel,
           pendingMessageCount: entry.session.pendingMessageCount,
           messages: entry.session.messages,

@@ -2443,6 +2443,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               agentKind: selectedModel.agentKind ?? 'codex',
               mode: 'create',
               source: 'task_push',
+              contextCapacityTokens: normalizedForm.contextCapacityTokens === undefined ? (capabilities.projectContextCapacityTokens ?? null) : normalizedForm.contextCapacityTokens,
               ...(normalizedForm.stageId ? { stageId: normalizedForm.stageId } : {}),
               model: selectedModel.id,
               ...(normalizedForm.effort ? { effort: normalizedForm.effort } : {}),

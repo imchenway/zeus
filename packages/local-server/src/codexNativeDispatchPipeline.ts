@@ -320,6 +320,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       if (!providerThreadId) {
         const profile = providerPermissionProfile(context);
         const threadRequest = {
+          contextCapacityTokens: context.contextCapacityTokens ?? null,
           model: context.model,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
           cwd: context.projectLocalPath,
@@ -343,6 +344,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
             conversationId: conversation.id,
             model: context.model,
             modelSourceId: context.modelSourceId,
+            contextCapacityTokens: context.contextCapacityTokens ?? null,
             serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : null,
             cwd: context.projectLocalPath,
             sandbox: profile.sandbox,
@@ -404,6 +406,12 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           observedAt: now(),
         });
       }
+      // 新建和同线程恢复均完成后记录本轮配置，后续真实用量才能对应这个窗口。
+      segmentLifecycle?.adapterSerialized(
+        { kind: 'context_capacity', contextCapacityTokens: context.contextCapacityTokens ?? null },
+        { adapter: 'codex_app_server', method: threadStartedForSubmission ? 'thread/start' : 'thread/resume' },
+        now(),
+      );
       providerThreadId = requireString(providerThreadId, 'provider thread id');
       commandProviderGenerationId = options.manager.generationForThread(providerThreadId);
       if (segmentLifecycle && commandOutboxId) {

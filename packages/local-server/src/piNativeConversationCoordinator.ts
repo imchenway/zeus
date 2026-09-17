@@ -74,6 +74,7 @@ import type { ConversationToolProcesses } from './conversationToolProcesses.js';
 import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput } from './codexNativeConversationContracts.js';
 import type { createConversationApplicationOperations } from './conversationApplicationOperations.js';
 import type { createPiGoalApplication } from './piGoalApplication.js';
+import { parseJsonRecord } from './codexNativeConversationPolicy.js';
 
 interface PiConversationContext {
   conversationId: string;
@@ -104,6 +105,8 @@ interface PiRunContext {
   usageComplete: boolean;
   /** 最后一次真实模型请求的用量；上下文规模只能来自它，不能用整轮累加值。 */
   lastRequestUsage: TokenUsageBreakdown | null;
+  /** 本轮 SDK 实际使用的窗口，不能读取后续修改的目录或偏好。 */
+  contextWindow: number | null;
   modelRequestCount: number;
   pendingModelRequest: {
     boundaryStarted: boolean;
@@ -121,6 +124,8 @@ interface PiRunContext {
 export interface CreatePiNativeConversationCoordinatorOptions {
   /** 各模型共用工作目录恢复与产品归档边界。 */
   ensureExecutionContext: CreateCodexNativeConversationCoordinatorOptions['ensureExecutionContext'];
+  /** 原生会话操作前校验实际模型预算。 */
+  validateContextCapacity: CreateCodexNativeConversationCoordinatorOptions['validateContextCapacity'];
   db: ZeusDatabase;
   commandDeliveries: CommandDeliveryRepository;
   conversations: ConversationRepository;
@@ -159,6 +164,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
 }
 
 export interface StartPiConversationInput {
+  /** 会话创建接纳时冻结，排队与恢复从会话记录读取。 */
+  contextCapacityTokens?: number | null;
   conversationId: string;
   submissionId: string;
   projectId: string;
@@ -339,6 +346,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
     }
+    options.validateContextCapacity(existingConversation?.contextCapacityTokens ?? input.contextCapacityTokens ?? null, input.model.sourceId, input.model.modelId, 'pi');
     if (existingConversation?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     if (existingConversation && !input.holdDispatch) {
       /** 切换模型后首次派发也先恢复原任务目录，再准备工具和模型请求。 */
@@ -359,6 +367,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (input.holdDispatch) {
       if (!existingConversation) {
         options.conversations.create({
+          contextCapacityTokens: input.contextCapacityTokens ?? null,
           id: input.conversationId,
           projectId: input.projectId,
           ...(input.taskId ? { taskId: input.taskId } : {}),
@@ -432,6 +441,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let attachmentInput: PiAttachmentResolution = { attachments: orderedAttachments, images: [], pathReferences: rawPathReferences, allowedRoots: allowedResourceRoots };
     if (!existingConversation) {
       options.conversations.create({
+        contextCapacityTokens: input.contextCapacityTokens ?? null,
         id: input.conversationId,
         projectId: input.projectId,
         ...(input.taskId ? { taskId: input.taskId } : {}),
@@ -713,6 +723,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: session.runtimeInstanceId });
       run = await driver.startRun({
+        contextCapacityTokens: submission.executionSnapshotId
+          ? ((parseJsonRecord(options.execution.getExecutionSnapshot(submission.executionSnapshotId)?.contextCapacityJson ?? 'null').contextCapacityTokens as number | null) ?? null)
+          : (options.conversations.getById(input.conversationId)?.contextCapacityTokens ?? null),
         session,
         traceIdentity: runCommand.traceIdentity,
         content: providerPrompt,
@@ -732,6 +745,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         preflightResult: () => undefined,
         durableTransactionSync: (acceptance) => {
+          /** 读回证据在打开 Provider 传输闸门前随现有接纳事务落盘。 */
+          if (acceptance.contextCapacity)
+            options.execution.appendConfigEvidence({
+              conversationId: submission.conversationId,
+              submissionId: submission.id,
+              layer: 'runtime_acknowledged',
+              configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
+              evidence: { adapter: 'pi_sdk', readback: acceptance.contextCapacity },
+              observedAt: acceptance.acceptedAt,
+            });
           if (input.segmentLifecycle) {
             acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
               providerTurnId: acceptance.nativeRunId,
@@ -853,6 +876,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       usage: emptyTokenUsageBreakdown(),
       usageComplete: true,
       lastRequestUsage: null,
+      contextWindow: run.contextCapacity?.contextWindow ?? null,
       modelRequestCount: 0,
       pendingModelRequest: null,
       currentStageId: null,
@@ -888,6 +912,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
+    /** 已接纳消息使用冻结容量，后续编辑不会改变队列中的请求。 */
+    const queuedSubmission = options.submissions.getById(input.submissionId);
+    const capacitySnapshot = queuedSubmission?.executionSnapshotId ? options.execution.getExecutionSnapshot(queuedSubmission.executionSnapshotId) : undefined;
+    const contextCapacityTokens = capacitySnapshot ? ((parseJsonRecord(capacitySnapshot.contextCapacityJson).contextCapacityTokens as number | null) ?? null) : input.conversation.contextCapacityTokens;
+    options.validateContextCapacity(contextCapacityTokens, input.model.sourceId, input.model.modelId, 'pi');
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     await options.transcripts.waitUntilReady(input.conversation.id);
     const createdAt = options.now();
@@ -1037,6 +1066,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: context.session.runtimeInstanceId });
       run = await driver.startRun({
+        contextCapacityTokens,
         session: context.session,
         traceIdentity: runCommand.traceIdentity,
         content: providerContent,
@@ -1056,6 +1086,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         preflightResult: () => undefined,
         durableTransactionSync: (acceptance) => {
+          /** 读回证据在打开 Provider 传输闸门前随现有接纳事务落盘。 */
+          if (acceptance.contextCapacity)
+            options.execution.appendConfigEvidence({
+              conversationId: submission.conversationId,
+              submissionId: submission.id,
+              layer: 'runtime_acknowledged',
+              configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
+              evidence: { adapter: 'pi_sdk', readback: acceptance.contextCapacity },
+              observedAt: acceptance.acceptedAt,
+            });
           if (input.segmentLifecycle) {
             acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
               providerTurnId: acceptance.nativeRunId,
@@ -1190,6 +1230,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       usage: emptyTokenUsageBreakdown(),
       usageComplete: true,
       lastRequestUsage: null,
+      contextWindow: run.contextCapacity?.contextWindow ?? null,
       modelRequestCount: 0,
       pendingModelRequest: null,
       currentStageId: null,
@@ -1533,7 +1574,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (requestUsage) run.lastRequestUsage = { ...requestUsage };
       if (segment) {
         const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
-        const contextWindow = connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null;
+        const contextWindow = run.contextWindow;
         const rawUsage = readPiUsageObservation(message.usage);
         const hasReasoningContent = content.some((part) => part.type === 'thinking');
         // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
@@ -1733,7 +1774,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           // last 的既定语义是"最后一次真实模型请求"，与 Codex 路径保持一致；缺失时退回整轮累加值。
           last: run.lastRequestUsage ?? run.usage,
           lastEstimate: estimate,
-          modelContextWindow: connection?.models.find((model) => model.id === run.modelId)?.contextWindow ?? null,
+          modelContextWindow: run.contextWindow,
           generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
           sequence: eventSequence + 1,
         });

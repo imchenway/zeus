@@ -1,3 +1,4 @@
+import { assertContextCapacity } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   ConversationCollaborationMode,
@@ -24,6 +25,8 @@ import {
 type EmptyInput = Record<string, never>;
 
 interface NextTurnSettingsInput {
+  /** 容量只在下一轮应用。 */
+  contextCapacityTokens?: unknown;
   model?: unknown;
   effort?: unknown;
   serviceTier?: unknown;
@@ -102,6 +105,10 @@ export function registerConversationCommandRoutes(options: {
   archiveNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
   /** 纯本地恢复不记录外部写出。 */
   restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
+  /** 模型变更前校验会话已冻结预算，不修改任何持久状态。 */
+  validateContextCapacity(conversation: ZeusConversationRecord, model: string | null): Promise<void>;
+  /** 项目只记住最后一次明确选择。 */
+  rememberContextCapacity(projectId: string, capacity: number | null): void;
   isConversationIdle(conversation: ZeusConversationRecord): boolean;
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   goalCapability(conversation: ZeusConversationRecord): unknown;
@@ -125,8 +132,9 @@ export function registerConversationCommandRoutes(options: {
     try {
       const parsed = parseCommand(request, conversationCommandTypes.nextTurnSettingsUpdate);
       assertExpectedRevision(parsed, null);
-      assertOnlyInputKeys(parsed.input, ['model', 'effort', 'serviceTier', 'permissionMode', 'collaborationMode'], parsed.command.commandType);
+      assertOnlyInputKeys(parsed.input, ['model', 'effort', 'serviceTier', 'permissionMode', 'collaborationMode', 'contextCapacityTokens'], parsed.command.commandType);
       const settings = parseNextTurnSettings(parsed.input);
+      await options.validateContextCapacity({ ...requireNativeConversation(request.params, true), ...(settings.contextCapacityTokens !== undefined ? { contextCapacityTokens: settings.contextCapacityTokens } : {}) }, settings.model);
       const mutation = application.executeCore({
         parsed,
         destinationId: 'conversation-settings-application',
@@ -136,6 +144,7 @@ export function registerConversationCommandRoutes(options: {
           const previousPermissionMode = options.conversations.getNextTurnSettings(conversation.id)?.permissionMode ?? conversation.permissionMode;
           if (previousPermissionMode !== settings.permissionMode) options.conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, false);
           options.conversations.updateNextTurnSettings(conversation.id, settings);
+          if (settings.contextCapacityTokens !== undefined) options.rememberContextCapacity(conversation.projectId, settings.contextCapacityTokens);
           return settings;
         },
       });
@@ -468,6 +477,7 @@ interface ConversationParams {
 }
 
 function parseNextTurnSettings(input: NextTurnSettingsInput): ConversationNextTurnSettings {
+  if (input.contextCapacityTokens !== undefined) assertContextCapacity(input.contextCapacityTokens);
   const model = typeof input.model === 'string' ? input.model.trim() : '';
   const effort = input.effort === undefined ? undefined : typeof input.effort === 'string' ? input.effort.trim() : null;
   const hasServiceTier = Object.prototype.hasOwnProperty.call(input, 'serviceTier');
@@ -476,6 +486,7 @@ function parseNextTurnSettings(input: NextTurnSettingsInput): ConversationNextTu
     throw routeError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Next turn model, reasoning effort, or service tier is invalid.', 400);
   }
   return {
+    ...(input.contextCapacityTokens !== undefined ? { contextCapacityTokens: input.contextCapacityTokens as number | null } : {}),
     model,
     ...(effort ? { effort } : {}),
     ...(hasServiceTier ? { serviceTier: serviceTier === null ? null : (serviceTier as string).trim() } : {}),

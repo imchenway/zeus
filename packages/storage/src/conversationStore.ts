@@ -1,3 +1,4 @@
+import { assertContextCapacity } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import type { SQLInputValue } from 'node:sqlite';
 import { randomId } from './randomId.js';
@@ -48,6 +49,8 @@ export interface ZeusConversationRecord {
   agentTransport: ConversationAgentTransport | null;
   modelSourceId: string | null;
   modelId: string | null;
+  /** 会话后续轮次的上下文容量，旧会话为空并保留默认。 */
+  contextCapacityTokens: number | null;
   nativeSessionId: string | null;
   nativeSessionPath: string | null;
   capabilitySnapshotId: string | null;
@@ -98,6 +101,8 @@ export interface ZeusConversationGoalEventRecord {
 }
 
 export interface ConversationNextTurnSettings {
+  /** 下一轮的容量选择；省略时保留当前会话设置。 */
+  contextCapacityTokens?: number | null;
   model: string;
   effort?: string;
   serviceTier?: string | null;
@@ -195,6 +200,8 @@ export interface CreateConversationInput {
   agentTransport?: ConversationAgentTransport;
   modelSourceId?: string;
   modelId?: string;
+  /** 创建时的上下文容量；后续调整使用独立更新入口。 */
+  contextCapacityTokens?: number | null;
   nativeSessionId?: string;
   nativeSessionPath?: string;
   capabilitySnapshotId?: string;
@@ -535,7 +542,7 @@ const selectConversationFields = `id, project_id, task_id, session_id, title, su
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
   provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, attention_kind, attention_revision, attention_turn_id, attention_updated_at, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
-  origin_kind, listing_scope, automation_run_id`;
+  origin_kind, listing_scope, automation_run_id, context_capacity_tokens`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
 const selectAliasedConversationMessageFields = `message.id, message.conversation_id, message.role, message.content, message.source, message.metadata_json, message.created_at,
@@ -759,6 +766,7 @@ export class ConversationRepository {
       agentTransport,
       modelSourceId: input.modelSourceId ?? null,
       modelId: input.modelId ?? input.providerModel ?? null,
+      contextCapacityTokens: input.contextCapacityTokens ?? null,
       nativeSessionId: input.nativeSessionId ?? input.providerThreadId ?? null,
       nativeSessionPath: input.nativeSessionPath ?? input.providerThreadPath ?? null,
       capabilitySnapshotId: input.capabilitySnapshotId ?? null,
@@ -771,8 +779,8 @@ export class ConversationRepository {
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
         provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread,
         agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
-        origin_kind, listing_scope, automation_run_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        origin_kind, listing_scope, automation_run_id, context_capacity_tokens)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -811,6 +819,7 @@ export class ConversationRepository {
         record.originKind,
         record.listingScope,
         record.automationRunId,
+        record.contextCapacityTokens,
       ],
     );
     syncConversationStage(this.db, record.id, timestamp);
@@ -833,8 +842,15 @@ export class ConversationRepository {
     return updated;
   }
 
+  /** 保存会话的下一轮容量，不改写正在运行的请求。 */
+  updateContextCapacity(conversationId: string, capacity: number | null): void {
+    assertContextCapacity(capacity);
+    this.db.execute('UPDATE conversations SET context_capacity_tokens = ?, updated_at = ? WHERE id = ?', [capacity, nowIso(), conversationId]);
+  }
+
   updateNextTurnSettings(conversationId: string, settings: ConversationNextTurnSettings): ZeusConversationWithMessagesRecord {
     validateNextTurnSettings(settings);
+    if (settings.contextCapacityTokens !== undefined) this.updateContextCapacity(conversationId, settings.contextCapacityTokens);
     this.db.execute(`UPDATE conversations SET next_turn_settings_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(settings), nowIso(), conversationId]);
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -842,12 +858,13 @@ export class ConversationRepository {
   }
 
   getNextTurnSettings(conversationId: string): ConversationNextTurnSettings | undefined {
-    const row = this.db.get<{ next_turn_settings_json: string }>(`SELECT next_turn_settings_json FROM conversations WHERE id = ?`, [conversationId]);
+    const row = this.db.get<{ next_turn_settings_json: string; context_capacity_tokens: number | null }>(`SELECT next_turn_settings_json, context_capacity_tokens FROM conversations WHERE id = ?`, [conversationId]);
     if (!row) return undefined;
     try {
       const parsed = JSON.parse(row.next_turn_settings_json) as unknown;
       validateNextTurnSettings(parsed);
-      return parsed;
+      // 容量只从独立持久字段读取，避免任务推送后仍回放旧设置中的容量。
+      return { ...parsed, contextCapacityTokens: row.context_capacity_tokens };
     } catch {
       return undefined;
     }
@@ -2825,7 +2842,8 @@ function validateProviderSettingsSnapshot(snapshot: unknown): asserts snapshot i
 
 function validateNextTurnSettings(settings: unknown): asserts settings is ConversationNextTurnSettings {
   if (!isPlainRecord(settings)) throw new Error('Invalid conversation next turn settings');
-  assertOnlyKeys(settings, ['model', 'effort', 'serviceTier', 'permissionMode', 'collaborationMode'], 'conversation next turn settings');
+  if (settings.contextCapacityTokens !== undefined) assertContextCapacity(settings.contextCapacityTokens);
+  assertOnlyKeys(settings, ['model', 'effort', 'serviceTier', 'permissionMode', 'collaborationMode', 'contextCapacityTokens'], 'conversation next turn settings');
   if (
     typeof settings.model !== 'string' ||
     !settings.model.trim() ||
@@ -3130,6 +3148,8 @@ interface DbConversationRow {
   agent_transport: ConversationAgentTransport | null;
   model_source_id: string | null;
   model_id: string | null;
+  /** 数据库保存的下一轮上下文容量。 */
+  context_capacity_tokens: number | null;
   native_session_id: string | null;
   native_session_path: string | null;
   capability_snapshot_id: string | null;
@@ -3361,6 +3381,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     agentTransport: row.agent_transport,
     modelSourceId: row.model_source_id,
     modelId: row.model_id,
+    contextCapacityTokens: row.context_capacity_tokens,
     nativeSessionId: row.native_session_id,
     nativeSessionPath: row.native_session_path,
     capabilitySnapshotId: row.capability_snapshot_id,

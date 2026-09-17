@@ -35,6 +35,8 @@ export interface ProjectModelServiceTierPreference {
 }
 
 export interface ProjectConfig {
+  /** 后续新建会话的上下文容量，旧配置保持默认。 */
+  contextCapacityTokens?: number | null;
   projectId: string;
   serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultModel: string | null;
@@ -63,7 +65,7 @@ export interface ProjectConfig {
   };
 }
 
-export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs' | 'serviceTierPreferences'> & { vcs?: ProjectConfig['vcs'] };
+export type SaveProjectConfigRequest = Partial<Omit<ProjectConfig, 'projectId' | 'vcs' | 'serviceTierPreferences'>> & { vcs?: ProjectConfig['vcs'] };
 
 export interface ProjectDatabaseSecretSnapshot {
   connectionName: string | null;

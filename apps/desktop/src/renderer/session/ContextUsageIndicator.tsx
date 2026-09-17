@@ -7,7 +7,12 @@ import { formatTokenCount } from './tokenUsageFormat.js';
 
 type ContextUsageSeverity = 'unavailable' | 'normal' | 'warning' | 'danger';
 
-export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageSnapshot | null; language: SessionUiLanguage }) {
+export function ContextUsageIndicator(props: {
+  /** 下一轮选择的容量，独立于真实使用量。 */ contextCapacityTokens?: number | null;
+  contextCapacityEvidence?: import('@zeus/shared').ContextCapacityEvidence | null;
+  unifiedUsage: NativeUnifiedUsageSnapshot | null;
+  language: SessionUiLanguage;
+}) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
@@ -17,8 +22,11 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
   // 上下文规模只认最后一次真实模型请求：totalTokens（提示词 + 本次输出）就是下一次请求要携带的上下文，
   // 与 Pi 运行内核的压缩阈值口径一致。轮次累计用量不是上下文规模，任何情况下都不能当分子。
   const latestRequest = props.unifiedUsage?.latestModelRequest ?? null;
-  const used = latestRequest?.totalTokens ?? null;
-  const capacity = latestRequest?.contextWindow ?? null;
+  /** 所选容量变更后，旧请求的窗口只属于上一轮，不能继续充当当前值。 */
+  const evidence = props.contextCapacityEvidence;
+  const pending = evidence ? evidence.contextCapacityTokens !== (props.contextCapacityTokens ?? null) || !latestRequest || latestRequest.occurredAt < evidence.observedAt : props.contextCapacityTokens != null;
+  const used = pending ? null : (latestRequest?.totalTokens ?? null);
+  const capacity = pending ? null : (latestRequest?.contextWindow ?? null);
   const available = used !== null && capacity !== null && capacity > 0;
   const ratio = available ? used / capacity : null;
   const estimate = props.unifiedUsage?.preflightEstimate ?? null;
@@ -66,6 +74,18 @@ export function ContextUsageIndicator(props: { unifiedUsage: NativeUnifiedUsageS
       style={contextUsageTooltipPositionStyle(tooltipPosition)}
     >
       <strong aria-hidden="true">{copy.title}</strong>
+      <small>
+        {props.language === 'zh-CN' ? '所选容量：' : 'Selected capacity: '}
+        {props.contextCapacityTokens == null ? (props.language === 'zh-CN' ? '默认' : 'Default') : `${props.contextCapacityTokens / 1000}K Token`}
+      </small>
+      {pending ? <small>{props.language === 'zh-CN' ? '下一轮应用，等待引擎回报；Codex 切换容量可能需约一分钟。' : 'Applies next turn; awaiting engine usage. Codex may take about a minute.'}</small> : null}
+      {available ? (
+        <small>
+          {props.language === 'zh-CN' ? '引擎回报的可用空间：' : 'Engine usable window: '}
+          {formatTokenCount(capacity!, props.language).compact}
+          {props.contextCapacityTokens != null && capacity !== props.contextCapacityTokens ? (props.language === 'zh-CN' ? '（已扣除引擎保留空间）' : ' (after engine reservation)') : ''}
+        </small>
+      ) : null}
       {available || copy.estimatedHeadroom || copy.compaction ? (
         <dl>
           {available ? (

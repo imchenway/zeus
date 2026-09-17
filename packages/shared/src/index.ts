@@ -18,6 +18,7 @@ export * from './skillIdentity.js';
 export * from './userFacingError.js';
 export * from './networkProxy.js';
 export * from './globalAgentSettings.js';
+export * from './contextCapacity.js';
 
 /** 项目本地仓库发现状态；完成时间只代表当前目录最近一次完整扫描。 */
 export interface ProjectRepositoryDiscovery {
