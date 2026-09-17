@@ -6,6 +6,8 @@ export interface UseGitBlameOptions {
   filePath?: string;
   ref?: string;
   initiallyVisible?: boolean;
+  /** 磁盘内容变更后使用新缓存，避免保存后复用旧行号。 */
+  revision?: string;
 }
 
 export interface UseGitBlameResult {
@@ -33,11 +35,11 @@ export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
   // 文件名两端的空格是合法路径内容，校验时只用 trim，不改变实际 IPC 参数。
   const filePath = options.filePath ?? '';
   const ref = options.ref?.trim() || undefined;
-  const cacheKey = projectId && filePath.trim() ? `${projectId}\0${filePath}\0${ref ?? ''}` : '';
+  const cacheKey = projectId && filePath.trim() ? `${projectId}\0${filePath}\0${ref ?? ''}\0${options.revision ?? ''}` : '';
   const available = Boolean(projectId && filePath.trim() && typeof window !== 'undefined' && window.zeus?.loadProjectSourceBlame);
   const [enabled, setEnabled] = useState(options.initiallyVisible ?? true);
   const [refreshVersion, setRefreshVersion] = useState(0);
-  const [blame, setBlame] = useState<GitFileBlame | null>(null);
+  const [blame, setBlame] = useState<{ key: string; value: GitFileBlame } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -56,7 +58,7 @@ export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
     if (!loader) return undefined;
     void readCachedBlame(cacheKey, () => loader({ projectId, relativePath: filePath, ...(ref ? { ref } : {}) }))
       .then((value) => {
-        if (active) setBlame(value);
+        if (active) setBlame({ key: cacheKey, value });
       })
       .catch((cause: unknown) => {
         if (active) {
@@ -78,7 +80,7 @@ export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
     setRefreshVersion((value) => value + 1);
   }, [cacheKey]);
 
-  return { blame, enabled, loading, available, error, toggle, reload };
+  return { blame: blame?.key === cacheKey ? blame.value : null, enabled, loading, available, error, toggle, reload };
 }
 
 async function readCachedBlame(key: string, load: () => Promise<GitFileBlame>): Promise<GitFileBlame> {

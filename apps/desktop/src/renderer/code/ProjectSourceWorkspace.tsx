@@ -23,6 +23,7 @@ import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.j
 import type { GitDiffSummary } from '../features/git/gitContracts.js';
 import { SideBySideDiff } from '../git/ProjectGitDiffViewer.js';
 
+const ProjectSourceEditor = lazy(() => import('./ProjectSourceEditor.js').then((module) => ({ default: module.ProjectSourceEditor })));
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
@@ -856,7 +857,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 <FilePreview request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }} revision={activeTab.document.revision.sha256} zh={zh} />
               ) : (
                 <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
-                  <CodeEditor
+                  <ProjectSourceEditor
+                    projectId={props.project.id}
+                    revision={activeTab.document.revision.sha256}
+                    dirty={activeTab.dirty}
+                    zh={zh}
                     extensions={conflictExtensions}
                     path={activeTab.document.relativePath}
                     language={activeTab.document.language}
