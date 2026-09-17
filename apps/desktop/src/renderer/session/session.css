@@ -10192,6 +10192,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   color: var(--session-text-muted);
 }
 
+/* 会话消息与输入区共用品牌选区底色，保留正文和代码原有字色。 */
+.session-codex-parity-v1 .session-transcript ::selection,
 .session-codex-parity-v1 .structured-composer-editor ::selection {
   background: color-mix(in srgb, var(--session-accent) 22%, transparent);
 }
