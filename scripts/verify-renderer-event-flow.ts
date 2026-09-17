@@ -1295,6 +1295,50 @@ async function verifyTurnChangeReviewHydration() {
 }
 
 /** 审阅专项可独立运行，避免无关历史探针的既有失败遮蔽结果。 */
+/** 真实控制器必须先取齐全部位置，再一次通知 UI，期间文本事件继续保留。 */
+async function verifyPlacementEpochTakeover() {
+  const harness = createHarness();
+  let reads = 0;
+  harness.client.loadNativeConversationTranscriptPlacements = async (_project, _conversation, ids) => {
+    reads += 1;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { conversationId, orderEpoch: 2, revision: 1000, uncoveredEntryIds: [], removedEntryIds: [], placements: ids.map((id) => ({ ...transcript(id, Number(id.split('-').at(-1)) + 1).placement, orderEpoch: 2 })) };
+  };
+  await harness.controller.start();
+  try {
+    for (let index = 0; index < 260; index += 1)
+      harness.emit(conversationEvent(index + 1, 'conversation.item.started', { turnId: 'turn', itemId: `placement-${index}`, itemType: 'agentMessage', textContent: '正文', transcript: transcript(`placement-${index}`, index + 1) }));
+    let publications = 0;
+    const unsubscribe = harness.controller.subscribe(() => {
+      publications += 1;
+      const epochs = new Set(Object.values(harness.controller.getState().items).flatMap((item) => (item.transcript ? [item.transcript.placement.orderEpoch] : [])));
+      assert(epochs.size <= 1, '位置接管不得发布混合代次。');
+    });
+    harness.emit(conversationEvent(261, 'conversation.transcript.placement.changed', { orderEpoch: 2, revision: 1000 }));
+    harness.emit(
+      conversationEvent(262, 'conversation.item.completed', {
+        turnId: 'turn',
+        itemId: 'placement-259',
+        itemType: 'agentMessage',
+        textContent: '期间完成正文',
+        transcript: { ...transcript('placement-259', 260), placement: { ...transcript('placement-259', 260).placement, orderEpoch: 2 }, sources: [{ ...transcript('placement-259', 260).sources[0]!, revision: 1001, contentRevision: 1001 }] },
+      }),
+    );
+    await waitUntil(() => Object.values(harness.controller.getState().items).every((item) => item.transcript?.placement.orderEpoch === 2), 'placement epoch takeover');
+    assert(reads === 2 && publications === 1, '超过 256 个位置需分批读取且只发布一次。');
+    assert(
+      Object.values(harness.controller.getState().items).some((item) => item.text === '期间完成正文'),
+      '位置接管不能丢失缓冲正文。',
+    );
+    unsubscribe();
+    return { loadedItems: 260, batches: reads, publications };
+  } finally {
+    harness.controller.dispose();
+  }
+}
+const placementTakeover = await verifyPlacementEpochTakeover();
+console.log(JSON.stringify({ placementTakeover }));
+
 const turnChangeReview = await verifyTurnChangeReviewHydration();
 /** 重试专项可单独核验，不受其他既有投影断言影响。 */
 const queuedRetryReconciliation = await verifyQueuedRetryReconciliation();

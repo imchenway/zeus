@@ -34,7 +34,15 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
   };
   current.forEach(add);
   incoming.forEach(add);
-  const items = [...byEntryId.values()].sort(compareTranscriptItems);
+  /** 只有新增或位置变化才排序；普通正文更新沿用已有顺序。 */
+  const structuralChange =
+    byEntryId.size !== current.length ||
+    current.some((item) => {
+      const next = byEntryId.get(transcriptEntryId(item))!;
+      return next.transcript.placement.order !== item.transcript.placement.order;
+    });
+  const items = changedEntryIds.size === 0 ? (current as NativeItemSnapshot[]) : [...byEntryId.values()];
+  if (structuralChange) items.sort(compareTranscriptItems);
   const movedEntryIds = items.flatMap((item, index) => {
     const entryId = transcriptEntryId(item);
     const before = previousOrder.get(entryId);
@@ -58,59 +66,45 @@ export function transcriptEntryId(item: Pick<NativeItemSnapshot, 'transcript'>):
   return item.transcript.placement.entryId;
 }
 
-/** 同一显示条目按来源修订合并，过程详情和完整正文不会被轻量预览降级。 */
-function mergeTranscriptItem(previous: NativeItemSnapshot, incoming: NativeItemSnapshot): NativeItemSnapshot {
-  if (incoming.transcript.placement.orderEpoch < previous.transcript.placement.orderEpoch) return previous;
-  if (incoming.transcript.placement.orderEpoch === previous.transcript.placement.orderEpoch && sourceRevision(incoming.transcript) < sourceRevision(previous.transcript)) return previous;
-  if (previous.payload.v2ContentKind === 'process_detail' && incoming.payload.v2ContentKind !== 'process_detail') {
-    return {
-      ...previous,
-      status: terminalStatus(previous.status, incoming.status),
-      completedAt: incoming.completedAt ?? previous.completedAt,
-      updatedAt: incoming.updatedAt > previous.updatedAt ? incoming.updatedAt : previous.updatedAt,
-      transcript: newestEnvelope(previous.transcript, incoming.transcript),
-      payload: { ...incoming.payload, ...previous.payload },
-    };
-  }
-  /** Pi 的调用和结果分开到达时保留参数、正文句柄与最终结果。 */
-  if (previous.payload.provider === 'pi' && incoming.payload.provider === 'pi') {
-    return {
-      ...incoming,
-      startedAt: previous.startedAt ?? incoming.startedAt,
-      status: terminalStatus(previous.status, incoming.status),
-      transcript: newestEnvelope(previous.transcript, incoming.transcript),
-      payload: {
-        ...previous.payload,
-        ...incoming.payload,
-        toolResult: incoming.payload.toolResult ?? previous.payload.toolResult,
-        ...(previous.payload.command && previous.payload.v2ContentTruncated === true && !incoming.payload.command
-          ? { v2ContentHandle: previous.payload.v2ContentHandle, v2ContentTruncated: true, v2ContentBytes: previous.payload.v2ContentBytes }
-          : {}),
-      },
-    };
-  }
-  return { ...incoming, status: terminalStatus(previous.status, incoming.status), transcript: newestEnvelope(previous.transcript, incoming.transcript) };
+/** 统一合并器只依赖内容、状态和来源证据，供快照与实时缓冲共同使用。 */
+type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status'> & { transcript?: ConversationTranscriptEnvelope };
+
+/** 来源修订用于去重；正文权威只由实际载荷的内容修订决定。 */
+export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, incoming: T): T {
+  const previousRevision = transcriptContentRevision(previous.transcript);
+  const incomingRevision = transcriptContentRevision(incoming.transcript);
+  const previousComplete = previous.payload.v2ContentTruncated !== true;
+  const incomingComplete = incoming.payload.v2ContentTruncated !== true;
+  const keepContent =
+    incomingRevision < previousRevision || (incomingRevision === previousRevision && ((previousComplete && !incomingComplete) || (previous.payload.v2ContentKind === 'process_detail' && incoming.payload.v2ContentKind !== 'process_detail')));
+  const content = keepContent ? previous : incoming;
+  const placement = newestTranscriptPlacement(previous.transcript, incoming.transcript);
+  const transcript = content.transcript && placement ? { ...content.transcript, placement } : (content.transcript ?? incoming.transcript);
+  if (content === previous && transcript?.placement === previous.transcript?.placement) return previous;
+  return {
+    ...incoming,
+    text: content.text,
+    payload: content.payload,
+    status: terminalStatus(previous.status, content.status),
+    ...(transcript ? { transcript } : {}),
+  };
+}
+
+/** 正文携带的来源集合只描述实际采用的载荷，不能混入更晚的其他副本。 */
+export function transcriptContentRevision(envelope: ConversationTranscriptEnvelope | undefined): number {
+  return envelope ? Math.max(0, ...envelope.sources.map((source) => source.contentRevision)) : 0;
+}
+
+/** 位置独立于正文合并，旧正文也可以携带新的位置证据。 */
+export function newestTranscriptPlacement(previous: ConversationTranscriptEnvelope | undefined, incoming: ConversationTranscriptEnvelope | undefined): ConversationTranscriptEnvelope['placement'] | undefined {
+  if (!previous) return incoming?.placement;
+  if (!incoming) return previous.placement;
+  return incoming.placement.orderEpoch > previous.placement.orderEpoch || (incoming.placement.orderEpoch === previous.placement.orderEpoch && incoming.placement.placementRevision >= previous.placement.placementRevision)
+    ? incoming.placement
+    : previous.placement;
 }
 
 /** 条目完成后不能被较晚到达的进行中投影倒退。 */
 function terminalStatus(previous: string, incoming: string): string {
-  return previous === 'completed' || previous === 'failed' || previous === 'resolved' ? previous : incoming;
-}
-
-/** 位置取新代次和新修订，来源集合按来源身份保留最高修订。 */
-function newestEnvelope(previous: ConversationTranscriptEnvelope, incoming: ConversationTranscriptEnvelope): ConversationTranscriptEnvelope {
-  const placement =
-    incoming.placement.orderEpoch > previous.placement.orderEpoch || incoming.placement.placementRevision >= previous.placement.placementRevision ? incoming.placement : previous.placement;
-  const sources = new Map<string, ConversationTranscriptEnvelope['sources'][number]>();
-  for (const source of [...previous.sources, ...incoming.sources]) {
-    const key = `${source.domain}\u0000${source.scope}\u0000${source.sourceId}\u0000${source.facet}`;
-    const current = sources.get(key);
-    if (!current || source.revision > current.revision) sources.set(key, source);
-  }
-  return { placement, sources: [...sources.values()] };
-}
-
-/** 比较一条投影采用的最高来源修订。 */
-function sourceRevision(envelope: ConversationTranscriptEnvelope): number {
-  return Math.max(envelope.placement.placementRevision, ...envelope.sources.map((source) => source.revision));
+  return (previous === 'completed' || previous === 'failed' || previous === 'resolved') && (incoming === 'in_progress' || incoming === 'running') ? previous : incoming;
 }

@@ -27,7 +27,7 @@ import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
 import { PlanImplementationRequestSurface } from '../src/renderer/session/PlanImplementationRequestSurface.js';
-import { createInitialSessionState } from '../src/renderer/session/sessionReducer.js';
+import { createInitialSessionState, sessionReducer } from '../src/renderer/session/sessionReducer.js';
 import type { ComposerInputHandle } from '../src/renderer/session/MarkdownComposerEditor.js';
 import { buildTaskCreateInitialForm, getLanguageCopy, TaskCreateModal } from '../src/renderer/features/workspace/workspaceSupport.js';
 
@@ -2447,7 +2447,7 @@ function NavigationQa() {
   }, [streaming]);
   useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
   /** 实际正文只投影已经读取的轮次。 */
-  const state = useMemo<NativeSessionState>(() => {
+  const baseState = useMemo<NativeSessionState>(() => {
     /** 时间线保持用户与答复的真实相对顺序。 */
     const items: NativeSessionItemBuffer[] = [...loaded]
       .sort((a, b) => a - b)
@@ -2466,7 +2466,7 @@ function NavigationQa() {
           type: role === 'user' ? 'userMessage' : 'agentMessage',
           phase: role === 'user' ? 'user' : 'final_answer',
           status: 'completed',
-          text: role === 'user' ? entry.prompt : entry.response.repeat(3) + (index === count - 1 ? ' 生成内容。'.repeat(revision % 200) : ''),
+          text: role === 'user' ? entry.prompt : entry.response.repeat(3),
           payload: {
             v2Sequence: entry.sequence + (role === 'user' ? 0 : 1),
             ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}),
@@ -2475,6 +2475,18 @@ function NavigationQa() {
               : {}),
           },
           resources: [],
+          transcript: {
+            placement: {
+              entryId: role === 'user' ? `user-message:${entry.clientUserMessageId ?? index}` : `answer-${index}`,
+              order: (index * 2 + (role === 'user' ? 1 : 2)) * 1024,
+              orderEpoch: 1,
+              placementRevision: 1,
+              turnId: entry.turnId,
+              openingInputId: `user-message:${entry.clientUserMessageId ?? index}`,
+              displayStageId: null,
+            },
+            sources: [{ domain: 'provider_item', scope: 'qa-navigation', sourceId: role === 'user' ? `user-${index}` : `answer-${index}`, facet: 'body', revision: 1, contentRevision: 1 }],
+          },
           updatedAt: entry.occurredAt,
         }));
       });
@@ -2483,7 +2495,7 @@ function NavigationQa() {
       conversationId,
       transportState: 'ready',
       conversationState: 'idle',
-      transcriptRevision: revision,
+      transcriptRevision: 0,
       pendingRequests: entries.flatMap((entry, index) =>
         entry.requestId && loaded.has(index)
           ? [
@@ -2515,7 +2527,37 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, revision, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, conversationId]);
+  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, conversationId]);
+
+  /** 持续生成经过正式归约器，使浏览器回归覆盖内容修订和增量投影。 */
+  const projectedState = useRef<{ base: NativeSessionState; state: NativeSessionState } | null>(null);
+  const state = useMemo(() => {
+    if (projectedState.current?.base !== baseState) projectedState.current = { base: baseState, state: baseState };
+    const previous = projectedState.current.state;
+    const answer = previous.items[`assistant-${count - 1}`];
+    if (!answer || !revision) return previous;
+    const transcript = { ...answer.transcript!, sources: answer.transcript!.sources.map((source) => ({ ...source, revision: revision + 1, contentRevision: revision + 1 })) };
+    const next = sessionReducer(previous, {
+      type: 'event_received',
+      event: {
+        id: `qa-delta-${revision}`,
+        type: 'conversation.item.completed',
+        createdAt: answer.updatedAt!,
+        payload: {
+          projectId: previous.projectId ?? '',
+          conversationId,
+          threadId: 'qa-navigation',
+          turnId: answer.turnId,
+          itemId: answer.providerItemId!,
+          itemType: answer.type,
+          textContent: entries[count - 1]!.response.repeat(3) + ' 生成内容。'.repeat(revision % 200),
+          transcript,
+        },
+      },
+    });
+    projectedState.current.state = next;
+    return next;
+  }, [baseState, revision, count, conversationId, entries]);
 
   /** 记录真实帧间隔、长任务和预览容器身份；采样本身不移动鼠标或正文。 */
   function recordFrames() {

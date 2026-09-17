@@ -25,7 +25,7 @@ import { migrateDigitalEmployeeStageHandoffSchema } from './digitalEmployeeStage
 import { migrateDigitalEmployeeLegacyRetirement } from './digitalEmployeeLegacyRetirementMigration.js';
 import { migrateConversationExpertSchema } from './conversationExpertStore.js';
 import { migrateConversationRuntimeSchema } from './conversationRuntimeStore.js';
-import { initializeConversationTranscriptIndexes, migrateConversationTranscriptStoreSchema } from './conversationTranscriptStore.js';
+import { initializeConversationTranscriptIndexes, migrateConversationTranscriptStoreSchema, stopConversationTranscriptInitialization } from './conversationTranscriptStore.js';
 import { migrateEmployeeMemorySchema } from './employeeMemoryMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
@@ -527,6 +527,7 @@ export class ZeusDatabase implements ZeusDatabasePort {
       });
     }
     this.businessMutationAdmissionFrozen = true;
+    stopConversationTranscriptInitialization(this);
   }
 
   /** 只允许 handoff repository 在冻结后提交 prepared/recovery_required 状态。 */
@@ -546,6 +547,7 @@ export class ZeusDatabase implements ZeusDatabasePort {
   /** 正常关闭会先提交、截断 WAL，再释放数据库句柄。 */
   async close(): Promise<void> {
     if (this.closed) return;
+    stopConversationTranscriptInitialization(this);
     if (this.accessMode === 'read_only_validation') {
       this.afterCommitCallbacks.length = 0;
       const errors: unknown[] = [];
@@ -601,6 +603,7 @@ export class ZeusDatabase implements ZeusDatabasePort {
   /** 启动失败时丢弃未提交变化，正式运行路径不得调用。 */
   discardAndClose(): void {
     if (this.closed) return;
+    stopConversationTranscriptInitialization(this);
     try {
       if (this.db.isTransaction) this.db.exec('ROLLBACK');
     } finally {
@@ -1036,7 +1039,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCompletedProviderPlansToConversationHistory(zeusDb);
     migrateConfirmedUserMessageHistory(zeusDb);
     migrateConversationTranscriptStoreSchema(zeusDb);
-    initializeConversationTranscriptIndexes(zeusDb);
+    await initializeConversationTranscriptIndexes(zeusDb, true);
     migrateArtifactStoreSchema(zeusDb);
     migrateConversationSyncEventStoreSchema(zeusDb);
     migrateConversationSyncProtocolV2(zeusDb);

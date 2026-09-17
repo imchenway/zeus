@@ -1662,7 +1662,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
-  | NativeEvent<'conversation.transcript.placement.changed', NativeEventIdentity & NativeConversationTranscriptPlacementBatch>
+  | NativeEvent<'conversation.transcript.placement.changed', NativeEventIdentity & { orderEpoch: number; revision: number }>
   | NativeEvent<'conversation.expert.round.changed', NativeEventIdentity & { submissionId: string; turnId: string; executions: NativeExpertExecutionProjection[] }>
   | NativeEvent<'conversation.expert.execution.changed', NativeEventIdentity & { turnId?: string; execution: NativeExpertExecutionProjection }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
@@ -1850,6 +1850,12 @@ export interface NativeSessionState {
   browserSubmission: ZeusBrowserPreparedSubmission | null;
   contextDraft: ConversationContextDraft;
   transcriptRevision: number;
+  /** 最近内容批次的有界变更记录；结构变化会中断连续修订。 */
+  /** 明确删除的显示身份及其修订，避免迟到页复活旧条目。 */
+  removedTranscriptEntryIds?: Record<string, number>;
+  transcriptContentChanges?: Array<{ key: string; revision: number }>;
+  /** 仅实时新建的条目允许播放入场动画。 */
+  transcriptLiveItemKeys?: string[];
   feedbackEpoch: number;
   visibleFeedbackEpoch: number;
   busyOperation: string | null;

@@ -5,6 +5,7 @@ import {
   type ConversationCollaborationMode,
   type ConversationNextTurnSettings,
   ConversationProviderItemRepository,
+  ConversationTranscriptRepository,
   ConversationServerRequestRepository,
   type ZeusConversationItemRecord,
   type ZeusConversationServerRequestRecord,
@@ -182,6 +183,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let handoffPromise: Promise<void> | null = null;
   let finalizationPromise: Promise<void> | null = null;
   const processProjector = new TurnProcessProjector(options.execution);
+  /** 旧资料在摄取前完成显示索引，事件继续受原队列预算约束。 */
+  const transcriptInitialization = new ConversationTranscriptRepository(options.db);
   const providerCommands = new CodexProviderCommandApplicationService(options.db, options.commandDeliveries, now);
   const pluginToolApprovals = createCodexPluginToolApprovalApplication({
     conversations: options.conversations,
@@ -401,6 +404,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const contextFromSubmission = (submission: ZeusConversationSubmissionRecord): ConversationDispatchContext => contextFromPersistedSubmission(submission, options.conversations.getById(submission.conversationId));
 
   async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false): Promise<void> {
+    await transcriptInitialization.waitUntilReady(conversationId);
     const existing = executionContextPromises.get(conversationId);
     if (existing) return existing;
     const promise = (async () => {
@@ -3188,6 +3192,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (eventThreadId) {
       providerThreadAuthority.markSubscribed(eventThreadId);
       const eventConversation = options.conversations.getByProviderThreadId(eventThreadId);
+      if (eventConversation) await transcriptInitialization.waitUntilReady(eventConversation.id);
       if (eventConversation) providerThreadAuthority.stopObserver(eventConversation.id);
     }
     await projectCodexProviderEvent(

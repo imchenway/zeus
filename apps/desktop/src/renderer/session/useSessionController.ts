@@ -1,7 +1,7 @@
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
-import type { ConversationNavigationSnapshot } from '@zeus/shared';
+import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -180,6 +180,8 @@ export interface SessionControllerClient {
   activateCodexConfig?(): Promise<unknown>;
   /** 首次加载、重连和发送后核对共用同一份结构与消息读取结果。 */
   loadNativeConversationReadableSnapshot(projectId: string, conversationId: string): Promise<NativeConversationReadableSnapshot>;
+  /** 核对全部已加载位置的服务端代次。 */
+  loadNativeConversationTranscriptPlacements?(projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number): Promise<ConversationTranscriptPlacementBatch>;
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
   /** 有界读取环境事实，不影响正文和队列状态。 */
   loadNativeConversationExecutionContext?(projectId: string, conversationId: string): Promise<NativeConversationExecutionContext>;
@@ -643,14 +645,126 @@ export function createSessionController(options: CreateSessionControllerOptions)
     pendingRenderBytes = 0;
   }
 
+  /** 批次内只归约状态，批次结束时统一通知订阅者。 */
+  let renderBatchActive = false;
+  let renderBatchChanged = false;
+
+  /** 位置换代期间保留旧画面，所有动作按原顺序等待一次接管。 */
+  let placementRecovery: Promise<void> | null = null;
+  let placementEpoch = Math.max(1, ...Object.values(state.items).map((item) => item.transcript?.placement.orderEpoch ?? 1));
+  const placementActions: Parameters<typeof sessionReducer>[1][] = [];
+  let placementBufferBytes = 0;
+  /** 作废已失败或已关闭的异步位置请求，避免旧请求接管新一轮状态。 */
+  let placementRecoveryGeneration = 0;
+
+  /** 收集动作中实际出现的持久身份，包含等待接管时新到的条目。 */
+  function actionTranscripts(action: Parameters<typeof sessionReducer>[1]): ConversationTranscriptEnvelope[] {
+    if (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') return [...action.snapshot.items, ...action.snapshot.requests].flatMap((item) => (item.transcript ? [item.transcript] : []));
+    if (action.type === 'pending_requests_hydrated') return [...action.requests, ...(action.items ?? [])].flatMap((item) => (item.transcript ? [item.transcript] : []));
+    if (action.type === 'event_received') {
+      const payload = action.event.payload;
+      const candidates = [
+        payload,
+        ...('request' in payload && payload.request ? [payload.request] : []),
+        ...('execution' in payload ? [payload.execution] : []),
+        ...('executions' in payload && Array.isArray(payload.executions) ? payload.executions : []),
+      ];
+      return candidates.flatMap((item) => (item && typeof item === 'object' && 'transcript' in item && item.transcript ? [item.transcript as ConversationTranscriptEnvelope] : []));
+    }
+    return [];
+  }
+
+  /** 分批核对同一代次；跨批又发生重编号时丢弃整批证据重新读取。 */
+  async function recoverTranscriptPlacements(generation: number): Promise<void> {
+    if (!options.client.loadNativeConversationTranscriptPlacements) throw new Error('当前客户端缺少位置核对接口。');
+    const placements = new Map<string, ConversationTranscriptPlacementBatch['placements'][number]>();
+    const removed = new Set<string>();
+    let epoch = 0;
+    let revision = 0;
+    let earliestRevision = Number.MAX_SAFE_INTEGER;
+    while (!disposed && generation === placementRecoveryGeneration) {
+      const ids = new Set([...Object.values(state.items), ...state.pendingRequests].flatMap((item) => (item.transcript ? [item.transcript.placement.entryId] : [])));
+      for (const action of placementActions) for (const envelope of actionTranscripts(action)) ids.add(envelope.placement.entryId);
+      const remaining = [...ids].filter((id) => !placements.has(id) && !removed.has(id));
+      if (remaining.length === 0) {
+        const notices = placementActions.flatMap((action) => (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? [action.event.payload] : []));
+        const requestedEpoch = Math.max(placementEpoch, ...notices.map((notice) => notice.orderEpoch), ...placementActions.flatMap(actionTranscripts).map((envelope) => envelope.placement.orderEpoch));
+        if (ids.size && (epoch < requestedEpoch || notices.some((notice) => notice.revision > earliestRevision))) {
+          placements.clear();
+          removed.clear();
+          earliestRevision = Number.MAX_SAFE_INTEGER;
+          continue;
+        }
+        const actions = placementActions.splice(0);
+        placementBufferBytes = 0;
+        placementEpoch = epoch || requestedEpoch;
+        placementRecovery = null;
+        dispatch({
+          type: 'transcript_placements_hydrated',
+          actions,
+          batch: { conversationId: options.conversationId, orderEpoch: placementEpoch, revision, placements: [...placements.values()], removedEntryIds: [...removed], uncoveredEntryIds: [] },
+        });
+        return;
+      }
+      const batch = await options.client.loadNativeConversationTranscriptPlacements(options.projectId, options.conversationId, remaining.slice(0, 256), epoch || undefined);
+      if (disposed || generation !== placementRecoveryGeneration) return;
+      if (batch.uncoveredEntryIds.length > 0 && batch.placements.length === 0 && batch.removedEntryIds.length === 0) throw new Error('已加载消息的位置无法核对，保留原画面等待重新同步。');
+      if (epoch && batch.orderEpoch !== epoch) {
+        placements.clear();
+        removed.clear();
+        earliestRevision = Number.MAX_SAFE_INTEGER;
+      }
+      epoch = batch.orderEpoch;
+      earliestRevision = Math.min(earliestRevision, batch.revision);
+      revision = Math.max(revision, batch.revision);
+      for (const placement of batch.placements) placements.set(placement.entryId, placement);
+      for (const id of batch.removedEntryIds) removed.add(id);
+    }
+  }
+
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
+    const incomingEpoch =
+      action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
+    if (
+      action.type !== 'transcript_placements_hydrated' &&
+      (placementRecovery || (incomingEpoch > 0 && incomingEpoch !== placementEpoch) || (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed'))
+    ) {
+      placementBufferBytes += new TextEncoder().encode(JSON.stringify(action)).byteLength;
+      placementActions.push(action);
+      if (placementActions.length > sessionRealtimeBufferBudget.maxEntries || placementBufferBytes > sessionRealtimeBufferBudget.maxBytes) {
+        placementActions.length = 0;
+        placementBufferBytes = 0;
+        placementRecovery = null;
+        placementRecoveryGeneration += 1;
+        failConversationSync(new Error('位置接管期间的消息缓冲超过预算。'));
+        return;
+      }
+      if (!placementRecovery) {
+        const generation = ++placementRecoveryGeneration;
+        const recovery = Promise.resolve()
+          .then(() => recoverTranscriptPlacements(generation))
+          .catch((error: unknown) => {
+            if (disposed || generation !== placementRecoveryGeneration) return;
+            placementActions.length = 0;
+            placementBufferBytes = 0;
+            placementRecovery = null;
+            failConversationSync(error);
+          })
+          .finally(() => {
+            if (placementRecovery === recovery) placementRecovery = null;
+          });
+        placementRecovery = recovery;
+      }
+      return;
+    }
     const previousThreadId = state.providerThreadId;
     const previousTransportKind = state.snapshot?.transportKind ?? null;
     const next = sessionReducer(state, action);
     if (next === state) return;
     state = next;
     if (state.providerThreadId !== previousThreadId || (state.snapshot?.transportKind ?? null) !== previousTransportKind) identityEpoch += 1;
-    for (const listener of listeners) listener();
+    if (renderBatchActive) renderBatchChanged = true;
+    else for (const listener of listeners) listener();
   }
 
   function persistDraft(): void {
@@ -707,7 +821,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || snapshot.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
     }
-    lastAppliedSyncEventSequence = snapshot.throughEventSeq;
+    lastAppliedSyncEventSequence = Math.max(lastAppliedSyncEventSequence, snapshot.throughEventSeq);
     for (const sequence of pendingSyncGapEvents.keys()) {
       if (sequence <= snapshot.throughEventSeq) deletePendingSyncGapEvent(sequence);
     }
@@ -717,6 +831,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       queue: queueWithPendingSteering(settledSnapshot.queue),
     };
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
+    if (placementRecovery) await placementRecovery;
     void hydrateSessionMetrics(projectedSnapshot.id);
   }
 
@@ -805,7 +920,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (pendingRenderDeltas.size === 0) return;
     const events = [...pendingRenderDeltas.values()];
     clearPendingRenderDeltas();
-    for (const event of events) applyEventImmediately(event);
+    renderBatchActive = true;
+    try {
+      for (const event of events) applyEventImmediately(event);
+    } finally {
+      renderBatchActive = false;
+      if (renderBatchChanged) {
+        renderBatchChanged = false;
+        for (const listener of listeners) listener();
+      }
+    }
   }
 
   function queueRenderDelta(event: NativeConversationEvent): void {
@@ -2574,6 +2698,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      placementActions.length = 0;
+      placementBufferBytes = 0;
+      placementRecovery = null;
+      placementRecoveryGeneration += 1;
       if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
       renderDeltaTimer = null;
       clearPendingRenderDeltas();

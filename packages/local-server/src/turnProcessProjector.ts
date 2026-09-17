@@ -94,7 +94,7 @@ export class TurnProcessProjector {
         const failureText = failed && type === 'text';
         if (!failureText && type !== 'thinking' && type !== 'reasoning' && type !== 'toolCall' && type !== 'tool_use') continue;
         const kind: ConversationProcessKind = failureText ? 'warning' : type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
-        const sourceId = typeof block.id === 'string' ? block.id : `${event.sequence}:${index}`;
+        const sourceId = typeof block.id === 'string' ? block.id : `${identity.stageId ?? event.nativeRunId}:${index}`;
         /** 工具声明和执行进度使用同一个身份，声明本身不代表执行完成。 */
         const sourceEventId = kind === 'tool' ? `pi:tool_execution:${sourceId}` : `pi:block:${sourceId}`;
         /** 重放旧的声明时不能回退已完成调用的结果。 */

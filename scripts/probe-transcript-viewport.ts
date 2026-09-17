@@ -4,9 +4,20 @@ import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { createZeusDatabase, ProjectRepository, ConversationRepository, ConversationSnapshotV2Repository, ConversationTranscriptRepository } from '../packages/storage/src/index.js';
+import {
+  createZeusDatabase,
+  ProjectRepository,
+  ConversationRepository,
+  ConversationSnapshotV2Repository,
+  ConversationTranscriptRepository,
+  ConversationProviderItemRepository,
+  ConversationExecutionRepository,
+} from '../packages/storage/src/index.js';
 import { registerConversationSnapshotV2Api } from '../packages/local-server/src/conversationSnapshotV2Api.js';
+import { initializeConversationTranscriptIndexes, stopConversationTranscriptInitialization } from '../packages/storage/src/conversationTranscriptStore.js';
 import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
+import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.js';
+import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection } from '../apps/desktop/src/renderer/session/transcriptProjection.js';
 import { reconcileTranscriptItems } from '../apps/desktop/src/renderer/session/transcriptReconciliation.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
@@ -155,7 +166,7 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
         /** 两段正文和最新摘要共存；历史模式只隐藏状态摘要。 */
         const rows = projectTranscriptRows([...reasoningItems, replacementSummary], [], 'turn', historyOnly);
         assertProbe(
-          rows.map((row) => row.key).join('|') === (historyOnly ? 'transcript:thinking|transcript:thinking-next' : 'transcript:thinking|transcript:thinking-next|transcript:codex-summary'),
+          rows.map((row) => row.key).join('|') === (historyOnly ? 'transcript:thinking|transcript:thinking-next' : 'transcript:thinking|transcript:thinking-next|reasoning-summary:turn'),
           `思考正文须各自保留，最新状态摘要独立且编号稳定：${protocolFamily}/${presentation}/${historyOnly}/${rows.map((row) => row.key).join('|')}`,
         );
         /** 同时核对未分组和已结束轮次，重复编号不能进入布局索引。 */
@@ -324,7 +335,9 @@ assertProbe(!hotCache.has(oversizedConversationId), '超过单会话字节上限
 /** 完整目录、按轮读取与前端身份共同经过真实存储和接口。 */
 const navigationProbe = await probeNavigation();
 /** 同时落盘的消息必须按持久顺序排列，不能按 key 字母顺序颠倒提问和回答。 */
-const equalTimeItems = [1, 2, 3].map((sequence) => ({ key: `entry-${sequence}`, updatedAt: '2026-01-01T00:00:00Z', payload: { v2Sequence: 4 - sequence }, transcript: probeTranscript(`entry-${sequence}`, sequence) }) as NativeSessionItemBuffer);
+const equalTimeItems = [1, 2, 3].map(
+  (sequence) => ({ key: `entry-${sequence}`, updatedAt: '2026-01-01T00:00:00Z', payload: { v2Sequence: 4 - sequence }, transcript: probeTranscript(`entry-${sequence}`, sequence) }) as NativeSessionItemBuffer,
+);
 assertProbe(
   orderTranscriptItemsWithQueue(equalTimeItems, null)
     .map((item) => item.transcript?.placement.order)
@@ -350,6 +363,187 @@ const transcriptItem = (entryId: string, order: number, revision: number, text: 
 });
 const reconciled = reconcileTranscriptItems([transcriptItem('second', 2, 3, '新正文')], [transcriptItem('first', 1, 2, '第一条'), transcriptItem('second', 2, 1, '旧正文')]);
 assertProbe(reconciled.items.map((item) => item.id).join(',') === 'first,second' && reconciled.items[1]?.text === '新正文', '统一合并必须按持久位置排序并拒绝旧来源覆盖');
+
+/** 来源写入修订不能冒充正文新鲜度，同修订轻量预览也不能降级全文。 */
+const completeBody = { ...transcriptItem('body', 1, 10, '完整的新正文'), status: 'in_progress' };
+const staleCopy = transcriptItem('body', 1, 11, '旧正文');
+staleCopy.transcript.sources[0]!.contentRevision = 4;
+assertProbe(reconcileTranscriptItems([completeBody], [staleCopy]).items[0]!.text === completeBody.text, '迟到历史副本必须继承其正文修订');
+assertProbe(reconcileTranscriptItems([completeBody], [{ ...completeBody, text: '完整', payload: { v2ContentTruncated: true } }]).items[0]!.text === completeBody.text, '同修订预览不得覆盖全文');
+assertProbe(reconcileTranscriptItems([completeBody], [transcriptItem('body', 1, 12, '短修正')]).items[0]!.text === '短修正', '更新修订允许合法缩短正文');
+
+/** 正式快照和实时归约共同验证正文、位置、顺序与投影引用。 */
+const probeSnapshot = {
+  id: 'reconciliation',
+  projectId: 'project',
+  providerThreadId: 'thread',
+  items: [completeBody, transcriptItem('other', 2, 10, '另一条')],
+  turns: [],
+  messages: [],
+  requests: [],
+  submissions: [],
+  queue: { state: { type: 'idle' }, submissions: [] },
+  throughEventSeq: 1,
+} as unknown as NativeConversationSnapshot;
+const beforeContent = createHydratedSessionState(probeSnapshot);
+const staleHydrated = sessionReducer(beforeContent, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [staleCopy] } });
+assertProbe(staleHydrated.items[beforeContent.itemOrder[0]!]!.text === completeBody.text, '快照必须走统一正文合并');
+const contentEvent = {
+  id: 'content-change',
+  type: 'conversation.item.delta',
+  createdAt: '2026-09-16T00:00:00Z',
+  payload: {
+    projectId: 'project',
+    conversationId: 'reconciliation',
+    threadId: 'thread',
+    turnId: 'turn',
+    itemId: 'body',
+    itemType: completeBody.type,
+    textContent: '完整的新正文追加',
+    transcript: probeTranscript('body', 1, 'probe-input', null, 12),
+  },
+} as const;
+const afterContent = sessionReducer(beforeContent, { type: 'event_received', event: contentEvent });
+assertProbe(afterContent.items[beforeContent.itemOrder[0]!]!.text === '完整的新正文追加' && afterContent.itemOrder === beforeContent.itemOrder, '纯内容更新必须沿用顺序数组');
+const beforeItems = beforeContent.itemOrder.map((key) => beforeContent.items[key]!);
+const beforeRows = projectTranscriptRows(beforeItems);
+const projection = createTranscriptProjection(beforeContent, [], beforeItems, beforeRows, projectTranscriptTurnRows(beforeRows));
+const updatedProjection = updateTranscriptProjection(projection, afterContent, []);
+assertProbe(updatedProjection !== null && updatedProjection.rowKeys === projection.rowKeys && updatedProjection.items[1] === projection.items[1], '内容批次必须保留未变条目和顶层键数组');
+const rebuiltRows = reuseTranscriptRows(beforeRows, projectTranscriptRows(beforeItems));
+const rebuiltTurns = reuseTranscriptTurnRows(projection.turnRows, projectTranscriptTurnRows(rebuiltRows));
+assertProbe(rebuiltRows.every((row, index) => row === beforeRows[index]) && rebuiltTurns.every((row, index) => row === projection.turnRows[index]), '结构核对必须复用未变化条目及父组');
+const changedPosition = { ...completeBody, transcript: { ...completeBody.transcript, placement: { ...completeBody.transcript.placement, order: 5, orderEpoch: 2, placementRevision: 20 } } };
+const movedHydrated = sessionReducer(beforeContent, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [changedPosition] } });
+assertProbe(movedHydrated.items[beforeContent.itemOrder[0]!]!.transcript?.placement.orderEpoch === 2, '纯位置快照不能被内容对象复用规则丢弃');
+
+/** 使用正式仓库验证迟到历史、重编号、事务回滚和 Pi 来源别名。 */
+async function verifyTranscriptStorageBoundaries(): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'zeus-transcript-boundaries-'));
+  const db = await createZeusDatabase(join(directory, 'probe.db'));
+  try {
+    const repo = new ConversationTranscriptRepository(db);
+    const at = '2026-09-16T00:00:00Z';
+    const register = (id: string, turnId: string, kind: 'ordinary_input' | 'content' = 'content') =>
+      repo.registerSource({
+        conversationId: 'ordering',
+        sourceDomain: 'provider_item',
+        sourceScope: 'segment',
+        sourceId: id,
+        facet: 'body',
+        preferredEntryId: id,
+        kind,
+        turnId,
+        segmentId: 'segment',
+        firstSeenAt: at,
+        orderingEvidence: 'provider',
+        contentHash: id,
+      });
+    register('a', 'a', 'ordinary_input');
+    const second = register('b', 'b', 'ordinary_input');
+    const late = register('late-a', 'a');
+    assertProbe(late.placement.order! < second.placement.order!, '旧轮次迟到内容必须位于新轮次之前');
+    db.execute('CREATE TABLE probe_placement_events (epoch INTEGER, revision INTEGER)');
+    repo.onPlacementChanged((_conversationId, epoch, revision) => db.execute('INSERT INTO probe_placement_events VALUES (?, ?)', [epoch, revision]));
+    for (let index = 0; index < 20; index += 1) register(`late-${index}`, 'a');
+    assertProbe(repo.orderEpoch('ordering') > 1 && db.countRows('probe_placement_events') > 0, '空隙耗尽必须重编号并在同一事务记录通知');
+    repo.startStage({ conversationId: 'ordering', turnId: 'a', segmentId: 'segment', stageId: 'early-stage', occurredAt: at });
+    register('steer-a', 'a', 'ordinary_input');
+    const stageResult = repo.registerSource({
+      conversationId: 'ordering',
+      sourceDomain: 'provider_item',
+      sourceScope: 'segment',
+      sourceId: 'early-stage-result',
+      facet: 'body',
+      preferredEntryId: 'early-stage-result',
+      kind: 'content',
+      turnId: 'a',
+      segmentId: 'segment',
+      displayStageId: 'early-stage',
+      firstSeenAt: at,
+      orderingEvidence: 'provider',
+      contentHash: 'result',
+    });
+    assertProbe(stageResult.placement.openingInputId === 'a', '阶段先开始、正文后完成时不能被中途插话吸走');
+    const beforeRollback = repo.revision('ordering');
+    try {
+      db.transaction(() => {
+        register('rollback', 'a');
+        throw new Error('回滚探针');
+      });
+    } catch {
+      /* 预期回滚。 */
+    }
+    assertProbe(repo.revision('ordering') === beforeRollback && repo.envelopeForEntry('ordering', 'rollback') === null, '来源和位置必须共同回滚');
+    const placements = repo.readPlacementBatch('ordering', ['a', 'b', 'late-a', 'unknown']);
+    assertProbe(placements.uncoveredEntryIds.includes('unknown') && !placements.removedEntryIds.includes('unknown') && Buffer.byteLength(JSON.stringify(placements)) <= 128 * 1024, '位置缺项不代表删除且整包必须有界');
+    db.execute('INSERT INTO conversation_runtime_segments (id, conversation_id, runtime_kind, state, native_session_id, opened_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+      'pi-segment',
+      'pi',
+      'pi',
+      'current',
+      'pi-thread',
+      at,
+      at,
+      at,
+    ]);
+    const provider = new ConversationProviderItemRepository(db);
+    const execution = new ConversationExecutionRepository(db);
+    provider.upsertCompleted({
+      conversationId: 'pi',
+      turnId: 'pi-turn',
+      providerThreadId: 'pi-thread',
+      providerTurnId: 'pi-turn',
+      providerItemId: 'pi-message',
+      itemType: 'agentMessage',
+      phase: 'final_answer',
+      payload: { stageId: 'pi-message' },
+      textContent: '完成正文',
+      updatedAt: at,
+      agentKind: 'pi',
+      status: 'completed',
+      completedAt: at,
+    });
+    const history = execution.appendModelHistory({ conversationId: 'pi', turnId: 'pi-turn', segmentId: 'pi-segment', role: 'assistant', content: { text: '完成正文', stageId: 'pi-message' }, confirmedAt: at });
+    const active = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'provider_item', sourceScope: 'pi-thread', sourceId: 'pi-message', facet: 'body' })!;
+    const confirmed = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'model_history', sourceScope: 'pi-segment', sourceId: history.id, facet: 'body' })!;
+    assertProbe(active.placement.entryId === confirmed.placement.entryId && active.sources[0]!.contentRevision === confirmed.sources[0]!.contentRevision, 'Pi 活动正文与确认历史必须共用显示身份与正文修订');
+    /** 旧资料队列应立即返回，并优先推进前台刚请求的会话。 */
+    const project = new ProjectRepository(db).create({ id: 'background-project', name: '后台初始化', localPath: directory });
+    for (const id of ['background-a', 'background-b']) new ConversationRepository(db).create({ id, projectId: project.id, title: id, transportKind: 'codex_native', providerId: 'codex' });
+    await initializeConversationTranscriptIndexes(db, true);
+    let initializing = false;
+    try {
+      repo.readPlacementBatch('background-a', []);
+    } catch (error) {
+      initializing = (error as { code?: string }).code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING';
+    }
+    assertProbe(initializing, '后台未完成时必须返回明确初始化状态');
+    let ready = false;
+    const barrier = repo.waitUntilReady('background-a').then(() => {
+      ready = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assertProbe(!ready, '摄取屏障不能在首批索引完成时提前放行');
+    assertProbe(
+      db.get<{ initialization_cursor_json: string | null }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['background-a'])?.initialization_cursor_json !== null,
+      '前台请求会话必须先推进一个批次',
+    );
+    assertProbe(
+      db.get<{ initialization_cursor_json: string | null }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['background-b'])?.initialization_cursor_json === null,
+      '未请求会话不能抢占前台批次',
+    );
+    await barrier;
+    assertProbe(repo.readPlacementBatch('background-a', []).placements.length === 0, '完整就绪后才能放行摄取屏障');
+    stopConversationTranscriptInitialization(db);
+    await initializeConversationTranscriptIndexes(db);
+    assertProbe(repo.readPlacementBatch('background-a', []).placements.length === 0, '暂停后必须能从持久断点继续完成');
+  } finally {
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+await verifyTranscriptStorageBoundaries();
 
 console.log(
   JSON.stringify(
@@ -502,12 +696,12 @@ async function probeNavigation() {
       );
     }
     /** 探针故意模拟升级前直写数据，再走正式旧数据初始化建立显示位置。 */
+    const initializing = new ConversationTranscriptRepository(db);
+    assertProbe(initializing.initializeConversation(conversation.id, 1) === false, '首批初始化必须留下可恢复断点');
+    assertProbe(db.get<{ initialization_state: string }>('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?', [conversation.id])?.initialization_state === 'building', '半份索引不能提前标记就绪');
     new ConversationTranscriptRepository(db).initializeConversation(conversation.id);
     /** 超过十个初始化批次后必须原子就绪，并清理持久暂存事实。 */
-    const initialization = db.get<{ initialization_state: string; reconstructed_count: number }>(
-      'SELECT initialization_state, reconstructed_count FROM conversation_transcript_state WHERE conversation_id = ?',
-      [conversation.id],
-    );
+    const initialization = db.get<{ initialization_state: string; reconstructed_count: number }>('SELECT initialization_state, reconstructed_count FROM conversation_transcript_state WHERE conversation_id = ?', [conversation.id]);
     assertProbe(initialization?.initialization_state === 'ready' && initialization.reconstructed_count === count * 4 + 1 + processCount, '旧数据必须按 512 条批次完整初始化');
     assertProbe(db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_initialization_facts WHERE conversation_id = ?', [conversation.id])?.count === 0, '初始化就绪后必须清理暂存事实');
     await db.save();

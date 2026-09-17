@@ -287,6 +287,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         turnId: run.providerTurnId,
         itemId: conversationProcessProviderItemId(processItem.sourceEventId) ?? processItem.id,
         itemType: presentation.type,
+        transcript: options.transcripts.envelopeForSource({
+          conversationId: run.conversationId,
+          sourceDomain: 'process',
+          sourceScope: processItem.segmentId,
+          sourceId: processItem.id,
+          facet: processItem.kind === 'reasoning' ? 'reasoning_block' : 'tool_activity',
+        }),
         itemPayload: {
           ...presentation.payload,
           processKind: processItem.kind,
@@ -327,6 +334,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function startConversation(input: StartPiConversationInput) {
+    await options.transcripts.waitUntilReady(input.conversationId);
     const existingConversation = options.conversations.getById(input.conversationId);
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
@@ -881,6 +889,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     segmentLifecycle?: ConversationSegmentLifecycle;
   }) {
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
+    await options.transcripts.waitUntilReady(input.conversation.id);
     const createdAt = options.now();
     /** 续发和重启恢复都使用当前产品工作区，不根据首条消息猜测目录。 */
     const executionContext = await options.ensureExecutionContext({ conversationId: input.conversation.id, mode: 'dispatch' });
@@ -1449,12 +1458,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!event.nativeRunId) return;
     const run = runs.get(event.nativeRunId);
     if (!run) return;
+    await options.transcripts.waitUntilReady(run.conversationId);
     const payload = asRecord(event.payload);
     const segment = options.execution.segmentByNativeSession(run.providerThreadId, run.conversationId);
     const protocolFamily = segment ? projectionProtocolFamily(run, segment) : null;
     const terminalMessage = event.type === 'message_end' ? asRecord(payload.message) : null;
+    if (event.type === 'message_start' && asRecord(payload.message).role === 'assistant') {
+      run.currentStageId = piAssistantStageId(asRecord(payload.message), event);
+      if (segment) options.transcripts.startStage({ conversationId: run.conversationId, turnId: run.turnId, segmentId: segment.id, stageId: run.currentStageId, occurredAt: event.createdAt });
+    }
     if (terminalMessage?.role === 'assistant') {
-      const stageId = piAssistantStageId(terminalMessage, event);
+      const stageId = (run.pendingModelRequest?.boundaryStarted ? run.currentStageId : null) ?? piAssistantStageId(terminalMessage, event);
       run.currentStageId = stageId;
       for (const toolCallId of piToolCallIds(terminalMessage)) run.stageIdByToolCallId.set(toolCallId, stageId);
     }
@@ -1615,7 +1629,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             turnId: run.turnId,
             segmentId: segment.id,
             role: 'assistant',
-            content: { text, ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
+            content: { text, ...providerPresentation, providerItemId: messageStageId, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
             submissionId: run.submissionId,
             confirmedAt: event.createdAt,
           });

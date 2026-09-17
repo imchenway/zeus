@@ -4,6 +4,7 @@ import type {
   ConversationState,
   NativeConversationAttachment,
   NativeConversationEvent,
+  NativeConversationTranscriptPlacementBatch,
   NativeConversationSnapshot,
   NativeConversationExecutionContext,
   NativeGoalResponse,
@@ -30,10 +31,14 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
+import { isTranscriptContentUpdate } from './transcriptProjection.js';
+import { mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
 import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
+  /** 全部已加载位置取齐后与缓冲动作一次接管。 */
+  | { type: 'transcript_placements_hydrated'; batch: NativeConversationTranscriptPlacementBatch; actions: NativeSessionAction[] }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
   | { type: 'snapshot_v2_page_merged'; snapshot: NativeConversationSnapshot }
   | { type: 'v2_content_loaded'; conversationId: string; handle: string; text: string; redacted: boolean }
@@ -172,6 +177,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         reconnectAttempt: action.reconnectAttempt ?? (action.transportState === 'ready' || action.transportState === 'connecting' || action.transportState === 'disconnected' ? 0 : state.reconnectAttempt),
         error: action.error === undefined ? state.error : action.error,
       };
+    case 'transcript_placements_hydrated':
+      return reduceTranscriptPlacements(action.actions.reduce(sessionReducer, state), action.batch);
     case 'snapshot_hydrated':
       return hydrateSnapshot(state, action.snapshot);
     case 'snapshot_v2_page_merged':
@@ -387,6 +394,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const previousUserItemKeys = new Map<string, string>();
   const previousUserStableIndexes = new Map<string, number>();
   const previousItemStableIndexes = new Map(state.itemOrder.map((key, index) => [key, index]));
+  /** 跨来源投影只认持久显示身份。 */
+  const previousItemsByEntryId = new Map(Object.values(state.items).flatMap((item) => (item.transcript ? [[item.transcript.placement.entryId, item] as const] : [])));
   const previousItemsByProviderId = new Map<string, NativeSessionItemBuffer>();
   const previousItemsByLocalId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
@@ -419,7 +428,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     return stableIndex++;
   };
 
-  for (const item of snapshot.items) {
+  for (const item of reconcileTranscriptItems([], snapshot.items).items) {
+    if ((state.removedTranscriptEntryIds?.[item.transcript.placement.entryId] ?? -1) >= item.transcript.placement.placementRevision) continue;
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
     const timelineAt = item.startedAt ?? item.updatedAt;
@@ -435,11 +445,12 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       continue;
     }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
-    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
+    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, item.transcript.placement.entryId);
     // 资源分页已经补齐到 Renderer 后，后续轻量权威快照仍可能只携带正文、把 resources
     // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
     // 对账时倒退为“图片不可用”。
-    const previousDurableItem = state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
+    const previousDurableItem =
+      previousItemsByEntryId.get(item.transcript.placement.entryId) ?? state.items[key] ?? (item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined) ?? previousItemsByLocalId.get(item.id);
     const previousCompleteContent = matchingCompleteContent(previousDurableItem, item);
     const projectedPayload = previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload;
     items[key] = {
@@ -463,7 +474,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       transcript: item.transcript,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
     };
-    orderedItems.push({ key, order: item.transcript.placement.order, stableIndex: stableIndexForClient(itemClientId) });
+    if (previousDurableItem) items[key] = mergeSnapshotPageItem(previousDurableItem, items[key]!, key);
+    orderedItems.push({ key, order: items[key]!.transcript?.placement.order ?? null, stableIndex: stableIndexForClient(itemClientId) });
     if (item.providerItemId) providerItemKeyById.set(item.providerItemId, key);
     if (itemClientId) {
       durableClientIds.add(itemClientId);
@@ -622,7 +634,11 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       if (identity) terminalTurnIds[identity] = terminalStatus(turn.status);
     }
   }
-  const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
+  const previousRequests = new Map(state.pendingRequests.map((request) => [request.id, request]));
+  const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId).map((request) => {
+    const placement = newestTranscriptPlacement(previousRequests.get(request.id)?.transcript, request.transcript);
+    return request.transcript && placement ? { ...request, transcript: { ...request.transcript, placement } } : request;
+  });
   const projectedItemOrder = orderedItems
     .sort((left, right) => {
       if (left.order !== null && right.order !== null) return left.order - right.order;
@@ -655,6 +671,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     terminalTurnIds,
     items: stableItems,
     itemOrder,
+    transcriptLiveItemKeys: [],
     queue: snapshot.queue,
     pendingRequests,
     planImplementationRequests: snapshot.planImplementationRequests ?? [],
@@ -714,65 +731,20 @@ function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, acti
 }
 
 function mergeSnapshotPageItem(previous: NativeSessionItemBuffer, projected: NativeSessionItemBuffer, canonicalKey: string): NativeSessionItemBuffer {
-  if (
-    previous.transcript &&
-    projected.transcript &&
-    (projected.transcript.placement.orderEpoch < previous.transcript.placement.orderEpoch ||
-      (projected.transcript.placement.orderEpoch === previous.transcript.placement.orderEpoch && transcriptRevision(projected.transcript) < transcriptRevision(previous.transcript)))
-  ) {
-    return canonicalKey === previous.key ? previous : { ...previous, key: canonicalKey };
-  }
-  const previousProcessDetail = stringValue(previous.payload.v2ContentKind) === 'process_detail';
-  const projectedProcessDetail = stringValue(projected.payload.v2ContentKind) === 'process_detail';
-  const presentation = previousProcessDetail && !projectedProcessDetail ? previous : projected;
-  const fallback = presentation === previous ? projected : previous;
-  const merged = {
-    ...fallback,
-    ...presentation,
+  const merged = mergeTranscriptItem(previous, projected);
+  return {
+    ...merged,
     key: canonicalKey,
-    // 持久记录接管后清除本地临时标记，不能从旧引导气泡继承发送状态。
     optimistic: previous.optimistic === true && projected.optimistic === true,
-    status: isTerminalItemStatus(previous.status) && !isTerminalItemStatus(projected.status) ? previous.status : projected.status,
-    payload: { ...fallback.payload, ...presentation.payload },
-    resources: presentation.resources.length > 0 ? presentation.resources : fallback.resources,
+    resources: mergeDurableItemResources(previous.resources, projected.resources),
     timelineAt: previous.timelineAt ?? projected.timelineAt,
-    updatedAt: (previous.updatedAt ?? previous.timelineAt ?? '').localeCompare(projected.updatedAt ?? projected.timelineAt ?? '') > 0 ? previous.updatedAt : projected.updatedAt,
-    transcript: mergeSessionTranscriptEnvelope(previous.transcript, projected.transcript),
   };
-  const completeContent = matchingCompleteContent(previous, projected) ?? matchingCompleteContent(projected, previous);
-  return completeContent
-    ? {
-        ...merged,
-        text: completeContent.text,
-        payload: preserveCompleteContentPayload(merged.payload, completeContent),
-      }
-    : merged;
-}
-
-/** 分页的内容优先级不能丢掉更新的位置代次和来源修订。 */
-function mergeSessionTranscriptEnvelope(
-  previous: NativeSessionItemBuffer['transcript'],
-  projected: NativeSessionItemBuffer['transcript'],
-): NativeSessionItemBuffer['transcript'] {
-  if (!previous) return projected;
-  if (!projected) return previous;
-  const placement =
-    projected.placement.orderEpoch > previous.placement.orderEpoch ||
-    (projected.placement.orderEpoch === previous.placement.orderEpoch && projected.placement.placementRevision >= previous.placement.placementRevision)
-      ? projected.placement
-      : previous.placement;
-  const sources = new Map<string, (typeof previous.sources)[number]>();
-  for (const source of [...previous.sources, ...projected.sources]) {
-    const identity = `${source.domain}\u0000${source.scope}\u0000${source.sourceId}\u0000${source.facet}`;
-    const current = sources.get(identity);
-    if (!current || source.revision > current.revision) sources.set(identity, source);
-  }
-  return { placement, sources: [...sources.values()] };
 }
 
 /** 判断热缓存中的完整内容能否安全复用于同一个不可变句柄。 */
 function matchingCompleteContent(previous: NativeSessionItemBuffer | undefined, projected: Pick<NativeSessionItemBuffer, 'payload'>): NativeSessionItemBuffer | null {
   const contentKind = projected.payload.v2ContentKind;
+  if (previous?.transcript && 'transcript' in projected && transcriptContentRevision(previous.transcript) !== transcriptContentRevision((projected as NativeSessionItemBuffer).transcript)) return null;
   if (!previous || (contentKind !== 'model_history' && contentKind !== 'process_detail') || previous.payload.v2ContentKind !== contentKind || projected.payload.v2ContentTruncated !== true) return null;
   const projectedHandle = stringValue(projected.payload.v2ContentHandle);
   return projectedHandle && previous.payload.v2ContentCompleteHandle === projectedHandle && previous.payload.v2ContentTruncated === false ? previous : null;
@@ -827,39 +799,14 @@ function mergeCompleteContent(state: NativeSessionState, action: Extract<NativeS
 function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
   const hydrated = hydrateSnapshot(state, snapshot, false);
   const items = { ...hydrated.items };
-  const canonicalKeyByProviderItemId = new Map<string, string>();
+  /** 唯一显示身份已在服务端统一；原生条目编号可以在不同分段重复。 */
+  const canonicalKeys = new Map(Object.values(items).map((item) => [item.transcript?.placement.entryId ?? item.key, item.key]));
   const canonicalKeyByAlias = new Map<string, string>();
-
-  // 水合页本身也可能同时带回模型历史和过程详情；先按 Provider 身份压成一个条目。
-  for (const [key, item] of Object.entries(items)) {
-    if (!item.providerItemId) continue;
-    const canonicalKey = canonicalKeyByProviderItemId.get(item.providerItemId);
-    if (!canonicalKey) {
-      canonicalKeyByProviderItemId.set(item.providerItemId, key);
-      continue;
-    }
-    if (canonicalKey === key) continue;
-    const canonical = items[canonicalKey];
-    if (!canonical) {
-      canonicalKeyByProviderItemId.set(item.providerItemId, key);
-      continue;
-    }
-    items[canonicalKey] = mergeSnapshotPageItem(canonical, item, canonicalKey);
-    delete items[key];
-    canonicalKeyByAlias.set(key, canonicalKey);
-  }
-
   for (const [key, previous] of Object.entries(state.items)) {
-    const canonicalKey = previous.providerItemId ? (canonicalKeyByProviderItemId.get(previous.providerItemId) ?? key) : (canonicalKeyByAlias.get(key) ?? key);
+    const canonicalKey = canonicalKeys.get(previous.transcript?.placement.entryId ?? key) ?? key;
     canonicalKeyByAlias.set(key, canonicalKey);
     const projected = items[canonicalKey];
-    if (!projected) {
-      items[canonicalKey] = canonicalKey === key ? previous : { ...previous, key: canonicalKey };
-      if (previous.providerItemId) canonicalKeyByProviderItemId.set(previous.providerItemId, canonicalKey);
-      continue;
-    }
-    items[canonicalKey] = mergeSnapshotPageItem(previous, projected, canonicalKey);
-    if (canonicalKey !== key && items[key]?.providerItemId === previous.providerItemId) delete items[key];
+    items[canonicalKey] = projected ? mergeSnapshotPageItem(previous, projected, canonicalKey) : previous;
   }
 
   const canonicalOrderKey = (key: string): string => canonicalKeyByAlias.get(key) ?? key;
@@ -960,6 +907,7 @@ function equivalentSessionItem(left: NativeSessionItemBuffer, right: NativeSessi
     left.durableClientUserMessageId === right.durableClientUserMessageId &&
     left.timelineAt === right.timelineAt &&
     left.updatedAt === right.updatedAt &&
+    sameSerializableValue(left.transcript, right.transcript) &&
     sameSerializableValue(left.payload, right.payload) &&
     sameSerializableValue(left.resources, right.resources)
   );
@@ -1177,7 +1125,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.item.completed':
       return reduceItemEvent(base, event);
     case 'conversation.transcript.placement.changed':
-      return reduceTranscriptPlacementEvent(base, event);
+      return base;
     case 'conversation.expert.round.changed':
     case 'conversation.expert.execution.changed':
       return reduceExpertEvent(base, event);
@@ -1418,10 +1366,7 @@ function planImplementationStatus(value: unknown): NativePlanImplementationReque
   return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
 }
 
-function reduceItemEvent(
-  state: NativeSessionState,
-  event: Extract<NativeConversationEvent, { type: 'conversation.item.started' | 'conversation.item.delta' | 'conversation.item.completed' }>,
-): NativeSessionState {
+function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConversationEvent, { type: 'conversation.item.started' | 'conversation.item.delta' | 'conversation.item.completed' }>): NativeSessionState {
   const payload = event.payload;
   const conversationId = stringValue(payload.conversationId) ?? state.conversationId;
   const threadId = stringValue(payload.threadId) ?? state.providerThreadId;
@@ -1430,6 +1375,7 @@ function reduceItemEvent(
   if (!conversationId || !threadId || !turnId || !itemId) return state;
 
   const incomingTranscript = payload.transcript;
+  if (incomingTranscript && (state.removedTranscriptEntryIds?.[incomingTranscript.placement.entryId] ?? -1) >= incomingTranscript.placement.placementRevision) return state;
   const stableItemId = incomingTranscript?.placement.entryId ?? itemId;
   const providerKey = nativeSessionItemKey(conversationId, threadId, turnId, stableItemId);
   const providerItem = state.items[providerKey];
@@ -1447,13 +1393,10 @@ function reduceItemEvent(
     : undefined;
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
-  const transcriptEntry = incomingTranscript
-    ? Object.entries(state.items).find(([, item]) => item.transcript?.placement.entryId === incomingTranscript.placement.entryId)
-    : undefined;
+  const transcriptEntry = !providerItem && incomingTranscript ? Object.entries(state.items).find(([, item]) => item.transcript?.placement.entryId === incomingTranscript.placement.entryId) : undefined;
   const matchedKey = matchedUserEntry?.[0] ?? transcriptEntry?.[0];
   const key = matchedKey ?? providerKey;
   const previous = state.items[key] ?? providerItem ?? transcriptEntry?.[1];
-  if (previous?.transcript && incomingTranscript && transcriptRevision(incomingTranscript) < transcriptRevision(previous.transcript)) return state;
   if (previous && isTerminalItemStatus(previous.status) && !completed) return state;
   const optimisticText = optimisticEntry?.[1].text ?? '';
   const matchedUserText = matchedUserItem?.text ?? '';
@@ -1464,7 +1407,7 @@ function reduceItemEvent(
   const previousPhase = stringValue(previous?.payload.phase) ?? previous?.phase ?? matchedUserItem?.phase;
   const incomingPhase = stringValue(incomingPayload?.phase) ?? stringValue(payload.phase);
   const itemPhase = classifyAssistantMessage({ ...previous?.payload, ...incomingPayload }, incomingPhase ?? previousPhase ?? 'prework') === 'final' ? 'final_answer' : 'prework';
-  const next: NativeSessionItemBuffer = {
+  const projected: NativeSessionItemBuffer = {
     key,
     conversationId,
     threadId,
@@ -1476,7 +1419,7 @@ function reduceItemEvent(
     phase: itemPhase,
     protocolFamily: incomingProtocolFamily ?? previous?.protocolFamily ?? null,
     stageId: incomingStageId ?? previous?.stageId ?? null,
-    text: completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
+    text: incomingTranscript ? incomingText : completed ? completedText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
     payload: completed
       ? isUserMessageType(effectiveType)
@@ -1492,11 +1435,14 @@ function reduceItemEvent(
     updatedAt: event.createdAt,
     ...(incomingTranscript || previous?.transcript ? { transcript: incomingTranscript ?? previous?.transcript } : {}),
   };
+  /** 实时、历史与分页共用正文权威判定。 */
+  const next = previous ? mergeTranscriptItem(previous, projected) : projected;
+  if (next === previous) return state;
   const isNew = previous === undefined;
   const items = { ...state.items, [key]: next };
   if (matchedKey && matchedKey !== key) delete items[matchedKey];
   const candidateOrder = matchedKey && matchedKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === matchedKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
-  const itemOrder = sortSessionItemOrder(candidateOrder, items);
+  const itemOrder = isNew || previous?.transcript?.placement.order !== next.transcript?.placement.order ? sortSessionItemOrder(candidateOrder, items) : candidateOrder;
   const phase = next.phase === 'final_answer' ? 'active_final_answer' : 'active_prework';
   const terminal = Boolean(state.terminalTurnIds[turnId]);
   const visibleFeedbackEpoch = itemProvidesVisibleFeedback(next) ? state.feedbackEpoch : state.visibleFeedbackEpoch;
@@ -1506,16 +1452,24 @@ function reduceItemEvent(
     items,
     itemOrder,
     transcriptRevision: state.transcriptRevision + 1,
+    transcriptContentChanges:
+      previous && isTranscriptContentUpdate(previous, next)
+        ? [...(state.transcriptContentChanges?.at(-1)?.revision === state.transcriptRevision ? state.transcriptContentChanges.slice(-255) : []), { key, revision: state.transcriptRevision + 1 }]
+        : [],
+    transcriptLiveItemKeys: isNew ? [...(state.transcriptLiveItemKeys ?? []).slice(-255), key] : state.transcriptLiveItemKeys,
     visibleFeedbackEpoch,
     conversationState: terminal ? state.conversationState : phase,
   };
 }
 
 /** 位置重排在完整批次到达后一次接管，避免逐条更新产生中间闪烁。 */
-function reduceTranscriptPlacementEvent(state: NativeSessionState, event: Extract<NativeConversationEvent, { type: 'conversation.transcript.placement.changed' }>): NativeSessionState {
-  const placements = new Map(event.payload.placements.map((placement) => [placement.entryId, placement]));
-  if (placements.size === 0 && event.payload.removedEntryIds.length === 0) return state;
-  const removed = new Set(event.payload.removedEntryIds);
+function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConversationTranscriptPlacementBatch): NativeSessionState {
+  if (Object.values(state.items).some((item) => (item.transcript?.placement.orderEpoch ?? 0) > batch.orderEpoch)) return state;
+  const placements = new Map(batch.placements.map((placement) => [placement.entryId, placement]));
+  if (placements.size === 0 && batch.removedEntryIds.length === 0) return state;
+  const removed = new Set(batch.removedEntryIds);
+  const removedTranscriptEntryIds = { ...state.removedTranscriptEntryIds };
+  for (const id of removed) removedTranscriptEntryIds[id] = Math.max(removedTranscriptEntryIds[id] ?? 0, batch.revision);
   const items = Object.fromEntries(
     Object.entries(state.items).flatMap(([key, item]) => {
       const entryId = item.transcript?.placement.entryId;
@@ -1525,7 +1479,13 @@ function reduceTranscriptPlacementEvent(state: NativeSessionState, event: Extrac
     }),
   );
   const candidateOrder = state.itemOrder.filter((key) => key in items);
-  return { ...state, items, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
+  const pendingRequests = state.pendingRequests.flatMap((request) => {
+    const entryId = request.transcript?.placement.entryId;
+    if (entryId && removed.has(entryId)) return [];
+    const placement = entryId ? placements.get(entryId) : null;
+    return [placement && request.transcript ? { ...request, transcript: { ...request.transcript, placement } } : request];
+  });
+  return { ...state, items, pendingRequests, removedTranscriptEntryIds, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
 }
 
 /** 实时条目只按持久位置插入；无位置的乐观队列继续保留当前相对顺序。 */
@@ -1539,11 +1499,6 @@ function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<s
     if (right !== null) return 1;
     return (previousIndex.get(leftKey) ?? 0) - (previousIndex.get(rightKey) ?? 0);
   });
-}
-
-/** 比较实时来源和位置的最高修订，拒绝晚到的旧事件。 */
-function transcriptRevision(transcript: NonNullable<NativeSessionItemBuffer['transcript']>): number {
-  return Math.max(transcript.placement.placementRevision, ...transcript.sources.map((source) => source.revision));
 }
 
 function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {

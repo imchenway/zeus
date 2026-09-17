@@ -2,6 +2,7 @@ import { assistantMessageMetadata } from '@zeus/shared';
 import { readCodexTurnItems, type CodexThreadSnapshot, type CodexTurnSnapshot } from '@zeus/ai-runtime';
 import type { ConversationResource } from '@zeus/shared';
 import {
+  providerFacet,
   type ConversationTurnStatus,
   projectConversationTurnFailure,
   resolveSnapshotProviderItemId,
@@ -362,10 +363,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn && classifySnapshotTurn(providerTurn) !== 'active') continue;
       /** 已确认且状态未变的边界轮次无需反复下载正文。 */
       const classification = classifySnapshotTurn(providerTurn);
+      /** 网络读取前冻结来源水位，返回后逐条拒绝覆盖并发实时写入。 */
+      const requestedRevision = options.transcripts.revision(conversation.id);
       if (!existingTurn || classification === 'active' || existingTurn.status !== classification || repairTurnIds.has(providerTurn.id)) {
         providerTurn.items = await readCodexTurnItems(options.manager, { threadId: providerThreadId, turnId: providerTurn.id, ...input });
       }
-      const projected = await projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
+      const projected = await projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn, requestedRevision);
       localTurns.set(providerTurn.id, projected);
     }
     await reconcileRecoveredRequestUserInput(options.conversations.getById(conversation.id) ?? conversation, providerThreadId, eligibleDescending, localTurns);
@@ -428,6 +431,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     providerThreadId: string,
     providerTurn: CodexTurnSnapshot,
     existingTurn: ZeusConversationTurnRecord | undefined,
+    requestedRevision: number,
   ): Promise<ZeusConversationTurnRecord> {
     const classification = classifySnapshotTurn(providerTurn);
     if (classification === 'unknown') throw coordinatorError('ZEUS_NATIVE_PROVIDER_TURN_INVALID', `Provider turn has an unknown status: ${providerTurn.id}`);
@@ -481,7 +485,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     let itemProjectionChanged = false;
     for (const candidate of Array.isArray(providerTurn.items) ? providerTurn.items : []) {
       if (!isRecord(candidate)) continue;
-      if (projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp, matchedCompatibilityItemIds)) itemProjectionChanged = true;
+      if (projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp, matchedCompatibilityItemIds, requestedRevision)) itemProjectionChanged = true;
     }
     if (itemProjectionChanged && !turnProjectionChanged) {
       turn = options.turns.upsert({
@@ -587,6 +591,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     turnClassification: ReturnType<typeof classifySnapshotTurn>,
     timestamp: string,
     matchedCompatibilityItemIds: Set<string>,
+    requestedRevision: number,
   ): boolean {
     const providerThreadId = turn.providerThreadId;
     const providerTurnId = requireString(turn.providerTurnId, 'provider turn id');
@@ -596,6 +601,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const existingRaw = options.providerItems.getByProvider(providerThreadId, nativeProviderItemId);
     const providerItemId = resolveSnapshotProviderItemId(providerTurnId, nativeProviderItemId, existingRaw);
     const itemType = itemTypeFromValue(itemPayload.type);
+    const currentSource = options.transcripts.envelopeForSource({ conversationId: conversation.id, sourceDomain: 'provider_item', sourceScope: providerThreadId, sourceId: providerItemId, facet: providerFacet(itemType) });
+    if (currentSource?.sources.some((source) => source.revision > requestedRevision)) return false;
     const identityPayload = compatibilitySnapshotItem ? { ...itemPayload, compatibilitySnapshotItemId: nativeProviderItemId } : itemPayload;
     const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...identityPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : identityPayload);
     const existing = providerItemId === nativeProviderItemId ? existingRaw : options.providerItems.getByProvider(providerThreadId, providerItemId);

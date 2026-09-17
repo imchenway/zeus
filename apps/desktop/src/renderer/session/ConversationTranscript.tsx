@@ -1,3 +1,4 @@
+import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection, type TranscriptProjection } from './transcriptProjection.js';
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
 import { classifyAssistantMessage, conversationNavigationExcerpt, conversationQuestionNavigationExcerpt, type ConversationNavigationSnapshot, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
@@ -341,8 +342,27 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
+  /** 内容批次复用已建立的输入、阶段和父组索引。 */
+  const previousProjection = useRef<TranscriptProjection | null>(null);
+  const projectionContext = [
+    props.state.conversationId,
+    props.state.itemOrder,
+    props.state.activeTurnId,
+    props.state.conversationState,
+    props.state.queue,
+    props.state.pendingRequests,
+    props.state.planImplementationRequests,
+    props.state.terminalTurnIds,
+    props.state.turnsByProviderId,
+    props.state.snapshot?.snapshotV2,
+    props.historyOnly,
+    props.projectPersistedPlans,
+    props.creationStatus,
+  ];
+  const contentProjection = updateTranscriptProjection(previousProjection.current, props.state, projectionContext);
   const persistedItems = useMemo(
     () =>
+      contentProjection?.items ??
       coalesceTranscriptUserMessages(
         props.state.itemOrder
           .map((key) => props.state.items[key])
@@ -355,6 +375,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
   const projectedItems = useMemo(() => {
+    if (contentProjection) return contentProjection.items;
     // 已确认消息沿用历史时间；仍在排队的补充留在记录末尾，避免切换后藏到旧回复上方。
     const durableItems = coalesceSupersededInterruptedQueuedUserMessages([...persistedItems, ...queuedSubmissionItems]);
     return orderTranscriptItemsWithQueue(props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems, props.state.queue);
@@ -370,9 +391,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     props.state.turnsByProviderId,
     queuedSubmissionItems,
   ]);
-  const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
+  const collapsedErrorItems = useMemo(() => contentProjection?.items ?? collapseRepeatedErrorItems(projectedItems), [projectedItems]);
   const transcriptItems = useMemo(
     () =>
+      contentProjection?.items ??
       collapsedErrorItems.filter((item) => {
         const turn = props.state.turnsByProviderId[item.turnId];
         // 轮次失败卡片已经承载底层原因时，不再把同一诊断事件单独画成第二张红卡。
@@ -391,6 +413,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     items.map((item) => item.key),
     220,
     historyHydrated,
+    props.state.transcriptLiveItemKeys ?? [],
   );
   /** 输入样式也承载智能体来信，不能把后台来信当作当前用户发送。 */
   const lastUserItem = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'));
@@ -413,14 +436,20 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showStandaloneActiveStatus = !props.historyOnly && Boolean(activeStatusKind) && !creationFailed && !(creatingSession && !realTurnStarted);
   // 只筛选底部已承载的同轮进行中整理；完成、失败、历史及其他活动继续参与原有投影。
   const transcriptRows = useMemo(() => {
+    if (contentProjection) return contentProjection.rows;
     // 此列表仅用于生成可见行，原始条目及身份不做删除或合并。
     const visibleItems =
       showStandaloneActiveStatus && activeStatusKind === 'compacting' ? items.filter((item) => item.turnId !== activeTurnId || normalizeItemType(item.type) !== 'contextcompaction' || item.status !== 'in_progress') : items;
-    return projectTranscriptRows(visibleItems, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds);
+    return reuseTranscriptRows(previousProjection.current?.rows ?? [], projectTranscriptRows(visibleItems, answeredRequests, activeTurnId, props.historyOnly, props.state.terminalTurnIds));
   }, [activeStatusKind, activeTurnId, answeredRequests, items, props.historyOnly, props.state.terminalTurnIds, showStandaloneActiveStatus]);
   const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const closedTurnChangeSetIds = useMemo(() => availableClosedTurnChangeSetIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
-  const baseTurnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds), [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows]);
+  const baseTurnRows = useMemo(
+    () => contentProjection?.turnRows ?? reuseTranscriptTurnRows(previousProjection.current?.turnRows ?? [], projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds)),
+    [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows],
+  );
+  previousProjection.current = contentProjection ?? createTranscriptProjection(props.state, projectionContext, items, transcriptRows, baseTurnRows);
+
   /** 目录只在稳定身份、送达状态、轮次结束或连接变化时重新读取。 */
   const latestNavigationUser = props.state.items[lastUserKey ?? ''];
   /** 前插历史不触发完整目录重读，只观察最新发言的确认状态。 */
@@ -497,7 +526,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     return expanded;
   }, [defaultExpandedRowKeys, rowExpansionOverrides]);
-  const turnRowKeys = useMemo(() => turnRows.map((row) => row.key), [turnRows]);
+  /** 文本变化不重建虚拟窗口键数组。 */
+  const previousTurnRowKeys = useRef<string[]>([]);
+  const turnRowKeys = useMemo(() => {
+    const previous = previousTurnRowKeys.current;
+    if (previous.length === turnRows.length && turnRows.every((row, index) => row.key === previous[index])) return previous;
+    return (previousTurnRowKeys.current = turnRows.map((row) => row.key));
+  }, [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
   const pinnedRowKeys = useMemo(() => {
@@ -510,9 +545,29 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [activeTurnRowKeys, expandedRowKeys, focusedRowKey, historyAnchorRowKey, staticReadingAnchorRowKey, navigationTargetKey, navigationEntries]);
   const isFollowingLatest = useCallback(() => scrollController.getState().mode !== 'static', [scrollController]);
   const requestLatestPositionAfterGeometryChange = useCallback(() => maintainLatestPositionRef.current(), []);
+  /** 仅在测量缓存命中时检查短布局元数据，正文不参与序列化。 */
+  const rowLayoutSignature = useCallback(
+    (key: string): string => {
+      const row = turnRowsByKey.get(key);
+      if (!row) return 'absent';
+      const rows = row.kind === 'turn_work' ? row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows]) : [row];
+      let revision = 0;
+      let length = 0;
+      for (const child of rows) {
+        const contents = child.kind === 'item' ? [child.item] : child.kind === 'activity' ? child.items : [];
+        for (const item of contents) {
+          length += item.text.length;
+          for (const source of item.transcript?.sources ?? []) revision = Math.max(revision, source.contentRevision);
+        }
+      }
+      return `${revision}:${length}:${rows.length}:${expandedRowKeys.has(turnProcessExpansionKey(row.kind === 'turn_work' ? row.key : row.kind === 'item' ? row.item.turnId : key))}`;
+    },
+    [turnRowsByKey, expandedRowKeys],
+  );
   const viewportVirtualizer = useTranscriptViewportVirtualizer({
     scopeKey: props.state.conversationId,
     rowKeys: turnRowKeys,
+    rowLayoutSignature,
     pinnedRowKeys,
     containerRef,
     isFollowingLatest,
@@ -2558,14 +2613,13 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
 /** 状态摘要沿用轮次身份，持久思考正文和普通消息保留各自的稳定身份。 */
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
   const entryId = item.transcript?.placement.entryId;
-  if (entryId) return `transcript:${encodeURIComponent(entryId)}`;
   // 活动轮次只投影一条当前摘要；Provider 换 item 时仍沿用轮次级 DOM 身份，
   // 让文字原位更新并固定在过程底部，不因新 item 被卸载后重新跳位。
   // Pi 持久思考正文及旧折叠记录可在同轮出现多段，必须保留各自的条目身份。
   if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
-  return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;
+  return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : entryId ? `transcript:${encodeURIComponent(entryId)}` : item.key;
 }
 
 /** 共享时间线隐藏内部协作事件与不可读输入，原始记录仍保留在会话状态中。 */

@@ -1,11 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * 只标记当前列表真实新增的对象；首批历史数据不播放逐项入场，避免打开页面时整列内容排队闪动。
  */
-export function useNewItemMotionIds(ids: readonly string[], durationMs = 220, baselineReady = true): ReadonlySet<string> {
-  const identity = JSON.stringify(ids);
-  const stableIds = useMemo(() => JSON.parse(identity) as string[], [identity]);
+export function useNewItemMotionIds(ids: readonly string[], durationMs = 220, baselineReady = true, eligibleIds?: readonly string[]): ReadonlySet<string> {
+  /** 调用方保持键数组时无需再次序列化整段历史。 */
+  const previousIds = useRef<readonly string[]>([]);
+  if (ids.length !== previousIds.current.length || ids.some((id, index) => id !== previousIds.current[index])) previousIds.current = ids;
+  const stableIds = previousIds.current;
+  const eligibleRef = useRef(eligibleIds);
+  eligibleRef.current = eligibleIds;
   const initializedRef = useRef(false);
   const knownIdsRef = useRef<Set<string>>(new Set());
   const timersRef = useRef<Map<string, number>>(new Map());
@@ -24,7 +28,8 @@ export function useNewItemMotionIds(ids: readonly string[], durationMs = 220, ba
       return;
     }
 
-    const addedIds = stableIds.filter((id) => !knownIdsRef.current.has(id));
+    const eligible = eligibleRef.current ? new Set(eligibleRef.current) : null;
+    const addedIds = stableIds.filter((id) => !knownIdsRef.current.has(id) && (!eligible || eligible.has(id)));
     knownIdsRef.current = currentIds;
     if (addedIds.length === 0) return;
 

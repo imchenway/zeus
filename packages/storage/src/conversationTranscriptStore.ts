@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto';
-import type {
-  ConversationTranscriptEnvelope,
-  ConversationTranscriptPlacement,
-  ConversationTranscriptPlacementBatch,
-  ConversationTranscriptSourceStamp,
-} from '@zeus/shared';
+import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacement, ConversationTranscriptPlacementBatch, ConversationTranscriptSourceStamp } from '@zeus/shared';
 import { conversationProcessProviderItemId } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 
@@ -25,9 +20,7 @@ const conversationTranscriptInitializationDomains = ['model_history', 'provider_
 type ConversationTranscriptInitializationDomain = (typeof conversationTranscriptInitializationDomains)[number];
 
 /** 旧数据初始化的持久断点。 */
-type ConversationTranscriptInitializationCursor =
-  | { phase: 'collecting'; domainIndex: number; offset: number }
-  | { phase: 'ordering'; offset: number };
+type ConversationTranscriptInitializationCursor = { phase: 'collecting'; domainIndex: number; offset: number } | { phase: 'ordering'; offset: number };
 
 /** 显示位置索引允许的职责种类。 */
 export type ConversationTranscriptEntryKind = 'ordinary_input' | 'content' | 'tool_activity' | 'question' | 'notice' | 'resource' | 'hidden_input_anchor' | 'hidden_stage_anchor';
@@ -197,27 +190,169 @@ export function migrateConversationTranscriptStoreSchema(db: ZeusDatabasePort): 
 }
 
 /** 为升级前会话分批建立确定位置；只读取身份、关系、顺序与短结构字段。 */
-export function initializeConversationTranscriptIndexes(db: ZeusDatabasePort): void {
+export async function initializeConversationTranscriptIndexes(db: ZeusDatabasePort, background = false): Promise<void> {
   const repository = new ConversationTranscriptRepository(db);
+  const repairId = '20260916_transcript_pi_source_identity';
+  if (!db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [repairId])) {
+    while (true) {
+      const aliases = db.select<{ conversation_id: string; previous_id: string; canonical_id: string }>(
+        `SELECT history_alias.conversation_id, history_alias.entry_id AS previous_id, provider_alias.entry_id AS canonical_id
+       FROM conversation_transcript_aliases AS history_alias
+       JOIN conversation_model_history AS history ON history.id = history_alias.source_id AND history_alias.source_domain = 'model_history'
+       JOIN conversation_runtime_segments AS segment ON segment.id = history.segment_id AND segment.runtime_kind = 'pi'
+       JOIN conversation_transcript_aliases AS provider_alias ON provider_alias.conversation_id = history_alias.conversation_id
+        AND provider_alias.source_domain = 'provider_item' AND provider_alias.source_scope = segment.native_session_id AND provider_alias.facet = history_alias.facet
+        AND provider_alias.source_id = CASE WHEN json_valid(history.content_json) THEN COALESCE(json_extract(history.content_json, '$.providerItemId'), json_extract(history.content_json, '$.stageId')) END
+       JOIN conversation_transcript_entries AS old_entry ON old_entry.conversation_id = history_alias.conversation_id AND old_entry.id = history_alias.entry_id
+       JOIN conversation_transcript_entries AS canonical_entry ON canonical_entry.conversation_id = provider_alias.conversation_id AND canonical_entry.id = provider_alias.entry_id AND canonical_entry.turn_id IS old_entry.turn_id
+       WHERE history_alias.entry_id <> provider_alias.entry_id LIMIT 512`,
+      );
+      if (!aliases.length) break;
+      db.transaction(() => {
+        for (const alias of aliases) repository.mergeSourceIdentity(alias.conversation_id, alias.previous_id, alias.canonical_id);
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [repairId, '修正 Pi 历史与活动来源的明确身份关联', 'pi-stage-identity', new Date().toISOString()]);
+  }
+
   const conversations = db.select<{ id: string }>(
     `SELECT conversation.id
        FROM conversations AS conversation
        LEFT JOIN conversation_transcript_state AS state ON state.conversation_id = conversation.id
       WHERE state.conversation_id IS NULL OR state.initialization_state <> 'ready'
-      ORDER BY conversation.created_at, conversation.id`,
+      ORDER BY conversation.updated_at DESC, conversation.id`,
   );
-  for (const conversation of conversations) repository.initializeConversation(conversation.id);
+  if (background && conversations.length) {
+    db.execute(`INSERT OR IGNORE INTO conversation_transcript_state (conversation_id, initialization_state)
+      SELECT id, 'building' FROM conversations`);
+    const work: TranscriptInitializationWork = { queue: conversations.map((conversation) => conversation.id), timer: null, errors: new Map(), barriers: new Map() };
+    transcriptInitializationWork.set(db, work);
+    /** 每次只推进一个持久批次；前台读取可将目标会话提到队首。 */
+    const advance = (): void => {
+      if (transcriptInitializationWork.get(db) !== work) return;
+      const conversationId = work.queue[0];
+      if (!conversationId) {
+        work.timer = null;
+        return;
+      }
+      try {
+        if (repository.initializeConversation(conversationId, 1)) {
+          work.queue.shift();
+          work.barriers.get(conversationId)?.resolve();
+          work.barriers.delete(conversationId);
+        }
+      } catch (error) {
+        work.errors.set(conversationId, error);
+        work.queue.shift();
+        work.barriers.get(conversationId)?.reject(error);
+        work.barriers.delete(conversationId);
+      }
+      work.timer = work.queue.length ? setImmediate(advance) : null;
+    };
+    work.timer = setImmediate(advance);
+    return;
+  }
+  for (const conversation of conversations) {
+    while (!repository.initializeConversation(conversation.id, 1)) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
+
+/** 同库旧资料初始化的可取消队列，失败留给对应会话读取明确报告。 */
+interface TranscriptInitializationWork {
+  queue: string[];
+  timer: ReturnType<typeof setImmediate> | null;
+  errors: Map<string, unknown>;
+  /** 每个会话共用一个等待屏障，不复制到达事件。 */
+  barriers: Map<string, { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }>;
+}
+/** 数据库生命周期拥有初始化队列，不在关闭后保留后台写入。 */
+const transcriptInitializationWork = new WeakMap<ZeusDatabasePort, TranscriptInitializationWork>();
+
+/** 关闭或交接数据库时取消后台推进，断点已随每批写入保存。 */
+export function stopConversationTranscriptInitialization(db: ZeusDatabasePort): void {
+  const work = transcriptInitializationWork.get(db);
+  if (work?.timer) clearImmediate(work.timer);
+  for (const barrier of work?.barriers.values() ?? []) barrier.reject(transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_STOPPED', '数据库已停止初始化。'));
+  transcriptInitializationWork.delete(db);
+}
+
+/** 请求中的会话优先完成；失败不得伪装为永远重试的初始化状态。 */
+function prioritizeTranscriptInitialization(db: ZeusDatabasePort, conversationId: string): void {
+  const work = transcriptInitializationWork.get(db);
+  if (!work) return;
+  if (work.errors.has(conversationId)) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED', '会话显示位置初始化失败，请检查数据库后重新启动。');
+  const index = work.queue.indexOf(conversationId);
+  if (index > 0) {
+    work.queue.splice(index, 1);
+    work.queue.unshift(conversationId);
+  }
+}
+
+/** 同一数据库的各仓库实例共享事务内位置通知，广播由宿主在提交后执行。 */
+const placementChangeWriters = new WeakMap<ZeusDatabasePort, (conversationId: string, orderEpoch: number, revision: number) => void>();
 
 /** 管理会话显示身份、位置与来源修订，不保存正文副本。 */
 export class ConversationTranscriptRepository {
   /** 绑定共享 SQLite 事务端口。 */
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** Provider 串行摄取等待完整索引，期间事件保留在原有队列中。 */
+  async waitUntilReady(conversationId: string): Promise<void> {
+    if (this.state(conversationId)?.initialization_state !== 'building') return;
+    prioritizeTranscriptInitialization(this.db, conversationId);
+    const work = transcriptInitializationWork.get(this.db);
+    if (!work) {
+      this.requireReadyState(conversationId);
+      return;
+    }
+    let barrier = work.barriers.get(conversationId);
+    if (!barrier) {
+      /** Promise 构造器同步安装完成与失败回调，沿用项目现有编译目标。 */
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((onReady, onFailure) => {
+        resolve = onReady;
+        reject = onFailure;
+      });
+      barrier = { promise, resolve, reject };
+      work.barriers.set(conversationId, barrier);
+    }
+    await barrier.promise;
+  }
+
+  /** 宿主注册耐久位置事件写入器；调用发生在位置变更的同一事务内。 */
+  onPlacementChanged(writer: (conversationId: string, orderEpoch: number, revision: number) => void): void {
+    placementChangeWriters.set(this.db, writer);
+  }
+
+  /** 只合并有明确原生身份关联的旧别名，保留最早位置并删除重复显示条目。 */
+  mergeSourceIdentity(conversationId: string, previousId: string, canonicalId: string): void {
+    if (previousId === canonicalId) return;
+    this.db.transaction(() => {
+      const previous = this.db.get<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [conversationId, previousId]);
+      const canonical = this.db.get<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [conversationId, canonicalId]);
+      if (!previous || !canonical || previous.turn_id !== canonical.turn_id) return;
+      const revision = this.nextRevision(conversationId);
+      const order = previous.display_order !== null && canonical.display_order !== null ? Math.min(previous.display_order, canonical.display_order) : canonical.display_order;
+      this.db.execute(`UPDATE conversation_transcript_entries SET display_order = NULL, removed_revision = ?, placement_revision = ? WHERE conversation_id = ? AND id = ?`, [revision, revision, conversationId, previousId]);
+      this.db.execute(`UPDATE conversation_transcript_entries SET display_order = ?, placement_revision = ? WHERE conversation_id = ? AND id = ?`, [order, revision, conversationId, canonicalId]);
+      this.db.execute(`UPDATE conversation_transcript_aliases SET entry_id = ? WHERE conversation_id = ? AND entry_id = ?`, [canonicalId, conversationId, previousId]);
+      this.db.execute(`UPDATE conversation_transcript_entries SET summary_entry_id = ? WHERE conversation_id = ? AND summary_entry_id = ?`, [canonicalId, conversationId, previousId]);
+      this.db.execute(`UPDATE conversation_transcript_state SET order_epoch = order_epoch + 1 WHERE conversation_id = ?`, [conversationId]);
+      placementChangeWriters.get(this.db)?.(conversationId, this.orderEpoch(conversationId), revision);
+    });
+  }
+
+  /** 捕获读取开始时的来源水位，供异步 Provider 返回时核对。 */
+  revision(conversationId: string): number {
+    return this.state(conversationId)?.next_revision ?? 0;
+  }
+
   /** 为一个旧会话按持久断点建立完整索引；ready 会话永不重复重建。 */
-  initializeConversation(conversationId: string): void {
+  initializeConversation(conversationId: string, maximumBatches = Number.POSITIVE_INFINITY): boolean {
     const state = this.state(conversationId);
-    if (state?.initialization_state === 'ready') return;
+    if (state?.initialization_state === 'ready') return true;
     let cursor = state ? parseInitializationCursor(state.initialization_cursor_json) : null;
     if (!state || !cursor) {
       cursor = { phase: 'collecting', domainIndex: 0, offset: 0 };
@@ -253,6 +388,7 @@ export class ConversationTranscriptRepository {
         this.db.execute(`UPDATE conversation_transcript_state SET initialization_cursor_json = ? WHERE conversation_id = ?`, [JSON.stringify(nextCursor), conversationId]);
       });
       cursor = nextCursor;
+      if (--maximumBatches <= 0) return false;
     }
     while (cursor.phase === 'ordering') {
       const facts = this.stagedReconstructionFacts(conversationId, cursor.offset, conversationTranscriptInitializationBatchLimit);
@@ -266,7 +402,7 @@ export class ConversationTranscriptRepository {
             [conversationId],
           );
         });
-        return;
+        return true;
       }
       const nextCursor: ConversationTranscriptInitializationCursor = { phase: 'ordering', offset: cursor.offset + facts.length };
       this.db.transaction(() => {
@@ -279,35 +415,71 @@ export class ConversationTranscriptRepository {
         );
       });
       cursor = nextCursor;
+      if (--maximumBatches <= 0) return false;
     }
+    return true;
   }
 
   /** 注册或更新一个来源；重复内容不递增修订，内容更新不移动条目。 */
   registerSource(input: RegisterConversationTranscriptSourceInput): ConversationTranscriptEnvelope {
-    return this.registerSourceInternal(input, false);
+    return this.db.transaction(() => {
+      this.registerSourceInternal(input, false);
+      return this.envelopeForSource(input)!;
+    });
+  }
+
+  /** 消息开始即持久化阶段锚点，正文尚未产生时工具也可继承归属。 */
+  startStage(input: { conversationId: string; turnId: string; segmentId: string; stageId: string; occurredAt: string }): void {
+    this.db.transaction(() => {
+      const registration: RegisterConversationTranscriptSourceInput = {
+        ...input,
+        sourceDomain: 'stage',
+        sourceScope: input.segmentId,
+        sourceId: input.stageId,
+        facet: 'stage',
+        preferredEntryId: input.stageId,
+        kind: 'hidden_stage_anchor',
+        displayStageId: input.stageId,
+        startsStage: true,
+        firstSeenAt: input.occurredAt,
+        orderingEvidence: 'provider',
+        contentHash: input.stageId,
+      };
+      this.db.execute(`INSERT OR IGNORE INTO conversation_transcript_state (conversation_id, initialization_state) VALUES (?, 'ready')`, [input.conversationId]);
+      this.requireReadyState(input.conversationId);
+      const revision = this.nextRevision(input.conversationId);
+      const openingInputId = this.latestOpeningInputId(input.conversationId, input.turnId) ?? this.ensureHiddenInputAnchor(registration, revision);
+      this.ensureNamedStageAnchor(registration, openingInputId, input.stageId, revision);
+    });
   }
 
   /** 标记明确业务删除的来源；分页缺项和缓存淘汰不得调用。 */
   removeSource(input: Pick<RegisterConversationTranscriptSourceInput, 'conversationId' | 'sourceDomain' | 'sourceScope' | 'sourceId' | 'facet'>): void {
-    const alias = this.alias(input);
-    if (!alias) return;
-    const revision = this.nextRevision(input.conversationId);
-    this.db.execute(
-      `UPDATE conversation_transcript_entries
+    this.db.transaction(() => {
+      const alias = this.alias(input);
+      if (!alias) return;
+      const revision = this.nextRevision(input.conversationId);
+      this.db.execute(
+        `UPDATE conversation_transcript_entries
           SET removed_revision = ?, placement_revision = ?
         WHERE conversation_id = ? AND id = ? AND removed_revision IS NULL`,
-      [revision, revision, input.conversationId, alias.entry_id],
-    );
+        [revision, revision, input.conversationId, alias.entry_id],
+      );
+      placementChangeWriters.get(this.db)?.(input.conversationId, this.orderEpoch(input.conversationId), revision);
+    });
   }
 
   /** 按来源读取当前稳定位置与所有已知来源修订。 */
   envelopeForSource(input: Pick<RegisterConversationTranscriptSourceInput, 'conversationId' | 'sourceDomain' | 'sourceScope' | 'sourceId' | 'facet'>): ConversationTranscriptEnvelope | null {
+    this.requireReadyState(input.conversationId);
     const alias = this.db.get<TranscriptAliasRow>(
       `SELECT * FROM conversation_transcript_aliases
         WHERE conversation_id = ? AND source_domain = ? AND source_scope = ? AND source_id = ? AND facet = ?`,
       [input.conversationId, input.sourceDomain, input.sourceScope, input.sourceId, input.facet],
     );
-    return alias ? this.envelopeForEntry(input.conversationId, alias.entry_id) : null;
+    if (!alias) return null;
+    const envelope = this.envelopeForEntry(input.conversationId, alias.entry_id);
+    return envelope ? { placement: envelope.placement, sources: [mapSourceStamp(alias)] } : null;
   }
 
   /** 按显示身份读取位置和全部来源修订。 */
@@ -317,7 +489,7 @@ export class ConversationTranscriptRepository {
 
   /** 构建期间只允许初始化事务内部读取刚写入的条目。 */
   private envelopeForEntryInternal(conversationId: string, entryId: string, allowBuilding: boolean): ConversationTranscriptEnvelope | null {
-    const state = allowBuilding ? this.state(conversationId) ?? this.requireReadyState(conversationId) : this.requireReadyState(conversationId);
+    const state = allowBuilding ? (this.state(conversationId) ?? this.requireReadyState(conversationId)) : this.requireReadyState(conversationId);
     const entry = this.db.get<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [conversationId, entryId]);
     if (!entry) return null;
     const sources = this.db
@@ -332,40 +504,42 @@ export class ConversationTranscriptRepository {
     const uniqueIds = [...new Set(entryIds.filter((entryId) => entryId.trim()))];
     if (uniqueIds.length > conversationTranscriptPlacementBatchLimit) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_BATCH_TOO_LARGE', '单批最多核对 256 个显示身份。');
     if (uniqueIds.length === 0) return { conversationId, orderEpoch: state.order_epoch, revision: state.next_revision, placements: [], uncoveredEntryIds: [], removedEntryIds: [] };
-    const rows = this.db.select<TranscriptEntryRow>(
-      `SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id IN (${uniqueIds.map(() => '?').join(', ')})`,
-      [conversationId, ...uniqueIds],
-    );
+    const rows = this.db.select<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id IN (${uniqueIds.map(() => '?').join(', ')})`, [conversationId, ...uniqueIds]);
     const byId = new Map(rows.map((row) => [row.id, row]));
     const placements: ConversationTranscriptPlacement[] = [];
     const uncoveredEntryIds: string[] = [];
     const removedEntryIds: string[] = [];
-    let responseBytes = 0;
+    /** 将身份本身与辅助锚点也纳入预算，不能只计算可见位置。 */
+    const batch = { conversationId, orderEpoch: state.order_epoch, revision: state.next_revision, placements, uncoveredEntryIds, removedEntryIds };
+    uncoveredEntryIds.push(...uniqueIds);
+    if (Buffer.byteLength(JSON.stringify(batch)) > conversationTranscriptPlacementByteLimit) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_BATCH_TOO_LARGE', '位置身份超过响应字节预算。');
     for (const entryId of uniqueIds) {
       const row = byId.get(entryId);
-      if (!row) {
-        uncoveredEntryIds.push(entryId);
-        continue;
+      if (!row) continue;
+      const pendingIndex = uncoveredEntryIds.indexOf(entryId);
+      uncoveredEntryIds.splice(pendingIndex, 1);
+      const previousLength = placements.length;
+      if (row.removed_revision !== null) removedEntryIds.push(entryId);
+      else {
+        if (!placements.some((placement) => placement.entryId === entryId)) placements.push(mapPlacement(row, state.order_epoch));
+        for (const anchorId of [row.opening_input_id, row.display_stage_id]) {
+          if (!anchorId || placements.some((placement) => placement.entryId === anchorId)) continue;
+          const anchor = this.db.get<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ? AND removed_revision IS NULL`, [conversationId, anchorId]);
+          if (anchor) placements.push(mapPlacement(anchor, state.order_epoch));
+        }
       }
-      if (row.removed_revision !== null) {
-        removedEntryIds.push(entryId);
-        continue;
+      if (Buffer.byteLength(JSON.stringify(batch)) > conversationTranscriptPlacementByteLimit) {
+        placements.splice(previousLength);
+        if (row.removed_revision !== null) removedEntryIds.pop();
+        uncoveredEntryIds.splice(pendingIndex, 0, entryId);
       }
-      const placement = mapPlacement(row, state.order_epoch);
-      const bytes = Buffer.byteLength(JSON.stringify(placement));
-      if (responseBytes + bytes > conversationTranscriptPlacementByteLimit) {
-        uncoveredEntryIds.push(entryId);
-        continue;
-      }
-      responseBytes += bytes;
-      placements.push(placement);
     }
-    return { conversationId, orderEpoch: state.order_epoch, revision: state.next_revision, placements, uncoveredEntryIds, removedEntryIds };
+    return batch;
   }
 
   /** 返回会话当前位置代次；空会话没有索引行时使用初始代次。 */
   orderEpoch(conversationId: string): number {
-    return this.state(conversationId)?.order_epoch ?? 1;
+    return this.requireReadyState(conversationId).order_epoch;
   }
 
   /** 执行注册并允许旧数据构建期间写入。 */
@@ -381,8 +555,12 @@ export class ConversationTranscriptRepository {
       );
       state = this.state(input.conversationId)!;
     }
-    if (!allowBuilding && state.initialization_state !== 'ready') throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING', '会话显示位置正在初始化。');
-    const existingAlias = this.alias(input);
+    if (!allowBuilding && state.initialization_state !== 'ready') this.requireReadyState(input.conversationId);
+    let existingAlias = this.alias(input);
+    if (existingAlias && existingAlias.entry_id !== input.preferredEntryId) {
+      this.mergeSourceIdentity(input.conversationId, existingAlias.entry_id, input.preferredEntryId);
+      existingAlias = this.alias(input);
+    }
     if (existingAlias) {
       const removedEntry = this.db.get<{ removed_revision: number | null }>(`SELECT removed_revision FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [input.conversationId, existingAlias.entry_id]);
       if (existingAlias.content_hash === input.contentHash && removedEntry?.removed_revision === null) return this.envelopeForEntryInternal(input.conversationId, existingAlias.entry_id, allowBuilding)!;
@@ -391,16 +569,7 @@ export class ConversationTranscriptRepository {
         `UPDATE conversation_transcript_aliases
             SET source_revision = ?, content_revision = ?, content_hash = ?
           WHERE conversation_id = ? AND source_domain = ? AND source_scope = ? AND source_id = ? AND facet = ?`,
-        [
-          revision,
-          input.inheritedContentRevision ?? revision,
-          input.contentHash,
-          input.conversationId,
-          input.sourceDomain,
-          input.sourceScope,
-          input.sourceId,
-          input.facet,
-        ],
+        [revision, input.inheritedContentRevision ?? revision, input.contentHash, input.conversationId, input.sourceDomain, input.sourceScope, input.sourceId, input.facet],
       );
       if (removedEntry && removedEntry.removed_revision !== null) {
         this.db.execute(`UPDATE conversation_transcript_entries SET removed_revision = NULL, placement_revision = ? WHERE conversation_id = ? AND id = ?`, [revision, input.conversationId, existingAlias.entry_id]);
@@ -414,17 +583,7 @@ export class ConversationTranscriptRepository {
       `INSERT INTO conversation_transcript_aliases
        (conversation_id, source_domain, source_scope, source_id, facet, entry_id, source_revision, content_revision, content_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        input.conversationId,
-        input.sourceDomain,
-        input.sourceScope,
-        input.sourceId,
-        input.facet,
-        entry.id,
-        sourceRevision,
-        input.inheritedContentRevision ?? sourceRevision,
-        input.contentHash,
-      ],
+      [input.conversationId, input.sourceDomain, input.sourceScope, input.sourceId, input.facet, entry.id, sourceRevision, input.inheritedContentRevision ?? sourceRevision, input.contentHash],
     );
     return this.envelopeForEntryInternal(input.conversationId, entry.id, allowBuilding)!;
   }
@@ -432,31 +591,23 @@ export class ConversationTranscriptRepository {
   /** 创建一个新显示条目，并把输入与阶段归属一次写定。 */
   private createEntry(input: RegisterConversationTranscriptSourceInput): TranscriptEntryRow {
     const revision = this.nextRevision(input.conversationId);
-    const openingInputId = input.kind === 'ordinary_input' ? input.preferredEntryId : input.openingInputId ?? this.latestOpeningInputId(input.conversationId, input.turnId) ?? this.ensureHiddenInputAnchor(input, revision);
+    /** 阶段先于正文开始时保留原输入归属，期间插话不能吸走旧阶段的结果。 */
+    const stageOpeningInputId = input.displayStageId
+      ? this.db.get<{ opening_input_id: string | null }>(`SELECT opening_input_id FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [input.conversationId, input.displayStageId])?.opening_input_id
+      : null;
+    const openingInputId =
+      input.kind === 'ordinary_input' ? input.preferredEntryId : (input.openingInputId ?? stageOpeningInputId ?? this.latestOpeningInputId(input.conversationId, input.turnId) ?? this.ensureHiddenInputAnchor(input, revision));
     let displayStageId = input.displayStageId ?? null;
     if (input.startsStage) displayStageId ??= this.ensureStageAnchor(input, openingInputId, revision);
     if (!displayStageId && (input.kind === 'tool_activity' || input.facet === 'reasoning_block')) displayStageId = this.currentStageId(input.conversationId, openingInputId) ?? this.ensureStageAnchor(input, openingInputId, revision);
     if (displayStageId) this.ensureNamedStageAnchor(input, openingInputId, displayStageId, revision);
-    const displayOrder = input.kind === 'hidden_input_anchor' || input.kind === 'hidden_stage_anchor' ? null : this.nextDisplayOrder(input.conversationId);
+    const displayOrder = input.kind === 'hidden_input_anchor' || input.kind === 'hidden_stage_anchor' ? null : this.nextDisplayOrder(input, openingInputId, displayStageId);
     this.db.execute(
       `INSERT INTO conversation_transcript_entries
        (conversation_id, id, turn_id, segment_id, kind, display_order, opening_input_id, display_stage_id,
         created_revision, placement_revision, first_seen_at, ordering_evidence, removed_revision, summary_entry_id, current_stage_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
-      [
-        input.conversationId,
-        input.preferredEntryId,
-        input.turnId,
-        input.segmentId,
-        input.kind,
-        displayOrder,
-        openingInputId,
-        displayStageId,
-        revision,
-        revision,
-        input.firstSeenAt,
-        input.orderingEvidence,
-      ],
+      [input.conversationId, input.preferredEntryId, input.turnId, input.segmentId, input.kind, displayOrder, openingInputId, displayStageId, revision, revision, input.firstSeenAt, input.orderingEvidence],
     );
     if (displayStageId && input.startsStage) {
       this.db.execute(`UPDATE conversation_transcript_entries SET summary_entry_id = COALESCE(summary_entry_id, ?) WHERE conversation_id = ? AND id = ?`, [input.preferredEntryId, input.conversationId, displayStageId]);
@@ -479,6 +630,13 @@ export class ConversationTranscriptRepository {
 
   /** 为没有原生阶段身份的首次过程创建确定性隐藏阶段锚点。 */
   private ensureStageAnchor(input: RegisterConversationTranscriptSourceInput, openingInputId: string, revision: number): string {
+    const currentStageId = this.currentStageId(input.conversationId, openingInputId);
+    if (
+      input.startsStage &&
+      currentStageId &&
+      this.db.get<{ summary_entry_id: string | null }>(`SELECT summary_entry_id FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [input.conversationId, currentStageId])?.summary_entry_id === null
+    )
+      return currentStageId;
     const anchorId = `stage:${stableIdentity([input.conversationId, openingInputId, input.sourceScope, input.sourceId, input.facet])}`;
     this.ensureNamedStageAnchor(input, openingInputId, anchorId, revision);
     return anchorId;
@@ -493,7 +651,8 @@ export class ConversationTranscriptRepository {
        VALUES (?, ?, ?, ?, 'hidden_stage_anchor', NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
       [input.conversationId, stageId, input.turnId, input.segmentId, openingInputId, stageId, revision, revision, input.firstSeenAt, input.orderingEvidence],
     );
-    this.db.execute(`UPDATE conversation_transcript_entries SET current_stage_id = ? WHERE conversation_id = ? AND id = ?`, [stageId, input.conversationId, openingInputId]);
+    if (input.startsStage || !this.currentStageId(input.conversationId, openingInputId))
+      this.db.execute(`UPDATE conversation_transcript_entries SET current_stage_id = ? WHERE conversation_id = ? AND id = ?`, [stageId, input.conversationId, openingInputId]);
   }
 
   /** 读取指定输入锚点当前持久阶段。 */
@@ -514,12 +673,56 @@ export class ConversationTranscriptRepository {
     );
   }
 
-  /** 为尾部正常追加分配带空隙的安全整数位置。 */
-  private nextDisplayOrder(conversationId: string): number {
-    const maximum = this.db.get<{ value: number | null }>(`SELECT MAX(display_order) AS value FROM conversation_transcript_entries WHERE conversation_id = ?`, [conversationId])?.value ?? 0;
-    const next = maximum + conversationTranscriptOrderGap;
-    if (!Number.isSafeInteger(next)) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_ORDER_EXHAUSTED', '会话显示位置超出安全整数范围。');
-    return next;
+  /** 在既定阶段、输入、轮次范围内插入；迟到的旧轮次不能追加到新轮次之后。 */
+  private nextDisplayOrder(input: RegisterConversationTranscriptSourceInput, openingInputId: string, stageId: string | null): number {
+    const conversationId = input.conversationId;
+    /** 先使用最窄的持久归属，工具结果因已有别名不会进入此路径。 */
+    const scopes: Array<[string, string | null]> =
+      input.kind === 'ordinary_input'
+        ? [['turn_id', input.turnId]]
+        : [
+            ['display_stage_id', stageId],
+            ['opening_input_id', openingInputId],
+            ['turn_id', input.turnId],
+          ];
+    let left: number | null = null;
+    for (const [column, identity] of scopes) {
+      if (!identity) continue;
+      left = this.db.get<{ value: number | null }>(`SELECT MAX(display_order) AS value FROM conversation_transcript_entries WHERE conversation_id = ? AND ${column} = ?`, [conversationId, identity])?.value ?? null;
+      if (left !== null) break;
+    }
+    /** 首次补入旧轮时，按已存轮次起点寻找其后继；仅用于新身份定位。 */
+    const nextTurn =
+      left === null && input.turnId
+        ? (this.db.get<{ value: number | null }>(
+            `SELECT MIN(entry.display_order) AS value FROM conversation_transcript_entries AS entry
+       JOIN conversation_turns AS next_turn ON next_turn.id = entry.turn_id
+       JOIN conversation_turns AS own_turn ON own_turn.id = ?
+       WHERE entry.conversation_id = ? AND next_turn.started_at > own_turn.started_at`,
+            [input.turnId, conversationId],
+          )?.value ?? null)
+        : null;
+    if (left === null && nextTurn === null) left = this.db.get<{ value: number | null }>(`SELECT MAX(display_order) AS value FROM conversation_transcript_entries WHERE conversation_id = ?`, [conversationId])?.value ?? null;
+    const right =
+      nextTurn ??
+      (left === null ? null : (this.db.get<{ value: number | null }>(`SELECT MIN(display_order) AS value FROM conversation_transcript_entries WHERE conversation_id = ? AND display_order > ?`, [conversationId, left])?.value ?? null));
+    const order = left === null ? (right === null ? conversationTranscriptOrderGap : right - conversationTranscriptOrderGap) : right === null ? left + conversationTranscriptOrderGap : left + Math.floor((right - left) / 2);
+    if (Number.isSafeInteger(order) && order !== left && order !== right) return order;
+    this.renumber(conversationId);
+    return this.nextDisplayOrder(input, openingInputId, stageId);
+  }
+
+  /** 空隙耗尽时在事务内重新编号；先清空唯一位置，避免逐条交换发生冲突。 */
+  private renumber(conversationId: string): void {
+    const entries = this.db.select<{ id: string }>(`SELECT id FROM conversation_transcript_entries WHERE conversation_id = ? AND display_order IS NOT NULL ORDER BY display_order`, [conversationId]);
+    if (!Number.isSafeInteger((entries.length + 1) * conversationTranscriptOrderGap)) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_ORDER_EXHAUSTED', '显示位置已超出安全整数容量。');
+    const revision = this.nextRevision(conversationId);
+    this.db.execute(`UPDATE conversation_transcript_entries SET display_order = NULL WHERE conversation_id = ?`, [conversationId]);
+    entries.forEach((entry, index) =>
+      this.db.execute(`UPDATE conversation_transcript_entries SET display_order = ?, placement_revision = ? WHERE conversation_id = ? AND id = ?`, [(index + 1) * conversationTranscriptOrderGap, revision, conversationId, entry.id]),
+    );
+    this.db.execute(`UPDATE conversation_transcript_state SET order_epoch = order_epoch + 1 WHERE conversation_id = ?`, [conversationId]);
+    placementChangeWriters.get(this.db)?.(conversationId, this.orderEpoch(conversationId), revision);
   }
 
   /** 分配会话严格递增修订。 */
@@ -546,7 +749,10 @@ export class ConversationTranscriptRepository {
   private requireReadyState(conversationId: string): TranscriptStateRow {
     const state = this.state(conversationId);
     if (!state) return { conversation_id: conversationId, next_revision: 0, order_epoch: 1, initialization_state: 'ready', initialization_cursor_json: null, reconstructed_count: 0 };
-    if (state.initialization_state !== 'ready') throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING', '会话显示位置正在初始化。');
+    if (state.initialization_state !== 'ready') {
+      prioritizeTranscriptInitialization(this.db, conversationId);
+      throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING', '会话显示位置正在初始化。');
+    }
     return state;
   }
 
@@ -567,18 +773,7 @@ export class ConversationTranscriptRepository {
        (conversation_id, source_domain, source_scope, source_id, facet, first_seen_at,
         source_priority, source_order, preferred_entry_id, fact_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        fact.conversationId,
-        fact.sourceDomain,
-        fact.sourceScope,
-        fact.sourceId,
-        fact.facet,
-        fact.firstSeenAt,
-        fact.sourcePriority,
-        fact.sourceOrder,
-        fact.preferredEntryId,
-        JSON.stringify(fact),
-      ],
+      [fact.conversationId, fact.sourceDomain, fact.sourceScope, fact.sourceId, fact.facet, fact.firstSeenAt, fact.sourcePriority, fact.sourceOrder, fact.preferredEntryId, JSON.stringify(fact)],
     );
   }
 
@@ -612,20 +807,46 @@ export class ConversationTranscriptRepository {
       client_message_id: string | null;
     }>(
       `SELECT history.id, history.sequence, history.turn_id, history.submission_id, history.segment_id,
-              history.role, history.content_json, history.reasoning_source_json, history.tool_pair_id,
+              history.role,
+              json_object('providerItemId', CASE WHEN json_valid(history.content_json) THEN json_extract(history.content_json, '$.providerItemId') END,
+                'stageId', CASE WHEN json_valid(history.content_json) THEN json_extract(history.content_json, '$.stageId') END,
+                'agentKind', segment.runtime_kind) AS content_json,
+              CASE WHEN json_valid(history.reasoning_source_json) THEN json_object('itemId', json_extract(history.reasoning_source_json, '$.itemId'), 'providerItemId', json_extract(history.reasoning_source_json, '$.providerItemId'), 'stageId', json_extract(history.reasoning_source_json, '$.stageId'), 'readableSummary', json_extract(history.reasoning_source_json, '$.readableSummary')) END AS reasoning_source_json,
+              history.tool_pair_id,
               history.confirmed_at, history.expert_execution_id, submission.client_message_id
          FROM conversation_model_history AS history
          LEFT JOIN conversation_submissions AS submission ON submission.id = history.submission_id
+         LEFT JOIN conversation_runtime_segments AS segment ON segment.id = history.segment_id
         WHERE history.conversation_id = ? ORDER BY history.sequence, history.id LIMIT ? OFFSET ?`,
       [conversationId, limit, offset],
     );
     return rows.map((row) => {
       const content = parseRecord(row.content_json);
       const reasoning = parseRecord(row.reasoning_source_json);
-      const providerItemId = stringValue(content.providerItemId) ?? stringValue(reasoning.itemId) ?? stringValue(reasoning.providerItemId) ?? row.expert_execution_id;
-      const reasoningBlock = row.role === 'assistant' && reasoning.readableSummary === true;
+      const providerItemId =
+        stringValue(content.providerItemId) ??
+        (content.agentKind === 'pi' ? stringValue(content.stageId) : null) ??
+        stringValue(reasoning.itemId) ??
+        stringValue(reasoning.providerItemId) ??
+        row.expert_execution_id ??
+        this.db.get<{ provider_item_id: string | null }>(
+          `SELECT CASE WHEN COUNT(DISTINCT message.provider_item_id) = 1 THEN MIN(message.provider_item_id) END AS provider_item_id
+         FROM conversation_model_history AS history
+         JOIN conversation_turns AS turn ON turn.id = history.turn_id
+         JOIN conversation_messages AS message ON message.conversation_id = history.conversation_id AND message.provider_turn_id = turn.provider_turn_id AND message.role = history.role AND message.created_at = history.confirmed_at
+         WHERE history.id = ? AND message.content = CASE WHEN json_valid(history.content_json) THEN COALESCE(json_extract(history.content_json, '$.text'), history.content_json) ELSE history.content_json END`,
+          [row.id],
+        )?.provider_item_id;
+      const reasoningBlock = row.role === 'assistant' && (reasoning.readableSummary === true || reasoning.readableSummary === 1);
       const facet = row.tool_pair_id ? 'tool_activity' : reasoningBlock ? 'reasoning_block' : 'body';
-      const preferredEntryId = row.role === 'user' && row.client_message_id ? `user-message:${row.client_message_id}` : row.expert_execution_id ? `expert:${row.expert_execution_id}` : providerItemId ? providerEntryId(row.segment_id, providerItemId, facet) : `history:${row.id}`;
+      const preferredEntryId =
+        row.role === 'user' && row.client_message_id
+          ? `user-message:${row.client_message_id}`
+          : row.expert_execution_id
+            ? `expert:${row.expert_execution_id}`
+            : providerItemId
+              ? providerEntryId(row.segment_id, providerItemId, facet)
+              : `history:${row.id}`;
       return {
         conversationId,
         sourceDomain: 'model_history',
@@ -640,7 +861,7 @@ export class ConversationTranscriptRepository {
         startsStage: reasoningBlock,
         firstSeenAt: row.confirmed_at,
         orderingEvidence: 'reconstructed',
-        contentHash: hashContent([row.content_json, row.reasoning_source_json, row.tool_pair_id]),
+        contentHash: hashConversationTranscriptContent([row.content_json, row.reasoning_source_json, row.tool_pair_id]),
         sourceOrder: row.sequence,
         sourcePriority: row.role === 'user' ? 10 : 30,
       } satisfies ReconstructionFact;
@@ -663,7 +884,7 @@ export class ConversationTranscriptRepository {
         updated_at: string;
       }>(
         `SELECT id, turn_id, provider_thread_id, provider_item_id, item_type, phase,
-                payload_projection_json, text_projection, started_at, updated_at
+                CASE WHEN json_valid(payload_projection_json) THEN json_object('stageId', json_extract(payload_projection_json, '$.stageId')) ELSE '{}' END AS payload_projection_json, '' AS text_projection, started_at, updated_at
            FROM conversation_provider_item_states WHERE conversation_id = ? ORDER BY updated_at, id LIMIT ? OFFSET ?`,
         [conversationId, limit, offset],
       )
@@ -685,7 +906,7 @@ export class ConversationTranscriptRepository {
           startsStage: false,
           firstSeenAt: row.started_at ?? row.updated_at,
           orderingEvidence: 'reconstructed',
-          contentHash: hashContent([row.text_projection, row.payload_projection_json, row.phase]),
+          contentHash: hashConversationTranscriptContent([row.text_projection, row.payload_projection_json, row.phase]),
           sourceOrder: offset + index + 1,
           sourcePriority: 20,
         } satisfies ReconstructionFact;
@@ -706,7 +927,10 @@ export class ConversationTranscriptRepository {
         source_event_id: string | null;
         started_at: string;
         completed_at: string | null;
-      }>(`SELECT id, turn_id, segment_id, process_sequence, kind, title, detail_json, source_event_id, started_at, completed_at FROM conversation_process_items WHERE conversation_id = ? ORDER BY process_sequence, id LIMIT ? OFFSET ?`, [conversationId, limit, offset])
+      }>(
+        `SELECT id, turn_id, segment_id, process_sequence, kind, '' AS title, CASE WHEN json_valid(detail_json) THEN json_object('stageId', json_extract(detail_json, '$.stageId')) ELSE '{}' END AS detail_json, source_event_id, started_at, completed_at FROM conversation_process_items WHERE conversation_id = ? ORDER BY process_sequence, id LIMIT ? OFFSET ?`,
+        [conversationId, limit, offset],
+      )
       .map((row) => {
         const detail = parseRecord(row.detail_json);
         const providerItemId = conversationProcessProviderItemId(row.source_event_id);
@@ -725,7 +949,7 @@ export class ConversationTranscriptRepository {
           startsStage: row.kind === 'reasoning',
           firstSeenAt: row.started_at,
           orderingEvidence: 'reconstructed',
-          contentHash: hashContent([row.title, row.detail_json, row.completed_at]),
+          contentHash: hashConversationTranscriptContent([row.title, row.detail_json, row.completed_at]),
           sourceOrder: row.process_sequence,
           sourcePriority: 40,
         } satisfies ReconstructionFact;
@@ -736,7 +960,7 @@ export class ConversationTranscriptRepository {
   private expertExecutionFacts(conversationId: string, offset: number, limit: number): ReconstructionFact[] {
     return this.db
       .select<{ id: string; submission_id: string; status: string; answer: string | null; error_json: string | null; created_at: string; updated_at: string; turn_id: string; segment_id: string }>(
-        `SELECT execution.id, execution.submission_id, execution.status, execution.answer, execution.error_json,
+        `SELECT execution.id, execution.submission_id, execution.status, NULL AS answer, NULL AS error_json,
                 execution.created_at, execution.updated_at, turn.id AS turn_id, history.segment_id
            FROM conversation_expert_executions AS execution
            JOIN conversation_turns AS turn ON turn.client_submission_id = execution.submission_id
@@ -757,7 +981,7 @@ export class ConversationTranscriptRepository {
         segmentId: row.segment_id,
         firstSeenAt: row.created_at,
         orderingEvidence: 'reconstructed',
-        contentHash: hashContent([row.status, row.answer, row.error_json, row.updated_at]),
+        contentHash: hashConversationTranscriptContent([row.status, row.answer, row.error_json, row.updated_at]),
         sourceOrder: offset + index + 1,
         sourcePriority: 35,
       }));
@@ -766,10 +990,16 @@ export class ConversationTranscriptRepository {
   /** 把结构化问答转换为旧数据重建事实。 */
   private requestFacts(conversationId: string, offset: number, limit: number): ReconstructionFact[] {
     return this.db
-      .select<{ id: string; turn_id: string | null; item_id: string | null; payload_json: string; response_json: string | null; status: string; created_at: string; resolved_at: string | null }>(
-        `SELECT id, turn_id, item_id, payload_json, response_json, status, created_at, resolved_at FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?`,
-        [conversationId, limit, offset],
-      )
+      .select<{
+        id: string;
+        turn_id: string | null;
+        item_id: string | null;
+        payload_json: string;
+        response_json: string | null;
+        status: string;
+        created_at: string;
+        resolved_at: string | null;
+      }>(`SELECT id, turn_id, item_id, '{}' AS payload_json, NULL AS response_json, status, created_at, resolved_at FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?`, [conversationId, limit, offset])
       .map((row, index) => ({
         conversationId,
         sourceDomain: 'request',
@@ -782,7 +1012,7 @@ export class ConversationTranscriptRepository {
         segmentId: null,
         firstSeenAt: row.created_at,
         orderingEvidence: 'reconstructed',
-        contentHash: hashContent([row.payload_json, row.response_json, row.status, row.resolved_at]),
+        contentHash: hashConversationTranscriptContent([row.payload_json, row.response_json, row.status, row.resolved_at]),
         sourceOrder: offset + index + 1,
         sourcePriority: 50,
       }));
@@ -791,10 +1021,15 @@ export class ConversationTranscriptRepository {
   /** 把交付资源转换为旧数据重建事实。 */
   private resourceFacts(conversationId: string, offset: number, limit: number): ReconstructionFact[] {
     return this.db
-      .select<{ id: string; turn_id: string; item_id: string; source_index: number; display_json: string; updated_at: string; created_at: string }>(
-        `SELECT id, turn_id, item_id, source_index, display_json, updated_at, created_at FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id LIMIT ? OFFSET ?`,
-        [conversationId, limit, offset],
-      )
+      .select<{
+        id: string;
+        turn_id: string;
+        item_id: string;
+        source_index: number;
+        display_json: string;
+        updated_at: string;
+        created_at: string;
+      }>(`SELECT id, turn_id, item_id, source_index, '{}' AS display_json, updated_at, created_at FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id LIMIT ? OFFSET ?`, [conversationId, limit, offset])
       .map((row) => ({
         conversationId,
         sourceDomain: 'resource',
@@ -807,7 +1042,7 @@ export class ConversationTranscriptRepository {
         segmentId: null,
         firstSeenAt: row.created_at,
         orderingEvidence: 'reconstructed',
-        contentHash: hashContent([row.item_id, row.source_index, row.display_json, row.updated_at]),
+        contentHash: hashConversationTranscriptContent([row.item_id, row.source_index, row.display_json, row.updated_at]),
         sourceOrder: row.source_index,
         sourcePriority: 60,
       }));
@@ -878,11 +1113,6 @@ function stableIdentity(parts: readonly string[]): string {
 
 /** 为等价内容生成内部修订指纹。 */
 export function hashConversationTranscriptContent(parts: readonly unknown[]): string {
-  return hashContent(parts);
-}
-
-/** 为等价内容生成内部修订指纹。 */
-function hashContent(parts: readonly unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 

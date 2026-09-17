@@ -901,6 +901,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now,
     flowControl: conversationEventFlow,
   });
+  /** 位置重编号与其耐久通知共用事务；同步协议在提交成功后才广播。 */
+  conversationTranscripts.onPlacementChanged((conversationId, orderEpoch, revision) => {
+    const conversation = conversations.getRecordById(conversationId);
+    if (!conversation) return;
+    conversationSyncProtocol.append({
+      conversationId,
+      type: 'conversation.transcript.placement.changed',
+      payload: {
+        projectId: conversation.projectId,
+        conversationId,
+        orderEpoch,
+        revision,
+        entityRevision: revision,
+      },
+    });
+  });
   // provider 可能以字符级频率发送增量；只在本地推送层合并同一 item，完成态仍是强制边界。
   const nativeDeltaCoalesceMs = 40;
   const pendingNativeCoalescibleEvents = new Map<string, { type: string; payload: Record<string, unknown>; byteLength: number }>();
