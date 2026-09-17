@@ -16,6 +16,14 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
     'stderr',
     'name',
     'toolName',
+    // 原生工具的身份与返回状态必须在历史和实时展示中一致。
+    'tool',
+    'namespace',
+    'server',
+    'success',
+    'isError',
+    'contentItems',
+    'toolResult',
     'arguments',
     'args',
     'query',
@@ -92,6 +100,7 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
   const output = Array.isArray(result.content) ? result.content.flatMap((block) => (processRecord(block).type === 'text' && typeof processRecord(block).text === 'string' ? [processRecord(block).text as string] : [])).join('\n') : '';
   /** 结果归档由宿主负责，展示只消费已有句柄。 */
   const resultDetails = processRecord(result.details);
+  if (result.isError === true) payload.isError = true;
   if (Number.isInteger(resultDetails.exitCode)) payload.exitCode = resultDetails.exitCode;
   if (output) payload.output = output;
   if (processString(resultDetails.toolResultHandle)) payload.toolResult = { handle: resultDetails.toolResultHandle, projection: JSON.stringify({ text: output }), projectionTruncated: true };

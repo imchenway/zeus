@@ -2143,10 +2143,26 @@
   }
 }
 
+/* 正文与顶栏保持在同一栏，浏览器顶栏和网页在终端展开后仍然对齐。 */
+.session-codex-parity-v1 .session-primary-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+/* 仅改变同一组节点的排列方向，切换位置不卸载终端或正文。 */
+.session-codex-parity-v1 .session-workspace-root:has(> .session-terminal-panel[data-position='right']) {
+  flex-direction: row;
+}
+
 /* 会话终端复用 Runtime PTY；面板只负责可恢复的标签、尺寸与交互呈现。 */
 .session-codex-parity-v1 .session-terminal-panel {
   background: var(--session-canvas);
   border-block-start: 0 solid var(--session-line);
+  box-sizing: border-box;
   block-size: 0;
   color: var(--session-text);
   display: flex;
@@ -2162,6 +2178,7 @@
   /* 沿用浏览器侧栏的尺寸与淡入节奏，正文随底部面板连续让出空间。 */
   transition:
     block-size 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    inline-size 180ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 120ms ease-out,
     visibility 0s linear 180ms;
   visibility: hidden;
@@ -2176,11 +2193,31 @@
   visibility: visible;
 }
 
-/* 首次挂载也从底部展开；后续重开直接接续当前过渡。 */
+/* 右侧终端铺满高度，宽度受会话区域约束，正文至少保留一半空间。 */
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] {
+  block-size: auto;
+  border-block-start-width: 0;
+  border-inline-start: 0 solid var(--session-line);
+  inline-size: 0;
+  max-block-size: none;
+  max-inline-size: 50%;
+}
+
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'][data-open='true'] {
+  border-inline-start-width: 1px;
+  inline-size: var(--session-terminal-width, 480px);
+}
+
+/* 首次挂载沿当前方向展开；后续重开直接接续当前过渡。 */
 @starting-style {
-  .session-codex-parity-v1 .session-terminal-panel[data-open='true'] {
+  .session-codex-parity-v1 .session-terminal-panel[data-position='bottom'][data-open='true'] {
     border-block-start-width: 0;
     block-size: 0;
+    opacity: 0;
+  }
+
+  .session-codex-parity-v1 .session-terminal-panel[data-position='right'][data-open='true'] {
+    inline-size: 0;
     opacity: 0;
   }
 }
@@ -2223,6 +2260,21 @@
   transition: background 120ms ease;
 }
 
+/* 右侧分隔线沿左边缘响应拖动与键盘调整。 */
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] .session-terminal-resizer {
+  block-size: auto;
+  cursor: col-resize;
+  inline-size: 9px;
+  inset-block: 0;
+  inset-inline: -5px auto;
+}
+
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'] .session-terminal-resizer::after {
+  block-size: auto;
+  inline-size: 2px;
+  inset: 42% auto 42% 3px;
+}
+
 .session-codex-parity-v1 .session-terminal-resizer:hover::after,
 .session-codex-parity-v1 .session-terminal-resizer:focus-visible::after,
 .session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] .session-terminal-resizer::after {
@@ -2231,7 +2283,7 @@
 
 .session-codex-parity-v1 .session-terminal-panel[data-resizing='true'] {
   /* 手动调整高度时立即跟手，与浏览器拖动分隔线一致。 */
-  transition-duration: 0s, 120ms, 0s;
+  transition-duration: 0s, 0s, 120ms, 0s;
   user-select: none;
 }
 
@@ -2442,19 +2494,20 @@
   }
 }
 
-/* TASK-20260822-004：复刻 Codex 的轮次操作组；摘要保持一行，展开后显示明细和图片缩略图。 */
+/* 操作组摘要随会话列宽换行，展开后显示明细和图片缩略图。 */
 .session-codex-parity-v1 .session-activity-group > details > summary {
   justify-content: flex-start;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
   min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
+  /* 长摘要折行时保留完整的展开箭头。 */
+  flex: 0 0 auto;
   margin-inline-start: 0;
 }
 
@@ -2467,11 +2520,12 @@
   cursor: pointer;
   font: inherit;
   max-inline-size: min(72ch, 100%);
-  overflow: hidden;
+  /* 文件名和技能名完整显示，连续路径也能在窄栏内折行。 */
+  overflow-wrap: anywhere;
   padding: 0;
-  text-overflow: ellipsis;
+  text-align: start;
   vertical-align: baseline;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link:hover:not(:disabled):not([aria-disabled='true']) {
@@ -4900,9 +4954,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-activity-live > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 运行描述随栏宽完整换行，长命令不再越过会话边界。 */
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-skills {
@@ -4969,9 +5024,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-size: 14px;
   line-height: 1.45;
   min-inline-size: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  /* 展开后的操作标题与实时描述使用相同的换行规则。 */
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-codex-parity-v1 .session-activity-item-summary {
@@ -7538,6 +7593,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   margin: 0;
   min-block-size: 0;
   min-inline-size: 0;
+  /* 行内资源在窄窗口也限制于正文列宽。 */
+  max-inline-size: 100%;
   padding: 0 1px;
   text-align: start;
   vertical-align: baseline;
@@ -7569,6 +7626,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-inline-resource-location {
   font-weight: inherit;
+  /* 行号作为完整位置保留，长文件名仍可自然换行。 */
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-inline-resource > span:first-of-type {
+  /* 不含空格的长路径也不能撑破正文宽度。 */
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-resource-card-list {
@@ -12067,7 +12132,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-/* 文件与浏览器顶栏沿用会话底色，保持上下连续且不叠加分栏细线。 */
+/* 文件与浏览器顶栏沿用会话底色，分隔线与正文连续。 */
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] {
   align-items: stretch;
   background: var(--zeus-card-background, var(--session-canvas));
@@ -12089,6 +12154,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
   align-items: center;
   border-inline-start: 0;
+  /* 正文拖动细线位于右栏外侧一像素，顶栏沿用相同位置且不挤占标签宽度。 */
+  box-shadow: -1px 0 0 var(--session-line);
   padding: 6px 8px;
 }
 
@@ -12098,6 +12165,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 .session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
   border-inline-start: 0;
+  box-shadow: none;
   grid-column: 2;
 }
 
@@ -12628,20 +12696,60 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 新标签使用原生选择菜单，保留键盘、Escape 与外部点击关闭。 */
-.session-source-add-tab {
-  flex: 0 0 32px;
-  width: 32px;
-  appearance: none;
-  border: 0;
-  background: transparent;
+/* 为原生菜单保留文字和系统箭头的空间，避免全局输入框内边距挤空内容。 */
+.session-codex-parity-v1 .session-source-add-tab {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 112px;
+  height: 32px;
+  appearance: auto;
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  background: var(--session-canvas);
   color: inherit;
   font: inherit;
-  font-size: 24px;
+  font-size: 12px;
   cursor: pointer;
-  padding: 0;
+  padding: 0 8px;
+}
+
+/* 复制反馈与操作同排显示，空状态不额外占用工具栏宽度。 */
+.session-source-copy-status {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.session-source-copy-status:empty {
+  display: none;
+}
+
+/* 本机应用图标和通用操作图标共用尺寸，保持菜单名称对齐。 */
+.session-open-with-target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.session-open-with-target-label > :is(img, svg) {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .session-source-tabs {
   overflow-x: auto;
+}
+
+/* 表格复用代码块的悬停复制图标，外层承接间距以保证按钮贴合表头。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block {
+  margin-block: 14px 18px;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block .table-node-wrapper {
+  margin-block: 0;
+}
+
+/* 表头末列为复制按钮留出点击空间，不让图标压住列名。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block th:last-child {
+  padding-inline-end: 48px;
 }

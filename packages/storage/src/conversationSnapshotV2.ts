@@ -1234,10 +1234,20 @@ export class ConversationSnapshotV2Repository {
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
               length(detail_json) AS detail_characters,
               CASE WHEN kind = 'waiting' THEN detail_json
-                   WHEN json_extract(detail_json, '$.provider') = 'pi' AND kind IN ('tool', 'command') THEN
-                     json_object('provider', 'pi', 'payload', json_object(
+                   /* 原生工具和 Pi 共用有界身份字段，长结果截断也不能丢失操作来源与终态。 */
+                   WHEN kind IN ('tool', 'command') THEN
+                     json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', json_extract(detail_json, '$.itemType'), 'payload', json_object(
                        'toolName', substr(COALESCE(json_extract(detail_json, '$.payload.toolName'), json_extract(detail_json, '$.block.name')), 1, 256),
+                       'tool', substr(json_extract(detail_json, '$.payload.tool'), 1, 256),
+                       'name', substr(json_extract(detail_json, '$.payload.name'), 1, 256),
+                       'namespace', substr(json_extract(detail_json, '$.payload.namespace'), 1, 256),
+                       'status', substr(json_extract(detail_json, '$.payload.status'), 1, 64),
+                       'success', json(CASE json_extract(detail_json, '$.payload.success') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),
+                       'exitCode', COALESCE(json_extract(detail_json, '$.payload.exitCode'), json_extract(detail_json, '$.payload.result.details.exitCode')),
                        'args', json_object(
+                         'app', substr(COALESCE(json_extract(detail_json, '$.payload.arguments.app'), json_extract(detail_json, '$.payload.args.app'), json_extract(detail_json, '$.block.arguments.app')), 1, 1000),
+                         'url', substr(COALESCE(json_extract(detail_json, '$.payload.arguments.url'), json_extract(detail_json, '$.payload.args.url'), json_extract(detail_json, '$.block.arguments.url')), 1, 2000),
+                         'surface', substr(COALESCE(json_extract(detail_json, '$.payload.arguments.surface'), json_extract(detail_json, '$.payload.args.surface'), json_extract(detail_json, '$.block.arguments.surface')), 1, 64),
                          'command', substr(COALESCE(json_extract(detail_json, '$.payload.args.command'), json_extract(detail_json, '$.block.arguments.command'), json_extract(detail_json, '$.block.input.command')), 1, 4000),
                          'path', substr(COALESCE(json_extract(detail_json, '$.payload.args.path'), json_extract(detail_json, '$.block.arguments.path'), json_extract(detail_json, '$.block.input.path')), 1, 2000),
                          'pattern', substr(COALESCE(json_extract(detail_json, '$.payload.args.pattern'), json_extract(detail_json, '$.block.arguments.pattern'), json_extract(detail_json, '$.block.input.pattern')), 1, 1000)

@@ -2533,26 +2533,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return null;
   }
 
-  /** 完整会话共享附件预览路由，创建会话前沿用独立附件容器。 */
-  const workspace = (
-    <section
-      className="session-workspace-root"
-      aria-label={copy.workspace}
-      data-transport-state={props.state?.transportState ?? props.loadState ?? 'empty'}
-      data-embedded-in-task={props.embeddedInTask || undefined}
-      data-conversation-state={props.state?.conversationState ?? (legacy ? 'legacy_readonly' : 'empty')}
-      onKeyDownCapture={handleWorkspaceKeyDownCapture}
-      onPointerDownCapture={(event) => {
-        if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
-      }}
-      onFocusCapture={(event) => {
-        if (!contextOpen || !(event.target instanceof Element)) return;
-        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
-      }}
-    >
+  /** 顶栏、正文与浏览器作为整体让出终端空间，保持各工作面的边界对齐。 */
+  const primaryPane = (
+    <>
       <MotionPresence>{imagePreviewRequest ? <FilePreviewDialog request={imagePreviewRequest} zh={props.language === 'zh-CN'} onClose={() => setImagePreviewRequest(null)} /> : null}</MotionPresence>
       {displayedHeader ? (
         <header
@@ -3004,20 +2987,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               </div>
             </div>
           </div>
-          {terminalMounted && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
-            <SessionTerminalPanel
-              client={props.terminalClient}
-              language={props.language}
-              visible={terminalOpen}
-              projectId={props.conversation.projectId}
-              projectName={owner?.projectName ?? props.conversation.projectId}
-              projectPath={props.projectPath}
-              taskId={props.task?.id ?? props.conversation.taskId ?? undefined}
-              cwd={props.state?.snapshot?.executionContext?.cwd}
-              focusRequest={terminalFocusRequest}
-              onClose={closeSessionTerminal}
-            />
-          ) : null}
           <MotionPresence>
             {goalPanelOpen ? (
               <GoalPanel
@@ -3064,6 +3033,45 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onChooseAttachments={actions.onChooseStartAttachments}
         />
       )}
+    </>
+  );
+
+  /** 完整会话共享附件预览路由，创建会话前沿用独立附件容器。 */
+  const workspace = (
+    <section
+      className="session-workspace-root"
+      aria-label={copy.workspace}
+      data-transport-state={props.state?.transportState ?? props.loadState ?? 'empty'}
+      data-embedded-in-task={props.embeddedInTask || undefined}
+      data-conversation-state={props.state?.conversationState ?? (legacy ? 'legacy_readonly' : 'empty')}
+      onKeyDownCapture={handleWorkspaceKeyDownCapture}
+      onPointerDownCapture={(event) => {
+        if (!contextOpen || !(event.target instanceof Element)) return;
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
+      }}
+      onFocusCapture={(event) => {
+        if (!contextOpen || !(event.target instanceof Element)) return;
+        const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
+      }}
+    >
+      <div className="session-primary-pane">{primaryPane}</div>
+      {terminalMounted && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
+        <SessionTerminalPanel
+          key={props.conversation.projectId}
+          client={props.terminalClient}
+          language={props.language}
+          visible={terminalOpen}
+          projectId={props.conversation.projectId}
+          projectName={owner?.projectName ?? props.conversation.projectId}
+          projectPath={props.projectPath}
+          taskId={props.task?.id ?? props.conversation.taskId ?? undefined}
+          cwd={props.state?.snapshot?.executionContext?.cwd}
+          focusRequest={terminalFocusRequest}
+          onClose={closeSessionTerminal}
+        />
+      ) : null}
     </section>
   );
   return (

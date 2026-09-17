@@ -40,13 +40,31 @@ interface QaScene {
 }
 
 const scenes: QaScene[] = [
+  {
+    query: 'tool-design',
+    title: '工具操作与文件资源',
+    summary: '真实会话组件的图标、状态和资源展示。',
+    answer: '',
+    activities: [
+      { type: 'dynamicToolCall', status: 'completed', payload: { namespace: 'zeus_browser', tool: 'open', arguments: { url: 'https://example.com/orders' }, success: true } },
+      { type: 'dynamicToolCall', status: 'completed', payload: { toolName: 'zeus_computer_get_app_state', arguments: { app: 'com.github.electron' }, output: JSON.stringify({ application: { name: 'Zeus Test' } }) } },
+      {
+        type: 'dynamicToolCall',
+        status: 'completed',
+        payload: { namespace: 'zeus_computer', tool: 'click', arguments: { app: 'com.github.electron' }, contentItems: [{ type: 'inputText', text: JSON.stringify({ status: 'waiting_for_user' }) }] },
+      },
+      { type: 'dynamicToolCall', status: 'completed', payload: { namespace: 'zeus_browser', tool: 'click', success: false } },
+      { type: 'commandExecution', status: 'completed', payload: { commandActions: [{ type: 'read', path: '/skills/accessibility/SKILL.md' }] } },
+      { type: 'commandExecution', status: 'completed', payload: { command: 'pnpm lint', exitCode: 2 } },
+    ],
+  },
   // 复用用户附件原文，覆盖时序图、流程图、语法错误与普通代码。
   {
     query: 'mermaid',
     title: '会话图表预览',
     summary: '共用 Markdown 渲染器的 Mermaid 预览与源码回退。',
     answer:
-      '## 附件原始时序图\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant U as 用户(前端)\n    participant A as SocialImportLogApplication<br/>(@Transactional)\n    participant P as SocialImportProvider\n    participant E as socialGoodsImportLookupExecutor<br/>(10 线程，独立池)\n    participant X as 第三方接口\n\n    U->>A: 提交 40 行文件 (needLookup=true)\n    A->>P: prepareProcessQuery(rows)\n    Note over P: 条码去重 40 → 20\n\n    par 滑动窗口，最多 10 个在飞\n        P->>E: submit(条码1)\n        P->>E: submit(条码2)\n        P->>E: ... 最多 10 个\n    end\n    E->>X: HTTP 并发查询\n    X-->>E: 结果\n    E-->>P: 完成一个 → 立刻补下一个\n    Note over P: 20 次外呼全部完成(约 222ms)\n\n    P->>P: 按 barcode → payload 回写 40 行\n    P-->>A: query 已填充\n    Note over A: 之后才是原有的批量落库逻辑\n    A-->>U: 导入结果\n```\n\n## 流程图\n\n```mermaid\nflowchart LR\n  A[开始] --> B{检查格式}\n  B -->|正确| C[显示预览]\n  B -->|错误| D[保留源码]\n```\n\n## 错误语法回退\n\n```mermaid\nflowchart LR\n  A[未闭合\n```\n\n## 普通代码保持原样\n\n```text\nsequenceDiagram\n  A->>B: 普通代码\n```',
+      '## 表格复制验收\n\n| 名称 | 值 |\n| :--- | ---: |\n| **中文** | `a\\|b` |\n| 空值 | |\n\n## 附件原始时序图\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant U as 用户(前端)\n    participant A as SocialImportLogApplication<br/>(@Transactional)\n    participant P as SocialImportProvider\n    participant E as socialGoodsImportLookupExecutor<br/>(10 线程，独立池)\n    participant X as 第三方接口\n\n    U->>A: 提交 40 行文件 (needLookup=true)\n    A->>P: prepareProcessQuery(rows)\n    Note over P: 条码去重 40 → 20\n\n    par 滑动窗口，最多 10 个在飞\n        P->>E: submit(条码1)\n        P->>E: submit(条码2)\n        P->>E: ... 最多 10 个\n    end\n    E->>X: HTTP 并发查询\n    X-->>E: 结果\n    E-->>P: 完成一个 → 立刻补下一个\n    Note over P: 20 次外呼全部完成(约 222ms)\n\n    P->>P: 按 barcode → payload 回写 40 行\n    P-->>A: query 已填充\n    Note over A: 之后才是原有的批量落库逻辑\n    A-->>U: 导入结果\n```\n\n## 流程图\n\n```mermaid\nflowchart LR\n  A[开始] --> B{检查格式}\n  B -->|正确| C[显示预览]\n  B -->|错误| D[保留源码]\n```\n\n## 错误语法回退\n\n```mermaid\nflowchart LR\n  A[未闭合\n```\n\n## 普通代码保持原样\n\n```text\nsequenceDiagram\n  A->>B: 普通代码\n```',
     activities: [],
   },
   { query: 'goal', title: '目标状态与继续执行', summary: '生产组件的目标详情和输入框对齐检查。', answer: '', activities: [] },
@@ -159,6 +177,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   useEffect(() => {
     window.zeus?.reportRendererBootstrapReady?.();
   }, []);
+  if (props.scene.query === 'tool-design') return <ToolDesignQa scene={props.scene} />;
   if (props.scene.query === 'mermaid') return <MermaidPreviewQa answer={props.scene.answer} />;
   if (props.scene.query === 'goal') return <GoalQa />;
   if (props.scene.query === 'navigation') return <NavigationQa />;
@@ -202,6 +221,66 @@ export function SessionQaApp(props: { scene: QaScene }) {
           </a>
         ))}
       </nav>
+    </main>
+  );
+}
+
+/** 直接挂载生产组件，切换主题和窄列检查，不复制图标或链接实现。 */
+function ToolDesignQa(props: { scene: QaScene }) {
+  /** 两种主题使用同一批操作，便于比较对比度。 */
+  const [dark, setDark] = useState(true);
+  /** 窄列覆盖长文件名换行，不改动生产正文列宽。 */
+  const [narrow, setNarrow] = useState(false);
+  /** 记录真实组件发出的打开目标；此页不冒充宿主文件打开验收。 */
+  const [opened, setOpened] = useState('尚未打开资源');
+  /** 与真实会话相同的资源结构，不依赖项目文件存在。 */
+  const document: ConversationResource = {
+    id: 'tool-design-doc',
+    kind: 'file',
+    presentation: 'inline',
+    displayName: '本轮设计记录',
+    projectRelativePath: 'docs/设计记录.md',
+    iconKind: 'markdown',
+    location: { line: 253 },
+    projectId: 'qa',
+    conversationId: 'qa',
+    turnId: 'qa',
+    itemId: 'qa',
+    createdAt: '',
+    updatedAt: '',
+  };
+  /** HTML 卡和源文件链接引用同一个本地资源。 */
+  const page: ConversationResource = { ...document, id: 'tool-design-html', displayName: '业务流程图', projectRelativePath: 'docs/流程图.html', iconKind: 'html', presentation: 'card', location: undefined };
+  /** 点击后核对组件的默认打开目标。 */
+  function open(resource: ConversationResource, target: ConversationOpenTarget): void {
+    setOpened(`${resource.displayName} → ${target}`);
+  }
+  return (
+    <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
+      <header className="qa-error-layout-heading">
+        <h1>{props.scene.title}</h1>
+        <nav>
+          <button type="button" onClick={() => setDark(!dark)}>
+            {dark ? '切换浅色' : '切换深色'}
+          </button>
+          <button type="button" onClick={() => setNarrow(!narrow)}>
+            {narrow ? '恢复宽列' : '检查窄列'}
+          </button>
+        </nav>
+      </header>
+      <section className="qa-error-layout-note" style={{ maxWidth: narrow ? 320 : 800 }}>
+        {props.scene.activities.map((_, index) => (
+          <SessionActivityGroup key={index} items={[activity(props.scene, index)]} language="zh-CN" category="tools" />
+        ))}
+        <p>
+          请查看 <ConversationInlineResource resource={document} label="本轮设计记录 (line 253)" language="zh-CN" onOpenResource={open} />。
+        </p>
+        <p>
+          <ConversationInlineResource resource={{ ...page, presentation: 'inline' }} label="订单与库存同步流程说明及异常处理记录文件名称换行验证.html" language="zh-CN" onOpenResource={open} />
+        </p>
+        <ConversationResourceCards resources={[page]} language="zh-CN" onOpenResource={open} />
+        <p role="status">{opened}</p>
+      </section>
     </main>
   );
 }
