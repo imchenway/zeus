@@ -794,3 +794,4 @@ export * from './distribution.js';
 export * from './conversationCapabilities.js';
 export * from './employeeWorkPlanning.js';
 export * from './digitalTeamWorkflow.js';
+export * from './conversationWorkspace.js';

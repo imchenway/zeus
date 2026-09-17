@@ -1,3 +1,4 @@
+import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -203,6 +204,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
+      const worktree = conversation.workspaceMode === 'worktree' || Boolean(conversation.workspaceId || conversation.environmentId);
+      const workspaceLabel = worktree ? (props.language === 'zh-CN' ? '工作树' : 'Worktree') : props.language === 'zh-CN' ? '项目目录' : 'Project folder';
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       const archiving = archivingConversationId === conversation.id;
@@ -225,6 +228,15 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             }}
             onContextMenu={(event) => handleContextMenu(event, conversation)}
           >
+            <span
+              className="session-conversation-workspace-icon"
+              data-workspace-mode={worktree ? 'worktree' : 'direct'}
+              role="img"
+              aria-label={workspaceLabel}
+              title={[workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ')}
+            >
+              {worktree ? <GitBranch aria-hidden="true" /> : <Folder aria-hidden="true" />}
+            </span>
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}
             </span>
@@ -370,22 +382,64 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
 }
 
 function ConversationRowState(props: { conversation: NativeConversationChoice; runtimeState: ConversationTreeRuntimeState; language: SessionUiLanguage }) {
-  const runStatus = taskRunStatusFromConversationTreeState(props.runtimeState);
+  const presentation = conversationStatusPresentation(props.conversation, props.runtimeState, props.language);
+  return presentation ? <ConversationStatusIcon {...presentation} /> : null;
+}
+
+/** 会话行和项目汇总使用相同的运行态、未读提示及文案。 */
+function conversationStatusPresentation(conversation: NativeConversationChoice, runtimeState: ConversationTreeRuntimeState, language: SessionUiLanguage): { status: ConversationStatusIconKind; label: string } | null {
+  const runStatus = taskRunStatusFromConversationTreeState(runtimeState);
   if (runStatus !== 'idle') {
-    return <ConversationStatusIcon status={runStatus} label={taskAgentRunStatusLabels[props.language][runStatus]} />;
+    return { status: runStatus, label: taskAgentRunStatusLabels[language][runStatus] };
   }
-  if (props.conversation.hasUnreadAttention) {
-    if (props.conversation.attentionKind === 'failed') return <ConversationStatusIcon status="failed" label={taskAgentRunStatusLabels[props.language].failed} />;
-    if (props.conversation.attentionKind === 'interrupted') return <ConversationStatusIcon status="interrupted" label={props.language === 'zh-CN' ? '本轮已中断' : 'Turn interrupted'} />;
-    if (props.conversation.attentionKind === 'completed') return <ConversationStatusIcon status="completed" label={props.language === 'zh-CN' ? '已完成' : 'Completed'} />;
-    return <ConversationStatusIcon status="unread" label={props.language === 'zh-CN' ? '有未读回复' : 'Unread reply'} />;
+  if (conversation.hasUnreadAttention) {
+    if (conversation.attentionKind === 'failed') return { status: 'failed', label: taskAgentRunStatusLabels[language].failed };
+    if (conversation.attentionKind === 'interrupted') return { status: 'interrupted', label: language === 'zh-CN' ? '本轮已中断' : 'Turn interrupted' };
+    if (conversation.attentionKind === 'completed') return { status: 'completed', label: language === 'zh-CN' ? '已完成' : 'Completed' };
+    return { status: 'unread', label: language === 'zh-CN' ? '有未读回复' : 'Unread reply' };
   }
   return null;
 }
 
 type ConversationStatusIconKind = TaskAgentRunStatus | 'completed' | 'interrupted' | 'unread';
 
-function ConversationStatusIcon(props: { status: ConversationStatusIconKind; label: string }) {
+/** 需要处理的状态优先于执行中，其余状态通过悬停摘要保留。 */
+const projectConversationStatusPriority: ConversationStatusIconKind[] = ['waiting_approval', 'waiting_user', 'failed', 'running', 'reconnecting', 'connecting', 'paused', 'interrupted', 'completed', 'unread', 'legacy_readonly'];
+
+/** 汇总完整项目会话，包含任务会话，不受侧栏搜索和折叠数量影响。 */
+export function summarizeProjectConversationStatuses(
+  groups: ProjectConversationGroup[],
+  conversationStates: Record<string, ConversationTreeRuntimeState> | undefined,
+  language: SessionUiLanguage,
+): Map<string, { status: ConversationStatusIconKind; label: string }> {
+  const result = new Map<string, { status: ConversationStatusIconKind; label: string }>();
+  for (const group of groups) {
+    const counts = new Map<ConversationStatusIconKind, { count: number; label: string }>();
+    const seen = new Set<string>();
+    for (const conversation of [...(group.conversations ?? []), ...group.tasks.flatMap((task) => task.conversations)]) {
+      const id = conversationNavigationId(conversation);
+      if (conversation.archived || seen.has(id)) continue;
+      seen.add(id);
+      const presentation = conversationStatusPresentation(conversation, resolveConversationTreeRuntimeState(conversation, conversationStates), language);
+      if (!presentation) continue;
+      const count = counts.get(presentation.status)?.count ?? 0;
+      counts.set(presentation.status, { count: count + 1, label: presentation.label });
+    }
+    const statuses = projectConversationStatusPriority.filter((status) => counts.has(status));
+    const status = statuses[0];
+    if (!status) continue;
+    const label = statuses
+      .map((kind) => {
+        const entry = counts.get(kind)!;
+        return `${entry.label} ${entry.count}`;
+      })
+      .join(' · ');
+    result.set(group.projectId, { status, label });
+  }
+  return result;
+}
+
+export function ConversationStatusIcon(props: { status: ConversationStatusIconKind; label: string }) {
   let icon = null;
   if (props.status === 'connecting' || props.status === 'reconnecting' || props.status === 'running') {
     icon = <CircleNotch className="session-conversation-state-spinner" aria-hidden="true" />;

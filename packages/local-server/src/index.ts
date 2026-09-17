@@ -1,5 +1,6 @@
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacitySupported } from '@zeus/shared';
+import type { ConversationWorktreeOptions } from '@zeus/shared';
 import { createDistributionContext, type DistributionConfig } from '@zeus/shared';
 
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -603,6 +604,10 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  source?: 'code_review';
+  inheritConversationId?: string;
+  worktree?: ConversationWorktreeOptions;
+  workspaceMode?: 'direct' | 'worktree';
   mode: 'create';
   /** 缺省继承项目；null 明确使用默认。 */
   contextCapacityTokens?: number | null;

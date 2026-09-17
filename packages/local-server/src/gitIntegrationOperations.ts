@@ -1,3 +1,4 @@
+import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { createAiRuntimeSessionManager, parseModelRef, type AiRuntimeSession } from '@zeus/ai-runtime';
 import {
   buildGitPatchExport,
@@ -976,7 +977,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       const repositoryId = requireWorkspaceGitIdentity(input.repositoryId, 'repositoryId');
       const project = projects.getById(projectId);
       if (!project) workspaceGitReject(404, 'ZEUS_PROJECT_NOT_FOUND', 'Project not found');
-      const repository = projectRepositories.getById(repositoryId);
+      const repository =
+        input.commandType === workspaceGitCommandTypes.workbenchAction && repositoryId.startsWith('conversation:')
+          ? { ...(await resolveConversationGitWorkspace(project, repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)), projectId: project.id }
+          : projectRepositories.getById(repositoryId);
       if (!repository || repository.projectId !== project.id) workspaceGitReject(404, 'ZEUS_PROJECT_REPOSITORY_NOT_FOUND', 'Project repository not found');
       opaque.projectId = project.id;
       opaque.repositoryId = repository.id;
@@ -1140,7 +1144,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
 
   async function executeWorkspaceGitWorkbenchAction(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>): Promise<WorkspaceGitRouteExecution> {
     const project = requirePreparedProject(opaque);
-    const repository = opaque.repositoryId ? projectRepositories.getById(opaque.repositoryId) : null;
+    const repository = opaque.repositoryId?.startsWith('conversation:')
+      ? { ...(await resolveConversationGitWorkspace(project, opaque.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)), projectId: project.id }
+      : opaque.repositoryId
+        ? projectRepositories.getById(opaque.repositoryId)
+        : null;
     if (!repository || repository.projectId !== project.id) workspaceGitReject(404, 'ZEUS_PROJECT_REPOSITORY_NOT_FOUND', 'Project repository not found');
     const action = parseProjectGitAction(value);
     const result = await executeProjectGitAction(repository.localPath, action);

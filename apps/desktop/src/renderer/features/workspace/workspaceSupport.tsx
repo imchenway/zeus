@@ -198,6 +198,8 @@ export type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: Ta
 export type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
+    | 'loadConversationGitHistory'
+    | 'loadProjectGitComparisonDiff'
     | 'memory'
     | 'conversations'
     | 'projects'

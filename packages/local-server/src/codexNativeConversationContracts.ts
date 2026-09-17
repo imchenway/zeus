@@ -346,6 +346,7 @@ export interface StartTaskConversationInput {
 export interface StartProjectConversationInput {
   /** 会话创建时冻结的上下文容量，空值保留默认。 */
   contextCapacityTokens?: number | null;
+  executionWorkspaceMode?: 'direct' | 'worktree';
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   conversationId?: string;

@@ -2101,7 +2101,7 @@
   }
 }
 
-/* ZEUS-0236：新会话执行上下文位于输入正文上方，项目与分支都使用真实可切换事实。 */
+/* ZEUS-0236：新会话执行上下文位于输入正文上方，项目目录显示当前分支，工作树单独配置来源和新分支。 */
 .session-codex-parity-v1 .session-new-conversation-context {
   align-items: center;
   background: color-mix(in srgb, var(--session-line-soft) 58%, transparent);
@@ -12759,4 +12759,84 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 /* 表头末列为复制按钮留出点击空间，不让图标压住列名。 */
 .session-codex-parity-v1 .session-conversation-markdown .session-markdown-table-block th:last-child {
   padding-inline-end: 48px;
+}
+
+.session-conversation-workspace-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--zeus-product-muted);
+}
+
+.session-conversation-workspace-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.session-conversation-workspace-icon[data-workspace-mode='worktree'] {
+  color: var(--zeus-product-accent);
+}
+
+.session-worktree-branch-popover .session-new-worktree-fields {
+  display: grid;
+  gap: 8px;
+  padding: 12px 8px 4px;
+  margin-block-start: 6px;
+  border-block-start: 1px solid var(--zeus-product-border);
+}
+
+.session-worktree-branch-popover .session-new-worktree-fields > button {
+  justify-self: start;
+}
+
+.session-new-worktree-fields > label {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-new-worktree-fields input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 34px;
+  padding: 6px 10px;
+  color: var(--zeus-product-text);
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-border);
+  border-radius: 8px;
+}
+
+.session-new-worktree-fields > small,
+.session-new-worktree-fields > label > span {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.session-new-worktree-fields > [role='alert'] {
+  margin: 0;
+  color: var(--zeus-control-danger-text, #b33a3a);
+  font-size: 12px;
+}
+
+/* 会话交付复用 Git 工作台，窗口尺寸变化时保持内部滚动。 */
+.conversation-git-delivery {
+  width: min(1400px, calc(100vw - 48px));
+  height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--zeus-card-background, var(--session-canvas));
+  border-radius: 12px;
+  overflow: hidden;
+}
+.conversation-git-delivery > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+}
+.conversation-git-delivery > .project-git-workbench {
+  flex: 1;
+  min-height: 0;
 }

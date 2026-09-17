@@ -166,6 +166,7 @@ export interface CreatePiNativeConversationCoordinatorOptions {
 export interface StartPiConversationInput {
   /** 会话创建接纳时冻结，排队与恢复从会话记录读取。 */
   contextCapacityTokens?: number | null;
+  executionWorkspaceMode?: 'direct' | 'worktree';
   conversationId: string;
   submissionId: string;
   projectId: string;
@@ -419,6 +420,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             projectId: input.projectId,
             taskId: input.taskId ?? null,
             projectLocalPath: input.cwd,
+            ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
             agentKind: 'pi',
@@ -497,6 +499,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
           context: {
             projectLocalPath: input.cwd,
+            ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
             agentKind: 'pi',
