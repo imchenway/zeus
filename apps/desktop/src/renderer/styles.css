@@ -1603,13 +1603,6 @@ a {
   min-inline-size: 0;
 }
 
-.macos-ai-app .codex-skill-selector-error {
-  color: var(--zeus-control-danger-text);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
 /* 扩展页统一承载纵向滚动，避免后面的通用工作区裁剪规则覆盖它。 */
 
 .macos-ai-app .skills-workspace-header,
@@ -11151,6 +11144,20 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .zeus-select-trigger:has(.zeus-select-value-color) {
   grid-template-columns: 10px minmax(0, 1fr) 14px;
+}
+
+/* 目录重试是选择器旁的独立动作，不覆盖下拉或新增表单说明行。 */
+.macos-ai-app .codex-skill-selector:has(> .codex-skill-retry) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.macos-ai-app .zeus-select-trigger.codex-skill-retry {
+  grid-template-columns: 14px auto;
+  gap: 6px;
+  padding-inline: 8px;
+  color: var(--zeus-brand-text);
+  white-space: nowrap;
 }
 
 .macos-ai-app .zeus-select-trigger:has(.zeus-select-trigger-icon) {

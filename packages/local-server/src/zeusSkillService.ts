@@ -4,11 +4,13 @@ import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, sta
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
-import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope } from '@zeus/ai-runtime';
+import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope, CodexSkillsListEntry } from '@zeus/ai-runtime';
 
 const execFileAsync = promisify(execFile);
 const maximumSkillNodes = 5_000;
 const maximumSkillBytes = 50 * 1024 * 1024;
+/** 订阅服务只补充目录，等待预算必须远小于本地接口的读取期限。 */
+const providerCatalogWaitMs = 1_000;
 
 export type ZeusSkillInstallSource = { kind: 'local'; path: string } | { kind: 'git'; repositoryUrl: string; ref?: string; subdirectory?: string };
 
@@ -72,6 +74,35 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
   const skillsRoot = requireAbsolutePath(options.skillsRoot, 'Zeus Skill Root');
   const skillProfileRoot = dirname(skillsRoot);
   const now = options.now ?? (() => new Date());
+  /** 未完成的同类读取共享请求，超时返回本地目录后也不重复堆积订阅请求。 */
+  const pendingProviderCatalogs = new Map<string, Promise<CodexSkillsListEntry[]>>();
+
+  /** 将启动和目录读取一起限时；底层请求自行收尾，不让可选元数据阻塞主流程。 */
+  async function readProviderCatalog(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<CodexSkillsListEntry[]> {
+    /** 启动与强制刷新语义不同，不能用普通读取替代。 */
+    const key = JSON.stringify([input.cwd, Boolean(input.forceReload), Boolean(input.startProvider)]);
+    /** 仅复用执行中的请求，不缓存可能已失效的 Skill 路径。 */
+    let pending = pendingProviderCatalogs.get(key);
+    if (!pending) {
+      pending = (async () => {
+        if (input.startProvider) await options.ensureReady();
+        return options.manager.listSkills({ cwds: [input.cwd], ...(input.forceReload ? { forceReload: true } : {}) });
+      })().finally(() => pendingProviderCatalogs.delete(key));
+      pendingProviderCatalogs.set(key, pending);
+    }
+    /** 每位调用者独立清理计时器，迟到的结果不修改已经返回或冻结的目录。 */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('订阅服务 Skill 目录读取超时，当前仅使用本地可用 Skill。')), providerCatalogWaitMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async function list(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<ZeusSkillCatalog> {
     const cwd = await requireDirectory(input.cwd, 'Skill 工作目录');
@@ -92,8 +123,7 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
     let providerSkills: CodexSkillMetadata[] = [];
     let providerErrors: Array<Record<string, unknown>> = [];
     try {
-      if (input.startProvider) await options.ensureReady();
-      const entries = await options.manager.listSkills({ cwds: [cwd], ...(input.forceReload ? { forceReload: true } : {}) });
+      const entries = await readProviderCatalog({ ...input, cwd });
       const entry = entries.find((candidate) => resolve(candidate.cwd) === cwd) ?? entries[0];
       if (entry) {
         providerSkills = entry.skills;

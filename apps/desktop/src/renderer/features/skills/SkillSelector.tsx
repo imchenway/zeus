@@ -1,5 +1,6 @@
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { useEffect, useMemo, useState } from 'react';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
@@ -24,12 +25,22 @@ export function SkillSelector(props: {
   const [catalog, setCatalog] = useState<SkillCatalog | null>(props.catalog ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 重试只刷新当前选择器，不影响其他表单或已经选择的 Skill。 */
+  const [reloadRevision, setReloadRevision] = useState(0);
   const zh = props.language === 'zh-CN';
   const catalogProvided = props.catalog !== undefined;
 
   useEffect(() => {
     if (catalogProvided) setCatalog(props.catalog ?? null);
   }, [catalogProvided, props.catalog]);
+
+  /** 切换项目时清空旧目录，重试同一项目时保留已加载的可选项。 */
+  useEffect(() => {
+    if (!catalogProvided) {
+      setCatalog(null);
+      setError(null);
+    }
+  }, [catalogProvided, props.projectId]);
 
   useEffect(() => props.onCatalogChange?.(catalog), [catalog, props.onCatalogChange]);
 
@@ -38,25 +49,26 @@ export function SkillSelector(props: {
     let active = true;
     const load = async (forceReload = false) => {
       setLoading(true);
-      setError(null);
       try {
         const next = await props.client!.loadSkills(props.projectId, forceReload);
         if (!active) return;
         setCatalog(next);
+        setError(null);
       } catch (reason) {
-        if (active) setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
+        // 可选目录读取失败仅在选择器显示，不打断对话或任务推送。
+        if (active) setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
       } finally {
         if (active) setLoading(false);
       }
     };
-    void load();
+    void load(reloadRevision > 0);
     const refresh = () => void load(true);
     window.addEventListener(skillCatalogChangedEvent, refresh);
     return () => {
       active = false;
       window.removeEventListener(skillCatalogChangedEvent, refresh);
     };
-  }, [catalogProvided, props.client, props.projectId, zh]);
+  }, [catalogProvided, props.client, props.projectId, reloadRevision, zh]);
 
   const options = useMemo<ZeusSelectOption<string>[]>(() => {
     const items: ZeusSelectOption<string>[] = [
@@ -71,28 +83,47 @@ export function SkillSelector(props: {
         })),
     ];
     if (props.value && !items.some((item) => item.value === props.value)) {
-      items.push({ value: props.value, label: zh ? '原 Skill 已不可用' : 'Previous skill unavailable', group: zh ? '需要重选' : 'Reselect', disabled: true, searchText: props.value });
+      items.push({
+        value: props.value,
+        label: !catalog ? (zh ? '已选 Skill（待确认）' : 'Selected skill (unverified)') : zh ? '原 Skill 已不可用' : 'Previous skill unavailable',
+        group: zh ? '需要重选' : 'Reselect',
+        disabled: true,
+        searchText: props.value,
+      });
     }
     return items;
-  }, [catalog?.skills, props.adding, props.allowedIds, props.value, zh]);
+  }, [catalog, props.adding, props.allowedIds, props.value, zh]);
 
   const selected = options.find((option) => option.value === props.value);
-  const fallbackLabel = loading ? (zh ? '正在读取 Skill…' : 'Loading skills…') : error ? (zh ? 'Skill 不可用' : 'Skills unavailable') : props.adding ? (zh ? '添加 Skill' : 'Add skill') : zh ? '不使用 Skill' : 'No skill';
+  const fallbackLabel = loading ? (zh ? '正在读取 Skill…' : 'Loading skills…') : props.adding ? (zh ? '添加 Skill' : 'Add skill') : zh ? '不使用 Skill' : 'No skill';
   return (
-    <span className={`codex-skill-selector${props.className ? ` ${props.className}` : ''}`} title={error ?? selected?.label}>
+    <span className={`codex-skill-selector${props.className ? ` ${props.className}` : ''}`} title={selected?.label}>
       <ZeusSelect
         ariaLabel={props.ariaLabel ?? (zh ? '选择 Skill' : 'Choose skill')}
         value={props.value}
         options={options}
         onChange={props.onChange}
         triggerLabel={selected?.label ?? fallbackLabel}
-        disabled={props.disabled || loading || !props.client || Boolean(error)}
+        disabled={props.disabled}
         searchPlaceholder={zh ? '搜索名称、说明或路径' : 'Search name, description, or path'}
         emptyLabel={zh ? '没有匹配的 Skill' : 'No matching skills'}
         searchable
         size="regular"
       />
-      {error ? <small className="codex-skill-selector-error">{error}</small> : null}
+      {/* 目录失败不接管选择入口；只有独立的重试按钮等待刷新完成。 */}
+      {error ? (
+        <button
+          type="button"
+          className="zeus-select-trigger codex-skill-retry"
+          title={error}
+          aria-label={loading ? (zh ? '正在重新加载 Skill' : 'Reloading skills') : `${zh ? 'Skill 目录加载失败，重试。' : 'Skills failed to load. Retry.'} ${error}`}
+          disabled={props.disabled || loading || !props.client}
+          onClick={() => setReloadRevision((revision) => revision + 1)}
+        >
+          <ArrowClockwiseIcon size={14} aria-hidden="true" />
+          {loading ? (zh ? '重试中' : 'Retrying') : zh ? '重试' : 'Retry'}
+        </button>
+      ) : null}
     </span>
   );
 }

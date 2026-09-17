@@ -3,7 +3,7 @@ import type { CodexTaskPushModelCapability } from './sessionTypes.js';
 import { SettingsEditor } from '../features/digital-employees/TaskWorkPlanPanel.js';
 import { DigitalEmployeeAvatar } from '../features/digital-employees/DigitalEmployeeAvatar.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEventHandler, type KeyboardEvent, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
@@ -139,7 +139,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
           if (active) setCatalog(value);
         })
         .catch((error: unknown) => {
-          if (active) setCatalogError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+          // 扩展候选不可用时保留输入能力，只在命令菜单解释失败原因。
+          if (active) setCatalogError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         });
     }
     return () => {
