@@ -48,7 +48,15 @@ import { type ComputerHost, createComputerHost } from './computerHost.js';
 import { createNativeAutomationHost } from './nativeAutomationHost.js';
 import { type ExternalBrowserHost, createExternalBrowserHost } from './externalBrowserHost.js';
 import { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
-import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest, openTurnChangeFile, type OpenTurnChangeFileRequest } from './conversationResourceOpen.js';
+import {
+  type ConversationResourceRequest,
+  loadConversationSourceBlame,
+  listConversationResourceOpenTargets,
+  openConversationResource,
+  type OpenConversationResourceRequest,
+  openTurnChangeFile,
+  type OpenTurnChangeFileRequest,
+} from './conversationResourceOpen.js';
 import {
   type ConversationInputResourceBroker,
   type ConversationInputResourceSource,
@@ -1567,13 +1575,19 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
   });
-  ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown }) => {
+  ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown; expectedSha256?: unknown }) => {
     requireProjectSourceWorkspace(event);
-    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string' || (input.ref !== undefined && typeof input.ref !== 'string')) {
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string' || (input.ref !== undefined && typeof input.ref !== 'string') || (input.expectedSha256 !== undefined && typeof input.expectedSha256 !== 'string')) {
       throw new TypeError('项目源码 blame 请求无效。');
     }
     const projectRoot = await loadProjectRootForSourceWorkspace(input.projectId);
-    return getFileBlame(projectRoot, input.relativePath, typeof input.ref === 'string' && input.ref.trim() ? input.ref : undefined);
+    return getFileBlame(projectRoot, input.relativePath, typeof input.ref === 'string' && input.ref.trim() ? input.ref : undefined, input.expectedSha256);
+  });
+  ipcMain.handle('zeus:conversation-resource:blame', (event, input: ConversationResourceRequest & { expectedSha256: string }) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('源码归属请求来自不受信窗口。');
+    if (!input || typeof input.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(input.expectedSha256)) throw new TypeError('源码版本校验参数无效。');
+    return loadConversationSourceBlame(input, conversationResourceOpenServices(requestingWindow));
   });
   ipcMain.handle('zeus:project-source:save-file', (event, request: MainCommandRequest<SaveProjectSourceFileInput>) => {
     const workspace = requireProjectSourceWorkspace(event);

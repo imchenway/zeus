@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GitFileBlame } from '../features/git/gitContracts.js';
+import { invalidateGitBlame, readCachedGitBlame } from './gitBlameCache.js';
 
 export interface UseGitBlameOptions {
   projectId?: string;
@@ -8,6 +9,10 @@ export interface UseGitBlameOptions {
   initiallyVisible?: boolean;
   /** 磁盘内容变更后使用新缓存，避免保存后复用旧行号。 */
   revision?: string;
+  /** 会话源码只能用资源身份解析，不回退项目主目录。 */
+  conversationId?: string;
+  resourceId?: string;
+  content?: string;
 }
 
 export interface UseGitBlameResult {
@@ -20,26 +25,21 @@ export interface UseGitBlameResult {
   reload: () => void;
 }
 
-interface BlameCacheEntry {
-  value?: GitFileBlame;
-  promise?: Promise<GitFileBlame>;
-  updatedAt: number;
-}
-
-const blameCache = new Map<string, BlameCacheEntry>();
-const blameCacheTtlMs = 30_000;
-
 /** 按项目、文件和版本共享短期读取结果，避免滚动或重新渲染重复启动 Git。 */
 export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
   const projectId = options.projectId?.trim() ?? '';
   // 文件名两端的空格是合法路径内容，校验时只用 trim，不改变实际 IPC 参数。
   const filePath = options.filePath ?? '';
   const ref = options.ref?.trim() || undefined;
-  const cacheKey = projectId && filePath.trim() ? `${projectId}\0${filePath}\0${ref ?? ''}\0${options.revision ?? ''}` : '';
-  const available = Boolean(projectId && filePath.trim() && typeof window !== 'undefined' && window.zeus?.loadProjectSourceBlame);
+  const { conversationId, resourceId, content, revision } = options;
+  const resource = Boolean(conversationId || resourceId);
+  const cacheKey = projectId ? JSON.stringify(resource ? ['resource', projectId, conversationId, resourceId] : ['project', projectId, filePath, ref]) : '';
+  const available = Boolean(
+    projectId && typeof window !== 'undefined' && (resource ? conversationId && resourceId && content !== undefined && window.zeus?.loadConversationSourceBlame : filePath.trim() && window.zeus?.loadProjectSourceBlame),
+  );
   const [enabled, setEnabled] = useState(options.initiallyVisible ?? true);
   const [refreshVersion, setRefreshVersion] = useState(0);
-  const [blame, setBlame] = useState<{ key: string; value: GitFileBlame } | null>(null);
+  const [blame, setBlame] = useState<{ key: string; revision?: string; content?: string; value: GitFileBlame } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -54,11 +54,18 @@ export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
     setBlame(null);
     setError(null);
     setLoading(true);
-    const loader = window.zeus?.loadProjectSourceBlame;
-    if (!loader) return undefined;
-    void readCachedBlame(cacheKey, () => loader({ projectId, relativePath: filePath, ...(ref ? { ref } : {}) }))
+    const load = async () => {
+      const expectedSha256 = content === undefined ? revision : Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content))), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      if (!active) return null;
+      return readCachedGitBlame(cacheKey, expectedSha256 ?? '', () =>
+        resource
+          ? window.zeus!.loadConversationSourceBlame({ projectId, conversationId: conversationId!, resourceId: resourceId!, expectedSha256: expectedSha256! })
+          : window.zeus!.loadProjectSourceBlame({ projectId, relativePath: filePath, ...(ref ? { ref } : {}), ...(expectedSha256 ? { expectedSha256 } : {}) }),
+      );
+    };
+    void load()
       .then((value) => {
-        if (active) setBlame({ key: cacheKey, value });
+        if (active && value) setBlame({ key: cacheKey, revision, content, value });
       })
       .catch((cause: unknown) => {
         if (active) {
@@ -72,32 +79,13 @@ export function useGitBlame(options: UseGitBlameOptions): UseGitBlameResult {
     return () => {
       active = false;
     };
-  }, [available, cacheKey, enabled, filePath, projectId, ref, refreshVersion]);
+  }, [available, cacheKey, enabled, filePath, projectId, ref, refreshVersion, resource, conversationId, resourceId, content, revision]);
 
   const toggle = useCallback(() => setEnabled((value) => !value), []);
   const reload = useCallback(() => {
-    if (cacheKey) blameCache.delete(cacheKey);
+    if (cacheKey) invalidateGitBlame(cacheKey);
     setRefreshVersion((value) => value + 1);
   }, [cacheKey]);
 
-  return { blame: blame?.key === cacheKey ? blame.value : null, enabled, loading, available, error, toggle, reload };
-}
-
-async function readCachedBlame(key: string, load: () => Promise<GitFileBlame>): Promise<GitFileBlame> {
-  const now = Date.now();
-  const cached = blameCache.get(key);
-  if (cached?.value && now - cached.updatedAt < blameCacheTtlMs) return cached.value;
-  if (cached?.promise) return cached.promise;
-
-  const promise = load()
-    .then((value) => {
-      blameCache.set(key, { value, updatedAt: Date.now() });
-      return value;
-    })
-    .catch((error: unknown) => {
-      blameCache.delete(key);
-      throw error;
-    });
-  blameCache.set(key, { promise, updatedAt: now });
-  return promise;
+  return { blame: blame?.key === cacheKey && blame.revision === revision && blame.content === content ? blame.value : null, enabled, loading, available, error, toggle, reload };
 }

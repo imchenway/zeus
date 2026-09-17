@@ -26,6 +26,8 @@ interface SourceCodePreviewProps {
   language: string | null;
   label: string;
   projectId?: string;
+  conversationId?: string;
+  resourceId?: string;
   blameLabels?: SourceBlameLabels;
   location?: ConversationFileLocation;
   widgets: SourceLineWidget[];
@@ -63,7 +65,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
       },
     [props.blameLabels],
   );
-  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.projectId ? props.path : undefined });
+  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
 
   useEffect(() => {
     if (!hostRef.current) return;

@@ -300,6 +300,8 @@ function SourceWorkspaceView(props: {
               language={props.preview.language}
               label={zh ? `${displayPath} 源码` : `${displayPath} source`}
               projectId={props.preview.resource.kind === 'file' ? props.preview.resource.projectId : undefined}
+              conversationId={props.preview.resource.kind === 'file' ? props.preview.resource.conversationId : undefined}
+              resourceId={props.preview.resource.kind === 'file' ? props.preview.resource.id : undefined}
               blameLabels={{
                 locale: props.language,
                 show: zh ? '显示 Git blame' : 'Show Git blame',

@@ -2837,7 +2837,7 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
 }
 
 /** 读取文件当前版本的逐行归属；只读命令不修改工作区、索引或引用。 */
-export async function getFileBlame(cwd: string, filePath: string, ref?: string): Promise<GitFileBlame> {
+export async function getFileBlame(cwd: string, filePath: string, ref?: string, expectedSha256?: string): Promise<GitFileBlame> {
   const projectRoot = canonicalFilesystemPath(cwd);
   const requestedPath = filePath;
   if (!requestedPath || requestedPath.includes('\0') || isAbsolute(requestedPath) || requestedPath.includes('\\')) {
@@ -2853,7 +2853,9 @@ export async function getFileBlame(cwd: string, filePath: string, ref?: string):
     throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path escapes the selected project: ${filePath}`);
   }
 
-  const context = await getGitRepositoryContext(projectRoot);
+  // 文件可能位于子模块或独立子仓库，授权边界仍由项目根目录约束。
+  if (relative(projectRoot, absolutePath).split(sep).includes('.git')) throw gitCoreError('ZEUS_GIT_PATH_INVALID', '不能读取 Git 管理目录的归属。');
+  const context = await getGitRepositoryContext(dirname(absolutePath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
   const repositoryRoot = canonicalFilesystemPath(context.topLevel);
   if (!isPathInside(repositoryRoot, absolutePath) || absolutePath === repositoryRoot) {
@@ -2865,6 +2867,16 @@ export async function getFileBlame(cwd: string, filePath: string, ref?: string):
   }
 
   const revision = ref?.trim() ? await resolveCommit(repositoryRoot, ref) : undefined;
+  const verifyContent = async () => {
+    if (expectedSha256 === undefined) return;
+    if (revision || !/^[a-f0-9]{64}$/u.test(expectedSha256)) throw gitCoreError('ZEUS_GIT_BLAME_REVISION_INVALID', '源码版本校验参数无效。');
+    const bytes = await readFile(absolutePath);
+    const actual = createHash('sha256').update(bytes).digest('hex');
+    // 会话预览的 UTF-8 解码会去除 BOM，兼容正文摘要和项目编辑器的原始字节摘要。
+    const previewHash = bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) ? createHash('sha256').update(bytes.subarray(3)).digest('hex') : actual;
+    if (actual !== expectedSha256 && previewHash !== expectedSha256) throw gitCoreError('ZEUS_GIT_BLAME_STALE', '文件内容已经变化，请重新打开文件后查看归属。');
+  };
+  await verifyContent();
   const args = ['-c', 'core.quotePath=false', '--no-pager', 'blame', '--line-porcelain', ...(revision ? [revision] : []), '--', repositoryPath];
   let stdout: string;
   try {
@@ -2872,6 +2884,7 @@ export async function getFileBlame(cwd: string, filePath: string, ref?: string):
   } catch (error) {
     throw gitCoreError('ZEUS_GIT_BLAME_FAILED', `Unable to read Git blame for ${filePath}.`, commandFailureDetail(error));
   }
+  await verifyContent();
   return {
     path: relative(projectRoot, absolutePath).split(sep).join('/'),
     lines: parseGitBlamePorcelain(stdout),
