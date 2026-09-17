@@ -158,6 +158,11 @@ const ownershipGroups = [
       'conversation_items',
       'conversation_messages',
       'conversation_message_provider_aliases',
+      // 会话消息的稳定身份、展示顺序及初始化事实由会话编排统一维护。
+      'conversation_transcript_state',
+      'conversation_transcript_entries',
+      'conversation_transcript_aliases',
+      'conversation_transcript_initialization_facts',
       'conversation_expert_participants',
       'conversation_expert_executions',
     ],
