@@ -1997,7 +1997,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         route,
         targetCapabilities: {
           readableReasoningSummary: true,
-          media: configuredModel?.capability.imageInput.state !== 'unsupported',
+          // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
+          media: true,
           contextWindow: configuredModel?.contextWindow ?? null,
           currentInputUtf8Bytes: Buffer.byteLength(content, 'utf8'),
         },

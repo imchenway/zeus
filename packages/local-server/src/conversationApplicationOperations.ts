@@ -1782,7 +1782,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             route: executionRoute,
             targetCapabilities: {
               readableReasoningSummary: true,
-              media: selectedConfiguredModel?.capability.imageInput.state !== 'unsupported',
+              // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
+              media: true,
               contextWindow: selectedConfiguredModel?.contextWindow ?? selectedContextWindow,
               currentInputUtf8Bytes: Buffer.byteLength(providerContent, 'utf8') + Buffer.byteLength(JSON.stringify({ attachments, browserComments }), 'utf8'),
             },
@@ -2453,7 +2454,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       route: resolvedRoute.route,
       targetCapabilities: {
         readableReasoningSummary: true,
-        media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
+        // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
+        media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? selectedModel.contextWindow,
         currentInputUtf8Bytes: Buffer.byteLength(providerContent, 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
       },
@@ -2746,7 +2748,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       route: resolvedRoute.route,
       targetCapabilities: {
         readableReasoningSummary: true,
-        media: resolvedRoute.configuredModel?.capability.imageInput.state !== 'unsupported',
+        // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
+        media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
         currentInputUtf8Bytes:
           Buffer.byteLength(plan.prompt, 'utf8') + Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),

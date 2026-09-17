@@ -443,12 +443,7 @@ function conversationFeatureCatalog(model: ConversationCapabilityModel, piTools:
   const external = unknown('以本轮已启用的 MCP 和实际工具目录为准；调用时返回具体配置或接口错误。');
   const result: ConversationFeatureCatalog = {
     skills: tools('read'),
-    imageInput:
-      model.imageInput === 'unsupported'
-        ? unavailable('模型接口明确不支持图片输入，发送时保留图片并返回错误。')
-        : model.imageInput === 'supported'
-          ? available('模型接口已声明支持图片输入。')
-          : unknown('模型接口尚未确认图片输入能力，允许正常尝试。'),
+    imageInput: model.imageInput === 'supported' ? available('模型接口已声明支持图片输入。') : unknown('图片正常发送，是否支持由模型接口实际返回。'),
     imageGeneration: { ...external, reason: '按模型接口或 MCP 实际返回的图片开放使用，不按模型名称或看图能力推断。' },
     questions: tools('request_user_input'),
     plan: tools('submit_plan'),
