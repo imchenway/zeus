@@ -1,9 +1,10 @@
+import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
@@ -307,6 +308,10 @@ export interface SessionController {
   setDraft(draft: string): void;
   setAttachments(attachments: NativeConversationAttachment[]): void;
   setBrowserSubmission(browserSubmission: ZeusBrowserPreparedSubmission | null): void;
+  /** 新确认的评论按身份加入已有草稿，保留其他网页和输入内容。 */
+  stageBrowserComments(prepared: ZeusBrowserPreparedSubmission): void;
+  /** 网页删除只移除对应评论，不影响其他草稿内容。 */
+  removeBrowserComments(commentIds: string[]): void;
   setContextDraft(contextDraft: ConversationContextDraft): void;
 
   send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
@@ -2761,6 +2766,35 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
       persistDraft();
     },
+    removeBrowserComments(commentIds) {
+      /** 会话中未引用这些评论时无需写入草稿。 */
+      const submission = state.browserSubmission;
+      if (!submission || !submission.commentIds.some((id) => commentIds.includes(id))) return;
+      /** 保留其余网页评论与仍被引用的截图。 */
+      const comments = submission.comments.filter((comment) => !commentIds.includes(comment.id));
+      dispatch({
+        type: 'browser_submission_changed',
+        browserSubmission: comments.length
+          ? {
+              ...submission,
+              comments,
+              commentIds: comments.map((comment) => comment.id),
+              content: serializeBrowserComments(comments),
+              attachments: submission.attachments.filter((attachment) => comments.some((comment) => comment.screenshotPath === attachment.localPath)),
+            }
+          : null,
+      });
+      persistDraft();
+    },
+    stageBrowserComments(prepared) {
+      if (browserSubmissionUsesReservedComments(prepared)) throw new Error('These browser comments already belong to a pending or delivered message.');
+      /** 同一评论重复确认只保留最新内容，跨网页评论继续累加。 */
+      const comments = dedupeById([...(state.browserSubmission?.comments ?? []), ...structuredClone(prepared.comments)]);
+      /** 截图按文件身份去重，不污染用户主动上传的附件。 */
+      const attachments = [...new Map([...(state.browserSubmission?.attachments ?? []), ...prepared.attachments].map((attachment) => [attachment.localPath, attachment])).values()];
+      dispatch({ type: 'browser_submission_changed', browserSubmission: { tabId: prepared.tabId, comments, commentIds: comments.map((comment) => comment.id), content: serializeBrowserComments(comments), attachments } });
+      persistDraft();
+    },
     setContextDraft(contextDraft) {
       dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(contextDraft) });
       persistDraft();
@@ -3276,6 +3310,19 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
     void controller.start().catch(() => undefined);
     return () => controller.dispose();
   }, [controller, options.enabled]);
+  useEffect(() => {
+    if (options.enabled === false) return;
+    // 控制器持有最新草稿，连续确认无需等待 React 重绘，也不关闭浏览器。
+    return window.zeus?.onBrowserEvent((event) => {
+      if ((event.type !== 'comments_saved' && event.type !== 'comments_removed') || event.conversationId !== options.conversationId) return;
+      try {
+        if (event.type === 'comments_saved') controller.stageBrowserComments(event.prepared);
+        else controller.removeBrowserComments(event.commentIds);
+      } catch (error) {
+        reportApplicationError(error);
+      }
+    });
+  }, [controller, options.enabled, options.conversationId]);
   return controller;
 }
 
