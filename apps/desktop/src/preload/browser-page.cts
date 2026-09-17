@@ -77,6 +77,8 @@ const state = {
   pointerStart: null as { x: number; y: number } | null,
   pointerCurrent: null as { x: number; y: number } | null,
   suppressNextClick: false,
+  /** 已有评论编辑时沿用身份，避免再次确认新增一条。 */
+  editingCommentId: undefined as string | undefined,
   editorAnchor: null as PageAnchor | null,
   editorPoint: null as { x: number; y: number } | null,
   editorTarget: null as HTMLElement | null,
@@ -109,33 +111,34 @@ function install(): void {
   style.textContent = `
     :host { all: initial; color-scheme: light dark; }
     * { box-sizing: border-box; }
-    .outline { position: fixed; pointer-events: none; border: 2px solid #1689e8; border-radius: 4px; background: rgb(22 137 232 / 14%); display: none; }
-    .region { border-style: dashed; border-radius: 8px; background: rgb(22 137 232 / 12%); }
+    .outline { position: fixed; pointer-events: none; border: 2px solid #6155d8; border-radius: 4px; background: rgb(97 85 216 / 14%); display: none; }
+    .region { border-style: dashed; border-radius: 8px; background: rgb(97 85 216 / 12%); }
     .markers { position: fixed; inset: 0; pointer-events: none; }
-    .marker { position: fixed; width: 23px; height: 23px; border: 2px solid white; border-radius: 999px; background: #1689e8; color: white; display: grid; place-items: center; font: 650 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); pointer-events: auto; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
-    .marker:hover,.marker[data-focus="true"] { transform: scale(1.12); box-shadow: 0 4px 16px rgb(22 137 232 / 38%); }
-    .editor-pin { position: fixed; width: 26px; height: 26px; border: 2px solid white; border-radius: 999px; background: #1689e8; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); display: none; pointer-events: none; transform: translate(-50%, -50%); }
-    .editor-pin::after { position: absolute; left: 2px; bottom: -3px; width: 8px; height: 8px; border: 2px solid white; border-top: 0; border-right: 0; border-radius: 0 0 0 6px; background: #1689e8; content: ""; transform: rotate(-18deg); }
-    .editor { position: fixed; width: min(296px, calc(100vw - 24px)); padding: 4px 5px; border: 1px solid rgb(23 23 23 / 10%); border-radius: 999px; background: rgb(255 255 255 / 98%); color: #202124; box-shadow: 0 8px 28px rgb(15 23 42 / 18%); backdrop-filter: blur(20px); pointer-events: auto; font: 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .marker { position: fixed; width: 23px; height: 23px; border: 2px solid white; border-radius: 999px; background: #6155d8; color: white; display: grid; place-items: center; font: 650 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); pointer-events: auto; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+    .marker:hover,.marker[data-focus="true"] { transform: scale(1.12); box-shadow: 0 4px 16px rgb(97 85 216 / 38%); }
+    .editor-pin { position: fixed; width: 26px; height: 26px; border: 2px solid white; border-radius: 999px; background: #6155d8; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); display: none; pointer-events: none; transform: translate(-50%, -50%); }
+    .editor-pin::after { position: absolute; left: 2px; bottom: -3px; width: 8px; height: 8px; border: 2px solid white; border-top: 0; border-right: 0; border-radius: 0 0 0 6px; background: #6155d8; content: ""; transform: rotate(-18deg); }
+    .editor { position: fixed; width: min(296px, calc(100vw - 24px)); padding: 4px 5px; border: 1px solid rgb(23 23 23 / 10%); border-radius: 999px; background: light-dark(#fff, #202124); color: light-dark(#202124, #f1f1f3); box-shadow: 0 8px 28px rgb(15 23 42 / 18%); backdrop-filter: blur(20px); pointer-events: auto; font: 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     .editor[data-expanded="true"] { width: min(360px, calc(100vw - 24px)); border-radius: 20px; }
+    /* 与会话评论共用紧凑尺寸和品牌确认色，多行时收紧圆角。 */
     .editor[hidden] { display: none; }
     .editor-row { align-items: center; display: flex; gap: 3px; min-height: 36px; }
-    .editor textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 28px; max-height: 112px; resize: none; overflow-y: auto; border: 0; padding: 4px 5px; background: transparent; color: #202124; font: inherit; outline: none; }
+    .editor textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 28px; max-height: 112px; resize: none; overflow-y: auto; border: 0; padding: 4px 5px; background: transparent; color: inherit; font: inherit; outline: none; }
     .editor textarea::placeholder { color: #8b8b8b; }
     .editor button { appearance: none; align-items: center; background: transparent; border: 0; border-radius: 999px; color: #737373; cursor: pointer; display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; padding: 0; width: 30px; }
     .editor button:hover { background: rgb(0 0 0 / 6%); color: #202124; }
     .editor button svg { height: 18px; width: 18px; }
-    .editor button.editor-save { background: #181818; color: white; }
-    .editor button.editor-save:hover { background: #000; }
+    .editor button.editor-save { background: #6155d8; color: white; }
+    .editor button.editor-save:hover { background: color-mix(in srgb, #6155d8 90%, black); }
     .editor button[hidden] { display: none; }
-    .editor button[data-listening="true"] { background: rgb(11 130 246 / 12%); color: #0b82f6; }
-    .editor button:focus-visible,.editor input:focus-visible,.editor textarea:focus-visible { outline: 2px solid #0b82f6; outline-offset: 2px; }
+    .editor button[data-listening="true"] { background: rgb(97 85 216 / 12%); color: #6155d8; }
+    .editor button:focus-visible,.editor input:focus-visible,.editor textarea:focus-visible { outline: 2px solid #6155d8; outline-offset: 2px; }
     .editor textarea:focus-visible { outline: 0; }
     .adjust { margin: 2px 5px 5px; padding: 10px 4px 3px; border-top: 1px solid rgb(32 33 36 / 10%); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .adjust[hidden] { display: none; }
     .adjust label { display: grid; gap: 4px; color: #6f6f6f; font-size: 11px; }
     .adjust label.wide { grid-column: 1 / -1; }
-    .adjust input { width: 100%; height: 30px; border: 1px solid rgb(32 33 36 / 15%); border-radius: 8px; padding: 0 8px; background: white; color: #202124; }
+    .adjust input { width: 100%; height: 30px; border: 1px solid rgb(32 33 36 / 15%); border-radius: 8px; padding: 0 8px; background: light-dark(#fff, #292a2d); color: inherit; }
     .adjust input[type="color"] { padding: 3px; }
     @media (max-width: 360px) { .editor,.editor[data-expanded="true"] { width: calc(100vw - 24px); } }
     @media (prefers-reduced-motion: reduce) { .marker { transition: none; } }
@@ -281,9 +284,11 @@ function openEditor(
     x: anchor.rect.x + anchor.rect.width / 2,
     y: anchor.rect.y,
   },
+  existing?: BrowserComment,
 ): void {
   if (!editor) return;
   restorePreview();
+  state.editingCommentId = existing?.id;
   state.editorAnchor = anchor;
   state.editorPoint = point;
   state.editorTarget = target;
@@ -297,42 +302,46 @@ function openEditor(
   editor.dataset.expanded = 'false';
   editor.innerHTML = `
     <div class="editor-row">
-      <button type="button" data-action="adjust" aria-label="Adjust" title="Adjust">
+      <button type="button" data-action="adjust" aria-label="评论选项" title="评论选项" aria-expanded="false">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M4 7h7M15 7h5M4 17h4M12 17h8"></path>
           <circle cx="13" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>
         </svg>
       </button>
-      <textarea rows="1" aria-label="Browser comment" placeholder="Add a comment…"></textarea>
+      <textarea rows="1" aria-label="评论内容" placeholder="添加评论…" maxlength="20000"></textarea>
       <button type="button" data-action="voice" aria-label="Voice input" title="Voice input">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path>
         </svg>
       </button>
-      <button type="button" class="editor-save" data-action="save" aria-label="Save comment" title="Save comment" hidden>
+      <button type="button" class="editor-save" data-action="save" aria-label="完成评论" title="完成评论并添加到输入框">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m6 12.5 4 4L18.5 8"></path>
         </svg>
       </button>
     </div>
     <div class="adjust" hidden>
-      <label class="wide">Text<input data-adjust="text" type="text" value=""></label>
-      <label>Font size<input data-adjust="font-size" type="text" placeholder="e.g. 16px"></label>
-      <label>Padding<input data-adjust="padding" type="text" placeholder="e.g. 12px"></label>
-      <label>Text color<input data-adjust="color" type="color" value="#1f2937"></label>
-      <label>Background<input data-adjust="background-color" type="color" value="#ffffff"></label>
+      <button type="button" data-action="cancel" aria-label="取消评论" title="取消评论">×</button>
+      <label class="wide">文字<input data-adjust="text" type="text" value=""></label>
+      <label>字号<input data-adjust="font-size" type="text" placeholder="e.g. 16px"></label>
+      <label>内边距<input data-adjust="padding" type="text" placeholder="e.g. 12px"></label>
+      <label>文字颜色<input data-adjust="color" type="color" value="#1f2937"></label>
+      <label>背景颜色<input data-adjust="background-color" type="color" value="#ffffff"></label>
     </div>
   `;
   const textarea = editor.querySelector<HTMLTextAreaElement>('textarea')!;
+  textarea.value = existing?.body ?? '';
   const textInput = editor.querySelector<HTMLInputElement>('[data-adjust="text"]')!;
   textInput.value = (state.originalTextNodeValue ?? target?.textContent ?? '').trim().slice(0, 2_000);
   editor.querySelector('[data-action="adjust"]')?.addEventListener('click', () => {
     const controls = editor?.querySelector<HTMLElement>('.adjust');
     if (!controls || !editor) return;
     controls.hidden = !controls.hidden;
-    editor.dataset.expanded = String(!controls.hidden);
+    editor.dataset.expanded = String(!controls.hidden || textarea.scrollHeight > 36);
+    editor.querySelector('[data-action="adjust"]')?.setAttribute('aria-expanded', String(!controls.hidden));
     positionEditor(anchor);
   });
+  editor.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeEditor());
   editor.querySelector('[data-action="save"]')?.addEventListener('click', () => void saveComment());
   const voiceButton = editor.querySelector<HTMLButtonElement>('[data-action="voice"]');
   if (voiceButton) installVoiceInput(voiceButton, textarea);
@@ -341,7 +350,7 @@ function openEditor(
     if (event.key === 'Escape') {
       event.preventDefault();
       closeEditor();
-    } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    } else if (event.key === 'Enter' && !event.isComposing && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void saveComment();
     }
@@ -387,7 +396,8 @@ function syncEditorActions(textarea: HTMLTextAreaElement): void {
   const hasBody = Boolean(textarea.value.trim());
   const saveButton = editor.querySelector<HTMLButtonElement>('[data-action="save"]');
   const voiceButton = editor.querySelector<HTMLButtonElement>('[data-action="voice"]');
-  if (saveButton) saveButton.hidden = !hasBody;
+  if (saveButton) saveButton.disabled = !hasBody;
+  editor.dataset.expanded = String(!editor.querySelector<HTMLElement>('.adjust')?.hidden || textarea.scrollHeight > 36);
   if (voiceButton) voiceButton.hidden = hasBody;
   if (state.editorAnchor) positionEditor(state.editorAnchor);
 }
@@ -435,6 +445,8 @@ async function saveComment(): Promise<void> {
   if (!editor || !state.editorAnchor) return;
   const textarea = editor.querySelector<HTMLTextAreaElement>('textarea');
   const body = textarea?.value.trim() ?? '';
+  // 输入法提交和重复点击不得创建多条相同评论。
+  if (editor.hidden) return;
   if (!body) {
     textarea?.focus();
     return;
@@ -446,9 +458,10 @@ async function saveComment(): Promise<void> {
   render();
   try {
     await invokeBrowserPageCommand('desktop.browser.save_comment', {
+      commentId: state.editingCommentId,
       body,
       anchor: state.editorAnchor,
-      designChanges,
+      designChanges: designChanges.length ? designChanges : (state.comments.find((comment) => comment.id === state.editingCommentId)?.designChanges ?? []),
     });
     closeEditor(false);
   } catch (error) {
@@ -537,6 +550,7 @@ function closeEditor(restore = true): void {
   hide(editorPin);
   hide(hoverOutline);
   hide(regionOutline);
+  state.editingCommentId = undefined;
   state.editorAnchor = null;
   state.editorPoint = null;
   state.editorTarget = null;
@@ -747,7 +761,10 @@ function renderMarkers(): void {
     marker.textContent = String(comment.number);
     marker.dataset.commentId = comment.id;
     marker.setAttribute('aria-label', `Browser comment ${comment.number}: ${comment.body}`);
-    marker.addEventListener('click', () => focusComment(comment.id));
+    marker.addEventListener('click', () => {
+      // 已保存评论与会话消息一致：点击编号即可编辑，再确认更新草稿。
+      openEditor(comment.anchor, null, resolveCommentMarker(comment), comment);
+    });
     markerLayer.append(marker);
   }
   render();

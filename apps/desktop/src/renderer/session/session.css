@@ -8721,27 +8721,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 17px;
 }
 
-.session-codex-parity-v1 .browser-annotation-toolbar {
-  background: color-mix(in oklab, rgb(45 151 231) 17%, var(--session-canvas));
-  border-block-end-color: color-mix(in oklab, rgb(45 151 231) 24%, var(--session-line));
-  grid-template-columns: minmax(78px, 1fr) minmax(0, 3fr) minmax(164px, 1fr);
-}
-
-.session-codex-parity-v1 .browser-annotation-context {
-  color: var(--session-text);
-  font-size: 13px;
-}
-
-.session-codex-parity-v1 .browser-stage-comments {
-  border-radius: 10px;
-  gap: 8px;
-  min-block-size: 34px;
-  padding: 0 7px 0 13px;
-}
-
 .session-codex-parity-v1 .browser-stage-count {
+  box-sizing: border-box;
   align-items: center;
-  background: color-mix(in oklab, var(--session-accent) 78%, black);
+  background: rgb(255 255 255 / 18%);
   border-radius: 999px;
   color: white;
   display: inline-flex;
@@ -8749,6 +8732,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-variant-numeric: tabular-nums;
   block-size: 22px;
   min-inline-size: 22px;
+  flex-shrink: 0;
   justify-content: center;
   padding-inline: 5px;
 }
@@ -8853,7 +8837,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: color-mix(in oklab, var(--session-accent) 10%, var(--session-canvas));
   border-block-end-color: color-mix(in oklab, var(--session-accent) 24%, var(--session-line));
   display: grid;
-  grid-template-columns: minmax(96px, 1fr) minmax(0, 2fr) minmax(180px, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .session-codex-parity-v1 .browser-annotation-actions {
@@ -8884,7 +8868,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 0;
 }
 
-.session-codex-parity-v1 .browser-annotation-actions > button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-codex-parity-v1 .browser-annotation-actions > button:not(.browser-stage-comments):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
@@ -8912,44 +8896,38 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   white-space: nowrap;
 }
 
-.session-codex-parity-v1 .browser-stage-comments {
-  background: var(--session-accent);
+/* 添加评论与会话确认按钮复用品牌色；数量和文字固定分隔，避免悬停样式覆盖主操作。 */
+.macos-ai-app.zeus-shell .browser-annotation-actions > .browser-stage-comments {
+  align-items: center;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  background: var(--zeus-brand-primary);
   border: 0;
   border-radius: 999px;
   color: white;
   font-size: 12px;
-  font-weight: 650;
-  min-block-size: 31px;
-  padding-inline: 13px;
+  font-weight: 600;
+  min-block-size: 30px;
+  padding: 3px 6px 3px 10px;
+  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .browser-stage-comments:hover:not(:disabled):not([aria-disabled='true']) {
-  filter: brightness(0.96);
+.macos-ai-app.zeus-shell .browser-annotation-actions > .browser-stage-comments:hover:not(:disabled) {
+  background: var(--zeus-interaction-primary-hover);
+  color: white;
 }
 
-.session-codex-parity-v1 .browser-stage-comments:disabled {
+.macos-ai-app.zeus-shell .browser-annotation-actions > .browser-stage-comments:disabled {
   opacity: 0.42;
 }
 
-/* 批注列表与独立移除按钮同排，展开不遮挡输入框。 */
+/* 网页评论沿用会话胶囊，正文预览另起一行，避免窄栏把标签挤成多行。 */
 .session-codex-parity-v1 .session-composer-browser-submission {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: start;
-  gap: 8px;
-}
-.session-composer-browser-submission > button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-top: 6px;
-  padding: 0;
-  color: inherit;
-  background: transparent;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 @media (max-width: 760px) {

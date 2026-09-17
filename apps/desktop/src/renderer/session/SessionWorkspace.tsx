@@ -811,7 +811,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       // 发送失败交回输入区显示；前置校验错误不一定经过控制器的运行操作状态。
       return input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined).then(() => undefined);
     },
-    onStageBrowserComments: (prepared) => input.controller.setBrowserSubmission(prepared),
+    onStageBrowserComments: (prepared) => input.controller.stageBrowserComments(prepared),
     onRemoveBrowserSubmission: () => input.controller.setBrowserSubmission(null),
     onContextDraftChange: (draft) => input.controller.setContextDraft(draft),
     onInterrupt: () => settle(input.controller.interruptActiveTurn()),
