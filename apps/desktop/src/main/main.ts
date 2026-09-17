@@ -257,7 +257,8 @@ const execFile = promisify(execFileCallback);
 const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
 const developmentDistributionName = 'Zeus Dev';
-const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
+/** 浮窗宽度固定，高度按内容收缩；额度较多时最多占用此高度。 */
+const menuBarUsageWindowSize = { width: 360, height: 640 } as const;
 const menuBarUsageWindowGap = 6;
 const menuBarUsageWindowBlurDelayMs = 150;
 
@@ -1547,6 +1548,18 @@ function setupIpc(): void {
     hideMenuBarUsageWindow();
     return { hidden: true };
   });
+  /** 仅允许菜单栏浮窗调整自身高度，范围受内容上限与当前屏幕约束。 */
+  ipcMain.handle('zeus:menu-bar-usage:resize', (event, requestedHeight: unknown) => {
+    const window = requireMenuBarUsageWindow(event);
+    if (typeof requestedHeight !== 'number' || !Number.isFinite(requestedHeight) || requestedHeight <= 0) throw new TypeError('菜单栏用量浮窗高度无效。');
+    /** 保留当前横向位置；向下展开时不能越过当前屏幕的工作区。 */
+    const bounds = window.getBounds();
+    const { workArea } = screen.getDisplayMatching(bounds);
+    const height = Math.max(1, Math.min(Math.max(200, Math.ceil(requestedHeight)), menuBarUsageWindowSize.height, workArea.height - menuBarUsageWindowGap * 2));
+    const y = Math.max(workArea.y + menuBarUsageWindowGap, Math.min(bounds.y, workArea.y + workArea.height - height - menuBarUsageWindowGap));
+    if (bounds.height !== height || bounds.y !== y) window.setBounds({ ...bounds, height, y }, false);
+    return { height };
+  });
   ipcMain.handle('zeus:menu-bar-usage:show-main', async (event) => {
     requireMenuBarUsageWindow(event);
     hideMenuBarUsageWindow();
@@ -2289,6 +2302,8 @@ function isUsableTrayBounds(bounds: Electron.Rectangle): boolean {
 }
 
 function resolveMenuBarUsageWindowPlacement(anchor: MenuBarUsageClickAnchor): MenuBarUsageWindowPlacement | undefined {
+  /** 再次打开或切换屏幕时使用实际高度，避免按最大高度错误向上定位。 */
+  const size = menuBarUsageWindow?.getBounds() ?? menuBarUsageWindowSize;
   const useBounds = isUsableTrayBounds(anchor.bounds);
   if (!useBounds && !isFiniteScreenPoint(anchor.position)) return undefined;
 
@@ -2296,13 +2311,13 @@ function resolveMenuBarUsageWindowPlacement(anchor: MenuBarUsageClickAnchor): Me
   const anchorY = useBounds ? anchor.bounds.y + anchor.bounds.height / 2 : anchor.position.y;
   const display = screen.getDisplayNearestPoint({ x: Math.round(anchorX), y: Math.round(anchorY) });
   const { workArea } = display;
-  const preferredX = Math.round(anchorX - menuBarUsageWindowSize.width / 2);
+  const preferredX = Math.round(anchorX - size.width / 2);
   const minX = workArea.x + menuBarUsageWindowGap;
-  const maxX = workArea.x + workArea.width - menuBarUsageWindowSize.width - menuBarUsageWindowGap;
+  const maxX = workArea.x + workArea.width - size.width - menuBarUsageWindowGap;
   const minY = workArea.y + menuBarUsageWindowGap;
-  const maxY = workArea.y + workArea.height - menuBarUsageWindowSize.height - menuBarUsageWindowGap;
+  const maxY = workArea.y + workArea.height - size.height - menuBarUsageWindowGap;
   const belowTrayY = useBounds ? Math.round(anchor.bounds.y + anchor.bounds.height + menuBarUsageWindowGap) : minY;
-  const preferredY = belowTrayY <= maxY ? belowTrayY : useBounds ? Math.round(anchor.bounds.y - menuBarUsageWindowSize.height - menuBarUsageWindowGap) : minY;
+  const preferredY = belowTrayY <= maxY ? belowTrayY : useBounds ? Math.round(anchor.bounds.y - size.height - menuBarUsageWindowGap) : minY;
 
   return {
     anchorSource: useBounds ? 'bounds' : 'position',

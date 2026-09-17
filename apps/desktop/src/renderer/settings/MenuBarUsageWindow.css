@@ -27,11 +27,11 @@ body:has(.menu-bar-usage-root),
   inline-size: 100%;
   block-size: 100%;
   /* 缩小浮窗外侧留白，让固定宽度更多用于内容。 */
-  padding: 12px 10px;
+  padding: 12px;
   color: var(--usage-text);
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   user-select: none;
@@ -101,14 +101,14 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-identity strong {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 730;
 }
 
 .menu-bar-usage-freshness {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -172,7 +172,7 @@ body:has(.menu-bar-usage-root),
   background: transparent;
   color: var(--usage-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 620;
 }
 
@@ -287,6 +287,16 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
+/* 列表只在表头说明统计口径，避免每行重复今日文案。 */
+.menu-bar-usage-provider-heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 22px 8px 4px;
+  color: var(--usage-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* 手柄与详情按钮分开，拖动排序不会误打开详情。 */
 .menu-bar-usage-provider-row {
   position: relative;
@@ -294,6 +304,7 @@ body:has(.menu-bar-usage-root),
   align-items: center;
   margin-block: 2px;
   border-radius: 6px;
+  border-block-end: 1px solid var(--usage-line);
 }
 
 .menu-bar-usage-provider-row .menu-bar-usage-provider-open {
@@ -315,6 +326,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-provider-row[data-dragging='true'] {
   opacity: 0.5;
+  background: var(--usage-accent-soft);
 }
 
 /* 落点线表示最终插入位置，拖拽过程中不重排内容。 */
@@ -336,10 +348,11 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-reorder-hint {
-  padding: 4px 2px 8px;
+  padding: 12px 2px 4px;
   color: var(--usage-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
+  text-align: center;
 }
 
 /* 排序播报只对辅助阅读工具可见，不挤占浮窗空间。 */
@@ -361,8 +374,8 @@ body:has(.menu-bar-usage-root),
   grid-template-columns: minmax(0, 1fr) auto 14px;
   align-items: center;
   gap: 9px;
-  min-block-size: 65px;
-  padding: 9px 4px;
+  min-block-size: 52px;
+  padding: 8px 4px;
   border: 0;
   background: transparent;
   color: var(--usage-text);
@@ -392,7 +405,8 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-copy strong {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 550;
 }
 
 .menu-bar-usage-provider-copy small,
@@ -407,7 +421,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-value strong {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .menu-bar-usage-root svg {
@@ -422,83 +436,73 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-detail {
   display: grid;
-  gap: 8px;
-  padding-block-end: 10px;
+  gap: 0;
 }
 
+/* 每个额度池只出现一次名称，周期、进度和余额共享一行。 */
 .menu-bar-usage-account-card {
   display: grid;
-  min-block-size: 108px;
-  gap: 8px;
-  padding: 10px 2px;
+  gap: 6px;
+  padding: 4px 0 12px;
   border: 0;
-  border-radius: var(--usage-radius-card, 12px);
-  background: color-mix(in srgb, var(--usage-accent-soft) 82%, var(--usage-panel-strong));
+  background: var(--usage-panel);
 }
 
-.menu-bar-usage-account-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px;
-  align-items: start;
-  gap: 14px;
+.menu-bar-usage-account-card h2,
+.menu-bar-usage-quota-group h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
-/* 各额度独立排列，保留余额和重置时间；内容超高时复用浮窗滚动区域。 */
-.menu-bar-usage-account-quotas {
-  display: grid;
-  min-inline-size: 0;
-  gap: 10px;
-}
-
-.menu-bar-usage-account-quota,
-.menu-bar-usage-account-today {
+.menu-bar-usage-quota-group {
   display: grid;
   min-inline-size: 0;
-}
-
-.menu-bar-usage-account-quota {
-  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
 }
 
-.menu-bar-usage-account-quota > small:first-child,
-.menu-bar-usage-account-today small,
-.menu-bar-usage-account-source,
-.menu-bar-usage-account-quota time,
-.menu-bar-usage-account-quota[data-empty='true'] > small:last-child {
-  overflow: hidden;
+.menu-bar-usage-quota-group h3 {
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.menu-bar-usage-account-quota {
+  display: grid;
+  grid-template-columns: minmax(44px, auto) minmax(0, 1fr) minmax(42px, auto);
+  align-items: center;
+  gap: 0 8px;
+  min-inline-size: 0;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.menu-bar-usage-quota-duration {
+  max-inline-size: 88px;
   color: var(--usage-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.menu-bar-usage-account-quota > strong {
+  font-size: 14px;
+  font-weight: 680;
+  text-align: end;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.menu-bar-usage-account-quota > strong,
-.menu-bar-usage-account-today strong {
-  overflow: hidden;
-  font-size: 17px;
-  font-weight: 730;
-  line-height: 1.15;
-  letter-spacing: -0.025em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menu-bar-usage-account-quota[data-empty='true'] > strong {
-  margin-block: 2px;
-  font-size: 11px;
-  letter-spacing: 0;
-}
-
-.menu-bar-usage-account-today {
-  align-content: start;
-  gap: 4px;
+/* 日期与进度条对齐，完整换行保留重置时刻。 */
+.menu-bar-usage-account-quota time {
+  grid-column: 2 / -1;
+  color: var(--usage-muted);
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .menu-bar-usage-progress {
   display: block;
   block-size: 4px;
-  margin-block-start: 1px;
   overflow: hidden;
   border-radius: var(--usage-radius-pill, 999px);
   background: color-mix(in srgb, var(--usage-accent) 12%, transparent);
@@ -511,25 +515,19 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-accent);
 }
 
-.menu-bar-usage-account-source {
-  align-self: end;
-}
-
-/* 重置日期和数据来源必须完整可读，英文较长时允许换行。 */
-.menu-bar-usage-account-quota time,
-.menu-bar-usage-account-source {
-  white-space: normal;
-  line-height: 1.4;
-}
-
+/* 两列统计让金额与长数字完整可读，四项指标共用相同布局。 */
 .menu-bar-usage-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
   margin: 0;
-  padding: 10px 0;
+  padding: 8px 0;
   border: 0;
-  border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
+}
+
+.menu-bar-usage-account-card + .menu-bar-usage-metrics {
+  border-block-start: 1px solid var(--usage-line);
 }
 
 .menu-bar-usage-metrics > div {
@@ -537,7 +535,7 @@ body:has(.menu-bar-usage-root),
   align-content: start;
   min-inline-size: 0;
   gap: 3px;
-  padding-inline: 2px;
+  padding-inline: 0;
 }
 
 .menu-bar-usage-root dt,
@@ -548,24 +546,22 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-metrics dt {
   overflow-wrap: anywhere;
   color: var(--usage-muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
 .menu-bar-usage-metrics dd {
-  overflow: hidden;
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .menu-bar-usage-bars {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   margin: 0;
-  padding: 8px 2px;
-  border-radius: var(--usage-radius-card, 12px);
+  padding: 8px 0 2px;
   background: var(--usage-panel);
 }
 
@@ -574,44 +570,44 @@ body:has(.menu-bar-usage-root),
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .menu-bar-usage-bars figcaption > span {
-  overflow: hidden;
   color: var(--usage-muted);
   font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .menu-bar-usage-bars figcaption dl {
   display: grid;
-  grid-template-columns: repeat(2, auto);
   gap: 10px;
   margin: 0;
   text-align: end;
 }
 
 .menu-bar-usage-bars figcaption dl > div {
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 2px 6px;
 }
 
 .menu-bar-usage-bars figcaption dt {
   color: var(--usage-muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .menu-bar-usage-bars figcaption dd {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 680;
 }
 
 .menu-bar-usage-bars-plot {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  /* 柱高与两行标签分开，新增每日数值不压缩柱形。 */
+  /* 顶部为数值预留高度，最高柱的标签也不会撞到图表标题。 */
   block-size: 100px;
   gap: 4px;
 }
@@ -619,50 +615,55 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars-plot > span {
   display: grid;
   block-size: 100%;
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: 2px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 4px;
   text-align: center;
 }
 
 .menu-bar-usage-bar-slot {
-  display: grid;
+  display: flex;
   min-block-size: 0;
   align-items: end;
+  justify-content: center;
+  padding-block-start: 20px;
+}
+
+/* 数值跟随实际柱顶，零值与缺失值仍保留独立的文字语义。 */
+.menu-bar-usage-bar-column {
+  position: relative;
+  inline-size: min(14px, 100%);
 }
 
 .menu-bar-usage-bar-slot i {
   display: block;
-  inline-size: min(14px, 100%);
-  justify-self: center;
+  block-size: 100%;
+  inline-size: 100%;
   border-radius: 3px 3px 1px 1px;
   background: var(--usage-accent);
   opacity: 0.78;
 }
 
-.menu-bar-usage-bars-plot > span[data-state='zero'] .menu-bar-usage-bar-slot i {
+.menu-bar-usage-bars-plot > span:not([data-state='positive']) .menu-bar-usage-bar-slot i {
   background: var(--usage-muted);
   opacity: 0.42;
-}
-
-.menu-bar-usage-bar-slot em {
-  align-self: end;
-  color: var(--usage-faint);
-  font-size: 11px;
-  font-style: normal;
 }
 
 .menu-bar-usage-bars-plot small {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: clip;
   white-space: nowrap;
 }
 
 /* 每日数值直接可读；空白日期继续显示破折号，零消耗显示 0。 */
 .menu-bar-usage-bar-value {
-  font-size: 10.5px;
-  font-weight: 650;
+  position: absolute;
+  inset-block-end: calc(100% + 3px);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  font-weight: 550;
   line-height: 1.4;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -697,7 +698,7 @@ body:has(.menu-bar-usage-root),
   border-radius: var(--usage-radius-control, 8px);
   color: var(--usage-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 630;
   line-height: 1.4;
   white-space: nowrap;
@@ -865,11 +866,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-load-failure span,
 .menu-bar-usage-provider-copy small,
 .menu-bar-usage-provider-value small,
-.menu-bar-usage-account-quota > small:first-child,
-.menu-bar-usage-account-today small,
-.menu-bar-usage-account-source,
 .menu-bar-usage-account-quota time,
-.menu-bar-usage-account-quota[data-empty='true'] > small:last-child,
 .menu-bar-usage-metrics dt,
 .menu-bar-usage-bars figcaption > span,
 .menu-bar-usage-bars figcaption dt,
@@ -990,7 +987,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-bars {
-  border: 0;
+  border-block-start: 1px solid var(--usage-line);
   background: var(--usage-panel);
   box-shadow: none;
 }
@@ -1000,7 +997,7 @@ body:has(.menu-bar-usage-root),
   box-shadow: 0 4px 8px -6px color-mix(in srgb, var(--usage-accent) 90%, transparent);
 }
 
-.menu-bar-usage-bars-plot > span[data-state='zero'] .menu-bar-usage-bar-slot i {
+.menu-bar-usage-bars-plot > span:not([data-state='positive']) .menu-bar-usage-bar-slot i {
   background: var(--usage-faint);
 }
 
