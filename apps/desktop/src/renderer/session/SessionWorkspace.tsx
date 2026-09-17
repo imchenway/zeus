@@ -354,6 +354,7 @@ export interface ConnectedSessionWorkspaceProps {
   suppressComposer?: boolean;
   /** 侧边栏既有会话先读取持久记录；可续接会话首次发送时再恢复实时订阅。 */
   historyOnly?: boolean;
+  /** 创建期间保持界面连续的导航身份，不能替代服务端会话身份。 */
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
@@ -542,7 +543,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     controller.setBrowserSubmission(props.localState.browserSubmission);
     controller.setContextDraft(props.localState.contextDraft);
   }, [controller, controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.contextDraft, props.localState?.draft]);
-  const displayedConversation = props.stableConversationId ? { ...props.conversation, id: props.stableConversationId } : props.conversation;
+  /** 导航身份只控制界面状态；审查、浏览器等操作始终保留真实会话编号。 */
+  const displayedConversation = props.stableConversationId ? { ...props.conversation, navigationId: props.stableConversationId } : props.conversation;
   const controllerHasSnapshot = controllerEnabled && state.snapshot?.id === props.conversation.id;
   const controllerFailed = controllerEnabled && state.transportState === 'failed';
   // 已经取得的完整正文始终优先于首发本地投影；后台校准只更新状态，不能让消息区退回第一条消息。
@@ -1708,6 +1710,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const actions = props.actions ?? {};
   const owner: SessionConversationOwner | undefined = props.owner ?? (props.task ? { kind: 'task', projectId: props.task.projectId, projectName: props.task.projectId, taskId: props.task.id, taskTitle: props.task.title } : undefined);
   const composerRef = useRef<ComposerInputHandle | null>(null);
+  /** 临时会话接管为真实会话时保留面板状态，切换到其他会话时才重置。 */
+  const navigationId = props.conversation?.navigationId ?? props.conversation?.id;
   const workspaceIdentityRef = useRef(props.conversation?.id ?? null);
   workspaceIdentityRef.current = props.conversation?.id ?? null;
   const responseGuard = useRef(createRequestResponseGuard()).current;
@@ -1744,7 +1748,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   });
   const [browserResizing, setBrowserResizing] = useState(false);
   const [quickActionsPopoverOpen, setQuickActionsPopoverOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useSessionTerminalVisibility(props.conversation?.projectId, props.conversation?.id);
+  const [terminalOpen, setTerminalOpen] = useSessionTerminalVisibility(props.conversation?.projectId, navigationId);
   const [terminalMounted, setTerminalMounted] = useState(false);
   const [terminalFocusRequest, setTerminalFocusRequest] = useState(0);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
@@ -1901,7 +1905,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setTerminalMounted(false);
     terminalReturnFocusRef.current = null;
     browserResizeActiveRef.current = false;
-  }, [escapeController, props.conversation?.id]);
+  }, [escapeController, navigationId]);
 
   useEffect(() => {
     if (!props.state || legacy || composerRuntimeSettingsDirtyRef.current) return;
@@ -2583,7 +2587,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           style={{ '--session-context-width': `${resolvedBrowserTargetWidth}px` } as CSSProperties}
         >
           {!props.embeddedInTask ? (
-            <div key={displayedHeader.conversationId} className="session-thread-title-copy" data-conversation-transition="true">
+            <div key={navigationId} className="session-thread-title-copy" data-conversation-transition="true">
               <span className="session-thread-title-row">
                 {displayedHeader.taskId && actions.onOpenTaskDetail ? (
                   <button
@@ -2816,7 +2820,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               >
                 <div className="session-conversation-pane">
                   {/* 固定在左栏内挂载，开关右侧工作区不重建详情，也不改变浏览器高度。 */}
-                  <div key={`runtime:${displayedHeader?.conversationId ?? props.state.conversationId}`} className="session-thread-subtitle-row">
+                  <div key={`runtime:${navigationId ?? props.state.conversationId}`} className="session-thread-subtitle-row">
                     <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
                   </div>
                   <SessionTranscriptProjection
