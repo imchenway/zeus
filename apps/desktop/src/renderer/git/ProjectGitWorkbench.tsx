@@ -126,7 +126,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
   const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
   const [selectedStashRef, setSelectedStashRef] = useState('');
-  const [conversationDiff, setConversationDiff] = useState<import('../apiClient.js').GitDiffSummary | null>(null);
+  const [conversationDiff, setConversationDiff] = useState<{ diff: import('../apiClient.js').GitDiffSummary; preview: Extract<import('@zeus/shared').FilePreviewRequest, { kind: 'project-git' }> } | null>(null);
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
   const [commitLoading, setCommitLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState('');
@@ -682,7 +682,12 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           ? props.client.loadProjectGitCommit(props.project.id, repository.id, options.commitHash).then((detail) => detail.diff)
           : Promise.resolve(options?.stage === 'staged' ? repository.snapshot.stagedDiff : options?.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff);
       void request
-        .then((diff) => setConversationDiff({ ...diff, files: [filePath], fileDiffs: diff.fileDiffs.filter((file) => file.newPath === filePath || file.oldPath === filePath) }))
+        .then((diff) =>
+          setConversationDiff({
+            diff: { ...diff, files: [filePath], fileDiffs: diff.fileDiffs.filter((file) => file.newPath === filePath || file.oldPath === filePath) },
+            preview: { kind: 'project-git', projectId: props.project.id, repositoryId: repository.id, path: filePath, ...options },
+          }),
+        )
         .catch((reason: unknown) => setError(errorMessage(reason, zh)));
       return;
     }
@@ -894,10 +899,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           <ModalPortal role="dialog" aria-label={zh ? '文件差异' : 'File diff'} onDismiss={() => setConversationDiff(null)}>
             <section className="conversation-git-delivery">
               <header>
-                <strong>{conversationDiff.files[0]}</strong>
+                <strong>{conversationDiff.preview.path}</strong>
                 <Button onClick={() => setConversationDiff(null)}>{zh ? '关闭' : 'Close'}</Button>
               </header>
-              <SideBySideDiff diff={conversationDiff} zh={zh} fill />
+              <SideBySideDiff previewRequest={conversationDiff.preview} diff={conversationDiff.diff} zh={zh} fill />
             </section>
           </ModalPortal>
         ) : null}
@@ -1970,7 +1975,7 @@ function GitLogSurface(props: {
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
   onConfirmAction: (repository: ProjectGitRepositoryWorkbenchItem, action: Extract<ProjectGitAction, { type: 'revert' | 'cherry_pick' }>, title: string, description: string, danger?: boolean) => void;
 }) {
-  const selectedDiff = props.commitDetail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? props.commitDetail?.diff.fileDiffs[0] ?? null;
+  const selectedDiff = props.commitDetail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? null;
   const [commitMenu, setCommitMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     setCommitMenu(null);
@@ -2191,7 +2196,7 @@ function GitLogSurface(props: {
             <GitPaneSeparator name="details" label={props.zh ? '调整文件与提交详情高度' : 'Resize files and commit details'} axis="y" initial={55} min={20} max={80} />
             <SideBySideDiff
               previewRequest={
-                props.selectedRepository && !props.selectedRepository.id.startsWith('conversation:')
+                props.selectedRepository && props.selectedFilePath
                   ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash }
                   : undefined
               }
@@ -2581,10 +2586,7 @@ function LocalChangesSurface(props: {
     unstaged: visibleFileStatuses.filter((file) => file.workingTreeStatus !== ' ' || file.indexStatus === '?').map((file) => file.path),
   };
   const stageDiff = props.selectedFileStage === 'staged' ? props.selectedRepository?.snapshot.stagedDiff : props.selectedRepository?.snapshot.unstagedDiff;
-  const selectedDiff =
-    stageDiff?.fileDiffs.find((file) => (file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) && matchesSubtree(file.newPath || file.oldPath)) ??
-    stageDiff?.fileDiffs.find((file) => matchesSubtree(file.newPath || file.oldPath)) ??
-    null;
+  const selectedDiff = stageDiff?.fileDiffs.find((file) => (file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) && matchesSubtree(file.newPath || file.oldPath)) ?? null;
   return (
     <div className="project-git-changes-layout project-git-navigator-layout" data-commit-active={commitActive}>
       <aside className="project-git-change-tree" data-empty={emptyVisibleChanges || undefined}>
@@ -2718,11 +2720,7 @@ function LocalChangesSurface(props: {
           </div>
         ) : (
           <SideBySideDiff
-            previewRequest={
-              repository && !repository.id.startsWith('conversation:') && props.selectedFilePath
-                ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage }
-                : undefined
-            }
+            previewRequest={repository && props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage } : undefined}
             revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
@@ -2997,7 +2995,7 @@ function StashSurface(props: {
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
-  const selectedDiff = props.detail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? props.detail?.diff.fileDiffs[0] ?? null;
+  const selectedDiff = props.detail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? null;
   if (!props.repository || !props.stash) {
     return (
       <div className="project-git-empty-surface">
@@ -3048,7 +3046,7 @@ function StashSurface(props: {
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
           <SideBySideDiff
-            previewRequest={props.repository.id.startsWith('conversation:') ? undefined : { kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref }}
+            previewRequest={props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref } : undefined}
             diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
             title={props.selectedFilePath}

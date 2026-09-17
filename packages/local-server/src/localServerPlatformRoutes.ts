@@ -2120,6 +2120,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const project = projects.getById(input.projectId);
         if (!project?.localPath || typeof input.path !== 'string') throw new Error('项目文件不可用。');
         intent = { sides: [{ name: input.path, label: '当前文件', root: project.localPath, path: resolve(project.localPath, input.path) }] };
+      } else if (input.kind === 'project-git') {
+        const project = projects.getById(input.projectId);
+        if (!project || typeof input.repositoryId !== 'string' || !input.repositoryId.startsWith('conversation:')) throw new Error('会话工作树预览身份无效。');
+        if (input.stage !== undefined && !['combined', 'staged', 'unstaged'].includes(input.stage)) throw new Error('文件预览暂存范围无效。');
+        if (input.comparisonMode !== undefined && !['current', 'working-tree'].includes(input.comparisonMode)) throw new Error('文件预览比较范围无效。');
+        const repository = await resolveConversationGitWorkspace(project, input.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions);
+        intent = { sides: await getGitFilePreviewSources(repository.localPath, input) };
       } else if (input.kind === 'task-git') {
         if (!['working', 'committed'].includes(input.scope)) throw new Error('交付预览范围无效。');
         const resolved = resolveTaskWorkspaceRequest(input.taskId, input.workspaceId);
