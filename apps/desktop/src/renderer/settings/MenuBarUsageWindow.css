@@ -26,7 +26,8 @@ body:has(.menu-bar-usage-root),
   box-sizing: border-box;
   inline-size: 100%;
   block-size: 100%;
-  padding: 14px;
+  /* 缩小浮窗外侧留白，让固定宽度更多用于内容。 */
+  padding: 12px 10px;
   color: var(--usage-text);
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
@@ -171,7 +172,7 @@ body:has(.menu-bar-usage-root),
   background: transparent;
   color: var(--usage-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 620;
 }
 
@@ -286,9 +287,74 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
+/* 手柄与详情按钮分开，拖动排序不会误打开详情。 */
+.menu-bar-usage-provider-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-block: 2px;
+  border-radius: 6px;
+}
+
+.menu-bar-usage-provider-row .menu-bar-usage-provider-open {
+  flex: 1;
+}
+
+.menu-bar-usage-drag-handle {
+  display: grid;
+  flex: 0 0 24px;
+  min-block-size: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--usage-muted);
+  cursor: grab;
+}
+
+.menu-bar-usage-provider-row[data-dragging='true'] {
+  opacity: 0.5;
+}
+
+/* 落点线表示最终插入位置，拖拽过程中不重排内容。 */
+.menu-bar-usage-provider-row[data-drop]::after {
+  position: absolute;
+  inset-inline: 2px;
+  block-size: 2px;
+  background: var(--usage-accent);
+  content: '';
+  pointer-events: none;
+}
+
+.menu-bar-usage-provider-row[data-drop='before']::after {
+  inset-block-start: 0;
+}
+
+.menu-bar-usage-provider-row[data-drop='after']::after {
+  inset-block-end: 0;
+}
+
+.menu-bar-usage-reorder-hint {
+  padding: 4px 2px 8px;
+  color: var(--usage-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 排序播报只对辅助阅读工具可见，不挤占浮窗空间。 */
+.menu-bar-usage-sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
 /* 列表悬停底色内缩并圆角，避免贴边整块铺色和粗选中竖条。 */
-.menu-bar-usage-provider-list > button {
-  margin: 2px 4px;
+.menu-bar-usage-provider-open {
+  margin: 0;
+  min-inline-size: 0;
   border-radius: 6px;
   display: grid;
   /* 移除字母头像后，供应商名称直接占据首列。 */
@@ -296,7 +362,7 @@ body:has(.menu-bar-usage-root),
   align-items: center;
   gap: 9px;
   min-block-size: 65px;
-  padding: 9px 10px;
+  padding: 9px 4px;
   border: 0;
   background: transparent;
   color: var(--usage-text);
@@ -304,12 +370,8 @@ body:has(.menu-bar-usage-root),
   text-align: start;
 }
 
-.menu-bar-usage-provider-list > button + button {
-  border-block-start: 0;
-}
-
 /* 独立用量窗口也使用强调色悬停，避免白块跳变。 */
-.menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']) {
+.menu-bar-usage-provider-open:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-brand-hover);
 }
 
@@ -336,7 +398,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-provider-copy small,
 .menu-bar-usage-provider-value small {
   color: var(--usage-muted);
-  font-size: 9.5px;
+  font-size: 11px;
 }
 
 .menu-bar-usage-provider-value {
@@ -366,9 +428,9 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-account-card {
   display: grid;
-  min-block-size: 118px;
+  min-block-size: 108px;
   gap: 8px;
-  padding: 11px 12px 10px;
+  padding: 10px 2px;
   border: 0;
   border-radius: var(--usage-radius-card, 12px);
   background: color-mix(in srgb, var(--usage-accent-soft) 82%, var(--usage-panel-strong));
@@ -406,7 +468,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-account-quota[data-empty='true'] > small:last-child {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 8.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -453,6 +515,13 @@ body:has(.menu-bar-usage-root),
   align-self: end;
 }
 
+/* 重置日期和数据来源必须完整可读，英文较长时允许换行。 */
+.menu-bar-usage-account-quota time,
+.menu-bar-usage-account-source {
+  white-space: normal;
+  line-height: 1.4;
+}
+
 .menu-bar-usage-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -465,9 +534,10 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-metrics > div {
   display: grid;
+  align-content: start;
   min-inline-size: 0;
   gap: 3px;
-  padding-inline: 9px;
+  padding-inline: 2px;
 }
 
 .menu-bar-usage-root dt,
@@ -475,18 +545,16 @@ body:has(.menu-bar-usage-root),
   margin: 0;
 }
 
-.menu-bar-usage-metrics dt,
-.menu-bar-usage-metrics small {
-  overflow: hidden;
+.menu-bar-usage-metrics dt {
+  overflow-wrap: anywhere;
   color: var(--usage-muted);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .menu-bar-usage-metrics dd {
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -496,7 +564,7 @@ body:has(.menu-bar-usage-root),
   display: grid;
   gap: 7px;
   margin: 0;
-  padding: 8px 10px 7px;
+  padding: 8px 2px;
   border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
 }
@@ -506,7 +574,7 @@ body:has(.menu-bar-usage-root),
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .menu-bar-usage-bars figcaption > span {
@@ -532,25 +600,26 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-bars figcaption dt {
   color: var(--usage-muted);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .menu-bar-usage-bars figcaption dd {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 680;
 }
 
 .menu-bar-usage-bars-plot {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  block-size: 48px;
-  gap: 5px;
+  /* 柱高与两行标签分开，新增每日数值不压缩柱形。 */
+  block-size: 100px;
+  gap: 4px;
 }
 
 .menu-bar-usage-bars-plot > span {
   display: grid;
   block-size: 100%;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   gap: 2px;
   text-align: center;
 }
@@ -578,26 +647,35 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bar-slot em {
   align-self: end;
   color: var(--usage-faint);
-  font-size: 9px;
+  font-size: 11px;
   font-style: normal;
 }
 
 .menu-bar-usage-bars-plot small {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 7.5px;
+  font-size: 10px;
   text-overflow: clip;
   white-space: nowrap;
+}
+
+/* 每日数值直接可读；空白日期继续显示破折号，零消耗显示 0。 */
+.menu-bar-usage-bar-value {
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .menu-bar-usage-chart-empty {
   display: flex;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 8px 2px;
   border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
   color: var(--usage-muted);
-  font-size: 9.5px;
+  font-size: 11px;
 }
 
 .menu-bar-usage-actions {
@@ -619,7 +697,7 @@ body:has(.menu-bar-usage-root),
   border-radius: var(--usage-radius-control, 8px);
   color: var(--usage-text);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 630;
   line-height: 1.4;
   white-space: nowrap;
@@ -793,7 +871,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-account-quota time,
 .menu-bar-usage-account-quota[data-empty='true'] > small:last-child,
 .menu-bar-usage-metrics dt,
-.menu-bar-usage-metrics small,
 .menu-bar-usage-bars figcaption > span,
 .menu-bar-usage-bars figcaption dt,
 .menu-bar-usage-bars-plot small {
@@ -879,14 +956,14 @@ body:has(.menu-bar-usage-root),
   -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
-.menu-bar-usage-provider-list > button {
+.menu-bar-usage-provider-open {
   transition:
     background-color 140ms ease,
     box-shadow 140ms ease;
 }
 
-.menu-bar-usage-provider-list > button:hover:not(:disabled):not([aria-disabled='true']),
-.menu-bar-usage-provider-list > button:focus-visible {
+.menu-bar-usage-provider-open:hover:not(:disabled):not([aria-disabled='true']),
+.menu-bar-usage-provider-open:focus-visible {
   background: var(--zeus-brand-hover);
   box-shadow: none;
 }
@@ -1000,7 +1077,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-tabs button {
   min-block-size: 30px;
-  padding-inline: var(--usage-space-3);
+  padding-inline: var(--usage-space-2);
   border-radius: 8px;
 }
 
@@ -1010,7 +1087,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-notice {
   margin-inline: 0;
-  padding-inline: var(--usage-space-3);
+  padding-inline: var(--usage-space-2);
   border-radius: 8px;
 }
 
@@ -1021,7 +1098,7 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-actions button {
   min-block-size: 32px;
-  padding-inline: var(--usage-space-3);
+  padding-inline: var(--usage-space-2);
   border-radius: 8px;
 }
 

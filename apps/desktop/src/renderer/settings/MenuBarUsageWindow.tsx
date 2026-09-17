@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { calculateUncachedInputTokens, type CodexOfficialRateWindow, type UsageOverviewSnapshot, type UsageProviderSummary } from '@zeus/shared';
+import type { CodexOfficialRateWindow, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
@@ -10,11 +10,15 @@ type UsageClient = Pick<DashboardClient, 'loadUsageOverview' | 'subscribeEvents'
 
 const snapshotStorageKey = 'zeus.menu-bar-usage.snapshot';
 const selectionStorageKey = 'zeus.menu-bar-usage.selection';
+/** 菜单栏独立保存供应商顺序，不改变供应商配置或后台统计顺序。 */
+const providerOrderStorageKey = 'zeus.menu-bar-usage.provider-order';
 
 const copy = {
   'zh-CN': {
     all: '全部',
     allProviders: '全部供应源',
+    reorderHint: '拖动手柄排序，也可聚焦手柄后按 ↑ ↓',
+    reorder: '排序',
     loading: '正在读取用量',
     noProviders: '还没有可统计的用量',
     noProvidersDetail: '使用 AI 后，这里会显示各个服务的用量。',
@@ -41,9 +45,6 @@ const copy = {
     cost: '近 7 日估算费用',
     costShort: '7 日估算费用',
     noPrice: '暂无价格',
-    localEstimate: 'Zeus 本地估算',
-    localUsage: 'Zeus 本地统计',
-    localUsageIncomplete: 'Zeus 本地记录不完整',
     recentUsage: 'Zeus 本地 Token',
     accountRecentUsage: 'Codex 账户 Token',
     officialUsageUnavailable: '官方账户暂未提供日用量',
@@ -66,6 +67,8 @@ const copy = {
   'en-US': {
     all: 'All',
     allProviders: 'All providers',
+    reorderHint: 'Drag to reorder, or focus a handle and press ↑ ↓',
+    reorder: 'Reorder',
     loading: 'Loading usage',
     noProviders: 'No usage recorded yet',
     noProvidersDetail: 'Usage for each AI service appears here after you use it.',
@@ -92,9 +95,6 @@ const copy = {
     cost: 'Estimated cost · 7 days',
     costShort: '7-day estimate',
     noPrice: 'No pricing',
-    localEstimate: 'Zeus local estimate',
-    localUsage: 'Zeus local usage',
-    localUsageIncomplete: 'Incomplete Zeus local history',
     recentUsage: 'Zeus local tokens',
     accountRecentUsage: 'Codex account tokens',
     officialUsageUnavailable: 'Official daily account usage is unavailable',
@@ -121,6 +121,8 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const text = copy[surfaceSettings.language];
   const [snapshot, setSnapshot] = useState<UsageOverviewSnapshot | null>(() => readStoredSnapshot());
   const [selection, setSelection] = useState(() => readStoredSelection());
+  /** 首次读取排序偏好，实时快照刷新不覆盖用户选择。 */
+  const [providerOrder, setProviderOrder] = useState(readStoredProviderOrder);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const requestRef = useRef<Promise<void> | null>(null);
@@ -194,7 +196,28 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     nextTab.click();
     nextTab.focus();
   };
-  const selectedProvider = snapshot?.providers.find((provider) => provider.providerId === selection) ?? null;
+  /** 已保存供应商按偏好排列，新出现的供应商沿用后台顺序追加。 */
+  const providerRanks = new Map(providerOrder.map((id, index) => [id, index]));
+  /** 列表与标签始终使用同一份排序结果，不修改原始快照。 */
+  const providers = [...(snapshot?.providers ?? [])].sort((left, right) => (providerRanks.get(left.providerId) ?? providerOrder.length) - (providerRanks.get(right.providerId) ?? providerOrder.length));
+  /** 拖拽与键盘共用移动入口，忽略已失效的供应商或越界目标。 */
+  const moveProvider = (providerId: string, targetId: string) => {
+    /** 当前可见顺序也是保存后的顺序，失效供应商不重新插入。 */
+    const next = providers.map((provider) => provider.providerId);
+    /** 起点和终点都必须仍在当前快照中。 */
+    const sourceIndex = next.indexOf(providerId);
+    const targetIndex = next.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
+    next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, providerId);
+    setProviderOrder(next);
+    try {
+      localStorage.setItem(providerOrderStorageKey, JSON.stringify(next));
+    } catch {
+      // 存储不可写时仍允许本次窗口内排序，与现有选择偏好保持一致。
+    }
+  };
+  const selectedProvider = providers.find((provider) => provider.providerId === selection) ?? null;
   // 顶部时间表示本次用量读取完成时间，供应源数据的新鲜度仍由卡片单独提示。
   const updatedAt = snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
@@ -222,7 +245,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
           <button type="button" role="tab" aria-selected={selection === 'all'} tabIndex={selection === 'all' ? 0 : -1} onClick={() => select('all')} onKeyDown={handleTabKeyDown}>
             {text.all}
           </button>
-          {snapshot?.providers.map((provider) => (
+          {providers.map((provider) => (
             <button
               key={provider.providerId}
               type="button"
@@ -255,7 +278,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
           ) : selectedProvider ? (
             <ProviderDetail provider={selectedProvider} language={surfaceSettings.language} />
           ) : (
-            <AllProviders providers={snapshot.providers} language={surfaceSettings.language} onSelect={select} />
+            <AllProviders providers={providers} language={surfaceSettings.language} onSelect={select} onMove={moveProvider} />
           )}
         </div>
 
@@ -287,8 +310,15 @@ function UsageLoadFailure(props: { error: unknown; language: Language; loading: 
   );
 }
 
-function AllProviders(props: { providers: UsageProviderSummary[]; language: Language; onSelect: (providerId: string) => void }) {
+/** 全部供应商列表：独立手柄排序，点击内容仍打开供应商详情。 */
+function AllProviders(props: { providers: UsageProviderSummary[]; language: Language; onSelect: (providerId: string) => void; onMove: (providerId: string, targetId: string) => void }) {
   const text = copy[props.language];
+  /** 只接收从本列表手柄发起的拖拽，外部文本和文件不会修改顺序。 */
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  /** 落点仅用于提示，松手后才提交排序，避免悬停时列表来回跳动。 */
+  const [dropId, setDropId] = useState<string | null>(null);
+  /** 键盘移动后向读屏播报当前位置。 */
+  const [announcement, setAnnouncement] = useState('');
   if (props.providers.length === 0) {
     return (
       <div className="menu-bar-usage-empty">
@@ -299,7 +329,15 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
   }
   return (
     <section className="menu-bar-usage-provider-list" aria-label={text.allProviders}>
-      {props.providers.map((provider) => {
+      {props.providers.length > 1 ? (
+        <small className="menu-bar-usage-reorder-hint" id="menu-bar-usage-reorder-hint">
+          {text.reorderHint}
+        </small>
+      ) : null}
+      <span className="menu-bar-usage-sr-only" role="status">
+        {announcement}
+      </span>
+      {props.providers.map((provider, index) => {
         const fullName = providerDisplayName(provider);
         const providerDetail = provider.deleted
           ? text.deleted
@@ -309,17 +347,73 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                 .join(' · ')
             : text.api;
         return (
-          <button key={provider.providerId} type="button" title={provider.deleted ? fullName : undefined} onClick={() => props.onSelect(provider.providerId)}>
-            <span className="menu-bar-usage-provider-copy">
-              <strong title={provider.deleted ? fullName : undefined}>{fullName}</strong>
-              <small>{providerDetail}</small>
-            </span>
-            <span className="menu-bar-usage-provider-value">
-              <strong>{formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, props.language)}</strong>
-              <small>{text.todayShort}</small>
-            </span>
-            <Chevron />
-          </button>
+          <div
+            className="menu-bar-usage-provider-row"
+            key={provider.providerId}
+            data-dragging={draggedId === provider.providerId}
+            data-drop={dropId === provider.providerId && draggedId !== provider.providerId ? (props.providers.findIndex((entry) => entry.providerId === draggedId) < index ? 'after' : 'before') : undefined}
+            onDragOver={(event) => {
+              if (!draggedId) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDropId(provider.providerId);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropId(null);
+            }}
+            onDrop={(event) => {
+              if (!draggedId) return;
+              event.preventDefault();
+              props.onMove(draggedId, provider.providerId);
+              setDraggedId(null);
+              setDropId(null);
+            }}
+          >
+            {props.providers.length > 1 ? (
+              <button
+                className="menu-bar-usage-drag-handle"
+                type="button"
+                draggable
+                aria-label={`${text.reorder} ${fullName}`}
+                aria-describedby="menu-bar-usage-reorder-hint"
+                title={text.reorderHint}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', provider.providerId);
+                  setDraggedId(provider.providerId);
+                }}
+                onDragEnd={() => {
+                  setDraggedId(null);
+                  setDropId(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                  event.preventDefault();
+                  /** 边界按键保持位置和焦点，不循环跳到另一端。 */
+                  const targetIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
+                  const target = props.providers[targetIndex];
+                  if (!target) return;
+                  props.onMove(provider.providerId, target.providerId);
+                  setAnnouncement(`${fullName} · ${targetIndex + 1} / ${props.providers.length}`);
+                }}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M5 3h.01M11 3h.01M5 8h.01M11 8h.01M5 13h.01M11 13h.01" />
+                </svg>
+              </button>
+            ) : null}
+            <button className="menu-bar-usage-provider-open" type="button" title={provider.deleted ? fullName : undefined} onClick={() => props.onSelect(provider.providerId)}>
+              <span className="menu-bar-usage-provider-copy">
+                <strong title={provider.deleted ? fullName : undefined}>{fullName}</strong>
+                <small>{providerDetail}</small>
+              </span>
+              <span className="menu-bar-usage-provider-value">
+                <strong>{formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, props.language)}</strong>
+                <small>{text.todayShort}</small>
+              </span>
+              <Chevron />
+            </button>
+          </div>
         );
       })}
     </section>
@@ -336,22 +430,9 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
       <ProviderSummaryCard provider={provider} language={language} />
 
       <dl className="menu-bar-usage-metrics">
-        <Metric
-          label={text.sevenDaysShort}
-          accessibleLabel={text.sevenDays}
-          value={formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language)}
-          hint={provider.sevenDayLocalComplete ? text.localUsage : text.localUsageIncomplete}
-        />
-        <Metric
-          label={text.cache}
-          value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported}
-          hint={
-            sevenDayLocalComplete && cacheAvailable
-              ? `${language === 'zh-CN' ? '命中' : 'Hit'} ${formatTokens(provider.sevenDayLocal.cachedInputTokens, language)} · ${language === 'zh-CN' ? '未命中' : 'Miss'} ${formatTokens(calculateUncachedInputTokens(provider.sevenDayLocal), language)}`
-              : undefined
-          }
-        />
-        <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} hint={sevenDayLocalComplete ? text.localEstimate : text.localUsageIncomplete} />
+        <Metric label={text.sevenDaysShort} accessibleLabel={text.sevenDays} value={formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language)} />
+        <Metric label={text.cache} value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported} />
+        <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} />
       </dl>
 
       <DailyBars provider={provider} language={language} />
@@ -389,7 +470,7 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
                       <i style={{ inlineSize: `${Math.max(0, Math.min(100, window.remainingPercent))}%` }} />
                     </span>
                     <time dateTime={window.resetsAt ? new Date(window.resetsAt * 1_000).toISOString() : undefined} title={window.resetsAt ? formatReset(window.resetsAt, language, text.resets) : undefined}>
-                      {window.resetsAt ? formatResetTime(window.resetsAt, language) : '—'}
+                      {window.resetsAt ? formatReset(window.resetsAt, language, text.resets) : '—'}
                     </time>
                   </>
                 ) : provider.officialState === 'signed_out' ? (
@@ -412,6 +493,7 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   );
 }
 
+/** 按原统计来源展示每日柱形、日期与数值，缺失数据不推算成零。 */
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
   const text = copy[props.language];
   const accountUsage = props.provider.kind === 'subscription';
@@ -460,6 +542,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
                 {slot.totalTokens === null ? <em aria-hidden="true">—</em> : <i style={{ blockSize: slot.totalTokens === 0 ? '2px' : `${Math.max(10, (slot.totalTokens / maximum) * 100)}%` }} />}
               </span>
               <small>{formatShortDate(slot.date, props.language)}</small>
+              <strong className="menu-bar-usage-bar-value">{formatOptionalTokens(slot.totalTokens, props.language)}</strong>
             </span>
           );
         })}
@@ -468,12 +551,12 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   );
 }
 
-function Metric(props: { label: string; accessibleLabel?: string; value: string; hint?: string }) {
+/** 菜单栏指标只显示名称和数值，减少重复说明占用的空间。 */
+function Metric(props: { label: string; accessibleLabel?: string; value: string }) {
   return (
     <div>
       <dt aria-label={props.accessibleLabel}>{props.label}</dt>
       <dd>{props.value}</dd>
-      {props.hint ? <small>{props.hint}</small> : null}
     </div>
   );
 }
@@ -593,12 +676,9 @@ function formatCost(provider: UsageProviderSummary, language: Language, unavaila
   return `~${new Intl.NumberFormat(language, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(value)}`;
 }
 
+/** 直接显示本地日期和时间，跨日重置无需悬停猜测。 */
 function formatReset(timestamp: number, language: Language, prefix: string): string {
   return `${prefix} ${new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000))}`;
-}
-
-function formatResetTime(timestamp: number, language: Language): string {
-  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000));
 }
 
 /** 正常状态仅显示时间；读取失败时保留过期数据说明。 */
@@ -632,6 +712,17 @@ function readStoredSelection(): string {
     return localStorage.getItem(selectionStorageKey)?.trim() || 'all';
   } catch {
     return 'all';
+  }
+}
+
+/** 本地存储属于不可信输入：仅接受非空字符串标识，并去除重复项。 */
+function readStoredProviderOrder(): string[] {
+  try {
+    /** 旧偏好或手工修改的内容不得影响窗口启动。 */
+    const value: unknown = JSON.parse(localStorage.getItem(providerOrderStorageKey) ?? '[]');
+    return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))] : [];
+  } catch {
+    return [];
   }
 }
 
