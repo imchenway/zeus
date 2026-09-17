@@ -594,6 +594,8 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  source?: 'code_review';
+  inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;
   workspaceMode?: 'direct' | 'worktree';
   mode: 'create';

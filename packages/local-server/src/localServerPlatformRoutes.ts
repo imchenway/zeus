@@ -1,3 +1,4 @@
+import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
@@ -24,6 +25,7 @@ import {
   getProjectGitCommitDetail,
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
+  getProjectGitHistory,
   getTaskBranchFileDiff,
   getTaskBranchComparison,
   getGitFilePreviewSources,
@@ -590,12 +592,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerStorageRecoveryPreflightApi({ server, db, artifacts: artifactStore });
 
   const projectGitQueries = new ProjectGitQueryApplication({
+    resolveConversationRepository: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
     projects,
     repositories: projectRepositories,
     effects: {
       workspaceHasGitDirectory: (localPath) => existsSync(join(localPath, '.git')),
       readStatus: readGitStatus,
       readDiff: readGitDiff,
+      readHistory: getProjectGitHistory,
       readRepositorySnapshot: (localPath) => getProjectGitRepositorySnapshot(localPath),
       readCommit: (localPath, commitHash) => getProjectGitCommitDetail(localPath, commitHash),
       readComparison: (localPath, ref, mode) => getProjectGitComparisonDiff(localPath, ref, mode),
@@ -657,7 +661,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       const generate = async () => {
         const started = performance.now();
         console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage: '读取暂存区', elapsedMs: 0 }));
-        const repository = await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
+        const repository =
+          typeof body.repositoryId === 'string' && body.repositoryId.startsWith('conversation:')
+            ? await resolveConversationGitWorkspace(project, body.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
+            : await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
         const context = await readGitCommitContext(repository.localPath);
         controller.signal.throwIfAborted();
         const prepared = performance.now();

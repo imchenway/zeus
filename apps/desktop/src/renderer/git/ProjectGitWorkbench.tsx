@@ -42,9 +42,21 @@ type BranchKind = 'local' | 'remote';
 type ExecutionOutcome = 'completed' | 'conflict' | null;
 
 export interface ProjectGitWorkbenchProps {
+  conversationScope?: boolean;
   project: ProjectRecord;
   projects: ProjectRecord[];
-  client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitOperations' | 'loadProjectGitCommit' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectModelSelection'>;
+  client: Pick<
+    DashboardClient,
+    | 'loadConversationGitHistory'
+    | 'loadProjectGitWorkbench'
+    | 'loadProjectGitOperations'
+    | 'loadProjectGitCommit'
+    | 'loadProjectGitComparisonDiff'
+    | 'executeProjectGitAction'
+    | 'generateGitCommitMessage'
+    | 'loadGitCommitModels'
+    | 'loadProjectModelSelection'
+  >;
   language: 'zh-CN' | 'en-US';
   onSelectProject: (project: ProjectRecord) => void;
 }
@@ -108,12 +120,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   useApplicationErrorDialog(error, {
     language: zh ? 'zh-CN' : 'en',
   });
-  const [tab, setTab] = useState<GitTab>(() => readRememberedTab(props.project.id));
+  const [tab, setTab] = useState<GitTab>(() => (props.conversationScope ? 'changes' : readRememberedTab(props.project.id)));
   const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
   const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
   const [selectedStashRef, setSelectedStashRef] = useState('');
+  const [conversationDiff, setConversationDiff] = useState<import('../apiClient.js').GitDiffSummary | null>(null);
   const [commitDetail, setCommitDetail] = useState<ProjectGitCommitDetail | null>(null);
   const [commitLoading, setCommitLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState('');
@@ -236,7 +249,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [selectedRepository?.id, historyRef, tab, snapshot?.refreshedAt]);
 
   async function loadHistory(append: boolean): Promise<void> {
-    if (!selectedRepository || !window.zeus?.loadProjectGitHistory) return;
+    if (!selectedRepository || (!props.conversationScope && !window.zeus?.loadProjectGitHistory)) return;
     if (append && historyInFlight.current === historyRequest.current) return;
     const key = `${selectedRepository.id}:${historyRef}`;
     const previous = append && historyPage?.key === key ? historyPage.commits : [];
@@ -245,7 +258,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      const page = await window.zeus.loadProjectGitHistory({ projectId: props.project.id, repositoryId: selectedRepository.id, offset: previous.length, ...(historyRef ? { ref: historyRef } : {}) });
+      const page = props.conversationScope
+        ? await props.client.loadConversationGitHistory(props.project.id, selectedRepository.id, previous.length, historyRef || undefined)
+        : await window.zeus!.loadProjectGitHistory!({ projectId: props.project.id, repositoryId: selectedRepository.id, offset: previous.length, ...(historyRef ? { ref: historyRef } : {}) });
       if (request !== historyRequest.current) return;
       const commits = [...previous, ...page.commits].filter((commit, index, items) => items.findIndex((item) => item.hash === commit.hash) === index);
       setHistoryPage({ key, commits, hasMore: page.hasMore });
@@ -283,8 +298,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.project.id, tab]);
 
   useEffect(() => {
-    if (tab === 'console') void operationHistory.refresh();
-  }, [tab, operationHistory.refresh]);
+    if (!props.conversationScope && tab === 'console') void operationHistory.refresh();
+  }, [tab, operationHistory.refresh, props.conversationScope]);
 
   useEffect(() => {
     if (tab !== 'changes' || !snapshot) return;
@@ -339,7 +354,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   async function loadWorkbench(): Promise<void> {
     // 历史与仓库快照独立读取，仓库刷新失败不能伪装成没有操作记录。
-    void operationHistory.refresh();
+    if (!props.conversationScope) void operationHistory.refresh();
     const version = ++requestVersionRef.current;
     setLoadState('loading');
     setError(null);
@@ -403,7 +418,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     } finally {
       actionBusyRef.current = false;
       setBusy(null);
-      void operationHistory.refresh(true);
+      if (!props.conversationScope) void operationHistory.refresh(true);
     }
   }
 
@@ -660,6 +675,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }
 
   function openDiffWindow(repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }): void {
+    if (props.conversationScope) {
+      const request = options?.comparisonRef
+        ? props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, options.comparisonRef, options.comparisonMode ?? 'current')
+        : options?.commitHash
+          ? props.client.loadProjectGitCommit(props.project.id, repository.id, options.commitHash).then((detail) => detail.diff)
+          : Promise.resolve(options?.stage === 'staged' ? repository.snapshot.stagedDiff : options?.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff);
+      void request
+        .then((diff) => setConversationDiff({ ...diff, files: [filePath], fileDiffs: diff.fileDiffs.filter((file) => file.newPath === filePath || file.oldPath === filePath) }))
+        .catch((reason: unknown) => setError(errorMessage(reason, zh)));
+      return;
+    }
     void window.zeus?.openProjectGitDiffWindow?.({
       projectId: props.project.id,
       repositoryId: repository.id,
@@ -783,7 +809,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           >
             {zh ? '贮藏' : 'Stash'}
           </Button>
-          {busy && window.zeus?.cancelProjectGitAction ? (
+          {busy && !props.conversationScope && window.zeus?.cancelProjectGitAction ? (
             <Button
               variant="secondary"
               size="compact"
@@ -863,6 +889,19 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </span>
       </header>
 
+      <MotionPresence>
+        {conversationDiff ? (
+          <ModalPortal role="dialog" aria-label={zh ? '文件差异' : 'File diff'} onDismiss={() => setConversationDiff(null)}>
+            <section className="conversation-git-delivery">
+              <header>
+                <strong>{conversationDiff.files[0]}</strong>
+                <Button onClick={() => setConversationDiff(null)}>{zh ? '关闭' : 'Close'}</Button>
+              </header>
+              <SideBySideDiff diff={conversationDiff} zh={zh} fill />
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
       <nav className="project-git-tabs" aria-label={zh ? 'Git 工作区' : 'Git workspace'}>
         {(
           [
@@ -870,12 +909,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             ['log', zh ? '历史' : 'History', null],
             ['console', zh ? '控制台' : 'Console', operationHistory.total],
           ] as const
-        ).map(([id, label, count]) => (
-          <button key={id} type="button" className={activeTopLevelTab === id ? 'is-active' : ''} aria-current={activeTopLevelTab === id ? 'page' : undefined} onClick={() => setTab(id)}>
-            {label}
-            {count !== null ? <span>{count}</span> : null}
-          </button>
-        ))}
+        )
+          .filter(([id]) => !props.conversationScope || id !== 'console')
+          .map(([id, label, count]) => (
+            <button key={id} type="button" className={activeTopLevelTab === id ? 'is-active' : ''} aria-current={activeTopLevelTab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+              {label}
+              {count !== null ? <span>{count}</span> : null}
+            </button>
+          ))}
         <span className="project-git-tab-facts">
           {tab === 'log' ? (
             <>
@@ -2149,7 +2190,11 @@ function GitLogSurface(props: {
             <GitPaneSeparator name="inspector" label={props.zh ? '调整详情与差异宽度' : 'Resize details and diff'} initial={35} min={20} max={65} />
             <GitPaneSeparator name="details" label={props.zh ? '调整文件与提交详情高度' : 'Resize files and commit details'} axis="y" initial={55} min={20} max={80} />
             <SideBySideDiff
-              previewRequest={props.selectedRepository ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash } : undefined}
+              previewRequest={
+                props.selectedRepository && !props.selectedRepository.id.startsWith('conversation:')
+                  ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash }
+                  : undefined
+              }
               diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null}
               zh={props.zh}
             />
@@ -2673,7 +2718,11 @@ function LocalChangesSurface(props: {
           </div>
         ) : (
           <SideBySideDiff
-            previewRequest={repository && props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage } : undefined}
+            previewRequest={
+              repository && !repository.id.startsWith('conversation:') && props.selectedFilePath
+                ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage }
+                : undefined
+            }
             revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
@@ -2999,7 +3048,7 @@ function StashSurface(props: {
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
           <SideBySideDiff
-            previewRequest={{ kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref }}
+            previewRequest={props.repository.id.startsWith('conversation:') ? undefined : { kind: 'project-git', projectId: props.projectId, repositoryId: props.repository.id, path: props.selectedFilePath, commitHash: props.stash.ref }}
             diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.detail.diff.diffText, fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
             title={props.selectedFilePath}

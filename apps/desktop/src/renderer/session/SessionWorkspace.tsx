@@ -18,7 +18,7 @@ import {
   type ZeusBrowserConversationSnapshot,
   type ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
-import type { ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
+import type { DashboardClient, ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -140,6 +140,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  source?: 'code_review';
+  inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;
   workspaceMode?: 'direct' | 'worktree';
   owner: Extract<SessionConversationOwner, { kind: 'project' }>;
@@ -323,6 +325,7 @@ export async function loadLegacyConversationDetail<T>(conversation: NativeConver
 }
 
 export interface ConnectedSessionWorkspaceProps {
+  gitContext?: { client: DashboardClient; project: ProjectRecord };
   language: SessionUiLanguage;
   client: SessionControllerClient;
   conversation: NativeConversationChoice;
@@ -746,6 +749,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       conversation={displayedConversation}
       task={props.task}
       owner={props.owner}
+      gitContext={props.gitContext}
       projectPath={props.projectPath}
       terminalClient={props.terminalClient}
       choices={props.choices}
@@ -1082,6 +1086,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
   if (!input.content.trim() && input.attachments.length === 0) throw new Error('Project conversation start content or attachments are required.');
   return {
     mode: 'create',
+    ...(input.source ? { source: input.source, inheritConversationId: input.inheritConversationId } : {}),
     workspaceMode: input.workspaceMode ?? 'direct',
     ...(input.workspaceMode === 'worktree' && input.worktree ? { worktree: input.worktree } : {}),
     content: input.content,
@@ -1122,6 +1127,9 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     value.mode === 'create' &&
     (value.workspaceMode === undefined || value.workspaceMode === 'direct' || value.workspaceMode === 'worktree') &&
     (value.worktree === undefined || isConversationWorktreeOptions(value.worktree)) &&
+    (value.source === undefined || value.source === 'code_review') &&
+    (value.inheritConversationId === undefined || typeof value.inheritConversationId === 'string') &&
+    (value.source !== 'code_review' || (typeof value.inheritConversationId === 'string' && Boolean(value.inheritConversationId.trim()) && value.permissionMode === 'read-only' && value.collaborationMode === 'default')) &&
     typeof value.content === 'string' &&
     Array.isArray(value.attachments) &&
     (Boolean(value.content.trim()) || value.attachments.length > 0) &&
@@ -1460,6 +1468,7 @@ export interface NewConversationDraft {
 export type NewConversationDraftStore = Map<string, NewConversationDraft>;
 
 export interface SessionWorkspaceProps {
+  gitContext?: { client: DashboardClient; project: ProjectRecord };
   newConversationDrafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
   state: NativeSessionState | null;
@@ -2669,6 +2678,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               ) : null}
               {!legacy && props.conversation && props.state ? (
                 <SessionQuickActionsCard
+                  gitContext={props.gitContext}
                   language={props.language}
                   conversation={props.conversation}
                   state={props.state}
@@ -2699,6 +2709,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       : undefined
                   }
                   onStartCodeReview={(selection: SessionCodeReviewSelection) => {
+                    if (props.conversation && !props.conversation.taskId && owner?.kind === 'project' && actions.onStartProjectConversation) {
+                      return actions.onStartProjectConversation({
+                        owner,
+                        source: 'code_review',
+                        inheritConversationId: props.conversation.id,
+                        content: '请审查当前会话工作树的代码变化。',
+                        attachments: [],
+                        permissionMode: 'read-only',
+                        collaborationMode: 'default',
+                        serviceTierSelection: selection.serviceTierSelection,
+                        model: selection.model,
+                        effort: selection.effort,
+                        ...(selection.skillId ? { skillReferences: [{ id: selection.skillId }] } : {}),
+                      });
+                    }
                     if (!props.task || !props.conversation || !actions.onStartConversation || props.conversation.projectId !== props.task.projectId || props.conversation.taskId !== props.task.id) {
                       return {
                         state: 'failed',

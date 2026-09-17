@@ -1499,6 +1499,8 @@ export type StartNativeConversationRequest =
     };
 
 export interface StartProjectConversationRequest {
+  source?: 'code_review';
+  inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;
   workspaceMode?: 'direct' | 'worktree';
   agentKind?: 'codex' | 'pi' | 'claude';

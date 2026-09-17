@@ -12728,3 +12728,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: var(--zeus-control-danger-text, #b33a3a);
   font-size: 12px;
 }
+
+/* 会话交付复用 Git 工作台，窗口尺寸变化时保持内部滚动。 */
+.conversation-git-delivery {
+  width: min(1400px, calc(100vw - 48px));
+  height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--zeus-card-background, var(--session-canvas));
+  border-radius: 12px;
+  overflow: hidden;
+}
+.conversation-git-delivery > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+}
+.conversation-git-delivery > .project-git-workbench {
+  flex: 1;
+  min-height: 0;
+}

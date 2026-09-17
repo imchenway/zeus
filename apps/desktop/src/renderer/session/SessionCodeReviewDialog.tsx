@@ -39,6 +39,7 @@ interface SessionCodeReviewDialogProps {
   conversation: NativeConversationChoice;
   state: NativeSessionState;
   workspace: TaskWorkspaceSnapshot | null;
+  repositoryName?: string;
   capabilities: CodexConversationCapabilities | null;
   serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
   onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
@@ -213,7 +214,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             <dl>
               <div>
                 <dt>{zh ? '仓库' : 'Repository'}</dt>
-                <dd>{props.workspace?.repositoryName ?? props.workspace?.repositoryRelativePath ?? '—'}</dd>
+                <dd>{props.repositoryName ?? props.workspace?.repositoryName ?? props.workspace?.repositoryRelativePath ?? '—'}</dd>
               </div>
               <div>
                 <dt>{zh ? '范围' : 'Range'}</dt>
