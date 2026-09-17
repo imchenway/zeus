@@ -431,13 +431,19 @@ function QueueActionsQa() {
       id: `qa-submission-${index + 1}`,
       content: text,
       position: index + 1,
-      status: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'resolved' : scenario === 'queued' || scenario === 'restoring' ? 'queued' : 'paused',
+      status: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'resolved' : scenario === 'queued' || scenario === 'restoring' ? 'queued' : scenario === 'failed' ? 'failed' : 'paused',
       pausedReason: ['queued', 'accepted', 'restoring'].includes(scenario) ? null : scenario,
       providerTurnId: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'qa-turn' : null,
       createdAt: '2026-09-10T02:00:00Z',
       attachments: sample === 'attachment' ? [{ name: '排队消息说明.md', mime: 'text/markdown', size: 128, kind: 'file' as const, localPath: '/qa/排队消息说明.md' }] : [],
       error:
-        scenario === 'outcome_unknown' || scenario === 'recovery_required' ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: scenario === 'recovery_required' } : null,
+        scenario === 'outcome_unknown'
+          ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: true }
+          : scenario === 'recovery_required'
+            ? { code: 'ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', message: 'Provider thread state cannot confirm a safe idle dispatch boundary.' }
+            : scenario === 'failed' || scenario === 'preflight_failed'
+              ? { code: 'ZEUS_NATIVE_SUBMISSION_NOT_DISPATCHED', message: '消息在发送前失败。' }
+              : null,
     }))
     .filter((submission) => outcomes[submission.id] !== 'deleted');
   /** 已接纳消息恢复为普通历史，检查底栏消失后不会重复正文或遗留占位。 */
@@ -484,22 +490,25 @@ function QueueActionsQa() {
       throw new Error('预览操作失败，原消息保留。');
     }
     setOutcomes((current) => ({ ...current, [id]: outcome }));
-    setResult(`${outcome === 'accepted' ? '引导' : '删除'}回调已触发：${id}`);
+    setResult(`${outcome === 'accepted' ? '发送' : '删除'}回调已触发：${id}`);
   }
   /** 沿用既有运行检查，确认状态变化没有重新开放未知送达消息的操作。 */
   function checkActions(): void {
     /** 已接纳消息退出队列操作，其余按真实状态计算可见入口。 */
     const pendingCount = submissions.filter((submission) => submission.status !== 'resolved').length;
     /** 正常排队与已确认未发送可取消，恢复期间仍由生产权限控制。 */
-    const expectedDelete = ['queued', 'restoring', 'recovered_unsent'].includes(scenario) ? pendingCount : 0;
+    const expectedDelete = ['queued', 'restoring', 'recovered_unsent', 'preflight_failed'].includes(scenario) ? pendingCount : 0;
     /** 引导入口只在 queued 状态显示，不可用原因由生产组件说明。 */
     const expectedSteer = ['queued', 'restoring'].includes(scenario) ? pendingCount : 0;
-    /** 两种结果未知状态都仅提供检查处理状态。 */
-    const expectedCheck = ['outcome_unknown', 'recovery_required'].includes(scenario) ? pendingCount : 0;
+    /** 送达未知只检查；写前失败和待恢复消息提供先核对再发送的重试。 */
+    const expectedCheck = scenario === 'outcome_unknown' ? pendingCount : 0;
+    /** 无需错误详情也能重试已确认未发送的消息。 */
+    const expectedRetry = ['failed', 'preflight_failed', 'recovery_required', 'recovered_unsent'].includes(scenario) ? pendingCount : 0;
     if (
       surface.current?.querySelectorAll('.session-queued-thread-delete').length !== expectedDelete ||
       surface.current?.querySelectorAll('.session-queued-thread-steer').length !== expectedSteer ||
-      [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '检查处理状态' : 'Check processing status')).length !== expectedCheck
+      [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '检查处理状态' : 'Check processing status')).length !== expectedCheck ||
+      [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '重试' : 'Retry')).length !== expectedRetry
     )
       throw new Error(`队列操作检查失败：${scenario}`);
     setResult(`运行检查通过：${scenario} / ${sample} / ${language}`);
@@ -521,9 +530,9 @@ function QueueActionsQa() {
                 resetPreview();
               }}
             >
-              {['queued', 'restoring', 'outcome_unknown', 'recovery_required', 'recovered_unsent', 'accepted'].map((value, index) => (
+              {['queued', 'restoring', 'outcome_unknown', 'recovery_required', 'recovered_unsent', 'accepted', 'failed', 'preflight_failed'].map((value, index) => (
                 <option key={value} value={value}>
-                  {['正常排队', '正在恢复', '送达未知', '引导待核对', '已确认未发送', '已接纳'][index]}
+                  {['正常排队', '正在恢复', '送达未知', '等待恢复', '已确认未发送', '已接纳', '发送失败', '发送前准备失败'][index]}
                 </option>
               ))}
             </select>
@@ -569,6 +578,7 @@ function QueueActionsQa() {
           transcriptHydrated
           onSendQueuedNow={(id) => runAction(id, 'accepted')}
           onCancelQueuedSubmission={(id) => runAction(id, 'deleted')}
+          onRetryQueuedSubmission={(id) => runAction(id, 'accepted')}
           onRecoverQueue={() => setResult('检查处理状态回调已触发')}
         />
       </div>
