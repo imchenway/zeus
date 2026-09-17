@@ -224,7 +224,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   } = state;
   /** 讨论成员配置读取同一任务安排，避免展示员工默认却实际使用任务覆盖。 */
   const loadTaskWorkSettings = useCallback(async (taskId: string) => (await props.commandClient?.loadTaskWorkManagement(taskId))?.plan?.settings ?? {}, [props.commandClient]);
-  const newConversationDrafts = useMemo<NewConversationDraftStore>(() => new Map(), [newConversationFocusRequest]);
+  // 返回新会话只重新聚焦输入框；未发送草稿随工作区保留，由发送成功负责清理。
+  const [newConversationDrafts] = useState<NewConversationDraftStore>(() => new Map());
   const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
     const {
       onConfirmRuntimeOperation,
