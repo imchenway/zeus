@@ -551,6 +551,7 @@ export * from './conversationContext.js';
 export * from './conversationResources.js';
 export * from './portableConversationContext.js';
 export * from './projectSourceWorkspace.js';
+export * from './projectSourceTextSearch.js';
 export * from './requestUserInput.js';
 export * from './assistantMessage.js';
 export * from './conversationProcessPresentation.js';

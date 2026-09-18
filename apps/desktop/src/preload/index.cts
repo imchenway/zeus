@@ -225,6 +225,7 @@ contextBridge.exposeInMainWorld('zeus', {
   listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
   searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
   searchProjectSourceContent: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-content', input),
+  searchProjectSourceText: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-text', input),
   loadProjectSourceBlame: (input: unknown) => ipcRenderer.invoke('zeus:project-source:blame', input),
   loadConversationSourceBlame: (input: unknown) => ipcRenderer.invoke('zeus:conversation-resource:blame', input),
 

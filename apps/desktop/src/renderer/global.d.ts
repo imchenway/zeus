@@ -13,6 +13,8 @@ import type {
   MoveProjectSourceEntryInput,
   ProjectSourceDirectorySnapshot,
   ProjectSourceContentSearchResult,
+  ProjectSourceTextSearchInput,
+  ProjectSourceTextSearchResult,
   ProjectSourceDocument,
   ProjectSourceEntry,
   ProjectSourceEvent,
@@ -150,6 +152,7 @@ declare global {
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
       searchProjectSourceContent: (input: { projectId: string; query: string }) => Promise<ProjectSourceContentSearchResult>;
+      searchProjectSourceText: (input: ProjectSourceTextSearchInput) => Promise<ProjectSourceTextSearchResult>;
       loadProjectSourceBlame: (input: { projectId: string; relativePath: string; ref?: string; expectedSha256?: string }) => Promise<GitFileBlame>;
       loadConversationSourceBlame: (input: { projectId: string; conversationId: string; resourceId: string; expectedSha256: string }) => Promise<GitFileBlame>;
 
