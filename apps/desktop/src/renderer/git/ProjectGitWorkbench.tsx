@@ -709,10 +709,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     >
       <header className="project-git-toolbar git-command-toolbar" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
         <div className="git-toolbar-identity">
-          <div className="git-toolbar-repository" title={selectedRepository?.relativePath}>
-            <Folder aria-hidden="true" />
-            <span>{selectedRepository?.name ?? props.project.name}</span>
-          </div>
           {selectedRepository ? (
             <BranchSwitcher
               zh={zh}
