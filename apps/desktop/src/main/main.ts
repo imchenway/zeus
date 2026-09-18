@@ -1,5 +1,3 @@
-import { isZeusReleaseUrl } from './desktopDistribution.js';
-
 import { registerFilePreview } from './filePreview.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
@@ -458,7 +456,7 @@ function desktopRoot(): string {
 
 function developmentAppIconPath(): string | undefined {
   if (app.isPackaged) return undefined;
-  const developmentIcon = join(desktopRoot(), 'dist', 'branding', 'icon-dev.png');
+  const developmentIcon = join(desktopRoot(), 'assets', 'icon-dev.png');
   // 开发图标为可选定制资源；干净源码检出使用仓库自带图标，避免阻断启动。
   return existsSync(developmentIcon) ? developmentIcon : join(desktopRoot(), 'assets', 'icon.png');
 }
@@ -3084,7 +3082,8 @@ async function initializeApplication(): Promise<void> {
           /** 发布清单中的链接也必须属于 Zeus 官方发布目录。 */
           openDownloadPage: async (value) => {
             const url = new URL(value);
-            if (!isZeusReleaseUrl(url.toString())) throw new Error('更新下载页面不是 Zeus 官方发布地址。');
+            if (url.protocol !== 'https:' || url.hostname !== 'github.com' || Boolean(url.port || url.username || url.password) || !url.pathname.startsWith('/imchenway/zeus/releases/'))
+              throw new Error('更新下载页面不是 Zeus 官方发布地址。');
             const result = await openExternalHttpsUrl({ url: value, openExternal: (target) => shell.openExternal(target) });
             if (!result.opened) throw new Error('无法打开更新下载页面，请稍后重试。');
           },

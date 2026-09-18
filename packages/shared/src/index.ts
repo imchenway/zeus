@@ -789,8 +789,6 @@ export const digitalEmployeeAvatarIds = ['loki', 'argus', 'eric', 'higgins', 'vi
 /** 头像身份跨模板与项目员工保持一致。 */
 export type DigitalEmployeeAvatarId = (typeof digitalEmployeeAvatarIds)[number];
 
-export * from './distribution.js';
-
 export * from './conversationCapabilities.js';
 export * from './employeeWorkPlanning.js';
 export * from './digitalTeamWorkflow.js';

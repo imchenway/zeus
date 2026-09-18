@@ -118,7 +118,7 @@ body:has(.menu-bar-usage-root),
   inline-size: 24px;
   block-size: 24px;
   flex: 0 0 24px;
-  background: url('../../../dist/branding/startup-mark.png') center / contain no-repeat;
+  background: url('../../../assets/startup-mark.png') center / contain no-repeat;
 }
 
 /* 时间与刷新按钮作为一组，长文案省略但保留完整悬浮提示。 */

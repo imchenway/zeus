@@ -63,7 +63,7 @@ for (const variant of variants) {
   }
   await writeFile(resolve(target, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   // 扩展各尺寸图标直接由应用的同一份原图生成。
-  for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'dist/branding/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
+  for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'assets/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
   await run('/usr/bin/zip', ['-q', '-r', resolve(outputRoot, variant.zip), '.'], target);
 }
 
@@ -76,7 +76,7 @@ for (const [source, target, width, height] of [
 ])
   await run('/usr/bin/xcrun', ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)], desktopRoot, swiftEnvironment);
 // 商店素材保留原始 PNG，避免扩展与桌面应用使用不同头像。
-await copyFile(resolve(desktopRoot, 'dist/branding/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
+await copyFile(resolve(desktopRoot, 'assets/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
 await writeFile(resolve(materials, 'PRODUCTION_EXTENSION_ID_REQUIRED.txt'), '生产扩展 ID 是商店首次上传后的发布输入。本任务禁止使用通配 allowed_origins，也不上传或提交审核。\n', 'utf8');
 
 async function run(command, args, cwd = desktopRoot, env = process.env) {

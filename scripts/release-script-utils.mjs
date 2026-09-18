@@ -1,4 +1,3 @@
-import { zeusDistribution, versionFromReleaseTag } from './desktop-distribution.mjs';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 
@@ -16,11 +15,11 @@ export function parseBoolean(name, rawValue, defaultValue) {
   throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
 }
 
+/** 只接受官方稳定标签，并要求目标版本递增。 */
 export function assertVersionAfterTag(version, tag, suffix = '') {
+  if (!/^v\d+\.\d+\.\d+$/u.test(tag)) throw new Error(`无效的 Zeus 稳定版本标签：${tag}`);
   const target = version.split('.').map(Number);
-  const baseVersion = versionFromReleaseTag(tag);
-  if (!baseVersion) throw new Error(`不属于本发行版的标签：${tag}`);
-  const base = baseVersion.split('.').map(Number);
+  const base = tag.slice(1).split('.').map(Number);
   for (let index = 0; index < 3; index += 1) {
     if (target[index] > base[index]) return;
     if (target[index] < base[index]) break;
@@ -34,7 +33,7 @@ export function validateReleaseNotes(markdown, version) {
   for (const heading of ['## 如何升级', '## 系统要求与已知限制', '## 发布验证']) {
     if (!markdown.includes(`\n${heading}\n`)) throw new Error(`Release notes 缺少必要章节：${heading}`);
   }
-  if (zeusDistribution.homebrewEnabled && !markdown.includes(`brew upgrade --cask ${zeusDistribution.homebrewTap}/zeus`)) throw new Error('Release notes 缺少 Homebrew 升级命令。');
+  if (!markdown.includes('brew upgrade --cask imchenway/tap/zeus')) throw new Error('Release notes 缺少 Homebrew 升级命令。');
   if (!markdown.includes(`Zeus-${version}-arm64.dmg`)) throw new Error(`Release notes 缺少版本化 DMG 名称：Zeus-${version}-arm64.dmg。`);
   if (/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) throw new Error('Release notes 泄漏内部任务或发布文档路径。');
   const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];

@@ -1,4 +1,4 @@
-import { zeusDistribution, toolPages } from '../../tooling/index.js';
+import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
@@ -2107,17 +2107,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               <small>{settingsWorkspaceCopy.release.notarizationDescription}</small>
                             </span>
                           </section>
-                          {zeusDistribution.homebrewEnabled ? (
-                            <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
-                              <span className="settings-row-copy">
-                                <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
-                              </span>
-                              <span className="settings-row-field">
-                                <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
-                                <small>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</small>
-                              </span>
-                            </section>
-                          ) : null}
+                          <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
+                            <span className="settings-row-copy">
+                              <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
+                            </span>
+                            <span className="settings-row-field">
+                              <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
+                              <small>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</small>
+                            </span>
+                          </section>
                           <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
                             <span className="settings-row-copy">
                               <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>

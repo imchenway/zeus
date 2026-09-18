@@ -64,9 +64,7 @@ async function verifyCustomizationBoundaries(): Promise<void> {
   const publicConsumers = new Map<string, Set<string>>([
     [`${rendererRoot}WorkspacePage.tsx`, new Set([`${customRoot}tools/base.css`, `${customRoot}tools/theme.css`])],
     [`${rendererRoot}features/workspace/WorkspaceView.tsx`, new Set([`${customRoot}index.js`])],
-    [`${rendererRoot}features/workspace/useWorkspaceQueryState.tsx`, new Set([`${customRoot}distribution.js`])],
   ]);
-  const distributionConsumers = new Set(['apps/desktop/src/main/desktopDistribution.ts', `${customRoot}distribution.ts`]);
   const files = [...(await collectFiles('packages')), ...(await collectFiles('apps/desktop/src'))].filter((path) => /\.(?:ts|tsx|cts|mjs|js)$/u.test(path));
   for (const path of files) {
     const content = await readText(path);
@@ -77,7 +75,7 @@ async function verifyCustomizationBoundaries(): Promise<void> {
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
         const argument = node.arguments[0];
         if (argument && ts.isStringLiteralLike(argument)) specifiers.push(argument.text);
-        else if (path.startsWith(customRoot) || path.startsWith('packages/distribution/')) failures.push(`${path} 工具与发行模块禁止无法静态核验的动态导入。`);
+        else if (path.startsWith(customRoot)) failures.push(`${path} 工具模块禁止无法静态核验的动态导入。`);
       }
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) specifiers.push(node.argument.literal.text);
       ts.forEachChild(node, visit);
@@ -90,9 +88,6 @@ async function verifyCustomizationBoundaries(): Promise<void> {
             .split('\\')
             .join('/')
         : specifier;
-      const isCustomPackage = specifier === '@zeus/distribution' || target.startsWith('packages/distribution/');
-      if (path.startsWith('packages/') && !path.startsWith('packages/distribution/') && isCustomPackage) failures.push(`${path} 通用包不能依赖 ${specifier}。`);
-      if (path.startsWith('apps/desktop/src/') && isCustomPackage && !distributionConsumers.has(path)) failures.push(`${path} 必须通过发行组装入口读取 ${specifier}。`);
       if (!path.startsWith(customRoot) && target.startsWith(customRoot) && !publicConsumers.get(path)?.has(target)) failures.push(`${path} 不得直接访问工具内部模块 ${specifier}。`);
       if (path.startsWith(`${customRoot}tools/`)) {
         if (specifier.startsWith('.') && !target.startsWith(`${customRoot}tools/`) && target !== `${customRoot}toolPageHost.js`) failures.push(`${path} 工具页只能通过 toolPageHost 使用宿主能力：${specifier}。`);
