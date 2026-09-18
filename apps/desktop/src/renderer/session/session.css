@@ -3346,6 +3346,8 @@
   --session-shadow: rgb(34 37 41 / 0.09);
   --session-shadow-soft: rgb(34 37 41 / 0.05);
   --session-gutter: clamp(16px, 4.2vw, 48px);
+  /* 标题、运行摘要和展开详情共用左侧起点。 */
+  --session-header-inset: 20px;
   --session-thread-max: 48rem;
   --session-markdown-max: 40rem;
   --session-composer-max: var(--session-thread-max);
@@ -3540,6 +3542,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   grid-template-columns: minmax(0, 1fr) auto;
   min-block-size: 58px;
   padding: 10px 20px;
+  padding-inline-start: var(--session-header-inset);
   pointer-events: none;
   position: relative;
   z-index: 31;
@@ -3582,8 +3585,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   flex-basis: 100%;
 }
 
-.session-codex-parity-v1 .session-thread-header-runtime .session-runtime-details > summary {
+/* 摘要由所在容器提供留白，避免比展开详情多缩进一层。 */
+.session-codex-parity-v1 .session-thread-header-runtime .session-runtime-details > summary,
+.session-codex-parity-v1 .session-thread-subtitle-row .session-runtime-details > summary {
   padding-inline: 0;
+}
+
+/* 移至正文上方的运行信息仍与标题对齐，展开内容沿用同一容器。 */
+.session-codex-parity-v1 .session-conversation-pane > .session-thread-subtitle-row {
+  padding-inline: var(--session-header-inset) 20px;
 }
 
 .session-codex-parity-v1 .session-thread-header:has(.session-thread-header-runtime .session-runtime-details[open]) > .session-context-header-tools {
@@ -6882,11 +6892,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 @media (max-width: 759px) {
   .session-codex-parity-v1 {
     --session-gutter: 16px;
+    /* 窄窗口标题和运行信息同步缩进。 */
+    --session-header-inset: 16px;
   }
 
   .session-codex-parity-v1 .session-thread-header {
     min-block-size: 52px;
-    padding-inline: 16px;
+    padding-inline: var(--session-header-inset) 16px;
   }
 
   .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
@@ -12155,6 +12167,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   align-content: center;
   max-inline-size: none;
   padding: 6px 12px;
+  padding-inline-start: var(--session-header-inset);
 }
 
 /* 顶栏与正文使用同一分栏宽度，标签起点与内容对齐。 */

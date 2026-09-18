@@ -2,7 +2,7 @@ import { MotionPresence } from '../../ui/MotionPresence.js';
 import { temporaryWorkspaceId, normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type ProjectSourceContentMatch, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
-import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
@@ -1039,6 +1039,18 @@ export function SidebarNav(props: {
   const projectMenuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const projectMenuCloseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const previousActiveProjectIdRef = useRef(props.activeProjectId);
+  /** 滚动结束后隐藏滑块；计时器不参与列表渲染。 */
+  const sidebarScrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** 只在实际滚动后短暂显示，滚轮、键盘与拖动共用同一入口。 */
+  function handleSidebarScroll(event: UIEvent<HTMLElement>): void {
+    /** 固定本次滚动容器，异步回调不持有事件对象。 */
+    const list = event.currentTarget;
+    clearTimeout(sidebarScrollIdleTimerRef.current);
+    list.dataset.scrolling = 'true';
+    sidebarScrollIdleTimerRef.current = setTimeout(() => {
+      delete list.dataset.scrolling;
+    }, 1000);
+  }
   useEffect(() => {
     if (previousActiveProjectIdRef.current === props.activeProjectId) return;
     previousActiveProjectIdRef.current = props.activeProjectId;
@@ -1051,6 +1063,7 @@ export function SidebarNav(props: {
     return () => {
       projectMenuCloseTimerRefs.current.forEach((timer) => clearTimeout(timer));
       projectMenuCloseTimerRefs.current.clear();
+      clearTimeout(sidebarScrollIdleTimerRef.current);
     };
   }, []);
   const toggleProjectCollapsed = (projectId: string, expanded: boolean) => {
@@ -1419,7 +1432,7 @@ export function SidebarNav(props: {
       )}
       {/* 尚未添加项目时不渲染搜索与列表；筛选无匹配仍保留搜索入口。 */}
       {props.projects.length > 0 ? (
-        <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation}>
+        <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation} onScroll={handleSidebarScroll}>
           <div className="project-sidebar-heading">
             <label className="project-sidebar-search-field" onKeyDown={handleProjectSearchKeyDown}>
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
