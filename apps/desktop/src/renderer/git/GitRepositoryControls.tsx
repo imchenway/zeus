@@ -1200,7 +1200,7 @@ export function PullDialog(props: {
   const [submitting, setSubmitting] = useState(false);
   const locked = submitting || props.busy !== null;
   const branches = props.repository.snapshot.remoteBranches.filter((ref) => ref.startsWith(remote + '/') && !ref.endsWith('/HEAD')).map((ref) => ref.slice(remote.length + 1));
-  const optionsId = useId();
+  const selectedBranch = branches.includes(branch) ? branch : '';
   return (
     <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={locked} role="dialog" aria-label={props.zh ? '拉取' : 'Pull'}>
       <section className="project-git-reference-dialog project-git-sync-dialog" data-modal-surface="dialog">
@@ -1229,12 +1229,19 @@ export function PullDialog(props: {
             <label>
               <span>{props.zh ? '要拉取的远程分支' : 'Remote branch'}</span>
               <span className="project-git-sync-branch-input">
-                <input list={optionsId} value={branch} onChange={(event) => setBranch(event.currentTarget.value)} />
-                <datalist id={optionsId}>
-                  {branches.map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-                </datalist>
+                <ZeusSelect
+                  key={remote}
+                  ariaLabel={props.zh ? '要拉取的远程分支' : 'Remote branch to pull'}
+                  value={selectedBranch}
+                  onChange={setBranch}
+                  options={branches.map((name) => ({ value: name, label: name }))}
+                  triggerLabel={selectedBranch || (props.zh ? '选择远程分支' : 'Select a remote branch')}
+                  disabled={locked || !remote}
+                  size="regular"
+                  searchable
+                  searchPlaceholder={props.zh ? '搜索远程分支' : 'Search remote branches'}
+                  emptyLabel={branches.length ? (props.zh ? '没有匹配的远程分支' : 'No matching remote branches') : props.zh ? '暂无远程分支，请点击刷新' : 'No remote branches. Refresh to fetch them.'}
+                />
                 <Button
                   variant="secondary"
                   size="compact"
@@ -1286,13 +1293,13 @@ export function PullDialog(props: {
           </Button>
           <Button
             variant="primary"
-            disabled={locked || !remote || !branch.trim() || props.repository.snapshot.detached}
+            disabled={locked || !remote || !selectedBranch || props.repository.snapshot.detached}
             busy={submitting}
             onClick={async () => {
               if (locked) return;
               setSubmitting(true);
               try {
-                const outcome = await props.onExecute(props.repository, { type: 'pull', remote, targetBranch: branch.trim(), strategy: rebase ? 'rebase' : 'merge', commitMerge, includeMergeLog, noFastForward }, props.zh ? '拉取' : 'Pull');
+                const outcome = await props.onExecute(props.repository, { type: 'pull', remote, targetBranch: selectedBranch, strategy: rebase ? 'rebase' : 'merge', commitMerge, includeMergeLog, noFastForward }, props.zh ? '拉取' : 'Pull');
                 if (outcome) props.onClose();
               } finally {
                 setSubmitting(false);

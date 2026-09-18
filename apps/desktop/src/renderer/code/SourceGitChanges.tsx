@@ -6,6 +6,9 @@ import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
+import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { MagnifyingGlassIcon as Search } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import type { GitApiClient } from '../features/git/gitApiClient.js';
 import type { GitDiffSummary, GitFileStatusSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
@@ -13,6 +16,7 @@ import { BranchSwitcher, CheckoutRevisionDialog, NewBranchDialog, PushDialog, St
 import type { BusyState, ExecutionOutcome, OperationTone, PushSelection } from '../git/gitWorkbenchTypes.js';
 import { notifyProjectGitChanged, projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, visibleRepositoryFiles } from '../git/projectGitWorkbenchState.js';
 import { useGitCommitDrafts } from '../git/useGitCommitDrafts.js';
+import { repositoryColor } from '../git/repositoryColor.js';
 import { loadGitCommitModelOptions, type GitCommitModelsClient } from '../git/gitCommitModels.js';
 import { Button } from '../ui/Button.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -49,6 +53,13 @@ export function SourceGitChanges(props: {
   const [feedback, setFeedback] = useState('');
   const [tab, setTab] = useState<'commit' | 'stash'>('commit');
   const [query, setQuery] = useState('');
+  const [fileView, setFileView] = useState<'tree' | 'flat'>(() => {
+    try {
+      return localStorage.getItem('zeus.source.git.file-view.v1') === 'flat' ? 'flat' : 'tree';
+    } catch {
+      return 'tree';
+    }
+  });
   const [selection, setSelection] = useState<Selection>({});
   const [activeRepositoryId, setActiveRepositoryId] = useState('');
   const [activeFile, setActiveFile] = useState('');
@@ -337,10 +348,33 @@ export function SourceGitChanges(props: {
         {!client ? <p className="source-git-empty">{zh ? 'Git 服务尚未连接。' : 'Git is not connected.'}</p> : !snapshot && loading ? <p className="source-git-empty">{zh ? '正在读取更改…' : 'Loading changes…'}</p> : null}
         {tab === 'commit' ? (
           <>
-            <label className="source-git-search">
-              <Search />
-              <input aria-label={zh ? '筛选更改文件' : 'Filter changed files'} placeholder={zh ? '筛选文件…' : 'Filter files…'} value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
-            </label>
+            <div className="source-git-file-tools">
+              <label className="source-git-search">
+                <Search />
+                <input aria-label={zh ? '筛选更改文件' : 'Filter changed files'} placeholder={zh ? '筛选文件…' : 'Filter files…'} value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
+              </label>
+              <span className="project-git-file-view-control" title={fileView === 'flat' ? (zh ? '平铺结构' : 'Flat view') : zh ? '树状结构' : 'Tree view'}>
+                {fileView === 'flat' ? <ListBullets aria-hidden="true" /> : <TreeStructure aria-hidden="true" />}
+                <CaretDown aria-hidden="true" />
+                <select
+                  className="project-git-file-view-select"
+                  aria-label={zh ? `更改文件显示方式：${fileView === 'flat' ? '平铺结构' : '树状结构'}` : `Changed file view: ${fileView === 'flat' ? 'Flat view' : 'Tree view'}`}
+                  value={fileView}
+                  onChange={(event) => {
+                    const next = event.currentTarget.value === 'flat' ? 'flat' : 'tree';
+                    setFileView(next);
+                    try {
+                      localStorage.setItem('zeus.source.git.file-view.v1', next);
+                    } catch {
+                      /* 存储不可用时保留当前会话选择。 */
+                    }
+                  }}
+                >
+                  <option value="tree">{zh ? '树状结构' : 'Tree view'}</option>
+                  <option value="flat">{zh ? '平铺结构' : 'Flat view'}</option>
+                </select>
+              </span>
+            </div>
             <div className="source-git-files" aria-busy={loading}>
               {(['conflicts', 'changes', 'untracked'] as const).map((group: ChangeGroup) => {
                 const groups = repositories
@@ -383,6 +417,7 @@ export function SourceGitChanges(props: {
                           <small title={item.snapshot.branch}>{item.snapshot.branch}</small>
                         </summary>
                         <SourceChangeTree
+                          view={fileView}
                           files={files}
                           selected={selection[item.id] ?? []}
                           selectedPath={activeFile.startsWith(`${item.id}:`) ? activeFile.slice(item.id.length + 1) : ''}
@@ -553,6 +588,7 @@ function SelectionCheckbox(props: { label: string; paths: string[]; selected: st
 }
 
 function SourceChangeTree(props: {
+  view: 'tree' | 'flat';
   files: GitFileStatusSummary[];
   selected: string[];
   selectedPath: string;
@@ -570,13 +606,13 @@ function SourceChangeTree(props: {
   for (const file of props.files) {
     const rest = file.path.slice(prefix.length);
     const slash = rest.indexOf('/');
-    if (slash >= 0 && slash < rest.length - 1) {
+    if (props.view === 'tree' && slash >= 0 && slash < rest.length - 1) {
       const folder = rest.slice(0, slash + 1);
       folders.set(folder, [...(folders.get(folder) ?? []), file]);
     } else files.push(file);
   }
   return (
-    <div className="source-git-tree">
+    <div className="source-git-tree" data-view={props.view}>
       {[...folders]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([folder, children]) => (
@@ -618,7 +654,8 @@ function SourceChangeTree(props: {
             ) : null}
             <button type="button" title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} onClick={() => props.onOpen(file)} onDoubleClick={() => props.onOpenFile(file)}>
               <File />
-              <span>{file.path.slice(prefix.length)}</span>
+              <span className="source-git-file-name">{props.view === 'flat' ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path.slice(prefix.length)}</span>
+              {props.view === 'flat' && file.path.includes('/') ? <span className="source-git-file-directory">{file.path.slice(0, file.path.lastIndexOf('/'))}</span> : null}
               <small>{file.indexStatus.trim() || file.workingTreeStatus.trim()}</small>
             </button>
           </div>
@@ -633,9 +670,4 @@ function projectPath(repository: ProjectGitRepositoryWorkbenchItem, path: string
 export function fileDiff(repository: ProjectGitRepositoryWorkbenchItem, path: string): GitDiffSummary {
   const diff = repository.snapshot.diff;
   return { ...diff, files: [path], fileDiffs: diff.fileDiffs.filter((file) => file.newPath === path || file.oldPath === path) };
-}
-function repositoryColor(id: string): string {
-  let hash = 0;
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return ['#547fc0', '#a675b6', '#52988c', '#b68b56', '#7771bb'][hash % 5];
 }

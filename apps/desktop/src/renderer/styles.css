@@ -4242,7 +4242,7 @@ a {
   align-items: center;
   gap: 8px;
 }
-.project-git-sync-branch-input > input {
+.project-git-sync-branch-input > .zeus-select {
   flex: 1;
   min-inline-size: 0;
 }

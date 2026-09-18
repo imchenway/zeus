@@ -25,6 +25,7 @@ import type { BusyState } from './gitWorkbenchTypes.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
+import { repositoryColor } from './repositoryColor.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
@@ -1723,12 +1724,12 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
           className="project-git-navigation-repository"
           aria-current={props.selectedId === repository.id ? 'true' : undefined}
           onClick={() => props.onSelect(repository.id)}
-          title={`${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
+          title={`${repository.name} · ${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
         >
-          <GitBranch aria-hidden="true" />
-          <span>
-            {node.name}
-            <small>{snapshot.detached ? snapshot.headSha.slice(0, 7) : snapshot.branch}</small>
+          <span className="project-git-navigation-repository-color" style={{ backgroundColor: repositoryColor(repository.id) }} aria-hidden="true" />
+          <span className="project-git-navigation-repository-label">
+            <strong>{node.name}</strong>
+            <small title={snapshot.detached ? snapshot.headSha : snapshot.branch}>{snapshot.detached ? snapshot.headSha.slice(0, 7) : snapshot.branch}</small>
           </span>
           <span className="git-tracking-badge" aria-label={relation}>
             {relation}

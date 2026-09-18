@@ -96,11 +96,19 @@
   outline: 2px solid var(--zeus-control-focus);
   outline-offset: -2px;
 }
+.source-git-file-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 8px 6px;
+  flex-shrink: 0;
+}
 .source-git-search {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin: 0 8px 6px;
+  flex: 1;
+  min-width: 0;
   padding: 4px 7px;
   border: 1px solid var(--zeus-product-line);
   border-radius: 5px;
@@ -238,13 +246,26 @@
   color: var(--zeus-product-muted);
   font-size: 10px;
 }
-.source-git-file[data-status='modified'] > button > span {
+.source-git-tree[data-view='flat'] > .source-git-file {
+  padding-left: 0;
+}
+.source-git-tree[data-view='flat'] .source-git-file-name {
+  max-width: 65%;
+  flex-shrink: 0;
+}
+.source-git-file > button > .source-git-file-directory {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--zeus-product-muted);
+}
+.source-git-file[data-status='modified'] > button > .source-git-file-name {
   color: var(--zeus-info-text, #547fc0);
 }
-.source-git-file[data-status='added'] > button > span {
+.source-git-file[data-status='added'] > button > .source-git-file-name {
   color: var(--zeus-success-text, #438c65);
 }
-.source-git-file[data-status='deleted'] > button > span {
+.source-git-file[data-status='deleted'] > button > .source-git-file-name {
   text-decoration: line-through;
 }
 .source-git-commit {

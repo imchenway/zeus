@@ -1756,6 +1756,35 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--zeus-product-muted);
   font-size: 11px;
 }
+/* 仓库行与源码更改列表一致：色块、名称和分支同行，同步状态留在行尾。 */
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-navigation-repository > .project-git-navigation-repository-color {
+  flex: 0 0 9px;
+  inline-size: 9px;
+  block-size: 9px;
+  border-radius: 2px;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-navigation-repository-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-navigation-repository-label > strong {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 650;
+}
+.macos-ai-app.zeus-shell .project-git-navigator .project-git-navigation-repository-label > small {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
 .macos-ai-app.zeus-shell .project-git-navigator p {
   margin: 6px 12px;
   color: var(--zeus-product-muted);
