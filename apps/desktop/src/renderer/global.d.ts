@@ -1,3 +1,4 @@
+import type { SourceLanguageRequest, SourceLanguageResult } from '@zeus/shared';
 import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
 import type { GitFileBlame } from '@zeus/git-core';
 import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
@@ -158,6 +159,8 @@ declare global {
       releaseFilePreview: (ids: string[]) => Promise<void>;
       /** 用户主动请求系统查看或导出当前预览版本。 */
       actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => Promise<void>;
+      requestProjectSourceLanguage: (input: SourceLanguageRequest) => Promise<SourceLanguageResult>;
+      releaseProjectSourceLanguage: (projectId: string) => Promise<void>;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
       saveProjectSourceFile: (input: SaveProjectSourceFileInput) => Promise<ProjectSourceDocument>;
       createProjectSourceEntry: (input: CreateProjectSourceEntryInput) => Promise<ProjectSourceEntry>;

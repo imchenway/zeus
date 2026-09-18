@@ -1,16 +1,17 @@
-import { createContext, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type FileReview, type ConversationFileLocation, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './filePreview.css';
+import { CodeReviewTextContext } from './codeReviewContext.js';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
 export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
-/** Git 差异继续使用既有的虚拟化增删行视图。 */
+/** Git 差异按需加载 Monaco 审阅视图。 */
 const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 /** Markdown 沿用受限渲染器，不加载任意活动 HTML。 */
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
@@ -121,6 +122,8 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
   const textOnly = items?.some((item) => item.kind === 'text') && items.every((item) => item.kind === 'text' || item.kind === 'unavailable');
   /** 按文件类型和用户选择确定当前视图。 */
   const showDiff = Boolean(props.children) && (mode === 'diff' || (mode === 'auto' && textOnly));
+  // 无法读取的版本不能推断为空；仅在两端文本都可用时提供完整内容。
+  const reviewText = useMemo(() => (items?.length === 2 && items.every((item) => item.kind === 'text') ? { original: items[0]!.content ?? '', modified: items[1]!.content ?? '' } : null), [items]);
   /** 图片两端使用并排展示。 */
   const images = items && items.length === 2 && items.some((item) => item.kind === 'image') && items.every((item) => item.kind === 'image' || item.kind === 'unavailable');
   /** 当前可用版本侧。 */
@@ -179,7 +182,7 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
         </nav>
       ) : null}
       {showDiff ? (
-        props.children
+        <CodeReviewTextContext.Provider value={reviewText}>{props.children}</CodeReviewTextContext.Provider>
       ) : error ? (
         <p role="alert">{simpleImage && typeof error === 'string' ? error : <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />}</p>
       ) : !items ? (

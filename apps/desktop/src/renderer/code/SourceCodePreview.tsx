@@ -57,8 +57,6 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const blameLabels = useMemo<SourceBlameLabels>(
     () =>
       props.blameLabels ?? {
-        show: 'Show Git blame',
-        hide: 'Hide Git blame',
         loading: 'Loading Git blame…',
         unavailable: 'Git blame unavailable',
         retry: 'Retry',
@@ -152,9 +150,9 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const extension = gitBlame.enabled && gitBlame.blame?.lines.length ? blameDecorations(gitBlame.blame.lines, blameLabels) : [];
+    const extension = gitBlame.blame?.lines.length ? blameDecorations(gitBlame.blame.lines, blameLabels) : [];
     view.dispatch({ effects: blameSlot.reconfigure(extension) });
-  }, [blameLabels, blameSlot, gitBlame.blame, gitBlame.enabled, props.content, props.path, props.label, commentsEnabled]);
+  }, [blameLabels, blameSlot, gitBlame.blame, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */

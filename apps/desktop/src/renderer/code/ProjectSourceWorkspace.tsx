@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { sourceConflictExtensions } from './sourceConflictExtensions.js';
+import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { sourceWorkspaces, sourceModels, sourceModelKey, retainSourceModels, releaseSourceWorkspace } from './sourceEditorState.js';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
@@ -14,7 +14,6 @@ import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/di
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
-import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
@@ -53,10 +52,21 @@ function SourceChanges(props: { projectId: string; zh: boolean; onConflict(path:
     };
   }, [props.projectId, props.zh, refreshKey]);
   useEffect(() => {
-    const refresh = () => setRefreshKey((key) => key + 1);
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setRefreshKey((key) => key + 1), 250);
+    };
+    const unsubscribe = window.zeus?.onProjectSourceEvent((event) => {
+      if (event.projectId === props.projectId) refresh();
+    });
     window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      unsubscribe?.();
+      window.removeEventListener('focus', refresh);
+    };
+  }, [props.projectId]);
   return (
     <details className="project-source-module project-source-changes" open>
       <summary>{props.zh ? '更改' : 'Changes'}</summary>
@@ -128,11 +138,12 @@ type AppLanguage = 'zh-CN' | 'en-US';
 interface SourceTab {
   document: ProjectSourceDocument;
   /** 编辑期间保留文档树，跨进程保存时才展开全文。 */
-  draft: string | Text;
+  draft: string;
   dirty: boolean;
   saving: boolean;
   externalChange: boolean;
   revealLine?: number | null;
+  revealColumn?: number | null;
   cursorLine: number;
   cursorColumn: number;
 }
@@ -165,7 +176,7 @@ export interface ProjectSourceWorkspaceProps {
 export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, ProjectSourceWorkspaceProps>(function ProjectSourceWorkspace(props, ref) {
   const zh = props.language === 'zh-CN';
   const [conflictComparison, setConflictComparison] = useState<{ current: string; incoming: string } | null>(null);
-  const conflictExtensions = useMemo(() => sourceConflictExtensions(zh, (current, incoming) => setConflictComparison({ current, incoming })), [zh]);
+  const compareConflict = useCallback((current: string, incoming: string) => setConflictComparison({ current, incoming }), []);
   const bridge = typeof window === 'undefined' ? undefined : window.zeus;
   const initialPreference = normalizePreference(props.preference);
   const [directories, setDirectories] = useState<Record<string, ProjectSourceDirectorySnapshot>>({});
@@ -261,6 +272,84 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     [bridge, props.project.id, zh],
   );
 
+  const openPaths = tabs.map((tab) => tab.document.relativePath).join('\0');
+  useEffect(() => {
+    retainSourceModels(props.project.id, openPaths ? openPaths.split('\0') : []);
+  }, [props.project.id, openPaths]);
+  useEffect(() => () => releaseSourceWorkspace(props.project.id), [props.project.id]);
+  useEffect(() => {
+    const projectId = props.project.id;
+    const actions = {
+      hasOpenFile(path: string) {
+        return tabsRef.current.some((tab) => tab.document.relativePath === path);
+      },
+      buffers() {
+        return tabsRef.current
+          .filter((tab) => tab.document.editable)
+          .map((tab) => {
+            const model = sourceModels.get(sourceModelKey(projectId, tab.document.relativePath))?.model;
+            return { relativePath: tab.document.relativePath, content: model?.getValue() ?? tab.draft, version: model?.getVersionId() ?? 0 };
+          });
+      },
+      async open(path: string, range?: import('@zeus/shared').SourceRange) {
+        await openFile(path, range?.startLineNumber);
+        if (range) setTabs((current) => current.map((tab) => (tab.document.relativePath === path ? { ...tab, revealLine: range.startLineNumber, revealColumn: range.startColumn } : tab)));
+        // 等标签页提交视图，VS Code 的跳转服务才能定位新编辑器。
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      },
+      changed(path: string, content: string) {
+        setTabs((current) => current.map((tab) => (tab.document.relativePath === path ? { ...tab, draft: content, dirty: content !== tab.document.content, revealLine: null, revealColumn: null } : tab)));
+      },
+      reportStatus(message: string) {
+        setNotice(message);
+      },
+      async prepareEdits(edits: import('@zeus/shared').SourceLanguageEdit[], contents: Record<string, string>) {
+        if (!bridge) throw new Error('项目源码服务不可用。');
+        const paths = [...new Set(edits.map((edit) => edit.relativePath))];
+        const missing = paths.filter((path) => !tabsRef.current.some((tab) => tab.document.relativePath === path));
+        if (tabsRef.current.length + missing.length > 20) throw new Error('重命名需要打开更多文件，请先关闭部分标签（最多 20 个）。');
+        const documents = await Promise.all(missing.map((relativePath) => bridge.readProjectSourceFile({ projectId, relativePath })));
+        for (const path of paths) {
+          const tab = tabsRef.current.find((item) => item.document.relativePath === path);
+          const document = tab?.document ?? documents.find((item) => item.relativePath === path);
+          const content = sourceModels.get(sourceModelKey(projectId, path))?.model.getValue() ?? tab?.draft ?? document?.content;
+          if (!document?.editable || content !== contents[path]) throw new Error('重命名分析期间文件内容发生变化，请重试。');
+        }
+        try {
+          const runtime = await import('./monacoRuntime.js');
+          await Promise.all(
+            paths.map((path) => {
+              const tab = tabsRef.current.find((item) => item.document.relativePath === path);
+              const document = tab?.document ?? documents.find((item) => item.relativePath === path)!;
+              return runtime.ensureSourceModel(projectId, path, { content: tab?.draft ?? document.content, language: document.language });
+            }),
+          );
+          if (sourceWorkspaces.get(projectId) !== actions) throw new Error('项目已关闭，请重新打开后重试。');
+          const remaining = paths.filter((path) => !tabsRef.current.some((tab) => tab.document.relativePath === path));
+          if (tabsRef.current.length + remaining.length > 20) throw new Error('重命名需要打开更多文件，请先关闭部分标签（最多 20 个）。');
+          // 全部目标验证成功后才发布标签；原生 WorkspaceEdit 随后统一更新模型。
+          for (const path of paths) if (sourceModels.get(sourceModelKey(projectId, path))?.model.getValue() !== contents[path]) throw new Error('文件已变化，请重新执行重命名。');
+          const additions: SourceTab[] = documents.map((document) => ({ document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }));
+          setTabs((current) => [...current, ...additions.filter((addition) => !current.some((tab) => tab.document.relativePath === addition.document.relativePath))]);
+          // 防止模型事件早于 React 标签状态的发布。
+          tabsRef.current = [...tabsRef.current, ...additions.filter((addition) => !tabsRef.current.some((tab) => tab.document.relativePath === addition.document.relativePath))];
+        } catch (error) {
+          const opened =
+            sourceWorkspaces
+              .get(projectId)
+              ?.buffers()
+              .map((buffer) => buffer.relativePath) ?? [];
+          retainSourceModels(projectId, opened);
+          throw error;
+        }
+      },
+    };
+    sourceWorkspaces.set(projectId, actions);
+    return () => {
+      if (sourceWorkspaces.get(projectId) === actions) sourceWorkspaces.delete(projectId);
+    };
+  }, [props.project.id, bridge, openFile]);
+
   const saveTab = useCallback(
     async (relativePath: string): Promise<boolean> => {
       const tab = tabsRef.current.find((candidate) => candidate.document.relativePath === relativePath);
@@ -268,6 +357,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       if (!tab.document.editable || !bridge?.saveProjectSourceFile) return false;
       setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: true } : candidate)));
       setError(null);
+      setNotice(null);
       try {
         const document = await bridge.saveProjectSourceFile({
           projectId: props.project.id,
@@ -434,7 +524,16 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       }
       try {
         const document = await sourceBridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
-        if (active) setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, document, draft: document.content, externalChange: false } : candidate)));
+        if (active)
+          setTabs((current) =>
+            current.map((candidate) =>
+              candidate.document.relativePath !== relativePath
+                ? candidate
+                : candidate.dirty
+                  ? { ...candidate, externalChange: document.revision.sha256 !== candidate.document.revision.sha256 }
+                  : { ...candidate, document, draft: document.content, externalChange: false },
+            ),
+          );
       } catch {
         if (active) {
           // 外部删除、重命名或暂时不可访问只更新标签状态，保留内容，不弹出操作失败提示。
@@ -633,8 +732,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   return (
     <section className="project-source-workspace" style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties} data-tree-open={treeDrawerOpen ? 'true' : 'false'}>
       {notice || activeTab?.externalChange ? (
-        <div className="project-source-message success" role="status">
-          <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
+        <div className={`project-source-message ${activeTab?.externalChange ? 'failed' : 'success'}`} role="status">
+          <span>{activeTab?.externalChange ? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.') : notice}</span>
           {activeTab?.externalChange ? (
             <>
               <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
@@ -862,14 +961,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     revision={activeTab.document.revision.sha256}
                     dirty={activeTab.dirty}
                     zh={zh}
-                    extensions={conflictExtensions}
+                    onCompareConflict={compareConflict}
                     path={activeTab.document.relativePath}
                     language={activeTab.document.language}
                     content={activeTab.draft}
                     savedContent={activeTab.document.content}
                     readOnly={false}
                     revealLine={activeTab.revealLine}
-                    onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLine: null } : tab)))}
+                    revealColumn={activeTab.revealColumn}
                     onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
                     onSave={() => void saveTab(activeTab.document.relativePath)}
                     onSaveAll={() => void saveAll()}
@@ -1078,6 +1177,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath: activeTab.document.relativePath });
       setTabs((current) => current.map((tab) => (tab.document.relativePath === document.relativePath ? { ...tab, document, draft: document.content, dirty: false, externalChange: false } : tab)));
       setError(null);
+      setNotice(zh ? `已重新加载 ${document.relativePath}` : `Reloaded ${document.relativePath}`);
     } catch (reloadError) {
       setError(reloadError);
     }

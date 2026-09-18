@@ -304,6 +304,8 @@ export interface GitBlameLine {
 export interface GitFileBlame {
   path: string;
   lines: GitBlameLine[];
+  /** 没有可追溯历史属于正常状态，不能与 Git 执行失败混为一谈。 */
+  unavailableReason?: 'not_repository' | 'no_commits' | 'uncommitted_file' | 'not_in_revision';
 }
 
 export interface ProjectGitStashEntry {
@@ -2534,8 +2536,9 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
         : ['--literal-pathspecs', 'rm', '--cached', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
       break;
     case 'apply_patch': {
-      const patch = action.patch.trim();
-      if (!patch || patch.length > 2 * 1024 * 1024 || patch.includes('\0') || (!patch.includes('\ndiff --git ') && !patch.startsWith('diff --git '))) {
+      // 补丁末尾换行和上下文空白属于补丁内容，不能裁剪，否则 git apply 会判定补丁损坏。
+      const patch = action.patch;
+      if (!patch.trim() || patch.length > 2 * 1024 * 1024 || patch.includes('\0') || (!patch.includes('\ndiff --git ') && !patch.startsWith('diff --git '))) {
         throw gitCoreError('ZEUS_GIT_PATCH_INVALID', 'Git hunk patch is invalid or exceeds the size limit.');
       }
       if (action.target === 'worktree' && !action.reverse) throw gitCoreError('ZEUS_GIT_PATCH_TARGET_INVALID', 'Working-tree patches may only discard an existing hunk.');
@@ -2853,23 +2856,13 @@ export async function getFileBlame(cwd: string, filePath: string, ref?: string, 
     throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path escapes the selected project: ${filePath}`);
   }
 
-  // 文件可能位于子模块或独立子仓库，授权边界仍由项目根目录约束。
   if (relative(projectRoot, absolutePath).split(sep).includes('.git')) throw gitCoreError('ZEUS_GIT_PATH_INVALID', '不能读取 Git 管理目录的归属。');
-  const context = await getGitRepositoryContext(dirname(absolutePath));
-  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
-  const repositoryRoot = canonicalFilesystemPath(context.topLevel);
-  if (!isPathInside(repositoryRoot, absolutePath) || absolutePath === repositoryRoot) {
-    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path is outside the Git repository: ${filePath}`);
-  }
-  const repositoryPath = relative(repositoryRoot, absolutePath);
-  if (!repositoryPath || isAbsolute(repositoryPath) || repositoryPath === '..' || repositoryPath.startsWith(`..${sep}`)) {
-    throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository-relative source path: ${filePath}`);
-  }
-
-  const revision = ref?.trim() ? await resolveCommit(repositoryRoot, ref) : undefined;
+  const path = relative(projectRoot, absolutePath).split(sep).join('/');
+  const requestedRef = ref?.trim() || undefined;
+  const unavailable = (unavailableReason: NonNullable<GitFileBlame['unavailableReason']>): GitFileBlame => ({ path, lines: [], unavailableReason });
   const verifyContent = async () => {
     if (expectedSha256 === undefined) return;
-    if (revision || !/^[a-f0-9]{64}$/u.test(expectedSha256)) throw gitCoreError('ZEUS_GIT_BLAME_REVISION_INVALID', '源码版本校验参数无效。');
+    if (requestedRef || !/^[a-f0-9]{64}$/u.test(expectedSha256)) throw gitCoreError('ZEUS_GIT_BLAME_REVISION_INVALID', '源码版本校验参数无效。');
     const bytes = await readFile(absolutePath);
     const actual = createHash('sha256').update(bytes).digest('hex');
     // 会话预览的 UTF-8 解码会去除 BOM，兼容正文摘要和项目编辑器的原始字节摘要。
@@ -2877,18 +2870,56 @@ export async function getFileBlame(cwd: string, filePath: string, ref?: string, 
     if (actual !== expectedSha256 && previewHash !== expectedSha256) throw gitCoreError('ZEUS_GIT_BLAME_STALE', '文件内容已经变化，请重新打开文件后查看归属。');
   };
   await verifyContent();
+
+  const readGit = (directory: string, args: string[]) => execFileAsync('git', args, { cwd: directory, env: { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' }, timeout: 30_000, maxBuffer: 32 * 1024 * 1024 });
+  const readFailure = (error: unknown) => {
+    const detail = redactGitOutput(commandFailureDetail(error));
+    // Electron IPC 不保留 Error 自定义字段，原因也要进入消息，界面才能展示实际故障。
+    return gitCoreError('ZEUS_GIT_BLAME_FAILED', `无法读取文件归属：${detail}`, detail);
+  };
+
+  // 文件可能位于子模块或独立子仓库，只发现所属仓库，不读取整个仓库的分支和工作树清单。
+  let repositoryRoot: string;
+  try {
+    const { stdout } = await readGit(dirname(absolutePath), ['rev-parse', '--show-toplevel']);
+    repositoryRoot = canonicalFilesystemPath(stdout.replace(/\r?\n$/u, ''));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 128 && 'stderr' in error && typeof error.stderr === 'string' && error.stderr.startsWith('fatal: not a git repository')) return unavailable('not_repository');
+    throw readFailure(error);
+  }
+  if (!isPathInside(repositoryRoot, absolutePath) || absolutePath === repositoryRoot) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Source file path is outside the Git repository: ${filePath}`);
+  const repositoryPath = relative(repositoryRoot, absolutePath);
+  if (!repositoryPath || isAbsolute(repositoryPath) || repositoryPath === '..' || repositoryPath.startsWith(`..${sep}`)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository-relative source path: ${filePath}`);
+
+  const revision = requestedRef ? await resolveCommit(repositoryRoot, requestedRef) : undefined;
+  if (!revision) {
+    try {
+      await readGit(repositoryRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 1) return unavailable('no_commits');
+      throw readFailure(error);
+    }
+  }
   const args = ['-c', 'core.quotePath=false', '--no-pager', 'blame', '--line-porcelain', ...(revision ? [revision] : []), '--', repositoryPath];
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync('git', args, { cwd: repositoryRoot, timeout: 30_000, maxBuffer: 32 * 1024 * 1024 }));
+    ({ stdout } = await readGit(repositoryRoot, args));
   } catch (error) {
-    throw gitCoreError('ZEUS_GIT_BLAME_FAILED', `Unable to read Git blame for ${filePath}.`, commandFailureDetail(error));
+    // 先让 Git 追溯索引中的重命名；失败后再区分文件没有历史，避免提前丢掉可追溯的归属。
+    try {
+      const tree = await readGit(repositoryRoot, ['--literal-pathspecs', 'ls-tree', '-z', revision ?? 'HEAD', '--', repositoryPath]);
+      if (!tree.stdout) {
+        await verifyContent();
+        return unavailable(revision ? 'not_in_revision' : 'uncommitted_file');
+      }
+    } catch (checkError) {
+      if (checkError && typeof checkError === 'object' && 'code' in checkError && checkError.code === 'ZEUS_GIT_BLAME_STALE') throw checkError;
+      throw readFailure(checkError);
+    }
+    throw readFailure(error);
   }
   await verifyContent();
-  return {
-    path: relative(projectRoot, absolutePath).split(sep).join('/'),
-    lines: parseGitBlamePorcelain(stdout),
-  };
+  return { path, lines: parseGitBlamePorcelain(stdout) };
 }
 
 /** 解析 `git blame --line-porcelain` 的记录块，兼容多行归属块和逐行归属输出。 */

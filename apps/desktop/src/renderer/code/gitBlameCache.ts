@@ -30,13 +30,13 @@ function prune(): void {
   }
 }
 
-export function readCachedGitBlame(key: string, revision: string, load: () => Promise<GitFileBlame>): Promise<GitFileBlame> {
+export function readCachedGitBlame(key: string, revision: string, load: () => Promise<GitFileBlame>, refresh = false): Promise<GitFileBlame> {
   prune();
   const cached = entries.get(key);
   if (cached?.revision === revision) {
     entries.delete(key);
     entries.set(key, cached);
-    if (cached.value) return Promise.resolve(cached.value);
+    if (cached.value && !refresh) return Promise.resolve(cached.value);
     if (cached.promise) return cached.promise;
   }
   const entry: Entry = { revision, updatedAt: Date.now() };

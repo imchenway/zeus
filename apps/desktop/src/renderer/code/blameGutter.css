@@ -12,7 +12,7 @@
   font-size: 11px;
 }
 
-.session-source-blame-toggle {
+.session-source-blame-action {
   appearance: none;
   border: 0;
   border-radius: 5px;
@@ -23,19 +23,14 @@
   font: inherit;
 }
 
-.session-source-blame-toggle:hover:not(:disabled) {
+.session-source-blame-action:hover:not(:disabled) {
   background: color-mix(in srgb, var(--session-text-muted, #6b7280) 12%, transparent);
   color: var(--session-text, #1f2937);
 }
 
-.session-source-blame-toggle:focus-visible {
+.session-source-blame-action:focus-visible {
   outline: 2px solid var(--session-accent, #408bd8);
   outline-offset: 1px;
-}
-
-.session-source-blame-toggle[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--session-accent, #408bd8) 14%, transparent);
-  color: var(--session-text, #1f2937);
 }
 
 .session-source-blame-status {
@@ -85,4 +80,23 @@
 .session-source-blame-inline:focus-visible {
   outline: 1px solid var(--session-accent, #408bd8);
   outline-offset: 2px;
+}
+
+.session-source-blame-error {
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.session-source-blame-error summary {
+  cursor: pointer;
+}
+
+.session-source-blame-error pre {
+  max-block-size: 120px;
+  overflow: auto;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  user-select: text;
 }

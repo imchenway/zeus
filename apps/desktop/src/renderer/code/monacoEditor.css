@@ -1,0 +1,124 @@
+/* 编辑器仍跟随 Zeus 的布局和品牌色，内部浮层使用原生 Monaco 交互。 */
+.zeus-monaco-editor {
+  flex: 1;
+}
+.zeus-monaco-editor .monaco-editor {
+  --vscode-focusBorder: var(--zeus-brand-primary);
+}
+.source-editor-error {
+  padding: 16px;
+  color: var(--zeus-danger-text);
+}
+.source-language-status {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--zeus-product-muted);
+  border-bottom: 1px solid var(--zeus-border-subtle);
+}
+.source-conflict-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-text);
+  padding: 2px 8px;
+}
+.source-conflict-actions button {
+  font-size: 11px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.source-conflict-actions button:hover {
+  background: var(--zeus-interaction-hover);
+}
+.monaco-editor .source-conflict-current {
+  background: #249b8328;
+}
+.monaco-editor .source-conflict-incoming {
+  background: #408bd828;
+}
+.monaco-editor .source-blame-inline {
+  color: var(--zeus-product-muted);
+  opacity: 0.72;
+  font-style: italic;
+  margin-left: 22px;
+}
+.zeus-monaco-diff {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.zeus-diff-navigation {
+  position: absolute;
+  right: 18px;
+  top: 4px;
+  display: flex;
+  gap: 3px;
+  z-index: 5;
+}
+.zeus-diff-navigation button {
+  border: 1px solid var(--zeus-border-subtle);
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.zeus-diff-margin {
+  overflow: visible !important;
+  white-space: nowrap;
+  display: flex;
+  width: max-content !important;
+}
+.zeus-diff-margin > span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 50px;
+  height: 20px;
+}
+.zeus-diff-margin button {
+  font: inherit;
+  padding: 0 3px;
+  height: 20px;
+}
+.monaco-editor .code-diff-line.is-addition,
+.monaco-editor .code-diff-line.is-replacement {
+  background: #26945b24;
+}
+.monaco-editor .code-diff-line.is-deletion {
+  background: #d14b4b24;
+}
+
+.zeus-conflict-actions {
+  display: flex;
+  width: 48px !important;
+  overflow: visible !important;
+}
+.zeus-conflict-actions button {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--zeus-product-text);
+  cursor: pointer;
+}
+.zeus-conflict-actions button[aria-pressed='true'] {
+  background: var(--zeus-control-bg);
+  color: var(--zeus-control-accent);
+}
+.zeus-conflict-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 交互区块位于代码绘制层上方，使鼠标可以直接操作评论和冲突按钮。 */
+.monaco-editor .view-zones > .source-conflict-actions,
+.monaco-editor .view-zones > .code-diff-annotation {
+  z-index: 1;
+}

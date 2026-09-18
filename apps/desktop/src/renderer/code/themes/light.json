@@ -1,0 +1,56 @@
+{
+  "name": "Zeus Light",
+  "type": "light",
+  "colors": {
+    "editor.background": "#ffffff",
+    "editor.foreground": "#202124",
+    "editorLineNumber.foreground": "#8c919a",
+    "editorLineNumber.activeForeground": "#6155d8",
+    "editor.selectionBackground": "#6155d850",
+    "editor.lineHighlightBackground": "#6155d811",
+    "editorCursor.foreground": "#6155d8",
+    "focusBorder": "#6155d8",
+    "editorWidget.background": "#f7f8fa",
+    "editorWidget.border": "#6155d855",
+    "editorSuggestWidget.selectedBackground": "#6155d835",
+    "textLink.foreground": "#6155d8"
+  },
+  "tokenColors": [
+    {
+      "scope": ["comment"],
+      "settings": {
+        "foreground": "#8d829e"
+      }
+    },
+    {
+      "scope": ["keyword", "storage"],
+      "settings": {
+        "foreground": "#6155d8"
+      }
+    },
+    {
+      "scope": ["string"],
+      "settings": {
+        "foreground": "#298356"
+      }
+    },
+    {
+      "scope": ["constant.numeric", "constant.language"],
+      "settings": {
+        "foreground": "#a66515"
+      }
+    },
+    {
+      "scope": ["entity.name.function", "support.function"],
+      "settings": {
+        "foreground": "#2468a0"
+      }
+    },
+    {
+      "scope": ["entity.name.type", "support.type"],
+      "settings": {
+        "foreground": "#916321"
+      }
+    }
+  ]
+}
