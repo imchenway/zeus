@@ -1,7 +1,7 @@
 /* Git 工作区共用中性色与主题令牌，供独立 Git 页和源码工具窗口使用。 */
 .macos-ai-app.zeus-shell .project-git-workbench .git-command-toolbar {
   display: flex;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 5px;
   min-height: 62px;
   flex: 0 0 62px;
@@ -63,10 +63,10 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  flex: 0 1 250px;
-  min-width: 140px;
-  height: 50px;
-  margin-right: auto;
+  min-width: 0;
+  min-height: 50px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--zeus-product-line);
 }
 .macos-ai-app.zeus-shell .git-toolbar-identity .project-git-branch-trigger {
   background: transparent;
@@ -351,8 +351,18 @@
 
 /* Mac 客户端的紧凑导航与单行历史，颜色沿用上游主题。 */
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator {
-  background: var(--zeus-page-background);
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
   padding: 6px 8px;
+}
+.macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-content {
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+}
+.macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-layout {
+  grid-template-columns: minmax(140px, var(--git-navigation, 20%)) 8px minmax(0, 1fr);
 }
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator details + details {
   margin-block-start: 8px;
