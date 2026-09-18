@@ -5,7 +5,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "../../script/build_and_run.sh",
-    "build": "node scripts/clean-build-output.mjs && node scripts/prepare-distribution-assets.mjs && vite build && node scripts/build-native-helpers.mjs && node scripts/build-browser-extensions.mjs && tsc -p tsconfig.preload.json && node scripts/bundle-preload.mjs && tsc -p tsconfig.main.json",
+    "build": "node scripts/clean-build-output.mjs && vite build && node scripts/build-native-helpers.mjs && node scripts/build-browser-extensions.mjs && tsc -p tsconfig.preload.json && node scripts/bundle-preload.mjs && tsc -p tsconfig.main.json",
     "package:mac": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs",
     "package:mac:test": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs",
     "package:mac:release": "ZEUS_PACKAGE_VARIANT=release ZEUS_RELEASE_BUILD=1 node ../../scripts/package-mac.mjs --dmg"
@@ -13,7 +13,6 @@
   "dependencies": {
     "@xyflow/react": "^12.11.6",
     "@zeus/ai-runtime": "workspace:*",
-    "@zeus/distribution": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",

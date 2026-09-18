@@ -1,4 +1,3 @@
-import { zeusReleaseBaseUrl } from '../../tooling/distribution.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
 import { projectTerminalOutput } from '@zeus/shared';
@@ -596,7 +595,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         currentVersion: '0.1.0',
         latestVersion: '0.1.0',
         channel: 'stable',
-        releasePageUrl: `${zeusReleaseBaseUrl}/latest`,
+        releasePageUrl: 'https://github.com/imchenway/zeus/releases/latest',
         artifact: null,
         executionHostProtocolVersion: 2,
         automaticInstallEnabled: false,

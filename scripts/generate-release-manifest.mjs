@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { releaseTag } from './desktop-distribution.mjs';
 /* global console, process */
-import { zeusDistribution } from './desktop-distribution.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -10,8 +8,10 @@ import { parseBoolean, sha256File } from './release-script-utils.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
-const defaultRepository = zeusDistribution.repository;
-const defaultHomebrewTap = zeusDistribution.homebrewTap;
+/** Zeus 唯一公开发布仓库。 */
+const defaultRepository = 'imchenway/zeus';
+/** 官方 Homebrew 升级来源。 */
+const defaultHomebrewTap = 'imchenway/tap';
 const currentExecutionHostProtocolVersion = 2;
 
 function normalizeVersion(version) {
@@ -37,20 +37,19 @@ function normalizeHomebrewTap(homebrewTap) {
   return trimmed || defaultHomebrewTap;
 }
 
+/** 根据候选产物生成官方稳定渠道清单，并拒绝非官方来源。 */
 export function renderReleaseManifest(input) {
   const version = normalizeVersion(input.version);
   const repository = normalizeRepository(input.repository);
   const homebrewTap = normalizeHomebrewTap(input.homebrewTap);
-  if (repository !== zeusDistribution.repository || homebrewTap !== zeusDistribution.homebrewTap) throw new Error('发布来源与发行配置不一致。');
-  if ((input.channel ?? 'stable') !== zeusDistribution.channel) throw new Error('发布渠道与发行配置不一致。');
-  const tag = releaseTag(version);
+  if (repository !== defaultRepository || homebrewTap !== defaultHomebrewTap || (input.channel ?? 'stable') !== 'stable') throw new Error('只允许生成 Zeus 官方稳定渠道的发布清单。');
+  const tag = `v${version}`;
   const releaseBaseUrl = `https://github.com/${repository}/releases`;
   const releaseDownloadBaseUrl = `${releaseBaseUrl}/download/${tag}`;
   const manifest = {
     app: 'Zeus',
-    distributionId: zeusDistribution.id,
+    // 保留固定候选身份，发布时复核制品确实来自本次提交。
     sourceCommit: input.sourceCommit ?? null,
-    upstream: input.upstream ?? null,
     schemaVersion: 1,
     version,
     channel: input.channel ?? 'stable',
@@ -73,7 +72,6 @@ export function renderReleaseManifest(input) {
       downloadUrl: artifact.downloadUrl ?? `${releaseDownloadBaseUrl}/${encodeURIComponent(artifact.fileName)}`,
     })),
     homebrew: {
-      enabled: zeusDistribution.homebrewEnabled,
       tap: homebrewTap,
       cask: 'zeus',
       installCommand: `brew install --cask ${homebrewTap}/zeus`,
@@ -97,7 +95,7 @@ async function discoverArtifacts({ distDir, version, repository }) {
       fileName,
       sha256: await sha256File(filePath),
       sizeBytes: fileStat.size,
-      downloadUrl: `https://github.com/${repository}/releases/download/${releaseTag(version)}/${encodeURIComponent(fileName)}`,
+      downloadUrl: `https://github.com/${repository}/releases/download/v${version}/${encodeURIComponent(fileName)}`,
     });
   }
   return artifacts.sort((left, right) => `${left.arch}-${left.kind}`.localeCompare(`${right.arch}-${right.kind}`));
@@ -112,12 +110,8 @@ export async function generateReleaseManifest({ version, channel = 'stable', rep
     version: normalizedVersion,
     repository: normalizedRepository,
   });
-  const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir, encoding: 'utf8' }).trim();
-  // 上游自身不产生同步基线；派生发行仍须读取真实记录，缺失或损坏时阻断发布。
-  const upstream = zeusDistribution.repository === zeusDistribution.upstreamRepository ? null : JSON.parse(await readFile(join(rootDir, 'releases/upstream-baseline.json'), 'utf8'));
   const content = renderReleaseManifest({
-    sourceCommit,
-    upstream,
+    sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir, encoding: 'utf8' }).trim(),
     version: normalizedVersion,
     channel,
     repository: normalizedRepository,

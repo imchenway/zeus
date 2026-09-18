@@ -1,7 +1,6 @@
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacitySupported } from '@zeus/shared';
 import type { ConversationWorktreeOptions } from '@zeus/shared';
-import { createDistributionContext, type DistributionConfig } from '@zeus/shared';
 
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { parseJsonObject } from './localServerPlatformSupport.js';
@@ -266,8 +265,6 @@ function claimCodexFinalizationOwnership(error: unknown): unknown {
 }
 
 export interface CreateLocalServerOptions {
-  /** 宿主注入发行信息；未提供时使用上游配置。 */
-  distribution?: DistributionConfig;
   dbPath: string;
   apiToken: string;
   /** Electron Main 派生并经 Execution Host bootstrap 贯穿；Core 不得自行回退到生产 service。 */
@@ -646,12 +643,13 @@ export type TelegramDispatchPreviewBody = TelegramUpdate;
 const telegramNotificationSettingsKey = 'telegram.notificationSettings';
 const telegramSecuritySettingsKey = 'telegram.securitySettings';
 
-function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean, distribution?: DistributionConfig): string {
-  const { zeusReleaseManifestUrl, isZeusReleaseUrl } = createDistributionContext(distribution);
-  const fallback = zeusReleaseManifestUrl;
+/** 更新清单只信任 Zeus 官方下载目录；隔离验收可显式使用本机服务。 */
+function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean): string {
+  /** Zeus 官方稳定更新清单。 */
+  const fallback = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
   const candidate = configured?.trim() || fallback;
   const url = new URL(candidate);
-  if (isZeusReleaseUrl(candidate)) return url.toString();
+  if (url.protocol === 'https:' && url.hostname === 'github.com' && !url.port && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/')) return url.toString();
   if (allowUntrustedTest && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port)) return url.toString();
   throw new Error('Zeus release update manifest URL is not trusted.');
 }
@@ -900,7 +898,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const readGitStatus = async (cwd: string): Promise<GitStatusSummary> => (await runGitStatusHeavyJob(cwd)).status;
   const readGitDiff = async (cwd: string): Promise<GitDiffSummary> => (await runGitDiffHeavyJob(cwd)).diff;
   const releaseEnvironment = process.env;
-  const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest), options.distribution);
+  const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest));
   const telegramRuntimeConfirmations = new Map<string, TelegramRuntimeConfirmation>();
   const telegramRuntimeSummarySentLogCounts = new Map<string, Set<number>>();
   const telegramCommandRunMessages = new Map<string, { chatId: number; messageId?: number }>();
