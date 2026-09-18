@@ -722,6 +722,8 @@ function mergeTurnChangeSet(state: NativeSessionState, changeSet: TurnChangeSet)
 const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
 
 function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>, preserveCachedHistory: boolean): boolean {
+  // 有界首屏不包含较早输入，不代表该输入被删除；已接纳身份由显示位置接口校正或移除。
+  if (isUserMessageItem(item) && !isUnacceptedTranscriptMessage(item) && sessionTranscriptEntryId(item)) return true;
   if (item.optimistic) return false;
   // resources 分页会为没有 Provider 正文 item 的交付物合成稳定条目。后续首屏权威
   // 快照不重复携带 resources，不能因此把已取回的图片或文件从正文时间线删除。
@@ -1476,10 +1478,10 @@ function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConv
   for (const id of removed) removedTranscriptEntryIds[id] = Math.max(removedTranscriptEntryIds[id] ?? 0, batch.revision);
   const items = Object.fromEntries(
     Object.entries(state.items).flatMap(([key, item]) => {
-      const entryId = item.transcript?.placement.entryId;
+      const entryId = sessionTranscriptEntryId(item);
       if (!entryId || removed.has(entryId)) return entryId && removed.has(entryId) ? [] : [[key, item]];
       const placement = placements.get(entryId);
-      return [[key, placement ? { ...item, transcript: { ...item.transcript!, placement } } : item]];
+      return [[key, placement ? { ...item, transcript: { sources: item.transcript?.sources ?? [], placement } } : item]];
     }),
   );
   const candidateOrder = state.itemOrder.filter((key) => key in items);
@@ -1503,6 +1505,15 @@ function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<s
     if (right !== null) return 1;
     return (previousIndex.get(leftKey) ?? 0) - (previousIndex.get(rightKey) ?? 0);
   });
+}
+
+/** 已接纳输入可按持久客户端身份核对原位置；未发送输入不猜位置，也不进入恢复请求。 */
+export function sessionTranscriptEntryId(item: NativeSessionItemBuffer): string | null {
+  if (item.transcript) return item.transcript.placement.entryId;
+  if (!isUserMessageItem(item) || isUnacceptedTranscriptMessage(item)) return null;
+  /** 优先使用正式提交身份；Provider 回显只补充关联，不重新编号用户输入。 */
+  const clientId = item.durableClientUserMessageId ?? item.clientUserMessageId ?? stringValue(item.payload.clientUserMessageId) ?? stringValue(item.payload.clientId);
+  return clientId ? `user-message:${clientId}` : null;
 }
 
 function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {
@@ -1664,6 +1675,8 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
       const projected = submissionUserMessageItem(conversationId, threadId, submission, key, itemId, turnId);
       const next = previous
         ? {
+            // 队列只覆盖提交字段，保留已接纳消息的显示身份、位置与来源修订。
+            ...previous,
             ...projected,
             ...(!previous.optimistic
               ? {
@@ -1731,6 +1744,8 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
   const key = previousKey ?? nativeSessionItemKey(conversationId, threadId, turnId, itemId);
   const previous = matchedEntry?.[1];
   const item: NativeSessionItemBuffer = {
+    // 引导状态变化不能移除之前已取得的显示位置。
+    ...previous,
     ...submissionUserMessageItem(conversationId, threadId, submission, key, itemId),
     ...(previous
       ? {

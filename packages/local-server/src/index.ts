@@ -2705,6 +2705,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
+    /** 在读取显示位置及路由专家事件前统一 Provider 身份，所有出口使用同一组字段。 */
+    payload = {
+      ...payload,
+      ...(typeof payload.threadId === 'string' ? {} : typeof payload.providerThreadId === 'string' ? { threadId: payload.providerThreadId } : {}),
+      ...(typeof payload.turnId === 'string' ? {} : typeof payload.providerTurnId === 'string' ? { turnId: payload.providerTurnId } : {}),
+      ...(typeof payload.itemId === 'string' ? {} : typeof payload.providerItemId === 'string' ? { itemId: payload.providerItemId } : {}),
+    };
     // 在专家会话重映射前使用工具调用的原始身份，正常完成、失败和中断共用撤销入口。
     const computerTurnId = typeof payload.providerTurnId === 'string' ? payload.providerTurnId : payload.turnId;
     if (type === 'conversation.turn.completed' && typeof payload.conversationId === 'string' && typeof computerTurnId === 'string') {
@@ -2772,15 +2779,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
       /** Provider 写入完成后立即附加同一显示身份，Renderer 不再按到达时间猜位置。 */
       const transcript =
-        nativeConversationTranscriptItemEventTypes.has(mappedType) && typeof payload.itemId === 'string' && typeof (payload.threadId ?? payload.providerThreadId) === 'string'
+        payload.transcript ??
+        (nativeConversationTranscriptItemEventTypes.has(mappedType) && typeof payload.itemId === 'string' && typeof payload.threadId === 'string'
           ? conversationTranscripts.envelopeForSource({
               conversationId,
               sourceDomain: 'provider_item',
-              sourceScope: String(payload.threadId ?? payload.providerThreadId),
+              sourceScope: payload.threadId,
               sourceId: payload.itemId,
               facet: providerFacet(typeof payload.itemType === 'string' ? payload.itemType : 'agentMessage'),
             })
-          : null;
+          : null);
       const eventPayload = {
         ...payload,
         ...(transcript ? { transcript } : {}),
@@ -2813,15 +2821,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               : typeof payload.updatedAt === 'string' && payload.updatedAt
                 ? payload.updatedAt
                 : conversation.updatedAt,
-        ...(typeof payload.threadId === 'string'
-          ? { threadId: payload.threadId }
-          : typeof payload.providerThreadId === 'string'
-            ? { threadId: payload.providerThreadId }
-            : conversation.providerThreadId
-              ? { threadId: conversation.providerThreadId }
-              : {}),
-        ...(typeof payload.turnId === 'string' ? { turnId: payload.turnId } : typeof payload.providerTurnId === 'string' ? { turnId: payload.providerTurnId } : {}),
-        ...(typeof payload.itemId === 'string' ? { itemId: payload.itemId } : typeof payload.providerItemId === 'string' ? { itemId: payload.providerItemId } : {}),
+        ...(typeof payload.threadId === 'string' ? { threadId: payload.threadId } : conversation.providerThreadId ? { threadId: conversation.providerThreadId } : {}),
         generationId,
       } satisfies Record<string, unknown>;
       if (durability === 'coalescible_process') {
