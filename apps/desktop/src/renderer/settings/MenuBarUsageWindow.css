@@ -31,7 +31,8 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
-  font-size: 14px;
+  /* 正文与操作使用紧凑字号；关键数字单独强调，点击区域保持原尺寸。 */
+  font-size: 12px;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   user-select: none;
@@ -102,13 +103,13 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-identity strong {
   font-size: 16px;
-  font-weight: 730;
+  font-weight: 650;
 }
 
 .menu-bar-usage-freshness {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 12px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -172,8 +173,8 @@ body:has(.menu-bar-usage-root),
   background: transparent;
   color: var(--usage-muted);
   font: inherit;
-  font-size: 13px;
-  font-weight: 620;
+  font-size: 12px;
+  font-weight: 550;
 }
 
 .menu-bar-usage-tabs button[aria-selected='true'] {
@@ -293,7 +294,7 @@ body:has(.menu-bar-usage-root),
   justify-content: space-between;
   padding: 12px 22px 8px 4px;
   color: var(--usage-muted);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -350,7 +351,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-reorder-hint {
   padding: 12px 2px 4px;
   color: var(--usage-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
   text-align: center;
 }
@@ -405,7 +406,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-copy strong {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 550;
 }
 
@@ -421,7 +422,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-value strong {
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .menu-bar-usage-root svg {
@@ -448,10 +449,9 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
-.menu-bar-usage-account-card h2,
 .menu-bar-usage-quota-group h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -473,7 +473,7 @@ body:has(.menu-bar-usage-root),
   align-items: center;
   gap: 0 8px;
   min-inline-size: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.2;
 }
 
@@ -484,18 +484,19 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-account-quota > strong {
-  font-size: 14px;
-  font-weight: 680;
+  font-size: 13px;
+  font-weight: 600;
   text-align: end;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-/* 日期与进度条对齐，完整换行保留重置时刻。 */
+/* 日期置于进度条下方并与轨道右端对齐，长日期仍可完整换行。 */
 .menu-bar-usage-account-quota time {
-  grid-column: 2 / -1;
+  grid-column: 2;
+  text-align: end;
   color: var(--usage-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -546,13 +547,13 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-metrics dt {
   overflow-wrap: anywhere;
   color: var(--usage-muted);
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
 .menu-bar-usage-metrics dd {
-  font-size: 18px;
-  font-weight: 680;
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -566,24 +567,44 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-bars figcaption {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
-}
-
-.menu-bar-usage-bars figcaption > span {
-  color: var(--usage-muted);
-  font-weight: 620;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  /* 图表标题与汇总共用字号和行高，仅用字重区分数值。 */
+  line-height: 1.4;
 }
 
 .menu-bar-usage-bars figcaption dl {
   display: grid;
   gap: 10px;
   margin: 0;
+  margin-inline-start: auto;
   text-align: end;
+}
+
+/* 账户来源与原生悬浮说明并排，说明图标不挤压标题行。 */
+.menu-bar-usage-chart-source {
+  display: inline-flex;
+  align-items: center;
+  color: var(--usage-muted);
+  font-weight: 550;
+}
+
+.menu-bar-usage-source-info {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  flex: 0 0 24px;
+  cursor: help;
+}
+
+/* 原生提示同时提供可聚焦入口和完整读屏文案。 */
+.menu-bar-usage-source-info:focus-visible {
+  outline: 2px solid var(--usage-accent);
+  border-radius: 4px;
 }
 
 .menu-bar-usage-bars figcaption dl > div {
@@ -596,12 +617,10 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-bars figcaption dt {
   color: var(--usage-muted);
-  font-size: 12px;
 }
 
 .menu-bar-usage-bars figcaption dd {
-  font-size: 14px;
-  font-weight: 680;
+  font-weight: 600;
 }
 
 .menu-bar-usage-bars-plot {
@@ -651,7 +670,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars-plot small {
   overflow: hidden;
   color: var(--usage-muted);
-  font-size: 12px;
+  font-size: 11px;
   text-overflow: clip;
   white-space: nowrap;
 }
@@ -662,8 +681,8 @@ body:has(.menu-bar-usage-root),
   inset-block-end: calc(100% + 3px);
   inset-inline-start: 50%;
   transform: translateX(-50%);
-  font-size: 11.5px;
-  font-weight: 550;
+  font-size: 11px;
+  font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -698,8 +717,8 @@ body:has(.menu-bar-usage-root),
   border-radius: var(--usage-radius-control, 8px);
   color: var(--usage-text);
   font: inherit;
-  font-size: 13px;
-  font-weight: 630;
+  font-size: 12px;
+  font-weight: 550;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -868,7 +887,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-provider-value small,
 .menu-bar-usage-account-quota time,
 .menu-bar-usage-metrics dt,
-.menu-bar-usage-bars figcaption > span,
 .menu-bar-usage-bars figcaption dt,
 .menu-bar-usage-bars-plot small {
   color: var(--usage-muted);
