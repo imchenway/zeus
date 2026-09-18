@@ -661,6 +661,15 @@ body:has(.macos-ai-app.zeus-shell) {
   gap: 2px;
 }
 
+/* 侧边栏空闲时只隐藏滑块，不改变滚动区域宽度；按住拖动时仍保持可见。 */
+.macos-ai-app.zeus-shell .project-sidebar-list:not([data-scrolling='true']):not(:active) {
+  scrollbar-color: transparent transparent;
+}
+
+.macos-ai-app.zeus-shell .project-sidebar-list:not([data-scrolling='true']):not(:active)::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
 .macos-ai-app.zeus-shell .project-sidebar-item,
 .macos-ai-app.zeus-shell .project-sidebar-conversations {
   gap: 0;
@@ -3734,9 +3743,9 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: 0 !important;
 }
 
-/* 会话与导航侧栏共用主题底色，外层保持连续平面，不绘制卡片边缘。 */
-.macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root, .workspace-view-project-sessions),
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view-project-sessions,
+/* 任务、Git、源码、命令及会话共用连续底色；源码和命令共用代码工作区，外层不绘制卡片边缘。 */
+.macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root, .workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
 .macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
 .macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
   background: var(--zeus-card-background) !important;
@@ -3763,10 +3772,8 @@ body:has(.macos-ai-app.zeus-shell) {
 /* 工作区只调整两侧留白，正文与输入框沿用共用列宽。 */
 .macos-ai-app.zeus-shell.project-navigation-rail-shell .session-workspace-root {
   --session-gutter: clamp(18px, 2.6vw, 36px);
-}
-
-.macos-ai-app.zeus-shell.project-navigation-rail-shell .session-thread-header:not([data-context-toolbar='true']) {
-  padding-inline-start: var(--session-gutter);
+  /* 主会话和详情共用标题起点，窄栏随现有会话留白收缩。 */
+  --session-header-inset: var(--session-gutter);
 }
 
 @media (max-width: 759px) {
@@ -3929,7 +3936,6 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 分栏顶栏必须与正文共用完整宽度，不能再叠加普通标题栏的左右留白。 */
 .macos-ai-app.zeus-shell.project-navigation-rail-shell .session-thread-header:not([data-context-toolbar='true']) {
-  padding-inline-start: var(--session-gutter);
   padding-inline-end: 24px;
 }
 /* 任务页复用统一外框，移除内部重复卡片及其外围空隙。 */
