@@ -451,6 +451,36 @@ const probeSnapshot = {
   queue: { state: { type: 'idle' }, submissions: [] },
   throughEventSeq: 1,
 } as unknown as NativeConversationSnapshot;
+/** 刷新有界首屏后，仍被缓存操作引用的已结束轮次不得失去摘要和本地编号。 */
+const cachedProcessTurn = {
+  id: 'local-cached-turn',
+  providerTurnId: 'cached-turn',
+  submissionId: null,
+  status: 'completed',
+  startedAt: '2026-01-01T00:00:00Z',
+  completedAt: '2026-01-01T00:01:31Z',
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:01:31Z',
+};
+/** 已完成操作会在正式水合中保留，摘要也必须拥有相同生命周期。 */
+const cachedProcessItem = { ...transcriptItem('cached-operation', 1, 10, '操作记录'), turnId: cachedProcessTurn.id, type: 'commandExecution', phase: null };
+/** 先加载完整轮次，再接收不包含该轮次的有界首屏。 */
+const beforeBoundedRefresh = createHydratedSessionState({ ...probeSnapshot, turns: [cachedProcessTurn], items: [cachedProcessItem] });
+/** 按真实刷新动作检查记录、轮次摘要和后续分页使用的身份。 */
+const afterBoundedRefresh = sessionReducer(beforeBoundedRefresh, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [] } });
+assertProbe(
+  Object.values(afterBoundedRefresh.items).some((item) => item.turnId === 'cached-turn'),
+  '有界刷新应保留已完成操作',
+);
+assertProbe(afterBoundedRefresh.turnsByProviderId['cached-turn']?.completedAt === cachedProcessTurn.completedAt, '缓存操作不能失去所属轮次耗时');
+assertProbe(
+  afterBoundedRefresh.snapshot?.turns.some((turn) => turn.id === cachedProcessTurn.id),
+  '后续分页必须保留操作所属的本地轮次编号',
+);
+/** 无条目引用的摘要不应因刷新而无界累积。 */
+const emptyBoundedRefresh = sessionReducer(createHydratedSessionState({ ...probeSnapshot, turns: [cachedProcessTurn], items: [] }), { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [] } });
+assertProbe(!emptyBoundedRefresh.turnsByProviderId['cached-turn'], '没有缓存条目的旧轮次应随首屏收敛');
+
 const beforeContent = createHydratedSessionState(probeSnapshot);
 const staleHydrated = sessionReducer(beforeContent, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [staleCopy] } });
 assertProbe(staleHydrated.items[beforeContent.itemOrder[0]!]!.text === completeBody.text, '快照必须走统一正文合并');

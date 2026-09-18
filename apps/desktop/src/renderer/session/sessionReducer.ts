@@ -389,8 +389,12 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
 function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConversationSnapshot, reconcileHistoryCache = true): NativeSessionState {
   const historyReconciliation = reconcileHistoryCache ? reconcileConversationHistoryCache(state.snapshot, incomingSnapshot) : { snapshot: incomingSnapshot, preserveCachedHistory: true };
   const snapshot = historyReconciliation.snapshot;
-  const turnsByProviderId = Object.fromEntries(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => [turn.providerTurnId!, turn]));
-  const providerTurnIdByLocalId = new Map(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => [turn.id, turn.providerTurnId!]));
+  /** 有界首屏未包含的已结束轮次仍可能拥有缓存过程；轮次身份必须随过程一起保留。 */
+  const cachedTurns = state.conversationId === snapshot.id ? Object.values(state.turnsByProviderId).filter((turn) => isTerminalTurnStatus(turn.status)) : [];
+  /** 首屏中的轮次仍以本次权威结果为准，缓存只补齐首屏范围外的归属。 */
+  const knownTurns = [...new Map([...cachedTurns, ...snapshot.turns].map((turn) => [turn.providerTurnId ?? turn.id, turn])).values()];
+  const turnsByProviderId = Object.fromEntries(knownTurns.filter((turn) => turn.providerTurnId).map((turn) => [turn.providerTurnId!, turn]));
+  const providerTurnIdByLocalId = new Map(knownTurns.filter((turn) => turn.providerTurnId).map((turn) => [turn.id, turn.providerTurnId!]));
   const providerItemIdByLocalId = new Map(snapshot.items.filter((item) => item.providerItemId).map((item) => [item.id, item.providerItemId!]));
   const items: Record<string, NativeSessionItemBuffer> = {};
   const orderedItems: Array<{ key: string; order: number | null; stableIndex: number }> = [];
@@ -652,6 +656,13 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     })
     .map((entry) => entry.key);
   const stableItems = reuseEquivalentSessionItems(state.items, items);
+  /** 只为仍在页面缓存中的条目保留额外摘要，避免轮次缓存无界增长。 */
+  const retainedTurnIds = new Set(Object.values(stableItems).map((item) => item.turnId));
+  /** 首屏摘要和已缓存过程共用同一份轮次集合，后续分页才能继续使用本地轮次编号。 */
+  const retainedTurns = knownTurns.filter((turn) => snapshot.turns.some((incoming) => incoming.id === turn.id) || retainedTurnIds.has(turn.id) || Boolean(turn.providerTurnId && retainedTurnIds.has(turn.providerTurnId)));
+  for (const [identity, turn] of Object.entries(turnsByProviderId)) {
+    if (!retainedTurns.includes(turn)) delete turnsByProviderId[identity];
+  }
   const itemOrder = sameStringArray(state.itemOrder, projectedItemOrder) ? state.itemOrder : projectedItemOrder;
   const activeTurnChanged = Boolean(activeTurnId && state.activeTurnId !== activeTurnId);
   const requestResolvedBySnapshot = Boolean(
@@ -669,7 +680,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     providerThreadId: snapshot.providerThreadId,
     activeTurnId,
     startedTurnId: activeTurnId,
-    snapshot: { ...snapshot, changeSets: Object.values(changeSetsByProviderId) },
+    snapshot: { ...snapshot, turns: retainedTurns, changeSets: Object.values(changeSetsByProviderId) },
     turnsByProviderId,
     changeSetsByProviderId,
     terminalTurnIds,
