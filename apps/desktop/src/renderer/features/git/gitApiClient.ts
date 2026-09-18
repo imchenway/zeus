@@ -25,7 +25,7 @@ export interface GitApiClient {
   loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
   generateGitCommitMessage: (
     projectId: string,
-    input: { repositoryId: string; relativePath?: string; language: 'zh-CN' | 'en'; modelRef: string },
+    input: { repositoryId: string; relativePath?: string; language: 'zh-CN' | 'en'; modelRef: string; selection?: Array<{ repositoryId: string; relativePath: string; paths: string[] }> },
     onText?: (text: string) => void,
     signal?: AbortSignal,
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;
@@ -82,6 +82,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
     generateGitCommitMessage: async (projectId, input, onText, signal) => {
       scopedRepositoryId(input.repositoryId);
+      input.selection?.forEach((item) => scopedRepositoryId(item.repositoryId));
       let result: { message: string; model: string; truncated?: boolean } | undefined;
       await transport.requestStream<{ type: string; text?: string; message?: string; model?: string; truncated?: boolean }>(
         `${projectGitPath(projectId)}/commit-message`,

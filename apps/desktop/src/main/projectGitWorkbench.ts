@@ -306,7 +306,13 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
         target: value.target === 'worktree' ? 'worktree' : 'index',
       };
     case 'commit':
-      return { type: 'commit', message: stringValue('message') ?? '' };
+      return {
+        type: 'commit',
+        message: stringValue('message') ?? '',
+        ...(value.paths === undefined ? {} : { paths: paths() }),
+        expectedHeadSha: typeof value.expectedHeadSha === 'string' ? value.expectedHeadSha : undefined,
+        expectedBranch: stringValue('expectedBranch'),
+      };
     case 'push':
       return {
         type: 'push',

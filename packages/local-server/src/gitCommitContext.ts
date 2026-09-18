@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { discoverGitRepositories } from '@zeus/git-core';
 import { realpath } from 'node:fs/promises';
+import { readSelectedCommitFingerprint, readSelectedGitCommitChanges } from './gitCommitSelectionContext.js';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 const execute = promisify(execFile);
@@ -27,7 +28,8 @@ export async function resolveCommitRepository(project: { id: string; localPath: 
   return repository;
 }
 
-export async function readCommitFingerprint(cwd: string): Promise<string> {
+export async function readCommitFingerprint(cwd: string, paths?: string[]): Promise<string> {
+  if (paths) return readSelectedCommitFingerprint(cwd, paths);
   // 对象ID覆盖二进制内容，stage和mode覆盖冲突与权限变化；不重复生成完整补丁。
   const [index, head] = await Promise.all([git(cwd, ['ls-files', '--stage', '-z']), readHead(cwd)]);
   return createHash('sha256').update(head).update('\0').update(index).digest('hex');
@@ -62,7 +64,11 @@ async function readCommitStyle(cwd: string): Promise<string[]> {
   return messages;
 }
 
-export async function readGitCommitContext(cwd: string) {
+export async function readGitCommitContext(cwd: string, paths?: string[]) {
+  if (paths) {
+    const [changes, history] = await Promise.all([readSelectedGitCommitChanges(cwd, paths), readCommitStyle(cwd)]);
+    return summarizeCommitContext(changes.files, changes.stat, changes.diff, history, changes.fingerprint);
+  }
   const fingerprint = await readCommitFingerprint(cwd);
   const [names, stat, diff, history] = await Promise.all([
     git(cwd, ['diff', '--cached', '--name-only', '-z']),
@@ -74,6 +80,10 @@ export async function readGitCommitContext(cwd: string) {
   if (!files.length) throw new Error('请先暂存需要提交的改动。');
   if (files.length > 2000 || names.length > 100_000) throw new Error('暂存文件过多，请缩小提交范围。');
   if (fingerprint !== (await readCommitFingerprint(cwd))) throw new Error('读取期间暂存内容已变化，请重新生成。');
+  return summarizeCommitContext(files, stat, diff, history, fingerprint);
+}
+
+function summarizeCommitContext(files: string[], stat: string, diff: string, history: string[], fingerprint: string) {
   const sections = diff.split(/(?=^diff --git )/mu).filter(Boolean);
   const budget = 40_000;
   const perFile = Math.max(256, Math.min(8_000, Math.floor(budget / Math.max(1, sections.length))));
