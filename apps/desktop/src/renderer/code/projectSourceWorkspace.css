@@ -112,17 +112,19 @@
   min-width: 0;
   min-height: 0;
   flex: 1;
-  grid-template-columns: var(--zeus-source-tree-width) 4px minmax(0, 1fr);
+  grid-template-columns: var(--zeus-source-tree-width) 8px minmax(0, 1fr);
 }
 
 .project-source-tree {
+  box-sizing: border-box;
+  padding: 0;
   overflow: auto;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   border-right: 0;
-  background: var(--zeus-product-panel-muted);
+  background: transparent;
 }
 .project-source-conflict-comparison {
   width: min(1200px, 94vw);
@@ -188,7 +190,11 @@
   --source-module-header-height: 30px;
   position: relative;
   flex: 0 0 auto;
-  border-bottom: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+  background: var(--zeus-product-panel);
 }
 .macos-ai-app .project-source-tree .project-source-module > summary,
 .macos-ai-app .project-source-tree .project-source-changes-body summary {
@@ -322,7 +328,8 @@
   min-height: 0;
 }
 .project-source-module-resizer {
-  flex: 0 0 5px;
+  flex: 0 0 8px;
+  border-radius: 4px;
   cursor: row-resize;
   touch-action: none;
   background: transparent;
@@ -333,6 +340,10 @@
 }
 .project-source-tree:has(> .project-source-module:not([open])) > .project-source-module-resizer {
   display: none;
+}
+/* 任一卡片折叠后仍保留分区间距，只有同时展开时显示高度拖动区。 */
+.project-source-tree:has(> .project-source-module:not([open])) > .project-source-changes {
+  margin-top: 8px;
 }
 .project-source-module .project-source-tree-scroll {
   max-height: none;
@@ -702,6 +713,9 @@
 
 .project-source-editor-pane {
   display: grid;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -1018,6 +1032,8 @@
     display: none;
   }
   .project-source-tree {
+    padding: 8px;
+    background: var(--zeus-product-panel-muted);
     position: absolute;
     z-index: 5;
     inset: 0 auto 0 0;
