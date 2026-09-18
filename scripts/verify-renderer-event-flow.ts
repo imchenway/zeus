@@ -2,7 +2,7 @@ import { ZeusApiError } from '../apps/desktop/src/renderer/transport/localApiTra
 import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
-import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
+import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import { orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
@@ -149,6 +149,7 @@ function createHarness(
   persistedDraft: string | null = null,
   sendFailure?: Error,
   changeSetLoader?: SessionControllerClient['loadTurnChangeSet'],
+  initialCachedState?: NativeSessionState,
 ) {
   let eventSink: ((event: NativeRealtimeEventEnvelope) => void) | null = null;
   let snapshotReads = 0;
@@ -226,6 +227,7 @@ function createHarness(
     client,
     projectId,
     conversationId,
+    initialCachedState,
     storage: {
       getItem: () => storedDraft,
       setItem: (_key, value) => {
@@ -1467,6 +1469,97 @@ async function verifyTranscriptInitializationRecovery() {
     budget.controller.dispose();
   }
   return { normalReads: reads, choices, queueReads, cancelledReads, failedReads, disposedReads, budgetReads, budgetCancelled: aborted };
+}
+
+/** 复核首条任务提示词在实时、队列和局部历史之间保持同一位置，旧缺位输入能一次恢复。 */
+async function verifyTaskPushPlacement() {
+  /** 使用正式快照适配器建立与控制器缓存一致的空会话。 */
+  const snapshot = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 客户端提交身份是首条输入的持久身份，不依赖任务标题或到达时间。 */
+  const inputTranscript = transcript('user-message:task-first', 1024);
+  /** 最小任务布局只用于确认队列更新不会丢掉已有展示信息。 */
+  const userEvent = conversationEvent(1, 'conversation.item.completed', {
+    turnId: 'turn',
+    itemId: 'provider-input',
+    itemType: 'userMessage',
+    status: 'completed',
+    textContent: '首条任务提示词',
+    itemPayload: { clientId: 'task-first', taskPushLayout: { title: '首条任务提示词' } },
+    transcript: inputTranscript,
+  });
+  /** 同一回复在实时和历史中使用一致位置。 */
+  const reply = {
+    id: 'reply',
+    providerItemId: 'reply',
+    turnId: 'turn',
+    type: 'agentMessage',
+    status: 'completed',
+    phase: 'final_answer',
+    text: '任务回复',
+    payload: {},
+    resources: [],
+    startedAt: occurredAt,
+    updatedAt: occurredAt,
+    transcript: transcript('reply', 2048),
+  };
+  /** 先接收正式用户回显，再补入只包含回复的历史页。 */
+  let state = sessionReducer(createHydratedSessionState(snapshot), { type: 'event_received', event: userEvent as NativeConversationEvent });
+  state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...snapshot, items: [reply] } });
+  /** 暂停队列仍可引用已确认输入；不能覆盖它的显示信封。 */
+  state = sessionReducer(state, {
+    type: 'queue_hydrated',
+    queue: {
+      state: { type: 'idle' },
+      submissions: [{ id: 'submission', clientUserMessageId: 'task-first', content: '首条任务提示词', status: 'paused', position: 1, providerTurnId: 'turn', pausedReason: 'interrupted', updatedAt: occurredAt }],
+    },
+  });
+  assert(state.items[state.itemOrder[0]!]!.transcript?.placement.entryId === inputTranscript.placement.entryId, '任务提示词必须保持在回复前，队列不能清除位置。');
+  assert(state.items[state.itemOrder[0]!]!.payload.taskPushLayout !== undefined, '队列不能移除任务布局。');
+  state = sessionReducer(state, {
+    type: 'steering_submission_hydrated',
+    submission: { id: 'submission', clientUserMessageId: 'task-first', content: '首条任务提示词', status: 'paused', position: 1, providerTurnId: 'turn', updatedAt: occurredAt },
+  });
+  assert(state.items[state.itemOrder[0]!]!.transcript?.placement.entryId === inputTranscript.placement.entryId, '立即引导不能移除原位置。');
+  /** 正式移除仍有权删除已保留输入，不把首条消息永久钉在界面上。 */
+  const removed = sessionReducer(state, {
+    type: 'transcript_placements_hydrated',
+    actions: [],
+    batch: { conversationId, orderEpoch: 1, revision: 4096, placements: [], removedEntryIds: [inputTranscript.placement.entryId], uncoveredEntryIds: [] },
+  });
+  assert(!Object.values(removed.items).some((item) => item.transcript?.placement.entryId === inputTranscript.placement.entryId), '正式移除必须清理已接纳输入。');
+  /** 冷开同一组消息仍是原顺序。 */
+  const cold = createHydratedSessionState({
+    ...snapshot,
+    items: [{ ...reply, id: inputTranscript.placement.entryId, providerItemId: 'provider-input', type: 'userMessage', text: '首条任务提示词', payload: { clientId: 'task-first' }, transcript: inputTranscript }, reply],
+  });
+  assert(cold.items[cold.itemOrder[0]!]!.transcript?.placement.order === 1024, '重新打开不能改变首条输入位置。');
+  /** 模拟修复前缓存的真实缺陷：身份字段在实时入口丢失，但提交身份仍保留。 */
+  const cached = structuredClone(cold);
+  delete cached.items[cached.itemOrder[0]!]!.transcript;
+  /** 已有控制器和位置接口完成恢复，不读取整段历史。 */
+  const recovered = createHarness(undefined, 0, true, [], null, undefined, undefined, cached);
+  /** 记录请求次数，防止缺位恢复形成无界重读。 */
+  let reads = 0;
+  recovered.client.loadNativeConversationTranscriptPlacements = async (_project, _conversation, ids) => {
+    reads += 1;
+    return { conversationId, orderEpoch: 1, revision: 2048, removedEntryIds: [], uncoveredEntryIds: [], placements: ids.map((id) => (id === inputTranscript.placement.entryId ? inputTranscript.placement : reply.transcript.placement)) };
+  };
+  try {
+    await recovered.controller.start();
+    assert(recovered.controller.getState().items[cached.itemOrder[0]!]!.transcript?.placement.order === 1024 && reads === 1, '缓存中的首条输入必须一次取回原位置。');
+    /** 没有正式位置的后续事件必须进入恢复，不能再污染消息列表。 */
+    recovered.emit(conversationEvent(1, 'conversation.item.started', { turnId: 'turn', itemId: 'missing-position', itemType: 'agentMessage', textContent: '不得投影' }));
+    assert(!Object.values(recovered.controller.getState().items).some((item) => item.itemId === 'missing-position'), '缺少位置的实时消息不得进入列表。');
+    return { taskPromptFirst: true, queuePreserved: true, steeringPreserved: true, removalPreserved: true, coldOpenPreserved: true, recoveredInputReads: reads, missingLivePositionRejected: true };
+  } finally {
+    recovered.controller.dispose();
+  }
+}
+
+/** 专项入口复用现有脚本，避免与历史待发送重放断言混淆。 */
+if (process.argv.includes('--task-push-placement-only')) {
+  console.log(JSON.stringify({ taskPushPlacement: await verifyTaskPushPlacement(), placementTakeover: await verifyPlacementEpochTakeover() }));
+  process.exit(0);
 }
 
 /** 专项入口复用现有脚本，避免与历史待发送重放断言混淆。 */

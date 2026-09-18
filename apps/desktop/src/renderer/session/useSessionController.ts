@@ -5,7 +5,7 @@ import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
+import { createInitialSessionState, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
   type ConversationResourcePreview,
@@ -762,7 +762,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
     let revision = 0;
     let earliestRevision = Number.MAX_SAFE_INTEGER;
     while (!disposed && generation === placementRecoveryGeneration) {
-      const ids = new Set([...Object.values(state.items), ...state.pendingRequests].flatMap((item) => (item.transcript ? [item.transcript.placement.entryId] : [])));
+      const ids = new Set([
+        ...Object.values(state.items).flatMap((item) => {
+          /** 旧实时事件漏带位置时，仍可用已确认输入的客户端身份取回原位置。 */
+          const entryId = sessionTranscriptEntryId(item);
+          return entryId ? [entryId] : [];
+        }),
+        ...state.pendingRequests.flatMap((request) => (request.transcript ? [request.transcript.placement.entryId] : [])),
+      ]);
       for (const action of placementActions) for (const envelope of actionTranscripts(action)) ids.add(envelope.placement.entryId);
       const remaining = [...ids].filter((id) => !placements.has(id) && !removed.has(id));
       if (remaining.length === 0) {
@@ -802,11 +809,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
+    /** 历史接管前补齐已加载用户输入的位置，不能先把它排到有位置的回复之后。 */
+    const missingInputPlacement = (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') && Object.values(state.items).some((item) => !item.transcript && sessionTranscriptEntryId(item) !== null);
     const incomingEpoch =
       action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
     if (
       action.type !== 'transcript_placements_hydrated' &&
-      (placementRecovery || (incomingEpoch > 0 && incomingEpoch !== placementEpoch) || (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed'))
+      (placementRecovery || missingInputPlacement || (incomingEpoch > 0 && incomingEpoch !== placementEpoch) || (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed'))
     ) {
       placementBufferBytes += new TextEncoder().encode(JSON.stringify(action)).byteLength;
       placementActions.push(action);
@@ -1184,6 +1193,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   function applyEventImmediately(event: NativeConversationEvent): void {
     if (!isEventForController(event)) return;
+    // 正文消息必须携带正式位置；旧事件通过现有重连快照恢复，不再混入无位置正文。
+    if (
+      (event.type === 'conversation.item.started' || event.type === 'conversation.item.delta' || event.type === 'conversation.item.completed') &&
+      (event.payload.itemType === 'userMessage' || event.payload.itemType === 'agentMessage') &&
+      !event.payload.transcript
+    ) {
+      failConversationSync(new Error('实时消息缺少正式显示位置，正在重新同步会话。'));
+      return;
+    }
     const requestId = eventRequestId(event);
     if (event.type === 'conversation.request.resolved' && requestId) {
       markRequestResolved(requestId, event);
