@@ -32,17 +32,17 @@ const copy = {
     signedOut: '未登录',
     unavailableStatus: '配额异常',
     removedStatus: '已移除',
-    today: '今日 Zeus Token',
-    sevenDays: '近 7 日 Zeus Token',
+    today: '今日 Token',
+    sevenDays: '近 7 日 Token',
     sevenDaysSummary: '近 7 日',
     cache: '缓存命中率',
     cacheUnsupported: '供应源未提供',
     cost: '近 7 日估算费用',
     costShort: '7 日估算费用',
     noPrice: '暂无价格',
-    recentUsage: 'Zeus 本地 Token',
-    accountRecentUsage: 'Codex 账户 Token',
-    officialUsageUnavailable: '官方账户暂未提供日用量',
+    recentUsage: '每日 Token',
+    accountUsage: 'Codex 账户',
+    accountUsageHint: '历史日期使用 Codex 账户统计；当日 Token 使用 Zeus 本地消耗。近 7 日为图中用量合计。',
     insufficientHistory: '用量积累后显示趋势',
     missingDay: '暂无数据',
     fullStatistics: '用量详情',
@@ -77,17 +77,17 @@ const copy = {
     signedOut: 'Signed out',
     unavailableStatus: 'Quota error',
     removedStatus: 'Removed',
-    today: 'Zeus tokens today',
-    sevenDays: 'Zeus tokens in 7 days',
+    today: 'Today tokens',
+    sevenDays: 'Tokens in 7 days',
     sevenDaysSummary: '7 days',
     cache: 'Cache hit rate',
     cacheUnsupported: 'Not provided',
     cost: 'Estimated cost · 7 days',
     costShort: '7-day estimate',
     noPrice: 'No pricing',
-    recentUsage: 'Zeus local tokens',
-    accountRecentUsage: 'Codex account tokens',
-    officialUsageUnavailable: 'Official daily account usage is unavailable',
+    recentUsage: 'Daily tokens',
+    accountUsage: 'Codex account',
+    accountUsageHint: 'Past days use Codex account usage; today uses local Zeus consumption. The 7-day total sums the chart.',
     insufficientHistory: 'A trend appears after usage is recorded',
     missingDay: 'No data',
     fullStatistics: 'Usage details',
@@ -479,10 +479,14 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
     if (group) group.push(window);
     else groups.set(key, [window]);
   }
+  /** 固定 Codex 主额度组在首位，其余组及组内周期保留原顺序。 */
+  const orderedGroups = [...groups];
+  /** 同时识别官方额度池标识和显示名称，不把 Spark 等独立额度当作主额度。 */
+  const codexIndex = orderedGroups.findIndex(([id, windows]) => id.toLowerCase() === 'codex' || windows[0].limitName?.toLowerCase() === 'codex');
+  if (provider.providerId === 'codex' && codexIndex > 0) orderedGroups.unshift(...orderedGroups.splice(codexIndex, 1));
   return (
     <section className="menu-bar-usage-account-card" aria-label={`${name} · ${text.quota}`}>
-      <h2>{text.quota}</h2>
-      {[...groups].map(([id, windows]) => {
+      {orderedGroups.map(([id, windows]) => {
         /** 同一额度池只显示一次名称，各周期仍独立保留余额与重置日期。 */
         const groupName = windows[0].limitName || id || name;
         return (
@@ -510,33 +514,43 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   );
 }
 
-/** 按原统计来源展示每日柱形、日期与数值，缺失数据不推算成零。 */
+/** Codex 历史使用账户数据，当天使用本地消耗；其他供应商使用本地日用量。 */
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
+  /** Codex 图表明确标注跨来源口径，当天仍与顶部今日指标一致。 */
   const text = copy[props.language];
-  const accountUsage = props.provider.kind === 'subscription';
-  const buckets = accountUsage ? (props.provider.dailyAccount ?? null) : props.provider.dailyLocal;
-  const label = accountUsage ? text.accountRecentUsage : text.recentUsage;
-  if (buckets === null)
+  const accountUsage = props.provider.providerId === 'codex';
+  const label = accountUsage ? text.accountUsage : text.recentUsage;
+  if (!accountUsage && props.provider.dailyLocal.length === 0 && !props.provider.collectionStartedAt)
     return (
       <div className="menu-bar-usage-chart-empty">
-        <span>{label}</span>
-        <small>{text.officialUsageUnavailable}</small>
-      </div>
-    );
-  if (buckets.length === 0 && (accountUsage || !props.provider.collectionStartedAt))
-    return (
-      <div className="menu-bar-usage-chart-empty">
-        <span>{label}</span>
         <small>{text.insufficientHistory}</small>
       </div>
     );
-  const slots = buildDailySlots(props.provider, buckets, accountUsage);
+  /** 补齐近七日日期；开始记录之前保留缺失状态。 */
+  const slots = buildDailySlots(props.provider);
   const maximum = Math.max(...slots.flatMap((slot) => (slot.totalTokens && slot.totalTokens > 0 ? [slot.totalTokens] : [])), 1);
-  const sevenDayValue = accountUsage ? formatOptionalTokens(props.provider.accountSevenDayTokens, props.language) : formatIncompleteTokens(props.provider.sevenDayLocal.totalTokens, props.provider.sevenDayLocalComplete, props.language);
+  /** 按实际展示的七根柱汇总；缺失日期或当天尚不完整时标明已知下限。 */
+  const sevenDayValue = accountUsage
+    ? formatIncompleteTokens(
+        slots.reduce((sum, slot) => sum + (slot.totalTokens ?? 0), 0),
+        slots.every((slot) => slot.complete),
+        props.language,
+      )
+    : formatIncompleteTokens(props.provider.sevenDayLocal.totalTokens, props.provider.sevenDayLocalComplete, props.language);
   return (
     <figure className="menu-bar-usage-bars" aria-label={`${providerDisplayName(props.provider)} ${label}`}>
       <figcaption>
-        <span>{label}</span>
+        {accountUsage && (
+          <span className="menu-bar-usage-chart-source">
+            {text.accountUsage}
+            <span className="menu-bar-usage-source-info" role="img" tabIndex={0} aria-label={text.accountUsageHint} title={text.accountUsageHint}>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" />
+                <path d="M8 4.5v4M8 11.5h.01" />
+              </svg>
+            </span>
+          </span>
+        )}
         <dl>
           <div>
             <dt>{text.sevenDaysSummary}</dt>
@@ -547,15 +561,16 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
       <div className="menu-bar-usage-bars-plot">
         {slots.map((slot) => {
           const state = slot.totalTokens === null ? 'missing' : slot.totalTokens === 0 ? 'zero' : 'positive';
-          const value = slot.totalTokens === null ? text.missingDay : `${formatTokens(slot.totalTokens, props.language)} Token`;
+          const value = slot.totalTokens === null ? text.missingDay : `${formatIncompleteTokens(slot.totalTokens, slot.complete, props.language)} Token`;
           /** 七列共用有限宽度，较长的万级数字去掉小数；悬浮摘要保留原精度。 */
-          const label = formatOptionalTokens(slot.totalTokens, props.language);
-          const chartLabel = label.length > 6 && slot.totalTokens !== null ? formatTokens(slot.totalTokens, props.language, 0) : label;
+          const label = slot.totalTokens === null ? '—' : formatIncompleteTokens(slot.totalTokens, slot.complete, props.language);
+          const chartLabel = label.length > 6 && slot.totalTokens !== null ? `${slot.complete ? '' : '≥'}${formatTokens(slot.totalTokens, props.language, 0)}` : label;
           return (
             <span key={slot.date} data-state={state} aria-label={`${formatShortDate(slot.date, props.language)} ${value}`} title={`${slot.date} · ${value}`}>
               <span className="menu-bar-usage-bar-slot">
                 <span className="menu-bar-usage-bar-column" style={{ blockSize: slot.totalTokens ? `${Math.max(2, (slot.totalTokens / maximum) * 100)}%` : '2px' }}>
-                  <strong className="menu-bar-usage-bar-value">{chartLabel}</strong>
+                  {/* 零用量不显示柱顶数字，日期与悬浮用量仍保留。 */}
+                  {slot.totalTokens !== 0 && <strong className="menu-bar-usage-bar-value">{chartLabel}</strong>}
                   <i />
                 </span>
               </span>
@@ -616,20 +631,29 @@ function providerDisplayName(provider: UsageProviderSummary, compact = false): s
   return `${name.slice(0, 12)}…${name.slice(-8)}`;
 }
 
-function buildDailySlots(provider: UsageProviderSummary, buckets: ReadonlyArray<{ date: string; totalTokens: number }>, accountUsage: boolean): Array<{ date: string; totalTokens: number | null }> {
+/** Codex 只替换当天账户数据，历史缺失不以本地记录或零填充。 */
+function buildDailySlots(provider: UsageProviderSummary): Array<{ date: string; totalTokens: number | null; complete: boolean }> {
+  /** 账户图使用官方历史；普通供应商沿用本地日账本。 */
+  const accountUsage = provider.providerId === 'codex';
+  const buckets = accountUsage ? (provider.dailyAccount ?? []) : provider.dailyLocal;
+  /** 按日期查找数值，本地采集起点只用于普通供应商的空白日期。 */
   const bucketsByDate = new Map(buckets.map((bucket) => [bucket.date, bucket.totalTokens]));
-  const collectionStart = accountUsage ? null : timestampDateKey(provider.collectionStartedAt);
+  const collectionStart = timestampDateKey(provider.collectionStartedAt);
+  /** 以本地自然日对应顶部今日指标，七天范围包含当天。 */
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Array.from({ length: 7 }, (_, index) => {
+    /** 每根柱对应独立自然日，最后一根固定为当天。 */
     const date = new Date(today);
     date.setDate(date.getDate() - 6 + index);
     const dateKey = localDateKey(date);
+    if (accountUsage && index === 6) {
+      return { date: dateKey, totalTokens: Math.max(0, provider.todayLocal.totalTokens), complete: provider.todayLocalComplete === true };
+    }
+    /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零。 */
     const recorded = bucketsByDate.get(dateKey);
-    return {
-      date: dateKey,
-      totalTokens: recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded),
-    };
+    const totalTokens = recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
+    return { date: dateKey, totalTokens, complete: totalTokens !== null };
   });
 }
 
@@ -675,10 +699,6 @@ function formatTokens(value: number, language: Language, maximumFractionDigits =
 function formatIncompleteTokens(value: number, complete: boolean | undefined, language: Language): string {
   const formatted = formatTokens(value, language);
   return complete === true ? formatted : `≥${formatted}`;
-}
-
-function formatOptionalTokens(value: number | null | undefined, language: Language): string {
-  return value === null || value === undefined ? '—' : formatTokens(value, language);
 }
 
 function formatPercent(value: number | null, language: Language, unavailable = ''): string {
