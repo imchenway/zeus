@@ -11,6 +11,20 @@
     "package:mac:release": "ZEUS_PACKAGE_VARIANT=release ZEUS_RELEASE_BUILD=1 node ../../scripts/package-mac.mjs --dmg"
   },
   "dependencies": {
+    "@codingame/monaco-vscode-api": "36.2.7",
+    "@codingame/monaco-vscode-css-default-extension": "36.2.7",
+    "@codingame/monaco-vscode-editor-service-override": "36.2.7",
+    "@codingame/monaco-vscode-files-service-override": "36.2.7",
+    "@codingame/monaco-vscode-html-default-extension": "36.2.7",
+    "@codingame/monaco-vscode-javascript-default-extension": "36.2.7",
+    "@codingame/monaco-vscode-json-default-extension": "36.2.7",
+    "@codingame/monaco-vscode-languages-service-override": "36.2.7",
+    "@codingame/monaco-vscode-model-service-override": "36.2.7",
+    "@codingame/monaco-vscode-python-default-extension": "36.2.7",
+    "@codingame/monaco-vscode-textmate-service-override": "36.2.7",
+    "@codingame/monaco-vscode-theme-service-override": "36.2.7",
+    "@codingame/monaco-vscode-typescript-basics-default-extension": "36.2.7",
+    "@shikijs/langs": "3.13.0",
     "@xyflow/react": "^12.11.6",
     "@zeus/ai-runtime": "workspace:*",
     "@zeus/git-core": "workspace:*",
@@ -20,7 +34,9 @@
     "ag-grid-react": "36.1.0",
     "markstream-react": "2.0.6",
     "mermaid": "11.17.2",
-    "qrcode": "1.5.4"
+    "monaco-editor": "npm:@codingame/monaco-vscode-editor-api@36.2.7",
+    "qrcode": "1.5.4",
+    "typescript": "5.9.3"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",

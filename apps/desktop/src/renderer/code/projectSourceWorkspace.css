@@ -112,17 +112,19 @@
   min-width: 0;
   min-height: 0;
   flex: 1;
-  grid-template-columns: var(--zeus-source-tree-width) 4px minmax(0, 1fr);
+  grid-template-columns: var(--zeus-source-tree-width) 8px minmax(0, 1fr);
 }
 
 .project-source-tree {
+  box-sizing: border-box;
+  padding: 0;
   overflow: auto;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   border-right: 0;
-  background: var(--zeus-product-panel-muted);
+  background: transparent;
 }
 .project-source-conflict-comparison {
   width: min(1200px, 94vw);
@@ -188,7 +190,11 @@
   --source-module-header-height: 30px;
   position: relative;
   flex: 0 0 auto;
-  border-bottom: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+  background: var(--zeus-product-panel);
 }
 .macos-ai-app .project-source-tree .project-source-module > summary,
 .macos-ai-app .project-source-tree .project-source-changes-body summary {
@@ -322,7 +328,8 @@
   min-height: 0;
 }
 .project-source-module-resizer {
-  flex: 0 0 5px;
+  flex: 0 0 8px;
+  border-radius: 4px;
   cursor: row-resize;
   touch-action: none;
   background: transparent;
@@ -334,9 +341,207 @@
 .project-source-tree:has(> .project-source-module:not([open])) > .project-source-module-resizer {
   display: none;
 }
+/* 任一卡片折叠后仍保留分区间距，只有同时展开时显示高度拖动区。 */
+.project-source-tree:has(> .project-source-module:not([open])) > .project-source-changes {
+  margin-top: 8px;
+}
 .project-source-module .project-source-tree-scroll {
   max-height: none;
   overflow: auto;
+}
+
+/* 内容搜索与替换固定在目录顶部，命中结果独立滚动。 */
+.project-source-content-search {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.project-source-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.project-source-search-input,
+.source-search-replacement > input {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 6px;
+  background: var(--zeus-control-background, var(--zeus-product-panel));
+}
+.project-source-search-input:focus-within,
+.source-search-replacement > input:focus {
+  border-color: var(--zeus-control-accent);
+}
+.project-source-content-search .project-source-search-input > input,
+.project-source-content-search .source-search-replacement > input {
+  min-width: 0;
+  width: 0;
+  flex: 1;
+  padding: 6px;
+  min-height: 30px;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--zeus-control-text);
+  outline: none;
+}
+.project-source-content-search .project-source-search-input > input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.project-source-search-input > button,
+.project-source-workspace .source-search-icon {
+  display: inline-flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.project-source-search-input > button[aria-pressed='true'] {
+  color: var(--zeus-brand-text);
+  background: color-mix(in srgb, var(--zeus-control-accent) 16%, transparent);
+}
+.project-source-search-input > button:hover:not(:disabled),
+.project-source-workspace .source-search-icon:hover:not(:disabled),
+.source-search-location:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover);
+}
+.project-source-search-input > button:focus-visible,
+.project-source-workspace .source-search-icon:focus-visible,
+.source-search-location:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+.source-search-word {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.source-search-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.source-search-icon svg.expanded {
+  transform: rotate(90deg);
+}
+.source-search-replacement {
+  margin: 5px 0 0 28px;
+}
+.source-search-status {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 4px 0 0 28px;
+  color: var(--zeus-control-muted-text);
+}
+.source-search-status > span {
+  flex: 1;
+  min-width: 0;
+}
+.source-search-feedback {
+  margin: 6px 0;
+  color: var(--zeus-control-muted-text);
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.project-source-content-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 8px;
+  font-size: 12px;
+}
+.source-search-file > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.source-search-file > summary::-webkit-details-marker {
+  display: none;
+}
+.source-search-file > summary::before {
+  content: '›';
+  color: var(--zeus-control-muted-text);
+}
+.source-search-file[open] > summary::before {
+  transform: rotate(90deg);
+}
+.source-search-file > summary > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.source-search-file > summary > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.source-search-file > summary > small {
+  color: var(--zeus-control-muted-text);
+  font-variant-numeric: tabular-nums;
+}
+.source-search-match {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline-start: 12px;
+}
+.source-search-location {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  flex: 1;
+  gap: 7px;
+  padding: 5px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.source-search-location > small {
+  flex: 0 0 auto;
+  color: var(--zeus-control-muted-text);
+  font-variant-numeric: tabular-nums;
+}
+.source-search-location > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-family: var(--zeus-code-font-family, monospace);
+}
+.source-search-location mark {
+  background: color-mix(in srgb, var(--zeus-control-accent) 23%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+.project-source-content-search button:disabled,
+.project-source-content-results button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .project-source-changes-body {
   padding: 2px 6px 12px;
@@ -415,34 +620,6 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.project-source-search {
-  display: flex;
-  flex-shrink: 0;
-  min-height: 42px;
-  align-items: center;
-  gap: 7px;
-  margin: 0 8px;
-  color: var(--zeus-control-muted-text);
-}
-
-.project-source-search svg {
-  width: 14px;
-  height: 14px;
-}
-.project-source-search input {
-  min-width: 0;
-  height: 28px;
-  flex: 1;
-  padding: 0 8px;
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 6px;
-  outline: none;
-  color: var(--zeus-control-text);
-  background: var(--zeus-control-bg);
-  font: inherit;
-  font-size: 12px;
 }
 
 .project-source-tree-scroll {
@@ -536,6 +713,9 @@
 
 .project-source-editor-pane {
   display: grid;
+  overflow: hidden;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -852,6 +1032,8 @@
     display: none;
   }
   .project-source-tree {
+    padding: 8px;
+    background: var(--zeus-product-panel-muted);
     position: absolute;
     z-index: 5;
     inset: 0 auto 0 0;

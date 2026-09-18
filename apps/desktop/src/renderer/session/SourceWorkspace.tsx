@@ -326,8 +326,6 @@ function SourceWorkspaceView(props: {
                 resourceId={props.preview.resource.kind === 'file' ? props.preview.resource.id : undefined}
                 blameLabels={{
                   locale: props.language,
-                  show: zh ? '显示 Git blame' : 'Show Git blame',
-                  hide: zh ? '隐藏 Git blame' : 'Hide Git blame',
                   loading: zh ? '正在加载 Git blame…' : 'Loading Git blame…',
                   unavailable: zh ? 'Git blame 暂不可用' : 'Git blame unavailable',
                   retry: zh ? '重试' : 'Retry',

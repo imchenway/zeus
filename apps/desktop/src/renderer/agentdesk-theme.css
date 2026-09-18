@@ -3850,12 +3850,17 @@ body:has(.macos-ai-app.zeus-shell) {
   }
 }
 
-/* 源码页只由工作区外框提供圆角；内部工作面贴边衔接，避免卡片与工具栏重复描边。 */
-/* 源码页内部工作面贴边衔接，与无外框的工作区保持一致。 */
+/* 源码页由目录、更改和编辑区各自成卡，外层仅负责布局，不再包一层大卡片。 */
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view-project-code:has(.project-source-workspace) {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
 .macos-ai-app.zeus-shell .workspace-view-project-code :is(.project-code-mode-host, .project-code-mode-pane, .project-source-workspace) {
   border-radius: 0 !important;
 }
 .macos-ai-app.zeus-shell .workspace-view-project-code .project-source-workspace {
+  background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
 }

@@ -4,6 +4,7 @@ import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, 
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { detectSourceLanguage } from '@zeus/shared';
 import { filePreviewMime, filePreviewKind, filePreviewLimits } from '@zeus/shared';
+import { findProjectSourceTextMatches, projectSourceTextSearchLimit, type ProjectSourceTextSearchInput, type ProjectSourceTextSearchResult } from '@zeus/shared';
 import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
@@ -153,6 +154,55 @@ export class ProjectSourceWorkspaceService {
     }
     const truncated = matches.length >= maximumContentSearchResults || directories.length > 0 || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes;
     return { matches, truncated };
+  }
+
+  /** 源码侧栏只搜索文本内容，返回全部命中位置及用于替换校验的文件版本。 */
+  async searchText(input: ProjectSourceTextSearchInput): Promise<ProjectSourceTextSearchResult> {
+    if (!input.query) return { files: [], truncated: false };
+    if (input.query.length > 1024 || /[\r\n]/u.test(input.query)) throw new TypeError('搜索内容必须是 1024 字以内的单行文本。');
+    const root = await this.#projectRoot(input.projectId);
+    const files: ProjectSourceTextSearchResult['files'] = [];
+    const directories = [''];
+    let visited = 0;
+    let count = 0;
+    let truncated = false;
+    while (directories.length) {
+      const directoryPath = directories.shift()!;
+      let handle;
+      try {
+        const directory = await resolveExistingPath(root, directoryPath, 'directory');
+        handle = await opendir(directory.absolutePath);
+      } catch {
+        truncated = true;
+        continue;
+      }
+      for await (const item of handle) {
+        if (ignoredWatchDirectoryNames.has(item.name) || item.name === '.pnpm-store') continue;
+        if (++visited > maximumSearchVisits) return { files, truncated: true };
+        const relativePath = joinRelative(directoryPath, item.name);
+        if (item.isDirectory()) {
+          directories.push(relativePath);
+          continue;
+        }
+        if (!item.isFile()) continue;
+        try {
+          const target = await resolveExistingPath(root, relativePath, 'file');
+          const fileStat = await stat(target.absolutePath);
+          if (fileStat.size === 0 || fileStat.size > maximumContentSearchFileBytes) continue;
+          const document = await this.readFile(input.projectId, relativePath);
+          if (!document.editable) continue;
+          const result = findProjectSourceTextMatches(document.content, input.query, input, projectSourceTextSearchLimit - count);
+          if (result.matches.length) files.push({ relativePath, revision: document.revision, matches: result.matches });
+          count += result.matches.length;
+          if (result.truncated) return { files, truncated: true };
+        } catch {
+          // 文件可能在遍历时被删除或变为不可读，保留已取得的结果并提示搜索不完整。
+          truncated = true;
+        }
+      }
+    }
+    files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    return { files, truncated };
   }
 
   /** 在项目目录边界内读取文件；图片返回只读预览，文本继续走原有编辑链路。 */

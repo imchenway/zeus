@@ -225,6 +225,7 @@ contextBridge.exposeInMainWorld('zeus', {
   listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
   searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
   searchProjectSourceContent: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-content', input),
+  searchProjectSourceText: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-text', input),
   loadProjectSourceBlame: (input: unknown) => ipcRenderer.invoke('zeus:project-source:blame', input),
   loadConversationSourceBlame: (input: unknown) => ipcRenderer.invoke('zeus:conversation-resource:blame', input),
 
@@ -232,6 +233,8 @@ contextBridge.exposeInMainWorld('zeus', {
   loadFilePreview: (input: unknown) => ipcRenderer.invoke('zeus:file-preview:load', input),
   releaseFilePreview: (ids: string[]) => ipcRenderer.invoke('zeus:file-preview:release', ids),
   actOnFilePreview: (id: string, action: string) => ipcRenderer.invoke('zeus:file-preview:action', id, action),
+  requestProjectSourceLanguage: (input: unknown) => ipcRenderer.invoke('zeus:project-source:language', input),
+  releaseProjectSourceLanguage: (projectId: string) => ipcRenderer.invoke('zeus:project-source:release-language', projectId),
   readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
   saveProjectSourceFile: (input: unknown) => invokeProjectSourceCommand('zeus:project-source:save-file', 'desktop.project_source.save_file', input),
   createProjectSourceEntry: (input: unknown) => invokeProjectSourceCommand('zeus:project-source:create-entry', 'desktop.project_source.create_entry', input),

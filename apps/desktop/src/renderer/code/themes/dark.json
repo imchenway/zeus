@@ -1,0 +1,56 @@
+{
+  "name": "Zeus Dark",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#24272c",
+    "editor.foreground": "#ebedf0",
+    "editorLineNumber.foreground": "#8a929e",
+    "editorLineNumber.activeForeground": "#a69cf5",
+    "editor.selectionBackground": "#6155d850",
+    "editor.lineHighlightBackground": "#6155d811",
+    "editorCursor.foreground": "#a69cf5",
+    "focusBorder": "#6155d8",
+    "editorWidget.background": "#2e333a",
+    "editorWidget.border": "#6155d855",
+    "editorSuggestWidget.selectedBackground": "#6155d835",
+    "textLink.foreground": "#a69cf5"
+  },
+  "tokenColors": [
+    {
+      "scope": ["comment"],
+      "settings": {
+        "foreground": "#8f889e"
+      }
+    },
+    {
+      "scope": ["keyword", "storage"],
+      "settings": {
+        "foreground": "#bf92ff"
+      }
+    },
+    {
+      "scope": ["string"],
+      "settings": {
+        "foreground": "#9ed9af"
+      }
+    },
+    {
+      "scope": ["constant.numeric", "constant.language"],
+      "settings": {
+        "foreground": "#e5b578"
+      }
+    },
+    {
+      "scope": ["entity.name.function", "support.function"],
+      "settings": {
+        "foreground": "#91c6ff"
+      }
+    },
+    {
+      "scope": ["entity.name.type", "support.type"],
+      "settings": {
+        "foreground": "#f0c879"
+      }
+    }
+  ]
+}

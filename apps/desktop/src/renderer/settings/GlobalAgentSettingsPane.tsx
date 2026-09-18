@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import type { GlobalAgentSettingsSnapshot } from '@zeus/shared';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
-import { CodeEditor } from '../code/CodeEditor.js';
 import { Button } from '../ui/Button.js';
+
+const CodeEditor = lazy(() => import('../code/CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
 
 /** 工作区离开确认调用当前编辑器的保存或放弃。 */
 export interface GlobalAgentSettingsHandle {
@@ -179,17 +180,19 @@ export function GlobalAgentSettingsPane(props: {
       </div>
       {snapshot ? (
         <div className="global-agent-settings-editor">
-          <CodeEditor
-            path={snapshot.path}
-            language="markdown"
-            label={zh ? 'AGENTS.md 全局规则内容' : 'AGENTS.md global rules content'}
-            content={draft}
-            readOnly={busy !== null}
-            onChange={setDraft}
-            onSave={() => {
-              void save();
-            }}
-          />
+          <Suspense fallback={<p role="status">{zh ? '正在打开编辑器…' : 'Opening editor…'}</p>}>
+            <CodeEditor
+              path={snapshot.path}
+              language="markdown"
+              label={zh ? 'AGENTS.md 全局规则内容' : 'AGENTS.md global rules content'}
+              content={draft}
+              readOnly={busy !== null}
+              onChange={setDraft}
+              onSave={() => {
+                void save();
+              }}
+            />
+          </Suspense>
         </div>
       ) : null}
     </section>

@@ -74,6 +74,8 @@ import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './netwo
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
+import { ProjectSourceLanguageService } from './projectSourceLanguage.js';
+import type { SourceLanguageRequest } from '@zeus/shared';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
 import {
@@ -144,6 +146,8 @@ let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
 let dataRootPreparationError: unknown;
 let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
+const projectSourceLanguage = new ProjectSourceLanguageService();
+app.on('will-quit', () => projectSourceLanguage.dispose());
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
 let mainCommandLedger: MainCommandLedger | undefined;
 let fatalStartup = false;
@@ -904,6 +908,7 @@ async function createWindow(): Promise<void> {
     pendingTaskTableLayoutWindowCloseIds.delete(window.id);
     projectSourceWatchers.get(sourceWatcherKey)?.watcher.close();
     projectSourceWatchers.delete(sourceWatcherKey);
+    projectSourceLanguage.release(sourceWatcherKey);
     mainWindowTaskGitContexts.delete(window.id);
     sessionContextActivityByWindow.delete(window.id);
     terminalActivityByWindow.delete(window.id);
@@ -1591,10 +1596,26 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码内容搜索请求无效。');
     return service.searchContent(input.projectId, input.query);
   });
+  ipcMain.handle('zeus:project-source:search-text', (event, input: { projectId?: unknown; query?: unknown; matchCase?: unknown; wholeWord?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.query !== 'string' || (input.matchCase !== undefined && typeof input.matchCase !== 'boolean') || (input.wholeWord !== undefined && typeof input.wholeWord !== 'boolean')) {
+      throw new TypeError('项目全文搜索请求无效。');
+    }
+    return service.searchText({ projectId: input.projectId, query: input.query, matchCase: input.matchCase, wholeWord: input.wholeWord });
+  });
   ipcMain.handle('zeus:project-source:read-file', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
+  });
+  ipcMain.handle('zeus:project-source:language', async (event, input: SourceLanguageRequest) => {
+    requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string') throw new Error('语言服务项目标识无效。');
+    return projectSourceLanguage.request(event.sender.id, await loadProjectRootForSourceWorkspace(input.projectId), input);
+  });
+  ipcMain.handle('zeus:project-source:release-language', (event, projectId: string) => {
+    requireProjectSourceWorkspace(event);
+    projectSourceLanguage.release(event.sender.id, projectId);
   });
   ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown; expectedSha256?: unknown }) => {
     requireProjectSourceWorkspace(event);

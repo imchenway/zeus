@@ -1,20 +1,17 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { detectSourceLanguage } from '@zeus/shared';
-import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, type ViewUpdate } from '@codemirror/view';
-import { Text, type Extension } from '@codemirror/state';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
-import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
+import { monaco, initializeSourceEditor, editorLanguage, exposeEditorControl, createTransientSourceModel } from './monacoRuntime.js';
+import { loadEditorGrammar } from './monacoGrammars.js';
 import { CodeEditor } from './CodeEditor.js';
-import { CommentWidget } from './SourceCodePreview.js';
+import { CodeReviewTextContext } from './codeReviewContext.js';
 import './codeDiffView.css';
 
-/** 评论位置沿用原始文件的左右行号。 */
 export interface DiffAnnotationLine {
   line: number;
   side: 'left' | 'right';
 }
-/** 每个显示行对应旧文件、新文件或补丁元信息。 */
 interface DiffRow {
   left: string;
   right: string;
@@ -22,324 +19,309 @@ interface DiffRow {
   rightNumber: number | null;
   kind: string;
 }
-/** 当前可见行号的 React 门户容器。 */
-interface GutterPortal {
+interface CodeDiffViewProps {
+  file: TaskGitFileDiff;
+  unified?: boolean;
+  alignReplacements?: boolean;
+  resizable?: boolean;
+  omitHunkHeaders?: boolean;
+  label: string;
+  annotationLines?: DiffAnnotationLine[];
+  focusAnnotation?: DiffAnnotationLine;
+  renderLineNumber?: (line: number, side: 'left' | 'right') => ReactNode;
+  renderLineComments?: (line: number, side: 'left' | 'right') => ReactNode;
+}
+
+/** 普通审阅采用原生 Diff；含评论的补丁保留权威行号映射，共用 Monaco 模型和高亮。 */
+export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
+  return props.renderLineNumber || props.renderLineComments ? <AnnotatedDiff {...props} /> : <NativeDiff {...props} />;
+});
+
+function NativeDiff(props: CodeDiffViewProps) {
+  const fullText = useContext(CodeReviewTextContext);
+  const host = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const [error, setError] = useState('');
+  const rows = useMemo(() => diffRows(props.file, false, Boolean(props.omitHunkHeaders)), [props.file, props.omitHunkHeaders]);
+  const documents = useMemo(() => {
+    if (fullText && !props.omitHunkHeaders) return { left: fullText.original, right: fullText.modified, leftNumbers: null, rightNumbers: null };
+    const left = rows.filter((row) => row.leftNumber !== null || row.kind === 'header');
+    const right = rows.filter((row) => row.rightNumber !== null || row.kind === 'header');
+    return { left: left.map((row) => row.left).join('\n'), right: right.map((row) => row.right).join('\n'), leftNumbers: left.map((row) => row.leftNumber), rightNumbers: right.map((row) => row.rightNumber) };
+  }, [rows, fullText, props.omitHunkHeaders]);
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    void initializeSourceEditor()
+      .then(async () => {
+        await loadEditorGrammar(editorLanguage(props.file.newPath || props.file.oldPath, detectSourceLanguage(props.file.newPath || props.file.oldPath)));
+        if (disposed || !host.current) return;
+        const language = editorLanguage(props.file.newPath || props.file.oldPath, detectSourceLanguage(props.file.newPath || props.file.oldPath));
+        const original = await createTransientSourceModel(documents.left, language);
+        const modified = await createTransientSourceModel(documents.right, language).catch((error: unknown) => {
+          original.dispose();
+          throw error;
+        });
+        if (disposed || !host.current) {
+          original.dispose();
+          modified.dispose();
+          return;
+        }
+        const editor = monaco.editor.createDiffEditor(host.current, {
+          automaticLayout: true,
+          readOnly: true,
+          originalEditable: false,
+          renderSideBySide: !props.unified,
+          enableSplitViewResizing: props.resizable ?? true,
+          diffAlgorithm: 'advanced',
+          ignoreTrimWhitespace: false,
+          renderIndicators: true,
+          renderOverviewRuler: true,
+          minimap: { enabled: false },
+          fontSize: 12,
+          lineHeight: 20,
+          scrollBeyondLastLine: false,
+          ariaLabel: props.label,
+          hideUnchangedRegions: { enabled: Boolean(fullText && !props.omitHunkHeaders), contextLineCount: 4, minimumLineCount: 8, revealLineCount: 20 },
+          renderSideBySideInlineBreakpoint: 0,
+        });
+        editor.setModel({ original: original.model, modified: modified.model });
+        if (documents.leftNumbers) editor.getOriginalEditor().updateOptions({ lineNumbers: (number) => String(documents.leftNumbers?.[number - 1] ?? '') });
+        if (documents.rightNumbers) editor.getModifiedEditor().updateOptions({ lineNumbers: (number) => String(documents.rightNumbers?.[number - 1] ?? '') });
+        setView(editor);
+        cleanup = () => {
+          editor.dispose();
+          original.dispose();
+          modified.dispose();
+        };
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [documents, props.file.newPath, props.file.oldPath]);
+  useEffect(() => {
+    view?.updateOptions({ renderSideBySide: !props.unified, enableSplitViewResizing: props.resizable ?? true, ariaLabel: props.label });
+  }, [view, props.unified, props.resizable, props.label]);
+  return (
+    <div className="zeus-monaco-diff" aria-label={props.label}>
+      <div ref={host} style={{ position: 'absolute', inset: 0 }} />
+      <div className="zeus-diff-navigation" role="group" aria-label="差异导航">
+        <button type="button" onClick={() => view?.goToDiff('previous')} aria-label="上一个差异" title="上一个差异">
+          ↑
+        </button>
+        <button type="button" onClick={() => view?.goToDiff('next')} aria-label="下一个差异" title="下一个差异">
+          ↓
+        </button>
+      </div>
+      {error ? <p role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
+interface LinePortal {
+  key: string;
   element: HTMLElement;
   row: number;
   side: 'left' | 'right';
 }
-/** 两侧评论容器始终同高，滚出视口后仍保留 React 草稿。 */
-interface AnnotationPair {
-  row: number;
-  left: HTMLDivElement;
-  right: HTMLDivElement;
-  leftBody: HTMLDivElement;
-  rightBody: HTMLDivElement;
-}
-/** 共用差异视图保留不同入口的行排列及操作能力。 */
-interface CodeDiffViewProps {
-  /** 已解析的补丁，只在文件内容变化时转换一次。 */
-  file: TaskGitFileDiff;
-  /** 统一视图保留补丁的增删前缀和双行号。 */
-  unified?: boolean;
-  /** Git 原有左右视图会配对相邻增删行。 */
-  alignReplacements?: boolean;
-  /** Git 工作台保留可拖动的左右分隔条。 */
-  resizable?: boolean;
-  /** 外层已经提供区块标题时，不再重复显示原始 @@ 片段头。 */
-  omitHunkHeaders?: boolean;
-  /** 视图无障碍名称。 */
-  label: string;
-  /** 只有实际存在评论或草稿的行需要区块装饰。 */
-  annotationLines?: DiffAnnotationLine[];
-  /** 新建或编辑评论时，在区块挂载后定位并聚焦。 */
-  focusAnnotation?: DiffAnnotationLine;
-  /** 可见行号支持现有评论、范围选择和打开源码操作。 */
-  renderLineNumber?: (line: number, side: 'left' | 'right') => ReactNode;
-  /** React 继续管理评论编辑，不随代码行滚出而卸载。 */
-  renderLineComments?: (line: number, side: 'left' | 'right') => ReactNode;
+interface CommentPortal extends LinePortal {
+  body: HTMLElement;
 }
 
-/** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
-export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
-  /** 文件内容和布局变化时才构造显示行。 */
+/** 评论使用 ViewZone；不会把空白和评论写进源码，也不会随滚动丢失草稿。 */
+function AnnotatedDiff(props: CodeDiffViewProps) {
   const rows = useMemo(() => diffRows(props.file, Boolean(props.alignReplacements && !props.unified), Boolean(props.omitHunkHeaders)), [props.file, props.alignReplacements, props.unified, props.omitHunkHeaders]);
-  /** 行文本只生成一次，不跟随评论或会话输入更新。 */
-  const documents = useMemo(
+  const content = useMemo(
     () => ({
-      left: Text.of(rows.map((row) => (props.unified ? `${row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '-' : row.kind === 'header' ? '' : ' '}${row.kind === 'deletion' ? row.left : row.right}` : row.left))),
-      right: Text.of(rows.map((row) => row.right)),
+      left: rows.map((row) => (props.unified ? (row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '-' : ' ') + (row.kind === 'deletion' ? row.left : row.right) : row.left)).join('\n'),
+      right: rows.map((row) => row.right).join('\n'),
     }),
     [rows, props.unified],
   );
-  /** 原始行号到显示行的索引供稀疏评论定位。 */
-  const positions = useMemo(() => {
-    const result = new Map<string, number>();
-    rows.forEach((row, index) => {
-      if (row.leftNumber !== null) result.set(`left:${row.leftNumber}`, index);
-      if (row.rightNumber !== null) result.set(`right:${row.rightNumber}`, index);
-    });
-    return result;
-  }, [rows]);
-  /** 两个编辑器共用纵向位置，横向保持独立。 */
-  const views = useRef<{ left: EditorView | null; right: EditorView | null }>({ left: null, right: null });
-  /** 仅在可见行号容器变化时发布一次 React 更新。 */
-  const [, setGutterRevision] = useState(0);
-  /** 行号容器注册表大小随可视行数变化。 */
-  const gutterPortals = useMemo(
-    () => ({
-      entries: new Map<HTMLElement, GutterPortal>(),
-      queued: false,
-      active: true,
-      notify() {
-        if (this.queued) return;
-        this.queued = true;
-        queueMicrotask(() => {
-          this.queued = false;
-          if (this.active) setGutterRevision((revision) => revision + 1);
-        });
-      },
-    }),
-    [],
-  );
-  useEffect(() => {
-    gutterPortals.active = true;
-    return () => {
-      gutterPortals.active = false;
-    };
-  }, [gutterPortals]);
-  /** 相同评论行继续使用已有节点，避免取消正在输入的草稿。 */
-  const pairCache = useRef(new Map<string, AnnotationPair>());
-  /** 区块只按实际评论行构建，不再为每一行筛选所有评论。 */
-  const pairs = useMemo(() => {
-    const next = new Map<string, AnnotationPair>();
+  const [left, setLeft] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [right, setRight] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [linePortals, setLinePortals] = useState<LinePortal[]>([]);
+  const commentNodes = useRef(new Map<string, CommentPortal>());
+  const comments = useMemo(() => {
+    const result: CommentPortal[] = [];
     for (const position of props.annotationLines ?? []) {
-      const row = positions.get(`${position.side}:${position.line}`);
-      if (row === undefined) continue;
-      const key = `${props.file.oldPath}:${props.file.newPath}:${row}`;
-      if (next.has(key)) continue;
-      let pair = pairCache.current.get(key);
-      if (!pair) {
-        const left = document.createElement('div');
-        const right = document.createElement('div');
-        const leftBody = document.createElement('div');
-        const rightBody = document.createElement('div');
-        left.className = right.className = 'code-diff-annotation';
-        left.append(leftBody);
-        right.append(rightBody);
-        pair = { row, left, right, leftBody, rightBody };
+      const row = rows.findIndex((item) => item[position.side === 'left' ? 'leftNumber' : 'rightNumber'] === position.line);
+      if (row < 0 || result.some((item) => item.row === row && item.side === position.side)) continue;
+      const key = props.file.oldPath + ':' + props.file.newPath + ':' + position.side + ':' + position.line;
+      let portal = commentNodes.current.get(key);
+      if (!portal) {
+        const element = document.createElement('div'),
+          body = document.createElement('div');
+        element.className = 'code-diff-annotation';
+        element.append(body);
+        portal = { key, element, body, side: position.side, row };
+        commentNodes.current.set(key, portal);
       }
-      next.set(key, pair);
+      result.push({ ...portal, row });
     }
-    pairCache.current = next;
-    return [...next.values()];
-  }, [props.annotationLines, positions, props.file.oldPath, props.file.newPath]);
-
-  /** 视图扩展只依赖实际行内容、评论位置与布局。 */
-  const extensions = useMemo(() => {
-    /** 两个侧栏使用相同的显示行和评论高度。 */
-    const make = (side: 'left' | 'right'): Extension => [
-      gutter({ class: 'code-diff-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals) }),
-      ViewPlugin.define(
-        (view) => ({
-          decorations: diffLineDecorations(view, rows, side, Boolean(props.unified)),
-          update(update: ViewUpdate) {
-            if (update.viewportChanged || update.docChanged) this.decorations = diffLineDecorations(update.view, rows, side, Boolean(props.unified));
-          },
-        }),
-        { decorations: (plugin) => plugin.decorations },
-      ),
-      EditorView.decorations.of(
-        Decoration.set(
-          pairs.map((pair) =>
-            Decoration.widget({ widget: new CommentWidget(pair[side]), block: true, side: 1 }).range(
-              // 显示文档与 rows 同序，避免在 React 更新里查询所有编辑器行。
-              documents[side].line(pair.row + 1).to,
-            ),
-          ),
-          true,
-        ),
-      ),
-      EditorView.domEventHandlers({
-        scroll: (_event, view) => {
-          const other = views.current[side === 'left' ? 'right' : 'left'];
-          if (other && Math.abs(other.scrollDOM.scrollTop - view.scrollDOM.scrollTop) > 1) other.scrollDOM.scrollTop = view.scrollDOM.scrollTop;
-        },
-      }),
-      EditorView.clipboardOutputFilter.of((text, state) => {
-        if (props.unified || state.selection.ranges.every((range) => range.empty)) return text;
-        // 复制按原始行过滤补位与片段头，保留真实空行和首尾选择范围。
-        return state.selection.ranges
-          .filter((range) => !range.empty)
-          .map((range) => {
-            const fromLine = state.doc.lineAt(range.from).number;
-            const toLine = state.doc.lineAt(range.to).number;
-            const selected: string[] = [];
-            for (let number = fromLine; number <= toLine; number += 1) {
-              const row = rows[number - 1];
-              if (!row || row[side === 'left' ? 'leftNumber' : 'rightNumber'] === null) continue;
-              const line = state.doc.line(number);
-              selected.push(state.doc.sliceString(Math.max(range.from, line.from), Math.min(range.to, line.to)));
+    const retained = new Set(result.map((portal) => portal.key));
+    for (const key of commentNodes.current.keys()) if (!retained.has(key)) commentNodes.current.delete(key);
+    return result;
+  }, [props.annotationLines, rows, props.file.oldPath, props.file.newPath]);
+  useEffect(() => {
+    if (!left || (!props.unified && !right)) return;
+    const views = props.unified ? [left] : [left, right!];
+    let syncing = false,
+      frame = 0,
+      active = true;
+    const disposables: monaco.IDisposable[] = [];
+    const widgets: Array<{ view: monaco.editor.IStandaloneCodeEditor; widget: monaco.editor.IGlyphMarginWidget }> = [];
+    function renderMargins() {
+      frame = 0;
+      if (!active) return;
+      widgets.splice(0).forEach(({ view, widget }) => view.removeGlyphMarginWidget(widget));
+      const portals: LinePortal[] = [];
+      views.forEach((view, index) => {
+        const side: 'left' | 'right' = index === 0 ? 'left' : 'right';
+        for (const visible of view.getVisibleRanges())
+          for (let number = visible.startLineNumber; number <= visible.endLineNumber; number++) {
+            const row = rows[number - 1];
+            if (!row) continue;
+            const sides: readonly ('left' | 'right')[] = props.unified ? ['left', 'right'] : [side];
+            const element = document.createElement('div');
+            element.className = 'zeus-diff-margin';
+            for (const current of sides) {
+              if (row[current === 'left' ? 'leftNumber' : 'rightNumber'] === null) continue;
+              const part = document.createElement('span');
+              element.append(part);
+              portals.push({ key: side + ':' + current + ':' + number, element: part, row: number - 1, side: current });
             }
-            return selected.join('\n');
+            const widget: monaco.editor.IGlyphMarginWidget = {
+              getId: () => 'zeus-line-' + number,
+              getDomNode: () => element,
+              getPosition: () => ({ lane: monaco.editor.GlyphMarginLane.Left, zIndex: 10, range: new monaco.Range(number, 1, number, 1) }),
+            };
+            view.addGlyphMarginWidget(widget);
+            exposeEditorControl(view, element);
+            widgets.push({ view, widget });
+          }
+      });
+      setLinePortals(portals);
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(renderMargins);
+    };
+    views.forEach((view, index) => {
+      view.updateOptions({ glyphMargin: true, lineNumbers: 'off', lineDecorationsWidth: props.unified ? 100 : 54, wordWrap: 'off', padding: { top: 0, bottom: 32 } });
+      const marks = view.createDecorationsCollection(
+        rows.map((row, offset) => {
+          const kind = props.unified || row.kind === 'header' ? row.kind : row[index === 0 ? 'leftNumber' : 'rightNumber'] === null ? 'empty' : row.kind === 'replacement' ? (index === 0 ? 'deletion' : 'addition') : row.kind;
+          return { range: new monaco.Range(offset + 1, 1, offset + 1, 1), options: { isWholeLine: true, className: 'code-diff-line is-' + kind } };
+        }),
+      );
+      const container = view.getDomNode();
+      const copy = (event: ClipboardEvent) => {
+        if (props.unified || !view.hasTextFocus() || !event.clipboardData) return;
+        const selections = view.getSelections()?.filter((selection) => !selection.isEmpty());
+        const model = view.getModel();
+        if (!model || !selections?.length) return;
+        // 复制时去掉对齐空行与区块标题，保留原文中的空行和首尾选择范围。
+        const text = selections
+          .map((selection) => {
+            const parts: string[] = [];
+            for (let line = selection.startLineNumber; line <= selection.endLineNumber; line++) {
+              if (rows[line - 1]?.[index === 0 ? 'leftNumber' : 'rightNumber'] == null) continue;
+              const content = model.getLineContent(line);
+              parts.push(content.slice(line === selection.startLineNumber ? selection.startColumn - 1 : 0, line === selection.endLineNumber ? selection.endColumn - 1 : undefined));
+            }
+            return parts.join('\n');
           })
           .join('\n');
-      }),
-    ];
-    return { left: make('left'), right: make('right') };
-  }, [rows, pairs, documents, props.unified, gutterPortals]);
-
-  useEffect(() => {
-    /** 评论折行、编辑和左右宽度变化时同步区块高度。 */
-    const synchronize = () => {
-      /** 长代码行可以横向延伸，评论仍限制在所在栏的可见宽度。 */
-      for (const side of ['left', 'right'] as const) {
-        const view = views.current[side];
-        if (!view) continue;
-        const width = Math.max(0, view.scrollDOM.clientWidth - (view.dom.querySelector<HTMLElement>('.cm-gutters')?.offsetWidth ?? 0));
-        pairs.forEach((pair) => {
-          pair[side].style.width = `${width}px`;
-        });
-      }
-      for (const pair of pairs) {
-        const height = Math.max(pair.leftBody.getBoundingClientRect().height, pair.rightBody.getBoundingClientRect().height);
-        if (height > 0) pair.left.style.height = pair.right.style.height = `${height}px`;
-      }
-      views.current.left?.requestMeasure();
-      views.current.right?.requestMeasure();
-    };
-    const observer = new ResizeObserver(synchronize);
-    pairs.forEach((pair) => {
-      observer.observe(pair.leftBody);
-      observer.observe(pair.rightBody);
-    });
-    if (views.current.left) observer.observe(views.current.left.scrollDOM);
-    if (views.current.right) observer.observe(views.current.right.scrollDOM);
-    synchronize();
-    return () => observer.disconnect();
-  }, [pairs]);
-  useEffect(() => {
-    views.current.left?.requestMeasure();
-    views.current.right?.requestMeasure();
-  });
-
-  /** 活跃评论容器身份稳定，其他评论变化不夺走输入焦点。 */
-  const focusedPair = props.focusAnnotation ? pairs.find((pair) => pair.row === positions.get(`${props.focusAnnotation!.side}:${props.focusAnnotation!.line}`)) : undefined;
-  const focusBody = props.focusAnnotation ? focusedPair?.[props.focusAnnotation.side === 'left' ? 'leftBody' : 'rightBody'] : undefined;
-  useEffect(() => {
-    const side = props.focusAnnotation?.side;
-    const view = side ? views.current[side] : null;
-    if (!view || !focusedPair || !focusBody) return;
-    let cancelled = false;
-    view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(focusedPair.row + 1).to, { y: 'center' }) });
-    view.requestMeasure({
-      read: () => focusBody.querySelector('textarea'),
-      write: (textarea) =>
-        queueMicrotask(() => {
-          if (!cancelled) textarea?.focus({ preventScroll: true });
+        event.clipboardData.setData('text/plain', text);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      container?.addEventListener('copy', copy, true);
+      disposables.push({ dispose: () => container?.removeEventListener('copy', copy, true) });
+      disposables.push({ dispose: () => marks.clear() });
+      disposables.push(
+        view.onDidScrollChange(() => {
+          if (!syncing) {
+            syncing = true;
+            for (const other of views) if (other !== view) other.setScrollTop(view.getScrollTop());
+            syncing = false;
+          }
+          schedule();
         }),
+        view.onDidLayoutChange(schedule),
+      );
     });
+    renderMargins();
     return () => {
-      cancelled = true;
+      active = false;
+      cancelAnimationFrame(frame);
+      widgets.forEach(({ view, widget }) => view.removeGlyphMarginWidget(widget));
+      disposables.forEach((item) => item.dispose());
     };
-  }, [focusBody]);
-
+  }, [left, right, rows, props.unified]);
+  useEffect(() => {
+    if (!left || (!props.unified && !right)) return;
+    const zones: Array<{ view: monaco.editor.IStandaloneCodeEditor; id: string; row: number; node: HTMLElement; height: number }> = [];
+    const views = props.unified ? [left] : [left, right!];
+    const rowIds = [...new Set(comments.map((comment) => comment.row))];
+    for (const row of rowIds)
+      views.forEach((view, index) => {
+        const node = document.createElement('div');
+        node.className = 'code-diff-annotation';
+        comments.filter((item) => item.row === row && (props.unified || item.side === (index === 0 ? 'left' : 'right'))).forEach((item) => node.append(item.element));
+        view.changeViewZones((accessor) => {
+          zones.push({ view, row, node, height: 1, id: accessor.addZone({ afterLineNumber: row + 1, heightInPx: 1, domNode: node, suppressMouseDown: false }) });
+          exposeEditorControl(view, node);
+        });
+      });
+    const resize = new ResizeObserver(() => {
+      for (const row of rowIds) {
+        const pair = zones.filter((zone) => zone.row === row);
+        const height = Math.max(1, ...pair.map((zone) => [...zone.node.children].reduce((sum, node) => sum + node.getBoundingClientRect().height, 0)));
+        for (const zone of pair) {
+          if (zone.height === height) continue;
+          zone.height = height;
+          zone.view.changeViewZones((accessor) => {
+            accessor.removeZone(zone.id);
+            zone.id = accessor.addZone({ afterLineNumber: zone.row + 1, heightInPx: height, domNode: zone.node, suppressMouseDown: false });
+          });
+        }
+      }
+    });
+    comments.forEach((comment) => resize.observe(comment.body));
+    return () => {
+      resize.disconnect();
+      zones.forEach((zone) => zone.view.changeViewZones((accessor) => accessor.removeZone(zone.id)));
+    };
+  }, [left, right, comments, props.unified]);
+  useEffect(() => {
+    const target = props.focusAnnotation;
+    if (!target) return;
+    const comment = comments.find((item) => item.side === target.side && rows[item.row]?.[target.side === 'left' ? 'leftNumber' : 'rightNumber'] === target.line);
+    if (!comment) return;
+    const view = props.unified || target.side === 'left' ? left : right;
+    view?.revealLineInCenter(comment.row + 1);
+    const frame = requestAnimationFrame(() => comment.body.querySelector('textarea')?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [props.focusAnnotation, comments, rows, left, right, props.unified]);
   return (
-    <div className={`code-diff-view${props.unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}`} aria-label={props.label}>
-      <CodeEditor
-        path={`${props.file.oldPath || props.file.newPath}:left:${Boolean(props.unified)}`}
-        language={detectSourceLanguage(props.unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
-        content={documents.left}
-        readOnly
-        label={props.label}
-        extensions={extensions.left}
-        onView={(view) => {
-          views.current.left = view;
-        }}
-      />
-      {!props.unified && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
-      {!props.unified ? (
-        <CodeEditor
-          path={`${props.file.newPath || props.file.oldPath}:right`}
-          language={detectSourceLanguage(props.file.newPath) ?? null}
-          content={documents.right}
-          readOnly
-          label={props.label}
-          extensions={extensions.right}
-          onView={(view) => {
-            views.current.right = view;
-          }}
-        />
-      ) : null}
-      {[...gutterPortals.entries.values()].map((portal) => {
-        const row = rows[portal.row];
-        if (!row) return null;
-        const number = row[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
-        return createPortal(
-          props.unified ? (
-            <>
-              <span>{row.leftNumber ?? ''}</span>
-              <span>{row.rightNumber ?? ''}</span>
-            </>
-          ) : number === null ? null : (
-            (props.renderLineNumber?.(number, portal.side) ?? number)
-          ),
-          portal.element,
-          `${portal.side}:${portal.row}`,
-        );
+    <div className={'code-diff-view' + (props.unified ? ' is-unified' : '')} aria-label={props.label}>
+      <CodeEditor path={props.file.oldPath + ':review-left'} language={detectSourceLanguage(props.file.oldPath || props.file.newPath)} content={content.left} readOnly onView={setLeft} />
+      {!props.unified ? <CodeEditor path={props.file.newPath + ':review-right'} language={detectSourceLanguage(props.file.newPath)} content={content.right} readOnly onView={setRight} /> : null}
+      {linePortals.map((portal) => {
+        const number = rows[portal.row]?.[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
+        return createPortal(number == null ? null : (props.renderLineNumber?.(number, portal.side) ?? number), portal.element, portal.key);
       })}
-      {pairs.flatMap((pair) =>
-        (['left', 'right'] as const).map((side) => {
-          const number = rows[pair.row]?.[side === 'left' ? 'leftNumber' : 'rightNumber'];
-          return createPortal(number == null ? null : props.renderLineComments?.(number, side), pair[side === 'left' ? 'leftBody' : 'rightBody'], `${side}:${pair.row}:comment`);
-        }),
-      )}
+      {comments.map((portal) => {
+        const number = rows[portal.row]?.[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
+        return createPortal(number == null ? null : props.renderLineComments?.(number, portal.side), portal.body, portal.key);
+      })}
     </div>
   );
-});
-
-/** 可见行号借助门户保留原有 React 按钮及事件。 */
-class DiffGutterMarker extends GutterMarker {
-  /** 注册表只保存当前可见行的节点。 */
-  constructor(
-    private readonly row: number,
-    private readonly side: 'left' | 'right',
-    private readonly registry: { entries: Map<HTMLElement, GutterPortal>; notify(): void },
-  ) {
-    super();
-  }
-  /** 未变化的可见行号不重新挂载。 */
-  eq(other: DiffGutterMarker): boolean {
-    return this.row === other.row && this.side === other.side && this.registry === other.registry;
-  }
-  /** 创建用于行号和操作按钮的容器。 */
-  toDOM(): HTMLElement {
-    const element = document.createElement('span');
-    element.className = 'code-diff-line-number';
-    this.registry.entries.set(element, { element, row: this.row, side: this.side });
-    this.registry.notify();
-    return element;
-  }
-  /** 行滚出视口后及时释放门户，不保留整份文件的按钮。 */
-  destroy(dom: Node): void {
-    this.registry.entries.delete(dom as HTMLElement);
-    this.registry.notify();
-  }
-}
-
-/** 只装饰可见行，完整文件的高亮交给编辑器后台增量解析。 */
-function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | 'right', unified: boolean) {
-  const decorations = [];
-  for (const range of view.visibleRanges) {
-    for (let position = range.from; position <= range.to; ) {
-      const line = view.state.doc.lineAt(position);
-      const row = rows[line.number - 1];
-      const kind = row?.kind === 'header' || unified ? row?.kind : row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] === null ? 'empty' : row?.kind === (side === 'left' ? 'addition' : 'deletion') ? 'context' : row?.kind;
-      decorations.push(Decoration.line({ attributes: { class: `code-diff-line is-${kind}`, 'data-diff-row': String(line.number), 'data-file-line': String(row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] ?? '') } }).range(line.from));
-      position = line.to + 1;
-    }
-  }
-  return Decoration.set(decorations, true);
 }
 
 /** 将补丁转换成左右显示行；不截断，完整内容可滚动和复制。 */
@@ -365,7 +347,7 @@ function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolea
       }
     }
   }
-  // 二进制或仅文件模式变化的 diff 没有文本 hunk；CodeMirror 文档仍必须至少有一行。
+  // 二进制或仅文件模式变化的 diff 没有文本 hunk；编辑器文档仍必须至少有一行。
   if (rows.length === 0) rows.push({ left: '', right: '', leftNumber: null, rightNumber: null, kind: 'empty' });
   return rows;
 }
