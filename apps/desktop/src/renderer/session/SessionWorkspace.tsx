@@ -1802,8 +1802,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   // 文件变更审核、历史分页、过程与截断正文都是本地只读查询。会话只读时仍必须允许查看。
   const transcriptReadActionsEnabled = true;
   const realtimeExpected = sessionStateNeedsRealtime(props.state);
+  /** 初始化错误属于本地历史读取，冷历史没有实时订阅也必须可见。 */
+  const transcriptPreparationError =
+    props.state?.transportState === 'failed' && ['ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING', 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED'].includes(props.state.error?.code ?? '') ? props.state.error : null;
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
-  const transportError = realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
+  const transportError = !transcriptPreparationError && realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
   useApplicationErrorDialog(props.historyOnly ? null : props.readOnlyGate?.error, {
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
   });
@@ -2889,6 +2892,30 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   />
                   {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                   {renderBottomInteraction()}
+                  {transcriptPreparationError ? (
+                    <p className="session-composer-unavailable" role="status">
+                      <span>
+                        {props.language === 'zh-CN'
+                          ? transcriptPreparationError.message
+                          : transcriptPreparationError.retryable
+                            ? 'Conversation history is still being prepared. Try again later.'
+                            : 'Conversation history could not be prepared. View the error details.'}
+                      </span>
+                      {transcriptPreparationError.retryable && actions.onReconnect ? (
+                        <button type="button" onClick={() => void actions.onReconnect?.()}>
+                          {props.language === 'zh-CN' ? '重试' : 'Retry'}
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => reportApplicationError(transcriptPreparationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' })}>
+                          {props.language === 'zh-CN' ? '查看详情' : 'View details'}
+                        </button>
+                      )}
+                    </p>
+                  ) : props.state?.transcriptInitializing && props.state.snapshot ? (
+                    <p className="session-composer-unavailable" role="status">
+                      {props.language === 'zh-CN' ? '正在准备会话历史，当前内容已保留。' : 'Preparing conversation history. Your current content is preserved.'}
+                    </p>
+                  ) : null}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
                     <>
                       {!props.historyOnly && transcriptInteractionsEnabled && asyncQuestionDock.questions.length > 0 ? (

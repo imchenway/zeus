@@ -426,14 +426,20 @@ export class ConversationProviderItemRepository {
     const payload = parseProjectionJson(record.payloadJson);
     const payloadRecord = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
     const userMessage = record.itemType === 'userMessage';
-    const clientMessageId = userMessage
-      ? (this.db.get<{ client_message_id: string | null }>(
-          `SELECT client_message_id FROM conversation_messages
-            WHERE conversation_id = ? AND provider_item_id = ? AND role = 'user'
-            ORDER BY created_at, id LIMIT 1`,
-          [record.conversationId, record.providerItemId],
-        )?.client_message_id ?? null)
-      : null;
+    /** 仅使用当前线程的显式消息关联，避免跨线程同名条目借用输入身份。 */
+    const userIdentities = userMessage
+      ? this.db.select<{ client_message_id: string }>(
+          `SELECT message.client_message_id FROM conversation_messages AS message
+            WHERE message.conversation_id = ? AND message.provider_thread_id = ? AND message.provider_item_id = ? AND message.role = 'user' AND message.client_message_id IS NOT NULL
+           UNION SELECT message.client_message_id FROM conversation_message_provider_aliases AS alias
+            JOIN conversation_messages AS message ON message.id = alias.message_id AND message.conversation_id = alias.conversation_id
+            WHERE alias.conversation_id = ? AND alias.provider_thread_id = ? AND alias.provider_item_id = ? AND message.role = 'user' AND message.client_message_id IS NOT NULL`,
+          [record.conversationId, record.providerThreadId, record.providerItemId, record.conversationId, record.providerThreadId, record.providerItemId],
+        )
+      : [];
+    if (userIdentities.length > 1) throw Object.assign(new Error(`Provider 回显关联到不同提交：${record.providerItemId}`), { code: 'ZEUS_CONVERSATION_TRANSCRIPT_IDENTITY_CONFLICT' });
+    /** 与历史重建一致，单一显式关联才可采用本地输入身份。 */
+    const clientMessageId = userIdentities[0]?.client_message_id ?? null;
     this.transcript.registerSource({
       conversationId: record.conversationId,
       sourceDomain: 'provider_item',

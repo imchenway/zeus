@@ -37,6 +37,8 @@ import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.j
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
+  /** 只更新准备状态，不触碰消息、排序、草稿或当前快照。 */
+  | { type: 'transcript_initialization_changed'; initializing: boolean }
   /** 全部已加载位置取齐后与缓冲动作一次接管。 */
   | { type: 'transcript_placements_hydrated'; batch: NativeConversationTranscriptPlacementBatch; actions: NativeSessionAction[] }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
@@ -170,6 +172,8 @@ export function createHydratedSessionState(snapshot: NativeConversationSnapshot)
 
 export function sessionReducer(state: NativeSessionState, action: NativeSessionAction): NativeSessionState {
   switch (action.type) {
+    case 'transcript_initialization_changed':
+      return state.transcriptInitializing === action.initializing ? state : { ...state, transcriptInitializing: action.initializing };
     case 'transport_changed':
       return {
         ...state,

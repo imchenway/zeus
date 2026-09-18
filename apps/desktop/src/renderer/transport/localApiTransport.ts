@@ -36,19 +36,22 @@ export interface ZeusClientPerformanceSpan {
 }
 
 export class ZeusApiError extends Error {
+  /** 服务端要求再次读取前等待的毫秒数，重读策略由业务恢复流程决定。 */
+  readonly retryAfterMs?: number;
   readonly status: number;
   readonly error: string | null;
   readonly recoveryRequired: boolean;
   /** 服务端包装错误中的原始原因。 */
   override readonly cause?: UserFacingErrorCause;
 
-  constructor(input: { status: number; error?: string | null; message: string; recoveryRequired?: boolean; cause?: UserFacingErrorCause }) {
+  constructor(input: { status: number; error?: string | null; message: string; recoveryRequired?: boolean; cause?: UserFacingErrorCause; retryAfterMs?: number }) {
     super(input.message);
     this.name = 'ZeusApiError';
     this.status = input.status;
     this.error = input.error ?? null;
     this.recoveryRequired = input.recoveryRequired ?? false;
     if (input.cause) this.cause = userFacingErrorCause(input.cause);
+    if (input.retryAfterMs !== undefined) this.retryAfterMs = input.retryAfterMs;
   }
 }
 
@@ -238,7 +241,16 @@ async function responseError(response: Response, path: string): Promise<ZeusApiE
     ...(payload?.cause ? { cause: userFacingErrorCause(payload.cause) } : {}),
     message: payload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
     recoveryRequired,
+    retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
   });
+}
+
+/** 同时支持 HTTP 秒数与日期；无效提示交由会话恢复流程采用默认间隔。 */
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value?.trim()) return undefined;
+  /** 纯数字是秒数，其余按 HTTP 日期解释。 */
+  const milliseconds = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1_000 : Date.parse(value) - Date.now();
+  return Number.isFinite(milliseconds) && milliseconds >= 0 ? milliseconds : undefined;
 }
 
 function blobPerformanceSpan(response: Response | null, traceId: string, attempt: number, startedAt: number, success: boolean): ZeusClientPerformanceSpan {

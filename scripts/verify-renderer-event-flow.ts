@@ -1,3 +1,4 @@
+import { ZeusApiError } from '../apps/desktop/src/renderer/transport/localApiTransport.ts';
 import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
@@ -349,7 +350,8 @@ async function verifyIdleHistoryDoesNotSubscribe() {
   };
 }
 
-async function verifyRestartedPendingSendReplaysOnce() {
+/** 重启与重新读取只恢复待发送状态，不自动再次发送模型请求。 */
+async function verifyRestartedPendingSendPreservesIdentity() {
   const originalIdentity = {
     idempotencyKey: 'renderer-restart-idempotency',
     clientUserMessageId: 'renderer-restart-client-message',
@@ -376,28 +378,33 @@ async function verifyRestartedPendingSendReplaysOnce() {
       deliveryError: { message: 'Execution Host restarted before acceptance.', code: 'ZEUS_LOCAL_API_UNAVAILABLE', recoveryRequired: false, retryable: true },
     },
   });
+  /** 持续服务不可用时也不能把读取恢复变成自动重发。 */
   const failure = Object.assign(new Error('Execution Host is still unavailable.'), { code: 'ZEUS_LOCAL_API_UNAVAILABLE' });
-  const first = createHarness(undefined, 0, true, [], persisted, failure);
-  await first.controller.start();
-  await waitUntil(() => first.sendCalls() === 1, 'restored pending send automatic replay');
-  const firstRequest = first.sentMessages[0]!;
-  assert(firstRequest.idempotencyKey === originalIdentity.idempotencyKey, 'Automatic replay must preserve the original idempotency key.');
-  assert(firstRequest.clientUserMessageId === originalIdentity.clientUserMessageId, 'Automatic replay must preserve the original client message id.');
-  await waitUntil(() => JSON.parse(first.persistedDraft() ?? '{}').pendingSend?.deliveryState === 'failed', 'automatic replay failure persistence');
-  const afterFirstReplay = first.persistedDraft();
-  assert(JSON.parse(afterFirstReplay ?? '{}').pendingSend?.autoReplayCount === 1, 'Automatic replay count must be persisted before the retry can fail.');
-  first.controller.dispose();
-
-  const second = createHarness(undefined, 0, true, [], afterFirstReplay, failure);
-  await second.controller.start();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert(second.sendCalls() === 0, 'A second Renderer restart must not start an automatic replay loop.');
-  await second.controller.retryPendingSend(originalIdentity.clientUserMessageId).catch(() => undefined);
-  assert(second.sendCalls() === 1, 'Explicit retry must remain available after the one automatic replay.');
-  assert(second.sentMessages[0]?.idempotencyKey === originalIdentity.idempotencyKey, 'Explicit retry must preserve the original idempotency key.');
-  assert(second.sentMessages[0]?.clientUserMessageId === originalIdentity.clientUserMessageId, 'Explicit retry must preserve the original client message id.');
-  second.controller.dispose();
-  return { automaticReplayCalls: 1, secondRestartAutomaticCalls: 0, explicitRetryCalls: 1, identitiesPreserved: true };
+  for (const deliveryState of ['failed', 'pending', 'uncertain']) {
+    /** 同一持久提交在三种重启状态下必须保留身份。 */
+    const restored = JSON.parse(persisted);
+    restored.pendingSend.deliveryState = deliveryState;
+    const harness = createHarness(undefined, 0, true, [], JSON.stringify(restored), failure);
+    try {
+      await harness.controller.start();
+      await harness.controller.reconnect();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert(harness.sendCalls() === 0, '重启和重新读取均不得自动重发待确认消息。');
+      /** 读取后保存的本地提交仍可由用户确认后继续处理。 */
+      const retained = JSON.parse(harness.persistedDraft() ?? '{}').pendingSend;
+      assert(retained?.idempotencyKey === originalIdentity.idempotencyKey && retained?.clientUserMessageId === originalIdentity.clientUserMessageId, '重启必须保留原提交与显示身份。');
+      assert(retained.deliveryState !== 'accepted', '未取得服务端证据的提交不得标记为已接纳。');
+      assert(
+        Object.values(harness.controller.getState().items).some((item) => item.optimistic && item.status === (deliveryState === 'failed' ? 'failed' : 'unconfirmed')),
+        '重启后的本地消息必须显示失败或待确认状态。',
+      );
+      await harness.controller.retryPendingSend(originalIdentity.clientUserMessageId, 'check').catch(() => undefined);
+      assert(harness.sendCalls() === 0, '仅核对发送结果不得发送新请求。');
+    } finally {
+      harness.controller.dispose();
+    }
+  }
+  return { states: 3, automaticReplayCalls: 0, checkOnlySends: 0, identitiesPreserved: true };
 }
 
 /** 长任务推送载荷被截断时，历史身份仍须让本地任务卡与 Provider 用户项合并。 */
@@ -1336,6 +1343,138 @@ async function verifyPlacementEpochTakeover() {
     harness.controller.dispose();
   }
 }
+/** 真实控制器的正常初始化、取消、预算与故障边界，不更改发送语义。 */
+async function verifyTranscriptInitializationRecovery() {
+  /** 只读等待使用正式传输错误类型，服务端提示为一秒。 */
+  const preparing = () => new ZeusApiError({ status: 503, error: 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING', message: '会话显示位置正在初始化。', retryAfterMs: 1_000 });
+  /** 每个场景都拥有独立控制器并在 finally 销毁。 */
+  const recovered = createHarness(undefined, 0, false);
+  let reads = 0;
+  let choices = 0;
+  let queueReads = 0;
+  try {
+    const load = recovered.client.loadNativeConversationReadableSnapshot;
+    const loadChoice = recovered.client.loadNativeConversationChoice;
+    const loadQueue = recovered.client.loadNativeConversationQueueV2;
+    recovered.client.loadNativeConversationReadableSnapshot = async (...args) => {
+      if (++reads <= 2) throw preparing();
+      return load(...args);
+    };
+    recovered.client.loadNativeConversationChoice = async (...args) => {
+      choices += 1;
+      return loadChoice(...args);
+    };
+    recovered.client.loadNativeConversationQueueV2 = async (...args) => {
+      queueReads += 1;
+      return loadQueue(...args);
+    };
+    recovered.controller.setDraft('保留未发送草稿');
+    await recovered.controller.start();
+    assert(reads === 3 && choices === 1 && queueReads === 1, '初始化只能重读可读快照，其他独立数据只读一次。');
+    assert(recovered.controller.getState().transportState === 'ready' && recovered.controller.getState().draft === '保留未发送草稿' && recovered.sendCalls() === 0, '正常准备应自动接续、保留草稿且不发送模型请求。');
+    /** 已显示内容在一次新的正常准备中始终保留。 */
+    const previous = recovered.controller.getState().snapshot;
+    let warmReads = 0;
+    recovered.client.loadNativeConversationReadableSnapshot = async (...args) => {
+      if (++warmReads === 1) throw preparing();
+      return load(...args);
+    };
+    const reconnecting = recovered.controller.reconnect();
+    await waitUntil(() => recovered.controller.getState().transcriptInitializing === true, 'warm transcript initialization');
+    assert(recovered.controller.getState().snapshot?.id === previous?.id, '准备期间不能清空已显示快照。');
+    await reconnecting;
+  } finally {
+    recovered.controller.dispose();
+  }
+
+  /** 手动重连取消旧计时器，迟到请求不创建额外恢复链。 */
+  const cancelled = createHarness(undefined, 0, false);
+  let cancelledReads = 0;
+  try {
+    const load = cancelled.client.loadNativeConversationReadableSnapshot;
+    cancelled.client.loadNativeConversationReadableSnapshot = async (...args) => {
+      if (++cancelledReads === 1) throw preparing();
+      return load(...args);
+    };
+    const first = cancelled.controller.start().catch((error) => error);
+    await waitUntil(() => cancelled.controller.getState().transcriptInitializing === true, 'initialization before reconnect');
+    await cancelled.controller.reconnect();
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    assert(cancelledReads === 2 && cancelled.controller.getState().transportState === 'ready', '手动重连后旧计时器不得继续读取或污染当前状态。');
+  } finally {
+    cancelled.controller.dispose();
+  }
+
+  /** 真实失败只有一次读取，错误码与不可重试语义不能丢失。 */
+  const failed = createHarness(undefined, 0, false);
+  let failedReads = 0;
+  try {
+    failed.client.loadNativeConversationReadableSnapshot = async () => {
+      failedReads += 1;
+      throw new ZeusApiError({ status: 500, error: 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED', message: '来源身份冲突。' });
+    };
+    await failed.controller.start().catch(() => undefined);
+    assert(
+      failedReads === 1 && failed.controller.getState().error?.code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED' && failed.controller.getState().error?.retryable === false,
+      '真实初始化失败不能被自动重试或包装成普通读取错误。',
+    );
+  } finally {
+    failed.controller.dispose();
+  }
+
+  /** 销毁立即终止正常准备，等待窗口过后不再请求。 */
+  const disposed = createHarness(undefined, 0, false);
+  let disposedReads = 0;
+  try {
+    disposed.client.loadNativeConversationReadableSnapshot = async () => {
+      disposedReads += 1;
+      throw preparing();
+    };
+    const pending = disposed.controller.start().catch((error) => error);
+    await waitUntil(() => disposed.controller.getState().transcriptInitializing === true, 'initialization before dispose');
+    disposed.controller.dispose();
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    assert(disposedReads === 1, '销毁后不得残留初始化轮询。');
+  } finally {
+    disposed.controller.dispose();
+  }
+
+  /** 真正经过二十秒预算，卡住的第二次网络读取也必须被取消。 */
+  const budget = createHarness(undefined, 0, false);
+  let budgetReads = 0;
+  let aborted = false;
+  const began = Date.now();
+  try {
+    budget.client.loadNativeConversationReadableSnapshot = async (_project, _conversation, options) => {
+      if (++budgetReads === 1) throw preparing();
+      return new Promise((_resolve, reject) =>
+        options?.signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(options.signal?.reason);
+          },
+          { once: true },
+        ),
+      );
+    };
+    await budget.controller.start().catch(() => undefined);
+    assert(Date.now() - began >= 19_000 && Date.now() - began < 23_000 && aborted && budgetReads === 2, '原二十秒预算必须取消卡住的读取，不能按重读续期。');
+    assert(budget.controller.getState().error?.code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING' && budget.controller.getState().error?.retryable === true, '预算用尽应保留稍后重读入口，不冒充真实初始化失败。');
+  } finally {
+    budget.controller.dispose();
+  }
+  return { normalReads: reads, choices, queueReads, cancelledReads, failedReads, disposedReads, budgetReads, budgetCancelled: aborted };
+}
+
+/** 专项入口复用现有脚本，避免与历史待发送重放断言混淆。 */
+if (process.argv.includes('--transcript-initialization-only')) {
+  console.log(JSON.stringify({ transcriptInitialization: await verifyTranscriptInitializationRecovery() }));
+  process.exit(0);
+}
+
 const placementTakeover = await verifyPlacementEpochTakeover();
 console.log(JSON.stringify({ placementTakeover }));
 
@@ -1363,7 +1502,8 @@ const result =
           snapshotV2SettingsAndPlanRestoration: verifySnapshotV2SettingsAndPlanRestoration(),
           pendingPlanConfirmationRestoration: await verifyPendingPlanConfirmationRestoration(),
           idleHistoryWithoutSubscription: await verifyIdleHistoryDoesNotSubscribe(),
-          restartedPendingSendReplay: await verifyRestartedPendingSendReplaysOnce(),
+          restartedPendingSendPreservation: await verifyRestartedPendingSendPreservesIdentity(),
+          transcriptInitialization: await verifyTranscriptInitializationRecovery(),
           queuedRetryReconciliation,
           activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
           idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),

@@ -468,7 +468,7 @@ export class ZeusDatabase implements ZeusDatabasePort {
 
   /**
    * 在回调返回前把整个事务提交到 SQLite。
-   * 该入口只用于 Provider 即将接纳真实请求的窄边界，禁止嵌套或异步回调。
+   * 该入口用于 Provider 接纳真实请求及持久维护批次的窄边界，禁止嵌套或异步回调。
    */
   durableTransactionSync<T>(operation: () => T): T {
     this.assertWritable();

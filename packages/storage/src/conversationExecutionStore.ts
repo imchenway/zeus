@@ -1628,8 +1628,10 @@ export class ConversationExecutionRepository {
   ): void {
     const content = parseJsonRecord(input.content);
     const reasoning = parseJsonRecord(input.reasoningSource);
+    /** 工具声明与结果共享调用身份；同阶段的不同工具保持独立。 */
     const providerItemId =
       stringOrNull(content.providerItemId) ??
+      stringOrNull(input.toolPairId) ??
       (content.agentKind === 'pi' || this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind === 'pi' ? stringOrNull(content.stageId) : null) ??
       stringOrNull(reasoning.itemId) ??
       stringOrNull(reasoning.providerItemId);

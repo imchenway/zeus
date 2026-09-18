@@ -1350,18 +1350,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         >
           {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
         </button>
-        <TranscriptHistoryLoading visible={Boolean(props.historyLoading)} language={props.language} />
+        <TranscriptHistoryLoading visible={Boolean(props.historyLoading)} initializing={Boolean(props.state?.transcriptInitializing)} language={props.language} />
       </div>
     </>
   );
 }
 
-function TranscriptHistoryLoading(props: { visible: boolean; language: SessionUiLanguage }) {
+/** 冷读取沿用原加载层，只区分位置准备与普通历史读取。 */
+function TranscriptHistoryLoading(props: { visible: boolean; initializing: boolean; language: SessionUiLanguage }) {
   return (
     <section className="session-transcript-loading" data-visible={props.visible || undefined} role={props.visible ? 'status' : undefined} aria-hidden={!props.visible} aria-live={props.visible ? 'polite' : undefined}>
       <span className="session-loading-line" />
       <span className="session-loading-line" />
-      <strong>{props.language === 'zh-CN' ? '正在加载会话' : 'Loading conversation'}</strong>
+      <strong>{props.initializing ? (props.language === 'zh-CN' ? '正在准备会话历史' : 'Preparing conversation history') : props.language === 'zh-CN' ? '正在加载会话' : 'Loading conversation'}</strong>
     </section>
   );
 }

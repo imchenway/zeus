@@ -205,6 +205,35 @@ export const conversationQueryPlanDefinitions: readonly ConversationQueryPlanDef
     scanBudgetRows: 0,
   },
   {
+    id: 'transcript-initialization-identity',
+    description: '初始化同身份来源核对',
+    sql: 'SELECT fact_json FROM conversation_transcript_initialization_facts WHERE conversation_id = ? AND preferred_entry_id = ?',
+    params: ['conversation-plan-check', 'entry-plan-check'],
+    expectedIndex: 'idx_conversation_transcript_initialization_identity',
+    scannedTable: 'conversation_transcript_initialization_facts',
+    scanBudgetRows: 0,
+  },
+  {
+    id: 'transcript-initialization-source-cursor',
+    description: '初始化每种来源自己的持久游标',
+    sql: 'SELECT fact_json FROM conversation_transcript_initialization_facts WHERE conversation_id = ? AND source_domain = ? AND (source_order, source_scope, source_id, facet) > (?, ?, ?, ?) ORDER BY source_order, source_scope, source_id, facet LIMIT ?',
+    params: ['conversation-plan-check', 'model_history', 0, '', '', '', 512],
+    expectedIndex: 'idx_conversation_transcript_initialization_source_order',
+    scannedTable: 'conversation_transcript_initialization_facts',
+    scanBudgetRows: 0,
+  },
+  {
+    id: 'transcript-batch-placement-write',
+    description: '批量新位置逐身份定位，不与全会话做嵌套扫描',
+    sql: `UPDATE conversation_transcript_entries AS target SET display_order = json_extract(position.value, '$[1]')
+      FROM json_each(?) AS position WHERE target.rowid = (SELECT rowid FROM conversation_transcript_entries AS lookup
+        WHERE lookup.conversation_id = ? AND lookup.id = json_extract(position.value, '$[0]'))`,
+    params: ['[["entry-plan-check",1024]]', 'conversation-plan-check'],
+    expectedIndex: 'sqlite_autoindex_conversation_transcript_entries_1',
+    scannedTable: 'target',
+    scanBudgetRows: 0,
+  },
+  {
     id: 'transcript-entry-sources',
     description: '显示条目来源修订',
     sql: 'SELECT * FROM conversation_transcript_aliases WHERE conversation_id = ? AND entry_id = ? ORDER BY source_revision, source_domain, source_id, facet',

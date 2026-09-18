@@ -2,10 +2,11 @@
 /* global console, process */
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { basename, join, posix, resolve } from 'node:path';
+import { basename, dirname, join, posix, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { pathToFileURL, URL } from 'node:url';
+import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 
 /** 只读取完整包的身份，不执行包内程序；打包和运行验收共用这一检查。 */
 function verifyPackagedAppIdentity(appPath, variant) {
@@ -202,13 +203,27 @@ function assertAppProcess(pid, executablePath) {
   if (actual !== executablePath) throw new Error(`运行验收进程 ${pid} 不属于指定测试包。`);
 }
 
-/** 只检查调用方已启动的隔离测试应用，观察真实心跳推进，不启动、停止应用或模拟宿主响应。 */
-export async function verifyRunningTestApp(appPath, userDataPath, pid) {
-  /** 原正式发布调用仍只做结构检查；运行检查只允许完整测试包。 */
-  const identity = verifyPackagedAppIdentity(resolve(appPath), 'test');
-  verifyPackagedApp(appPath);
-  /** 两个进程必须使用同一完整测试包的可执行文件。 */
-  const executablePath = join(resolve(appPath), 'Contents/MacOS', identity.executable);
+/** 开发运行只接受本项目安装的 Electron 与当前工作树入口，不冒充完整测试包。 */
+function developmentRuntimeIdentity(appPath) {
+  /** 依赖解析以本脚本所在项目为界，禁止传入其他 Electron 副本。 */
+  const require = createRequire(import.meta.url);
+  /** Electron 官方依赖导出当前实际可执行文件路径。 */
+  const executablePath = require('electron');
+  if (resolve(appPath) !== dirname(dirname(dirname(executablePath)))) throw new Error('开发验收只接受当前项目安装的 Electron。');
+  /** 固定工作树入口与版本，不能由调用方任意声明。 */
+  const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../apps/desktop');
+  /** 版本来自正常开发构建使用的应用清单。 */
+  const manifest = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8'));
+  return { executablePath, desktopRoot, version: manifest.version, bundleId: 'dev.hypha.zeus.development', profile: 'development' };
+}
+
+/** 只检查调用方已启动的隔离应用，观察真实心跳推进，不启动、停止应用或模拟宿主响应。 */
+export async function verifyRunningTestApp(appPath, userDataPath, pid, development = false) {
+  /** 原完整包检查保持不变；开发模式必须显式选择并验证固定工作树入口。 */
+  const identity = development ? developmentRuntimeIdentity(appPath) : { ...verifyPackagedAppIdentity(resolve(appPath), 'test'), profile: 'test' };
+  if (!development) verifyPackagedApp(appPath);
+  /** 两个进程必须使用同一真实可执行文件。 */
+  const executablePath = development ? identity.executablePath : join(resolve(appPath), 'Contents/MacOS', identity.executable);
   assertAppProcess(pid, executablePath);
   /** 复用现有安全发现文件读取和控制协议，不另建模拟接口。 */
   const protocol = await import('../apps/desktop/dist/main/executionHostProtocol.js');
@@ -218,7 +233,7 @@ export async function verifyRunningTestApp(appPath, userDataPath, pid) {
   const root = resolve(userDataPath);
   /** 首次观察锁定真实宿主和连接，后续观察不接受被替换的实例。 */
   const rendezvous = await protocol.readExecutionHostRendezvous(root);
-  if (!rendezvous || rendezvous.dataRootIdentity.profile !== 'test' || rendezvous.dataRootIdentity.bundleId !== identity.bundleId || rendezvous.pid === pid) {
+  if (!rendezvous || rendezvous.dataRootIdentity.profile !== identity.profile || rendezvous.dataRootIdentity.bundleId !== identity.bundleId || rendezvous.pid === pid) {
     throw new Error('未找到独立测试数据目录对应的真实执行宿主。');
   }
   verifyZeusDataRootHostIdentity({ rootPath: root, expected: rendezvous.dataRootIdentity });
@@ -231,6 +246,16 @@ export async function verifyRunningTestApp(appPath, userDataPath, pid) {
   const assertProcesses = () => {
     assertAppProcess(pid, executablePath);
     assertAppProcess(rendezvous.pid, executablePath);
+    if (development) {
+      /** 两个开发进程分别运行当前工作树主入口和宿主入口，不能只比 Electron 文件名。 */
+      for (const [processId, entry] of [
+        [pid, identity.desktopRoot],
+        [rendezvous.pid, join(identity.desktopRoot, 'dist/main/executionHost.js')],
+      ]) {
+        const command = execFileSync('/bin/ps', ['-p', String(processId), '-o', 'command='], { encoding: 'utf8', timeout: 5_000 }).trim();
+        if (command !== `${executablePath} ${entry}`) throw new Error('开发进程不属于当前工作树指定入口。');
+      }
+    }
     /** 只输出监听端口所属进程号，不读取连接数据或认证信息。 */
     const owner = execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(rendezvous.pid), `-iTCP:${address.port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8', timeout: 5_000 }).trim();
     if (owner !== String(rendezvous.pid)) throw new Error('测试控制端口不属于指定应用的执行宿主。');
@@ -282,18 +307,21 @@ async function main() {
       'runtime-root': { type: 'string' },
       // 调用方实际启动的测试界面进程号。
       'runtime-pid': { type: 'string' },
+      // 显式检查 pnpm dev，仍要求隔离数据身份及真实进程心跳。
+      development: { type: 'boolean', default: false },
     },
   });
   /** 保留原有单个应用包位置参数。 */
   const [appPath] = positionals;
   /** 显式传入空运行参数也必须失败，不能被当成仅检查结构。 */
+  if (values.development && (!values['runtime-root'] || !values['runtime-pid'])) throw new Error('开发验收必须同时提供 runtime-root 和 runtime-pid。');
   const runtimeRequested = values['runtime-root'] !== undefined || values['runtime-pid'] !== undefined;
   if (!appPath || positionals.length !== 1 || (runtimeRequested && (!values['runtime-root']?.trim() || !values['runtime-pid']?.trim()))) {
     throw new Error('用法：node scripts/verify-packaged-app-health.mjs <App绝对路径> [--runtime-root <独立测试数据目录> --runtime-pid <测试界面进程号>]');
   }
   if (runtimeRequested) {
     /** 只有真实进程、宿主身份、端口与推进的心跳均通过才输出运行成功。 */
-    const runtime = await verifyRunningTestApp(appPath, values['runtime-root'], Number(values['runtime-pid']));
+    const runtime = await verifyRunningTestApp(appPath, values['runtime-root'], Number(values['runtime-pid']), values.development);
     console.log(`runtime-health=${JSON.stringify(runtime)}`);
     return;
   }

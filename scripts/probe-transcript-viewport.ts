@@ -3,6 +3,10 @@ import { activityOutcome, nativeActivityTitle, nativeActivityTool } from '../app
 import { mkdtemp, rm } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import {
@@ -52,6 +56,31 @@ registerHooks({
 const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 /** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
 const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
+
+/** 隔离子进程在真实 COMMIT 前后突然退出，不借正常 close 隐式提交。 */
+if (process.argv.includes('--transcript-crash-child')) {
+  /** 父进程仅传本任务临时目录，不允许使用默认正式数据路径。 */
+  const position = process.argv.indexOf('--transcript-crash-child');
+  const [databasePath, conversationId, mode, markerPath] = process.argv.slice(position + 1);
+  if (!databasePath || !conversationId || !markerPath || !['before', 'after'].includes(mode ?? '')) throw new Error('崩溃探针缺少显式临时路径。');
+  /** 使用真实数据库组合入口，再停止自动推进以控制本次维护批次。 */
+  const database = await createZeusDatabase(databasePath);
+  stopConversationTranscriptInitialization(database);
+  /** 标记最后真正持久化的状态，供父进程在异常退出后独立核对。 */
+  const before = database.get('SELECT initialization_state, initialization_cursor_json, reconstructed_count FROM conversation_transcript_state WHERE conversation_id = ?', [conversationId]);
+  writeFileSync(markerPath, JSON.stringify(before));
+  /** 真实持久事务实现仍负责 BEGIN、回滚和 COMMIT。 */
+  const durable = database.durableTransactionSync.bind(database);
+  if (mode === 'before')
+    database.durableTransactionSync = (operation) =>
+      durable(() => {
+        const result = operation();
+        process.kill(process.pid, 'SIGKILL');
+        return result;
+      });
+  new ConversationTranscriptRepository(database).initializeConversation(conversationId, 1);
+  process.kill(process.pid, 'SIGKILL');
+}
 
 /** 为探针条目建立与正式协议相同的最小持久位置。 */
 function probeTranscript(entryId: string, order: number, openingInputId: string | null = 'probe-input', displayStageId: string | null = null, revision = order) {
@@ -454,6 +483,191 @@ const changedPosition = { ...completeBody, transcript: { ...completeBody.transcr
 const movedHydrated = sessionReducer(beforeContent, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [changedPosition] } });
 assertProbe(movedHydrated.items[beforeContent.itemOrder[0]!]!.transcript?.placement.orderEpoch === 2, '纯位置快照不能被内容对象复用规则丢弃');
 
+/** 真实磁盘子进程崩溃、损坏断点和阶段续做的恢复核验。 */
+async function verifyTranscriptDurableRecovery(): Promise<void> {
+  /** 所有文件只存在于本任务的系统临时目录。 */
+  const directory = await mkdtemp(join(tmpdir(), 'zeus-transcript-durable-'));
+  const databasePath = join(directory, 'recovery.db');
+  const db = await createZeusDatabase(databasePath);
+  try {
+    /** 提供独立来源事实，使提交前后都实际发生索引与断点写入。 */
+    const project = new ProjectRepository(db).create({ id: 'durable-project', name: '持久恢复', localPath: directory });
+    new ConversationRepository(db).create({ id: 'durable-conversation', projectId: project.id, title: '断点恢复', transportKind: 'codex_native', providerId: 'codex' });
+    for (let index = 0; index < 520; index += 1)
+      db.execute(
+        `INSERT INTO conversation_model_history (id, conversation_id, sequence, turn_id, segment_id, role, content_json, confirmed_at)
+       VALUES (?, 'durable-conversation', ?, 'durable-turn', 'durable-segment', ?, ?, '2026-09-17T00:00:00Z')`,
+        [`durable-history-${index}`, index, index === 0 ? 'user' : 'assistant', JSON.stringify(index === 1 || index === 519 ? { providerItemId: 'same-explicit-body' } : {})],
+      );
+    /** 声明与结果横跨批次，只靠调用编号关联，模拟原生工具历史字段。 */
+    db.execute("UPDATE conversation_model_history SET tool_pair_id = 'durable-tool-call' WHERE id IN ('durable-history-2', 'durable-history-518')");
+    db.execute("UPDATE conversation_model_history SET role = 'tool' WHERE id = 'durable-history-518'");
+    /** 首批必须已经对独立连接可见，且只收集有界来源。 */
+    const repository = new ConversationTranscriptRepository(db);
+    repository.initializeConversation('durable-conversation', 1);
+    /** 逐阶段续做不依赖同一仓库对象，也不会清空未知断点。 */
+    let normalized = false;
+    for (let batch = 0; batch < 30; batch += 1) {
+      const cursor = JSON.parse(db.get<{ initialization_cursor_json: string }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['durable-conversation'])!.initialization_cursor_json) as {
+        phase: string;
+      };
+      if (cursor.phase === 'ordering') {
+        normalized = true;
+        break;
+      }
+      new ConversationTranscriptRepository(db).initializeConversation('durable-conversation', 1);
+    }
+    assertProbe(normalized, '收集与身份关系核对必须推进到排序阶段');
+    repository.initializeConversation('durable-conversation', 1);
+    /** 保存新排序前缀，下一批必须续做而不是再次清除。 */
+    const prefix = db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_aliases WHERE conversation_id = ?', ['durable-conversation'])!.count;
+    new ConversationTranscriptRepository(db).initializeConversation('durable-conversation', 1);
+    assertProbe(prefix === 512 && db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_aliases WHERE conversation_id = ?', ['durable-conversation'])!.count === 520, '带身份核对标记的新排序游标必须直接续做');
+    /** 显式模拟旧排序断点，转换只清理 building 派生前缀而保留来源。 */
+    const revision = repository.revision('durable-conversation');
+    db.execute("UPDATE conversation_transcript_state SET initialization_cursor_json = ? WHERE conversation_id = 'durable-conversation'", [JSON.stringify({ phase: 'ordering', offset: 100 })]);
+    repository.initializeConversation('durable-conversation', 1);
+    assertProbe(
+      db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_aliases WHERE conversation_id = ?', ['durable-conversation'])!.count === 0 && repository.revision('durable-conversation') === revision,
+      '旧断点转换只清派生前缀且保留修订单调性',
+    );
+    /** 损坏断点必须原样保留，不能被当作新建空会话。 */
+    const validCursor = db.get<{ initialization_cursor_json: string }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['durable-conversation'])!.initialization_cursor_json;
+    db.execute("UPDATE conversation_transcript_state SET initialization_cursor_json = 'broken-cursor' WHERE conversation_id = 'durable-conversation'");
+    let rejected = false;
+    try {
+      repository.initializeConversation('durable-conversation', 1);
+    } catch (error) {
+      rejected = (error as { code?: string }).code === 'ZEUS_CONVERSATION_TRANSCRIPT_INVALID_CURSOR';
+    }
+    assertProbe(
+      rejected && db.get<{ initialization_cursor_json: string }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['durable-conversation'])!.initialization_cursor_json === 'broken-cursor',
+      '损坏断点不得静默重建或删除事实',
+    );
+    db.execute("UPDATE conversation_transcript_state SET initialization_cursor_json = ? WHERE conversation_id = 'durable-conversation'", [validCursor]);
+    await db.close();
+    for (const mode of ['before', 'after']) {
+      /** 子进程写下操作前的持久状态后在精确提交边界自我终止。 */
+      const markerPath = join(directory, `${mode}.json`);
+      const child = spawnSync(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url), '--transcript-crash-child', databasePath, 'durable-conversation', mode, markerPath], { encoding: 'utf8', timeout: 30_000 });
+      assertProbe(child.signal === 'SIGKILL', `隔离子进程必须在指定提交边界突然结束：${mode}/${child.stderr}`);
+      /** 从独立连接读取崩溃后的磁盘视图，不能调用存储启动流程先推进状态。 */
+      const reader = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        const before = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
+        const after = reader.prepare('SELECT initialization_state, initialization_cursor_json, reconstructed_count FROM conversation_transcript_state WHERE conversation_id = ?').get('durable-conversation');
+        assertProbe((JSON.stringify(before) === JSON.stringify(after)) === (mode === 'before'), `崩溃后只能看到最后已提交的批次：${mode}`);
+      } finally {
+        reader.close();
+      }
+    }
+    /** 异常退出后重新启动真实数据库，完整来源仍能续做并去重。 */
+    const resumed = await createZeusDatabase(databasePath);
+    try {
+      stopConversationTranscriptInitialization(resumed);
+      const repository = new ConversationTranscriptRepository(resumed);
+      repository.initializeConversation('durable-conversation');
+      const aliases = resumed.select<{ entry_id: string }>("SELECT entry_id FROM conversation_transcript_aliases WHERE conversation_id = 'durable-conversation' AND source_id IN ('durable-history-1', 'durable-history-519')");
+      assertProbe(aliases.length === 2 && aliases[0]!.entry_id === aliases[1]!.entry_id, '跨越 512 条边界的明确来源必须统一身份');
+      /** 重建和实时追加采用相同调用身份，结果不另建显示条目。 */
+      const toolAliases = resumed.select<{ entry_id: string }>("SELECT entry_id FROM conversation_transcript_aliases WHERE conversation_id = 'durable-conversation' AND source_id IN ('durable-history-2', 'durable-history-518')");
+      assertProbe(toolAliases.length === 2 && toolAliases[0]!.entry_id === toolAliases[1]!.entry_id, '跨批次工具声明和结果必须按调用编号合一');
+      assertProbe(repository.readPlacementBatch('durable-conversation', []).placements.length === 0, '崩溃恢复完成后公开读取必须可用');
+    } finally {
+      await resumed.close();
+    }
+  } finally {
+    db.discardAndClose();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+/** 强关系冲突、最终提交失败与摄取优先的真实初始化边界。 */
+async function verifyTranscriptInitializationFailures(): Promise<void> {
+  /** 本任务拥有的独立磁盘库，故障注入不接触正式数据。 */
+  const directory = await mkdtemp(join(tmpdir(), 'zeus-transcript-failure-'));
+  const databasePath = join(directory, 'failure.db');
+  const db = await createZeusDatabase(databasePath);
+  try {
+    const project = new ProjectRepository(db).create({ id: 'failure-project', name: '初始化失败边界', localPath: directory });
+    for (const id of ['read-priority', 'provider-priority', 'commit-failure', 'relation-conflict', 'same-text']) {
+      new ConversationRepository(db).create({ id, projectId: project.id, title: id, transportKind: 'codex_native', providerId: 'codex' });
+      for (let index = 0; index < 2; index += 1)
+        db.execute(
+          `INSERT INTO conversation_model_history (id, conversation_id, sequence, turn_id, segment_id, role, content_json, confirmed_at)
+         VALUES (?, ?, ?, ?, 'failure-segment', 'assistant', ?, '2026-09-17T00:00:00Z')`,
+          [`${id}-${index}`, id, index, `${id}-turn`, JSON.stringify(id === 'relation-conflict' ? { providerItemId: 'one-call', stageId: `conflicting-stage-${index}` } : { text: '相同正文' })],
+        );
+    }
+    /** 同文同刻的唯一候选也不是明确身份关系，旧推断路径必须失效。 */
+    db.execute(`INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, started_at, created_at, updated_at)
+      VALUES ('same-text-turn', 'same-text', 'same-text-thread', 'same-text-native-turn', 'unused-submission', 'completed', '2026-09-17T00:00:00Z', '2026-09-17T00:00:00Z', '2026-09-17T00:00:00Z')`);
+    db.execute(`INSERT INTO conversation_messages (id, conversation_id, role, content, source, metadata_json, created_at, provider_thread_id, provider_turn_id, provider_item_id)
+      VALUES ('unrelated-message', 'same-text', 'assistant', '相同正文', 'codex_native', '{}', '2026-09-17T00:00:00Z', 'same-text-thread', 'same-text-native-turn', 'unrelated-provider-id')`);
+    await initializeConversationTranscriptIndexes(db, true);
+    /** 摄取等待先登记，后来的界面请求不能抢走它的执行机会。 */
+    const repository = new ConversationTranscriptRepository(db);
+    const providerReady = repository.waitUntilReady('provider-priority');
+    try {
+      repository.readPlacementBatch('read-priority', []);
+    } catch {
+      /* 正常初始化响应只改变读取优先级。 */
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assertProbe(
+      db.get<{ initialization_cursor_json: string | null }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['provider-priority'])!.initialization_cursor_json !== null &&
+        db.get<{ initialization_cursor_json: string | null }>('SELECT initialization_cursor_json FROM conversation_transcript_state WHERE conversation_id = ?', ['read-priority'])!.initialization_cursor_json === null,
+      'Provider 摄取屏障必须优先于后来的读取请求',
+    );
+    await providerReady;
+    /** 最终提交前抛错，真实持久事务必须回滚 ready，不放行等待者。 */
+    const durable = db.durableTransactionSync.bind(db);
+    db.durableTransactionSync = (operation) =>
+      durable(() => {
+        const result = operation();
+        if (db.get<{ initialization_state: string }>('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?', ['commit-failure'])?.initialization_state === 'ready')
+          throw new Error('隔离探针：最终提交失败');
+        return result;
+      });
+    const failed = await repository.waitUntilReady('commit-failure').then(
+      () => null,
+      (error: unknown) => error,
+    );
+    assertProbe((failed as { code?: string })?.code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED', '最终提交失败必须拒绝等待者并保留失败类型');
+    /** 独立连接确认最终 ready 确实未落盘。 */
+    const reader = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      assertProbe(
+        (reader.prepare('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?').get('commit-failure') as { initialization_state: string }).initialization_state === 'building',
+        'COMMIT 失败后其他连接不得看到 ready',
+      );
+    } finally {
+      reader.close();
+    }
+    db.durableTransactionSync = durable;
+    stopConversationTranscriptInitialization(db);
+    repository.initializeConversation('same-text');
+    /** 两条没有关联证据的历史消息必须继续拥有独立身份。 */
+    const independent = db.select<{ entry_id: string }>("SELECT entry_id FROM conversation_transcript_aliases WHERE conversation_id = 'same-text'");
+    assertProbe(independent.length === 2 && independent[0]!.entry_id !== independent[1]!.entry_id, '同文同刻不能把不同历史记录合成一条消息');
+    let conflict: unknown;
+    try {
+      repository.initializeConversation('relation-conflict');
+    } catch (error) {
+      conflict = error;
+    }
+    assertProbe(
+      (conflict as { code?: string })?.code === 'ZEUS_CONVERSATION_TRANSCRIPT_RELATION_CONFLICT' &&
+        db.get<{ count: number }>("SELECT COUNT(*) AS count FROM conversation_transcript_initialization_facts WHERE conversation_id = 'relation-conflict'")!.count === 2,
+      '两份明确阶段证据冲突时必须失败并保留全部事实',
+    );
+  } finally {
+    stopConversationTranscriptInitialization(db);
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 /** 使用正式仓库验证迟到历史、重编号、事务回滚和 Pi 来源别名。 */
 async function verifyTranscriptStorageBoundaries(): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), 'zeus-transcript-boundaries-'));
@@ -484,6 +698,34 @@ async function verifyTranscriptStorageBoundaries(): Promise<void> {
     repo.onPlacementChanged((_conversationId, epoch, revision) => db.execute('INSERT INTO probe_placement_events VALUES (?, ?)', [epoch, revision]));
     for (let index = 0; index < 20; index += 1) register(`late-${index}`, 'a');
     assertProbe(repo.orderEpoch('ordering') > 1 && db.countRows('probe_placement_events') > 0, '空隙耗尽必须重编号并在同一事务记录通知');
+    /** 批量插入使用真实来源登记，不靠放大间隙掩盖逐条中点退化。 */
+    const batchSource = (id: string, turnId: string, kind: 'ordinary_input' | 'content' = 'content') => ({
+      conversationId: 'batch-ordering',
+      sourceDomain: 'provider_item',
+      sourceScope: 'segment',
+      sourceId: id,
+      facet: 'body',
+      preferredEntryId: id,
+      kind,
+      turnId,
+      segmentId: 'segment',
+      firstSeenAt: at,
+      orderingEvidence: 'provider' as const,
+      contentHash: id,
+    });
+    repo.registerSources([batchSource('batch-a', 'a', 'ordinary_input'), batchSource('batch-b', 'b', 'ordinary_input')]);
+    /** 原后邻的身份与位置在间隙足够时保持不变。 */
+    const beforeBatchB = repo.envelopeForEntry('batch-ordering', 'batch-b')!;
+    const middle = repo.registerSources(Array.from({ length: 20 }, (_, index) => batchSource(`batch-middle-${index}`, 'a')));
+    assertProbe(repo.orderEpoch('batch-ordering') === 1 && repo.envelopeForEntry('batch-ordering', 'batch-b')!.placement.order === beforeBatchB.placement.order, '二十项中间插入必须一次分配且不重编号');
+    assertProbe(
+      middle.every((entry, index) => entry.placement.openingInputId === 'batch-a' && entry.placement.order! < beforeBatchB.placement.order! && (index === 0 || entry.placement.order! > middle[index - 1]!.placement.order!)),
+      '批量中间项必须保持严格顺序及原输入归属',
+    );
+    /** 一批大量补入必然耗尽当前区间，但只能重编号一次。 */
+    const epochBefore = repo.orderEpoch('batch-ordering');
+    const crowded = repo.registerSources(Array.from({ length: 1_100 }, (_, index) => batchSource(`batch-crowded-${index}`, 'a')));
+    assertProbe(repo.orderEpoch('batch-ordering') === epochBefore + 1 && crowded.at(-1)!.placement.order! < repo.envelopeForEntry('batch-ordering', 'batch-b')!.placement.order!, '整个不足区间必须在一批内只重编号一次');
     repo.startStage({ conversationId: 'ordering', turnId: 'a', segmentId: 'segment', stageId: 'early-stage', occurredAt: at });
     register('steer-a', 'a', 'ordinary_input');
     const stageResult = repo.registerSource({
@@ -557,9 +799,50 @@ async function verifyTranscriptStorageBoundaries(): Promise<void> {
     const active = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'provider_item', sourceScope: 'pi-thread', sourceId: 'pi-message', facet: 'body' })!;
     const confirmed = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'model_history', sourceScope: 'pi-segment', sourceId: history.id, facet: 'body' })!;
     assertProbe(active.placement.entryId === confirmed.placement.entryId && active.sources[0]!.contentRevision === confirmed.sources[0]!.contentRevision, 'Pi 活动正文与确认历史必须共用显示身份与正文修订');
+    /** 同阶段两次工具调用分别合并声明和结果，不能互相合并或随追加输入移动。 */
+    for (const toolPairId of ['pi-tool-a', 'pi-tool-b']) {
+      const declaration = execution.appendModelHistory({ conversationId: 'pi', turnId: 'pi-turn', segmentId: 'pi-segment', role: 'assistant', toolPairId, content: { type: 'tool_call', stageId: 'pi-message' }, confirmedAt: at });
+      const original = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'model_history', sourceScope: 'pi-segment', sourceId: declaration.id, facet: 'tool_activity' })!;
+      repo.registerSource({
+        conversationId: 'pi',
+        sourceDomain: 'model_history',
+        sourceScope: 'pi-segment',
+        sourceId: `steer-${toolPairId}`,
+        facet: 'body',
+        preferredEntryId: `steer-${toolPairId}`,
+        kind: 'ordinary_input',
+        turnId: 'pi-turn',
+        segmentId: 'pi-segment',
+        firstSeenAt: at,
+        orderingEvidence: 'live',
+        contentHash: toolPairId,
+      });
+      const result = execution.appendModelHistory({ conversationId: 'pi', turnId: 'pi-turn', segmentId: 'pi-segment', role: 'tool', toolPairId, content: { projection: '完成', stageId: 'pi-message' }, confirmedAt: at });
+      const completed = repo.envelopeForSource({ conversationId: 'pi', sourceDomain: 'model_history', sourceScope: 'pi-segment', sourceId: result.id, facet: 'tool_activity' })!;
+      assertProbe(
+        original.placement.entryId === completed.placement.entryId && original.placement.order === completed.placement.order && original.placement.openingInputId === completed.placement.openingInputId,
+        '工具结果必须沿用调用身份、顺序和原输入归属',
+      );
+    }
+    assertProbe(db.get<{ count: number }>("SELECT COUNT(DISTINCT entry_id) AS count FROM conversation_transcript_aliases WHERE conversation_id = 'pi' AND facet = 'tool_activity'")?.count === 2, '同阶段两个工具必须保留两个独立显示身份');
     /** 旧资料队列应立即返回，并优先推进前台刚请求的会话。 */
     const project = new ProjectRepository(db).create({ id: 'background-project', name: '后台初始化', localPath: directory });
     for (const id of ['background-a', 'background-b']) new ConversationRepository(db).create({ id, projectId: project.id, title: id, transportKind: 'codex_native', providerId: 'codex' });
+    /** 旧轮次的二十条迟到正文会耗尽插入间隙，复现宿主已安装通知回调时的后台重编号。 */
+    for (let index = 0; index < 1_538; index += 1) {
+      db.execute('INSERT INTO conversation_model_history (id, conversation_id, sequence, turn_id, segment_id, role, content_json, confirmed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+        `background-history-${index}`,
+        'background-a',
+        index + 1,
+        index === 1 ? 'background-turn-b' : 'background-turn-a',
+        'background-segment',
+        index < 2 ? 'user' : 'assistant',
+        '{}',
+        new Date(Date.parse(at) + index * 1_000).toISOString(),
+      ]);
+    }
+    /** 重建前保存通知数量，未就绪期间的重排不能对外发布。 */
+    const eventsBeforeInitialization = db.countRows('probe_placement_events');
     await initializeConversationTranscriptIndexes(db, true);
     let initializing = false;
     try {
@@ -584,6 +867,19 @@ async function verifyTranscriptStorageBoundaries(): Promise<void> {
     );
     await barrier;
     assertProbe(repo.readPlacementBatch('background-a', []).placements.length === 0, '完整就绪后才能放行摄取屏障');
+    assertProbe(repo.orderEpoch('background-a') > 1, '后台历史重建必须实际覆盖间隙耗尽后的重编号');
+    assertProbe(db.countRows('probe_placement_events') === eventsBeforeInitialization, '后台初始化重排不能公开未完成的索引');
+    assertProbe(db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_transcript_aliases WHERE conversation_id = ?', ['background-a'])?.count === 1_538, '后台重排后必须保留全部历史来源');
+    /** 独立只读连接证明屏障放行前已真正 COMMIT，而非同连接的未提交视图。 */
+    const reader = new DatabaseSync(join(directory, 'probe.db'), { readOnly: true });
+    try {
+      const durable = reader.prepare('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?').get('background-a') as { initialization_state: string };
+      const aliases = reader.prepare('SELECT COUNT(*) AS count FROM conversation_transcript_aliases WHERE conversation_id = ?').get('background-a') as { count: number };
+      assertProbe(durable.initialization_state === 'ready' && aliases.count === 1_538, '放行初始化屏障前，独立连接必须看到完整就绪索引');
+    } finally {
+      reader.close();
+    }
+
     stopConversationTranscriptInitialization(db);
     await initializeConversationTranscriptIndexes(db);
     assertProbe(repo.readPlacementBatch('background-a', []).placements.length === 0, '暂停后必须能从持久断点继续完成');
@@ -593,6 +889,8 @@ async function verifyTranscriptStorageBoundaries(): Promise<void> {
   }
 }
 await verifyTranscriptStorageBoundaries();
+await verifyTranscriptDurableRecovery();
+await verifyTranscriptInitializationFailures();
 
 console.log(
   JSON.stringify(
@@ -750,6 +1048,10 @@ async function probeNavigation() {
     }
     /** 探针故意模拟升级前直写数据，再走正式旧数据初始化建立显示位置。 */
     const initializing = new ConversationTranscriptRepository(db);
+    /** 宿主在后台初始化尚未完成时已安装通知写入器，探针必须覆盖相同边界。 */
+    initializing.onPlacementChanged((conversationId) => {
+      assertProbe(db.get<{ initialization_state: string }>('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?', [conversationId])?.initialization_state === 'ready', '初始化重排不得公开半份位置索引');
+    });
     assertProbe(initializing.initializeConversation(conversation.id, 1) === false, '首批初始化必须留下可恢复断点');
     assertProbe(db.get<{ initialization_state: string }>('SELECT initialization_state FROM conversation_transcript_state WHERE conversation_id = ?', [conversation.id])?.initialization_state === 'building', '半份索引不能提前标记就绪');
     new ConversationTranscriptRepository(db).initializeConversation(conversation.id);

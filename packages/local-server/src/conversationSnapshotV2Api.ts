@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ConversationSnapshotV2Error, type ConversationSnapshotV2ExecutionContext, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
-import type { ConversationTranscriptPlacementRequest } from '@zeus/shared';
+import { userFacingErrorCause, type ConversationTranscriptPlacementRequest } from '@zeus/shared';
 
 interface ConversationOwnershipRecord {
   id: string;
@@ -356,6 +356,9 @@ function sendSnapshotV2Error(reply: FastifyReply, error: unknown): FastifyReply 
   if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING') {
     reply.header('retry-after', '1');
     return reply.code(503).send({ error: code, message: error instanceof Error ? error.message : '会话显示位置正在初始化。' });
+  }
+  if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED') {
+    return reply.code(500).send({ error: code, message: error instanceof Error ? error.message : '会话历史准备失败，请查看错误详情。', cause: userFacingErrorCause(error), retryable: false });
   }
   if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_BATCH_TOO_LARGE' || code === 'ZEUS_CONVERSATION_TRANSCRIPT_INVALID_IDENTITY') {
     return reply.code(400).send({ error: code, message: error instanceof Error ? error.message : '会话显示位置请求无效。' });

@@ -1854,6 +1854,8 @@ export interface NativeSessionError {
 }
 
 export interface NativeSessionState {
+  /** 位置索引仍在准备，保留当前正文而不当作模型失败。 */
+  transcriptInitializing?: boolean;
   transportState: TransportState;
   reconnectAttempt: number;
   conversationState: ConversationState;

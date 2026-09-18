@@ -63,7 +63,7 @@ export interface ConversationApiClient {
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   /** 一次取得同一事件进度下的会话结构与消息尾页。 */
-  loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string) => Promise<NativeConversationReadableSnapshot>;
+  loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string, options?: { signal?: AbortSignal }) => Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
   /** 有界核对已加载条目的持久位置代次。 */
   loadNativeConversationTranscriptPlacements: (projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number) => Promise<NativeConversationTranscriptPlacementBatch>;
@@ -197,9 +197,10 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       return { acceptance, operationIdentity: commandBody.command.payload.operationIdentity };
     },
     // 会话恢复只读取组合结果，不再让两个独立请求碰运气对齐事件进度。
-    loadNativeConversationReadableSnapshot: (projectId, conversationId) =>
+    loadNativeConversationReadableSnapshot: (projectId, conversationId, options) =>
       transport.request<NativeConversationReadableSnapshot>(`${conversationPath(projectId, conversationId)}/readable-snapshot`, {
         headers: { 'x-zeus-snapshot-caller': 'renderer-session-v2' },
+        signal: options?.signal,
       }),
     loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),

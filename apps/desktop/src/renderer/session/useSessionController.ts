@@ -70,6 +70,76 @@ class ConversationHydrationTimeoutError extends Error {
   }
 }
 
+/** 正常准备超过本轮恢复预算，与服务端真实失败分开呈现。 */
+class ConversationInitializationPendingError extends Error {
+  /** 允许用户稍后重新读取，不表示需要重新执行模型。 */
+  readonly code = 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING';
+  /** 预算用尽可以明确重试读取。 */
+  readonly retryable = true;
+  /** 创建可读的等待结果。 */
+  constructor() {
+    super('会话历史仍在准备，可稍后重试。');
+    this.name = 'ConversationInitializationPendingError';
+  }
+}
+
+/** 一个恢复操作的取消与预算上下文，不跨会话复用。 */
+interface TranscriptHydrationContext {
+  /** 可取消当前请求和重读等待。 */
+  controller: AbortController;
+  /** 本轮绝对截止时间，不在每次 503 后重置。 */
+  deadline: number;
+  /** 最后一次可读结果是否为正常初始化状态。 */
+  initializing: boolean;
+  /** 结果只允许应用到建立上下文时的连接代次。 */
+  token: number;
+}
+
+/** 等待 Promise 时响应取消，清理监听器且消费迟到结果。 */
+function withHydrationAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    /** 取消时只结束本次读取，不重发任何业务命令。 */
+    const abort = (): void => {
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason);
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** 有界的准备等待，取消后立即清除计时器。 */
+function waitForTranscriptRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    /** 两种结束路径共用清理，不留下下一次请求的计时器。 */
+    const finish = (): void => {
+      globalThis.clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      resolve();
+    };
+    /** 取消保留原因，供上层识别切换或预算结束。 */
+    const abort = (): void => {
+      globalThis.clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason);
+    };
+    /** 当前恢复上下文同时最多安装一个重读计时器。 */
+    const timer = globalThis.setTimeout(finish, milliseconds);
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
 class ConversationRealtimeOpenTimeoutError extends Error {
   readonly code = 'ZEUS_CONVERSATION_REALTIME_OPEN_TIMEOUT';
 
@@ -180,7 +250,7 @@ export interface SessionControllerClient {
 
   activateCodexConfig?(): Promise<unknown>;
   /** 首次加载、重连和发送后核对共用同一份结构与消息读取结果。 */
-  loadNativeConversationReadableSnapshot(projectId: string, conversationId: string): Promise<NativeConversationReadableSnapshot>;
+  loadNativeConversationReadableSnapshot(projectId: string, conversationId: string, options?: { signal?: AbortSignal }): Promise<NativeConversationReadableSnapshot>;
   /** 核对全部已加载位置的服务端代次。 */
   loadNativeConversationTranscriptPlacements?(projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number): Promise<ConversationTranscriptPlacementBatch>;
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
@@ -549,6 +619,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let realtimeSubscribed = false;
   let realtimeConnectionPromise: Promise<void> | null = null;
   let connectionToken = 0;
+  /** 连接换代或销毁时取消所有正在读取的恢复上下文。 */
+  const transcriptHydrations = new Set<TranscriptHydrationContext>();
   let sessionMetricsHydrationToken = 0;
   /** 同时只允许一个环境读取，连续命令合并为读取后的下一次刷新。 */
   let executionContextHydrationPending = false;
@@ -1709,47 +1781,96 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function loadConversationForProgressiveHydration(hooks?: { onReadable?: (snapshot: NativeConversationSnapshot) => void | Promise<void>; onGoal?: (response: NativeGoalResponse) => void }): Promise<NativeConversationSnapshot> {
-    const interactionPromise = loadConversationInteractionForHydration();
-    // 队列或确认项即使比正文更早失败，也由稍后的权威阶段统一处理，不能制造未处理 Promise。
-    void interactionPromise.catch(() => undefined);
-    let latestGoal: NativeGoalResponse | null = null;
-    const goalPromise = loadGoalForHydration().then((response) => {
-      latestGoal = response;
-      return response;
-    });
-    if (hooks?.onGoal) void goalPromise.then(hooks.onGoal).catch(() => undefined);
-    const goalAtReadableDeadline = withSessionTimeout(goalPromise, conversationGoalHydrationTimeoutMs, () => new ConversationGoalHydrationTimeoutError()).catch(() => fallbackGoalForHydration());
-    const readable = await loadConversationReadableForHydration();
-    if (hooks?.onReadable) {
-      await hooks.onReadable(
-        adaptConversationSnapshotV2({
-          ...readable,
-          queue: emptyQueueWhileHydrating(),
-          requests: [],
-          planImplementationRequests: [],
-          goal: latestGoal ?? fallbackGoalForHydration(),
-        }),
+    /** 预算覆盖读取、重读等待和相关状态合并，不能按尝试次数续期。 */
+    const context: TranscriptHydrationContext = { controller: new AbortController(), deadline: Date.now() + conversationHydrationTimeoutMs, initializing: false, token: connectionToken };
+    transcriptHydrations.add(context);
+    /** 外层超时也取消网络请求，避免只 reject 而内部继续轮询。 */
+    const timer = globalThis.setTimeout(() => context.controller.abort(context.initializing ? new ConversationInitializationPendingError() : new ConversationHydrationTimeoutError()), conversationHydrationTimeoutMs);
+    try {
+      return await withHydrationAbort(
+        (async () => {
+          const interactionPromise = loadConversationInteractionForHydration();
+          // 队列或确认项即使比正文更早失败，也由稍后的权威阶段统一处理，不能制造未处理 Promise。
+          void interactionPromise.catch(() => undefined);
+          let latestGoal: NativeGoalResponse | null = null;
+          const goalPromise = loadGoalForHydration().then((response) => {
+            latestGoal = response;
+            return response;
+          });
+          if (hooks?.onGoal) void goalPromise.then(hooks.onGoal).catch(() => undefined);
+          const goalAtReadableDeadline = withSessionTimeout(goalPromise, conversationGoalHydrationTimeoutMs, () => new ConversationGoalHydrationTimeoutError()).catch(() => fallbackGoalForHydration());
+          const readable = await loadConversationReadableForHydration(context);
+          context.controller.signal.throwIfAborted();
+          if (hooks?.onReadable) {
+            await hooks.onReadable(
+              adaptConversationSnapshotV2({
+                ...readable,
+                queue: emptyQueueWhileHydrating(),
+                requests: [],
+                planImplementationRequests: [],
+                goal: latestGoal ?? fallbackGoalForHydration(),
+              }),
+            );
+          }
+          const [interaction, goalAtDeadline] = await Promise.all([interactionPromise, goalAtReadableDeadline]);
+          context.controller.signal.throwIfAborted();
+          return adaptConversationSnapshotV2({
+            ...readable,
+            queue: interaction.queue,
+            requests: interaction.pending.requests,
+            planImplementationRequests: interaction.pending.planImplementationRequests ?? [],
+            goal: latestGoal ?? goalAtDeadline,
+          });
+        })(),
+        context.controller.signal,
       );
+    } finally {
+      globalThis.clearTimeout(timer);
+      context.controller.abort(new DOMException('会话读取已结束。', 'AbortError'));
+      transcriptHydrations.delete(context);
+      if (!disposed && context.token === connectionToken && ![...transcriptHydrations].some((pending) => pending.initializing && pending.token === connectionToken))
+        dispatch({ type: 'transcript_initialization_changed', initializing: false });
     }
-    const [interaction, goalAtDeadline] = await Promise.all([interactionPromise, goalAtReadableDeadline]);
-    return adaptConversationSnapshotV2({
-      ...readable,
-      queue: interaction.queue,
-      requests: interaction.pending.requests,
-      planImplementationRequests: interaction.pending.planImplementationRequests ?? [],
-      goal: latestGoal ?? goalAtDeadline,
-    });
   }
 
   /** 后台负责结构与消息的一致性；适配器继续校验身份和事件进度，后续更新沿用现有缓冲与补拉。 */
-  async function loadConversationReadableForHydration(): Promise<NativeConversationReadableSnapshot & { choice: NativeConversationChoice }> {
+  async function loadConversationReadableForHydration(context: TranscriptHydrationContext): Promise<NativeConversationReadableSnapshot & { choice: NativeConversationChoice }> {
     try {
-      // 会话选择信息不参与消息进度判断，保持独立并行读取。
-      const [readable, choice] = await Promise.all([options.client.loadNativeConversationReadableSnapshot(options.projectId, options.conversationId), options.client.loadNativeConversationChoice(options.projectId, options.conversationId)]);
+      // 选择信息只读一次，与可读快照并行；正常初始化仅重读可读快照。
+      const [readable, choice] = await Promise.all([loadReadableUntilInitialized(context), options.client.loadNativeConversationChoice(options.projectId, options.conversationId)]);
       return { ...readable, choice };
     } catch (error) {
-      // 刷新失败不代表模型执行失败；原始原因只随详情传递，不触发消息重发。
+      if (context.controller.signal.aborted) throw context.controller.signal.reason;
+      /** 准备预算用尽和真实失败保留业务错误码，不包装成笼统读取错误。 */
+      const code = toSessionError(error, false).code;
+      if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING') throw error;
+      if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED') throw Object.assign(new Error(errorMessage(error)), { code, retryable: false, cause: userFacingErrorCause(error) });
       throw Object.assign(new Error('会话内容暂时无法刷新'), { code: 'ZEUS_CONVERSATION_READ_FAILED', cause: userFacingErrorCause(error) });
+    }
+  }
+
+  /** 仅专属初始化状态可在原预算内重读，其他错误立即交给既有恢复流程。 */
+  async function loadReadableUntilInitialized(context: TranscriptHydrationContext): Promise<NativeConversationReadableSnapshot> {
+    while (true) {
+      context.controller.signal.throwIfAborted();
+      if (disposed || context.token !== connectionToken) throw new DOMException('会话读取已取消。', 'AbortError');
+      try {
+        /** 请求取消信号贯通到已有传输层。 */
+        const readable = await options.client.loadNativeConversationReadableSnapshot(options.projectId, options.conversationId, { signal: context.controller.signal });
+        context.controller.signal.throwIfAborted();
+        context.initializing = false;
+        return readable;
+      } catch (error) {
+        if (context.controller.signal.aborted) throw context.controller.signal.reason;
+        if (toSessionError(error, false).code !== 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZING') throw error;
+        context.initializing = true;
+        if (!disposed && context.token === connectionToken) dispatch({ type: 'transcript_initialization_changed', initializing: true });
+        /** 服务端等待提示无效时采用当前协议的一秒间隔。 */
+        const hint = (error as { retryAfterMs?: unknown }).retryAfterMs;
+        const delay = typeof hint === 'number' && Number.isFinite(hint) && hint >= 0 ? Math.max(1_000, hint) : 1_000;
+        if (delay >= context.deadline - Date.now()) throw new ConversationInitializationPendingError();
+        await waitForTranscriptRetry(delay, context.controller.signal);
+      }
     }
   }
 
@@ -1857,7 +1978,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     flushRenderDeltas();
     // 连接代次更换会取消旧分页请求，保留已显示内容并释放旧请求的读取标记。
     if (state.snapshot?.snapshotV2) dispatchV2Snapshot(resumeCachedConversationSnapshot(state.snapshot));
+    for (const context of transcriptHydrations) context.controller.abort(new DOMException('会话连接已更换。', 'AbortError'));
     const token = ++connectionToken;
+    dispatch({ type: 'transcript_initialization_changed', initializing: false });
     socketLifecycle?.markInactive();
     socket?.close();
     socket = null;
@@ -2706,6 +2829,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const context of transcriptHydrations) context.controller.abort(new DOMException('会话已关闭。', 'AbortError'));
       placementActions.length = 0;
       placementBufferBytes = 0;
       placementRecovery = null;
