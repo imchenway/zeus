@@ -160,7 +160,7 @@ export type ProjectGitAction =
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
   | { type: 'apply_patch'; patch: string; reverse?: boolean; target?: 'index' | 'worktree' }
-  | { type: 'commit'; message: string }
+  | { type: 'commit'; message: string; paths?: string[]; expectedHeadSha?: string; expectedBranch?: string }
   | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }
   | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }

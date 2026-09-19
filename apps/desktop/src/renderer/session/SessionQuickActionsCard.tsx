@@ -556,7 +556,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   ×
                 </button>
               </header>
-              <ProjectGitWorkbench conversationScope project={props.gitContext.project} projects={[props.gitContext.project]} client={conversationGitClient} language={props.language} onSelectProject={() => {}} />
+              <ProjectGitWorkbench conversationScope project={props.gitContext.project} client={conversationGitClient} language={props.language} />
             </section>
           </ModalPortal>
         ) : null}
