@@ -2859,8 +2859,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const requestedConversationIds = [...new Set(conversationIds)];
     if (requestedConversationIds.length === 0) return;
     for (let pass = 0; pass < 3; pass += 1) {
-      /** 每次核对前重新取得当前实例，不能沿用上一次恢复的世代。 */
-      const capabilities = await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) });
+      /** 每次核对前重新取得当前实例，不能沿用上一次恢复的世代。
+       *  恢复必须沿用目标会话所属的 Responses 运行时身份；若回退到默认 Codex 实例，
+       *  会把 DeepSeek 等自定义线程的原 owner 排空并翻转代次，触发“运行实例已变化”。 */
+      const firstConversation = options.conversations.getById(requestedConversationIds[0]!);
+      const runtimeContext = firstConversation ? (contexts.get(firstConversation.id) ?? contextFromConversation(firstConversation)) : null;
+      const responsesRuntime = runtimeContext ? await responsesRuntimeFor(runtimeContext) : null;
+      assertOpen();
+      const capabilities = await options.manager.ensureReady({
+        commandPath: commandPath(),
+        ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
+        ...(responsesRuntime ? { providerEnvironment: responsesRuntime.environment, responsesProvider: responsesRuntime.provider } : {}),
+      });
       assertOpen();
       await Promise.all(
         requestedConversationIds.map((conversationId) => {
