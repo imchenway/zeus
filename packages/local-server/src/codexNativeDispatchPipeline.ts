@@ -189,6 +189,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     providerArchiveRecoveryAttempted: boolean,
     segmentLifecycle?: ConversationSegmentLifecycle,
     serviceTierFallbackAttempted = false,
+    turnStartRetryAttempted = false,
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
@@ -259,7 +260,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         return accepted(submission, 'queued', conversation.providerThreadId, null);
       }
       // 所有恢复和等待检查通过后才占用统一执行权，提前返回不会留下活动占用。
-      if (!serviceTierFallbackAttempted) await segmentLifecycle?.beginDispatch();
+      if (!serviceTierFallbackAttempted && !turnStartRetryAttempted) await segmentLifecycle?.beginDispatch();
       const freshDispatchEnvelope = conversationSubmissionDispatchEnvelope(submission);
       const existingDelivery = options.commandDeliveries.get(freshDispatchEnvelope.commandId);
       const dispatchEnvelope = existingDelivery ? parseStoredConversationSubmissionDispatchEnvelope(existingDelivery.inbox.envelopeJson, freshDispatchEnvelope) : freshDispatchEnvelope;
@@ -702,6 +703,17 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         }
         return result;
       }
+      // 新建线程后首个 turn/start 可能撞上 app-server 尚未加载线程的短暂竞态
+      // （表现为 thread not loaded）。重试一次走 thread/resume + turn/start，
+      // 避免提交永久停留在 dispatching，让任务和会话看起来一直“正在执行”。
+      if (!dispatchStopped(submission.id) && !turnStartRetryAttempted && threadStartedForSubmission && isRuntimeRejected(error)) {
+        options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
+        runStates.set(conversation.id, { type: 'idle' });
+        await persist();
+        const retrySubmission = options.submissions.getById(submission.id) ?? submission;
+        const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
+        return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, segmentLifecycle, serviceTierFallbackAttempted, true);
+      }
       const providerArchived = isProviderThreadArchivedError(error);
       const explicitlyRejected = isRuntimeRejected(error) || providerArchived;
       const runtimeRejected = segmentLifecycle !== undefined && isRuntimeRejected(error);
@@ -735,12 +747,20 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         return accepted(submission, 'recovery_required', candidateProviderThreadId ?? conversation.providerThreadId, null);
       }
       if (runtimeRejected) {
+        // 运行实例已明确拒绝本次写入，必须持久化失败而不是把提交留在 dispatching。
+        // 上层通过 paused_reason=runtime_rejected 判定会话失败并给出可重试入口。
+        options.submissions.updateStatus(submission.id, 'paused', {
+          pausedReason: 'runtime_rejected',
+          error: serializeError(error),
+          updatedAt: now(),
+        });
         runStates.set(conversation.id, { type: 'paused', reason: 'runtime_rejected' });
+        await persist();
         options.broadcast('conversation.queue.changed', {
           conversationId: conversation.id,
           submissionId: submission.id,
         });
-        return accepted(submission, 'queued', segmentLifecycle.requiresNewSegment ? candidateProviderThreadId : conversation.providerThreadId, null);
+        return accepted(submission, 'recovery_required', segmentLifecycle.requiresNewSegment ? candidateProviderThreadId : conversation.providerThreadId, null);
       }
       if (segmentLifecycle?.requiresNewSegment) {
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
