@@ -127,7 +127,7 @@ export function VisibleApplicationError(props: { error: unknown; language?: Appl
   const explanation = describeUserFacingError(props.error, language);
   return (
     <span className={props.className}>
-      <span>{explanation.message}</span>
+      <span data-zeus-selectable="text">{explanation.message}</span>
       {explanation.details ? (
         <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(props.error, { language, showDetails: true })}>
           {language === 'zh-CN' ? '错误详情' : 'Error details'}
@@ -235,8 +235,12 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
             </div>
             <div className="application-error-dialog-content">
               <header>
-                <strong id="application-error-dialog-title">{current.title}</strong>
-                <p id="application-error-dialog-summary">{current.summary}</p>
+                <strong id="application-error-dialog-title" data-zeus-selectable="text">
+                  {current.title}
+                </strong>
+                <p id="application-error-dialog-summary" data-zeus-selectable="text">
+                  {current.summary}
+                </p>
               </header>
               <Collapsible open={detailsOpen}>
                 <section className="application-error-dialog-details" aria-labelledby="application-error-dialog-details-title">
