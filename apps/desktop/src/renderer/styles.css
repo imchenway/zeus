@@ -3218,19 +3218,6 @@ a {
   color: var(--zeus-product-muted);
   margin-left: auto;
 }
-.project-git-toolbar > .zeus-select {
-  flex: 0 1 280px;
-  margin-left: 24px;
-  min-width: 126px;
-}
-.project-git-toolbar > .zeus-select > .project-git-project-trigger {
-  width: 100%;
-}
-.project-git-project-trigger .zeus-select-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .project-git-navigator-branch-actions {
   padding: 4px 0 10px;
 }
@@ -4255,7 +4242,7 @@ a {
   align-items: center;
   gap: 8px;
 }
-.project-git-sync-branch-input > input {
+.project-git-sync-branch-input > .zeus-select {
   flex: 1;
   min-inline-size: 0;
 }

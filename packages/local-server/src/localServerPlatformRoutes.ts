@@ -637,7 +637,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.post(
     '/api/projects/:projectId/git/commit-message',
     { bodyLimit: 512_000 },
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean } }>, reply) => {
+    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean; selection?: unknown } }>, reply) => {
       const project = projects.getById(request.params.projectId);
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
       const body = request.body;
@@ -650,6 +650,35 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       ) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
       }
+      type CommitSelection = { repositoryId: string; relativePath: string; paths: string[] };
+      const validSelection = (value: unknown): value is CommitSelection => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        const item = value as Record<string, unknown>;
+        return (
+          typeof item.repositoryId === 'string' &&
+          item.repositoryId.length > 0 &&
+          item.repositoryId.length <= 200 &&
+          typeof item.relativePath === 'string' &&
+          item.relativePath.length > 0 &&
+          item.relativePath.length <= 4096 &&
+          Array.isArray(item.paths) &&
+          item.paths.length > 0 &&
+          item.paths.length <= 2000 &&
+          item.paths.every((path) => typeof path === 'string' && path.length > 0 && path.length <= 4096)
+        );
+      };
+      if (
+        body.selection !== undefined &&
+        (!Array.isArray(body.selection) ||
+          !body.selection.length ||
+          body.selection.length > 20 ||
+          !body.selection.every(validSelection) ||
+          body.selection.reduce((count, item) => count + item.paths.length, 0) > 2000 ||
+          new Set(body.selection.map((item) => item.repositoryId)).size !== body.selection.length)
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '所选提交范围无效或过大，请重新选择。' });
+      }
+      const selection = body.selection as CommitSelection[] | undefined;
       const controller = new AbortController();
       const stream = body.stream === true ? new PassThrough() : null;
       const disconnected = () => {
@@ -661,22 +690,39 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
       const generate = async () => {
         const started = performance.now();
-        console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage: '读取暂存区', elapsedMs: 0 }));
-        const repository =
-          typeof body.repositoryId === 'string' && body.repositoryId.startsWith('conversation:')
-            ? await resolveConversationGitWorkspace(project, body.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
-            : await resolveCommitRepository(project, body.repositoryId as string, typeof body.relativePath === 'string' ? body.relativePath : undefined);
-        const context = await readGitCommitContext(repository.localPath);
+        console.info(JSON.stringify({ event: 'git_commit_generation_stage', requestId: request.id, stage: selection ? '读取所选文件' : '读取暂存区', elapsedMs: 0 }));
+        const targets: Array<{ repositoryId: string; relativePath?: string; paths?: string[] }> = selection ?? [
+          { repositoryId: body.repositoryId as string, ...(typeof body.relativePath === 'string' ? { relativePath: body.relativePath } : {}) },
+        ];
+        const contexts = await Promise.all(
+          targets.map(async (target) => {
+            const repository = target.repositoryId.startsWith('conversation:')
+              ? await resolveConversationGitWorkspace(project, target.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
+              : await resolveCommitRepository(project, target.repositoryId, target.relativePath);
+            return { repository, context: await readGitCommitContext(repository.localPath, target.paths), paths: target.paths };
+          }),
+        );
         controller.signal.throwIfAborted();
         const prepared = performance.now();
+        const multiple = contexts.length > 1;
+        const budget = Math.floor(40_000 / contexts.length);
         const input = {
-          repositoryName: repository.name,
-          stagedDiff: redactSensitiveText(context.stagedDiff).text,
-          files: context.files,
-          diffStat: redactSensitiveText(context.diffStat).text,
-          recentCommits: context.recentCommits.map((message) => redactSensitiveText(message).text),
-          truncated: context.truncated,
+          repositoryName: contexts.map(({ repository }) => repository.name).join(', '),
+          stagedDiff: redactSensitiveText(
+            contexts
+              .map(({ repository, context }) => {
+                const partial = context.stagedDiff.slice(0, budget);
+                const diff = context.stagedDiff.length > budget ? `${partial.slice(0, partial.lastIndexOf('\n') + 1)}\n[此仓库其余逐行内容已截断]` : partial;
+                return `${multiple ? `仓库：${repository.name}\n` : ''}${diff}`;
+              })
+              .join('\n\n'),
+          ).text,
+          files: contexts.flatMap(({ repository, context }) => context.files.map((file) => (multiple ? `${repository.name}/${file}` : file))),
+          diffStat: redactSensitiveText(contexts.map(({ repository, context }) => `${multiple ? `仓库：${repository.name}\n` : ''}${context.diffStat.slice(0, Math.floor(20_000 / contexts.length))}`).join('\n')).text,
+          recentCommits: contexts.flatMap(({ context }) => context.recentCommits.slice(0, Math.max(1, Math.floor(20 / contexts.length)))).map((message) => redactSensitiveText(message).text),
+          truncated: contexts.some(({ context }) => context.truncated || context.stagedDiff.length > budget),
           language: body.language === 'en' ? ('en' as const) : ('zh-CN' as const),
+          ...(selection ? { scope: 'selection' as const } : {}),
           ...(typeof body.modelRef === 'string' ? { modelRef: body.modelRef } : {}),
         };
         const run = async () => {
@@ -695,20 +741,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         };
         const result = await run();
         const generated = performance.now();
-        if (context.fingerprint !== (await readCommitFingerprint(repository.localPath))) throw new Error('生成期间暂存内容已变化，请重新生成。');
+        const fingerprints = await Promise.all(contexts.map(({ repository, paths }) => readCommitFingerprint(repository.localPath, paths)));
+        if (contexts.some(({ context }, index) => context.fingerprint !== fingerprints[index])) throw new Error(selection ? '生成期间所选内容已变化，请重新生成。' : '生成期间暂存内容已变化，请重新生成。');
         controller.signal.throwIfAborted();
         request.log.info(
           {
             prepareMs: Math.round(prepared - started),
             generateMs: Math.round(generated - prepared),
             verifyMs: Math.round(performance.now() - generated),
-            fileCount: context.files.length,
+            fileCount: input.files.length,
             diffChars: input.stagedDiff.length,
-            truncated: context.truncated,
+            truncated: input.truncated,
           },
           '提交说明生成耗时',
         );
-        return { ...result, truncated: context.truncated };
+        return { ...result, truncated: input.truncated };
       };
       if (stream) {
         reply.type('application/x-ndjson').header('Cache-Control', 'no-store');

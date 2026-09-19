@@ -1,0 +1,374 @@
+/* 源码工具窗口采用独立提交选择，暂存区仍由 Git 工作区管理。 */
+.source-git-module {
+  min-width: 0;
+}
+.source-git-total {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  margin-left: 7px;
+}
+.source-git-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+}
+.source-git-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--zeus-product-line);
+  padding: 0 8px 5px;
+  flex-shrink: 0;
+}
+.source-git-body button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.source-git-body button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.source-git-tabs > button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 4px 9px;
+}
+.source-git-tabs > button[aria-selected='true'] {
+  background: var(--zeus-source-list-selected);
+  border-color: var(--zeus-product-line);
+  font-weight: 650;
+}
+.source-git-tabs small {
+  color: var(--zeus-product-muted);
+  margin-left: 6px;
+}
+.source-git-tabs > button:last-child {
+  margin-left: auto;
+}
+.source-git-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+.source-git-actions .project-git-branch-trigger {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border-color: transparent;
+  padding-left: 5px;
+}
+.source-git-actions .project-git-branch-trigger > span {
+  font-size: 11px;
+  font-weight: 500;
+}
+.source-git-body .source-git-icon {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+}
+.source-git-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.source-git-body button:hover:not(:disabled),
+.source-git-body summary:hover {
+  background: var(--zeus-interaction-hover);
+}
+.source-git-body button:focus-visible,
+.source-git-body summary:focus-visible,
+.source-git-body input:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: -2px;
+}
+.source-git-file-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 8px 6px;
+  flex-shrink: 0;
+}
+.source-git-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.source-git-search svg {
+  width: 13px;
+  height: 13px;
+  color: var(--zeus-product-muted);
+}
+.source-git-search input {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  outline: 0;
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+}
+.source-git-files {
+  flex: 1;
+  min-height: 55px;
+  overflow: auto;
+  padding: 0 6px 6px;
+}
+.source-git-files details {
+  min-width: 0;
+}
+.source-git-files summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 2px 4px;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.source-git-files summary::-webkit-details-marker {
+  display: none;
+}
+.source-git-files summary::before {
+  content: '›';
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 10px;
+  flex-shrink: 0;
+  font-size: 16px;
+  color: var(--zeus-product-muted);
+}
+.source-git-files details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.source-git-files summary > span,
+.source-git-files summary > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.source-git-files summary > small {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.source-git-files summary svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--zeus-product-muted);
+}
+.source-git-group > summary {
+  font-weight: 650;
+}
+.source-git-repository {
+  margin-left: 10px;
+}
+.source-git-repository-color {
+  background: var(--repository-color);
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.source-git-tree {
+  padding-left: 14px;
+}
+.source-git-files input[type='checkbox'] {
+  appearance: auto;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin: 0 2px;
+  accent-color: var(--zeus-control-accent);
+  cursor: pointer;
+}
+.source-git-file {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 3px 0 14px;
+  border-radius: 4px;
+  min-width: 0;
+}
+.source-git-file[data-selected='true'] {
+  background: var(--zeus-source-list-selected);
+}
+.source-git-file > button {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.source-git-file > button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--zeus-product-muted);
+}
+.source-git-file > button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-git-file > button > small {
+  margin-left: auto;
+  padding-left: 4px;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+.source-git-tree[data-view='flat'] > .source-git-file {
+  padding-left: 0;
+}
+.source-git-tree[data-view='flat'] .source-git-file-name {
+  max-width: 65%;
+  flex-shrink: 0;
+}
+.source-git-file > button > .source-git-file-directory {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--zeus-product-muted);
+}
+.source-git-file[data-status='modified'] > button > .source-git-file-name {
+  color: var(--zeus-info-text, #547fc0);
+}
+.source-git-file[data-status='added'] > button > .source-git-file-name {
+  color: var(--zeus-success-text, #438c65);
+}
+.source-git-file[data-status='deleted'] > button > .source-git-file-name {
+  text-decoration: line-through;
+}
+.source-git-commit {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--zeus-product-line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.source-git-message {
+  position: relative;
+}
+.source-git-body .source-git-generate {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  color: var(--zeus-product-muted);
+}
+.source-git-body .source-git-generate:hover:not(:disabled),
+.source-git-body .source-git-generate[data-generating='true'] {
+  color: var(--zeus-control-accent);
+}
+.source-git-commit textarea {
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 48px;
+  max-height: 160px;
+  width: 100%;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 5px;
+  background: var(--zeus-control-bg);
+  padding: 7px 34px 7px 7px;
+  display: block;
+  color: inherit;
+  font: inherit;
+}
+.source-git-commit textarea:focus {
+  outline: 1px solid var(--zeus-control-focus);
+}
+.source-git-selection-count,
+.source-git-commit > small {
+  font-size: 10px;
+  color: var(--zeus-product-muted);
+}
+.source-git-commit-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.source-git-commit-buttons .zeus-button {
+  font-size: 11px;
+}
+.source-git-feedback,
+.source-git-error,
+.source-git-empty {
+  margin: 0;
+  padding: 5px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.source-git-empty,
+.source-git-feedback {
+  color: var(--zeus-product-muted);
+}
+.source-git-error {
+  color: var(--zeus-danger-text, #c94f57);
+  max-height: 80px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.source-git-stash {
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  gap: 4px;
+}
+.source-git-stash > button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  min-width: 0;
+}
+.source-git-stash > button:first-child {
+  flex: 1;
+  text-align: left;
+}
+.source-git-stash svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.source-git-stash span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-git-stash small {
+  display: block;
+  color: var(--zeus-product-muted);
+}
