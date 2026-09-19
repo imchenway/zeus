@@ -2000,7 +2000,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           contextWindow: configuredModel?.contextWindow ?? null,
           currentInputUtf8Bytes: Buffer.byteLength(content, 'utf8'),
         },
-        userHistoryContent: { text: content },
+        userHistoryContent: {
+          text: content,
+          ...(typeof persisted.displayText === 'string' ? { displayText: persisted.displayText } : {}),
+          attachments,
+          browserComments,
+          ...(conversationContext ? { conversationContext } : {}),
+        },
       });
       if (frozen.runtimeKind === 'pi') {
         if (lifecycle.requiresNewSegment) {
