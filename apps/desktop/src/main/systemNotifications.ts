@@ -84,6 +84,7 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
     };
   }
   if (event.type === 'runtime.session.ended') {
+    if (isConversationToolProcessSession(readString(payload.sessionId))) return null;
     return {
       title: zh ? 'Zeus 运行已结束' : 'Zeus run ended',
       body: joinNotificationParts(readString(payload.sessionId), readString(payload.taskId)),
@@ -234,6 +235,11 @@ function taskStatusNotificationTitle(status: string, language: UserFacingErrorLa
 
 function readString(value: unknown, fallback = ''): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+/** Pi 会话为 bash/进程工具启动的受管命令进程不需要“运行已结束”系统通知；身份前缀由 conversationToolProcesses 生成。 */
+function isConversationToolProcessSession(sessionId: string): boolean {
+  return sessionId.startsWith('conversation_process_');
 }
 
 function formatCount(value: unknown, label: string): string {
