@@ -10,8 +10,6 @@ export interface AppShellSettings {
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
-  /** 只用于之后新建项目的完整供应商模型引用。 */
-  newProjectDefaultModelRef?: string | null;
   appLanguage: 'zh-CN' | 'en-US';
   appearance: 'system' | 'light' | 'dark';
   /** 保留已持久化的布局值；界面分别显示为经典布局和紧凑布局。 */
@@ -60,8 +58,6 @@ export type UpdateAppShellSettingsRequest = Partial<
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
-  /** 只用于之后新建项目的完整供应商模型引用。 */
-  newProjectDefaultModelRef?: string | null;
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];

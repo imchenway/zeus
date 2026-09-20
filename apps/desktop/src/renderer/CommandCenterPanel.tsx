@@ -1296,7 +1296,6 @@ function draftToInput(draft: CommandDraft): CommandDefinitionInput {
 
 function projectConfigWithCommandPermissions(config: ProjectConfig, command: CommandDefinition): SaveProjectConfigRequest {
   return {
-    defaultModel: config.defaultModel,
     defaultWorkMode: config.defaultWorkMode,
     language: config.language,
     dependencies: config.dependencies,

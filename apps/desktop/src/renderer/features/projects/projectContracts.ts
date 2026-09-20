@@ -39,7 +39,6 @@ export interface ProjectConfig {
   contextCapacityTokens?: number | null;
   projectId: string;
   serviceTierPreferences: ProjectModelServiceTierPreference[];
-  defaultModel: string | null;
   defaultWorkMode: ProjectWorkMode;
   language: {
     primary: string;
@@ -88,7 +87,6 @@ export interface CreateProjectRequest {
   localPath: string;
   description?: string;
   note?: string;
-  defaultModel?: string | null;
   defaultWorkMode?: ProjectWorkMode;
 }
 

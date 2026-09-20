@@ -49,7 +49,7 @@ import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
 import { ImRobotSettingsPane } from '../telegram/ImRobotSettingsPane.js';
 import { ProjectDigitalEmployeesPanel } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
-import { ProjectModelsSettings } from '../../settings/ProjectModelsSettings.js';
+import { ProjectContextCapacitySettings } from '../../settings/ProjectContextCapacitySettings.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
@@ -93,7 +93,7 @@ import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 
 /** 项目设置只保留两个同级入口，避免把两块长内容纵向拼成一个页面。 */
-type ProjectSettingsSection = 'employees' | 'models';
+type ProjectSettingsSection = 'employees' | 'capacity';
 
 /** 项目设置页在离开页面或切换项目时重新挂载，因此默认入口始终是数字员工。 */
 function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient: DashboardClient | null; conversationClient: NativeConversationAppClient | null; language: 'zh-CN' | 'en-US' }) {
@@ -102,8 +102,8 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
   const sectionId = useId();
   const employeesTabId = `${sectionId}-employees-tab`;
   const employeesPanelId = `${sectionId}-employees-panel`;
-  const modelsTabId = `${sectionId}-models-tab`;
-  const modelsPanelId = `${sectionId}-models-panel`;
+  const capacityTabId = `${sectionId}-capacity-tab`;
+  const capacityPanelId = `${sectionId}-capacity-panel`;
 
   return (
     <div className="project-settings-shell" data-section={section}>
@@ -125,8 +125,17 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
           >
             {zh ? '数字员工' : 'Digital employees'}
           </button>
-          <button id={modelsTabId} type="button" role="tab" aria-selected={section === 'models'} aria-controls={modelsPanelId} tabIndex={section === 'models' ? 0 : -1} data-inline-rail-item="true" onClick={() => setSection('models')}>
-            {zh ? '可用模型' : 'Available models'}
+          <button
+            id={capacityTabId}
+            type="button"
+            role="tab"
+            aria-selected={section === 'capacity'}
+            aria-controls={capacityPanelId}
+            tabIndex={section === 'capacity' ? 0 : -1}
+            data-inline-rail-item="true"
+            onClick={() => setSection('capacity')}
+          >
+            {zh ? '上下文容量' : 'Context capacity'}
           </button>
         </nav>
       </header>
@@ -134,8 +143,8 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
       <section id={employeesPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={employeesTabId} hidden={section !== 'employees'}>
         <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name} client={props.commandClient} skillClient={props.conversationClient} language={props.language} />
       </section>
-      <section id={modelsPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={modelsTabId} hidden={section !== 'models'}>
-        <ProjectModelsSettings projectId={props.project.id} client={props.commandClient} language={props.language} />
+      <section id={capacityPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={capacityTabId} hidden={section !== 'capacity'}>
+        <ProjectContextCapacitySettings projectId={props.project.id} client={props.commandClient} language={props.language} />
       </section>
     </div>
   );

@@ -2,7 +2,6 @@ import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVer
 import type {
   ModelConnectionDiagnostic,
   ModelConnectionRecord,
-  ProjectModelSelection,
   SaveModelConnectionRequest,
   SecuritySecretsSnapshot,
   SelectablePiModel,
@@ -22,7 +21,7 @@ export interface IntegrationApiClient {
   updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   deleteModelConnection: (connectionId: string) => Promise<void>;
   clearModelConnectionApiKey: (connectionId: string) => Promise<ModelConnectionRecord>;
-  refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; checkedAt: string }>;
+  refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; removedModelIds: string[]; checkedAt: string }>;
   diagnoseModelConnection: (connectionId: string) => Promise<ModelConnectionDiagnostic>;
   loadZentaoInstances: () => Promise<ZentaoInstanceRecord[]>;
   createZentaoInstance: (input: SaveZentaoInstanceRequest) => Promise<ZentaoInstanceRecord>;
@@ -40,8 +39,6 @@ export interface IntegrationApiClient {
   loadZentaoItem: (instanceId: string, kind: ZentaoRemoteKind, objectId: string) => Promise<ZentaoRemoteItemDetail>;
   syncTaskToZentao: (instanceId: string, input: ZentaoTaskSyncRequest) => Promise<ZentaoTaskSyncResult>;
   loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
-  loadProjectModelSelection: (projectId: string) => Promise<ProjectModelSelection>;
-  saveProjectModelSelection: (projectId: string, input: ProjectModelSelection) => Promise<ProjectModelSelection>;
   loadSecuritySecrets: () => Promise<SecuritySecretsSnapshot>;
   saveTelegramBotToken: (token: string) => Promise<SecuritySecretsSnapshot>;
   clearTelegramBotToken: () => Promise<SecuritySecretsSnapshot>;
@@ -158,18 +155,6 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     loadZentaoItem: (instanceId, kind, objectId) => transport.request(`${zentaoInstancePath(instanceId)}/items/${encodeURIComponent(kind)}/${encodeURIComponent(objectId)}`),
     syncTaskToZentao: (instanceId, input) => zentaoCommand(instanceId, integrationClientCommandTypes.zentaoTaskSync, 'task_sync', 'POST', '/sync-task', input) as ReturnType<IntegrationApiClient['syncTaskToZentao']>,
     loadSelectablePiModels: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadSelectablePiModels']>> }>('/api/models/catalog')).items,
-    loadProjectModelSelection: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/model-selection`),
-    saveProjectModelSelection: async (projectId, input) => {
-      const value = { allowedModelRefs: input.allowedModelRefs, defaultModelRef: input.defaultModelRef };
-      const body = await buildIntegrationCommandRequest({
-        commandType: integrationClientCommandTypes.projectModelSelectionSave,
-        scopeKind: 'settings',
-        scopeId: () => `project_model_selection:${projectId}`,
-        operationPrefix: 'project_model_selection',
-        value,
-      });
-      return transport.request(`/api/projects/${encodeURIComponent(projectId)}/model-selection`, jsonRequest('PUT', body));
-    },
     loadSecuritySecrets: () => transport.request('/api/security/secrets'),
     saveTelegramBotToken: (token) =>
       secretCommand('telegram.botToken', integrationClientCommandTypes.telegramBotTokenPut, 'telegram_token_put', 'PUT', '/api/security/secrets/telegram-bot-token', { token }) as ReturnType<IntegrationApiClient['saveTelegramBotToken']>,

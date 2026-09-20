@@ -80,12 +80,6 @@ export interface SaveModelConnectionInput {
   models?: ConfiguredModelDefinition[];
 }
 
-export interface ProjectModelSelection {
-  projectId: string;
-  allowedModelRefs: string[];
-  defaultModelRef: string | null;
-}
-
 export interface SelectableConnectionModel {
   id: string;
   model: string;
@@ -214,19 +208,6 @@ export function normalizeStoredModelConnections(value: unknown): ModelConnection
   return records;
 }
 
-export function normalizeProjectModelSelection(projectId: string, value: unknown, availableRefs?: ReadonlySet<string>): ProjectModelSelection {
-  const source = isRecord(value) ? value : {};
-  const allowedModelRefs = Array.isArray(source.allowedModelRefs)
-    ? [...new Set(source.allowedModelRefs.filter((item): item is string => typeof item === 'string' && parseModelRef(item) !== null))].filter((item) => !availableRefs || availableRefs.has(item))
-    : [];
-  const requestedDefault = typeof source.defaultModelRef === 'string' ? source.defaultModelRef : null;
-  return {
-    projectId,
-    allowedModelRefs,
-    defaultModelRef: requestedDefault && allowedModelRefs.includes(requestedDefault) ? requestedDefault : (allowedModelRefs[0] ?? null),
-  };
-}
-
 const officialDeepSeekResponsesModelIds = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
 
 /** DeepSeek 模板只有指向官方 HTTPS 端点时，才能使用官方价格和能力证据。 */
@@ -340,14 +321,32 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
   );
 }
 
-export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat, templateId: ModelConnectionTemplateId = 'custom'): ConfiguredModelDefinition[] {
-  const byId = new Map(existing.map((model) => [model.id, model]));
-  for (const rawId of modelIds) {
-    const id = rawId.trim();
-    if (!id || byId.has(id)) continue;
-    byId.set(id, applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId));
-  }
-  return [...byId.values()].map((model) => applyAutomaticCapabilityProfile(model, templateId));
+/** 模型目录同步结果：候选池以接口返回为准，同时回传新增与移除的模型 ID 供界面和审计展示。 */
+export interface DiscoveredModelSyncResult {
+  models: ConfiguredModelDefinition[];
+  addedModelIds: string[];
+  removedModelIds: string[];
+}
+
+/**
+ * 以接口返回的模型 ID 同步候选池，不再只增不删。
+ *
+ * 已存在的模型保留原有启用状态与手动配置；新发现的模型只进入候选池、默认停用，
+ * 等待用户在分组下拉中显式勾选启用；接口不再返回的模型从候选池移除。
+ */
+export function syncDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat, templateId: ModelConnectionTemplateId = 'custom'): DiscoveredModelSyncResult {
+  const previousById = new Map(existing.map((model) => [model.id, model]));
+  const normalizedIds = [...new Set(modelIds.map((rawId) => rawId.trim()).filter((id) => id.length > 0))].slice(0, 200);
+  const nextIds = new Set(normalizedIds);
+  const addedModelIds: string[] = [];
+  const models = normalizedIds.map((id) => {
+    const previous = previousById.get(id);
+    if (previous) return applyAutomaticCapabilityProfile(previous, templateId);
+    addedModelIds.push(id);
+    return applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, { enabled: false }, thinkingFormat), templateId);
+  });
+  const removedModelIds = existing.filter((model) => !nextIds.has(model.id)).map((model) => model.id);
+  return { models, addedModelIds, removedModelIds };
 }
 
 export function createTemplateConfiguredModelDefinition(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {

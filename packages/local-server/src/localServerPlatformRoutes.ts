@@ -844,7 +844,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readAccount: () => codexAppServerManager.readAccount(),
     },
     modelCatalog: {
-      getProjectSelection: (projectId) => modelConnections.getProjectSelection(projectId),
       listSelectableModels: () => modelConnections.listSelectableModels(),
     },
     git: {
@@ -855,7 +854,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       read: (project, task) => resolveTaskPushContextState(project, task),
       readAttachmentOptions: (project, task) => inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment: { option: TaskPushParentAttachmentOption }) => attachment.option),
     },
-    readConfiguredModel: (projectId) => readProjectConfig(projectId).defaultModel ?? platformMutableState.runtimeSettings.adapterModels.codex ?? null,
+    readDefaultModel: () => platformMutableState.runtimeSettings.adapterModels.codex ?? null,
     codexNativeEnabled: () => codexNativeEnabled,
     now,
   });
@@ -2227,14 +2226,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     sharedPaths: projectSharedPaths,
     templates: taskTemplates,
     saveProjectConfig: (projectId, config) => settings.setJson(projectConfigSettingsPrefix + projectId, config),
-    stageProjectModelSelection: (projectId, explicitModel) => {
-      // 项目显式模型优先；完整引用保存在模型选择中，不裁成裸模型名。
-      const reference = explicitModel ?? platformMutableState.appShellSettings.newProjectDefaultModelRef;
-      if (!reference) return;
-      // 保留用户指定的完整引用；可用性只在推送阶段判断，不阻断项目创建。
-      if (!reference.includes(':')) return;
-      modelConnections.savePreparedProjectSelectionInCurrentTransaction({ projectId, allowedModelRefs: [reference], defaultModelRef: reference });
-    },
     stageProjectManagementStatus: (projectId) => {
       settings.setJson(appShellSettingsKey, {
         ...platformMutableState.appShellSettings,
@@ -3292,11 +3283,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
 
-  server.get('/api/projects/:projectId/model-selection', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
-    if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-    return modelConnections.getProjectSelection(request.params.projectId);
-  });
-
   registerIntegrationCommandRoutes({
     server,
     application: integrationCommands,
@@ -3378,12 +3364,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       });
       const previousSettings = platformMutableState.appShellSettings;
       const nextSettings = patchAppShellSettings(previousSettings, parsed.input, settingsIdentityCatalog);
-      if (parsed.input.newProjectDefaultModelRef) {
-        const models: SelectableConnectionModel[] = await modelConnections.listSelectableModels();
-        if (!models.some((model) => model.id === parsed.input.newProjectDefaultModelRef && model.available)) {
-          return reply.code(409).send({ error: 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE', message: '请选择已保存密钥且已启用的供应商模型。' });
-        }
-      }
       const migrationOperations: Array<{ projectId: string; fromStatus: TaskManagementStatus; toStatus: TaskManagementStatus }> = [];
       if (Object.prototype.hasOwnProperty.call(parsed.input, 'taskManagementStatusByProject')) {
         for (const project of projects.list()) {

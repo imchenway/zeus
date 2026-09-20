@@ -4,17 +4,15 @@ import {
   buildModelsUrl,
   createTemplateConfiguredModelDefinition,
   listSelectableConnectionModels,
-  mergeDiscoveredModels,
   modelConnectionSecretAccount,
   modelConnectionTemplates,
   modelRef,
   normalizeModelConnection,
-  normalizeProjectModelSelection,
   normalizeStoredModelConnections,
+  syncDiscoveredModels,
   type ConfiguredModelDefinition,
   type ModelConnectionRecord,
   type ModelConnectionTemplateId,
-  type ProjectModelSelection,
   type SaveModelConnectionInput,
   type SelectableConnectionModel,
 } from '@zeus/ai-runtime';
@@ -30,6 +28,7 @@ export interface ModelCatalogRefreshResult {
   connection: ModelConnectionRecord;
   discoveredModelIds: string[];
   addedModelIds: string[];
+  removedModelIds: string[];
   checkedAt: string;
 }
 
@@ -56,18 +55,13 @@ export interface ModelConnectionService {
   refreshModels(id: string): Promise<ModelCatalogRefreshResult>;
   diagnose(id: string): Promise<ModelConnectionDiagnostic>;
   listSelectableModels(): Promise<SelectableConnectionModel[]>;
-  getProjectSelection(projectId: string): Promise<ProjectModelSelection>;
-  prepareProjectSelection(projectId: string, value: unknown): Promise<ProjectModelSelection>;
-  savePreparedProjectSelectionInCurrentTransaction(selection: ProjectModelSelection): ProjectModelSelection;
-  saveProjectSelection(projectId: string, value: unknown): Promise<ProjectModelSelection>;
   loadRuntimeConnections(): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
 }
 
 const modelConnectionsSettingKey = 'models.connections';
-const projectModelsSettingPrefix = 'project.models.';
 
 /** 模型连接元数据进 SQLite settings，API Key 只进 SecretStore。 */
-export function createModelConnectionService(options: { settings: SettingRepository; secretStore: SecretStore; save: () => Promise<void>; listProjectIds: () => string[]; now?: () => string; fetch?: typeof fetch }): ModelConnectionService {
+export function createModelConnectionService(options: { settings: SettingRepository; secretStore: SecretStore; save: () => Promise<void>; now?: () => string; fetch?: typeof fetch }): ModelConnectionService {
   const now = options.now ?? (() => new Date().toISOString());
   const fetcher = options.fetch ?? fetch;
 
@@ -179,12 +173,6 @@ export function createModelConnectionService(options: { settings: SettingReposit
     },
     async remove(id) {
       await requireConnection(id);
-      const references = [];
-      for (const projectId of options.listProjectIds()) {
-        const selection = await this.getProjectSelection(projectId);
-        if (selection.allowedModelRefs.some((reference) => reference.startsWith(`${encodeURIComponent(id)}:`))) references.push(projectId);
-      }
-      if (references.length > 0) throw serviceError('ZEUS_MODEL_CONNECTION_IN_USE', `该连接仍被 ${references.length} 个项目使用，请先移除项目模型。`, 409);
       await options.secretStore.deleteSecret(modelConnectionSecretAccount(id));
       await write(readStored().filter((candidate) => candidate.id !== id));
     },
@@ -196,14 +184,14 @@ export function createModelConnectionService(options: { settings: SettingReposit
     async refreshModels(id) {
       const connection = await requireConnection(id);
       const modelIds = await fetchModelIds(connection);
-      const previousIds = new Set(connection.models.map((model) => model.id));
       const thinkingFormat = connection.templateId === 'custom' ? 'openai' : modelConnectionTemplates[connection.templateId].thinkingFormat;
-      const models = mergeDiscoveredModels(connection.models, modelIds, thinkingFormat, connection.templateId);
-      const updated = await saveConnection(connection.id, { ...connection, models }, connection);
+      const sync = syncDiscoveredModels(connection.models, modelIds, thinkingFormat, connection.templateId);
+      const updated = await saveConnection(connection.id, { ...connection, models: sync.models }, connection);
       return {
         connection: updated,
         discoveredModelIds: modelIds,
-        addedModelIds: modelIds.filter((modelId) => !previousIds.has(modelId)),
+        addedModelIds: sync.addedModelIds,
+        removedModelIds: sync.removedModelIds,
         checkedAt: now(),
       };
     },
@@ -225,30 +213,6 @@ export function createModelConnectionService(options: { settings: SettingReposit
     },
     async listSelectableModels() {
       return listSelectableConnectionModels(await hydrate());
-    },
-    async getProjectSelection(projectId) {
-      // 读取保留失效引用，推送时由用户重新选择。
-      return normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId));
-    },
-    async prepareProjectSelection(projectId, value) {
-      const models = await this.listSelectableModels();
-      // 保留原来已启用但已失效的引用；新增引用仍须在本地目录中存在。
-      const previous = normalizeProjectModelSelection(projectId, options.settings.getJson<unknown>(projectModelsSettingPrefix + projectId));
-      const availableRefs = new Set([...models.map((model) => model.id), ...previous.allowedModelRefs]);
-      const selection = normalizeProjectModelSelection(projectId, value, availableRefs);
-      const requested = isRecord(value) && Array.isArray(value.allowedModelRefs) ? value.allowedModelRefs : [];
-      if (requested.some((reference) => typeof reference !== 'string' || !availableRefs.has(reference))) throw serviceError('ZEUS_PROJECT_MODEL_SELECTION_INVALID', '项目选择包含不存在的模型。', 400);
-      return selection;
-    },
-    savePreparedProjectSelectionInCurrentTransaction(selection) {
-      options.settings.setJson(projectModelsSettingPrefix + selection.projectId, selection);
-      return selection;
-    },
-    async saveProjectSelection(projectId, value) {
-      const selection = await this.prepareProjectSelection(projectId, value);
-      this.savePreparedProjectSelectionInCurrentTransaction(selection);
-      await options.save();
-      return selection;
     },
     async loadRuntimeConnections() {
       const connections = await hydrate();

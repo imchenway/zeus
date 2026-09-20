@@ -47,15 +47,7 @@ export interface ProjectGitWorkbenchProps {
   projects: ProjectRecord[];
   client: Pick<
     DashboardClient,
-    | 'loadConversationGitHistory'
-    | 'loadProjectGitWorkbench'
-    | 'loadProjectGitOperations'
-    | 'loadProjectGitCommit'
-    | 'loadProjectGitComparisonDiff'
-    | 'executeProjectGitAction'
-    | 'generateGitCommitMessage'
-    | 'loadGitCommitModels'
-    | 'loadProjectModelSelection'
+    'loadConversationGitHistory' | 'loadProjectGitWorkbench' | 'loadProjectGitOperations' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels'
   >;
   language: 'zh-CN' | 'en-US';
   onSelectProject: (project: ProjectRecord) => void;
@@ -155,8 +147,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setCommitModelsError('');
     setCommitModelRef('');
     setCommitModels([]);
-    void Promise.all([props.client.loadGitCommitModels(props.project.id), props.client.loadProjectModelSelection(props.project.id)])
-      .then(([models, selection]) => {
+    void props.client
+      .loadGitCommitModels(props.project.id)
+      .then((models) => {
         if (!active) return;
         const available = models.items;
         // 单个来源不可用不代表整个模型列表失败；有可用模型时不阻挡生成反馈。
@@ -165,11 +158,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         try {
           remembered = localStorage.getItem(`zeus.git.commit-model.${props.project.id}`);
         } catch {
-          /* 偏好不可用时使用项目默认模型。 */
+          /* 偏好不可用时退回第一个可用模型。 */
         }
-        const preferred = [remembered, selection.defaultModelRef].find((ref) => available.some((model) => model.id === ref));
+        const preferred = remembered && available.some((model) => model.id === remembered) ? remembered : available[0]?.id;
         setCommitModels(available);
-        setCommitModelRef(preferred ?? available[0]?.id ?? '');
+        setCommitModelRef(preferred ?? '');
       })
       .catch((reason: unknown) => {
         if (active) setCommitModelsError(errorMessage(reason, zh));

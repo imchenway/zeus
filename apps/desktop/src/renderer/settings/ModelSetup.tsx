@@ -179,16 +179,11 @@ export function useModelSetup(input: {
     try {
       if (target) {
         if (reference) {
-          /** 合并当前项目选择；只有缺失或失效的默认模型才被替换。 */
-          const [selection, catalog] = await Promise.all([current.client.loadProjectModelSelection(target.projectId), current.client.loadSelectablePiModels()]);
+          /** 供应商中已启用的模型全局可用；这里只核对引用可用，不再写项目级白名单。 */
+          const catalog = await current.client.loadSelectablePiModels();
           if (!isCurrent()) return;
           const available = new Set(catalog.filter((model) => model.available).map((model) => model.id));
           if (!available.has(reference)) throw new Error('ZEUS_MODEL_UNAVAILABLE');
-          await current.client.saveProjectModelSelection(target.projectId, {
-            ...selection,
-            allowedModelRefs: [...new Set([...selection.allowedModelRefs, reference])],
-            defaultModelRef: selection.defaultModelRef && available.has(selection.defaultModelRef) ? selection.defaultModelRef : reference,
-          });
         }
         if (!isCurrent()) return;
         await target.onComplete(reference);
@@ -202,7 +197,6 @@ export function useModelSetup(input: {
       const saved = await current.client.settings.saveAppShellSettings({
         ...toAppShellSettingsSavePayload(current.settings),
         modelSetupStatus: skipped ? 'skipped' : 'completed',
-        ...(skipped ? {} : { newProjectDefaultModelRef: reference }),
       });
       if (!isCurrent()) return;
       current.onSettingsSaved(saved);
