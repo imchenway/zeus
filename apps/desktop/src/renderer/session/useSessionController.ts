@@ -810,12 +810,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
     /** 历史接管前补齐已加载用户输入的位置，不能先把它排到有位置的回复之后。 */
-    const missingInputPlacement = (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') && Object.values(state.items).some((item) => !item.transcript && sessionTranscriptEntryId(item) !== null);
+    const missingInputPlacement =
+      (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') &&
+      Object.values(state.items).some((item) => (!item.transcript || item.transcript.placement.order === null) && sessionTranscriptEntryId(item) !== null);
+    /** 冷加载时旧状态还没有本次快照条目，需直接核对入站条目是否缺整数位置。 */
+    const incomingMissingPlacement = (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') && actionTranscripts(action).some((envelope) => envelope.placement.order === null);
     const incomingEpoch =
       action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
     if (
       action.type !== 'transcript_placements_hydrated' &&
-      (placementRecovery || missingInputPlacement || (incomingEpoch > 0 && incomingEpoch !== placementEpoch) || (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed'))
+      (placementRecovery ||
+        missingInputPlacement ||
+        incomingMissingPlacement ||
+        (incomingEpoch > 0 && incomingEpoch !== placementEpoch) ||
+        (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed'))
     ) {
       placementBufferBytes += new TextEncoder().encode(JSON.stringify(action)).byteLength;
       placementActions.push(action);

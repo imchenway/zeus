@@ -42,7 +42,11 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
       return next.transcript.placement.order !== item.transcript.placement.order;
     });
   const items = changedEntryIds.size === 0 ? (current as NativeItemSnapshot[]) : [...byEntryId.values()];
-  if (structuralChange) items.sort(compareTranscriptItems);
+  if (structuralChange) {
+    /** 排序前记录候选顺序；位置未规划时沿用该顺序，不能把开场输入沉底。 */
+    const candidateIndex = new Map(items.map((item, index) => [transcriptEntryId(item), index]));
+    items.sort(compareTranscriptItemsByCandidate(candidateIndex));
+  }
   const movedEntryIds = items.flatMap((item, index) => {
     const entryId = transcriptEntryId(item);
     const before = previousOrder.get(entryId);
@@ -51,14 +55,14 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
   return { items, changedEntryIds: [...changedEntryIds], movedEntryIds };
 }
 
-/** 只按服务端持久位置排序；时间戳、分页序号和到达顺序均不参与。 */
-export function compareTranscriptItems(left: NativeItemSnapshot, right: NativeItemSnapshot): number {
-  const leftOrder = left.transcript.placement.order;
-  const rightOrder = right.transcript.placement.order;
-  if (leftOrder === null && rightOrder !== null) return 1;
-  if (leftOrder !== null && rightOrder === null) return -1;
-  if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
-  return transcriptEntryId(left).localeCompare(transcriptEntryId(right));
+/** 只有双方都有整数位置时才比较 order；缺位置的条目按候选顺序保留原位。 */
+function compareTranscriptItemsByCandidate(candidateIndex: ReadonlyMap<string, number>): (left: NativeItemSnapshot, right: NativeItemSnapshot) => number {
+  return (left, right) => {
+    const leftOrder = left.transcript.placement.order;
+    const rightOrder = right.transcript.placement.order;
+    if (leftOrder !== null && rightOrder !== null) return leftOrder - rightOrder || transcriptEntryId(left).localeCompare(transcriptEntryId(right));
+    return (candidateIndex.get(transcriptEntryId(left)) ?? 0) - (candidateIndex.get(transcriptEntryId(right)) ?? 0);
+  };
 }
 
 /** 读取条目的产品级稳定身份。 */
