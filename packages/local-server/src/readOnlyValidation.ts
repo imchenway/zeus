@@ -455,7 +455,7 @@ export function isReadOnlyValidationExternalRead(path: string): boolean {
     /^\/api\/security\/(?:secrets|reset)(?:\/|$)/u,
     /^\/api\/git(?:\/|$)/u,
     /^\/api\/skills(?:\/|$)/u,
-    /^\/api\/projects\/[^/]+\/(?:git|database\/secret|model-selection|scan-status|codex-task-push-capabilities|codex-conversation-capabilities)(?:\/|$)/u,
+    /^\/api\/projects\/[^/]+\/(?:git|database\/secret|scan-status|codex-task-push-capabilities|codex-conversation-capabilities)(?:\/|$)/u,
     /^\/api\/tasks\/[^/]+\/(?:diff|git-workspaces|integrations)(?:\/|$)/u,
     /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/subagents(?:\/|$)/u,
     /^\/api\/projects\/[^/]+\/conversations\/[^/]+\/resources\/[^/]+\/(?:open-intent|preview)$/u,

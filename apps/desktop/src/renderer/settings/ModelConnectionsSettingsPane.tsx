@@ -18,6 +18,7 @@ import type {
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { Collapsible } from '../ui/Collapsible.js';
+import { presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
@@ -139,6 +140,19 @@ export function ModelConnectionsSettingsPane(props: {
   const modelPage = settingsPage(filteredModels.length, requestedModelPage);
   /** 全部操作以当前搜索结果为范围，包含尚未翻到的页面。 */
   const allModelsExpanded = filteredModels.length > 0 && filteredModels.every((model) => expandedModelIds.has(model.id));
+  /** 候选池里的模型全部进入分组下拉，勾选状态单独映射到模型的 enabled。 */
+  const candidateModelOptions: ModelOptionSource[] = draft.models.map((model) => ({
+    id: model.id,
+    model: model.id,
+    displayName: model.displayName,
+    sourceName: current?.name || draft.name,
+    available: true,
+    supports1MContext: model.supports1MContext,
+    speedLabel: model.speedLabel,
+  }));
+  const enablePresentation = presentModelOptions(candidateModelOptions, '', props.language);
+  const enabledModelIds = draft.models.filter((model) => model.enabled).map((model) => model.id);
+  const enabledModelCount = enabledModelIds.length;
 
   /** 批量和单项展开共用同一状态，保留搜索范围之外的展开选择。 */
   function setModelsExpanded(ids: string[], expanded: boolean): void {
@@ -151,6 +165,12 @@ export function ModelConnectionsSettingsPane(props: {
       }
       return nextIds;
     });
+  }
+
+  /** 分组下拉勾选只翻转启用状态，协议、认证和容量仍由模型卡片维护。 */
+  function toggleModelEnabled(modelId: string): void {
+    const enabled = draft.models.some((model) => model.id === modelId && model.enabled);
+    changeDraft({ ...draft, models: draft.models.map((model) => (model.id === modelId ? { ...model, enabled: !enabled } : model)) });
   }
 
   function selectConnection(connection: ModelConnectionRecord): void {
@@ -298,7 +318,11 @@ export function ModelConnectionsSettingsPane(props: {
       const result = await props.client.refreshModelConnectionModels(draft.id);
       await reloadConnections(draft.id);
       if (props.onComplete) await refreshDefaultModels(draft.id);
-      setMessage(zh ? `发现 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个。` : `Discovered ${result.discoveredModelIds.length} models and added ${result.addedModelIds.length}.`);
+      setMessage(
+        zh
+          ? `候选池已同步：共 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个，移除 ${result.removedModelIds.length} 个。新模型默认未启用，请在“启用模型”中勾选。`
+          : `Candidate pool synced: ${result.discoveredModelIds.length} discovered, ${result.addedModelIds.length} added, ${result.removedModelIds.length} removed. New models stay disabled until selected.`,
+      );
     } catch (error) {
       setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
@@ -547,12 +571,12 @@ export function ModelConnectionsSettingsPane(props: {
             <header>
               <span>
                 <strong>
-                  {zh ? '可用模型' : 'Available models'} <small>{draft.models.length}</small>
+                  {zh ? '候选模型' : 'Candidate models'} <small>{draft.models.length}</small>
                 </strong>
                 <small>
                   {zh
-                    ? '为每个模型选择服务支持的请求格式和登录方式。功能是否可用以检测结果为准。'
-                    : 'Choose the request format and authentication supported by the service for each model. Feature availability is based on checks of that connection.'}
+                    ? '获取模型只更新候选池；请在下方下拉中勾选启用，再为每个模型选择请求格式和登录方式。'
+                    : 'Fetching only refreshes the candidate pool. Enable models in the dropdown, then choose each model request format and authentication.'}
                 </small>
               </span>
               <Button
@@ -571,6 +595,23 @@ export function ModelConnectionsSettingsPane(props: {
                 {allModelsExpanded ? (zh ? '全部收起' : 'Collapse all') : zh ? '全部展开' : 'Expand all'}
               </Button>
             </header>
+            {draft.models.length > 0 ? (
+              <label className="model-enable-picker">
+                <span>{zh ? '启用模型' : 'Enable models'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '勾选要启用的模型' : 'Choose models to enable'}
+                  value={enabledModelIds[0] ?? ''}
+                  selectedValues={enabledModelIds}
+                  triggerLabel={zh ? `已启用 ${enabledModelCount} 个模型` : `${enabledModelCount} enabled`}
+                  options={enablePresentation.options}
+                  searchable
+                  searchPlaceholder={zh ? '搜索候选模型' : 'Search candidate models'}
+                  onChange={toggleModelEnabled}
+                />
+                <small>{zh ? '下拉中勾选即启用，取消勾选即停用；候选模型不会自动启用。' : 'Check to enable and uncheck to disable; candidates are never enabled automatically.'}</small>
+              </label>
+            ) : null}
             <div className="model-definition-toolbar">
               {draft.models.length > 0 ? (
                 <input
@@ -767,11 +808,13 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
   return (
     <article className="model-definition-card" data-enabled={model.enabled ? 'true' : 'false'}>
       <header className="model-definition-header">
-        <input type="checkbox" aria-label={zh ? `启用模型 ${model.id}` : `Enable model ${model.id}`} checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
+        <span className="model-definition-enabled-state" data-enabled={model.enabled ? 'true' : 'false'}>
+          {model.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '候选' : 'Candidate'}
+        </span>
         <button type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
           <span>
-            <strong title={model.id}>{model.id}</strong>
-            <small>{modelRouteLabel(model, zh)}</small>
+            <strong title={model.displayName || model.id}>{model.displayName || model.id}</strong>
+            <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
         </button>

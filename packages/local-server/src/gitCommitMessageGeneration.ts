@@ -16,12 +16,13 @@ export interface GitCommitMessageInput {
 /** 仅生成可编辑的文本草稿；不创建会话、不调用工具、不执行 Git 写操作。 */
 export async function generateGitCommitMessage(service: ModelConnectionService, projectId: string, input: GitCommitMessageInput, signal?: AbortSignal): Promise<{ message: string; model: string }> {
   if (!input.files.length || !input.stagedDiff.trim()) throw failure(input.scope === 'selection' ? '请先勾选需要提交的文件。' : '请先暂存需要提交的改动。', 400);
-  const [connections, selection] = await Promise.all([service.loadRuntimeConnections(), service.getProjectSelection(projectId)]);
+  const connections = await service.loadRuntimeConnections();
   const available = connections
     .filter((connection) => connection.enabled && connection.apiKey)
     .flatMap((connection) => connection.models.filter((model) => model.enabled && model.runtimeAdapter === 'pi_sdk').map((model) => ({ connection, model, ref: modelRef(connection.id, model.id) })));
-  const requestedModelRef = input.modelRef ?? selection.defaultModelRef;
-  const selected = requestedModelRef ? available.find((entry) => entry.ref === requestedModelRef) : available.find((entry) => !selection.allowedModelRefs.length || selection.allowedModelRefs.includes(entry.ref));
+  const requestedModelRef = input.modelRef;
+  // 未记住提交模型时退回第一个可用模型，不再依赖项目级白名单或默认模型配置。
+  const selected = requestedModelRef ? available.find((entry) => entry.ref === requestedModelRef) : available[0];
   if (!selected) throw failure('所选模型不可用，请选择已启用且配置 API Key 的模型连接。', 409);
   const { connection, model } = selected;
   const { system, prompt } = buildGitCommitPrompt(input);

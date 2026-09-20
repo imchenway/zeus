@@ -741,6 +741,40 @@
   .model-definition-list:empty {
     display: none;
   }
+  .model-enable-picker {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+  .model-enable-picker > span:first-child {
+    color: var(--zeus-product-text);
+    font-size: 11.5px;
+    line-height: 16px;
+  }
+  .model-enable-picker > small {
+    flex-basis: 100%;
+    color: var(--zeus-product-muted);
+    font-size: 10.5px;
+    line-height: 15px;
+  }
+  .model-definition-enabled-state {
+    flex: 0 0 auto;
+    min-inline-size: 44px;
+    padding: 2px 8px;
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 999px;
+    color: var(--zeus-product-muted);
+    font-size: 10.5px;
+    line-height: 16px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .model-definition-enabled-state[data-enabled='true'] {
+    border-color: color-mix(in srgb, var(--zeus-product-accent) 42%, transparent);
+    color: var(--zeus-product-accent);
+  }
   .model-definition-card {
     border: 0 !important;
     border-radius: 0;

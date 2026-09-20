@@ -14,7 +14,6 @@ export interface ProjectConfigSnapshot {
   projectId: string;
   /** 仅影响后续新建会话；空值保留默认。 */
   contextCapacityTokens: number | null;
-  defaultModel: string | null;
   serviceTierPreferences: ProjectModelServiceTierPreference[];
   defaultWorkMode: ProjectWorkMode;
   language: {
@@ -44,7 +43,6 @@ export interface ProjectConfigSnapshot {
 export interface UpdateProjectConfigBody {
   /** 外部输入需严格校验，不进行数字字符串转换。 */
   contextCapacityTokens?: unknown;
-  defaultModel?: unknown;
   serviceTierPreferences?: unknown;
   defaultWorkMode?: unknown;
   language?: { primary?: unknown; additional?: unknown };
@@ -62,7 +60,6 @@ export function createDefaultProjectConfig(projectId: string): ProjectConfigSnap
   return {
     projectId,
     contextCapacityTokens: null,
-    defaultModel: null,
     serviceTierPreferences: [],
     defaultWorkMode: 'plan',
     language: { primary: 'typescript', additional: [] },
@@ -88,7 +85,6 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   } catch {
     return null;
   }
-  const defaultModel = normalizeOptionalSingleLine(raw.defaultModel, 80, fallback.defaultModel);
   const serviceTierPreferences = normalizeProjectModelServiceTierPreferences(raw.serviceTierPreferences, fallback.serviceTierPreferences);
   const languagePrimary = normalizeIdentifierText(raw.language?.primary, fallback.language.primary);
   const languageAdditional = normalizeIdentifierList(raw.language?.additional, fallback.language.additional);
@@ -98,7 +94,6 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   const connectionName = normalizeOptionalSingleLine(raw.database?.connectionName, 80, fallback.database.connectionName);
   const telegramAlias = normalizeOptionalSingleLine(raw.telegram?.alias, 80, fallback.telegram.alias);
   if (
-    (defaultModel === null && raw.defaultModel !== undefined && raw.defaultModel !== null) ||
     serviceTierPreferences === null ||
     languagePrimary === null ||
     languageAdditional === null ||
@@ -111,7 +106,6 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
     return null;
   return {
     projectId,
-    defaultModel,
     contextCapacityTokens: contextCapacityTokens as number | null,
     serviceTierPreferences,
     defaultWorkMode: isProjectWorkMode(raw.defaultWorkMode) ? raw.defaultWorkMode : fallback.defaultWorkMode,

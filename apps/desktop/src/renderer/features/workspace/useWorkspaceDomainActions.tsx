@@ -939,7 +939,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     event?.preventDefault();
     if (!props.onSaveProjectConfig) return;
     const input: SaveProjectConfigRequest = {
-      defaultModel: projectConfigForm.defaultModel.trim() || null,
       defaultWorkMode: projectConfigForm.defaultWorkMode,
       language: {
         primary: projectConfigForm.languagePrimary.trim() || 'typescript',
@@ -1141,7 +1140,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         name,
         localPath,
         description: uiCopy.sidebar.selectedRepositoryDescription,
-        defaultModel: appShellSettings.newProjectDefaultModelRef || createProjectConfigForm.defaultModel.trim() || appShellSettings.defaultModel || null,
         defaultWorkMode: createProjectConfigForm.defaultWorkMode,
       });
       const selectedCreatedProject = nextSnapshot.projects.find((project) => normalizeProjectLocalPath(project.localPath) === localPath);

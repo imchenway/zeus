@@ -1,7 +1,7 @@
 import type { ConversationFeatureCatalog, ConversationFeatureAvailability } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type ProjectModelSelection, type SelectableConnectionModel } from '@zeus/ai-runtime';
+import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type SelectableConnectionModel } from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
@@ -58,7 +58,6 @@ interface ConversationCapabilityQueryPorts {
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
   provider: ExistingProviderCapabilityReadPort;
   modelCatalog: {
-    getProjectSelection(projectId: string): Promise<ProjectModelSelection>;
     listSelectableModels(): Promise<SelectableConnectionModel[]>;
   };
   git: TaskPushGitReadPort;
@@ -66,7 +65,8 @@ interface ConversationCapabilityQueryPorts {
     read(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushContextProjection;
     readAttachmentOptions(project: ZeusProjectRecord, task: ZeusTaskRecord): unknown[];
   };
-  readConfiguredModel(projectId: string): string | null;
+  /** 读取全局默认模型；项目级默认模型已移除，新项目沿用该默认值。 */
+  readDefaultModel(): string | null;
   codexNativeEnabled(): boolean;
   now(): Date;
 }
@@ -236,15 +236,13 @@ export class ConversationCapabilityQueryApplication {
   }
 
   async buildConversationCapabilities(project: ZeusProjectRecord, codexCapabilities: CodexCapabilitiesSnapshot | null, codexAccount: CodexAccountSnapshot | UnavailableCodexAccount): Promise<ConversationCapabilitiesSnapshot> {
-    const connectionSelection = await this.ports.modelCatalog.getProjectSelection(project.id);
     const connectionCatalog = await this.ports.modelCatalog.listSelectableModels();
-    const allowedConnectionModels = connectionCatalog.filter((model) => connectionSelection.allowedModelRefs.includes(model.id));
-    const models = mapConversationCapabilityModels(codexCapabilities, allowedConnectionModels).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
+    // 项目不再维护模型白名单；供应商中启用的模型全局可用，真实能力以运行探针结果为准。
+    const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
-    const configuredModel = this.ports.readConfiguredModel(project.id);
-    // 已配置的模型失效时保留原引用，禁止读取目录顺带切换模型。
-    const requestedModel = connectionSelection.defaultModelRef ?? configuredModel;
-    const preferredModel = requestedModel ? (resolveModelCapability(models, requestedModel)?.id ?? requestedModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
+    const defaultModel = this.ports.readDefaultModel();
+    // 新项目沿用 Zeus 全局默认模型；会话/推送模型由各入口的“记住上次选择”覆盖。
+    const preferredModel = defaultModel ? (resolveModelCapability(models, defaultModel)?.id ?? defaultModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
       projectContextCapacityTokens: this.ports.readProjectContextCapacity?.(project.id) ?? null,
       goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { ModelConnectionRecord, ProjectModelSelection } from '@zeus/ai-runtime';
+import type { ModelConnectionRecord } from '@zeus/ai-runtime';
 import type { SecretPresenceLabel, SecretStore } from './securityCore.js';
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord } from '@zeus/shared';
 import type { AppendAuditLogInput, ProjectRepository } from '@zeus/storage';
@@ -13,10 +13,6 @@ interface SaveTelegramTokenInput {
 }
 interface SaveExternalApiKeyInput {
   key?: string;
-}
-interface ProjectModelSelectionInput {
-  allowedModelRefs?: unknown;
-  defaultModelRef?: unknown;
 }
 interface SecuritySecretsSnapshot {
   telegramBotToken: SecretPresenceLabel;
@@ -278,37 +274,6 @@ export function registerIntegrationCommandRoutes(options: {
     }
   });
 
-  server.put('/api/projects/:projectId/model-selection', async (request: FastifyRequest<{ Params: { projectId: string }; Body: IntegrationCommandRequest<ProjectModelSelectionInput> }>, reply) => {
-    try {
-      if (!options.projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-      const scopeId = projectModelSelectionScope(request.params.projectId);
-      const parsed = parseResourceCommand<ProjectModelSelectionInput>(application, request.body, integrationCommandTypes.projectModelSelectionSave, 'settings', scopeId);
-      assertExactKeys(parsed.input, ['allowedModelRefs', 'defaultModelRef'], parsed.command.commandType);
-      const replay = application.replayAcceptedCore<ProjectModelSelectionInput, ProjectModelSelection>({ parsed, destinationId: 'settings', resourceId: scopeId });
-      if (replay) return replay.result;
-      const selection = await options.modelConnections.prepareProjectSelection(request.params.projectId, parsed.input);
-      const mutation = application.executeCore({
-        parsed,
-        destinationId: 'settings',
-        resourceId: scopeId,
-        mutateBusinessState: () => {
-          const saved = options.modelConnections.savePreparedProjectSelectionInCurrentTransaction(selection);
-          options.appendAuditLog({
-            actorType: 'local_api',
-            action: 'project.model_selection.updated',
-            resourceType: 'project',
-            resourceId: request.params.projectId,
-            payload: { modelCount: saved.allowedModelRefs.length, defaultModelRef: saved.defaultModelRef },
-          });
-          return saved;
-        },
-      });
-      return mutation.result;
-    } catch (error) {
-      return sendIntegrationError(reply, error, options.redactSensitiveText, '项目模型选择保存失败。');
-    }
-  });
-
   registerSecretPutRoute(options, {
     path: '/api/security/secrets/telegram-bot-token',
     commandType: integrationCommandTypes.telegramBotTokenPut,
@@ -424,10 +389,6 @@ function externalOperationId(parsed: ParsedIntegrationCommand<object>): string {
 
 function modelApiKeyScope(connectionId: string): string {
   return `model_connection:${connectionId}:api_key`;
-}
-
-function projectModelSelectionScope(projectId: string): string {
-  return `project_model_selection:${projectId}`;
 }
 
 function appendModelConnectionAudit(

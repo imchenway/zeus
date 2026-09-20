@@ -687,7 +687,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
         eventTitle,
         prompt,
         attachmentInput,
-        model: await resolveCodexModel(project),
+        model: await resolveCodexModel(),
       };
     }
     if (!isNonCodexAiCliAdapterId(platformMutableState.runtimeSettings.defaultAdapterId)) {
@@ -855,7 +855,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       prompt,
       attachments: attachmentInput.attachments,
       allowedAttachmentRoots: attachmentInput.allowedRoots,
-      model: await resolveCodexModel(project),
+      model: await resolveCodexModel(),
       allowCodeChanges: task.allowCodeChanges,
       allowTests: task.allowTests,
       allowGitCommit: task.allowGitCommit,

@@ -13,7 +13,6 @@ export interface CreateProjectCommandInput {
   localPath: string;
   description?: string;
   note?: string;
-  defaultModel?: unknown;
   defaultWorkMode?: unknown;
 }
 
@@ -40,8 +39,6 @@ interface ProjectOperationPorts {
   sharedPaths: Pick<ProjectSharedPathRepository, 'replaceForProject'>;
   templates: Pick<TaskTemplateRepository, 'getById'>;
   saveProjectConfig(projectId: string, config: ProjectConfigSnapshot): void;
-  /** 为新项目写入经过目录验证的默认模型及可用模型集合。 */
-  stageProjectModelSelection(projectId: string, explicitModel: string | null): void;
   stageProjectManagementStatus(projectId: string): void;
   activateProjectManagementStatus(projectId: string): void;
   appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void;
@@ -65,15 +62,14 @@ export class WorkManagementProjectOperations {
     }
     if (!input?.name || !input.localPath) throw routeError(400, 'ZEUS_INVALID_PROJECT', 'Project name and localPath are required');
     const localPath = requireReadableProjectDirectory(input.localPath);
-    const initialDefaults = normalizeProjectConfig('pending-project', { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode }, createDefaultProjectConfig('pending-project'));
+    const initialDefaults = normalizeProjectConfig('pending-project', { defaultWorkMode: input.defaultWorkMode }, createDefaultProjectConfig('pending-project'));
     if (!initialDefaults) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
-    const projectConfig = normalizeProjectConfig(projectId, { defaultModel: input.defaultModel, defaultWorkMode: input.defaultWorkMode }, detectProjectConfigFromLocalFiles(projectId, localPath));
+    const projectConfig = normalizeProjectConfig(projectId, { defaultWorkMode: input.defaultWorkMode }, detectProjectConfigFromLocalFiles(projectId, localPath));
     if (!projectConfig) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
     const project = this.ports.projects.create({ id: projectId, name: input.name, localPath, description: input.description, note: input.note });
     this.ports.saveProjectConfig(project.id, { ...projectConfig, projectId: project.id });
     this.ports.repositoryDiscovery.request(project, context.commandId);
     this.ports.stageProjectManagementStatus(project.id);
-    this.ports.stageProjectModelSelection(project.id, projectConfig.defaultModel);
     this.audit(context, 'project.config.detected', project, {
       language: projectConfig.language.primary,
       packageManagers: projectConfig.dependencies.packageManagers,

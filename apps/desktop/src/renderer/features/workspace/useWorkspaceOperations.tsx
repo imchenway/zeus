@@ -272,7 +272,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             enableProjectShell: async (projectId: string) => {
               const config = await onLoadProjectConfig(projectId);
               const saved = await onSaveProjectConfig(projectId, {
-                defaultModel: config.defaultModel,
                 defaultWorkMode: config.defaultWorkMode,
                 language: config.language,
                 dependencies: config.dependencies,

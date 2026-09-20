@@ -65,15 +65,7 @@ export interface ProjectGitWorkbenchProps {
   project: ProjectRecord;
   client: Pick<
     DashboardClient,
-    | 'loadConversationGitHistory'
-    | 'loadProjectGitWorkbench'
-    | 'loadProjectGitOperations'
-    | 'loadProjectGitCommit'
-    | 'loadProjectGitComparisonDiff'
-    | 'executeProjectGitAction'
-    | 'generateGitCommitMessage'
-    | 'loadGitCommitModels'
-    | 'loadProjectModelSelection'
+    'loadConversationGitHistory' | 'loadProjectGitWorkbench' | 'loadProjectGitOperations' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels'
   >;
   language: 'zh-CN' | 'en-US';
 }

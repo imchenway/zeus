@@ -1499,10 +1499,9 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
 
   function createNonCodexTaskRuntimeInvocation(adapterId: NonCodexAiCliAdapterId, project: ZeusProjectRecord, task: ZeusTaskRecord, instruction?: string, prompt = createTaskRuntimePrompt(task, instruction), commandPathOverride?: string) {
     assertNonCodexTaskAttachmentsSupported(adapterId, task);
-    const projectConfig = readProjectConfig(project.id);
-    // 项目默认模型优先级高于全局 Runtime 模型；未配置时才回退到全局设置。
+    // 项目级默认模型已移除；非 Codex 适配直接沿用全局 Runtime 模型。
     return createNonCodexAiCliAdapterInvocation(adapterId, prompt, {
-      model: projectConfig.defaultModel ?? platformMutableState.runtimeSettings.adapterModels[adapterId],
+      model: platformMutableState.runtimeSettings.adapterModels[adapterId],
       defaultArgs: platformMutableState.runtimeSettings.adapterDefaultArgs[adapterId] ?? [],
       commandPath: commandPathOverride ?? platformMutableState.runtimeSettings.adapterCliPaths[adapterId],
     });

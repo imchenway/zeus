@@ -127,12 +127,6 @@ export interface SelectablePiModel {
   authenticationScheme: ModelAuthenticationScheme;
 }
 
-export interface ProjectModelSelection {
-  projectId: string;
-  allowedModelRefs: string[];
-  defaultModelRef: string | null;
-}
-
 export interface SecurityAuditLogEntry {
   id: string;
   actorType: string;

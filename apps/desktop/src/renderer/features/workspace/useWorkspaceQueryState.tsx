@@ -311,7 +311,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [projectDirectoryChoosing, setProjectDirectoryChoosing] = useState(false);
   const projectCreateReturnFocusRef = useRef<HTMLElement | null>(null);
   const [createProjectConfigForm] = useState(() => ({
-    defaultModel: '',
     defaultWorkMode: 'plan' as ProjectConfig['defaultWorkMode'],
   }));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');

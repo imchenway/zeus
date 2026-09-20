@@ -3648,7 +3648,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
       if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
       const capabilities = await resolveConversationCapabilities(project);
-      const selectedModelId = await resolveCodexModel(project);
+      const selectedModelId = await resolveCodexModel();
       const selectedModel = resolveModelCapability(capabilities.models, selectedModelId);
       if (!selectedModel || selectedModel.agentKind === 'pi') throw nativeApiError('ZEUS_MODEL_NOT_READY', '旧会话引用需要可用的 Codex App Server 模型。');
       nativeOperation = await startNativeTaskConversationFromPlan({
@@ -4100,10 +4100,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return `native_operation_${createHash('sha256').update(`${scope}\0${idempotencyKey}\0${requestHash}`).digest('hex').slice(0, 24)}`;
   }
 
-  async function resolveCodexModel(project: ZeusProjectRecord): Promise<string> {
+  async function resolveCodexModel(): Promise<string> {
     if (!codexNativeEnabled) throw nativeApiError('ZEUS_CODEX_NATIVE_DISABLED', 'Codex native conversation writes are disabled by ZEUS_CODEX_NATIVE_ENABLED.');
-    const projectConfig = readProjectConfig(project.id);
-    const configured = projectConfig.defaultModel ?? platformMutableState.runtimeSettings.adapterModels.codex;
+    // 项目级默认模型已移除；未显式指定时沿用全局 Codex 适配默认模型。
+    const configured = platformMutableState.runtimeSettings.adapterModels.codex;
     if (configured?.trim()) return configured.trim();
     const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
     const firstSupported = capabilities.supportedModels[0];

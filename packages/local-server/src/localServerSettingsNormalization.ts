@@ -1,6 +1,6 @@
 import { defaultTaskManagementStatusConfig, isTaskStatusFilter, normalizeTaskManagementStatusConfig, type ProjectCodeWorkspacePreference, type TaskManagementStatusConfig, type TaskPageViewMode, type TaskStatusFilter } from '@zeus/shared';
 import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
-import { listAiCliAdapters, parseModelRef, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
+import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import { normalizeNetworkProxySettings, type NetworkProxySettings, normalizeSidebarConversationFilters, type SidebarConversationFilters } from '@zeus/shared';
@@ -351,8 +351,6 @@ export interface AppShellSettingsSnapshot {
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
-  /** 只用于之后新建项目的完整供应商模型引用。 */
-  newProjectDefaultModelRef?: string | null;
   appLanguage: AppLanguage;
   appearance: AppAppearance;
   /** 主工作区布局；旧设置缺省时继续使用当前布局。 */
@@ -395,8 +393,6 @@ export interface UpdateAppShellSettingsBody {
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
   modelSetupStatus?: 'pending' | 'skipped' | 'completed' | null;
-  /** 只用于之后新建项目的完整供应商模型引用。 */
-  newProjectDefaultModelRef?: string | null;
   appLanguage?: AppLanguage;
   appearance?: AppAppearance;
   mainLayout?: 'upstream' | 'current';
@@ -548,7 +544,6 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
     sidebarConversationFilters: value?.sidebarConversationFilters === undefined ? undefined : normalizeSidebarConversationFilters(value.sidebarConversationFilters),
     defaultModel: normalizeAppShellDefaultModel(value?.defaultModel),
     modelSetupStatus: value?.modelSetupStatus === 'pending' || value?.modelSetupStatus === 'skipped' || value?.modelSetupStatus === 'completed' ? value.modelSetupStatus : null,
-    newProjectDefaultModelRef: typeof value?.newProjectDefaultModelRef === 'string' && parseModelRef(value.newProjectDefaultModelRef) ? value.newProjectDefaultModelRef : null,
     defaultTaskTemplateId: normalizeDefaultTaskTemplateId(value?.defaultTaskTemplateId, identities),
     taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
     taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
@@ -576,9 +571,6 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
   if (input.modelSetupStatus !== undefined && input.modelSetupStatus !== null && !['pending', 'skipped', 'completed'].includes(input.modelSetupStatus)) {
     throw Object.assign(new Error('模型接入状态无效。'), { code: 'ZEUS_MODEL_SETUP_INVALID', statusCode: 400 });
   }
-  if (input.newProjectDefaultModelRef !== undefined && input.newProjectDefaultModelRef !== null && (typeof input.newProjectDefaultModelRef !== 'string' || !parseModelRef(input.newProjectDefaultModelRef))) {
-    throw Object.assign(new Error('新项目默认模型必须包含供应商与模型身份。'), { code: 'ZEUS_MODEL_SETUP_INVALID', statusCode: 400 });
-  }
   return normalizeAppShellSettings(
     {
       ...current,
@@ -598,7 +590,6 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       collapsedProjectIds: Array.isArray(input.collapsedProjectIds) ? normalizeProjectPreferenceIds(input.collapsedProjectIds) : current.collapsedProjectIds,
       sidebarConversationFilters: input.sidebarConversationFilters === undefined ? current.sidebarConversationFilters : normalizeSidebarConversationFilters(input.sidebarConversationFilters),
       modelSetupStatus: input.modelSetupStatus === undefined ? current.modelSetupStatus : input.modelSetupStatus,
-      newProjectDefaultModelRef: input.newProjectDefaultModelRef === undefined ? current.newProjectDefaultModelRef : input.newProjectDefaultModelRef,
       defaultModel: input.defaultModel === null ? null : typeof input.defaultModel === 'string' ? input.defaultModel : current.defaultModel,
       defaultTaskTemplateId: input.defaultTaskTemplateId === null ? null : typeof input.defaultTaskTemplateId === 'string' ? input.defaultTaskTemplateId : current.defaultTaskTemplateId,
       // taskTableColumns 支持局部保存；columnWidths 只有显式传入时才替换，空对象用于明确恢复默认列宽。
