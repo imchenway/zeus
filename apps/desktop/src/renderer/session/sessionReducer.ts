@@ -650,8 +650,6 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const projectedItemOrder = orderedItems
     .sort((left, right) => {
       if (left.order !== null && right.order !== null) return left.order - right.order;
-      if (left.order !== null) return -1;
-      if (right.order !== null) return 1;
       return left.stableIndex - right.stableIndex;
     })
     .map((entry) => entry.key);
@@ -845,8 +843,6 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
       if (leftPlacement?.order !== null && leftPlacement?.order !== undefined && rightPlacement?.order !== null && rightPlacement?.order !== undefined) {
         return leftPlacement.order - rightPlacement.order || leftPlacement.entryId.localeCompare(rightPlacement.entryId);
       }
-      if (leftPlacement?.order !== null && leftPlacement?.order !== undefined) return -1;
-      if (rightPlacement?.order !== null && rightPlacement?.order !== undefined) return 1;
       return (previousOrder.get(leftKey) ?? stableOrderIndex.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? stableOrderIndex.get(rightKey) ?? Number.MAX_SAFE_INTEGER);
     });
 
@@ -1512,8 +1508,6 @@ function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<s
     const left = items[leftKey]?.transcript?.placement.order ?? null;
     const right = items[rightKey]?.transcript?.placement.order ?? null;
     if (left !== null && right !== null) return left - right || (items[leftKey]?.transcript?.placement.entryId ?? leftKey).localeCompare(items[rightKey]?.transcript?.placement.entryId ?? rightKey);
-    if (left !== null) return -1;
-    if (right !== null) return 1;
     return (previousIndex.get(leftKey) ?? 0) - (previousIndex.get(rightKey) ?? 0);
   });
 }
