@@ -777,6 +777,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           <div className="git-toolbar-identity">
             {selectedRepository ? (
               <BranchSwitcher
+                cascadeRepositories
                 zh={zh}
                 repositories={repositories}
                 selectedRepository={selectedRepository}

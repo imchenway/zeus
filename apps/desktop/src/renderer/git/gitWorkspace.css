@@ -447,3 +447,41 @@
 .macos-ai-app.zeus-shell .project-git-workbench .git-working-copy-row strong {
   font-weight: 600;
 }
+
+/* 源码分支菜单按仓库、分支、操作保留三级上下文。 */
+.macos-ai-app .git-repository-branch-submenu {
+  width: min(340px, calc(100vw - 16px));
+  z-index: 121;
+}
+.git-branch-collapsible-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  list-style: none;
+  font-size: 12px;
+  cursor: pointer;
+}
+.git-branch-collapsible-group > summary::-webkit-details-marker {
+  display: none;
+}
+.git-branch-collapsible-group > summary > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.git-branch-collapsible-group[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.git-branch-collapsible-group > summary:hover {
+  background: var(--zeus-interaction-hover);
+}
+.git-branch-collapsible-group > summary:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: -2px;
+}
+.git-reference-tree button.is-active {
+  background: var(--zeus-source-list-selected);
+}

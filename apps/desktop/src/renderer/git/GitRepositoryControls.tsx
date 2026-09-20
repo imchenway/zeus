@@ -1,4 +1,5 @@
 import './gitWorkspace.css';
+import { repositoryColor } from './repositoryColor.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -24,6 +25,8 @@ interface BranchTreeNode {
 
 export function BranchSwitcher(props: {
   zh: boolean;
+  /** 按仓库、分支、操作逐级展开，供源码与 Git 工作区共用。 */
+  cascadeRepositories?: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   selectedRepository: ProjectGitRepositoryWorkbenchItem | null;
   busy: BusyState;
@@ -39,7 +42,13 @@ export function BranchSwitcher(props: {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [position, setPosition] = useState({ left: 0, top: 0 });
-  const [referenceMenu, setReferenceMenu] = useState<{ anchor: HTMLButtonElement; repository: ProjectGitRepositoryWorkbenchItem; reference: string; kind: BranchKind | 'tag' | 'revision' } | null>(null);
+  const [repositoryMenu, setRepositoryMenu] = useState<{ anchor: HTMLButtonElement; repository: ProjectGitRepositoryWorkbenchItem } | null>(null);
+  const repositoryMenuRef = useRef(repositoryMenu);
+  repositoryMenuRef.current = repositoryMenu;
+  const repositoryPopoverRef = useRef<HTMLDivElement>(null);
+  const repositorySubmenuId = useId();
+  const repositoryRowId = useId();
+  const [referenceMenu, setReferenceMenu] = useState<{ anchor: HTMLButtonElement; parent: HTMLElement; repository: ProjectGitRepositoryWorkbenchItem; reference: string; kind: BranchKind | 'tag' | 'revision' } | null>(null);
   const referenceMenuRef = useRef(referenceMenu);
   referenceMenuRef.current = referenceMenu;
   const menuTreeRef = useRef<HTMLDivElement>(null);
@@ -60,6 +69,7 @@ export function BranchSwitcher(props: {
 
   const closeMenus = () => {
     setReferenceMenu(null);
+    setRepositoryMenu(null);
     setOpen(false);
   };
 
@@ -79,7 +89,7 @@ export function BranchSwitcher(props: {
       if (!menuTreeRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) closeMenus();
     };
     const escape = (event: KeyboardEvent) => {
-      if (referenceMenuRef.current || menuTreeRef.current?.closest('[inert]')) return;
+      if (referenceMenuRef.current || repositoryMenuRef.current || menuTreeRef.current?.closest('[inert]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) {
         event.preventDefault();
         event.stopPropagation();
@@ -110,8 +120,11 @@ export function BranchSwitcher(props: {
     action();
   };
   const openReferenceMenu = (event: ReactMouseEvent<HTMLButtonElement>, repository: ProjectGitRepositoryWorkbenchItem, ref: string, kind: BranchKind | 'tag' | 'revision') => {
-    props.onSelectRepository(repository.id);
-    setReferenceMenu({ anchor: event.currentTarget, repository, reference: ref, kind });
+    const parent = event.currentTarget.closest<HTMLElement>('.project-git-branch-popover');
+    if (!parent) return;
+    if (!props.cascadeRepositories) props.onSelectRepository(repository.id);
+    if (parent === popoverRef.current) setRepositoryMenu(null);
+    setReferenceMenu({ anchor: event.currentTarget, parent, repository, reference: ref, kind });
   };
   const quickActions = [
     { id: 'update', label: props.zh ? '更新项目…' : 'Update Project…', run: props.onOpenUpdate },
@@ -141,6 +154,7 @@ export function BranchSwitcher(props: {
             value={query}
             onChange={(event) => {
               setReferenceMenu(null);
+              setRepositoryMenu(null);
               setQuery(event.currentTarget.value);
             }}
             aria-label={props.zh ? '搜索分支、操作和仓库' : 'Search branches, actions and repositories'}
@@ -157,7 +171,7 @@ export function BranchSwitcher(props: {
               ))}
             </section>
           ) : null}
-          {normalizedQuery && props.repositories.length > 1 && commonLocalBranches.some(matches) ? (
+          {!props.cascadeRepositories && normalizedQuery && props.repositories.length > 1 && commonLocalBranches.some(matches) ? (
             <section className="project-git-branch-group">
               <strong>{props.zh ? '共同本地分支' : 'Common local branches'}</strong>
               {commonLocalBranches.filter(matches).map((branch) => (
@@ -200,23 +214,36 @@ export function BranchSwitcher(props: {
               ))}
             </section>
           ) : null}
-          {props.repositories.length > 1 ? (
+          {props.cascadeRepositories || props.repositories.length > 1 ? (
             <section className="git-branch-repositories" aria-label={props.zh ? '仓库' : 'Repositories'}>
               {props.repositories
-                .filter((repository) => !normalizedQuery || `${repository.name}/${repository.relativePath}`.toLocaleLowerCase().includes(normalizedQuery))
+                .filter((repository) => !normalizedQuery || `${repository.name}/${repository.relativePath}`.toLocaleLowerCase().includes(normalizedQuery) || repositoryHasMatchingReference(repository, normalizedQuery))
                 .map((repository) => (
                   <button
                     type="button"
                     key={repository.id}
-                    className={repository.id === props.selectedRepository?.id ? 'is-current' : ''}
-                    onClick={() => {
+                    id={`${repositoryRowId}-${repository.id}`}
+                    className={(props.cascadeRepositories ? repositoryMenu?.repository.id === repository.id : repository.id === props.selectedRepository?.id) ? 'is-current' : ''}
+                    aria-haspopup={props.cascadeRepositories ? 'menu' : undefined}
+                    aria-expanded={props.cascadeRepositories ? repositoryMenu?.repository.id === repository.id : undefined}
+                    aria-controls={repositoryMenu?.repository.id === repository.id ? repositorySubmenuId : undefined}
+                    onKeyDown={(event) => {
+                      if (!props.cascadeRepositories || event.key !== 'ArrowRight') return;
+                      event.preventDefault();
+                      event.currentTarget.click();
+                    }}
+                    onClick={(event) => {
                       setReferenceMenu(null);
-                      props.onSelectRepository(repository.id);
-                      setQuery('');
+                      if (props.cascadeRepositories) {
+                        setRepositoryMenu({ anchor: event.currentTarget, repository });
+                      } else {
+                        props.onSelectRepository(repository.id);
+                        setQuery('');
+                      }
                     }}
                     title={repository.relativePath}
                   >
-                    <span className="git-repository-dot" />
+                    <span className="git-repository-dot" style={{ backgroundColor: repositoryColor(repository.id) }} />
                     <span>{repository.name}</span>
                     <small>{currentRepositoryRefLabel(repository, props.zh)}</small>
                     <CaretRight />
@@ -229,6 +256,7 @@ export function BranchSwitcher(props: {
               key={`${repository.id}:${normalizedQuery}`}
               zh={props.zh}
               repository={repository}
+              collapsible={props.cascadeRepositories}
               query={`${repository.name}/${repository.relativePath}`.toLocaleLowerCase().includes(normalizedQuery) ? '' : normalizedQuery}
               onOpenReferenceMenu={openReferenceMenu}
               activeAnchorId={referenceMenu?.anchor.id}
@@ -241,6 +269,58 @@ export function BranchSwitcher(props: {
         </div>
       </div>
       <MotionPresence>
+        {open && repositoryMenu && popoverRef.current ? (
+          <MenuSurface
+            key={repositoryMenu.repository.id}
+            ref={repositoryPopoverRef}
+            id={repositorySubmenuId}
+            className="project-git-branch-popover git-repository-branch-submenu"
+            aria-label={props.zh ? `仓库分支：${repositoryMenu.repository.name}` : `Repository branches: ${repositoryMenu.repository.name}`}
+            submenuAnchor={{ row: repositoryMenu.anchor, parent: popoverRef.current }}
+            onClose={() => {
+              setReferenceMenu(null);
+              setRepositoryMenu(null);
+            }}
+          >
+            <div className="project-git-branch-popover-scroll">
+              <section className="project-git-branch-actions">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={props.busy !== null}
+                  onClick={runAction(() => {
+                    props.onSelectRepository(repositoryMenu.repository.id);
+                    props.onOpenNewBranch();
+                  })}
+                >
+                  {props.zh ? '新建分支…' : 'New Branch…'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={props.busy !== null}
+                  onClick={runAction(() => {
+                    props.onSelectRepository(repositoryMenu.repository.id);
+                    props.onOpenRevision();
+                  })}
+                >
+                  {props.zh ? '切换到标签或提交…' : 'Switch to a tag or commit…'}
+                </button>
+              </section>
+              <RepositoryBranchGroups
+                zh={props.zh}
+                repository={repositoryMenu.repository}
+                collapsible
+                query={`${repositoryMenu.repository.name}/${repositoryMenu.repository.relativePath}`.toLocaleLowerCase().includes(normalizedQuery) ? '' : normalizedQuery}
+                onOpenReferenceMenu={openReferenceMenu}
+                activeAnchorId={referenceMenu?.anchor.id}
+                submenuId={submenuId}
+              />
+            </div>
+          </MenuSurface>
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
         {open && referenceMenu && popoverRef.current ? (
           referenceMenu.kind === 'local' || referenceMenu.kind === 'remote' ? (
             <BranchContextMenu
@@ -248,7 +328,7 @@ export function BranchSwitcher(props: {
               id={submenuId}
               x={0}
               y={0}
-              submenuAnchor={{ row: referenceMenu.anchor, parent: popoverRef.current }}
+              submenuAnchor={{ row: referenceMenu.anchor, parent: referenceMenu.parent }}
               repository={referenceMenu.repository}
               branch={referenceMenu.reference}
               kind={referenceMenu.kind}
@@ -265,7 +345,7 @@ export function BranchSwitcher(props: {
               id={submenuId}
               x={0}
               y={0}
-              submenuAnchor={{ row: referenceMenu.anchor, parent: popoverRef.current }}
+              submenuAnchor={{ row: referenceMenu.anchor, parent: referenceMenu.parent }}
               repository={referenceMenu.repository}
               revision={referenceMenu.reference}
               zh={props.zh}
@@ -275,6 +355,7 @@ export function BranchSwitcher(props: {
               onExecute={props.onExecute}
               onNewBranch={(baseRef) => {
                 closeMenus();
+                props.onSelectRepository(referenceMenu.repository.id);
                 props.onOpenNewBranch(baseRef);
               }}
             />
@@ -296,6 +377,7 @@ export function BranchSwitcher(props: {
         onClick={() => {
           setQuery('');
           setReferenceMenu(null);
+          setRepositoryMenu(null);
           setOpen((current) => !current);
         }}
       >
@@ -310,6 +392,7 @@ export function BranchSwitcher(props: {
 
 export function RepositoryBranchGroups(props: {
   zh: boolean;
+  collapsible?: boolean;
   repository: ProjectGitRepositoryWorkbenchItem;
   query: string;
   activeAnchorId?: string;
@@ -321,7 +404,7 @@ export function RepositoryBranchGroups(props: {
     { id: 'recent', label: props.zh ? '最近' : 'Recent', values: props.repository.snapshot.recentRefs.filter((item) => matches(item.ref)) },
     { id: 'local', label: props.zh ? '本地' : 'Local', values: props.repository.snapshot.localBranches.filter(matches).map((ref) => ({ ref, kind: 'local' as const })) },
     { id: 'remote', label: props.zh ? '远程' : 'Remote', values: props.repository.snapshot.remoteBranches.filter(matches).map((ref) => ({ ref, kind: 'remote' as const })) },
-    { id: 'tags', label: 'Tags', values: props.repository.snapshot.tags.filter(matches).map((ref) => ({ ref, kind: 'tag' as const })) },
+    { id: 'tags', label: props.zh ? '标签' : 'Tags', values: props.repository.snapshot.tags.filter(matches).map((ref) => ({ ref, kind: 'tag' as const })) },
   ].filter((group) => group.values.length > 0);
   if (groups.length === 0) return null;
   return (
@@ -330,12 +413,24 @@ export function RepositoryBranchGroups(props: {
         <strong>{props.repository.name}</strong>
         <small>{props.repository.relativePath === '.' ? currentRepositoryRefLabel(props.repository, props.zh) : `${props.repository.relativePath} · ${currentRepositoryRefLabel(props.repository, props.zh)}`}</small>
       </header>
-      {groups.map((group) => (
-        <div key={group.id} className="project-git-branch-group">
-          <strong>{group.label}</strong>
-          <ReferenceTree items={group.values} repository={props.repository} zh={props.zh} onOpenReferenceMenu={props.onOpenReferenceMenu} activeAnchorId={props.activeAnchorId} submenuId={props.submenuId} />
-        </div>
-      ))}
+      {groups.map((group) =>
+        props.collapsible ? (
+          <details key={`${group.id}:${props.query}`} className="git-branch-collapsible-group" open={Boolean(props.query) || group.id === 'recent' || (group.id === 'local' && !groups.some((item) => item.id === 'recent'))}>
+            <summary>
+              <CaretRight aria-hidden="true" />
+              <span>
+                {group.label} · {props.repository.name}
+              </span>
+            </summary>
+            <ReferenceTree items={group.values} repository={props.repository} zh={props.zh} onOpenReferenceMenu={props.onOpenReferenceMenu} activeAnchorId={props.activeAnchorId} submenuId={props.submenuId} />
+          </details>
+        ) : (
+          <div key={group.id} className="project-git-branch-group">
+            <strong>{group.label}</strong>
+            <ReferenceTree items={group.values} repository={props.repository} zh={props.zh} onOpenReferenceMenu={props.onOpenReferenceMenu} activeAnchorId={props.activeAnchorId} submenuId={props.submenuId} />
+          </div>
+        ),
+      )}
     </section>
   );
 }
@@ -379,7 +474,7 @@ function ReferenceTree(props: {
         <button
           key={`${item.kind}:${item.ref}`}
           type="button"
-          className={item.kind === 'local' && item.ref === props.repository.snapshot.branch ? 'is-current' : ''}
+          className={props.activeAnchorId === `${treeId}-${index}` ? 'is-active' : item.kind === 'local' && item.ref === props.repository.snapshot.branch ? 'is-current' : ''}
           id={`${treeId}-${index}`}
           title={item.ref}
           aria-haspopup="menu"

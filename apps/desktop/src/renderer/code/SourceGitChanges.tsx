@@ -291,6 +291,7 @@ export function SourceGitChanges(props: {
         {repository ? (
           <div className="source-git-actions">
             <BranchSwitcher
+              cascadeRepositories
               zh={zh}
               repositories={repositories}
               selectedRepository={repository}
