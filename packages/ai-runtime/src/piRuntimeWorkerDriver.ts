@@ -63,6 +63,8 @@ export interface PiRuntimeWorkerDriver extends SupervisedAgentRuntimeDriver {
   /** 独立审查不占用主会话请求通道。 */
   reviewPermission(input: PiPermissionReviewInput): Promise<PiPermissionReviewResult>;
   invalidateModelRuntime(): Promise<void>;
+  /** 与 SDK 驱动同语义的分批历史导入，Worker 侧按 RPC 转发执行。 */
+  importPortableHistory(input: PiPortableHistoryImportInput): Promise<PiPortableHistoryImportResult>;
 }
 
 interface PendingWorkerRequest {

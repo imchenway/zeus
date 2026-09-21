@@ -256,6 +256,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'deleteModelConnection'
     | 'clearModelConnectionApiKey'
     | 'refreshModelConnectionModels'
+    | 'probeModelConnectionModels'
     | 'diagnoseModelConnection'
     | 'loadZentaoInstances'
     | 'createZentaoInstance'
