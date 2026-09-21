@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { CodexAppServerManager, CodexResponsesRuntime } from '@zeus/ai-runtime';
+import type { CodexAppServerManager } from '@zeus/ai-runtime';
 import { encodeCodexPortableAdditionalContext, type PortableContextCompactionPlan } from './conversationPortableContext.js';
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 
@@ -13,7 +13,6 @@ export async function runCodexPortableContextCompaction(input: {
   effort: string | null;
   serviceTier: string | null;
   cwd: string;
-  responsesRuntime: CodexResponsesRuntime | null;
   issuedAt: string;
 }): Promise<{
   summary: string;
@@ -39,7 +38,6 @@ export async function runCodexPortableContextCompaction(input: {
     developerInstructions: '输出一份可供后续模型继续工作的事实摘要，保留约束、决定、工具结果和未完成工作。',
     ephemeral: true,
     dynamicTools: [],
-    ...(input.responsesRuntime ? { responsesRuntime: input.responsesRuntime } : {}),
   };
   const thread = await input.providerCommands.executeSession({
     operation: 'thread_start',

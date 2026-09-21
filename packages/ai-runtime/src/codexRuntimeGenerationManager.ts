@@ -2,8 +2,6 @@ import {
   type CodexAppServerEvent,
   type CodexAppServerManager,
   type CodexCapabilitiesSnapshot,
-  type CodexResponsesModelProvider,
-  type CodexResponsesRuntime,
   type CodexRpcRetryProgress,
   type CodexServerRequestResponse,
   type CodexTransportState,
@@ -20,8 +18,6 @@ interface RuntimeEntry {
   commandPath: string;
   externalAgentHome: string | null;
   remoteControl: boolean;
-  providerEnvironment: Record<string, string>;
-  responsesProvider: CodexResponsesModelProvider | null;
   capabilities: CodexCapabilitiesSnapshot;
   threads: Set<string>;
   activeTurns: Map<string, string>;
@@ -46,37 +42,9 @@ type RuntimeActivationInput = {
   commandPath: string;
   externalAgentHome?: string;
   remoteControl?: boolean;
-  providerEnvironment?: Record<string, string>;
-  responsesProvider?: CodexResponsesModelProvider | null;
   /** 手动订阅登录要求本次新连接取得远端目录后再接替旧连接。 */
   requireFreshModels?: boolean;
 };
-
-function sameResponsesProvider(left: CodexResponsesModelProvider | null, right: CodexResponsesModelProvider | null): boolean {
-  if (left === null || right === null) return left === right;
-  return left.id === right.id && left.name === right.name && left.baseUrl === right.baseUrl && left.envKey === right.envKey && left.modelContextWindow === right.modelContextWindow;
-}
-
-/** app-server 重启后仍需在进程级配置中声明外部 Responses Provider，原生 thread 才能继续运行。 */
-function responsesProviderFlags(provider: CodexResponsesModelProvider | null): string[] {
-  if (!provider) return [];
-  if (!/^[a-z0-9_-]{1,100}$/iu.test(provider.id) || !/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(provider.envKey)) {
-    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 身份无效。');
-  }
-  const prefix = `model_providers.${provider.id}`;
-  return [
-    '-c',
-    `${prefix}.name=${JSON.stringify(provider.name)}`,
-    '-c',
-    `${prefix}.base_url=${JSON.stringify(provider.baseUrl)}`,
-    '-c',
-    `${prefix}.env_key=${JSON.stringify(provider.envKey)}`,
-    '-c',
-    `${prefix}.wire_api="responses"`,
-    '-c',
-    `${prefix}.requires_openai_auth=false`,
-  ];
-}
 
 /** 只在真实配置声明了 node_repl 时覆盖其环境，避免凭空创建不完整的 MCP server。 */
 function nodeReplToolRuntimeFlags(codexHome: string | undefined, toolRuntimeCodexHome: string | undefined): string[] {
@@ -145,8 +113,6 @@ export function createCodexRuntimeGenerationManager(
   const entries = new Set<RuntimeEntry>();
   const entriesByGeneration = new Map<string, RuntimeEntry>();
   const entriesByThread = new Map<string, RuntimeEntry>();
-  const responsesProvidersByThread = new Map<string, CodexResponsesModelProvider>();
-  const responsesProviderEnvironmentsByThread = new Map<string, Record<string, string>>();
   const threadHandoffChains = new Map<string, Promise<void>>();
   const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
   const externalImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
@@ -227,17 +193,9 @@ export function createCodexRuntimeGenerationManager(
       commandPath: string;
       externalAgentHome: string | null;
       remoteControl: boolean;
-      providerEnvironment: Record<string, string>;
-      responsesProvider: CodexResponsesModelProvider | null;
     },
   ): boolean {
-    return (
-      entry.commandPath === input.commandPath &&
-      entry.externalAgentHome === input.externalAgentHome &&
-      entry.remoteControl === input.remoteControl &&
-      sameStringRecord(entry.providerEnvironment, input.providerEnvironment) &&
-      sameResponsesProvider(entry.responsesProvider, input.responsesProvider)
-    );
+    return entry.commandPath === input.commandPath && entry.externalAgentHome === input.externalAgentHome && entry.remoteControl === input.remoteControl;
   }
 
   function entryMatchesRuntime(
@@ -246,8 +204,6 @@ export function createCodexRuntimeGenerationManager(
       commandPath: string;
       externalAgentHome: string | null;
       remoteControl: boolean;
-      providerEnvironment: Record<string, string>;
-      responsesProvider: CodexResponsesModelProvider | null;
     },
   ): boolean {
     return !entry.closing && entry.manager.getState().type !== 'closed' && sameRuntimeIdentity(entry, input);
@@ -294,36 +250,14 @@ export function createCodexRuntimeGenerationManager(
     return result;
   }
 
-  function recordedResponsesRuntime(threadId: string, explicit?: CodexResponsesRuntime): CodexResponsesRuntime | undefined {
-    if (explicit) return explicit;
-    const provider = responsesProvidersByThread.get(threadId);
-    if (!provider) return undefined;
-    return {
-      provider,
-      environment: responsesProviderEnvironmentsByThread.get(threadId) ?? {},
-    };
-  }
-
-  function assertOwnerRuntime(entry: RuntimeEntry, threadId: string, responsesRuntime: CodexResponsesRuntime | undefined): void {
-    if (!responsesRuntime) {
-      if (entry.responsesProvider === null) return;
-    } else if (!entry.remoteControl && sameResponsesProvider(entry.responsesProvider, responsesRuntime.provider) && sameStringRecord(entry.providerEnvironment, responsesRuntime.environment)) {
-      return;
-    }
-    throw managerError('ZEUS_CODEX_THREAD_RUNTIME_IDENTITY_MISMATCH', `Codex thread ${threadId} is owned by a runtime with a different provider identity.`);
-  }
-
-  function acquireRuntimeForThread(responsesRuntime: CodexResponsesRuntime | undefined): Promise<RuntimeLease> {
+  /** 线程只认仍在运行的同身份实例；没有可用实例时才激活新世代，避免同名线程落在两个进程上。 */
+  function acquireRuntimeForThread(): Promise<RuntimeLease> {
     const acquisition = activationChain.then(async () => {
       const current = requireActiveEntry();
-      const requestedResponsesProvider = responsesRuntime?.provider ?? null;
-      const requestedProviderEnvironment = responsesRuntime?.environment ?? {};
       await activate({
         commandPath: current.commandPath,
         ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
-        remoteControl: requestedResponsesProvider ? false : remoteControlEnabled,
-        providerEnvironment: requestedProviderEnvironment,
-        responsesProvider: requestedResponsesProvider,
+        remoteControl: remoteControlEnabled,
       });
       return retainEntry(requireActiveEntry());
     });
@@ -334,39 +268,31 @@ export function createCodexRuntimeGenerationManager(
     return acquisition;
   }
 
-  async function acquireThreadLease(threadId: string, explicitResponsesRuntime?: CodexResponsesRuntime): Promise<{ lease: RuntimeLease; responsesRuntime: CodexResponsesRuntime | undefined; needsResume: boolean }> {
+  async function acquireThreadLease(threadId: string): Promise<{ lease: RuntimeLease; needsResume: boolean }> {
     let mapped = entriesByThread.get(threadId);
     if (mapped?.closing) await mapped.closePromise;
     mapped = entriesByThread.get(threadId);
-    const responsesRuntime = recordedResponsesRuntime(threadId, explicitResponsesRuntime);
     if (mapped && !mapped.closing && mapped.manager.getState().type !== 'closed') {
-      assertOwnerRuntime(mapped, threadId, responsesRuntime);
-      return { lease: retainEntry(mapped), responsesRuntime, needsResume: false };
+      return { lease: retainEntry(mapped), needsResume: false };
     }
     if (mapped) entriesByThread.delete(threadId);
-    return { lease: await acquireRuntimeForThread(responsesRuntime), responsesRuntime, needsResume: true };
+    return { lease: await acquireRuntimeForThread(), needsResume: true };
   }
 
-  function withThreadOwner<T>(
-    threadId: string,
-    cwd: string | undefined,
-    explicitResponsesRuntime: CodexResponsesRuntime | undefined,
-    operation: (entry: RuntimeEntry, responsesRuntime: CodexResponsesRuntime | undefined) => Promise<T>,
-  ): Promise<T> {
+  function withThreadOwner<T>(threadId: string, cwd: string | undefined, operation: (entry: RuntimeEntry) => Promise<T>): Promise<T> {
     return serializeThreadHandoff(threadId, async () => {
-      const acquired = await acquireThreadLease(threadId, explicitResponsesRuntime);
+      const acquired = await acquireThreadLease(threadId);
       const { entry } = acquired.lease;
       try {
         if (acquired.needsResume) {
           await entry.manager.resumeThread({
             threadId,
             ...(cwd ? { cwd } : {}),
-            ...(acquired.responsesRuntime ? { responsesRuntime: acquired.responsesRuntime } : {}),
           });
           bindThread(entry, threadId);
           await syncThreadGoalPin(entry, threadId);
         }
-        return await operation(entry, acquired.responsesRuntime);
+        return await operation(entry);
       } finally {
         acquired.lease.release();
       }
@@ -468,17 +394,12 @@ export function createCodexRuntimeGenerationManager(
   async function activate(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
-    const requestedResponsesProvider = input.responsesProvider ?? null;
-    // 外部 Responses 依赖连接专属进程环境，不能交给已经运行且环境不可更新的 Remote Control 守护进程。
-    const requestedRemoteControl = requestedResponsesProvider ? false : (input.remoteControl ?? remoteControlEnabled);
-    const requestedProviderEnvironment = input.providerEnvironment ?? (requestedResponsesProvider ? (activeEntry?.providerEnvironment ?? {}) : {});
-    const normalizedInput = { ...input, remoteControl: requestedRemoteControl, providerEnvironment: requestedProviderEnvironment };
+    const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
+    const normalizedInput = { ...input, remoteControl: requestedRemoteControl };
     const runtimeIdentity = {
       commandPath: input.commandPath,
       externalAgentHome: requestedHome,
       remoteControl: requestedRemoteControl,
-      providerEnvironment: requestedProviderEnvironment,
-      responsesProvider: requestedResponsesProvider,
     };
     let reusable = forceFreshGeneration
       ? null
@@ -507,7 +428,7 @@ export function createCodexRuntimeGenerationManager(
     /** 版本必须来自实际使用的程序，不让 Finder 缺少 PATH 造成版本证据丢失。 */
     const providerVersionFallback = await (options.providerVersionProbe ? options.providerVersionProbe(input.commandPath) : probeCodexProviderVersion(input.commandPath, runtimeEnvironment));
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
-    const appServerFlags = [...nodeReplToolRuntimeFlags(options.codexHome, options.toolRuntimeCodexHome), ...responsesProviderFlags(requestedResponsesProvider)];
+    const appServerFlags = [...nodeReplToolRuntimeFlags(options.codexHome, options.toolRuntimeCodexHome)];
     const manager = createCodexAppServerManager({
       ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}),
       ...(options.codexHome ? { codexHome: options.codexHome } : {}),
@@ -520,8 +441,6 @@ export function createCodexRuntimeGenerationManager(
       commandPath: input.commandPath,
       externalAgentHome: requestedHome,
       remoteControl: requestedRemoteControl,
-      providerEnvironment: { ...requestedProviderEnvironment },
-      responsesProvider: requestedResponsesProvider,
       capabilities: {
         generationId: '',
         initializedAt: '',
@@ -651,12 +570,10 @@ export function createCodexRuntimeGenerationManager(
       await requireActiveEntry().manager.cancelChatGptLogin(input);
     },
     async startThread(input) {
-      const lease = await acquireRuntimeForThread(input.responsesRuntime);
+      const lease = await acquireRuntimeForThread();
       try {
         const thread = await lease.entry.manager.startThread(input);
         bindThread(lease.entry, thread.id);
-        if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
-        if (input.responsesRuntime) responsesProviderEnvironmentsByThread.set(thread.id, { ...input.responsesRuntime.environment });
         return thread;
       } finally {
         lease.release();
@@ -664,13 +581,11 @@ export function createCodexRuntimeGenerationManager(
     },
     async resumeThread(input) {
       return serializeThreadHandoff(input.threadId, async () => {
-        const acquired = await acquireThreadLease(input.threadId, input.responsesRuntime);
+        const acquired = await acquireThreadLease(input.threadId);
         const { entry } = acquired.lease;
         try {
-          const thread = await entry.manager.resumeThread({ ...input, ...(acquired.responsesRuntime ? { responsesRuntime: acquired.responsesRuntime } : {}) });
+          const thread = await entry.manager.resumeThread(input);
           bindThread(entry, thread.id);
-          if (acquired.responsesRuntime) responsesProvidersByThread.set(thread.id, acquired.responsesRuntime.provider);
-          if (acquired.responsesRuntime) responsesProviderEnvironmentsByThread.set(thread.id, { ...acquired.responsesRuntime.environment });
           await syncThreadGoalPin(entry, thread.id);
           return thread;
         } finally {
@@ -679,11 +594,9 @@ export function createCodexRuntimeGenerationManager(
       });
     },
     async archiveThread(input) {
-      await withThreadOwner(input.threadId, undefined, undefined, async (entry) => {
+      await withThreadOwner(input.threadId, undefined, async (entry) => {
         await entry.manager.archiveThread(input);
         if (entriesByThread.get(input.threadId) === entry) entriesByThread.delete(input.threadId);
-        responsesProvidersByThread.delete(input.threadId);
-        responsesProviderEnvironmentsByThread.delete(input.threadId);
         entry.threads.delete(input.threadId);
       });
     },
@@ -710,7 +623,7 @@ export function createCodexRuntimeGenerationManager(
       return routeThread(input.threadId).manager.readThreadGoal(input);
     },
     async setThreadGoal(input) {
-      return withThreadOwner(input.threadId, undefined, undefined, async (entry) => {
+      return withThreadOwner(input.threadId, undefined, async (entry) => {
         const goal = await entry.manager.setThreadGoal(input);
         if (goal.status === 'active') entry.activeGoals.add(input.threadId);
         else entry.activeGoals.delete(input.threadId);
@@ -718,7 +631,7 @@ export function createCodexRuntimeGenerationManager(
       });
     },
     async clearThreadGoal(input) {
-      return withThreadOwner(input.threadId, undefined, undefined, async (entry) => {
+      return withThreadOwner(input.threadId, undefined, async (entry) => {
         const result = await entry.manager.clearThreadGoal(input);
         if (result.cleared) entry.activeGoals.delete(input.threadId);
         return result;
@@ -735,14 +648,10 @@ export function createCodexRuntimeGenerationManager(
       return requireActiveEntry().manager.listSkills(input);
     },
     async compactThread(input) {
-      await withThreadOwner(input.threadId, undefined, undefined, (entry) => entry.manager.compactThread(input));
+      await withThreadOwner(input.threadId, undefined, (entry) => entry.manager.compactThread(input));
     },
     async startTurn(input) {
-      return withThreadOwner(input.threadId, input.cwd, input.responsesRuntime, async (entry) => {
-        if (input.responsesRuntime) {
-          responsesProvidersByThread.set(input.threadId, input.responsesRuntime.provider);
-          responsesProviderEnvironmentsByThread.set(input.threadId, { ...input.responsesRuntime.environment });
-        }
+      return withThreadOwner(input.threadId, input.cwd, async (entry) => {
         const turn = await entry.manager.startTurn(input);
         const identity = turnKey(input.threadId, turn.id);
         if (entry.completedTurns.has(identity)) entry.completedTurns.delete(identity);
@@ -880,8 +789,6 @@ export function createCodexRuntimeGenerationManager(
         entries.clear();
         entriesByGeneration.clear();
         entriesByThread.clear();
-        responsesProvidersByThread.clear();
-        responsesProviderEnvironmentsByThread.clear();
         threadHandoffChains.clear();
         listeners.clear();
         externalImportListeners.clear();
@@ -933,12 +840,6 @@ function turnKey(threadId: string, turnId: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function sameStringRecord(left: Record<string, string>, right: Record<string, string>): boolean {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function managerError(code: string, message: string): Error & { code: string } {

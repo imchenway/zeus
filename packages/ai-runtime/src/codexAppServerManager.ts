@@ -208,20 +208,6 @@ export interface CodexDynamicToolNamespaceSpec {
 
 export type CodexDynamicToolSpec = CodexDynamicToolFunctionSpec | CodexDynamicToolNamespaceSpec;
 
-export interface CodexResponsesModelProvider {
-  id: string;
-  name: string;
-  baseUrl: string;
-  envKey: string;
-  modelContextWindow: number;
-}
-
-export interface CodexResponsesRuntime {
-  provider: CodexResponsesModelProvider;
-  /** 仅注入 app-server 子进程，不进入 thread config、日志或持久化记录。 */
-  environment: Record<string, string>;
-}
-
 export interface CodexPerformanceTraceContext {
   /** Zeus 内部短期性能身份；不序列化到 Codex app-server params。 */
   traceIdentity?: string | null;
@@ -237,7 +223,6 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
   approvalsReviewer?: 'user' | 'auto_review';
   sandbox: CodexSandboxPolicy;
   config?: never;
-  responsesRuntime?: CodexResponsesRuntime;
   baseInstructions?: string;
   developerInstructions?: string;
   ephemeral?: boolean;
@@ -249,7 +234,6 @@ export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
   contextCapacityTokens?: number | null;
   threadId: string;
   cwd?: string;
-  responsesRuntime?: CodexResponsesRuntime;
   /** 仅用于宿主退出时结束本地等待；不会向 Provider 发送重复恢复请求。 */
   signal?: AbortSignal;
 }
@@ -280,8 +264,6 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   additionalContext?: CodexBootstrapAdditionalContext;
   /** 仅供适配器确认 JSON-RPC 帧已经成功写入传输层，不进入线协议。 */
   requestWritten?: () => void;
-  /** 仅供运行管理器在进程重启后恢复外部 Responses Provider，不进入 turn/start 线协议。 */
-  responsesRuntime?: CodexResponsesRuntime;
   collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
   model?: string;
   effort?: string;
@@ -496,14 +478,11 @@ export interface CodexAppServerManager {
     commandPath: string;
     externalAgentHome?: string;
     remoteControl?: boolean;
-    providerEnvironment?: Record<string, string>;
-    /** 世代管理器用于在进程启动前安装外部 Responses Provider；底层管理器不把它写入 RPC。 */
-    responsesProvider?: CodexResponsesModelProvider | null;
     /** 登录后的新连接须等到本次远端目录更新完成，不能接受启动时的旧缓存。 */
     requireFreshModels?: boolean;
   }): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
-  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string>; requireFreshModels?: boolean }): Promise<CodexCapabilitiesSnapshot>;
+  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; requireFreshModels?: boolean }): Promise<CodexCapabilitiesSnapshot>;
   /** 刷新既有连接的完整目录，不重启进程或重放任何模型请求。 */
   refreshModels(): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean; cachedOnly?: boolean }): Promise<CodexAccountSnapshot>;
@@ -684,13 +663,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const threadModels = new Map<string, string>();
   /** 当前进程实际加载的会话容量；不能跨进程或跨线程复用。 */
   const threadCapacities = new Map<string, { generationId: string; tokens: number | null }>();
-  const threadResponsesProviders = new Map<string, CodexResponsesModelProvider>();
   let state: CodexTransportState = { type: 'idle' };
   let child: CodexAppServerProcess | null = null;
   let commandPath: string | null = null;
   let externalAgentHome: string | null = null;
   let remoteControlTransport = false;
-  let providerEnvironment: Record<string, string> = {};
   let readyPromise: Promise<CodexCapabilitiesSnapshot> | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let rejectScheduledRestart: ((error: Error) => void) | null = null;
@@ -762,7 +739,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const decoder = new CodexJsonLineDecoder();
     const env = {
       ...process.env,
-      ...providerEnvironment,
       ...runtimeEnvironment,
       PATH: expandCliSearchPath(searchPath),
       ...(codexHome === null ? {} : { CODEX_HOME: codexHome }),
@@ -930,7 +906,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       // 远程接管复用常驻进程，不会因重连触发启动预取；独立短连接负责这次目录同步。
       const catalogReader = createCodexAppServerManager(options);
       try {
-        await catalogReader.ensureReady({ commandPath: commandPath!, ...(externalAgentHome ? { externalAgentHome } : {}), providerEnvironment, requireFreshModels: true });
+        await catalogReader.ensureReady({ commandPath: commandPath!, ...(externalAgentHome ? { externalAgentHome } : {}), requireFreshModels: true });
       } finally {
         await catalogReader.close();
       }
@@ -1428,14 +1404,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (commandPath !== null && remoteControlTransport !== requestedRemoteControlTransport) {
         return Promise.reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_TRANSPORT_CHANGED', 'Codex remote-control transport cannot change while the manager is active.'));
       }
-      const requestedProviderEnvironment = input.providerEnvironment === undefined ? providerEnvironment : normalizeProviderEnvironment(input.providerEnvironment);
-      if (commandPath !== null && !sameStringRecord(providerEnvironment, requestedProviderEnvironment)) {
-        return Promise.reject(managerError('ZEUS_CODEX_PROVIDER_ENVIRONMENT_CHANGED', 'Codex provider environment cannot change while the manager is active.'));
-      }
       commandPath = input.commandPath;
       externalAgentHome = requestedExternalAgentHome;
       remoteControlTransport = requestedRemoteControlTransport;
-      providerEnvironment = requestedProviderEnvironment;
       if (remoteControlTransport) remoteControlEnabled = true;
       if (state.type === 'ready') return Promise.resolve(state.capabilities);
       if (readyPromise) return readyPromise;
@@ -1568,14 +1539,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async startThread(input) {
       const capabilities = await awaitCapabilities();
-      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : null;
-      if (responsesProvider) {
-        if (!providerEnvironment[responsesProvider.envKey]) throw managerError('ZEUS_CODEX_PROVIDER_CREDENTIAL_UNAVAILABLE', 'Responses 自定义 Provider 的进程凭据不可用。');
-        if (input.serviceTier !== undefined && input.serviceTier !== null) throw managerError('ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE', 'Responses 自定义 Provider 不支持 Codex service tier。');
-      } else {
-        const model = requireModel(capabilities, input.model);
-        validateServiceTier(model, input.serviceTier);
-      }
+      /** 只有订阅目录里的模型会走这条链路，档位必须先通过 Codex 自己的目录校验。 */
+      const model = requireModel(capabilities, input.model);
+      validateServiceTier(model, input.serviceTier);
       if (input.config !== undefined) throw managerError('ZEUS_CODEX_CONFIG_UNAVAILABLE', 'Raw Codex thread config overrides are not supported.');
       validateDynamicTools(input.dynamicTools);
       const sandbox = normalizeThreadSandbox(input.sandbox);
@@ -1585,7 +1551,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           'thread/start',
           compactObject({
             model: input.model,
-            modelProvider: responsesProvider?.id,
             serviceTier: input.serviceTier,
             cwd: input.cwd,
             approvalPolicy: input.approvalPolicy,
@@ -1598,7 +1563,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             dynamicTools: input.dynamicTools,
             // 原生线程及其子任务也不能隐式取得整个系统临时目录的写权限。
             config: {
-              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
               ...contextCapacityConfig(input.contextCapacityTokens),
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,
               'sandbox_workspace_write.exclude_slash_tmp': true,
@@ -1620,12 +1584,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const responseModel = typeof response.model === 'string' ? response.model : input.model;
       threadModels.set(thread.id, responseModel);
       threadCapacities.set(thread.id, { generationId: capabilities.generationId, tokens: input.contextCapacityTokens ?? null });
-      if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel);
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
-      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
       /** 仅在容量变化时卸载空闲线程；保留原线程身份、历史和其他会话的运行。 */
       const previousCapacity = threadCapacities.get(input.threadId);
       const capacityChanged = previousCapacity?.generationId !== capabilities.generationId || previousCapacity.tokens !== (input.contextCapacityTokens ?? null);
@@ -1658,9 +1620,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             // 恢复只返回元信息和实时状态；正文走已有分页读取，避免完整历史回包触发接收上限。
             excludeTurns: true,
             cwd: input.cwd,
-            modelProvider: responsesProvider?.id,
             config: {
-              ...(responsesProvider ? responsesProviderConfig(responsesProvider) : {}),
               ...contextCapacityConfig(input.contextCapacityTokens),
               // 恢复与新建遵守同一权限和子代理上限，不能恢复旧默认值。
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,
@@ -1680,7 +1640,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const responseModel = typeof response.model === 'string' ? response.model : threadModels.get(thread.id);
       if (responseModel) threadModels.set(thread.id, responseModel);
       if (capacityApplied) threadCapacities.set(thread.id, { generationId: capabilities.generationId, tokens: input.contextCapacityTokens ?? null });
-      if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return responseModel ? attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel) : thread;
     },
     async archiveThread(input) {
@@ -1688,7 +1647,6 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId }, { traceIdentity: input.traceIdentity });
       threadModels.delete(input.threadId);
       threadCapacities.delete(input.threadId);
-      threadResponsesProviders.delete(input.threadId);
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();
@@ -1788,9 +1746,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
-      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
-      if (responsesProvider) threadResponsesProviders.set(input.threadId, responsesProvider);
-      const model = !responsesProvider && modelName ? requireModel(capabilities, modelName) : null;
+      const model = modelName ? requireModel(capabilities, modelName) : null;
       const wireEffort = toCodexWireReasoningEffort(input.effort);
       const wireCollaborationMode = input.collaborationMode
         ? {
@@ -1801,7 +1757,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             },
           }
         : undefined;
-      if (typeof wireEffort === 'string' && !responsesProvider) {
+      if (typeof wireEffort === 'string') {
         const supportedEfforts = model?.supportedReasoningEfforts ?? [];
         if (!model || !supportedEfforts.includes(wireEffort)) {
           throw Object.assign(new Error(`Configured Codex effort is unavailable: ${wireEffort}`), {
@@ -1810,11 +1766,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           });
         }
       }
-      if (input.serviceTier !== undefined && !responsesProvider) {
+      if (input.serviceTier !== undefined) {
         if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
         validateServiceTier(model, input.serviceTier);
       }
-      if (wireCollaborationMode && !responsesProvider) {
+      if (wireCollaborationMode) {
         const collaborationModel = requireModel(capabilities, wireCollaborationMode.settings.model);
         const collaborationEffort = wireCollaborationMode.settings.reasoning_effort;
         if (collaborationEffort !== null && !collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) {
@@ -2324,57 +2280,6 @@ function validateServiceTier(model: CodexModelCapability, serviceTier: string | 
     code: 'ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE',
     supportedServiceTiers: model.serviceTiers.map((tier) => tier.id),
   });
-}
-
-function normalizeResponsesProvider(provider: CodexResponsesModelProvider): CodexResponsesModelProvider {
-  const id = provider.id.trim();
-  const name = provider.name.trim();
-  const envKey = provider.envKey.trim();
-  if (!/^[a-z0-9_-]{1,100}$/iu.test(id) || !name || name.length > 100) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 身份无效。');
-  if (!/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(envKey)) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 环境变量名无效。');
-  let url: URL;
-  try {
-    url = new URL(provider.baseUrl);
-  } catch {
-    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 地址无效。');
-  }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 必须使用无凭据的 HTTPS 地址。');
-  if (!Number.isSafeInteger(provider.modelContextWindow) || provider.modelContextWindow < 1_000 || provider.modelContextWindow > 10_000_000) {
-    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 上下文窗口无效。');
-  }
-  return { id, name, baseUrl: url.toString().replace(/\/+$/u, ''), envKey, modelContextWindow: provider.modelContextWindow };
-}
-
-function responsesProviderConfig(provider: CodexResponsesModelProvider): Record<string, JsonValue> {
-  return {
-    model_provider: provider.id,
-    model_providers: {
-      [provider.id]: {
-        name: provider.name,
-        base_url: provider.baseUrl,
-        env_key: provider.envKey,
-        wire_api: 'responses',
-        requires_openai_auth: false,
-      },
-    },
-  };
-}
-
-function normalizeProviderEnvironment(value: Record<string, string>): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  for (const [key, secret] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
-    if (!/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(key) || typeof secret !== 'string' || !secret.trim()) {
-      throw managerError('ZEUS_CODEX_PROVIDER_ENVIRONMENT_INVALID', 'Codex provider environment contains an invalid entry.');
-    }
-    normalized[key] = secret;
-  }
-  return normalized;
-}
-
-function sameStringRecord(left: Record<string, string>, right: Record<string, string>): boolean {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId: string, response: Record<string, unknown>, model: string): CodexThreadSnapshot {

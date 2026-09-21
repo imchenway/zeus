@@ -62,7 +62,6 @@ export interface ConfiguredModelDefinition {
   contextWindowSource?: 'catalog';
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
-  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
   protocolFamily: ModelProtocolFamily;
   authenticationScheme: ModelAuthenticationScheme;
   capability: ConfiguredModelCapability;
@@ -108,7 +107,8 @@ export interface SelectableConnectionModel {
   speedLabel: ConfiguredModelDefinition['speedLabel'];
   tools: ModelCapabilityState;
   imageInput: ModelCapabilityState;
-  runtimeAdapter: ConfiguredModelDefinition['runtimeAdapter'];
+  /** 模型连接一律由 Zeus 内核（Pi SDK）执行；Codex App Server 只服务订阅目录里的模型。 */
+  runtimeAdapter: 'pi_sdk';
   protocolFamily: ConfiguredModelDefinition['protocolFamily'];
   authenticationScheme: ConfiguredModelDefinition['authenticationScheme'];
   supports1MContext: boolean;
@@ -176,8 +176,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const routeIdentity = { templateId, baseUrl };
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyModelRoute(applyAutomaticCapabilityProfile(model, templateId), routeIdentity));
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -219,8 +218,6 @@ export function normalizeStoredModelConnections(value: unknown): ModelConnection
   return records;
 }
 
-const officialDeepSeekResponsesModelIds = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
-
 /** DeepSeek 模板只有指向官方 HTTPS 端点时，才能使用官方价格和能力证据。 */
 export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): boolean {
   if (connection.templateId !== 'deepseek') return false;
@@ -233,29 +230,13 @@ export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnection
   }
 }
 
-/** 只有 DeepSeek 官方域名上的 V4 模型可以继承官方 Responses 兼容证据。 */
-export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): boolean {
-  return isOfficialDeepSeekApiConnection(connection) && officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase());
-}
-
-export function modelConnectionRoute(
-  connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>,
-  modelId: string,
-  configuredProtocol: ModelProtocolFamily = 'openai_completions',
-): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
-  if (isOfficialDeepSeekResponsesModel(connection, modelId)) return { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' };
-  return {
-    runtimeAdapter: 'pi_sdk',
-    protocolFamily: configuredProtocol,
-  };
-}
-
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
     connection.models.map((model) => {
-      const agentKind = model.runtimeAdapter === 'codex_app_server' ? 'codex' : 'pi';
-      const tools = agentKind === 'codex' ? 'supported' : model.capability.tools.state;
-      const imageInput = agentKind === 'codex' ? 'unsupported' : model.capability.imageInput.state;
+      // 模型连接没有第二条链路可切换：订阅目录以外的模型一律由 Zeus 内核执行，界面不需要再解释路由。
+      const agentKind = 'pi' as const;
+      const tools = model.capability.tools.state;
+      const imageInput = model.capability.imageInput.state;
       const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
       const availabilityReason = !connection.enabled
         ? '模型供应商已停用。'
@@ -265,9 +246,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
             ? '模型已停用。'
             : tools === 'unsupported'
               ? '模型明确不支持工具调用，只能保存在诊断目录中。'
-              : agentKind === 'codex'
-                ? 'Zeus 已完成该 DeepSeek 官方 V4 模型的 Responses 兼容验收；新会话使用 Codex App Server。'
-                : '模型已配置；真实外部能力仍以运行探针结果为准。';
+              : '模型已配置，由 Zeus 内核执行；真实外部能力仍以运行探针结果为准。';
       return {
         id: modelRef(connection.id, model.id),
         model: model.id,
@@ -285,7 +264,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         speedLabel: model.speedLabel,
         tools,
         imageInput,
-        runtimeAdapter: model.runtimeAdapter,
+        runtimeAdapter: 'pi_sdk',
         protocolFamily: model.protocolFamily,
         authenticationScheme: model.authenticationScheme,
         supports1MContext: model.supports1MContext,
@@ -307,7 +286,6 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       contextWindow: input.contextWindow ?? 256_000,
       maxTokens: input.maxTokens ?? 8_192,
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
-      runtimeAdapter: input.runtimeAdapter ?? 'pi_sdk',
       protocolFamily: input.protocolFamily ?? 'openai_completions',
       authenticationScheme: input.authenticationScheme ?? 'protocol_default',
       capability:
@@ -426,15 +404,10 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const maxTokens = Math.min(requestedMaxTokens, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
-  const runtimeAdapter = value.runtimeAdapter === 'codex_app_server' ? 'codex_app_server' : 'pi_sdk';
   const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
   const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
   const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
-  return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
-}
-
-function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {
-  return { ...model, ...modelConnectionRoute(connection, model.id, model.protocolFamily) };
+  return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, protocolFamily, authenticationScheme, capability };
 }
 
 /** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */

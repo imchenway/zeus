@@ -94,7 +94,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     recordTaskEvent,
     redactSensitiveText,
     resolveCodexModel,
-    resolveResponsesRuntime,
     resolveTaskManagementStatusConfigForProject,
     runtimeSessions,
     taskAttachmentRoot,
@@ -148,8 +147,8 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     }
   }
 
-  async function assertCodexAccountReady(modelSourceId: string | null = 'codex', model = ''): Promise<void> {
-    if (model && (await resolveResponsesRuntime({ modelSourceId, model }))) return;
+  /** Codex 订阅模型的账号门禁；模型连接改由 Zeus 内核执行后不再需要在这里放行。 */
+  async function assertCodexAccountReady(): Promise<void> {
     let account: Awaited<ReturnType<typeof codexAppServerManager.readAccount>>;
     try {
       account = await codexAppServerManager.readAccount({ cachedOnly: true });

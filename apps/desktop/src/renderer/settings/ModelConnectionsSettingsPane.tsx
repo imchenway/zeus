@@ -988,7 +988,6 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
                     props.onChange({
                       ...model,
                       protocolFamily,
-                      runtimeAdapter: 'pi_sdk',
                       authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
                     })
                   }
@@ -1045,7 +1044,6 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     contextWindow: 256_000,
     maxTokens: 8_192,
     speedLabel,
-    runtimeAdapter: 'pi_sdk',
     protocolFamily: 'openai_completions',
     authenticationScheme: 'protocol_default',
     capability: {

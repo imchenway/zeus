@@ -52,7 +52,6 @@ export interface ModelConnectionModel {
   contextWindowSource?: 'catalog';
   maxTokens: number;
   speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
-  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
   protocolFamily: ModelProtocolFamily;
   authenticationScheme: ModelAuthenticationScheme;
   capability: {
@@ -143,7 +142,8 @@ export interface SelectablePiModel {
   speedLabel: ModelConnectionModel['speedLabel'];
   tools: ModelCapabilityState;
   imageInput: ModelCapabilityState;
-  runtimeAdapter: 'codex_app_server' | 'pi_sdk';
+  /** 模型连接一律由 Zeus 内核执行；Codex App Server 只服务订阅目录里的模型。 */
+  runtimeAdapter: 'pi_sdk';
   protocolFamily: ModelProtocolFamily;
   authenticationScheme: ModelAuthenticationScheme;
 }

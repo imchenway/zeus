@@ -1,7 +1,7 @@
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
-import type { CodexAppServerManager, CodexResponsesRuntime, CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { CodexAppServerManager, CodexServerRequestResponse } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
 import type {
   CommandDeliveryRepository,
@@ -79,7 +79,6 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   } | null>;
   /** 实际目标发送或恢复前校验冻结预算；不按旧模型替代新路由。 */
   validateContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void;
-  resolveResponsesRuntime: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
   /** 两条链路读取同一轮冻结的普通 Skill 目录。 */
   loadSkills?(cwd: string, identity: string): Promise<NativeConversationSkillInput[]>;
   compileDispatchContext: ProviderDispatchContextCompiler;

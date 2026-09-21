@@ -1,4 +1,4 @@
-import type { CodexAppServerManager, CodexResponsesRuntime } from '@zeus/ai-runtime';
+import type { CodexAppServerManager } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
 import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
@@ -32,7 +32,6 @@ interface PrepareCodexContextInput {
     additionalContext?: CodexBootstrapAdditionalContext;
   };
   pluginPromptContext?: CodexBootstrapAdditionalContext;
-  responsesRuntime: CodexResponsesRuntime | null;
   beforePortableProviderWrite(): void;
   now(): string;
 }
@@ -61,7 +60,6 @@ export async function prepareCodexDispatchContext(input: PrepareCodexContextInpu
         effort: input.context.effort,
         serviceTier: input.context.serviceTier ?? null,
         cwd: input.context.projectLocalPath,
-        responsesRuntime: input.responsesRuntime,
         issuedAt: input.submission.createdAt,
       });
       await lifecycle.completeContextCompaction({ summary: compacted.summary, usage: compacted.usage, evidence: compacted.evidence, completedAt: input.now() });

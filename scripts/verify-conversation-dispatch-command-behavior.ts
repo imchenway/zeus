@@ -569,7 +569,8 @@ async function verifyRecoveryIntents(application: ConversationDispatchCommandApp
     requireConversation: () => conversation,
     inferRunState: () => ({ type: 'idle' }),
     prepareContext: forbidden,
-    responsesRuntimeFor: forbidden,
+    // 只读检查不得触碰上下文容量复验；容量复验属于恢复路径，不属于只读检查。
+    assertDispatchContextCapacity: forbidden,
     enqueueProviderTurnReconciliation: forbidden,
     projectedProviderThreadSnapshot: (_id, metadata) => metadata,
     reconcileConversationSnapshot: (_conversation, _snapshot, _generation, input) => {

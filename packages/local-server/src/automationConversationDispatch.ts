@@ -39,8 +39,9 @@ export function createAutomationConversationDispatch(options: {
     }
     const idempotencyKey = `automation:${run.id}`;
     const connection = snapshot.modelSourceId === 'codex' ? undefined : modelConnections.listMetadata().find((candidate: { id: string }) => candidate.id === snapshot.modelSourceId);
-    const configuredModel = connection?.models.find((candidate: { id: string; runtimeAdapter?: string }) => candidate.id === snapshot.modelId);
-    const runtimeKind = configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : 'codex';
+    const configuredModel = connection?.models.find((candidate: { id: string }) => candidate.id === snapshot.modelId);
+    // 命中的是模型连接就走 Zeus 内核；只有 Codex 订阅来源才交给 app-server。
+    const runtimeKind = configuredModel ? 'pi' : 'codex';
     const result = await executeProjectConversationIdempotent(
       project,
       {

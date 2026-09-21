@@ -1,4 +1,4 @@
-import type { CodexAppServerManager, CodexResponsesRuntime, CodexThreadRuntimeStatus, CodexThreadSnapshot } from '@zeus/ai-runtime';
+import type { CodexAppServerManager, CodexThreadRuntimeStatus, CodexThreadSnapshot } from '@zeus/ai-runtime';
 import type { ConversationSubmissionRepository, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
@@ -26,7 +26,8 @@ interface CodexProviderThreadAuthorityOptions {
   requireConversation(conversationId: string): ZeusConversationWithMessagesRecord;
   prepareContext(conversationId: string): Promise<ConversationDispatchContext>;
   inferRunState(conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState;
-  responsesRuntimeFor(context: ConversationDispatchContext): Promise<CodexResponsesRuntime | null>;
+  /** 恢复前复验冻结的上下文容量，不改变任何路由。 */
+  assertDispatchContextCapacity(context: ConversationDispatchContext): void;
   enqueueProviderTurnReconciliation(conversation: ZeusConversationWithMessagesRecord, input?: { priority?: 'control' }): Promise<void>;
   projectedProviderThreadSnapshot(conversationId: string, metadata: CodexThreadSnapshot): CodexThreadSnapshot;
   reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string, input?: { preserveUnsentQueue?: boolean }): void;
@@ -266,7 +267,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     if (confirmed.type === 'active' && hasCurrentSubscription(providerThreadId)) return confirmed;
     // 空闲时由管理器核对并应用本轮容量；容量未变不会卸载线程。
 
-    const responsesRuntime = await options.responsesRuntimeFor(context);
+    options.assertDispatchContextCapacity(context);
     assertOpen();
     /** 恢复完成时仍须属于同一运行实例。 */
     const generationId = options.manager.generationForThread(providerThreadId) ?? options.readyGenerationId();
@@ -276,7 +277,6 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
         contextCapacityTokens: context.contextCapacityTokens ?? null,
         threadId: providerThreadId,
         ...(context.projectLocalPath ? { cwd: context.projectLocalPath } : {}),
-        ...(responsesRuntime ? { responsesRuntime } : {}),
         signal: resumeAbortController.signal,
       });
     } catch (resumeError) {
