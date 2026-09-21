@@ -928,7 +928,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         try {
           const nativeResult = await props.onReadClipboardResources();
           additions = nativeResult.resources;
-          text = nativeResult.text || text;
+          // 剪贴板正文已经被附件消费时，只补回剩余说明文字；没有附件才回填整段粘贴原文。
+          text = additions.length > 0 ? nativeResult.text : nativeResult.text || text;
         } catch {
           nativeReadFailed = true;
         }
@@ -978,7 +979,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       } else {
         attachmentPasteRetryRef.current = null;
       }
-      return { updatedAt: result.task.updatedAt };
+      /** 有待重试的失败项时先不写回正文，重试成功后再插入，避免同一段文字进入两次。 */
+      return { updatedAt: result.task.updatedAt, ...(failedCount === 0 && text ? { insertText: text } : {}) };
     } catch {
       const resourceLikePaste = request.files.length > 0 || text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
       if (!resourceLikePaste && request.plainText) {

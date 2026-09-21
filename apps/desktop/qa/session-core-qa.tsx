@@ -1829,10 +1829,33 @@ async function checkAttachmentFocus(control: HTMLElement, input: ComposerInputHa
   return other ? '通过：附件已加入，用户新焦点保持不变' : other === null ? '通过：意外失焦后恢复原输入框及选区' : '通过：附件已加入，处理中可输入，光标与选区保持不变';
 }
 
+/** 粘贴“文件路径 + 说明文字”：路径变成附件，说明文字必须留在同一个字段里。 */
+async function checkAttachmentPasteText(control: HTMLInputElement | HTMLTextAreaElement, pathLine: string, note: string): Promise<string> {
+  const before = control.value;
+  const cardsBefore = document.querySelectorAll('.task-create-modal .pending-resource-card').length;
+  control.focus();
+  control.setSelectionRange(before.length, before.length);
+  const data = new DataTransfer();
+  data.setData('text/plain', `${pathLine}\n${note}`);
+  control.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  // 读取回执、附件回写和 React 重渲染分别推进，不用固定等待掩盖失败。
+  await nextQaTask();
+  await nextQaTask();
+  await nextQaTask();
+  await nextQaTask();
+  if (control.value !== `${before}${note}`) throw new Error(`正文未按预期回填，当前内容为 ${JSON.stringify(control.value)}`);
+  if (document.querySelectorAll('.task-create-modal .pending-resource-card').length <= cardsBefore) throw new Error('剪贴板里的文件路径没有变成附件');
+  return '通过：路径变成附件，说明文字完整留在原字段，路径本身没有混进正文';
+}
+
 /** 真实任务创建表单；地址参数选择需求、缺陷或优化，以及对应粘贴字段。 */
 function TaskPasteFocusQa() {
   /** 本页只更新草稿，不提交任务。 */
   const parameters = new URLSearchParams(window.location.search);
+  /** 粘贴“文件路径 + 说明文字”的验收样例，路径行模拟剪贴板里的会话文件绝对路径。 */
+  const clipboardPathLine = '/Users/qa/.zeus/providers/codex/sessions/2026/09/20/rollout-qa.jsonl';
+  /** 路径被附件消费后应当留在字段里的说明文字。 */
+  const clipboardNote = '读取会话文件，分析显示效果是否有优化空间。';
   const [form, setForm] = useState(() => ({
     ...buildTaskCreateInitialForm('zh-CN'),
     projectId: 'qa',
@@ -1857,7 +1880,8 @@ function TaskPasteFocusQa() {
         setResult('失败：目标字段未挂载');
         return;
       }
-      void checkAttachmentFocus(control, control, parameters.has('move') ? (titleRef.current ?? undefined) : undefined).then(setResult, (error) => setResult(`失败：${String(error)}`));
+      const pending = parameters.has('paste-text') ? checkAttachmentPasteText(control, clipboardPathLine, clipboardNote) : checkAttachmentFocus(control, control, parameters.has('move') ? (titleRef.current ?? undefined) : undefined);
+      void pending.then(setResult, (error) => setResult(`失败：${String(error)}`));
     }, 0);
     return () => clearTimeout(timer);
   }, []);
@@ -1879,7 +1903,11 @@ function TaskPasteFocusQa() {
       onReadClipboardResources={async () => {
         await nextQaTask();
         await nextQaTask();
-        return { resources: [{ path: `qa:${crypto.randomUUID()}`, name: '焦点检查.txt', kind: 'file', mimeType: 'text/plain' }], text: '' };
+        return {
+          resources: [{ path: `qa:${crypto.randomUUID()}`, name: '焦点检查.txt', kind: 'file', mimeType: 'text/plain' }],
+          // 真实 Main 在路径变成附件后只回传剩余正文；这里按同一契约返回验收样例。
+          text: parameters.has('paste-text') ? clipboardNote : '',
+        };
       }}
       onAuthorizeFiles={async () => ({ resources: [], failedCount: 0 })}
       onMaterializeResources={async () => []}

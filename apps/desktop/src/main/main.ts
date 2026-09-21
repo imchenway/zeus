@@ -35,6 +35,7 @@ import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
+  extractTaskClipboardResidualText,
   inferTaskClipboardAttachmentMimeType,
   isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
@@ -2492,6 +2493,7 @@ type TaskResourcePayload = {
 type TaskClipboardResourceRead = {
   paths: string[];
   attachments: TaskResourcePayload[];
+  /** 没有被附件消费、仍要回填到输入框的正文；附件已覆盖整段剪贴板文字时为空。 */
   text: string;
 };
 
@@ -2549,7 +2551,7 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClip
   const readOptions = { readSystemFileReferences: readMacOSClipboardFileReferences };
   const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(clipboardReader, readOptions);
   if (referencedPaths.length > 0) {
-    return { paths: referencedPaths, attachments: [], text: '' };
+    return { paths: referencedPaths, attachments: [], text: readTaskClipboardResidualText(referencedPaths) };
   }
   const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader, readOptions);
   if (attachments.length > 0) {
@@ -2569,6 +2571,16 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClip
     };
   }
   return { paths: [], attachments: [], text };
+}
+
+/** Finder 复制文件时剪贴板正文可能只有路径；只有正文里的路径已变成附件才剔除该行。 */
+function readTaskClipboardResidualText(referencedPaths: readonly string[]): string {
+  try {
+    return extractTaskClipboardResidualText(clipboard.readText(), referencedPaths);
+  } catch {
+    // 剪贴板文字不可读时按没有正文处理，保留已经识别出的附件。
+    return '';
+  }
 }
 
 async function readMacOSClipboardFileReferences(): Promise<string[]> {

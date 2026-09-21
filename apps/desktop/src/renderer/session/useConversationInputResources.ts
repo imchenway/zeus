@@ -129,10 +129,8 @@ export function useConversationInputResources(options: UseConversationInputResou
           if (!bridge) throw new Error('当前应用版本未提供原生剪贴板附件读取能力。');
           const result = await bridge();
           if (generation !== pasteGeneration.current) return;
-          if (result.resources.length > 0) {
-            latest.current.onAddAttachments(result.resources);
-            return;
-          }
+          if (result.resources.length > 0) latest.current.onAddAttachments(result.resources);
+          // 剪贴板可能是“文件路径 + 说明文字”：附件之外的正文仍要落回输入框。
           if (result.text) insertText(latest.current, result.text, selection);
         });
       }, 120);
