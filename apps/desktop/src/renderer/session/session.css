@@ -1355,10 +1355,35 @@
 
 .session-codex-parity-v1 .session-turn-failure-message {
   flex: 1;
+  /* 正文与操作并排：胶囊很宽，按钮不必单独占一行把提示撑高。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 12px;
   min-inline-size: 0;
   font-size: 14px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* 消息状态的操作行跟在正文右侧，位置与同族的传输失败提示保持一致。 */
+.session-codex-parity-v1 .session-turn-failure-message > .session-message-delivery-actions {
+  grid-column: 2;
+  flex-wrap: nowrap;
+  margin-block-start: 0;
+}
+
+/* 窄分栏没有并排空间时退回上下堆叠，避免正文与按钮互相挤压。 */
+@container (max-width: 560px) {
+  .session-codex-parity-v1 .session-turn-failure-message {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-turn-failure-message > .session-message-delivery-actions {
+    grid-column: 1;
+    flex-wrap: wrap;
+    margin-block-start: 8px;
+  }
 }
 
 /* 目标摘要沿用输入框的宽度和两侧留白，避免分栏时独立撑满。 */
