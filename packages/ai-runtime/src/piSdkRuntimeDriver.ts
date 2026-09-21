@@ -166,6 +166,15 @@ interface PiTerminalFailure {
 
 const piPreflightTimeoutMs = 5 * 60_000;
 const maximumPiDispatchContextBytes = 8 * 1024 * 1024;
+/**
+ * 单轮模型请求的瞬时失败续跑次数。
+ * 取值权衡：次数越多越能盖住网络抖动和供应商瞬时断连，但次数越多用户在真正断网时空等越久，
+ * 且每次续跑都会再向供应商发一次请求（只影响计费，不会重放工具调用）。两次足以覆盖观测到的
+ * 单点断连，又不至于让彻底不可用的连接长时间占用本轮。
+ */
+const piModelRequestRetryLimit = 2;
+/** 续跑之间的退避基数：2 秒起倍增，给供应商和网络留出自愈时间。 */
+const piModelRequestRetryBaseDelayMs = 2_000;
 
 /**
  * 把会话档位交给 Pi。
@@ -250,9 +259,12 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const model = requestedModel ? resolveModel(runtime, requestedModel) : undefined;
     const settingsManager = SettingsManager.inMemory(
       {
-        // Provider 写出后的超时或断连无法证明请求未被接纳；Pi 的会话层与传输层都必须
-        // 禁止自动重发。后续动作只能由 Zeus 的显式对账/重试命令以新的稳定身份发起。
-        retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
+        // 传输层（HTTP）重发继续禁止：Provider 写出后的超时或断连无法证明请求未被接纳，
+        // 需要新稳定身份的重发只能由 Zeus 的显式对账/重试命令发起。
+        // 会话层保留有限自动续跑：Pi 只在收到可重试的瞬时错误时继续同一轮，并且会先从上下文里
+        // 摘掉失败的那条 assistant 消息再重新请求，不会重放已经执行过的工具调用，因此不会产生
+        // 重复副作用；次数耗尽后仍然按失败收尾，交给用户显式重新发送。
+        retry: { enabled: true, maxRetries: piModelRequestRetryLimit, baseDelayMs: piModelRequestRetryBaseDelayMs, provider: { maxRetries: 0 } },
         // 压缩阈值必须随目标窗口缩放：Pi 的压缩是单次摘要请求，历史贴近窗口时
         // 这个请求自身就会超过窗口并被 Provider 拒绝，之后每次发送都会重复失败。
         compaction: compactionSettingsForModel(model),
@@ -1152,12 +1164,30 @@ export function applyModelAuthentication(options: StreamOptions | undefined, aut
   };
 }
 
+/**
+ * 传输层中断留下的原始英文错误。
+ * 这些文本说明连接在生成过程中断开，而不是供应商拒绝了请求；Pi 自己的可重试判定也把这一组
+ * 文本当作瞬时失败，所以命中时值得给用户一句能读懂、能行动的说明。
+ */
+const piModelTransportFailurePattern = /terminated|socket hang up|other side closed|ECONNRESET|EPIPE|ENOTFOUND|EAI_AGAIN|fetch failed|timed out|timeout/iu;
+
+/**
+ * 把 Pi 给出的失败原文翻成用户能用的说法：只补传输层中断这一类，供应商的业务错误
+ * （余额不足、Key 额度用完、上下文超限等）原文更准确，保持原样不动。
+ * 原始英文错误仍然保留在正文里，诊断记录不会因此丢信息。
+ */
+function describePiModelFailure(rawMessage: string): string {
+  if (!piModelTransportFailurePattern.test(rawMessage)) return rawMessage;
+  return `模型连接在生成过程中中断（原始错误：${rawMessage}）。这通常是网络或供应商的瞬时故障，可以直接重新发送本轮。`;
+}
+
 /** Pi 会把供应商请求失败包装成空正文的 assistant message；在适配层恢复为公共失败终态。 */
 function piMessageFailure(event: AgentSessionEvent): PiTerminalFailure | null {
   if (event.type !== 'message_end' || event.message.role !== 'assistant' || event.message.stopReason !== 'error') return null;
+  const rawMessage = event.message.errorMessage?.trim();
   return {
     code: 'ZEUS_PI_MODEL_REQUEST_FAILED',
-    message: event.message.errorMessage?.trim() || 'Pi 模型请求失败，但运行内核没有提供具体原因。',
+    message: rawMessage ? describePiModelFailure(rawMessage) : 'Pi 模型请求失败，但运行内核没有提供具体原因。',
     providerStatus: event.message.stopReason,
   };
 }
