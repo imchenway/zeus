@@ -16,6 +16,7 @@ import {
   isQueueMemberStatus,
 } from '../packages/storage/src/index.js';
 import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from '../packages/local-server/src/unboundConversationArchiveApplication.js';
+import { boundLiveProcessPayload } from '../packages/local-server/src/livePayloadBudget.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import {
   ConversationCommandApplication,
@@ -371,6 +372,17 @@ try {
         !isCancellableSubmission({ status: 'active', providerTurnId: 'turn-1' }),
       '未完成写入与可取消两个集合不得互相替代：暂停项可取消但不在途，已绑定轮次的活动项不可取消',
     );
+    /** 巨大的工具输出必须在推送前被裁剪，绝不能把耐久事件顶到 1 MiB 协议预算。 */
+    const fatLivePayload = boundLiveProcessPayload({ title: '命令输出', detail: { payload: { output: 'x'.repeat(2 * 1024 * 1024), exitCode: 0 } } });
+    assertProbe(
+      Buffer.byteLength(JSON.stringify(fatLivePayload.itemPayload), 'utf8') <= 256 * 1024 &&
+        fatLivePayload.truncated &&
+        JSON.stringify(fatLivePayload.itemPayload).includes('已截断') &&
+        JSON.stringify(fatLivePayload.itemPayload).includes('exitCode'),
+      '超过预算的实时处理项载荷必须降级为带说明的摘要，并保留非文本字段',
+    );
+    const slimLivePayload = boundLiveProcessPayload({ title: '命令输出', detail: { payload: { output: 'ok' } } });
+    assertProbe(!slimLivePayload.truncated && JSON.stringify(slimLivePayload.itemPayload).includes('ok'), '未超过预算的实时载荷不得被改写');
     observed.quickCheck = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
     assertProbe(
