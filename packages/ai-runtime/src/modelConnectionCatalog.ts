@@ -4,6 +4,7 @@ import { MOONSHOTAI_MODELS } from '@earendil-works/pi-ai/providers/moonshotai.mo
 import { OPENCODE_MODELS } from '@earendil-works/pi-ai/providers/opencode.models';
 import { QWEN_TOKEN_PLAN_CN_MODELS } from '@earendil-works/pi-ai/providers/qwen-token-plan-cn.models';
 import { ZAI_MODELS } from '@earendil-works/pi-ai/providers/zai.models';
+import { readOfficialModelVersion } from './modelVersionNames.js';
 
 export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
 
@@ -44,6 +45,16 @@ export interface ConfiguredModelCapability {
 export interface ConfiguredModelDefinition {
   id: string;
   displayName: string;
+  /**
+   * 能力探测时服务端在响应里回报的实际服务模型标识，可能带版本日期。
+   * 只记录真机观测结果；没探测过或服务端不回报时为空，不用供应商文档猜测。
+   */
+  servedModelId?: string | null;
+  /**
+   * 厂商官方文档里登记的版本名（人工维护表），只用于展示，不参与请求。
+   * 未登记时为 null，界面退回显示目录名或模型 ID。
+   */
+  officialVersion?: string | null;
   enabled: boolean;
   supports1MContext: boolean;
   contextWindow: number;
@@ -290,6 +301,7 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
     {
       id: normalizedId,
       displayName: input.displayName ?? normalizedId,
+      servedModelId: input.servedModelId ?? null,
       enabled: input.enabled ?? true,
       supports1MContext: input.supports1MContext ?? false,
       contextWindow: input.contextWindow ?? 256_000,
@@ -403,6 +415,10 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   if (!isRecord(value)) throw new Error('模型配置必须是对象。');
   const id = normalizeSingleLine(value.id, '模型 ID', 200);
   const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
+  // 服务端回报的模型标识按原样保留；为空即为“未观测到”，不猜测。
+  const servedModelId = typeof value.servedModelId === 'string' ? value.servedModelId.trim().slice(0, 200) || null : null;
+  // 官方版本名由人工表决定，保存时重算，避免界面把过期值写回配置。
+  const officialVersion = readOfficialModelVersion(id);
   const supports1MContext = value.supports1MContext === true;
   const contextWindow = normalizePositiveInteger(value.contextWindow, '上下文容量', 1, 10_000_000);
   // 有效窗口是权威值：历史配置可能保留超过 256K 的 maxTokens，取消 1M 后不应让整条连接不可保存。
@@ -414,7 +430,7 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
   const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
   const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
-  return { id, displayName, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
+  return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, runtimeAdapter, protocolFamily, authenticationScheme, capability };
 }
 
 function applyModelRoute(model: ConfiguredModelDefinition, connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): ConfiguredModelDefinition {
