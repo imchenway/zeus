@@ -45,6 +45,8 @@ interface SessionQuickActionsCardProps {
   conversation: NativeConversationChoice;
   state: NativeSessionState;
   task: { id: string; title: string } | null;
+  /** 正文列真实可用宽度：右侧上下文工作面与停靠终端占用的空间都已扣除。 */
+  conversationColumnWidth: number;
   persistentHost?: HTMLElement | null;
   /** 浏览器展开时将环境信息放进独立布局区，保留网页可见性。 */
   dockHost?: HTMLElement | null;
@@ -80,8 +82,8 @@ interface SourceRow {
   resource?: ConversationResource;
 }
 
-/** 为环境卡预留 332px 后，仍能容纳 768px 正文和两侧留白。 */
-const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1200;
+/** 正文列扣掉常驻卡 332px 后，仍能容纳 768px 正文和两侧留白。 */
+const PERSISTENT_CARD_MIN_COLUMN_WIDTH = 1200;
 const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
@@ -89,7 +91,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
-  const [hasPersistentSpace, setHasPersistentSpace] = useState(false);
   const [showAllSources, setShowAllSources] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
@@ -137,6 +138,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   });
   const canStartCodeReview = codeReviewUnavailableReason === null;
   const subagentCount = props.subagentCount ?? 0;
+  /** 常驻只看正文列真实可用宽度：右侧终端或浏览器变宽都会让这里重新判定。 */
+  const hasPersistentSpace = props.conversationColumnWidth >= PERSISTENT_CARD_MIN_COLUMN_WIDTH;
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
@@ -152,20 +155,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       if (popoverOpen) props.onPopoverOpenChange?.(false);
     };
   }, [popoverOpen, props.onPopoverOpenChange]);
-
-  useEffect(() => {
-    const workspaceRoot = rootRef.current?.closest<HTMLElement>('.session-workspace-root');
-    if (!workspaceRoot || typeof ResizeObserver === 'undefined') return;
-
-    const updatePresentation = (): void => {
-      const nextHasPersistentSpace = workspaceRoot.getBoundingClientRect().width >= PERSISTENT_CARD_MIN_WORKSPACE_WIDTH;
-      setHasPersistentSpace((current) => (current === nextHasPersistentSpace ? current : nextHasPersistentSpace));
-    };
-    updatePresentation();
-    const observer = new ResizeObserver(updatePresentation);
-    observer.observe(workspaceRoot);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     if (!props.forceCollapsed) return;

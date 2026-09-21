@@ -1767,6 +1767,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
+  /** 环境卡常驻判定只用正文列真实可用宽度：右侧浏览器工作面、停靠终端和全宽工作面占用的空间都不算正文空间。 */
+  const conversationColumnWidth = contextFullWidth ? 0 : Math.max(0, browserLayoutWidth - (contextOpen ? resolvedBrowserTargetWidth : 0));
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner, props.language), [owner, props.conversation, props.task, props.language]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
@@ -2693,7 +2695,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   task={props.task}
                   persistentHost={quickActionsPersistentHost}
                   dockHost={browserOpen ? browserEnvironmentHost : null}
-                  forceCollapsed={contextOpen}
+                  conversationColumnWidth={conversationColumnWidth}
                   suppressed={props.quickActionsSuppressed}
                   capabilities={props.capabilities}
                   serviceTierPreferences={serviceTierPreferences}
