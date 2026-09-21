@@ -20,6 +20,8 @@ export * from './piRuntimeWorkerProtocol.js';
 export * from './piRuntimeWorkerDriver.js';
 export * from './providerRuntimeHealth.js';
 export * from './modelConnectionCatalog.js';
+export * from './modelVersionNames.js';
+export * from './modelConnectionProbe.js';
 export * from './piSdkRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
 export { projectTerminalOutput } from './terminalOutput.js';

@@ -7,6 +7,7 @@ export const integrationClientCommandTypes = {
   modelConnectionDelete: 'integration.model_connection.delete',
   modelConnectionApiKeyClear: 'integration.model_connection.api_key.clear',
   modelConnectionModelsRefresh: 'integration.model_connection.models.refresh',
+  modelConnectionModelsProbe: 'integration.model_connection.models.probe',
   modelConnectionDiagnose: 'integration.model_connection.diagnose',
   zentaoInstanceCreate: 'integration.zentao_instance.create',
   zentaoInstanceUpdate: 'integration.zentao_instance.update',

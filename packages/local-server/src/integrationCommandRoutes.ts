@@ -4,7 +4,7 @@ import type { SecretPresenceLabel, SecretStore } from './securityCore.js';
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord } from '@zeus/shared';
 import type { AppendAuditLogInput, ProjectRepository } from '@zeus/storage';
 import { IntegrationCommandApplication, integrationCommandHttpError, integrationCommandTypes, type IntegrationCommandRequest, type ParsedIntegrationCommand } from './integrationCommandApplication.js';
-import type { ModelCatalogRefreshResult, ModelConnectionDiagnostic, ModelConnectionService, SaveModelConnectionRequest } from './modelConnectionService.js';
+import type { ModelCapabilityProbeSummary, ModelCatalogRefreshResult, ModelConnectionDiagnostic, ModelConnectionService, SaveModelConnectionRequest } from './modelConnectionService.js';
 import type { ZentaoCredentialService } from './zentaoCredentialService.js';
 
 type EmptyInput = Record<string, never>;
@@ -19,7 +19,7 @@ interface SecuritySecretsSnapshot {
   externalApiKey: SecretPresenceLabel;
 }
 
-/** 仅注册凭据、集成账号和模型配置的 16 个公开 mutation；GET 与其他设置域不在此模块。 */
+/** 仅注册凭据、集成账号和模型配置的 17 个公开 mutation；GET 与其他设置域不在此模块。 */
 export function registerIntegrationCommandRoutes(options: {
   server: FastifyInstance;
   application: IntegrationCommandApplication;
@@ -162,6 +162,36 @@ export function registerIntegrationCommandRoutes(options: {
       return mutation.result;
     } catch (error) {
       return sendIntegrationError(reply, error, options.redactSensitiveText, '模型目录刷新失败。');
+    }
+  });
+
+  server.post('/api/model-connections/:connectionId/models/probe', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: IntegrationCommandRequest<EmptyInput> }>, reply) => {
+    try {
+      const parsed = parseResourceCommand<EmptyInput>(application, request.body, integrationCommandTypes.modelConnectionModelsProbe, 'provider_configuration', request.params.connectionId);
+      assertExactKeys(parsed.input, [], parsed.command.commandType);
+      const mutation = await application.executeExternal({
+        parsed,
+        destinationId: 'model_capability',
+        resourceId: request.params.connectionId,
+        externalOperationId: externalOperationId(parsed),
+        invoke: async (): Promise<ModelCapabilityProbeSummary> => {
+          const result = await options.modelConnections.probeModels(request.params.connectionId);
+          await options.refreshModelRuntime();
+          return result;
+        },
+        mutateAcceptedBusinessState: (result) => {
+          options.appendAuditLog({
+            actorType: 'local_api',
+            action: 'model.connection.capability.probed',
+            resourceType: 'model_connection',
+            resourceId: result.connection.id,
+            payload: { probedCount: result.results.length, supportedToolCount: result.results.filter((item) => item.capability.tools.state === 'supported').length, checkedAt: result.checkedAt },
+          });
+        },
+      });
+      return mutation.result;
+    } catch (error) {
+      return sendIntegrationError(reply, error, options.redactSensitiveText, '模型能力探测失败。');
     }
   });
 

@@ -1015,7 +1015,8 @@ function boundedMetadataText(value: unknown, label: string, maximum: number): st
   return value.trim();
 }
 
-function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {
+/** 把 Zeus 的模型配置翻译成 Pi 原生模型定义；能力探测与运行内核共用同一份翻译，避免两处漂移。 */
+export function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {
   const supportedLevels = new Set(model.capability.reasoning.levels);
   const levelMap = model.capability.reasoning.levelMap;
   const thinkingLevelMap = Object.fromEntries(
@@ -1096,7 +1097,7 @@ function withModelTransport(
   };
 }
 
-function applyModelAuthentication(options: StreamOptions | undefined, authenticationScheme: ModelAuthenticationScheme): StreamOptions | undefined {
+export function applyModelAuthentication(options: StreamOptions | undefined, authenticationScheme: ModelAuthenticationScheme): StreamOptions | undefined {
   if (authenticationScheme !== 'bearer' || !options?.apiKey) return options;
   return {
     ...options,

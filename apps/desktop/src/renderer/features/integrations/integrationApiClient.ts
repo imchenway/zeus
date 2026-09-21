@@ -1,5 +1,6 @@
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult, ZentaoRemoteKind, ZentaoTaskSyncRequest } from '@zeus/shared';
 import type {
+  ModelCapabilityProbeSummary,
   ModelConnectionDiagnostic,
   ModelConnectionRecord,
   SaveModelConnectionRequest,
@@ -22,6 +23,7 @@ export interface IntegrationApiClient {
   deleteModelConnection: (connectionId: string) => Promise<void>;
   clearModelConnectionApiKey: (connectionId: string) => Promise<ModelConnectionRecord>;
   refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; removedModelIds: string[]; checkedAt: string }>;
+  probeModelConnectionModels: (connectionId: string) => Promise<ModelCapabilityProbeSummary>;
   diagnoseModelConnection: (connectionId: string) => Promise<ModelConnectionDiagnostic>;
   loadZentaoInstances: () => Promise<ZentaoInstanceRecord[]>;
   createZentaoInstance: (input: SaveZentaoInstanceRequest) => Promise<ZentaoInstanceRecord>;
@@ -113,6 +115,8 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionApiKeyClear, 'api_key_clear', 'DELETE', '/api-key', {}) as ReturnType<IntegrationApiClient['clearModelConnectionApiKey']>,
     refreshModelConnectionModels: (connectionId) =>
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionModelsRefresh, 'models_refresh', 'POST', '/models/refresh', {}) as ReturnType<IntegrationApiClient['refreshModelConnectionModels']>,
+    probeModelConnectionModels: (connectionId) =>
+      modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionModelsProbe, 'models_probe', 'POST', '/models/probe', {}) as ReturnType<IntegrationApiClient['probeModelConnectionModels']>,
     diagnoseModelConnection: (connectionId) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionDiagnose, 'diagnose', 'POST', '/diagnose', {}) as ReturnType<IntegrationApiClient['diagnoseModelConnection']>,
     loadZentaoInstances: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadZentaoInstances']>> }>('/api/zentao-instances')).items,
     // 密码响应由服务端禁止缓存，前端只在当前编辑器内短暂保留。
