@@ -13,6 +13,7 @@ export type PiRuntimeWorkerMethod =
   | 'steerRun'
   | 'followUp'
   | 'compactSession'
+  | 'importPortableHistory'
   | 'interruptRun'
   | 'respondToInteraction'
   | 'readSession'
@@ -148,6 +149,7 @@ function isWorkerMethod(value: unknown): value is PiRuntimeWorkerMethod {
     value === 'steerRun' ||
     value === 'followUp' ||
     value === 'compactSession' ||
+    value === 'importPortableHistory' ||
     value === 'interruptRun' ||
     value === 'respondToInteraction' ||
     value === 'readSession' ||

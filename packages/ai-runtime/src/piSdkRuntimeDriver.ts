@@ -1,4 +1,4 @@
-import { assertContextCapacitySupported } from '@zeus/shared';
+import { assertContextCapacitySupported, type PortableHistoryEntry } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -98,6 +98,28 @@ export interface PiSdkRuntimeDriver extends AgentRuntimeDriver {
   invalidateModelRuntime(): void | Promise<void>;
   /** 独立且无工具的权限审查，不进入用户会话，也不重试原操作。 */
   reviewPermission(input: PiPermissionReviewInput): Promise<PiPermissionReviewResult>;
+  /** 分批导入既有历史并逐批压缩；任何一次摘要请求都必须留在目标窗口内。 */
+  importPortableHistory(input: PiPortableHistoryImportInput): Promise<PiPortableHistoryImportResult>;
+}
+
+export interface PiPortableHistoryImportInput {
+  session: AgentSessionIdentity;
+  thinkingLevel?: string;
+  /** 压缩指令与首次播种共用同一语义，不在两处各写一份。 */
+  customInstructions: string;
+  /** 按发生顺序排列的导入历史。 */
+  entries: PortableHistoryEntry[];
+  /** 单批摘要请求的 token 预算，由便携上下文的压缩计划统一给出。 */
+  batchTokens: number;
+}
+
+export interface PiPortableHistoryImportResult {
+  /** 最后一批压缩产生的累计摘要；SDK 会用上一份摘要做增量合并。 */
+  summary: string;
+  /** 最后一次真实摘要请求的用量，不把逐批累加值冒充完整用量。 */
+  usage: CompactAgentSessionResult['usage'];
+  /** 实际写入并压缩的批次数，供审计还原导入规模。 */
+  batches: number;
 }
 
 /** 审查只接收已冻结的具体操作及用户授权上下文。 */
@@ -214,6 +236,9 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         // Provider 写出后的超时或断连无法证明请求未被接纳；Pi 的会话层与传输层都必须
         // 禁止自动重发。后续动作只能由 Zeus 的显式对账/重试命令以新的稳定身份发起。
         retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
+        // 压缩阈值必须随目标窗口缩放：Pi 的压缩是单次摘要请求，历史贴近窗口时
+        // 这个请求自身就会超过窗口并被 Provider 拒绝，之后每次发送都会重复失败。
+        compaction: compactionSettingsForModel(model),
         defaultProjectTrust: 'never',
         enableAnalytics: false,
         enableInstallTelemetry: false,
@@ -540,20 +565,34 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
       }
       const result = await entry.session.compact(input.customInstructions);
-      const usage = asUnknownRecord(result.usage);
       return {
         summary: result.summary,
         tokensBefore: result.tokensBefore,
         estimatedTokensAfter: result.estimatedTokensAfter ?? null,
-        usage: {
-          inputTokens: nullableUsageNumber(usage.input ?? usage.inputTokens),
-          cachedInputTokens: nullableUsageNumber(usage.cacheRead ?? usage.cachedInputTokens),
-          cacheWriteInputTokens: nullableUsageNumber(usage.cacheWrite ?? usage.cacheWriteInputTokens),
-          outputTokens: nullableUsageNumber(usage.output ?? usage.outputTokens),
-          reasoningOutputTokens: nullableUsageNumber(usage.reasoning ?? usage.reasoningTokens),
-          totalTokens: nullableUsageNumber(usage.totalTokens ?? usage.total),
-        },
+        usage: compactionUsage(result.usage),
       };
+    },
+    async importPortableHistory(input: PiPortableHistoryImportInput): Promise<PiPortableHistoryImportResult> {
+      assertOpen();
+      const entry = requireSession(input.session);
+      if (!entry.session.isIdle || entry.activeRunId) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_SESSION_BUSY', 'Pi 会话正在执行，不能导入既有历史。');
+      if (input.entries.length === 0) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_EMPTY', 'Pi 历史导入缺少可导入条目。');
+      if (input.thinkingLevel) {
+        if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
+        entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
+      }
+      const batches = splitPortableHistoryBatches(input.entries, portableHistoryBatchCharacters(input.batchTokens));
+      let summary = '';
+      let usage = compactionUsage(undefined);
+      for (const batch of batches) {
+        for (const portableEntry of batch) appendPortableEntry(entry.session.sessionManager, portableEntry);
+        // 每批写入后立即压缩：SDK 会把上一份摘要作为增量输入合并，历史顺序与一次性导入完全一致。
+        const compacted = await entry.session.compact(input.customInstructions);
+        summary = compacted.summary;
+        usage = compactionUsage(compacted.usage);
+      }
+      if (!summary) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_SUMMARY_MISSING', 'Pi 历史导入没有返回可用摘要。');
+      return { summary, usage, batches: batches.length };
     },
     async interruptRun(input: InterruptAgentRunInput): Promise<void> {
       const entry = requireSession(input.session);
@@ -1237,14 +1276,86 @@ function seedPortableContext(sessionManager: SessionManager, metadata: Record<st
     conversationId: portable.conversationId ?? null,
     throughModelHistorySequence: portable.throughModelHistorySequence ?? null,
   });
+  for (const entry of entries) appendPortableEntry(sessionManager, entry as PortableHistoryEntry);
+}
+
+/**
+ * 压缩阈值随目标窗口缩放。
+ *
+ * Pi SDK 的压缩是单次摘要请求：把待压缩历史全部序列化进同一个请求。历史一旦贴近窗口，
+ * 这个请求自身就超过窗口并被 Provider 拒绝，此后每次发送都会重复失败。因此按窗口比例留出
+ * 余量，让任何一次摘要请求都落在窗口内。
+ *
+ * 两个量的取舍：余量越大，摘要请求越安全，但压缩触发更早（摘要次数变多）；同时 SDK 用
+ * 同一个余量推算摘要输出上限（0.8 × reserveTokens，再受模型自身 maxTokens 约束），
+ * 所以这里把余量上限定在 256k，避免输出上限被抬得过高。极小窗口退回 SDK 默认值。
+ */
+function compactionSettingsForModel(model: Model<Api> | undefined): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+  const contextWindow = model?.contextWindow ?? 0;
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
+  return {
+    enabled: true,
+    reserveTokens: Math.min(262_144, Math.max(16_384, Math.floor(contextWindow * 0.35))),
+    keepRecentTokens: Math.min(65_536, Math.max(20_000, Math.floor(contextWindow * 0.05))),
+  };
+}
+
+/**
+ * 单批导入的字符上限。
+ *
+ * 预算由便携上下文的压缩计划统一给出（目标窗口的一半），这里按同一字符密度
+ * （每 token 约 4 字符）折算，再留 20% 余量：每一批写入后触发的摘要请求只面对这一批历史。
+ * 已知边界：单条条目无法在本层再切分，超大单条会单独成批，该次请求的大小由这条内容自身决定。
+ */
+function portableHistoryBatchCharacters(batchTokens: number): number {
+  return Math.max(4_000, Math.floor(batchTokens * 4 * 0.8));
+}
+
+/** 导入历史的文本形态只有一份定义，首次播种与分批导入不能出现两种口径。 */
+function portableEntryText(entry: Record<string, unknown>): string {
+  return `[来源历史角色：${typeof entry.role === 'string' ? entry.role : 'unknown'}]\n${JSON.stringify(entry.content ?? null)}`;
+}
+
+/** 单条导入历史以自定义消息进入模型上下文，来源元数据只用于回看和审计。 */
+function appendPortableEntry(sessionManager: SessionManager, portableEntry: PortableHistoryEntry): void {
+  const record = asUnknownRecord(portableEntry);
+  sessionManager.appendCustomMessageEntry('zeus_portable_context_entry', portableEntryText(record), false, {
+    sequence: record.sequence ?? null,
+    sourceSegmentId: record.sourceSegmentId ?? null,
+    toolPairId: record.toolPairId ?? null,
+  });
+}
+
+/** 按实际写入字符数分批，保证 SDK 的单次摘要请求只面对一批历史。 */
+function splitPortableHistoryBatches(entries: readonly PortableHistoryEntry[], maximumCharacters: number): PortableHistoryEntry[][] {
+  const batches: PortableHistoryEntry[][] = [];
+  let current: PortableHistoryEntry[] = [];
+  let currentCharacters = 0;
   for (const entry of entries) {
-    const record = asUnknownRecord(entry);
-    sessionManager.appendCustomMessageEntry('zeus_portable_context_entry', `[来源历史角色：${typeof record.role === 'string' ? record.role : 'unknown'}]\n${JSON.stringify(record.content ?? null)}`, false, {
-      sequence: record.sequence ?? null,
-      sourceSegmentId: record.sourceSegmentId ?? null,
-      toolPairId: record.toolPairId ?? null,
-    });
+    const characters = portableEntryText(asUnknownRecord(entry)).length;
+    if (current.length > 0 && currentCharacters + characters > maximumCharacters) {
+      batches.push(current);
+      current = [];
+      currentCharacters = 0;
+    }
+    current.push(entry);
+    currentCharacters += characters;
   }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+/** 压缩用量的公共映射：单次压缩与分批导入必须使用同一口径。 */
+function compactionUsage(value: unknown): CompactAgentSessionResult['usage'] {
+  const usage = asUnknownRecord(value);
+  return {
+    inputTokens: nullableUsageNumber(usage.input ?? usage.inputTokens),
+    cachedInputTokens: nullableUsageNumber(usage.cacheRead ?? usage.cachedInputTokens),
+    cacheWriteInputTokens: nullableUsageNumber(usage.cacheWrite ?? usage.cacheWriteInputTokens),
+    outputTokens: nullableUsageNumber(usage.output ?? usage.outputTokens),
+    reasoningOutputTokens: nullableUsageNumber(usage.reasoning ?? usage.reasoningTokens),
+    totalTokens: nullableUsageNumber(usage.totalTokens ?? usage.total),
+  };
 }
 
 function asUnknownRecord(value: unknown): Record<string, unknown> {

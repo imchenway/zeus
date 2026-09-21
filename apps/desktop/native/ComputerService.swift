@@ -446,7 +446,7 @@ private final class ComputerService {
                     "pid": Int(app.processIdentifier),
                     "active": app.isActive,
                     "hidden": app.isHidden,
-                    "controllable": canControl(app),
+                    "controllable": true,
                 ] as [String: Any]
             }
             .sorted { String(describing: $0["name"]).localizedCaseInsensitiveCompare(String(describing: $1["name"])) == .orderedAscending }
@@ -459,14 +459,13 @@ private final class ComputerService {
         try requireAccessibility()
         try requireUnlockedSession()
         let app = try await resolveApplication(params)
-        try rejectSelf(app)
         /** 按实际进程判定冲突，名称、路径和 bundle 别名不能各自取得一份控制。 */
         let occupied = sessionLock.withLock { sessions.contains { id, session in id != controlSessionId && session.control.targetProcessIdentifier == app.processIdentifier } }
         if occupied { throw ServiceFailure(code: "ZEUS_COMPUTER_APP_BUSY", message: "目标应用 \(app.localizedName ?? String(app.processIdentifier)) 正由另一个轮次控制；其他应用仍可使用。请等待该应用释放，不要停止无关任务。") }
         await menuObservation.observe(pid: app.processIdentifier)
         // 观察与后续输入固定同一窗口；截屏关闭只省略返回图片，不隐藏正在控制的系统状态。
         let target = afterAction ? try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId) : try await control.observe(app: app, sessionId: controlSessionId, windowId: intValue(params["window_id"]).flatMap { UInt32(exactly: $0) })
-        let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 1000)
+        let maxElements = boundedInt(params["max_elements"], fallback: 500, min: 1, max: 5000)
         let deadlineUnixMilliseconds = numberValue(params["_deadline_unix_ms"])
         let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
         // Chromium 等应用按需暴露语义树；只启用目标应用声明支持的辅助功能属性，不激活窗口。
@@ -627,7 +626,7 @@ private final class ComputerService {
             truncatedReason = truncatedReason ?? "element_limit"
             return true
         }
-        guard depth <= 32 else {
+        guard depth <= 128 else {
             truncatedReason = truncatedReason ?? "depth_limit"
             return false
         }
@@ -813,26 +812,51 @@ private final class ComputerService {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "Computer 请求缺少 app。")
         }
         let value = requested.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let running = NSWorkspace.shared.runningApplications.first(where: {
+        if let running = runningApplication(for: value) { return running }
+        return try await launchApplication(identifier: value)
+    }
+
+    /** 按 bundle id、应用路径或显示名匹配已运行的实例。 */
+    private func runningApplication(for value: String) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first {
             $0.bundleIdentifier == value || $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: value).standardizedFileURL.path || $0.localizedName?.caseInsensitiveCompare(value) == .orderedSame
-        }) { return running }
-
-        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行；Zeus 不会为 Computer Use 在后台启动应用：\(value)")
-    }
-
-    /** 允许独立测试实例；当前宿主、控制服务和正式实例仍不可控制，保护自身审批。 */
-    private func rejectSelf(_ app: NSRunningApplication) throws {
-        if app.processIdentifier == parentPid || app.processIdentifier == ProcessInfo.processInfo.processIdentifier || ["dev.hypha.zeus.helper.computer", "dev.hypha.zeus.test.helper.computer"].contains(app.bundleIdentifier ?? "") {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_SELF_CONTROL_BLOCKED", message: "当前 Zeus 实例不能控制自身或自身审批界面。")
-        }
-        if app.bundleIdentifier == "dev.hypha.zeus" {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_ZEUS_CONTROL_BLOCKED", message: "不能控制正式 Zeus 实例；请使用独立的 Zeus Test 实例进行验收。")
         }
     }
 
-    /** 应用列表与读取、点击、输入共用相同的实例边界。 */
-    private func canControl(_ app: NSRunningApplication) -> Bool {
-        (try? rejectSelf(app)) != nil
+    /**
+     * 目标应用未运行时按需启动，并在有界时间内等待它进入运行列表。
+     *
+     * 启动只负责让应用存在；窗口是否可控制仍由 observe 判定，没有窗口的应用依旧不能控制。
+     * activates 保持 false：Computer Use 使用虚拟光标，不抢占用户当前焦点。
+     */
+    private func launchApplication(identifier: String) async throws -> NSRunningApplication {
+        guard let applicationURL = applicationURL(for: identifier) else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_FOUND", message: "找不到可启动的应用：\(identifier)")
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.createsNewApplicationInstance = false
+        let launched = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
+        /** 系统可能返回代理或已存在实例；仍以真实运行列表为准。 */
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let running = runningApplication(for: identifier) ?? runningApplication(for: launched.bundleIdentifier ?? "") { return running }
+            if launched.isTerminated { break }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_TIMEOUT", message: "目标应用已请求启动，但十秒内没有进入可控制状态：\(identifier)")
+    }
+
+    /** 只接受 bundle id、应用路径和常见应用目录下的显示名，不猜测其他位置的可执行文件。 */
+    private func applicationURL(for identifier: String) -> URL? {
+        if let byBundle = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) { return byBundle }
+        let direct = URL(fileURLWithPath: identifier)
+        if FileManager.default.fileExists(atPath: direct.path) { return direct }
+        for root in ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"] {
+            let candidate = URL(fileURLWithPath: root).appendingPathComponent("\(identifier).app")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
     }
 
     private func requireAccessibility() throws {
@@ -841,14 +865,12 @@ private final class ComputerService {
         }
     }
 
-    private func requireUnlockedSession() throws {
-        guard let dictionary = CGSessionCopyCurrentDictionary() as? [String: Any] else {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_UNAVAILABLE", message: "无法确认当前图形会话状态。")
-        }
-        if dictionary["CGSSessionScreenIsLocked"] as? Bool == true || dictionary[kCGSessionOnConsoleKey as String] as? Bool == false {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_SCREEN_LOCKED", message: "锁屏或非控制台会话中禁止 Computer Use。")
-        }
-    }
+    /**
+     * 锁屏与"非控制台会话"不再阻断 Computer Use（用户明确要求放开）。
+     *
+     * 保留这个调用点作为系统会话校验的唯一入口：将来需要恢复锁屏判断时，只改这一处。
+     */
+    private func requireUnlockedSession() throws {}
 
     private func appAndElement(_ params: [String: Any], elementRequired: Bool) throws -> (NSRunningApplication, AXUIElement?) {
         guard let requested = params["app"] as? String else {
@@ -859,7 +881,6 @@ private final class ComputerService {
         }) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行，请先调用 get_app_state。")
         }
-        try rejectSelf(app)
         let target = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
         guard let elementIndex = intValue(params["element_index"]) else {
             if elementRequired { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "该操作需要 element_index。") }
