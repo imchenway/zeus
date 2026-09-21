@@ -6,6 +6,7 @@ import {
   defaultContextTokenCounter,
   longTermMemoryContextFragment,
   renderCompiledContext,
+  isApplicationContextCategory,
   type CompiledContext,
   type CompileContextInput,
   type ContextBudget,
@@ -121,6 +122,8 @@ export interface ContextDispatchApplicationServiceOptions {
   memory: LongTermMemoryRepository;
   now(): Date;
   audit?: ContextDispatchAuditPort;
+  /** 全局规则真源目录；未提供时本轮不注入全局规则（项目规则仍然生效）。 */
+  agentRulesDirectory?: string;
 }
 
 export interface ContextDispatchEnvelope {
@@ -191,7 +194,16 @@ export class ContextDispatchApplicationService {
     const selectedFragments = normalizeSelectedFragments(input.selectedFragments);
     const memory = this.options.memory.resolveForContext({ projectId: project.id, asOf, minimumConfidence: input.minimumMemoryConfidence });
     const rootId = `project:${project.id}`;
-    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath }]);
+    /** 全局规则真源目录作为独立受控根登记；未配置时不注入全局规则。 */
+    const globalRulesRootId = 'zeus:agent-rules';
+    const agentRulesRoot = this.options.agentRulesDirectory ? [{ id: globalRulesRootId, path: this.options.agentRulesDirectory }] : [];
+    const catalog = new ContextSourceCatalog([...agentRulesRoot, { id: rootId, path: project.localPath }]);
+    const agentRules = await catalog.agentRulesFragment({
+      ...(agentRulesRoot.length > 0 ? { globalRootId: globalRulesRootId } : {}),
+      projectRootId: rootId,
+      projectId: project.id,
+      idPrefix: 'agent-rules',
+    });
     const taskDocument = task
       ? await catalog.primaryTaskDocumentFragment({
           rootId,
@@ -201,7 +213,7 @@ export class ContextDispatchApplicationService {
           maximumBytes: input.maximumTaskDocumentBytes,
         })
       : { fragment: null, selection: { primary: null, candidates: [], truncatedDirectory: false }, page: null };
-    const fragments = [taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment), ...selectedFragments].filter((fragment): fragment is ContextFragment => fragment !== null);
+    const fragments = [agentRules.fragment, taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment), ...selectedFragments].filter((fragment): fragment is ContextFragment => fragment !== null);
     const requestAccountingInput = normalizeRequestAccounting(input.provider.requestAccounting);
     /** 缩小窗口时只收紧可选资料注入；既有历史交给引擎原生逻辑处理。 */
     const contextWindowTokens = input.provider.contextCapacityTokens ?? input.provider.contextWindowTokens;
@@ -224,6 +236,7 @@ export class ContextDispatchApplicationService {
         budgets: input.budgets,
         watermarks: {
           ...(input.sourceWatermarks ?? {}),
+          'agent_rules.revision': agentRules.fragment?.sourceVersion ?? 'missing',
           'docs.primary': taskDocument.fragment?.sourceVersion ?? (task ? 'missing' : 'not_applicable'),
           'memory.latest': latestMemoryWatermark(memory.selected.map((record) => record.updatedAt)),
           'provider.preflight_token_count': preflightWatermark(input.provider.preflightTokenCount),
@@ -340,8 +353,8 @@ function normalizeSelectedFragments(fragments: ContextFragment[] | undefined): C
   if (fragments === undefined) return [];
   if (!Array.isArray(fragments)) throw dispatchError('ZEUS_CONTEXT_INVALID_ARGUMENT', 'selectedFragments 必须是数组。');
   for (const fragment of fragments) {
-    if (fragment.category === 'safety_boundary' || fragment.category === 'task_document' || fragment.category === 'long_term_memory') {
-      throw dispatchError('ZEUS_CONTEXT_AUTHORITY_SPOOFING', 'selectedFragments 不能覆盖安全边界、任务主文档或长期记忆；这些来源只能由其 owner 组装。');
+    if (isApplicationContextCategory(fragment.category)) {
+      throw dispatchError('ZEUS_CONTEXT_AUTHORITY_SPOOFING', 'selectedFragments 不能覆盖安全边界、全局规则、任务主文档或长期记忆；这些来源只能由其 owner 组装。');
     }
   }
   return fragments;

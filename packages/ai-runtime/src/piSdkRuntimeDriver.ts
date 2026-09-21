@@ -1247,6 +1247,8 @@ function normalizeApplicationContext(input: NonNullable<StartAgentRunInput['appl
     fingerprint,
     manifest: boundedDispatchContext(input.manifest, 'application manifest'),
     content: boundedDispatchContext(input.content, 'application context'),
+    /** 规则片段已由编译器注入时透传标记，Pi 侧据此关闭 AGENTS.md 原生注入。 */
+    ...(input.agentRulesIncluded ? { agentRulesIncluded: true } : {}),
   };
 }
 

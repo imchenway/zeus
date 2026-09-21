@@ -15,6 +15,8 @@ export interface MemoryContextApplicationServiceOptions {
   commandDeliveries: CommandDeliveryRepository;
   getProject(projectId: string): MemoryContextProject | undefined;
   now(): Date;
+  /** 全局规则真源目录；未提供时预览不注入全局规则（与真实派发保持一致地降级）。 */
+  agentRulesDirectory?: string;
 }
 
 export type NewMemoryCandidate = Omit<RecordLongTermMemoryCandidateInput, 'id' | 'recordedAt'>;
@@ -135,7 +137,16 @@ export class MemoryContextApplicationService {
     const asOf = input.asOf ?? this.options.now().toISOString();
     const memory = this.options.memory.resolveForContext({ projectId: project.id, asOf, minimumConfidence: input.minimumMemoryConfidence });
     const rootId = `project:${project.id}`;
-    const catalog = new ContextSourceCatalog([{ id: rootId, path: project.localPath }]);
+    /** 全局规则真源目录作为独立受控根登记，保证预览与真实派发看到同一份规则。 */
+    const globalRulesRootId = 'zeus:agent-rules';
+    const agentRulesRoot = this.options.agentRulesDirectory ? [{ id: globalRulesRootId, path: this.options.agentRulesDirectory }] : [];
+    const catalog = new ContextSourceCatalog([...agentRulesRoot, { id: rootId, path: project.localPath }]);
+    const agentRules = await catalog.agentRulesFragment({
+      ...(agentRulesRoot.length > 0 ? { globalRootId: globalRulesRootId } : {}),
+      projectRootId: rootId,
+      projectId: project.id,
+      idPrefix: 'agent-rules',
+    });
     const taskDocument = await catalog.primaryTaskDocumentFragment({
       rootId,
       projectId: project.id,
@@ -143,7 +154,7 @@ export class MemoryContextApplicationService {
       taskCode: input.taskCode,
       maximumBytes: input.maximumTaskDocumentBytes,
     });
-    const fragments = [taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment)].filter((fragment) => fragment !== null);
+    const fragments = [agentRules.fragment, taskDocument.fragment, ...memory.selected.map(longTermMemoryContextFragment)].filter((fragment) => fragment !== null);
     const compiled = compileContext({
       asOf,
       operationRisk: input.operationRisk,
@@ -152,6 +163,7 @@ export class MemoryContextApplicationService {
       budgets: input.budgets,
       task: { projectId: project.id, taskId: input.taskId, taskCode: input.taskCode.toUpperCase() },
       watermarks: {
+        'agent_rules.revision': agentRules.fragment?.sourceVersion ?? 'missing',
         'docs.primary': taskDocument.fragment?.sourceVersion ?? 'missing',
         'memory.latest': latestMemoryWatermark(memory.selected.map((record) => record.updatedAt)),
       },
@@ -159,7 +171,7 @@ export class MemoryContextApplicationService {
     });
     return {
       preview: true as const,
-      coverage: ['task_document', 'long_term_memory'] as const,
+      coverage: ['agent_rules', 'task_document', 'long_term_memory'] as const,
       compiled,
       rendered: renderCompiledContext(compiled),
       taskDocument: {

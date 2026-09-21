@@ -1,11 +1,32 @@
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { lstat, open, opendir, realpath, stat } from 'node:fs/promises';
+import { lstat, open, opendir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ContextFragment } from './contextCompiler.js';
 
 export const defaultProjectDocumentPageBytes = 64 * 1024;
 export const maximumProjectDocumentPageBytes = 256 * 1024;
+/** 单个规则文件的读取上限；超过即拒绝，避免把超大文件塞进每一轮上下文。 */
+export const maximumAgentRuleBytes = 256 * 1024;
+/** 规则文件名；与运行内核的原生约定保持一致。 */
+export const agentRulesFileName = 'AGENTS.md';
+/** 子目录规则索引的最多条目数，避免每一轮扫描拖慢派发。 */
+const maximumAgentRuleIndexEntries = 64;
+/** 子目录规则索引只向下两级：再深一层已经是局部实现细节，不是项目约定。 */
+const maximumAgentRuleScanDepth = 2;
+/** 规则索引跳过的目录：依赖与构建产物里不会出现需要遵守的项目约定。 */
+const ignoredAgentRuleDirectories = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'vendor']);
+/** 扫描的硬性刹车：即使目录异常膨胀，也不允许无限枚举。 */
+const maximumAgentRuleScanEntries = 4_096;
+
+/** 单个规则文件的最小描述：索引条目只含路径与时间，不含正文。 */
+export interface AgentRuleFileSummary {
+  relativePath: string;
+  byteLength: number;
+  modifiedAt: string;
+  /** 只有读取了正文时才给出内容摘要；索引条目为 null。 */
+  sha256: string | null;
+}
 export interface ContextSourceRoot {
   id: string;
   path: string;
@@ -172,11 +193,128 @@ export class ContextSourceCatalog {
     };
   }
 
+  /**
+   * 组装本轮生效的规则 fragment：全局规则、项目根规则、更深层级规则索引，按“由外向内”拼成一段。
+   *
+   * 刻意合并成单个 fragment：编译器在同一类别内按更新时间排序，拆成多个 fragment 会让全局与项目
+   * 规则的先后顺序随文件修改时间漂移，破坏“项目规则覆盖全局规则”的语义。
+   * 符号链接一律拒绝——真源必须唯一，投影链接只供按文件读取的运行内核使用。
+   */
+  async agentRulesFragment(input: { globalRootId?: string; projectRootId: string; projectId: string; idPrefix: string }): Promise<{
+    fragment: ContextFragment | null;
+    globalFile: AgentRuleFileSummary | null;
+    projectFile: AgentRuleFileSummary | null;
+    indexedRuleCount: number;
+  }> {
+    const globalRoot = input.globalRootId ? this.requireRoot(input.globalRootId) : null;
+    const projectRoot = this.requireRoot(input.projectRootId);
+    const projectId = boundedText(input.projectId, 'projectId', 1, 512);
+    const globalFile = globalRoot ? await readRuleFile(globalRoot, agentRulesFileName) : null;
+    const projectFile = await readRuleFile(projectRoot, agentRulesFileName);
+    const projectPath = await canonicalRoot(projectRoot);
+    const indexed: AgentRuleFileSummary[] = [];
+    await collectAgentRulePaths(projectPath, projectPath, 0, indexed);
+    indexed.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    if (!globalFile && !projectFile && indexed.length === 0) return { fragment: null, globalFile: null, projectFile: null, indexedRuleCount: 0 };
+    const listed = indexed.slice(0, maximumAgentRuleIndexEntries);
+    const sections: string[] = ['# 规则来源与优先级', '', '以下规则由外向内排列：全局规则适用于所有项目，项目规则适用于当前仓库。同一主题冲突时以更靠后的项目规则为准；标题含 Hard boundaries 的条目任何情况下不得违反。'];
+    if (globalFile) sections.push('', '# 全局规则（Zeus）', '', globalFile.content);
+    if (projectFile) sections.push('', '# 项目规则（当前仓库根目录）', '', projectFile.content);
+    if (listed.length > 0) {
+      sections.push('', '# 更深层级的规则文件索引', '', '下面是本仓库中同样生效、但未展开注入的规则文件；修改对应目录前先读取它：', '');
+      for (const entry of listed) sections.push(`- ${entry.relativePath}`);
+      if (indexed.length > listed.length) sections.push(`- （另有 ${indexed.length - listed.length} 个未列出）`);
+    }
+    const content = sections.join('\n');
+    /** 水位取三部分里最新的修改时间：任何一处规则改动都会改变 sourceVersion。 */
+    const modifiedAt = [globalFile?.modifiedAt, projectFile?.modifiedAt, ...indexed.map((entry) => entry.modifiedAt)]
+      .filter((value): value is string => typeof value === 'string')
+      .sort()
+      .at(-1)!;
+    return {
+      globalFile: globalFile ? stripRuleContent(globalFile) : null,
+      projectFile: projectFile ? stripRuleContent(projectFile) : null,
+      indexedRuleCount: indexed.length,
+      fragment: {
+        id: `${input.idPrefix}:${agentRulesFileName}`,
+        category: 'agent_rules',
+        authority: 'project_document',
+        status: 'current',
+        provenance: 'zeus_current',
+        projectId,
+        content,
+        sourceRef: `${globalRoot?.id ?? projectRoot.id}:${agentRulesFileName}`,
+        sourceVersion: `${modifiedAt}:${globalFile?.sha256 ?? 'none'}:${projectFile?.sha256 ?? 'none'}:${indexed.length}`,
+        updatedAt: modifiedAt,
+        dedupeKey: `${input.idPrefix}:${projectId}:${agentRulesFileName}`,
+      },
+    };
+  }
+
   private requireRoot(rootId: string): ContextSourceRoot {
     const id = boundedText(rootId, 'rootId', 1, 256);
     const root = this.roots.get(id);
     if (!root) throw new ContextSourceCatalogError('ZEUS_CONTEXT_SOURCE_ROOT_NOT_FOUND', '受控上下文来源根目录未登记。', { rootId: id });
     return root;
+  }
+}
+
+/** 已读取正文的规则文件。 */
+interface AgentRuleFileContent extends AgentRuleFileSummary {
+  content: string;
+}
+
+/** 去掉正文，只保留可对外暴露的摘要。 */
+function stripRuleContent(file: AgentRuleFileContent): AgentRuleFileSummary {
+  return { relativePath: file.relativePath, byteLength: file.byteLength, modifiedAt: file.modifiedAt, sha256: file.sha256 };
+}
+
+/** 读取受控根目录下的单个规则文件；缺失返回 null，符号链接与超限一律拒绝。 */
+async function readRuleFile(root: ContextSourceRoot, relativePath: string): Promise<AgentRuleFileContent | null> {
+  const rootPath = await canonicalRoot(root);
+  const candidate = resolve(rootPath, relativePath);
+  assertPathInside(rootPath, candidate, root.id);
+  const existing = await lstat(candidate).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  });
+  // 规则文件是可选的：缺失代表该层级没有规则，不是错误。
+  if (!existing) return null;
+  if (existing.isSymbolicLink() || !existing.isFile()) throw pathError('规则来源必须是非符号链接普通文件。', { rootId: root.id, relativePath });
+  if (existing.size > maximumAgentRuleBytes) throw pathError('规则文件超过上下文读取上限。', { rootId: root.id, relativePath, byteLength: existing.size, maximum: maximumAgentRuleBytes });
+  const before = await stat(candidate);
+  const content = await readFile(candidate, 'utf8');
+  const after = await stat(candidate);
+  if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+    throw sourceChanged('规则文件在读取期间发生变化，请重新派发。', { rootId: root.id, relativePath });
+  }
+  /** 去掉 BOM 与首尾空白；只有空白正文等同于没有规则。 */
+  const text = content.replace(/^\uFEFF/u, '').trim();
+  if (text.length === 0) return null;
+  return { relativePath, byteLength: after.size, modifiedAt: after.mtime.toISOString(), sha256: createHash('sha256').update(text, 'utf8').digest('hex'), content: text };
+}
+
+/** 递归收集更深层级的规则文件路径；只记录路径与时间，不读取正文。 */
+async function collectAgentRulePaths(rootPath: string, directory: string, nesting: number, output: AgentRuleFileSummary[]): Promise<void> {
+  if (output.length >= maximumAgentRuleScanEntries) return;
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return [];
+    throw error;
+  });
+  for (const entry of [...entries].sort((left, right) => left.name.localeCompare(right.name))) {
+    if (output.length >= maximumAgentRuleScanEntries) return;
+    if (entry.isSymbolicLink()) continue;
+    const absolute = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (nesting + 1 > maximumAgentRuleScanDepth || entry.name.startsWith('.') || ignoredAgentRuleDirectories.has(entry.name)) continue;
+      await collectAgentRulePaths(rootPath, absolute, nesting + 1, output);
+      continue;
+    }
+    // 根目录自己的规则文件已整份注入，索引只列更深层级，避免同一份内容出现两次。
+    if (nesting === 0) continue;
+    if (!entry.isFile() || entry.name !== agentRulesFileName) continue;
+    const status = await stat(absolute);
+    output.push({ relativePath: toPosixRelative(rootPath, absolute), byteLength: status.size, modifiedAt: status.mtime.toISOString(), sha256: null });
   }
 }
 

@@ -64,7 +64,7 @@ try {
     const agentsAudit: unknown[] = [];
     registerGlobalAgentSettingsRoutes({
       server: agentsServer,
-      codexHome: agentsRoot,
+      agentRulesDirectory: agentsRoot,
       commands: application,
       redactSensitiveText,
       recordSaved: (metadata) => {
