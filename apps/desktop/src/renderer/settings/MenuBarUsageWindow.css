@@ -527,7 +527,7 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
-.menu-bar-usage-account-card + .menu-bar-usage-metrics {
+.menu-bar-usage-overview {
   border-block-start: 1px solid var(--usage-line);
 }
 
@@ -1176,4 +1176,173 @@ body:has(.menu-bar-usage-root),
   .menu-bar-usage-root *::after {
     transition: none !important;
   }
+}
+
+/* 用量概览：标题、指标多选与指标网格共处一栏，与柱图共享同一块底色。 */
+.menu-bar-usage-overview {
+  display: grid;
+  gap: 0;
+  border-block-start: 1px solid var(--usage-line);
+  background: var(--usage-panel);
+}
+
+.menu-bar-usage-overview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 24px;
+  padding-block-start: var(--usage-space-2, 8px);
+}
+
+.menu-bar-usage-overview-head h3 {
+  margin: 0;
+  margin-inline-end: auto;
+  color: var(--usage-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* 指标入口只用名称和箭头，点击区域保持 24px 便于触控。 */
+.menu-bar-usage-metrics-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-block-size: 24px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-pill, 999px);
+  background: var(--usage-panel-strong);
+  color: var(--usage-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.menu-bar-usage-metrics-trigger svg {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.menu-bar-usage-metrics-trigger:hover {
+  border-color: var(--usage-accent-border);
+  background: var(--zeus-brand-hover);
+  color: var(--usage-text);
+}
+
+/* 多选面板挂在 popover 顶层，不被浮窗滚动区裁切；向左下展开保证始终留在 360px 浮窗内。 */
+.menu-bar-usage-metrics-menu[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 4px 0;
+  inline-size: max-content;
+  min-inline-size: 148px;
+  max-inline-size: calc(100vw - 24px);
+  max-block-size: 252px;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-control, 8px);
+  background: var(--usage-panel-strong);
+  box-shadow: var(--usage-shadow-soft);
+  color: var(--usage-text);
+  position-area: bottom span-left;
+  position-try-fallbacks: flip-block, flip-inline;
+}
+
+.menu-bar-usage-metrics-menu:popover-open {
+  display: grid;
+  gap: 2px;
+}
+
+/* 复选框保留原生语义与键盘行为，只收敛成紧凑的一行。 */
+.menu-bar-usage-metrics-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-block-size: 24px;
+  padding-inline: 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.menu-bar-usage-metrics-option:hover {
+  background: var(--zeus-brand-hover);
+}
+
+.menu-bar-usage-metrics-option input {
+  inline-size: 13px;
+  block-size: 13px;
+  flex: 0 0 13px;
+  margin: 0;
+  accent-color: var(--usage-accent);
+}
+
+/* 柱图图注同时容纳来源、维度切换与七日均值，间距按 4px 阶梯收敛。 */
+.menu-bar-usage-bars figcaption {
+  position: relative;
+  gap: var(--usage-space-1, 4px);
+}
+
+/* 原生 title 在无边框透明浮窗里不显示，改为随悬浮或键盘焦点出现的真实气泡。 */
+.menu-bar-usage-source-hint {
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 0;
+  z-index: 2;
+  inline-size: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-control, 8px);
+  background: var(--usage-panel-strong);
+  box-shadow: var(--usage-shadow-soft);
+  color: var(--usage-text);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: start;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.menu-bar-usage-chart-source:hover .menu-bar-usage-source-hint,
+.menu-bar-usage-chart-source:focus-within .menu-bar-usage-source-hint {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 分段控件保持紧凑，选中态只用品牌浅底和描边区分，边框常驻避免切换时跳动。 */
+.menu-bar-usage-dimension {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-pill, 999px);
+  background: var(--usage-panel);
+}
+
+.menu-bar-usage-dimension button {
+  min-block-size: 20px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--usage-radius-pill, 999px);
+  background: transparent;
+  color: var(--usage-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.menu-bar-usage-dimension button[aria-pressed='true'] {
+  border-color: var(--usage-accent-border);
+  background: var(--usage-accent-soft);
+  color: var(--usage-accent-strong);
 }
