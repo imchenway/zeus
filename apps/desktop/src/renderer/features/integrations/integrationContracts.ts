@@ -23,7 +23,11 @@ export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kim
 
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 
+/** Pi 认识的七个档位词，只作为 Zeus 内部的中转词；界面显示的是用户词。 */
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** 档位清单的来源，决定界面标签和这份清单有多可信。 */
+export type ModelReasoningBasis = 'official_endpoint' | 'catalog' | 'catalog_default' | 'model_name' | 'user' | 'unidentified';
 
 export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
@@ -55,15 +59,17 @@ export interface ModelConnectionModel {
   protocolFamily: ModelProtocolFamily;
   authenticationScheme: ModelAuthenticationScheme;
   capability: {
+    /**
+     * 推理档位清单：用户词（id）、Pi 中转词（piLevel）、线上取值（wire）三件事分开记，
+     * 界面显示 id，Pi 收到 piLevel，厂商收到 wire。
+     */
     reasoning: {
       state: ModelCapabilityState;
-      levels: ModelThinkingLevel[];
-      defaultLevel: ModelThinkingLevel;
+      options: { id: string; label?: string | null; piLevel: ModelThinkingLevel; wire: string | null }[];
+      defaultId: string | null;
       thinkingFormat: ModelThinkingFormat;
-      levelMap: Partial<Record<ModelThinkingLevel, string | null>>;
-      source: ModelCapabilityEvidence['source'];
+      basis: ModelReasoningBasis;
       checkedAt: string | null;
-      reason: string;
     };
     tools: ModelCapabilityEvidence;
     imageInput: ModelCapabilityEvidence;
@@ -135,8 +141,9 @@ export interface SelectablePiModel {
   available: boolean;
   supports1MContext: boolean;
   availabilityReason: string;
-  supportedReasoningEfforts: ModelThinkingLevel[];
-  defaultReasoningEffort: ModelThinkingLevel | null;
+  /** 用户可见的档位（厂商口径的词），界面直接显示这些。 */
+  supportedReasoningEfforts: string[];
+  defaultReasoningEffort: string | null;
   serviceTiers: [];
   defaultServiceTier: null;
   speedLabel: ModelConnectionModel['speedLabel'];
@@ -146,6 +153,31 @@ export interface SelectablePiModel {
   runtimeAdapter: 'pi_sdk';
   protocolFamily: ModelProtocolFamily;
   authenticationScheme: ModelAuthenticationScheme;
+}
+
+/** 用户手工覆盖档位时提交的一项。 */
+export interface ModelReasoningOverrideOption {
+  id: string;
+  label?: string | null;
+  piLevel: ModelThinkingLevel;
+  wire: string | null;
+}
+
+/** 逐档体检的单条观测结果。 */
+export interface ModelReasoningAuditEntry {
+  id: string;
+  piLevel: ModelThinkingLevel;
+  wire: string | null;
+  ok: boolean;
+  failure: string | null;
+  thinkingSeen: boolean;
+  reasoningTokens: number | null;
+}
+
+export interface ModelReasoningAuditResult {
+  modelId: string;
+  entries: ModelReasoningAuditEntry[];
+  verdict: string;
 }
 
 export interface SecurityAuditLogEntry {

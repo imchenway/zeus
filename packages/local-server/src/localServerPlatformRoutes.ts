@@ -3328,6 +3328,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return { password };
   });
 
+  // API Key 查看沿用禅道密码的同一条独立读取入口：只有用户主动点开才读取，
+  // 不进入缓存、命令回执或审计明文，隐藏后立即丢弃。
+  server.get('/api/model-connections/:connectionId/api-key', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const apiKey = await modelConnections.revealApiKey(request.params.connectionId);
+    appendAuditLog({ actorType: 'local_api', action: 'model.connection.api_key.viewed', resourceType: 'model_connection', resourceId: request.params.connectionId, payload: {} });
+    return { apiKey };
+  });
+
+  // 最近一次实际发送：只读配置证据，让用户能自证「界面显示的 = 真发出去的」。
+  server.get('/api/model-connections/:connectionId/models/:modelId/last-sent', async (request: FastifyRequest<{ Params: { connectionId: string; modelId: string } }>) => {
+    const record = conversationExecution.latestReasoningConfiguration(request.params.connectionId, request.params.modelId);
+    return { effort: record?.effort ?? null, observedAt: record?.observedAt ?? null };
+  });
+
   server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
 
   registerIntegrationCommandRoutes({

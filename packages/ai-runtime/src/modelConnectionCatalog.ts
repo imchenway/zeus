@@ -25,17 +25,55 @@ export interface ModelCapabilityEvidence {
   reason: string;
 }
 
+/** 推理档位清单的来源；同时决定界面标签和这份清单有多可信。 */
+export type ReasoningProfileBasis =
+  /** 官方端点声明：按厂商文档核对过的清单，最可信。 */
+  | 'official_endpoint'
+  /** 内置目录明确声明了档位映射。 */
+  | 'catalog'
+  /** 目录只标了「会思考」、没给档位映射，档位是 Pi 自己推出来的默认假设。 */
+  | 'catalog_default'
+  /** 按模型名推断出所属家族（第三方中转场景），未验证。 */
+  | 'model_name'
+  /** 用户在模型配置里手工指定。 */
+  | 'user'
+  /** 认不出：没有档位清单，界面不给下拉，请求不发任何档位字段。 */
+  | 'unidentified';
+
+/**
+ * 推理档位清单里的一项，三个字段是三件不同的事：
+ * 用户看到并存储在配置里的词（id）、Zeus 内部交给 Pi 的中转词（piLevel）、
+ * 以及真正写进请求发给厂商的取值（wire）。
+ */
+export interface ConfiguredReasoningOption {
+  /** 用户词，也是存储值；用厂商口径，例如 low / high / max / ultra。 */
+  id: string;
+  /** 可选的本地化显示名；缺省时界面直接显示 id。 */
+  label?: string | null;
+  /** Zeus 内部中转词，必须是 Pi 认识的七个之一。 */
+  piLevel: PiThinkingLevel;
+  /** 真正写进请求的取值；null 表示这个档位不发送任何取值字段。 */
+  wire: string | null;
+}
+
+/**
+ * 一个模型的推理档位清单。
+ * 喂给 Pi 的档位集合（levels）、默认档、线上取值映射全部由它派生，不再单独维护，避免两边漂移。
+ */
+export interface ConfiguredReasoningProfile {
+  state: ModelCapabilityState;
+  /** 用户可见的档位清单，顺序即界面顺序；为空表示未识别。 */
+  options: ConfiguredReasoningOption[];
+  /** 默认档位的 id；未识别时为 null。 */
+  defaultId: string | null;
+  thinkingFormat: OpenAiThinkingFormat;
+  basis: ReasoningProfileBasis;
+  /** 真机观测时间；只有能力探测会写，档位清单的重算不会覆盖它。 */
+  checkedAt: string | null;
+}
+
 export interface ConfiguredModelCapability {
-  reasoning: {
-    state: ModelCapabilityState;
-    levels: PiThinkingLevel[];
-    defaultLevel: PiThinkingLevel;
-    thinkingFormat: OpenAiThinkingFormat;
-    levelMap: Partial<Record<PiThinkingLevel, string | null>>;
-    source: ModelCapabilityEvidence['source'];
-    checkedAt: string | null;
-    reason: string;
-  };
+  reasoning: ConfiguredReasoningProfile;
   tools: ModelCapabilityEvidence;
   imageInput: ModelCapabilityEvidence;
   streaming: ModelCapabilityEvidence;
@@ -90,6 +128,15 @@ export interface SaveModelConnectionInput {
   models?: ConfiguredModelDefinition[];
 }
 
+/**
+ * 判定推理档位清单需要的连接身份。
+ * 模型 ID 和协议形态由调用方按每个模型补齐，因为同一个连接里可以混着不同协议族的模型。
+ */
+export interface ModelReasoningRoute {
+  templateId: ModelConnectionTemplateId;
+  baseUrl: string;
+}
+
 export interface SelectableConnectionModel {
   id: string;
   model: string;
@@ -100,8 +147,10 @@ export interface SelectableConnectionModel {
   enabled: boolean;
   available: boolean;
   availabilityReason: string;
-  supportedReasoningEfforts: PiThinkingLevel[];
-  defaultReasoningEffort: PiThinkingLevel | null;
+  /** 用户可见的推理档位（厂商口径的 id），界面直接显示这些词。 */
+  supportedReasoningEfforts: string[];
+  /** 默认档位的 id；未识别时为 null。 */
+  defaultReasoningEffort: string | null;
   serviceTiers: [];
   defaultServiceTier: null;
   speedLabel: ConfiguredModelDefinition['speedLabel'];
@@ -118,6 +167,8 @@ export interface SelectableConnectionModel {
 const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const thinkingFormats = new Set<OpenAiThinkingFormat>(['openai', 'openrouter', 'deepseek', 'together', 'zai', 'qwen', 'qwen-chat-template', 'string-thinking', 'ant-ling']);
 const capabilityStates = new Set<ModelCapabilityState>(['supported', 'unsupported', 'unverified']);
+/** 档位清单来源的合法取值，非法值一律当未识别处理。 */
+const reasoningProfileBases = new Set<ReasoningProfileBasis>(['official_endpoint', 'catalog', 'catalog_default', 'model_name', 'user', 'unidentified']);
 const speedLabels = new Set<ConfiguredModelDefinition['speedLabel']>(['standard', 'high_speed', 'flash', 'turbo']);
 const automaticModelCatalogs: Record<ModelConnectionTemplateId, Readonly<Record<string, Model<Api>>>> = {
   custom: normalizeModelCatalog(OPENCODE_MODELS),
@@ -176,7 +227,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -257,8 +308,8 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         enabled: connection.enabled && model.enabled,
         available: available && tools !== 'unsupported',
         availabilityReason,
-        supportedReasoningEfforts: model.capability.reasoning.state === 'supported' ? [...model.capability.reasoning.levels] : [],
-        defaultReasoningEffort: model.capability.reasoning.state === 'supported' ? model.capability.reasoning.defaultLevel : null,
+        supportedReasoningEfforts: model.capability.reasoning.options.map((option) => option.id),
+        defaultReasoningEffort: model.capability.reasoning.defaultId,
         serviceTiers: [] as [],
         defaultServiceTier: null,
         speedLabel: model.speedLabel,
@@ -293,13 +344,12 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
         ({
           reasoning: {
             state: 'unverified',
-            levels: ['off'],
-            defaultLevel: 'off',
+            // 未识别：没有档位清单，界面不给下拉，请求也不发任何档位字段。
+            options: [],
+            defaultId: null,
             thinkingFormat,
-            levelMap: { off: null },
-            source: 'catalog',
+            basis: 'unidentified',
             checkedAt: null,
-            reason: '模型目录只证明 ID 存在，待 Zeus 自动识别能力。',
           },
           tools: evidence('unverified', 'catalog', '模型目录未提供工具能力证据，等待真实工具闭环探针。'),
           imageInput: evidence('unverified', 'catalog', '模型目录未提供图片能力证据，等待真实图片输入探针。'),
@@ -324,24 +374,31 @@ export interface DiscoveredModelSyncResult {
  * 已存在的模型保留原有启用状态与手动配置；新发现的模型只进入候选池、默认停用，
  * 等待用户在分组下拉中显式勾选启用；接口不再返回的模型从候选池移除。
  */
-export function syncDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat, templateId: ModelConnectionTemplateId = 'custom'): DiscoveredModelSyncResult {
+export function syncDiscoveredModels(
+  existing: readonly ConfiguredModelDefinition[],
+  modelIds: readonly string[],
+  thinkingFormat: OpenAiThinkingFormat,
+  route: ModelReasoningRoute = { templateId: 'custom', baseUrl: '' },
+): DiscoveredModelSyncResult {
   const previousById = new Map(existing.map((model) => [model.id, model]));
   const normalizedIds = [...new Set(modelIds.map((rawId) => rawId.trim()).filter((id) => id.length > 0))].slice(0, 200);
   const nextIds = new Set(normalizedIds);
   const addedModelIds: string[] = [];
   const models = normalizedIds.map((id) => {
     const previous = previousById.get(id);
-    if (previous) return applyAutomaticCapabilityProfile(previous, templateId);
+    if (previous) return applyAutomaticCapabilityProfile(previous, { ...route, protocolFamily: previous.protocolFamily });
     addedModelIds.push(id);
-    return applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, { enabled: false }, thinkingFormat), templateId);
+    const created = createConfiguredModelDefinition(id, { enabled: false }, thinkingFormat);
+    return applyAutomaticCapabilityProfile(created, { ...route, protocolFamily: created.protocolFamily });
   });
   const removedModelIds = existing.filter((model) => !nextIds.has(model.id)).map((model) => model.id);
   return { models, addedModelIds, removedModelIds };
 }
 
-export function createTemplateConfiguredModelDefinition(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
-  const thinkingFormat = templateId === 'custom' ? 'openai' : modelConnectionTemplates[templateId].thinkingFormat;
-  return applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId);
+export function createTemplateConfiguredModelDefinition(id: string, route: ModelReasoningRoute): ConfiguredModelDefinition {
+  const thinkingFormat = route.templateId === 'custom' ? 'openai' : modelConnectionTemplates[route.templateId].thinkingFormat;
+  const created = createConfiguredModelDefinition(id, {}, thinkingFormat);
+  return applyAutomaticCapabilityProfile(created, { ...route, protocolFamily: created.protocolFamily });
 }
 
 export function modelConnectionSecretAccount(connectionId: string): string {
@@ -410,84 +467,212 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, protocolFamily, authenticationScheme, capability };
 }
 
-/** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */
-function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
-  const normalizedId = model.id.toLowerCase();
-  const baseModel = discardManualCapabilityClaims(model);
-  const catalogModel = automaticModelCatalogs[templateId][normalizedId];
-  if (catalogModel) {
-    const levels = getSupportedThinkingLevels(catalogModel) as PiThinkingLevel[];
-    const reasoningState: ModelCapabilityState = catalogModel.reasoning ? 'supported' : 'unsupported';
-    const effectiveLevels: PiThinkingLevel[] = reasoningState === 'supported' ? levels : ['off'];
-    const defaultLevel = preferredCatalogReasoningLevel(normalizedId, effectiveLevels);
-    const levelMap: Partial<Record<PiThinkingLevel, string | null>> = {};
-    for (const level of effectiveLevels) levelMap[level] = catalogModel.thinkingLevelMap?.[level] ?? level;
-    const catalogEvidence = (state: ModelCapabilityState, reason: string): ModelCapabilityEvidence => ({ source: 'catalog', state, checkedAt: null, reason });
-    return {
-      ...baseModel,
-      displayName: catalogModel.name,
-      // 已知模型采用 Pi 自带目录的窗口，清除旧界面统一生成的 256K 假定。
-      contextWindow: catalogModel.contextWindow,
-      contextWindowSource: 'catalog',
-      maxTokens: Math.min(baseModel.maxTokens, catalogModel.contextWindow),
-      supports1MContext: catalogModel.contextWindow >= 1_000_000,
-      capability: {
-        ...baseModel.capability,
-        reasoning:
-          baseModel.capability.reasoning.source === 'probe'
-            ? baseModel.capability.reasoning
-            : {
-                state: reasoningState,
-                levels: effectiveLevels,
-                defaultLevel,
-                thinkingFormat: catalogThinkingFormat(catalogModel, baseModel.capability.reasoning.thinkingFormat),
-                levelMap,
-                source: 'catalog',
-                checkedAt: null,
-                reason: '由 Zeus 内置模型目录自动识别；当前第三方接入渠道仍需真实运行验证。',
-              },
-        imageInput:
-          baseModel.capability.imageInput.source === 'probe'
-            ? baseModel.capability.imageInput
-            : catalogEvidence(catalogModel.input.includes('image') ? 'supported' : 'unsupported', `模型目录声明${catalogModel.input.includes('image') ? '支持' : '不支持'}图片输入；当前接入渠道待真实运行验证。`),
-      },
-    };
-  }
-  return baseModel;
+/** 档位清单的判定入参：连接身份 + 模型 ID + 协议形态。 */
+interface ReasoningRoute {
+  templateId: ModelConnectionTemplateId;
+  baseUrl: string;
+  modelId: string;
+  protocolFamily: ModelProtocolFamily;
+  thinkingFormat: OpenAiThinkingFormat;
 }
 
-/** 旧版界面留下的手工能力声明不再参与运行；只有目录、模板或真实探针可以形成能力证据。 */
+/** 内置家族预设：模型 ID 里出现任一关键字即命中，先到先得。 */
+interface ReasoningPreset {
+  keywords: readonly string[];
+  levels: readonly PiThinkingLevel[];
+  defaultLevel: PiThinkingLevel;
+}
+
+/**
+ * 首批内置家族预设。加一行就支持一个新厂商；
+ * 用户看到的档位词默认与 Pi 的中转词同名，需要发别的取值时给该档位单独写 wire。
+ */
+const reasoningPresets: readonly ReasoningPreset[] = [
+  { keywords: ['deepseek'], levels: ['low', 'high', 'max'], defaultLevel: 'high' },
+  { keywords: ['kimi', 'moonshot'], levels: ['low', 'high', 'max'], defaultLevel: 'high' },
+  { keywords: ['qwen', 'tongyi'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
+  { keywords: ['glm', 'zhipu', 'zai'], levels: ['high', 'max'], defaultLevel: 'high' },
+  { keywords: ['gpt-', 'codex'], levels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  { keywords: ['claude', 'fable'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
+  { keywords: ['gemini', 'gemma'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
+  { keywords: ['grok'], levels: ['low', 'medium', 'high'], defaultLevel: 'medium' },
+];
+
+/**
+ * 明显不是对话/推理模型的品类关键字：图像、视频、语音、向量、检索等。
+ * 这些模型本来就没有推理档位，绝不能因为名字里有某个厂商关键字就硬套一份家族清单。
+ */
+const nonChatModelKeywords = ['image', 'imagine', 'video', 'veo', 'seedance', 'vidu', 'hailuo', 'kling', 'sora', 'tts', 'asr', 'whisper', 'audio', 'embedding', 'embed', 'rerank', 'ocr', 'flux', 'nano_banana'];
+
+/** 把一组 Pi 档位词变成「同名直传」的档位清单：用户词、Pi 中转词、线上取值三者相同。 */
+function sameNameReasoningOptions(levels: readonly PiThinkingLevel[]): ConfiguredReasoningOption[] {
+  return levels.map((level) => ({ id: level, label: null, piLevel: level, wire: level }));
+}
+
+/** 官方 DeepSeek 端点档案：依据官方 Thinking Mode 文档（2026-09-21 核对），档位就是 low/high/max。 */
+const officialDeepSeekReasoningOptions = sameNameReasoningOptions(['low', 'high', 'max']);
+
+/**
+ * 判定一个模型该用哪份推理档位清单，命中即止：
+ * 用户手工指定 → 官方端点档案 → 内置目录 → 家族预设 → 未识别。
+ */
+function resolveReasoningProfile(model: ConfiguredModelDefinition, route: ReasoningRoute): ConfiguredReasoningProfile {
+  const stored = model.capability.reasoning;
+  // 真机观测时间不参与档位判定，只跟着走：档位清单可以重算，观测事实不能被抹掉。
+  const observedAt = stored.checkedAt;
+  if (stored.basis === 'user' && stored.options.length > 0) return { ...stored, state: 'supported' };
+  const normalizedId = route.modelId.toLowerCase();
+  if (isOfficialDeepSeekApiConnection(route)) {
+    return {
+      state: 'supported',
+      options: officialDeepSeekReasoningOptions.map((option) => ({ ...option })),
+      defaultId: 'high',
+      thinkingFormat: 'deepseek',
+      basis: 'official_endpoint',
+      checkedAt: observedAt,
+    };
+  }
+  const catalogProfile = catalogReasoningProfile(automaticModelCatalogs[route.templateId][normalizedId], normalizedId, route, observedAt);
+  if (catalogProfile) return catalogProfile;
+  // 图像、视频、语音这类模型没有推理档位，不参与家族推断，直接按未识别处理。
+  const nonChat = nonChatModelKeywords.some((keyword) => normalizedId.includes(keyword));
+  for (const preset of nonChat ? [] : reasoningPresets) {
+    if (!preset.keywords.some((keyword) => normalizedId.includes(keyword))) continue;
+    return {
+      state: 'supported',
+      options: sameNameReasoningOptions(preset.levels),
+      defaultId: preset.defaultLevel,
+      thinkingFormat: route.thinkingFormat,
+      basis: 'model_name',
+      checkedAt: observedAt,
+    };
+  }
+  // 认不出就不编：空清单表示界面不给下拉、请求不发任何档位字段，由服务端按自己的默认跑。
+  return { state: 'unverified', options: [], defaultId: null, thinkingFormat: route.thinkingFormat, basis: 'unidentified', checkedAt: observedAt };
+}
+
+/** 内置目录命中的档位清单；目录没声明推理能力时返回「不支持」，没命中返回 null。 */
+function catalogReasoningProfile(catalogModel: Model<Api> | undefined, normalizedId: string, route: ReasoningRoute, observedAt: string | null): ConfiguredReasoningProfile | null {
+  if (!catalogModel) return null;
+  if (!catalogModel.reasoning) return { state: 'unsupported', options: [], defaultId: null, thinkingFormat: route.thinkingFormat, basis: 'catalog', checkedAt: observedAt };
+  const declared = catalogModel.thinkingLevelMap ?? {};
+  const options: ConfiguredReasoningOption[] = [];
+  for (const level of getSupportedThinkingLevels(catalogModel) as PiThinkingLevel[]) {
+    const declaredWire = declared[level];
+    // off 在 Anthropic 协议上是真的关闭思考；其它协议只有在目录给了明确取值时才算数。
+    const offIsReal = typeof declaredWire === 'string' || route.protocolFamily === 'anthropic_messages';
+    if (level === 'off' && !offIsReal) continue;
+    const wire = typeof declaredWire === 'string' ? declaredWire : level === 'off' ? null : level;
+    options.push({ id: level, label: null, piLevel: level, wire });
+  }
+  if (options.length === 0) return { state: 'unsupported', options: [], defaultId: null, thinkingFormat: route.thinkingFormat, basis: 'catalog', checkedAt: observedAt };
+  const preferredLevel = preferredCatalogReasoningLevel(
+    normalizedId,
+    options.map((option) => option.piLevel),
+  );
+  const defaultOption = options.find((option) => option.piLevel === preferredLevel) ?? options[0]!;
+  return {
+    state: 'supported',
+    options,
+    defaultId: defaultOption.id,
+    thinkingFormat: catalogThinkingFormat(catalogModel, route.thinkingFormat),
+    // 目录没给任何档位映射时，档位是 Pi 自己推出来的默认假设，可信度要降一档。
+    basis: Object.keys(declared).length > 0 ? 'catalog' : 'catalog_default',
+    checkedAt: observedAt,
+  };
+}
+
+/** 目录命中时的默认档偏好：优先中档，gpt-5.6-sol 例外取 low。 */
+function preferredCatalogReasoningLevel(modelId: string, levels: readonly PiThinkingLevel[]): PiThinkingLevel {
+  const preferences: PiThinkingLevel[] = modelId === 'gpt-5.6-sol' ? ['low', 'medium', 'high', 'off'] : ['medium', 'high', 'low', 'off'];
+  return preferences.find((level) => levels.includes(level)) ?? levels[0]!;
+}
+
+/** 判断是不是 Pi 认识的档位词；用户手工覆盖档位时用它校验输入。 */
+export function isPiThinkingLevel(value: unknown): value is PiThinkingLevel {
+  return thinkingLevels.has(value as PiThinkingLevel);
+}
+
+/** 清单 → 喂给 Pi 的档位集合；两边同源，界面能给出来的档位 Pi 一定认识。 */
+export function reasoningPiLevels(profile: ConfiguredReasoningProfile): PiThinkingLevel[] {
+  return profile.options.map((option) => option.piLevel);
+}
+
+/** 清单 → Pi 的档位取值映射；不在清单里的档位一律 null，Pi 会当成不可用。 */
+export function reasoningLevelMap(profile: ConfiguredReasoningProfile): Partial<Record<PiThinkingLevel, string | null>> {
+  const map: Partial<Record<PiThinkingLevel, string | null>> = {};
+  for (const level of thinkingLevels) map[level] = null;
+  const seen = new Set<PiThinkingLevel>();
+  for (const option of profile.options) {
+    // 同一清单里 piLevel 必须唯一：Pi 的映射表按档位索引，重复会互相覆盖，重复时以先出现的为准。
+    if (seen.has(option.piLevel)) continue;
+    seen.add(option.piLevel);
+    map[option.piLevel] = option.wire;
+  }
+  return map;
+}
+
+/** 清单 → 默认档的 Pi 词；未识别时为 null。 */
+export function reasoningDefaultPiLevel(profile: ConfiguredReasoningProfile): PiThinkingLevel | null {
+  const preferred = profile.options.find((option) => option.id === profile.defaultId) ?? profile.options[0];
+  return preferred?.piLevel ?? null;
+}
+
+/**
+ * 用户词 → Pi 档位词。
+ * 认不出或没传时回落到清单默认档；清单为空（未识别）返回 null，调用方不要设置档位。
+ */
+export function resolvePiThinkingLevel(profile: ConfiguredReasoningProfile, requestedId?: string | null): PiThinkingLevel | null {
+  const requested = typeof requestedId === 'string' ? requestedId.trim() : '';
+  if (requested) {
+    const hit = profile.options.find((option) => option.id === requested);
+    if (hit) return hit.piLevel;
+  }
+  return reasoningDefaultPiLevel(profile);
+}
+
+/** 按连接身份和模型重新判定档位清单，同时保留目录给出的窗口等非档位信息。 */
+function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, route: Pick<ReasoningRoute, 'templateId' | 'baseUrl' | 'protocolFamily'>): ConfiguredModelDefinition {
+  const baseModel = discardManualCapabilityClaims(model);
+  const reasoning = resolveReasoningProfile(baseModel, { ...route, modelId: baseModel.id, thinkingFormat: baseModel.capability.reasoning.thinkingFormat });
+  const catalogModel = automaticModelCatalogs[route.templateId][baseModel.id.toLowerCase()];
+  if (!catalogModel) return { ...baseModel, capability: { ...baseModel.capability, reasoning } };
+  const catalogEvidence = (state: ModelCapabilityState, reason: string): ModelCapabilityEvidence => ({ source: 'catalog', state, checkedAt: null, reason });
+  return {
+    ...baseModel,
+    displayName: catalogModel.name,
+    // 已知模型采用 Pi 自带目录的窗口，清除旧界面统一生成的 256K 假定。
+    contextWindow: catalogModel.contextWindow,
+    contextWindowSource: 'catalog',
+    maxTokens: Math.min(baseModel.maxTokens, catalogModel.contextWindow),
+    supports1MContext: catalogModel.contextWindow >= 1_000_000,
+    capability: {
+      ...baseModel.capability,
+      reasoning,
+      imageInput:
+        baseModel.capability.imageInput.source === 'probe'
+          ? baseModel.capability.imageInput
+          : catalogEvidence(catalogModel.input.includes('image') ? 'supported' : 'unsupported', `模型目录声明${catalogModel.input.includes('image') ? '支持' : '不支持'}图片输入；当前接入渠道待真实运行验证。`),
+    },
+  };
+}
+
+/**
+ * 旧版界面留下的手工能力声明不再参与运行；工具、图片等证据只有目录、模板或真实探针可以形成。
+ * 推理档位不在这里清除：用户手工指定的清单优先级最高，由 resolveReasoningProfile 保留。
+ */
 function discardManualCapabilityClaims(model: ConfiguredModelDefinition): ConfiguredModelDefinition {
-  const reasoning = model.capability.reasoning;
   const resetEvidence = (value: ModelCapabilityEvidence, reason: string): ModelCapabilityEvidence => (value.source === 'manual' ? evidence('unverified', 'catalog', reason) : value);
   return {
     ...model,
     capability: {
       ...model.capability,
-      reasoning:
-        reasoning.source === 'manual'
-          ? {
-              state: 'unverified',
-              levels: ['off'],
-              defaultLevel: 'off',
-              thinkingFormat: reasoning.thinkingFormat,
-              levelMap: { off: null },
-              source: 'catalog',
-              checkedAt: null,
-              reason: '旧版手工声明已停用，待 Zeus 自动识别推理能力。',
-            }
-          : reasoning,
       tools: resetEvidence(model.capability.tools, '旧版手工声明已停用，等待真实工具闭环探针。'),
       imageInput: resetEvidence(model.capability.imageInput, '旧版手工声明已停用，等待真实图片输入探针。'),
       streaming: resetEvidence(model.capability.streaming, '旧版手工声明已停用，等待真实流式输出探针。'),
       usage: resetEvidence(model.capability.usage, '旧版手工声明已停用，等待真实用量字段探针。'),
     },
   };
-}
-
-function preferredCatalogReasoningLevel(modelId: string, levels: readonly PiThinkingLevel[]): PiThinkingLevel {
-  const preferences: PiThinkingLevel[] = modelId === 'gpt-5.6-sol' ? ['low', 'medium', 'high', 'off'] : ['medium', 'high', 'low', 'off'];
-  return preferences.find((level) => levels.includes(level)) ?? levels[0]!;
 }
 
 function normalizeModelCatalog(catalog: object): Readonly<Record<string, Model<Api>>> {
@@ -502,42 +687,65 @@ function catalogThinkingFormat(model: Model<Api>, fallback: OpenAiThinkingFormat
 
 function normalizeCapability(value: ConfiguredModelCapability, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelCapability {
   const capabilitySource: Record<string, unknown> = isRecord(value) ? value : {};
-  const reasoningSource: Record<string, unknown> = isRecord(capabilitySource.reasoning) ? capabilitySource.reasoning : {};
-  const reasoningState = normalizeCapabilityState(reasoningSource.state);
-  const levels: PiThinkingLevel[] = [];
-  if (Array.isArray(reasoningSource.levels)) {
-    for (const item of reasoningSource.levels) {
-      if (thinkingLevels.has(item as PiThinkingLevel) && !levels.includes(item as PiThinkingLevel)) levels.push(item as PiThinkingLevel);
-    }
-  }
-  const effectiveLevels: PiThinkingLevel[] = reasoningState === 'supported' && levels.length > 0 ? levels : ['off'];
-  const requestedDefault = thinkingLevels.has(reasoningSource.defaultLevel as PiThinkingLevel) ? (reasoningSource.defaultLevel as PiThinkingLevel) : effectiveLevels[0]!;
-  const defaultLevel = effectiveLevels.includes(requestedDefault) ? requestedDefault : effectiveLevels[0]!;
-  const thinkingFormat = thinkingFormats.has(reasoningSource.thinkingFormat as OpenAiThinkingFormat) ? (reasoningSource.thinkingFormat as OpenAiThinkingFormat) : fallbackThinkingFormat;
-  const levelMapSource = isRecord(reasoningSource.levelMap) ? reasoningSource.levelMap : {};
-  const levelMap: Partial<Record<PiThinkingLevel, string | null>> = {};
-  for (const level of thinkingLevels) {
-    const mapped = levelMapSource[level];
-    if (mapped === null || typeof mapped === 'string') levelMap[level] = mapped;
-    else if (effectiveLevels.includes(level)) levelMap[level] = level;
-  }
-  const reasoningEvidenceSource = reasoningSource.source === 'template' || reasoningSource.source === 'catalog' || reasoningSource.source === 'probe' ? reasoningSource.source : 'manual';
   return {
-    reasoning: {
-      state: reasoningState,
-      levels: effectiveLevels,
-      defaultLevel,
-      thinkingFormat,
-      levelMap,
-      source: reasoningEvidenceSource,
-      checkedAt: normalizeIsoDate(reasoningSource.checkedAt),
-      reason: typeof reasoningSource.reason === 'string' && reasoningSource.reason.trim() ? reasoningSource.reason.trim().slice(0, 500) : '待 Zeus 自动识别推理能力。',
-    },
+    reasoning: normalizeReasoningProfile(capabilitySource.reasoning, fallbackThinkingFormat),
     tools: normalizeEvidence(capabilitySource.tools, '等待真实工具闭环探针。'),
     imageInput: normalizeEvidence(capabilitySource.imageInput, '等待真实图片输入探针。'),
     streaming: normalizeEvidence(capabilitySource.streaming, '等待真实流式输出探针。'),
     usage: normalizeEvidence(capabilitySource.usage, '等待真实用量字段探针。'),
   };
+}
+
+/**
+ * 归一推理档位清单，只做结构与合法性检查。
+ * 「这个模型该用哪份清单」由 resolveReasoningProfile 判定；这里不许编造档位，读不出来就是未识别。
+ */
+function normalizeReasoningProfile(value: unknown, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredReasoningProfile {
+  const source: Record<string, unknown> = isRecord(value) ? value : {};
+  const thinkingFormat = thinkingFormats.has(source.thinkingFormat as OpenAiThinkingFormat) ? (source.thinkingFormat as OpenAiThinkingFormat) : fallbackThinkingFormat;
+  const options = normalizeReasoningOptions(source);
+  const basis = reasoningProfileBases.has(source.basis as ReasoningProfileBasis) ? (source.basis as ReasoningProfileBasis) : 'unidentified';
+  const defaultId = typeof source.defaultId === 'string' && options.some((option) => option.id === source.defaultId) ? source.defaultId : (options[0]?.id ?? null);
+  const storedState = normalizeCapabilityState(source.state);
+  return {
+    state: options.length > 0 ? 'supported' : storedState === 'unsupported' ? 'unsupported' : 'unverified',
+    options,
+    defaultId,
+    thinkingFormat,
+    basis,
+    checkedAt: normalizeIsoDate(source.checkedAt),
+  };
+}
+
+/** 档位清单：新形状直接读；旧形状（levels + levelMap）迁移成「同名直传」清单，等下一次判定覆盖。 */
+function normalizeReasoningOptions(source: Record<string, unknown>): ConfiguredReasoningOption[] {
+  const options: ConfiguredReasoningOption[] = [];
+  const push = (candidate: unknown): void => {
+    if (!isRecord(candidate)) return;
+    const id = typeof candidate.id === 'string' ? candidate.id.trim().slice(0, 60) : '';
+    const piLevel = candidate.piLevel;
+    // 同一清单里 piLevel 必须唯一，否则 Pi 的映射表会互相覆盖。
+    if (!id || !thinkingLevels.has(piLevel as PiThinkingLevel) || options.some((option) => option.id === id || option.piLevel === piLevel)) return;
+    options.push({
+      id,
+      label: typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label.trim().slice(0, 40) : null,
+      piLevel: piLevel as PiThinkingLevel,
+      wire: candidate.wire === null || typeof candidate.wire === 'string' ? (candidate.wire as string | null) : null,
+    });
+  };
+  if (Array.isArray(source.options)) {
+    for (const candidate of source.options.slice(0, thinkingLevels.size)) push(candidate);
+    return options;
+  }
+  const legacyMap = isRecord(source.levelMap) ? source.levelMap : {};
+  if (Array.isArray(source.levels)) {
+    for (const item of source.levels.slice(0, thinkingLevels.size)) {
+      if (!thinkingLevels.has(item as PiThinkingLevel)) continue;
+      const legacyWire = legacyMap[item as string];
+      push({ id: item, piLevel: item, wire: typeof legacyWire === 'string' ? legacyWire : item === 'off' ? null : item });
+    }
+  }
+  return options;
 }
 
 function normalizeEvidence(value: unknown, fallbackReason: string): ModelCapabilityEvidence {

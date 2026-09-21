@@ -460,10 +460,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const requestedModel = typeof input.body.model === 'string' && input.body.model.trim() ? input.body.model.trim() : (input.conversation?.modelId ?? input.conversation?.providerModel ?? capabilities.preferredModel);
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel) ?? capabilities.models[0];
     if (!selectedModel || selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel?.availabilityReason || '所选模型当前不可运行。');
-    const effort = typeof input.body.effort === 'string' && input.body.effort.trim() ? input.body.effort.trim() : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
-    if (effort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === effort)) {
-      throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '所选模型不支持该推理级别。');
-    }
+    const requestedEffort = typeof input.body.effort === 'string' && input.body.effort.trim() ? input.body.effort.trim() : null;
+    // 陈旧档位按默认档归一，不报错：档位的合法性由模型自己的清单决定，界面只会给出清单里的值。
+    const effort =
+      requestedEffort && selectedModel.supportedReasoningEfforts.some((candidate) => candidate === requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
     const requestedServiceTier = readServiceTierOverride(input.body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel) ?? null;
     const skillReferences = normalizeSkillReferences(input.body.skillReferences);
@@ -495,11 +495,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const memberModelId = override.modelOverride === null ? requestedModel : (override.modelOverride ?? (employee.model || requestedModel));
         const memberModel = resolveModelCapability(capabilities.models, memberModelId);
         if (!memberModel || memberModel.available === false) throw nativeApiError('ZEUS_EXPERT_MODEL_NOT_READY', `${employee.name} 的模型当前不可运行，请调整该成员的本轮配置。`);
-        const memberEffort =
-          override.reasoningEffort === null
-            ? (memberModel.defaultReasoningEffort ?? null)
-            : (override.reasoningEffort ?? (memberModel.supportedReasoningEfforts.includes(employee.reasoningEffort ?? '') ? employee.reasoningEffort : memberModel.defaultReasoningEffort) ?? null);
-        if (memberEffort && !memberModel.supportedReasoningEfforts.includes(memberEffort)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', `${employee.name} 的模型不支持所选推理强度。`);
+        const requestedMemberEffort = override.reasoningEffort === null ? null : (override.reasoningEffort ?? employee.reasoningEffort ?? null);
+        // 成员档位同理：认不出就按该成员模型的默认档归一，不因为旧配置拦住整轮对话。
+        const memberEffort = requestedMemberEffort && memberModel.supportedReasoningEfforts.includes(requestedMemberEffort) ? requestedMemberEffort : (memberModel.defaultReasoningEffort ?? memberModel.supportedReasoningEfforts[0] ?? null);
         const memberTier = normalizeServiceTierForCapability({ present: true, value: override.serviceTier === undefined ? employee.serviceTier : override.serviceTier }, memberModel) ?? null;
         const references = splitZeusSkillIds(override.skillIds ?? employee.skillIds);
         if (references.invalidIds.length) throw nativeApiError('ZEUS_EXPERT_SKILL_INVALID', `${employee.name} 包含无效技能。`);
@@ -1427,8 +1425,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const contextCapacityTokens = frozenCapacity ?? null;
     assertContextCapacity(contextCapacityTokens);
     if (contextCapacityTokens !== null && !selectedModel.contextCapacity?.choices.includes(contextCapacityTokens)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(selectedModel.contextCapacity));
-    const effort = typeof input.settings.effort === 'string' && input.settings.effort.trim() ? input.settings.effort.trim() : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
-    if (effort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === effort)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '所选模型不支持该推理级别。');
+    const requestedEffort = typeof input.settings.effort === 'string' && input.settings.effort.trim() ? input.settings.effort.trim() : null;
+    // 档位只认模型自己的档位清单：认不出（旧配置、旧版本遗留值）就按默认档归一，不报错。
+    // 界面能给出来的档位一定在清单里，所以这条兜底只会作用在陈旧数据上。
+    const effort =
+      requestedEffort && selectedModel.supportedReasoningEfforts.some((candidate) => candidate === requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
     const requestedServiceTier = readServiceTierOverride(input.settings);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel) ?? null;
     const permissionMode = input.settings.permissionMode === undefined ? conversation.permissionMode : parseConversationPermissionMode(input.settings.permissionMode);
@@ -3550,8 +3551,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
-        if (requestedEffort && !selectedModel.supportedReasoningEfforts.includes(requestedEffort)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '所选模型不支持该推理级别。');
-        const selectedEffort = requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null;
+        // 同上：陈旧档位按默认档归一，不因为配置过时就拦住用户。
+        const selectedEffort = requestedEffort && selectedModel.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
         let inheritedEnvironment: Awaited<ReturnType<typeof resolveTaskPushEnvironment>> | null = null;
         if (inheritConversationId) {

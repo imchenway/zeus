@@ -833,6 +833,40 @@
     border: 0;
   }
   .model-route-controls,
+  /* 档位覆盖、体检结果、最近一次实际发送三块共用同一套紧凑表格样式。 */
+  .model-reasoning-controls {
+    grid-column: 1 / -1;
+  }
+  .model-reasoning-table {
+    inline-size: 100%;
+    border-collapse: collapse;
+    margin-block-end: 8px;
+  }
+  .model-reasoning-table th,
+  .model-reasoning-table td {
+    padding: 4px 6px;
+    text-align: start;
+    font-weight: 400;
+    border-block-end: 1px solid var(--settings-border, #e5e7eb);
+  }
+  .model-reasoning-table th {
+    font-size: 12px;
+    color: var(--settings-muted, #6b7280);
+  }
+  .model-reasoning-table input[type='text'],
+  .model-reasoning-table input:not([type]) {
+    inline-size: 100%;
+  }
+  .model-reasoning-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-block-end: 8px;
+  }
+  .model-reasoning-message {
+    display: block;
+    margin-block-end: 4px;
+  }
   .model-route-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 0;

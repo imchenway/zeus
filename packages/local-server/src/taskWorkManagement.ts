@@ -2241,8 +2241,9 @@ function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEnt
     return null;
   }
   /** 显式调整优先，其次沿用员工默认，最后采用模型推荐值。 */
-  const reasoningEffort = selection.reasoningEffort === null ? model.defaultReasoningEffort : selection.reasoningEffort?.trim() || employee.reasoningEffort || model.defaultReasoningEffort;
-  if (reasoningEffort && !model.supportedReasoningEfforts.includes(reasoningEffort)) blockers.push({ code: 'ZEUS_TASK_WORK_REASONING_NOT_ALLOWED', message: '所选推理强度不受当前模型支持。' });
+  const requestedReasoningEffort = selection.reasoningEffort === null ? null : selection.reasoningEffort?.trim() || employee.reasoningEffort || null;
+  // 档位不在清单里（旧配置、旧版本遗留值）按默认档归一，不拦任务：界面显示什么，任务就用什么。
+  const reasoningEffort = requestedReasoningEffort && model.supportedReasoningEfforts.includes(requestedReasoningEffort) ? requestedReasoningEffort : (model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? null);
   /** 显式选择标准档保持清除语义；未设置时继承员工默认。 */
   const serviceTier = selection.serviceTier === null ? model.defaultServiceTier : selection.serviceTier?.trim() || employee.serviceTier || model.defaultServiceTier;
   if (serviceTier && !model.serviceTiers.some((tier) => tier.id === serviceTier)) blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '所选服务速率不受当前模型支持。' });

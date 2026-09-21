@@ -23,6 +23,7 @@
     "verify:release-remote-read": "node scripts/verify-release-remote-read-resilience.mjs",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:architecture": "node --import tsx scripts/verify-architecture-governance.ts",
+    "verify:model-reasoning-profile": "tsx scripts/verify-model-reasoning-profile.ts",
     "verify:detached-host": "node scripts/probe-detached-execution-host.mjs",
     "verify:execution-host-legacy-lock": "node scripts/probe-execution-host-legacy-lock.mjs",
     "verify:execution-host-v2-crash-recovery": "tsx scripts/verify-execution-host-v2-crash-recovery.ts",

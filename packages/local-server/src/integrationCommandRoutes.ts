@@ -110,6 +110,52 @@ export function registerIntegrationCommandRoutes(options: {
     }
   });
 
+  /** 用户手工覆盖某个模型的推理档位清单；传 { reset: true } 恢复自动判定。 */
+  server.put(
+    '/api/model-connections/:connectionId/models/:modelId/reasoning-options',
+    async (request: FastifyRequest<{ Params: { connectionId: string; modelId: string }; Body: { reset?: boolean; options?: unknown; defaultId?: string | null } }>, reply) => {
+      try {
+        const body = request.body ?? {};
+        const input =
+          body.reset === true
+            ? null
+            : {
+                options: Array.isArray(body.options) ? body.options : [],
+                defaultId: typeof body.defaultId === 'string' && body.defaultId.trim() ? body.defaultId.trim() : null,
+              };
+        const connection = await options.modelConnections.saveModelReasoningOptions(request.params.connectionId, request.params.modelId, input);
+        await options.refreshModelRuntime();
+        options.appendAuditLog({
+          actorType: 'local_api',
+          action: input === null ? 'model.reasoning_override.cleared' : 'model.reasoning_override.saved',
+          resourceType: 'model_connection',
+          resourceId: connection.id,
+          payload: { modelId: request.params.modelId },
+        });
+        return connection;
+      } catch (error) {
+        return sendIntegrationError(reply, error, options.redactSensitiveText, '模型档位操作失败。');
+      }
+    },
+  );
+
+  /** 逐档体检：对每个档位各发一次真实请求并比较思考用量；只出证据，不写配置。 */
+  server.post('/api/model-connections/:connectionId/models/:modelId/reasoning-audit', async (request: FastifyRequest<{ Params: { connectionId: string; modelId: string } }>, reply) => {
+    try {
+      const result = await options.modelConnections.auditModelReasoningLevels(request.params.connectionId, request.params.modelId);
+      options.appendAuditLog({
+        actorType: 'local_api',
+        action: 'model.reasoning_levels.audited',
+        resourceType: 'model_connection',
+        resourceId: request.params.connectionId,
+        payload: { modelId: request.params.modelId, levelCount: result.entries.length },
+      });
+      return result;
+    } catch (error) {
+      return sendIntegrationError(reply, error, options.redactSensitiveText, '档位体检失败。');
+    }
+  });
+
   server.delete('/api/model-connections/:connectionId/api-key', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: IntegrationCommandRequest<EmptyInput> }>, reply) => {
     try {
       const scopeId = modelApiKeyScope(request.params.connectionId);
