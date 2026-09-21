@@ -23,25 +23,31 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
   useLayoutEffect(() => {
     const element = ref.current;
     if (!open || !element) return;
-    /** 按实际尺寸贴合窗口边缘，不使用预估菜单高度。 */
-    const width = element.offsetWidth;
-    const height = element.offsetHeight;
-    let left = props.style?.left;
-    let top = props.style?.top;
-    if (submenuAnchor) {
-      const parent = submenuAnchor.parent.getBoundingClientRect();
-      const row = submenuAnchor.row.getBoundingClientRect();
-      const rightSpace = window.innerWidth - parent.right - 12;
-      const leftSpace = parent.left - 12;
-      left = rightSpace >= width || rightSpace >= leftSpace ? parent.right + 4 : parent.left - width - 4;
-      top = row.top - 5;
-    }
-    if (typeof left === 'number') element.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
-    if (typeof top === 'number') element.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
+    // 分组展开后菜单高度也会变化，重新定位以保持在窗口内。
+    const updatePosition = () => {
+      /** 按实际尺寸贴合窗口边缘，不使用预估菜单高度。 */
+      const width = element.offsetWidth;
+      const height = element.offsetHeight;
+      let left = props.style?.left;
+      let top = props.style?.top;
+      if (submenuAnchor) {
+        const parent = submenuAnchor.parent.getBoundingClientRect();
+        const row = submenuAnchor.row.getBoundingClientRect();
+        const rightSpace = window.innerWidth - parent.right - 12;
+        const leftSpace = parent.left - 12;
+        left = rightSpace >= width || rightSpace >= leftSpace ? parent.right + 4 : parent.left - width - 4;
+        top = row.top - 5;
+      }
+      if (typeof left === 'number') element.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+      if (typeof top === 'number') element.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
+    };
+    updatePosition();
+    const observer = new ResizeObserver(updatePosition);
+    observer.observe(element);
     const previous = submenuAnchor?.row ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     activeMenus.push(element);
     /** 禁用项不可被方向键或首次聚焦选中。 */
-    const items = () => [...element.querySelectorAll<HTMLElement>(':is([role="menuitem"], button):not(:disabled):not([aria-disabled="true"])')].filter((item) => item.checkVisibility() && !item.closest('[inert]'));
+    const items = () => [...element.querySelectorAll<HTMLElement>(':is([role="menuitem"], button, summary):not(:disabled):not([aria-disabled="true"])')].filter((item) => item.checkVisibility() && !item.closest('[inert]'));
     items()[0]?.focus({ preventScroll: true });
     /** 点在菜单外即关闭，保留该次点击原本要执行的动作。 */
     const outside = (event: Event) => {
@@ -79,6 +85,7 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
     document.addEventListener('keydown', keydown, true);
     window.addEventListener('resize', resized);
     return () => {
+      observer.disconnect();
       document.removeEventListener('pointerdown', outside, true);
       document.removeEventListener('scroll', outside, true);
       document.removeEventListener('keydown', keydown, true);
