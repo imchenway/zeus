@@ -833,9 +833,36 @@
     border: 0;
   }
   .model-route-controls,
-  /* 档位覆盖、体检结果、最近一次实际发送三块共用同一套紧凑表格样式。 */
-  .model-reasoning-controls {
-    grid-column: 1 / -1;
+  /* 档位摘要行：左边一句话，最右边一个齿轮按钮进自定义。 */
+  .model-reasoning-summary {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+  .model-route-facts dd:has(> .model-reasoning-open) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .model-reasoning-open {
+    flex: 0 0 34px;
+    padding: 6px;
+  }
+  /* 自定义档位弹窗：低频动作，收在齿轮后面，不占卡片版面。 */
+  .model-reasoning-dialog {
+    inline-size: min(760px, calc(100vw - 64px));
+    max-block-size: min(640px, calc(100vh - 96px));
+    overflow: auto;
+    padding: 20px;
+  }
+  .model-reasoning-dialog header p {
+    margin: 6px 0 12px;
+    color: var(--settings-muted, #6b7280);
+  }
+  .model-reasoning-dialog footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-block-start: 12px;
   }
   .model-reasoning-table {
     inline-size: 100%;

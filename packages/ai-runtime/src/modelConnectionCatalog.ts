@@ -33,6 +33,8 @@ export type ReasoningProfileBasis =
   | 'catalog'
   /** 目录只标了「会思考」、没给档位映射，档位是 Pi 自己推出来的默认假设。 */
   | 'catalog_default'
+  /** 已核对的厂商文档档位表，适用于该厂商的同族模型（第三方渠道）。 */
+  | 'vendor_docs'
   /** 按模型名推断出所属家族（第三方中转场景），未验证。 */
   | 'model_name'
   /** 用户在模型配置里手工指定。 */
@@ -168,7 +170,7 @@ const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'mediu
 const thinkingFormats = new Set<OpenAiThinkingFormat>(['openai', 'openrouter', 'deepseek', 'together', 'zai', 'qwen', 'qwen-chat-template', 'string-thinking', 'ant-ling']);
 const capabilityStates = new Set<ModelCapabilityState>(['supported', 'unsupported', 'unverified']);
 /** 档位清单来源的合法取值，非法值一律当未识别处理。 */
-const reasoningProfileBases = new Set<ReasoningProfileBasis>(['official_endpoint', 'catalog', 'catalog_default', 'model_name', 'user', 'unidentified']);
+const reasoningProfileBases = new Set<ReasoningProfileBasis>(['official_endpoint', 'vendor_docs', 'catalog', 'catalog_default', 'model_name', 'user', 'unidentified']);
 const speedLabels = new Set<ConfiguredModelDefinition['speedLabel']>(['standard', 'high_speed', 'flash', 'turbo']);
 const automaticModelCatalogs: Record<ModelConnectionTemplateId, Readonly<Record<string, Model<Api>>>> = {
   custom: normalizeModelCatalog(OPENCODE_MODELS),
@@ -484,6 +486,15 @@ interface ReasoningPreset {
 }
 
 /**
+ * 已按官方文档核对过档位表的厂商。
+ *
+ * 它排在模型目录之前：目录是第三方维护的，会过期——DeepSeek 就是活例，
+ * 目录把 `low` 标成不可用，而官方文档写明档位就是 low/high/max。
+ * 厂商文档与目录冲突时以文档为准，但依据要如实标成「厂商文档」而不是「官方端点」。
+ */
+const verifiedVendorReasoningProfiles: readonly { keywords: readonly string[]; levels: readonly PiThinkingLevel[]; defaultLevel: PiThinkingLevel }[] = [{ keywords: ['deepseek'], levels: ['low', 'high', 'max'], defaultLevel: 'high' }];
+
+/**
  * 首批内置家族预设。加一行就支持一个新厂商；
  * 用户看到的档位词默认与 Pi 的中转词同名，需要发别的取值时给该档位单独写 wire。
  */
@@ -532,10 +543,22 @@ function resolveReasoningProfile(model: ConfiguredModelDefinition, route: Reason
       checkedAt: observedAt,
     };
   }
+  // 图像、视频、语音这类模型没有推理档位，不参与任何按名字来的推断（厂商文档档位表和家族预设都不参与）。
+  const nonChat = nonChatModelKeywords.some((keyword) => normalizedId.includes(keyword));
+  // 已核对过厂商文档的家族优先于目录：目录里的档位表可能是过期的。
+  for (const vendor of nonChat ? [] : verifiedVendorReasoningProfiles) {
+    if (!vendor.keywords.some((keyword) => normalizedId.includes(keyword))) continue;
+    return {
+      state: 'supported',
+      options: sameNameReasoningOptions(vendor.levels),
+      defaultId: vendor.defaultLevel,
+      thinkingFormat: route.thinkingFormat,
+      basis: 'vendor_docs',
+      checkedAt: observedAt,
+    };
+  }
   const catalogProfile = catalogReasoningProfile(automaticModelCatalogs[route.templateId][normalizedId], normalizedId, route, observedAt);
   if (catalogProfile) return catalogProfile;
-  // 图像、视频、语音这类模型没有推理档位，不参与家族推断，直接按未识别处理。
-  const nonChat = nonChatModelKeywords.some((keyword) => normalizedId.includes(keyword));
   for (const preset of nonChat ? [] : reasoningPresets) {
     if (!preset.keywords.some((keyword) => normalizedId.includes(keyword))) continue;
     return {

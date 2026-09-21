@@ -69,6 +69,21 @@ assert.ok(selectable);
 assert.deepEqual(selectable.supportedReasoningEfforts, ['low', 'high', 'max']);
 assert.equal(selectable.defaultReasoningEffort, 'high');
 
+// 2.1 第三方渠道上的同族模型必须和官方端点给同一份档位表：
+// 目录把 DeepSeek 的 low 标成不可用，那是过期的第三方数据，厂商文档说了算。
+const thirdParty = buildConnection({
+  name: 'thirdparty',
+  templateId: 'custom',
+  baseUrl: 'https://relay.invalid/v1',
+  models: [createConfiguredModelDefinition('deepseek-v4-pro', {}, 'openai'), createConfiguredModelDefinition('deepseek-v4-flash', {}, 'openai')],
+});
+for (const id of ['deepseek-v4-pro', 'deepseek-v4-flash']) {
+  const profile = profileOf(thirdParty.models, id);
+  assert.deepEqual(optionIds(profile), ['low', 'high', 'max'], `${id} 在中转上也应该是 low/high/max`);
+  assert.equal(profile.basis, 'vendor_docs', `${id} 的依据应标成厂商文档，不能冒充官方端点`);
+  assert.equal(reasoningLevelMap(profile).low, 'low');
+}
+
 // 3. 认不出的模型不编造档位：空清单 = 界面不给下拉、请求不发档位字段。
 const unknown = buildConnection({
   name: 'unknown',

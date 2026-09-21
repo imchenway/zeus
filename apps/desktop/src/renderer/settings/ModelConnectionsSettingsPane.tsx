@@ -5,6 +5,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
 import { EyeSlashIcon } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { GearIcon } from '@phosphor-icons/react/dist/csr/Gear';
 import type {
   DashboardClient,
   ModelAuthenticationScheme,
@@ -995,8 +996,7 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
   const piLevelOptions = PI_THINKING_LEVELS.map((level) => ({ value: level, label: level }));
   return (
     <div className="model-reasoning-controls">
-      <dt>{zh ? '档位设置' : 'Reasoning levels'}</dt>
-      <dd>
+      <div className="model-reasoning-body">
         <table className="model-reasoning-table">
           <thead>
             <tr>
@@ -1048,11 +1048,7 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
             {zh ? '逐档体检' : 'Audit each level'}
           </Button>
         </span>
-        <small>
-          {zh
-            ? '体检会对每个档位各发一次真实请求并比较思考用量，是唯一能证明档位真的传到了模型的手段；它只出证据，不改配置。'
-            : 'Auditing sends one real request per level and compares reasoning usage. It only reports evidence and never changes configuration.'}
-        </small>
+        <small>{zh ? '体检逐档各发一次真实请求，只出证据、不改配置。' : 'Auditing sends one real request per level. It only reports evidence.'}</small>
         {message ? <small className="model-reasoning-message">{message}</small> : null}
         {audit ? (
           <table className="model-reasoning-table">
@@ -1081,8 +1077,34 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
           {zh ? '最近一次实际发送：' : 'Last actually sent: '}
           {lastSent?.effort ? `${lastSent.effort}${lastSent.observedAt ? `（${lastSent.observedAt}）` : ''}` : zh ? '暂无记录' : 'no record yet'}
         </small>
-      </dd>
+      </div>
     </div>
+  );
+}
+
+/** 自定义档位弹窗：只有用户点开才会出现，关闭即回到 Zeus 的默认判定。 */
+function ModelReasoningDialog(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; context: ModelReasoningContext; onClose: () => void }) {
+  const zh = props.language === 'zh-CN';
+  const titleId = `model-reasoning-dialog-title-${props.model.id}`;
+  return (
+    <ModalPortal rootClassName="model-reasoning-portal" role="dialog" aria-labelledby={titleId} onDismiss={props.onClose}>
+      <section className="model-reasoning-dialog zeus-solid-form-surface">
+        <header>
+          <strong id={titleId}>{zh ? `自定义推理档位：${props.model.id}` : `Customize reasoning levels: ${props.model.id}`}</strong>
+          <p>
+            {zh
+              ? '不改就用 Zeus 的默认判定（官方档案 / 厂商文档 / 模型目录 / 模型名推断）。只有你自己填过的清单会一直生效，直到「恢复自动判定」。'
+              : 'Leave it alone and Zeus keeps its automatic resolution. Only a list you save stays in effect, until you reset it.'}
+          </p>
+        </header>
+        <ModelReasoningSection language={props.language} model={props.model} context={props.context} />
+        <footer>
+          <Button variant="secondary" onClick={props.onClose}>
+            {zh ? '关闭' : 'Close'}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
   );
 }
 
@@ -1105,6 +1127,8 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
     { label: zh ? '用量字段' : 'Usage fields', evidence: capability.usage },
   ];
   const probed = rows.some((row) => row.evidence.source === 'probe') || capability.reasoning.checkedAt !== null;
+  /** 自定义档位是低频动作：默认完全展开太吵，收进小按钮后面的弹窗。 */
+  const [reasoningDialogOpen, setReasoningDialogOpen] = useState(false);
   /** 版本优先级：真机观测 > 人工官方表 > 目录名/模型 ID；表会过期，所以真实观测永远赢。 */
   const observedVersion = props.model.servedModelId && props.model.servedModelId !== props.model.id ? props.model.servedModelId : null;
   const versionValue = observedVersion ?? props.model.officialVersion ?? props.model.displayName;
@@ -1150,41 +1174,30 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
       <div>
         <dt>{zh ? '推理档位' : 'Reasoning levels'}</dt>
         <dd>
-          {capability.reasoning.options.length === 0
-            ? zh
-              ? '未识别：跟随模型默认，不发送任何档位字段'
-              : 'Unidentified: follow the model default and send no thinking field'
-            : capability.reasoning.options.map((option) => option.label || option.id).join(' / ')}
-          {' · '}
-          {reasoningBasisLabel(capability.reasoning.basis, zh)}
+          <span className="model-reasoning-summary">
+            {capability.reasoning.options.length === 0
+              ? zh
+                ? '未识别：跟随模型默认，不发送任何档位字段'
+                : 'Unidentified: follow the model default and send no thinking field'
+              : capability.reasoning.options.map((option) => option.label || option.id).join(' / ')}
+            {' · '}
+            {reasoningBasisLabel(capability.reasoning.basis, zh)}
+          </span>
+          {props.reasoning?.connectionId ? (
+            <Button
+              size="compact"
+              variant="secondary"
+              className="model-reasoning-open"
+              aria-label={zh ? `自定义 ${props.model.id} 的推理档位` : `Customize reasoning levels for ${props.model.id}`}
+              title={zh ? '自定义推理档位' : 'Customize reasoning levels'}
+              onClick={() => setReasoningDialogOpen(true)}
+            >
+              <GearIcon aria-hidden="true" />
+            </Button>
+          ) : null}
         </dd>
       </div>
-      {props.reasoning?.connectionId ? <ModelReasoningSection language={props.language} model={props.model} context={props.reasoning} /> : null}
-      {capability.reasoning.options.length > 0 ? (
-        <div className="model-capability-reasoning-table">
-          <dt>{zh ? '档位换算' : 'Level mapping'}</dt>
-          <dd>
-            <table>
-              <thead>
-                <tr>
-                  <th>{zh ? '页面可选' : 'Shown'}</th>
-                  <th>{zh ? 'Pi 传输' : 'Pi level'}</th>
-                  <th>{zh ? '实际发送' : 'Wire value'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {capability.reasoning.options.map((option) => (
-                  <tr key={option.id}>
-                    <td>{option.label || option.id}</td>
-                    <td>{option.piLevel}</td>
-                    <td>{option.wire ?? (zh ? '不发送取值' : 'no value')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </dd>
-        </div>
-      ) : null}
+      {reasoningDialogOpen && props.reasoning ? <ModelReasoningDialog language={props.language} model={props.model} context={props.reasoning} onClose={() => setReasoningDialogOpen(false)} /> : null}
     </dl>
   );
 }
@@ -1194,7 +1207,8 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
  * 「真实支持」只有官方文档和真机逐档体检能确认，所以推断出来的来源必须写明是推断。
  */
 function reasoningBasisLabel(basis: ModelReasoningBasis, zh: boolean): string {
-  if (basis === 'official_endpoint') return zh ? '依据：官方端点声明' : 'Basis: official endpoint';
+  if (basis === 'official_endpoint') return zh ? '依据：官方端点声明（官方文档核对）' : 'Basis: official endpoint (verified against vendor docs)';
+  if (basis === 'vendor_docs') return zh ? '依据：厂商文档档位表（同族通用，未逐个渠道验证）' : 'Basis: vendor documentation (same family, per-channel unverified)';
   if (basis === 'catalog') return zh ? '依据：内置目录声明（未逐档真机验证）' : 'Basis: built-in catalog (not verified level by level)';
   if (basis === 'catalog_default') return zh ? '依据：目录默认假设，未验证' : 'Basis: catalog default assumption, unverified';
   if (basis === 'model_name') return zh ? '依据：按模型名推断，未验证' : 'Basis: inferred from model name, unverified';
