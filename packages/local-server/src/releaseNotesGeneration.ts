@@ -1,6 +1,5 @@
+import { isOfficialDeepSeekApiConnection, type ModelConnectionRecord } from '@zeus/ai-runtime';
 import type { ModelConnectionService } from './modelConnectionService.js';
-
-const releaseNotesModel = 'deepseek-v4-flash';
 
 export interface ReleaseNotesGenerationOutput {
   markdown: string;
@@ -8,30 +7,46 @@ export interface ReleaseNotesGenerationOutput {
   uncertainties: string[];
 }
 
-/** 使用 Zeus SecretStore 中的 DeepSeek 连接生成发布说明，API Key 不进入命令环境或响应。 */
-export async function generateReleaseNotesWithDeepSeek(modelConnections: ModelConnectionService, input: { model: string; prompt: string }): Promise<{ model: typeof releaseNotesModel; output: ReleaseNotesGenerationOutput }> {
-  if (input.model !== releaseNotesModel) {
-    throw generationError('ZEUS_RELEASE_NOTES_MODEL_INVALID', `发布说明只允许使用 ${releaseNotesModel}。`, 400);
+/** 发布说明优先走 flash 档位控制成本；模型目录里没有 flash 时才退回该连接的第一个启用模型。 */
+const releaseNotesFlashModelPattern = /flash/iu;
+
+/**
+ * 解析本次发布说明实际使用的模型。
+ * 模型 ID 只是供应商目录里的显示名，写死会在目录改名后整条链路静默失效，因此按连接和档位实时解析。
+ */
+export function resolveReleaseNotesModel(connections: Array<ModelConnectionRecord & { apiKey?: string }>): { modelId: string; baseUrl: string; apiKey: string } | null {
+  for (const connection of connections) {
+    // 只允许官方 DeepSeek 端点：发布说明会携带大段仓库差异，不投递到自建或中转网关。
+    if (!connection.enabled || !connection.apiKey || !isOfficialDeepSeekApiConnection(connection)) continue;
+    const enabledModels = connection.models.filter((model) => model.enabled);
+    const model = enabledModels.find((candidate) => releaseNotesFlashModelPattern.test(candidate.id)) ?? enabledModels[0];
+    if (model) return { modelId: model.id, baseUrl: connection.baseUrl, apiKey: connection.apiKey };
   }
+  return null;
+}
+
+/** 使用 Zeus SecretStore 中的 DeepSeek 连接生成发布说明，API Key 不进入命令环境或响应。 */
+export async function generateReleaseNotesWithDeepSeek(modelConnections: ModelConnectionService, input: { prompt: string }): Promise<{ model: string; output: ReleaseNotesGenerationOutput }> {
   const prompt = input.prompt.trim();
   if (!prompt || prompt.length > 400_000) {
     throw generationError('ZEUS_RELEASE_NOTES_PROMPT_INVALID', '发布说明证据不能为空且不能超过 400,000 字符。', 400);
   }
 
   const connections = await modelConnections.loadRuntimeConnections();
-  const connection = connections.find((candidate) => candidate.enabled && candidate.templateId === 'deepseek' && Boolean(candidate.apiKey) && candidate.models.some((model) => model.enabled && model.id === releaseNotesModel));
-  if (!connection?.apiKey) {
-    throw generationError('ZEUS_RELEASE_NOTES_MODEL_UNAVAILABLE', `请先在 Zeus 模型连接中启用 DeepSeek ${releaseNotesModel} 并配置 API Key。`, 409);
+  const resolved = resolveReleaseNotesModel(connections);
+  if (!resolved) {
+    throw generationError('ZEUS_RELEASE_NOTES_MODEL_UNAVAILABLE', '请先启用一个指向 api.deepseek.com 的 DeepSeek 连接、配置 API Key，并至少启用一个模型。', 409);
   }
+  const { modelId: releaseNotesModel, baseUrl, apiKey } = resolved;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 80_000);
   try {
-    const response = await fetch(new URL('chat/completions', `${connection.baseUrl.replace(/\/+$/u, '')}/`), {
+    const response = await fetch(new URL('chat/completions', `${baseUrl.replace(/\/+$/u, '')}/`), {
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${connection.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

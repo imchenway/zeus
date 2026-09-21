@@ -1006,7 +1006,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     async (
       request: FastifyRequest<{
         Params: { runId: string };
-        Body: { model?: unknown; prompt?: unknown };
+        Body: { prompt?: unknown };
       }>,
       reply,
     ) => {
@@ -1019,9 +1019,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         });
       }
       try {
-        const model = typeof request.body?.model === 'string' ? request.body.model : '';
         const prompt = typeof request.body?.prompt === 'string' ? request.body.prompt : '';
-        return await generateReleaseNotesWithDeepSeek(modelConnections, { model, prompt });
+        return await generateReleaseNotesWithDeepSeek(modelConnections, { prompt });
       } catch (error) {
         const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
         const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'ZEUS_RELEASE_NOTES_GENERATION_FAILED';
