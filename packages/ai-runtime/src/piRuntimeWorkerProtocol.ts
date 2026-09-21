@@ -102,11 +102,43 @@ export function isPiRuntimeCoreToWorkerMessage(value: unknown): value is PiRunti
   return false;
 }
 
+/**
+ * 错误码只用于跨 IPC 传递短标识符，这里拦截的是任意字符串冒充错误码，而不是限制大小写。
+ * AI 供应商的错误码是小写加下划线（context_length_exceeded、insufficient_quota、model_not_found 等），
+ * 早先只放行大写会把它们统一降级成通用码，使 userFacingError 中对应的友好文案永远无法命中。
+ */
+const piRuntimeWorkerErrorCodePattern = /^[A-Za-z][A-Za-z0-9_-]{0,119}$/u;
+
+/** 这两个码只表示「Pi 侧失败了」，本身不含原因，因此允许用正文还原更精确的原因。 */
+const piGenericFailureCodes = new Set(['ZEUS_PI_WORKER_OPERATION_FAILED', 'ZEUS_PI_MODEL_REQUEST_FAILED']);
+
+/**
+ * Pi 只把供应商的 HTTP 响应压成「状态码: 响应体」纯文本（例如 `400: {"message":"This model's maximum context length is ..."}`），
+ * 既不保留供应商错误码，也没有结构化字段。这里按 HTTP 语义还原成 Zeus 已解释的标准码，
+ * 否则上游只会看到笼统的「Pi 失败了」，userFacingError 里超窗、余额、限流、鉴权的文案永远无法命中。
+ */
+function piProviderFailureCode(message: string): string | null {
+  /** 状态码未必在开头：Pi 会写成 `Summarization failed: 400: {...}`，故按 4xx/5xx 三位数定位并排除长数字内的片段。 */
+  const status = /(?:^|[^\d])([45]\d{2})(?![\d])/u.exec(message)?.[1];
+  if (!status) return null;
+  if (status === '401' || status === '403') return 'authentication_error';
+  if (status === '402') return /insufficient|balance|quota|billing|credit/iu.test(message) ? 'insufficient_quota' : 'permission_denied';
+  if (status === '429') return 'rate_limit_exceeded';
+  if (status === '400' && /maximum context length|context length|too many tokens|exceeds? .{0,24}context/iu.test(message)) return 'context_length_exceeded';
+  return null;
+}
+
+/** 保留供应商或 Zeus 自带的精确错误码；只有笼统失败码才回退到按正文还原。 */
+function resolvePiRuntimeWorkerErrorCode(record: Record<string, unknown>, message: string): string {
+  const declared = typeof record.code === 'string' && piRuntimeWorkerErrorCodePattern.test(record.code) ? record.code : null;
+  if (declared && !piGenericFailureCodes.has(declared)) return declared;
+  return piProviderFailureCode(message) ?? declared ?? 'ZEUS_PI_WORKER_OPERATION_FAILED';
+}
+
 export function serializePiRuntimeWorkerError(error: unknown): PiRuntimeWorkerWireError {
   const record = isRecord(error) ? error : {};
-  const code = typeof record.code === 'string' && /^[A-Z0-9_]{1,120}$/u.test(record.code) ? record.code : 'ZEUS_PI_WORKER_OPERATION_FAILED';
   const message = error instanceof Error ? error.message : typeof record.message === 'string' ? record.message : 'Pi Worker 操作失败。';
-  return { code, message: sanitizePiRuntimeWorkerDiagnostic(message) };
+  return { code: resolvePiRuntimeWorkerErrorCode(record, message), message: sanitizePiRuntimeWorkerDiagnostic(message) };
 }
 
 export function piRuntimeWorkerError(error: PiRuntimeWorkerWireError): Error & { code: string } {
