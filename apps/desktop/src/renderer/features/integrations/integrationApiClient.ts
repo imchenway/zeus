@@ -1,6 +1,8 @@
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult, ZentaoRemoteKind, ZentaoTaskSyncRequest } from '@zeus/shared';
 import type {
   ModelCapabilityProbeSummary,
+  ModelReasoningAuditResult,
+  ModelReasoningOverrideOption,
   ModelConnectionDiagnostic,
   ModelConnectionRecord,
   SaveModelConnectionRequest,
@@ -22,6 +24,14 @@ export interface IntegrationApiClient {
   updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   deleteModelConnection: (connectionId: string) => Promise<void>;
   clearModelConnectionApiKey: (connectionId: string) => Promise<ModelConnectionRecord>;
+  /** 用户主动查看当前连接的 API Key；不得用于列表加载或预取。 */
+  revealModelConnectionApiKey: (connectionId: string) => Promise<{ apiKey: string | null }>;
+  /** 该模型最近一次真实下发过的档位；没有记录时返回 null，不猜。 */
+  loadModelConnectionLastSent: (connectionId: string, modelId: string) => Promise<{ effort: string | null; observedAt: string | null }>;
+  /** 手工覆盖档位；传 null 表示恢复自动判定。 */
+  saveModelConnectionReasoningOptions: (connectionId: string, modelId: string, input: { options: ModelReasoningOverrideOption[]; defaultId: string | null } | null) => Promise<ModelConnectionRecord>;
+  /** 逐档体检：每个档位一次真实请求，只出证据不写配置。 */
+  auditModelConnectionReasoningLevels: (connectionId: string, modelId: string) => Promise<ModelReasoningAuditResult>;
   refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; removedModelIds: string[]; checkedAt: string }>;
   probeModelConnectionModels: (connectionId: string) => Promise<ModelCapabilityProbeSummary>;
   diagnoseModelConnection: (connectionId: string) => Promise<ModelConnectionDiagnostic>;
@@ -111,6 +121,11 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     },
     updateModelConnection: (connectionId, input) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionUpdate, 'update', 'PUT', '', input) as ReturnType<IntegrationApiClient['updateModelConnection']>,
     deleteModelConnection: (connectionId) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionDelete, 'delete', 'DELETE', '', {}) as ReturnType<IntegrationApiClient['deleteModelConnection']>,
+    revealModelConnectionApiKey: (connectionId) => transport.request<{ apiKey: string | null }>(`${modelConnectionPath(connectionId)}/api-key`),
+    loadModelConnectionLastSent: (connectionId, modelId) => transport.request<{ effort: string | null; observedAt: string | null }>(`${modelConnectionPath(connectionId)}/models/${encodeURIComponent(modelId)}/last-sent`),
+    saveModelConnectionReasoningOptions: (connectionId, modelId, input) =>
+      transport.request<ModelConnectionRecord>(`${modelConnectionPath(connectionId)}/models/${encodeURIComponent(modelId)}/reasoning-options`, jsonRequest('PUT', input === null ? { reset: true } : input)),
+    auditModelConnectionReasoningLevels: (connectionId, modelId) => transport.request<ModelReasoningAuditResult>(`${modelConnectionPath(connectionId)}/models/${encodeURIComponent(modelId)}/reasoning-audit`, jsonRequest('POST', {})),
     clearModelConnectionApiKey: (connectionId) =>
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionApiKeyClear, 'api_key_clear', 'DELETE', '/api-key', {}) as ReturnType<IntegrationApiClient['clearModelConnectionApiKey']>,
     refreshModelConnectionModels: (connectionId) =>

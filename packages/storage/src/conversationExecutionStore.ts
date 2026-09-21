@@ -1388,6 +1388,29 @@ export class ConversationExecutionRepository {
     return this.db.select<ModelRequestRow>(`SELECT * FROM conversation_model_requests WHERE conversation_id = ? AND turn_id = ? ORDER BY request_sequence`, [conversationId, turnId]).map(mapModelRequest);
   }
 
+  /**
+   * 读取该模型最近一次真实下发过的档位配置，供设置页展示「最近一次实际发送」。
+   * 只读配置证据，不参与任何判定；读不出来就返回 null，界面显示"暂无记录"。
+   * ponytail: 直接按 json 字段扫配置证据表（本机量级几万行、毫秒级）；真到百万行再补生成列与索引。
+   */
+  latestReasoningConfiguration(sourceId: string, modelId: string): { effort: string | null; observedAt: string } | null {
+    const row = this.db.get<{ configuration_json: string; observed_at: string }>(
+      `SELECT configuration_json, observed_at FROM conversation_config_evidence
+        WHERE json_extract(configuration_json, '$.model') = ? AND json_extract(configuration_json, '$.sourceId') = ?
+        ORDER BY observed_at DESC, id DESC LIMIT 1`,
+      [modelId, sourceId],
+    );
+    if (!row) return null;
+    let level: unknown = null;
+    try {
+      level = (JSON.parse(row.configuration_json) as Record<string, unknown>).thinkingLevel ?? null;
+    } catch {
+      // 配置证据损坏时只当没有记录，不让设置页因为一条坏行打不开。
+      return null;
+    }
+    return { effort: typeof level === 'string' && level.trim() ? level.trim() : null, observedAt: row.observed_at };
+  }
+
   /** 压缩完成项可能晚于用量到达；仅修正其起止范围内的请求，避免吞掉同轮普通回答的容量回报。 */
   markModelRequestsAsContextCompaction(conversationId: string, turnId: string, startedAt: string, completedAt: string): void {
     this.db.execute(

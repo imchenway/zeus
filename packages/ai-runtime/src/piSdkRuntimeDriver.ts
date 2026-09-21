@@ -30,7 +30,7 @@ import type {
   StartAgentRunInput,
   SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import { type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, modelConnectionRuntimeBaseUrl, type PiThinkingLevel } from './modelConnectionCatalog.js';
+import { type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, modelConnectionRuntimeBaseUrl, reasoningLevelMap, resolvePiThinkingLevel } from './modelConnectionCatalog.js';
 import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
 import { PiHeadlessResourceLoader, type PiPluginSkillResource } from './piHeadlessResourceLoader.js';
 
@@ -164,9 +164,25 @@ interface PiTerminalFailure {
   providerStatus: string;
 }
 
-const piThinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const piPreflightTimeoutMs = 5 * 60_000;
 const maximumPiDispatchContextBytes = 8 * 1024 * 1024;
+
+/**
+ * 把会话档位交给 Pi。
+ * 会话档位是用户词（厂商口径），Pi 只认七个中转词，所以这里用同一个模型的档位清单换算：
+ * 认不出就回落到清单默认档，清单为空（未识别）时什么都不设，请求里也不会带任何档位字段。
+ */
+async function applySessionThinkingLevel(entry: PiSessionEntry, requested: string | null | undefined, loadRuntime: () => Promise<{ connections: PiRuntimeConnection[] }>): Promise<void> {
+  if (!requested) return;
+  const sessionModel = entry.session.model;
+  if (!sessionModel) return;
+  const { connections } = await loadRuntime();
+  const sourceId = sourceIdFromPiProvider(sessionModel.provider);
+  const definition = connections.find((candidate) => candidate.id === sourceId)?.models.find((model) => model.id === sessionModel.id);
+  if (!definition) return;
+  const piLevel = resolvePiThinkingLevel(definition.capability.reasoning, requested);
+  if (piLevel) entry.session.setThinkingLevel(piLevel);
+}
 
 /**
  * 把 Pi SDK 收敛为 Zeus 的公共运行内核驱动。
@@ -343,10 +359,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         throw runtimeError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', 'Pi 未能确认上下文容量，已停止本次发送。');
       }
     }
-    if (input.thinkingLevel) {
-      if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
-      entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
-    }
+    await applySessionThinkingLevel(entry, input.thinkingLevel, loadModelRuntime);
     const nativeRunId = mode === 'steer' ? entry.activeRunId! : `pi_run_${randomUUID()}`;
     entry.activeRunId = nativeRunId;
     entry.pendingFailure = null;
@@ -561,10 +574,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     async compactSession(input: CompactAgentSessionInput): Promise<CompactAgentSessionResult> {
       const entry = requireSession(input.session);
       if (!entry.session.isIdle) throw runtimeError('ZEUS_PI_COMPACTION_SESSION_BUSY', 'Pi 会话正在执行，不能开始上下文压缩。');
-      if (input.thinkingLevel) {
-        if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
-        entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
-      }
+      await applySessionThinkingLevel(entry, input.thinkingLevel, loadModelRuntime);
       const result = await entry.session.compact(input.customInstructions);
       return {
         summary: result.summary,
@@ -578,10 +588,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       const entry = requireSession(input.session);
       if (!entry.session.isIdle || entry.activeRunId) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_SESSION_BUSY', 'Pi 会话正在执行，不能导入既有历史。');
       if (input.entries.length === 0) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_EMPTY', 'Pi 历史导入缺少可导入条目。');
-      if (input.thinkingLevel) {
-        if (!piThinkingLevels.has(input.thinkingLevel as PiThinkingLevel)) throw runtimeError('ZEUS_PI_THINKING_LEVEL_INVALID', `Pi 不支持推理等级：${input.thinkingLevel}`);
-        entry.session.setThinkingLevel(input.thinkingLevel as PiThinkingLevel);
-      }
+      await applySessionThinkingLevel(entry, input.thinkingLevel, loadModelRuntime);
       const batches = splitPortableHistoryBatches(input.entries, portableHistoryBatchCharacters(input.batchTokens));
       let summary = '';
       let usage = compactionUsage(undefined);
@@ -1057,14 +1064,10 @@ function boundedMetadataText(value: unknown, label: string, maximum: number): st
 
 /** 把 Zeus 的模型配置翻译成 Pi 原生模型定义；能力探测与运行内核共用同一份翻译，避免两处漂移。 */
 export function toPiModel(model: ConfiguredModelDefinition, providerId: string, connectionBaseUrl: string): Model<Api> {
-  const supportedLevels = new Set(model.capability.reasoning.levels);
-  const levelMap = model.capability.reasoning.levelMap;
-  const thinkingLevelMap = Object.fromEntries(
-    [...piThinkingLevels].map((level) => {
-      if (!supportedLevels.has(level)) return [level, null];
-      return [level, Object.prototype.hasOwnProperty.call(levelMap, level) ? levelMap[level] : level];
-    }),
-  );
+  // 档位集合和线上取值都从同一份清单派生：界面能给出来的档位，Pi 一定认识；清单为空就是未识别。
+  const reasoningOptions = model.capability.reasoning.options;
+  const supportsReasoning = reasoningOptions.length > 0;
+  const thinkingLevelMap = reasoningLevelMap(model.capability.reasoning);
   const anthropicMessages = model.protocolFamily === 'anthropic_messages';
   const openAIResponses = model.protocolFamily === 'openai_responses';
   return {
@@ -1073,7 +1076,7 @@ export function toPiModel(model: ConfiguredModelDefinition, providerId: string, 
     provider: providerId,
     api: anthropicMessages ? ('anthropic-messages' as const) : openAIResponses ? ('openai-responses' as const) : ('openai-completions' as const),
     baseUrl: modelConnectionRuntimeBaseUrl(connectionBaseUrl, model.protocolFamily),
-    reasoning: model.capability.reasoning.state === 'supported',
+    reasoning: supportsReasoning,
     thinkingLevelMap,
     // 保留用户和工具图片的传输能力，避免 SDK 按目录标记删图；是否支持由模型接口实际返回。
     input: ['text', 'image'],
@@ -1097,7 +1100,7 @@ export function toPiModel(model: ConfiguredModelDefinition, providerId: string, 
               thinkingFormat: model.capability.reasoning.thinkingFormat,
               // 外部 OpenAI 兼容端点普遍支持 system，但不一定接受 OpenAI 专有的 developer 角色。
               supportsDeveloperRole: false,
-              supportsReasoningEffort: model.capability.reasoning.state === 'supported',
+              supportsReasoningEffort: supportsReasoning,
               supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
               supportsStrictMode: false,
             },

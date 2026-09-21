@@ -9,12 +9,16 @@ import {
   modelRef,
   normalizeModelConnection,
   normalizeStoredModelConnections,
+  auditConfiguredModelReasoningLevels,
   probeConfiguredModel,
   syncDiscoveredModels,
+  isPiThinkingLevel,
   type ConfiguredModelDefinition,
   type ModelConnectionRecord,
   type ModelConnectionTemplateId,
+  type ConfiguredReasoningOption,
   type ModelProbeResult,
+  type ReasoningLevelAuditResult,
   type SaveModelConnectionInput,
   type SelectableConnectionModel,
 } from '@zeus/ai-runtime';
@@ -24,6 +28,12 @@ import type { SettingRepository } from '@zeus/storage';
 export interface SaveModelConnectionRequest extends SaveModelConnectionInput {
   apiKey?: string;
   allowInsecureHttp?: boolean;
+}
+
+/** 用户手工覆盖某个模型档位清单的输入。 */
+export interface ModelReasoningOverrideInput {
+  options: Array<{ id: string; label?: string | null; piLevel: string; wire: string | null }>;
+  defaultId: string | null;
 }
 
 export interface ModelCatalogRefreshResult {
@@ -63,6 +73,12 @@ export interface ModelConnectionService {
   update(id: string, input: SaveModelConnectionRequest): Promise<ModelConnectionRecord>;
   remove(id: string): Promise<void>;
   clearApiKey(id: string): Promise<ModelConnectionRecord>;
+  /** 读取当前连接的 API Key；只在用户主动点开时调用，绝不用于列表加载或预取。 */
+  revealApiKey(id: string): Promise<string | null>;
+  /** 覆盖某个模型的推理档位清单；传 null 表示清除覆盖、回到自动判定。 */
+  saveModelReasoningOptions(id: string, modelId: string, input: ModelReasoningOverrideInput | null): Promise<ModelConnectionRecord>;
+  /** 逐档体检：对清单里每个档位各发一次真实请求并比较思考用量；只出证据，不写配置。 */
+  auditModelReasoningLevels(id: string, modelId: string): Promise<ReasoningLevelAuditResult>;
   refreshModels(id: string): Promise<ModelCatalogRefreshResult>;
   /** 对已启用模型真实探测一次，用观测结果替换静态能力声明。 */
   probeModels(id: string): Promise<ModelCapabilityProbeSummary>;
@@ -199,11 +215,39 @@ export function createModelConnectionService(options: { settings: SettingReposit
       await options.secretStore.deleteSecret(modelConnectionSecretAccount(id));
       return { ...existing, apiKeyConfigured: false, updatedAt: now() };
     },
+    async saveModelReasoningOptions(id, modelId, input) {
+      const connection = await requireConnection(id);
+      const model = requireModel(connection, modelId);
+      /** 清除覆盖时不写任何档位，下一次读取会按官方档案/目录/家族重新判定。 */
+      const reasoning =
+        input === null
+          ? { ...model.capability.reasoning, state: 'unverified' as const, options: [], defaultId: null, basis: 'unidentified' as const }
+          : (() => {
+              const options = normalizeReasoningOverrides(input.options);
+              const defaultId = input.defaultId && options.some((option) => option.id === input.defaultId) ? input.defaultId : (options[0]?.id ?? null);
+              return { ...model.capability.reasoning, state: 'supported' as const, options, defaultId, basis: 'user' as const };
+            })();
+      const models = connection.models.map((candidate) => (candidate.id === model.id ? { ...candidate, capability: { ...candidate.capability, reasoning } } : candidate));
+      return saveConnection(connection.id, { ...connection, models }, connection);
+    },
+    async auditModelReasoningLevels(id, modelId) {
+      const connection = await requireConnection(id);
+      const model = requireModel(connection, modelId);
+      if (model.capability.reasoning.options.length === 0) throw serviceError('ZEUS_MODEL_REASONING_UNAVAILABLE', '这个模型还没有档位清单，先设置档位再体检。', 409);
+      const apiKey = await options.secretStore.getSecret(modelConnectionSecretAccount(id));
+      if (!apiKey) throw serviceError('ZEUS_MODEL_API_KEY_REQUIRED', '请先为该连接配置 API Key。', 409);
+      return auditConfiguredModelReasoningLevels({ connection, model, apiKey, ...(options.fetch ? { fetch: options.fetch } : {}) });
+    },
+    async revealApiKey(id) {
+      // 先确认连接存在，避免用一个不存在的 ID 去探测钥匙串里有没有别的条目。
+      await requireConnection(id);
+      return (await options.secretStore.getSecret(modelConnectionSecretAccount(id))) ?? null;
+    },
     async refreshModels(id) {
       const connection = await requireConnection(id);
       const modelIds = await fetchModelIds(connection);
       const thinkingFormat = connection.templateId === 'custom' ? 'openai' : modelConnectionTemplates[connection.templateId].thinkingFormat;
-      const sync = syncDiscoveredModels(connection.models, modelIds, thinkingFormat, connection.templateId);
+      const sync = syncDiscoveredModels(connection.models, modelIds, thinkingFormat, { templateId: connection.templateId, baseUrl: connection.baseUrl });
       const updated = await saveConnection(connection.id, { ...connection, models: sync.models }, connection);
       return {
         connection: updated,
@@ -285,11 +329,43 @@ function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConne
 }
 
 export function createManualModel(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
-  return createTemplateConfiguredModelDefinition(id, templateId);
+  // 手工新增的模型没有独立地址，用模板自带的官方地址参与档位判定；自定义连接没有地址可依据。
+  const baseUrl = templateId === 'custom' ? '' : modelConnectionTemplates[templateId].baseUrl;
+  return createTemplateConfiguredModelDefinition(id, { templateId, baseUrl });
 }
 
 export function referencesForConnection(connection: ModelConnectionRecord): string[] {
   return connection.models.map((model) => modelRef(connection.id, model.id));
+}
+
+/** 在连接里取出指定模型；不存在时给出明确的 404，而不是静默改别的模型。 */
+function requireModel(connection: ModelConnectionRecord, modelId: string): ConfiguredModelDefinition {
+  const model = connection.models.find((candidate) => candidate.id === modelId);
+  if (!model) throw serviceError('ZEUS_MODEL_NOT_FOUND', '模型不存在于该连接中。', 404);
+  return model;
+}
+
+/**
+ * 校验用户手工填写的档位清单：
+ * 档位词必须是 Pi 认识的七个之一、同一个 Pi 档位不能出现两次（否则映射会互相覆盖）、最多七项。
+ */
+function normalizeReasoningOverrides(value: unknown): ConfiguredReasoningOption[] {
+  if (!Array.isArray(value)) throw serviceError('ZEUS_MODEL_REASONING_INVALID', '档位清单必须是数组。', 400);
+  if (value.length === 0) throw serviceError('ZEUS_MODEL_REASONING_INVALID', '档位清单至少要有一项；不想要档位就恢复自动判定。', 400);
+  if (value.length > 7) throw serviceError('ZEUS_MODEL_REASONING_INVALID', 'Pi 只认识七个档位词，最多只能配置七项。', 400);
+  const options: ConfiguredReasoningOption[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') throw serviceError('ZEUS_MODEL_REASONING_INVALID', '档位项必须是对象。', 400);
+    const id = typeof candidate.id === 'string' ? candidate.id.trim().slice(0, 60) : '';
+    if (!id) throw serviceError('ZEUS_MODEL_REASONING_INVALID', '档位名不能为空。', 400);
+    if (!isPiThinkingLevel(candidate.piLevel)) throw serviceError('ZEUS_MODEL_REASONING_INVALID', `Pi 不认识档位词：${String(candidate.piLevel)}。`, 400);
+    if (options.some((option) => option.id === id)) throw serviceError('ZEUS_MODEL_REASONING_INVALID', `档位名重复：${id}。`, 400);
+    if (options.some((option) => option.piLevel === candidate.piLevel)) throw serviceError('ZEUS_MODEL_REASONING_INVALID', `同一个 Pi 档位只能配置一次：${candidate.piLevel}。`, 400);
+    const wire = candidate.wire === null ? null : typeof candidate.wire === 'string' ? candidate.wire.trim().slice(0, 60) : null;
+    const label = typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label.trim().slice(0, 40) : null;
+    options.push({ id, label, piLevel: candidate.piLevel, wire });
+  }
+  return options;
 }
 
 function serviceError(code: string, message: string, statusCode: number): Error & { code: string; statusCode: number } {

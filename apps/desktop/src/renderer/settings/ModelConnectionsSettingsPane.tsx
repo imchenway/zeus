@@ -3,6 +3,8 @@ import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosav
 import { useEffect, useId, useRef, useState } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
+import { EyeSlashIcon } from '@phosphor-icons/react/dist/csr/EyeSlash';
 import type {
   DashboardClient,
   ModelAuthenticationScheme,
@@ -13,7 +15,10 @@ import type {
   ModelConnectionRecord,
   ModelConnectionTemplateId,
   ModelProtocolFamily,
+  ModelReasoningAuditResult,
+  ModelReasoningBasis,
   ModelThinkingFormat,
+  ModelThinkingLevel,
   SaveModelConnectionRequest,
   SelectablePiModel,
 } from '../apiClient.js';
@@ -32,6 +37,9 @@ interface ModelConnectionDraft extends SaveModelConnectionRequest {
 }
 
 /** 沿用已有供应商模板的地址与模型目录。 */
+/** Pi 认识的七个档位词；手工覆盖档位时用户从这里选，界面显示的仍是自己填的厂商词。 */
+const PI_THINKING_LEVELS: ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
 const templateDefaults: Record<ModelConnectionTemplateId, { name: string; baseUrl: string; modelsPath: string; thinkingFormat: ModelThinkingFormat }> = {
   custom: { name: '', baseUrl: '', modelsPath: '/models', thinkingFormat: 'openai' },
   deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelsPath: '/models', thinkingFormat: 'deepseek' },
@@ -49,6 +57,10 @@ type ModelConnectionClient = Pick<
   | 'updateModelConnection'
   | 'deleteModelConnection'
   | 'clearModelConnectionApiKey'
+  | 'revealModelConnectionApiKey'
+  | 'loadModelConnectionLastSent'
+  | 'saveModelConnectionReasoningOptions'
+  | 'auditModelConnectionReasoningLevels'
   | 'refreshModelConnectionModels'
   | 'probeModelConnectionModels'
   | 'diagnoseModelConnection'
@@ -91,7 +103,10 @@ export function ModelConnectionsSettingsPane(props: {
   const [requestedModelPage, setRequestedModelPage] = useState(1);
   /** 展开只属于当前编辑器，跨搜索和分页保留，不写入模型配置。 */
   const [expandedModelIds, setExpandedModelIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'probing' | 'deleting'>('loading');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'probing' | 'deleting' | 'revealing'>('loading');
+  /** 已读取出来的密钥只活在这份状态里：隐藏、保存、切换连接都会立刻丢掉。 */
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   /** 保存反馈与模型诊断消息分开。 */
   const [saveState, setSaveState] = useState<SettingsSaveState>('idle');
@@ -144,6 +159,11 @@ export function ModelConnectionsSettingsPane(props: {
     setPendingInsecureHttpSave(null);
   }, [props.active]);
   const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
+  /** 换到别的连接（或清空草稿）时立刻丢掉上一条连接读出来的密钥，避免串台。 */
+  useEffect(() => {
+    setRevealedApiKey(null);
+    setApiKeyVisible(false);
+  }, [draft.id]);
   /** 界面列表只展示已启用模型：没勾选的候选只留在大纲下拉里，避免几十个候选刷屏。 */
   const enabledModels = draft.models.filter((model) => model.enabled);
   /** 本地筛选保留全部草稿，翻页不会遗失模型修改。 */
@@ -275,6 +295,8 @@ export function ModelConnectionsSettingsPane(props: {
     try {
       const saved = draft.id ? await props.client.updateModelConnection(draft.id, input) : await props.client.createModelConnection(input);
       setConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
+      setRevealedApiKey(null);
+      setApiKeyVisible(false);
       setDraft({ ...saved, id: saved.id, apiKey: '', models: saved.models.map(cloneModel) });
       setSaveState('saved');
       if (props.onComplete) await refreshDefaultModels(saved.id);
@@ -373,12 +395,41 @@ export function ModelConnectionsSettingsPane(props: {
     }
   }
 
+  /**
+   * 用户主动查看当前连接的 API Key。
+   * 只有点击眼睛才走独立读取入口；再次点击或切换连接立刻丢弃，不进草稿、不落盘、不预取。
+   */
+  async function toggleApiKeyVisibility(): Promise<void> {
+    if (apiKeyVisible) {
+      setApiKeyVisible(false);
+      setRevealedApiKey(null);
+      return;
+    }
+    if (!props.client || !draft.id || !current?.apiKeyConfigured) return;
+    setStatus('revealing');
+    try {
+      const result = await props.client.revealModelConnectionApiKey(draft.id);
+      if (!result.apiKey) {
+        setMessage(zh ? '钥匙串里没有这项密钥，请重新填写后保存。' : 'No key found in Keychain. Enter and save a new one.');
+        return;
+      }
+      setRevealedApiKey(result.apiKey);
+      setApiKeyVisible(true);
+    } catch (error) {
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+    } finally {
+      setStatus('idle');
+    }
+  }
+
   async function clearApiKey(): Promise<void> {
     if (!props.client || !draft.id || busy) return;
     setStatus('saving');
     try {
       await props.client.clearModelConnectionApiKey(draft.id);
       await reloadConnections(draft.id);
+      setRevealedApiKey(null);
+      setApiKeyVisible(false);
       setMessage(zh ? 'API Key 已从钥匙串清除。' : 'API key cleared from Keychain.');
     } catch (error) {
       setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
@@ -560,16 +611,33 @@ export function ModelConnectionsSettingsPane(props: {
             ) : null}
             <label>
               <span>{current?.apiKeyConfigured ? (zh ? '替换 API Key' : 'Replace API key') : 'API Key'}</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={draft.apiKey}
-                placeholder={current?.apiKeyConfigured ? (zh ? '已保存，留空保留现有密钥' : 'Saved; leave blank to keep the current key') : undefined}
-                onChange={(event) => {
-                  const apiKey = event.currentTarget.value;
-                  setDraft((value) => ({ ...value, apiKey }));
-                }}
-              />
+              <span className="settings-secret-control">
+                <input
+                  type={apiKeyVisible ? 'text' : 'password'}
+                  autoComplete="off"
+                  value={apiKeyVisible ? (revealedApiKey ?? draft.apiKey) : draft.apiKey}
+                  placeholder={current?.apiKeyConfigured ? (zh ? '已保存，留空保留现有密钥' : 'Saved; leave blank to keep the current key') : undefined}
+                  onChange={(event) => {
+                    const apiKey = event.currentTarget.value;
+                    // 一旦开始输入新密钥，之前读出来的旧密钥立即丢弃。
+                    setRevealedApiKey(null);
+                    setDraft((value) => ({ ...value, apiKey }));
+                  }}
+                />
+                <Button
+                  size="compact"
+                  aria-label={apiKeyVisible ? (zh ? '隐藏 API Key' : 'Hide API key') : zh ? '查看 API Key' : 'Show API key'}
+                  aria-pressed={apiKeyVisible}
+                  disabled={!current?.apiKeyConfigured || busy}
+                  busy={status === 'revealing'}
+                  onClick={() => void toggleApiKeyVisibility()}
+                >
+                  {apiKeyVisible ? <EyeSlashIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}
+                </Button>
+              </span>
+              {current?.apiKeyConfigured ? (
+                <small>{zh ? '密钥只保存在本机钥匙串；点击眼睛查看当前密钥，每次查看都会写审计记录。' : 'Stored only in this Mac Keychain. Use the eye button to read the current key; every view is audited.'}</small>
+              ) : null}
             </label>
             {draft.templateId === 'custom' ? (
               <label>
@@ -694,6 +762,7 @@ export function ModelConnectionsSettingsPane(props: {
                   readOnly={draft.templateId !== 'custom'}
                   onChange={(next) => updateModel(model.id, () => next)}
                   onRemove={() => changeDraft({ ...draft, models: draft.models.filter((candidate) => candidate.id !== model.id) })}
+                  reasoning={{ client: props.client, connectionId: draft.id, onSaved: () => reloadConnections(draft.id ?? undefined) }}
                 />
               ))}
             </div>
@@ -825,8 +894,207 @@ function describeProbeResult(summary: ModelCapabilityProbeSummary, zh: boolean):
   );
 }
 
+/** 档位覆盖、逐档体检、最近一次实际发送共用的上下文；没有客户端时这些动作整体不可用。 */
+interface ModelReasoningContext {
+  client: ModelConnectionClient | null;
+  /** 已保存的连接 ID；新连接还没落库时为 null。 */
+  connectionId: string | null;
+  /** 覆盖保存后重新载入连接，界面继续用服务端判定出来的档位。 */
+  onSaved: () => Promise<void>;
+}
+
+/**
+ * 模型推理档位的三件事：手工覆盖清单、逐档体检、以及最近一次真实发送的档位。
+ * 覆盖会写进配置并立刻生效；体检只出证据，绝不改配置。
+ */
+function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; context: ModelReasoningContext }) {
+  const zh = props.language === 'zh-CN';
+  const profile = props.model.capability.reasoning;
+  const [rows, setRows] = useState<ModelReasoningOverrideRow[]>(() => profile.options.map((option) => ({ id: option.id, piLevel: option.piLevel, wire: option.wire ?? '' })));
+  const [defaultId, setDefaultId] = useState<string>(profile.defaultId ?? '');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'auditing' | 'loading'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+  const [audit, setAudit] = useState<ModelReasoningAuditResult | null>(null);
+  const [lastSent, setLastSent] = useState<{ effort: string | null; observedAt: string | null } | null>(null);
+  const busy = status !== 'idle';
+
+  /** 清单变化（保存、恢复自动判定、切换模型）时把编辑草稿同步回服务端事实。 */
+  useEffect(() => {
+    setRows(profile.options.map((option) => ({ id: option.id, piLevel: option.piLevel, wire: option.wire ?? '' })));
+    setDefaultId(profile.defaultId ?? '');
+    setAudit(null);
+    setMessage(null);
+  }, [profile.defaultId, profile.options, props.model.id]);
+  useEffect(() => {
+    const client = props.context.client;
+    const connectionId = props.context.connectionId;
+    if (!client || !connectionId) return;
+    let active = true;
+    setStatus('loading');
+    void client
+      .loadModelConnectionLastSent(connectionId, props.model.id)
+      .then((result) => {
+        if (active) setLastSent(result);
+      })
+      .catch(() => {
+        if (active) setLastSent(null);
+      })
+      .finally(() => {
+        if (active) setStatus('idle');
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.context.client, props.context.connectionId, props.model.id]);
+
+  function updateRow(index: number, patch: Partial<ModelReasoningOverrideRow>): void {
+    setRows((value) => value.map((row, position) => (position === index ? { ...row, ...patch } : row)));
+  }
+
+  /** 把编辑草稿提交给服务端；校验交给服务端一处完成，界面只负责把错误原样显示。 */
+  async function saveOverride(input: ModelReasoningOverrideRow[] | null): Promise<void> {
+    const client = props.context.client;
+    const connectionId = props.context.connectionId;
+    if (!client || !connectionId || busy) return;
+    setStatus('saving');
+    try {
+      if (input === null) {
+        await client.saveModelConnectionReasoningOptions(connectionId, props.model.id, null);
+        setMessage(zh ? '已恢复自动判定：档位重新按官方档案、模型目录或家族推断决定。' : 'Restored automatic detection.');
+      } else {
+        await client.saveModelConnectionReasoningOptions(connectionId, props.model.id, {
+          options: input.map((row) => ({ id: row.id.trim(), piLevel: row.piLevel, wire: row.wire.trim() ? row.wire.trim() : null })),
+          defaultId: defaultId.trim() ? defaultId.trim() : null,
+        });
+        setMessage(zh ? '已按你的清单生效；只有清空才回到自动判定。' : 'Saved. It stays until you clear it.');
+      }
+      await props.context.onSaved();
+    } catch (error) {
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+    } finally {
+      setStatus('idle');
+    }
+  }
+
+  /** 逐档体检：每个档位各一次真实请求，只出证据不写配置。 */
+  async function runAudit(): Promise<void> {
+    const client = props.context.client;
+    const connectionId = props.context.connectionId;
+    if (!client || !connectionId || busy) return;
+    setStatus('auditing');
+    try {
+      setAudit(await client.auditModelConnectionReasoningLevels(connectionId, props.model.id));
+      setMessage(null);
+    } catch (error) {
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+    } finally {
+      setStatus('idle');
+    }
+  }
+
+  const piLevelOptions = PI_THINKING_LEVELS.map((level) => ({ value: level, label: level }));
+  return (
+    <div className="model-reasoning-controls">
+      <dt>{zh ? '档位设置' : 'Reasoning levels'}</dt>
+      <dd>
+        <table className="model-reasoning-table">
+          <thead>
+            <tr>
+              <th>{zh ? '页面可选（厂商词）' : 'Shown'}</th>
+              <th>{zh ? 'Pi 传输' : 'Pi level'}</th>
+              <th>{zh ? '实际发送' : 'Wire value'}</th>
+              <th>{zh ? '默认' : 'Default'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${row.id}:${index}`}>
+                <td>
+                  <input aria-label={zh ? '页面档位名' : 'Shown level'} value={row.id} disabled={busy} onChange={(event) => updateRow(index, { id: event.currentTarget.value })} />
+                </td>
+                <td>
+                  <ZeusSelect<ModelThinkingLevel> ariaLabel={zh ? 'Pi 档位' : 'Pi level'} size="compact" value={row.piLevel} disabled={busy} options={piLevelOptions} onChange={(piLevel) => updateRow(index, { piLevel })} />
+                </td>
+                <td>
+                  <input
+                    aria-label={zh ? '实际发送取值' : 'Wire value'}
+                    placeholder={zh ? '留空表示不发送取值' : 'blank = send no value'}
+                    value={row.wire}
+                    disabled={busy}
+                    onChange={(event) => updateRow(index, { wire: event.currentTarget.value })}
+                  />
+                </td>
+                <td>
+                  <input type="radio" name={`reasoning-default-${props.model.id}`} aria-label={zh ? `默认档位 ${row.id}` : `Default level ${row.id}`} checked={defaultId === row.id} disabled={busy} onChange={() => setDefaultId(row.id)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <span className="model-reasoning-actions">
+          <Button size="compact" variant="secondary" disabled={busy || rows.length === 0} onClick={() => setRows((value) => [...value, { id: '', piLevel: 'medium', wire: '' }])}>
+            {zh ? '增加一档' : 'Add level'}
+          </Button>
+          <Button size="compact" variant="secondary" disabled={busy} onClick={() => setRows((value) => value.slice(0, -1))}>
+            {zh ? '减少一档' : 'Remove last'}
+          </Button>
+          <Button size="compact" disabled={busy || props.context.connectionId === null} busy={status === 'saving'} onClick={() => void saveOverride(rows)}>
+            {zh ? '保存清单' : 'Save list'}
+          </Button>
+          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null} onClick={() => void saveOverride(null)}>
+            {zh ? '恢复自动判定' : 'Reset to automatic'}
+          </Button>
+          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null || profile.options.length === 0} busy={status === 'auditing'} onClick={() => void runAudit()}>
+            {zh ? '逐档体检' : 'Audit each level'}
+          </Button>
+        </span>
+        <small>
+          {zh
+            ? '体检会对每个档位各发一次真实请求并比较思考用量，是唯一能证明档位真的传到了模型的手段；它只出证据，不改配置。'
+            : 'Auditing sends one real request per level and compares reasoning usage. It only reports evidence and never changes configuration.'}
+        </small>
+        {message ? <small className="model-reasoning-message">{message}</small> : null}
+        {audit ? (
+          <table className="model-reasoning-table">
+            <thead>
+              <tr>
+                <th>{zh ? '档位' : 'Level'}</th>
+                <th>{zh ? '请求' : 'Request'}</th>
+                <th>{zh ? '看到思考' : 'Thinking seen'}</th>
+                <th>{zh ? '思考 token' : 'Reasoning tokens'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {audit.entries.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.id}</td>
+                  <td>{entry.ok ? (zh ? '成功' : 'ok') : (entry.failure ?? (zh ? '失败' : 'failed'))}</td>
+                  <td>{entry.thinkingSeen ? (zh ? '是' : 'yes') : zh ? '否' : 'no'}</td>
+                  <td>{entry.reasoningTokens ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+        {audit ? <small className="model-reasoning-message">{audit.verdict}</small> : null}
+        <small>
+          {zh ? '最近一次实际发送：' : 'Last actually sent: '}
+          {lastSent?.effort ? `${lastSent.effort}${lastSent.observedAt ? `（${lastSent.observedAt}）` : ''}` : zh ? '暂无记录' : 'no record yet'}
+        </small>
+      </dd>
+    </div>
+  );
+}
+
+/** 手工覆盖清单里的一行；wire 用空串表示"不发送取值"，提交前再还原成 null。 */
+interface ModelReasoningOverrideRow {
+  id: string;
+  piLevel: ModelThinkingLevel;
+  wire: string;
+}
+
 /** 能力证据只展示真实观测过的内容；没探测过的模型不显示空话。 */
-function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel }) {
+function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; reasoning?: ModelReasoningContext }) {
   const zh = props.language === 'zh-CN';
   const capability = props.model.capability;
   /** 四项独立探测结论，供合并展示与逐项展示共用。 */
@@ -836,7 +1104,7 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
     { label: zh ? '流式输出' : 'Streaming', evidence: capability.streaming },
     { label: zh ? '用量字段' : 'Usage fields', evidence: capability.usage },
   ];
-  const probed = rows.some((row) => row.evidence.source === 'probe') || capability.reasoning.source === 'probe';
+  const probed = rows.some((row) => row.evidence.source === 'probe') || capability.reasoning.checkedAt !== null;
   /** 版本优先级：真机观测 > 人工官方表 > 目录名/模型 ID；表会过期，所以真实观测永远赢。 */
   const observedVersion = props.model.servedModelId && props.model.servedModelId !== props.model.id ? props.model.servedModelId : null;
   const versionValue = observedVersion ?? props.model.officialVersion ?? props.model.displayName;
@@ -882,12 +1150,56 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
       <div>
         <dt>{zh ? '推理档位' : 'Reasoning levels'}</dt>
         <dd>
-          {capability.reasoning.state === 'supported' ? capability.reasoning.levels.join(' / ') : zh ? '未确认' : 'Unconfirmed'}
-          {capability.reasoning.state === 'supported' && capability.reasoning.source === 'catalog' ? (zh ? '（来自上游目录，未逐档真机验证）' : ' (from upstream catalog, not verified level by level)') : ''}
+          {capability.reasoning.options.length === 0
+            ? zh
+              ? '未识别：跟随模型默认，不发送任何档位字段'
+              : 'Unidentified: follow the model default and send no thinking field'
+            : capability.reasoning.options.map((option) => option.label || option.id).join(' / ')}
+          {' · '}
+          {reasoningBasisLabel(capability.reasoning.basis, zh)}
         </dd>
       </div>
+      {props.reasoning?.connectionId ? <ModelReasoningSection language={props.language} model={props.model} context={props.reasoning} /> : null}
+      {capability.reasoning.options.length > 0 ? (
+        <div className="model-capability-reasoning-table">
+          <dt>{zh ? '档位换算' : 'Level mapping'}</dt>
+          <dd>
+            <table>
+              <thead>
+                <tr>
+                  <th>{zh ? '页面可选' : 'Shown'}</th>
+                  <th>{zh ? 'Pi 传输' : 'Pi level'}</th>
+                  <th>{zh ? '实际发送' : 'Wire value'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {capability.reasoning.options.map((option) => (
+                  <tr key={option.id}>
+                    <td>{option.label || option.id}</td>
+                    <td>{option.piLevel}</td>
+                    <td>{option.wire ?? (zh ? '不发送取值' : 'no value')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </dd>
+        </div>
+      ) : null}
     </dl>
   );
+}
+
+/**
+ * 档位清单的来源标签。
+ * 「真实支持」只有官方文档和真机逐档体检能确认，所以推断出来的来源必须写明是推断。
+ */
+function reasoningBasisLabel(basis: ModelReasoningBasis, zh: boolean): string {
+  if (basis === 'official_endpoint') return zh ? '依据：官方端点声明' : 'Basis: official endpoint';
+  if (basis === 'catalog') return zh ? '依据：内置目录声明（未逐档真机验证）' : 'Basis: built-in catalog (not verified level by level)';
+  if (basis === 'catalog_default') return zh ? '依据：目录默认假设，未验证' : 'Basis: catalog default assumption, unverified';
+  if (basis === 'model_name') return zh ? '依据：按模型名推断，未验证' : 'Basis: inferred from model name, unverified';
+  if (basis === 'user') return zh ? '依据：你手工指定' : 'Basis: set by you';
+  return zh ? '依据：未识别' : 'Basis: unidentified';
 }
 
 /** 目录声明不是真机结论，措辞必须和探测结果区分开。 */
@@ -908,7 +1220,16 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
 }
 
 /** 模型标题独立控制展开；启用、移除和配置修改沿用各自的业务入口。 */
-function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; expanded: boolean; onToggle: () => void; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
+function ModelDefinitionEditor(props: {
+  language: 'zh-CN' | 'en-US';
+  model: ModelConnectionModel;
+  readOnly: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onChange: (model: ModelConnectionModel) => void;
+  onRemove: () => void;
+  reasoning?: ModelReasoningContext;
+}) {
   /** 将展开按钮与详细配置关联。 */
   const detailsId = useId();
   const zh = props.language === 'zh-CN';
@@ -1020,7 +1341,7 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
               </label>
             </div>
           )}
-          <ModelCapabilityFacts language={props.language} model={model} />
+          <ModelCapabilityFacts language={props.language} model={model} {...(props.reasoning ? { reasoning: props.reasoning } : {})} />
         </div>
       </Collapsible>
     </article>
@@ -1049,13 +1370,12 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     capability: {
       reasoning: {
         state: 'unverified',
-        levels: ['off'],
-        defaultLevel: 'off',
+        // 新模型先进「未识别」：界面不给档位下拉，请求也不发档位字段，等保存时按连接判定清单。
+        options: [],
+        defaultId: null,
         thinkingFormat,
-        levelMap: { off: null },
-        source: 'catalog',
+        basis: 'unidentified',
         checkedAt: null,
-        reason: zhModelCapabilityPendingReason,
       },
       tools: evidence('尚未检测工具调用功能。'),
       imageInput: evidence('尚未检测图片输入功能。'),
@@ -1081,13 +1401,11 @@ function modelRouteLabel(model: ModelConnectionModel, zh: boolean): string {
   return `${protocolLabel(model.protocolFamily)} · ${authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}`;
 }
 
-const zhModelCapabilityPendingReason = '等待识别此服务中该模型支持的功能。';
-
 function cloneModel(model: ModelConnectionModel): ModelConnectionModel {
   return {
     ...model,
     capability: {
-      reasoning: { ...model.capability.reasoning, levels: [...model.capability.reasoning.levels], levelMap: { ...model.capability.reasoning.levelMap } },
+      reasoning: { ...model.capability.reasoning, options: model.capability.reasoning.options.map((option) => ({ ...option })) },
       tools: { ...model.capability.tools },
       imageInput: { ...model.capability.imageInput },
       streaming: { ...model.capability.streaming },
