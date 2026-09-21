@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { CodexOfficialRateWindow, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -12,6 +12,24 @@ const snapshotStorageKey = 'zeus.menu-bar-usage.snapshot';
 const selectionStorageKey = 'zeus.menu-bar-usage.selection';
 /** 菜单栏独立保存供应商顺序，不改变供应商配置或后台统计顺序。 */
 const providerOrderStorageKey = 'zeus.menu-bar-usage.provider-order';
+/** 指标显示偏好与柱图统计维度只影响浮窗展示，不改变后台统计口径。 */
+const metricsStorageKey = 'zeus.menu-bar-usage.metrics';
+const chartDimensionStorageKey = 'zeus.menu-bar-usage.chart-dimension';
+
+/** 全部可选指标；顺序即网格顺序，取消勾选只影响展示。 */
+const metricOrder = ['todayTokens', 'todayCost', 'sevenDayTokens', 'sevenDayCost', 'cacheHit', 'cacheSavings', 'sevenDayConversations', 'sevenDayTurns', 'averageTurnCost'] as const;
+
+/** 默认显示的指标；新增指标默认不展示，升级后浮窗高度与既有版面保持不变。 */
+const defaultMetricOrder: MetricId[] = ['todayTokens', 'todayCost', 'sevenDayTokens', 'sevenDayCost', 'cacheHit', 'cacheSavings'];
+
+/** 指标标识，取值来自本地存储时必须先过滤未知项。 */
+type MetricId = (typeof metricOrder)[number];
+
+/** 柱图统计维度；费用只能来自本地账本估算，官方账户历史没有模型维度。 */
+type ChartDimension = 'tokens' | 'cost';
+
+/** 柱图槽位：日期、数值与完整性，数值为 null 表示当天没有可用数据。 */
+type DailySlot = { date: string; value: number | null; complete: boolean };
 
 const copy = {
   'zh-CN': {
@@ -39,6 +57,17 @@ const copy = {
     cacheUnsupported: '供应源未提供',
     cost: '近 7 日估算费用',
     costShort: '7 日估算费用',
+    todayCost: '今日估算费用',
+    cacheSavings: '7 日缓存节省',
+    sevenDayConversations: '7 日会话数',
+    sevenDayTurns: '7 日轮次数',
+    averageTurnCost: '平均每轮费用',
+    overview: '用量概览',
+    metrics: '指标',
+    dimension: '统计维度',
+    dimensionTokens: 'Token',
+    dimensionCost: '费用',
+    costEstimateHint: '费用由 Zeus 本地账本按模型单价估算，只统计已定价的轮次；Codex 官方账户在其它客户端的用量不在此列。',
     noPrice: '暂无价格',
     recentUsage: '每日 Token',
     accountUsage: 'Codex 账户',
@@ -84,6 +113,17 @@ const copy = {
     cacheUnsupported: 'Not provided',
     cost: 'Estimated cost · 7 days',
     costShort: '7-day estimate',
+    todayCost: "Today's estimate",
+    cacheSavings: 'Cache savings · 7 days',
+    sevenDayConversations: 'Sessions · 7 days',
+    sevenDayTurns: 'Turns · 7 days',
+    averageTurnCost: 'Avg cost per turn',
+    overview: 'Usage overview',
+    metrics: 'Metrics',
+    dimension: 'Metric dimension',
+    dimensionTokens: 'Tokens',
+    dimensionCost: 'Cost',
+    costEstimateHint: 'Cost is estimated from the local Zeus ledger using model rates and covers priced turns only; usage the Codex account records on other clients is not included.',
     noPrice: 'No pricing',
     recentUsage: 'Daily tokens',
     accountUsage: 'Codex account',
@@ -176,6 +216,8 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     const refreshWhenShown = () => void load();
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      /** 指标下拉是原生 popover，Escape 交给轻量关闭处理，不关闭整个浮窗。 */
+      if (document.querySelector('.menu-bar-usage-metrics-menu:popover-open')) return;
       event.preventDefault();
       void window.zeus?.hideMenuBarUsage?.();
     };
@@ -442,24 +484,90 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
 
 /** 统一各供应商的本地指标和趋势布局，官方额度仅在存在时显示。 */
 function ProviderDetail(props: { provider: UsageProviderSummary; language: Language }) {
+  return (
+    <article className="menu-bar-usage-detail">
+      <ProviderSummaryCard provider={props.provider} language={props.language} />
+
+      <UsageOverview provider={props.provider} language={props.language} />
+
+      <DailyBars provider={props.provider} language={props.language} />
+    </article>
+  );
+}
+
+/** 用量概览：标题、指标多选与指标网格共用同一套取值，避免多处口径不一致。 */
+function UsageOverview(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
+  const text = copy[language];
+  /** 多选面板与触发按钮配对，重挂载后仍保持唯一 id。 */
+  const menuId = useId();
+  const [visibleMetrics, setVisibleMetrics] = useState(readStoredMetrics);
+  const metrics = readMetricValues(provider, language);
+  /** 至少保留一个指标，取消最后一个可见项时保持原样。 */
+  const toggleMetric = (id: MetricId) => {
+    const selected = visibleMetrics.includes(id);
+    if (selected && visibleMetrics.length === 1) return;
+    /** 保存顺序始终与指标顺序一致，刷新后网格排列稳定。 */
+    const next = metricOrder.filter((entry) => (entry === id ? !selected : visibleMetrics.includes(entry)));
+    setVisibleMetrics(next);
+    storeMetrics(next);
+  };
+  return (
+    <section className="menu-bar-usage-overview">
+      <header className="menu-bar-usage-overview-head">
+        <h3>{text.overview}</h3>
+        <button className="menu-bar-usage-metrics-trigger" type="button" popoverTarget={menuId} aria-haspopup="true" aria-label={`${text.metrics} · ${visibleMetrics.length}/${metricOrder.length}`}>
+          {text.metrics}
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="m4 6.5 4 4 4-4" />
+          </svg>
+        </button>
+        {/* 面板挂在 popover 顶层，不会被浮窗滚动区裁切，点击外部自动收起。 */}
+        <div id={menuId} popover="auto" className="menu-bar-usage-metrics-menu" role="group" aria-label={text.metrics}>
+          {metricOrder.map((id) => {
+            const selected = visibleMetrics.includes(id);
+            return (
+              <label key={id} className="menu-bar-usage-metrics-option">
+                <input type="checkbox" checked={selected} disabled={selected && visibleMetrics.length === 1} onChange={() => toggleMetric(id)} />
+                <span>{metrics[id].label}</span>
+              </label>
+            );
+          })}
+        </div>
+      </header>
+
+      <dl className="menu-bar-usage-metrics">
+        {metricOrder
+          .filter((id) => visibleMetrics.includes(id))
+          .map((id) => (
+            <Metric key={id} label={metrics[id].label} accessibleLabel={metrics[id].accessibleLabel} value={metrics[id].value} />
+          ))}
+      </dl>
+    </section>
+  );
+}
+
+/** 指标取值与文案：多选面板和网格共用一份结果，标签与数值始终对应。 */
+function readMetricValues(provider: UsageProviderSummary, language: Language): Record<MetricId, { label: string; accessibleLabel?: string; value: string }> {
   const text = copy[language];
   const cacheAvailable = provider.cacheUsageAvailable ?? (provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0);
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
-  return (
-    <article className="menu-bar-usage-detail">
-      <ProviderSummaryCard provider={provider} language={language} />
-
-      <dl className="menu-bar-usage-metrics">
-        <Metric label={text.today} value={formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language)} />
-        <Metric label={text.sevenDays} value={formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language)} />
-        <Metric label={text.cache} value={!sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported} />
-        <Metric label={text.costShort} accessibleLabel={text.cost} value={sevenDayLocalComplete ? formatCost(provider, language, text.noPrice) : '—'} />
-      </dl>
-
-      <DailyBars provider={provider} language={language} />
-    </article>
-  );
+  /** 平均每轮费用只在有轮次、已定价且七日内数据完整时才有意义。 */
+  const averageTurnCost =
+    provider.sevenDayLocal.turnCount > 0
+      ? formatUsd(provider.sevenDayLocal.apiEquivalentUsd === null ? null : provider.sevenDayLocal.apiEquivalentUsd / provider.sevenDayLocal.turnCount, provider.sevenDayLocal.priceCoverage, language, text.noPrice)
+      : '—';
+  return {
+    todayTokens: { label: text.today, value: formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language) },
+    todayCost: { label: text.todayCost, value: provider.todayLocalComplete === true ? formatUsd(provider.todayLocal.apiEquivalentUsd, provider.todayLocal.priceCoverage, language, text.noPrice) : '—' },
+    sevenDayTokens: { label: text.sevenDays, value: formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language) },
+    sevenDayCost: { label: text.costShort, accessibleLabel: text.cost, value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.apiEquivalentUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—' },
+    cacheHit: { label: text.cache, value: !sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported },
+    cacheSavings: { label: text.cacheSavings, value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.cacheSavingsUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—' },
+    sevenDayConversations: { label: text.sevenDayConversations, value: formatIncompleteCount(provider.sevenDayLocal.conversationCount, provider.sevenDayLocalComplete, language) },
+    sevenDayTurns: { label: text.sevenDayTurns, value: formatIncompleteCount(provider.sevenDayLocal.turnCount, provider.sevenDayLocalComplete, language) },
+    averageTurnCost: { label: text.averageTurnCost, value: sevenDayLocalComplete ? averageTurnCost : '—' },
+  };
 }
 
 /** 完整展示官方额度窗口，避免备用额度的较低余额遮住重置后的主额度。 */
@@ -519,38 +627,74 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   /** Codex 图表明确标注跨来源口径，当天仍与顶部今日指标一致。 */
   const text = copy[props.language];
   const accountUsage = props.provider.providerId === 'codex';
-  const label = accountUsage ? text.accountUsage : text.recentUsage;
-  if (!accountUsage && props.provider.dailyLocal.length === 0 && !props.provider.collectionStartedAt)
+  const [dimension, setDimension] = useState<ChartDimension>(readStoredChartDimension);
+  /** 费用维度只来自本地账本，官方账户历史没有模型维度，无法换算金额。 */
+  const costDimension = dimension === 'cost';
+  const label = costDimension ? text.cost : accountUsage ? text.accountUsage : text.recentUsage;
+  /** 图注口径随维度切换，避免两种数据源被当成同一份统计。 */
+  const sourceHint = costDimension ? text.costEstimateHint : text.accountUsageHint;
+  const showSourceHint = costDimension || accountUsage;
+  /** 维度偏好写入本地存储，重开浮窗保持一致。 */
+  const selectDimension = (next: ChartDimension) => {
+    setDimension(next);
+    try {
+      localStorage.setItem(chartDimensionStorageKey, next);
+    } catch {
+      // 存储不可写时仅保留本次窗口内的选择，与现有偏好处理一致。
+    }
+  };
+  /** 费用维度依赖本地账本；没有本地记录时不再画一排空柱。 */
+  const hasLocalHistory = props.provider.dailyLocal.length > 0 || props.provider.collectionStartedAt !== null;
+  if ((costDimension || !accountUsage) && !hasLocalHistory)
     return (
       <div className="menu-bar-usage-chart-empty">
         <small>{text.insufficientHistory}</small>
       </div>
     );
   /** 补齐近七日日期；开始记录之前保留缺失状态。 */
-  const slots = buildDailySlots(props.provider);
-  const maximum = Math.max(...slots.flatMap((slot) => (slot.totalTokens && slot.totalTokens > 0 ? [slot.totalTokens] : [])), 1);
+  const slots = buildDailySlots(props.provider, dimension);
+  const maximum = Math.max(...slots.flatMap((slot) => (slot.value && slot.value > 0 ? [slot.value] : [])), 1);
   /** 按实际展示的七根柱汇总；缺失日期或当天尚不完整时标明已知下限。 */
-  const sevenDayValue = accountUsage
-    ? formatIncompleteTokens(
-        slots.reduce((sum, slot) => sum + (slot.totalTokens ?? 0), 0),
+  const sevenDayTotal = slots.reduce((sum, slot) => sum + (slot.value ?? 0), 0);
+  const sevenDayValue = costDimension
+    ? formatIncompleteUsd(
+        sevenDayTotal,
         slots.every((slot) => slot.complete),
         props.language,
       )
-    : formatIncompleteTokens(props.provider.sevenDayLocal.totalTokens, props.provider.sevenDayLocalComplete, props.language);
+    : accountUsage
+      ? formatIncompleteTokens(
+          sevenDayTotal,
+          slots.every((slot) => slot.complete),
+          props.language,
+        )
+      : formatIncompleteTokens(props.provider.sevenDayLocal.totalTokens, props.provider.sevenDayLocalComplete, props.language);
   return (
     <figure className="menu-bar-usage-bars" aria-label={`${providerDisplayName(props.provider)} ${label}`}>
       <figcaption>
-        {accountUsage && (
-          <span className="menu-bar-usage-chart-source">
-            {text.accountUsage}
-            <span className="menu-bar-usage-source-info" role="img" tabIndex={0} aria-label={text.accountUsageHint} title={text.accountUsageHint}>
+        <span className="menu-bar-usage-chart-source">
+          {label}
+          {showSourceHint && (
+            <span className="menu-bar-usage-source-info" role="img" tabIndex={0} aria-label={sourceHint}>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <circle cx="8" cy="8" r="6" />
                 <path d="M8 4.5v4M8 11.5h.01" />
               </svg>
+              {/* 原生 title 在无边框透明浮窗里不显示，说明文字改为真实气泡，读屏仍读图标自身的文案。 */}
+              <span className="menu-bar-usage-source-hint" aria-hidden="true">
+                {sourceHint}
+              </span>
             </span>
-          </span>
-        )}
+          )}
+        </span>
+        <span className="menu-bar-usage-dimension" role="group" aria-label={text.dimension}>
+          <button type="button" aria-pressed={!costDimension} onClick={() => selectDimension('tokens')}>
+            {text.dimensionTokens}
+          </button>
+          <button type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
+            {text.dimensionCost}
+          </button>
+        </span>
         <dl>
           <div>
             <dt>{text.sevenDaysSummary}</dt>
@@ -560,17 +704,18 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
       </figcaption>
       <div className="menu-bar-usage-bars-plot">
         {slots.map((slot) => {
-          const state = slot.totalTokens === null ? 'missing' : slot.totalTokens === 0 ? 'zero' : 'positive';
-          const value = slot.totalTokens === null ? text.missingDay : `${formatIncompleteTokens(slot.totalTokens, slot.complete, props.language)} Token`;
-          /** 七列共用有限宽度，较长的万级数字去掉小数；悬浮摘要保留原精度。 */
-          const label = slot.totalTokens === null ? '—' : formatIncompleteTokens(slot.totalTokens, slot.complete, props.language);
-          const chartLabel = label.length > 6 && slot.totalTokens !== null ? `${slot.complete ? '' : '≥'}${formatTokens(slot.totalTokens, props.language, 0)}` : label;
+          const state = slot.value === null ? 'missing' : slot.value === 0 ? 'zero' : 'positive';
+          const formatted = costDimension ? formatUsdText(slot.value, props.language) : slot.value === null ? '' : formatIncompleteTokens(slot.value, slot.complete, props.language);
+          const value = slot.value === null ? text.missingDay : costDimension ? formatted : `${formatted} Token`;
+          /** 七列共用有限宽度：token 的万级数字去掉小数，金额限制到两位小数；悬浮摘要保留原精度。 */
+          const barLabel = slot.value === null ? '—' : formatted;
+          const chartLabel = slot.value === null ? barLabel : costDimension ? formatCurrency(slot.value, props.language, 2) : barLabel.length > 6 ? `${slot.complete ? '' : '≥'}${formatTokens(slot.value, props.language, 0)}` : barLabel;
           return (
             <span key={slot.date} data-state={state} aria-label={`${formatShortDate(slot.date, props.language)} ${value}`} title={`${slot.date} · ${value}`}>
               <span className="menu-bar-usage-bar-slot">
-                <span className="menu-bar-usage-bar-column" style={{ blockSize: slot.totalTokens ? `${Math.max(2, (slot.totalTokens / maximum) * 100)}%` : '2px' }}>
+                <span className="menu-bar-usage-bar-column" style={{ blockSize: slot.value ? `${Math.max(2, (slot.value / maximum) * 100)}%` : '2px' }}>
                   {/* 零用量不显示柱顶数字，日期与悬浮用量仍保留。 */}
-                  {slot.totalTokens !== 0 && <strong className="menu-bar-usage-bar-value">{chartLabel}</strong>}
+                  {slot.value !== 0 && <strong className="menu-bar-usage-bar-value">{chartLabel}</strong>}
                   <i />
                 </span>
               </span>
@@ -632,10 +777,10 @@ function providerDisplayName(provider: UsageProviderSummary, compact = false): s
 }
 
 /** Codex 只替换当天账户数据，历史缺失不以本地记录或零填充。 */
-function buildDailySlots(provider: UsageProviderSummary): Array<{ date: string; totalTokens: number | null; complete: boolean }> {
-  /** 账户图使用官方历史；普通供应商沿用本地日账本。 */
-  const accountUsage = provider.providerId === 'codex';
-  const buckets = accountUsage ? (provider.dailyAccount ?? []) : provider.dailyLocal;
+function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimension): DailySlot[] {
+  /** 账户图使用官方历史；费用维度与普通供应商沿用本地日账本。 */
+  const accountUsage = provider.providerId === 'codex' && dimension === 'tokens';
+  const buckets = accountUsage ? (provider.dailyAccount ?? []) : provider.dailyLocal.map((day) => ({ date: day.date, totalTokens: dimension === 'cost' ? day.apiEquivalentUsd : day.totalTokens }));
   /** 按日期查找数值，本地采集起点只用于普通供应商的空白日期。 */
   const bucketsByDate = new Map(buckets.map((bucket) => [bucket.date, bucket.totalTokens]));
   const collectionStart = timestampDateKey(provider.collectionStartedAt);
@@ -648,12 +793,12 @@ function buildDailySlots(provider: UsageProviderSummary): Array<{ date: string; 
     date.setDate(date.getDate() - 6 + index);
     const dateKey = localDateKey(date);
     if (accountUsage && index === 6) {
-      return { date: dateKey, totalTokens: Math.max(0, provider.todayLocal.totalTokens), complete: provider.todayLocalComplete === true };
+      return { date: dateKey, value: Math.max(0, provider.todayLocal.totalTokens), complete: provider.todayLocalComplete === true };
     }
-    /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零。 */
+    /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零，未定价日期按缺失处理。 */
     const recorded = bucketsByDate.get(dateKey);
-    const totalTokens = recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
-    return { date: dateKey, totalTokens, complete: totalTokens !== null };
+    const value = recorded === undefined || recorded === null ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
+    return { date: dateKey, value, complete: value !== null };
   });
 }
 
@@ -701,15 +846,40 @@ function formatIncompleteTokens(value: number, complete: boolean | undefined, la
   return complete === true ? formatted : `≥${formatted}`;
 }
 
+/** 会话数、轮次数等计数不缩写，未完成时同样标出已知下限。 */
+function formatIncompleteCount(value: number, complete: boolean | undefined, language: Language): string {
+  return `${complete === true ? '' : '≥'}${new Intl.NumberFormat(language).format(Math.max(0, value))}`;
+}
+
 function formatPercent(value: number | null, language: Language, unavailable = ''): string {
   return value === null ? unavailable : new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, value));
 }
 
-/** 美元使用简短货币符号，保留小额费用精度。 */
-function formatCost(provider: UsageProviderSummary, language: Language, unavailable: string): string {
-  const value = provider.sevenDayLocal.apiEquivalentUsd;
-  if (value === null || !provider.sevenDayLocal.priceCoverage) return unavailable;
-  return `~${new Intl.NumberFormat(language, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(value)}`;
+/** 美元统一使用简短货币符号；小额保留更多小数位，柱顶等紧凑位置限制到两位。 */
+function formatCurrency(value: number, language: Language, maximumFractionDigits = 4): string {
+  return new Intl.NumberFormat(language, {
+    style: 'currency',
+    currency: 'USD',
+    currencyDisplay: 'narrowSymbol',
+    minimumFractionDigits: value > 0 && value < 0.01 ? maximumFractionDigits : 2,
+    maximumFractionDigits,
+  }).format(value);
+}
+
+/** 估算费用：缺值或未定价返回占位文案，其余统一带 ~ 表示估算。 */
+function formatUsd(value: number | null, coverage: number | null | undefined, language: Language, unavailable: string): string {
+  if (value === null || !coverage) return unavailable;
+  return `~${formatCurrency(value, language)}`;
+}
+
+/** 柱图槽位金额：槽位已按天过滤缺失与未定价，这里只做格式化。 */
+function formatUsdText(value: number | null, language: Language): string {
+  return value === null ? '' : `~${formatCurrency(value, language)}`;
+}
+
+/** 费用汇总缺失日期表示已知下限，与 token 一样前缀 ≥。 */
+function formatIncompleteUsd(value: number, complete: boolean, language: Language): string {
+  return `${complete ? '' : '≥'}~${formatCurrency(value, language)}`;
 }
 
 /** 直接显示本地日期和时间，跨日重置无需悬停猜测。 */
@@ -767,5 +937,35 @@ function storeSelection(value: string): void {
     localStorage.setItem(selectionStorageKey, value);
   } catch {
     // 选择偏好不可写时，仅保留当前窗口内状态。
+  }
+}
+
+/** 指标偏好同属不可信输入：过滤未知标识、按固定顺序去重，空结果回落为默认显示项。 */
+function readStoredMetrics(): MetricId[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(metricsStorageKey) ?? 'null');
+    if (!Array.isArray(value)) return [...defaultMetricOrder];
+    const known = new Set(value.filter((id): id is MetricId => typeof id === 'string' && metricOrder.includes(id as MetricId)));
+    const selected = metricOrder.filter((id) => known.has(id));
+    return selected.length > 0 ? selected : [...defaultMetricOrder];
+  } catch {
+    return [...defaultMetricOrder];
+  }
+}
+
+function storeMetrics(value: MetricId[]): void {
+  try {
+    localStorage.setItem(metricsStorageKey, JSON.stringify(value));
+  } catch {
+    // 存储不可写时仍保留本次窗口内的指标选择。
+  }
+}
+
+/** 维度偏好只接受两个已知取值，其他内容回落到 Token。 */
+function readStoredChartDimension(): ChartDimension {
+  try {
+    return localStorage.getItem(chartDimensionStorageKey) === 'cost' ? 'cost' : 'tokens';
+  } catch {
+    return 'tokens';
   }
 }
