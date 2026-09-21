@@ -639,6 +639,7 @@ export class ConversationTranscriptRepository {
     const state = allowBuilding ? (this.state(conversationId) ?? this.requireReadyState(conversationId)) : this.requireReadyState(conversationId);
     const entry = this.db.get<TranscriptEntryRow>(`SELECT * FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ?`, [conversationId, entryId]);
     if (!entry) return null;
+    assertVisiblePlacement(entry);
     const sources = this.db
       .select<TranscriptAliasRow>(`SELECT * FROM conversation_transcript_aliases WHERE conversation_id = ? AND entry_id = ? ORDER BY source_revision, source_domain, source_id, facet`, [conversationId, entryId])
       .map(mapSourceStamp);
@@ -668,6 +669,7 @@ export class ConversationTranscriptRepository {
       const previousLength = placements.length;
       if (row.removed_revision !== null) removedEntryIds.push(entryId);
       else {
+        assertVisiblePlacement(row);
         if (!placements.some((placement) => placement.entryId === entryId)) placements.push(mapPlacement(row, state.order_epoch));
         for (const anchorId of [row.opening_input_id, row.display_stage_id]) {
           if (!anchorId || placements.some((placement) => placement.entryId === anchorId)) continue;
@@ -1471,6 +1473,18 @@ export class ConversationTranscriptRepository {
   /** 按 Provider 线程找到持久运行分段。 */
   private segmentForProviderThread(conversationId: string, providerThreadId: string): string | null {
     return this.db.get<{ id: string }>(`SELECT id FROM conversation_runtime_segments WHERE conversation_id = ? AND native_session_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId, providerThreadId])?.id ?? null;
+  }
+}
+
+/**
+ * 可见条目必须带安全整数位置，任何读取路径都按同一契约校验。
+ * 隐藏锚点只做归属连接、不进入时间线，允许没有位置；已删除条目由调用方单独处理。
+ */
+function assertVisiblePlacement(row: TranscriptEntryRow): void {
+  if (row.removed_revision !== null) return;
+  if (row.kind === 'hidden_input_anchor' || row.kind === 'hidden_stage_anchor') return;
+  if (row.display_order === null || !Number.isSafeInteger(row.display_order)) {
+    throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INCOMPLETE', `显示条目缺少持久位置：${row.id}`);
   }
 }
 

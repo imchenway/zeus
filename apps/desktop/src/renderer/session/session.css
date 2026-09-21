@@ -3352,6 +3352,8 @@
   --session-markdown-max: 40rem;
   --session-composer-max: var(--session-thread-max);
   --session-ease-out: cubic-bezier(0.19, 1, 0.22, 1);
+  /* ZEUS-0693：消息入场用带轻微回弹的弹簧收尾，先落一点再收回，避免生硬弹出。 */
+  --session-ease-spring: cubic-bezier(0.21, 1.14, 0.34, 1);
   /* 会话页的全局 source rail 与 native thread 共用同一套明暗 token，避免 dark shell 仍消费旧浅色产品变量。 */
   --zeus-product-canvas: var(--session-canvas);
   --zeus-product-panel: var(--session-sidebar);
@@ -4280,7 +4282,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item.is-entering {
-  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
+  animation: session-thread-item-arrive 380ms var(--session-ease-spring) both;
 }
 
 .session-codex-parity-v1 .session-thread-item.has-message-actions {
@@ -4288,7 +4290,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
-  animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
+  animation: session-thread-item-arrive-latest 440ms var(--session-ease-spring) both;
 }
 
 /* 结构化回答沿用正文列宽和询问卡片；普通消息继续使用右侧气泡。 */
@@ -6842,17 +6844,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     inset: 0;
     position: absolute;
     z-index: 8;
-  }
-}
-
-@keyframes session-latest-turn-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -11063,7 +11054,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
-  animation: session-message-settle 160ms var(--session-ease-out) both;
+  animation: session-thread-item-arrive-latest 440ms var(--session-ease-spring) both;
 }
 
 .session-codex-parity-v1 .session-queued-messages-header {
@@ -11107,10 +11098,39 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   }
 }
 
-@keyframes session-message-settle {
+/* ZEUS-0693：普通新消息的入场弹簧，中段轻微过冲后回到静止位置。 */
+@keyframes session-thread-item-arrive {
   from {
-    opacity: 0.74;
-    transform: translateY(4px);
+    opacity: 0;
+    transform: translateY(8px) scale(0.995);
+  }
+
+  60% {
+    opacity: 1;
+    transform: translateY(-1.5px) scale(1);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 最新一条同时是当前发言，入场幅度略大，让“来了新消息”一眼可读。 */
+@keyframes session-thread-item-arrive-latest {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+
+  58% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
