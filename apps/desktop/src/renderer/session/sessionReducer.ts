@@ -107,7 +107,8 @@ export type NativeSessionAction =
       type: 'send_uncertain';
       clientUserMessageId: string;
       previousConversationState: ConversationState;
-      error: NativeSessionError;
+      /** 结果待核对属于可自行收敛的内部状态，允许不携带面向用户的错误。 */
+      error?: NativeSessionError;
     }
   | { type: 'send_accepted'; clientUserMessageId: string; status: string; submissionId?: string; providerTurnId?: string }
   | { type: 'send_reconciliation_failed'; error: NativeSessionError }
@@ -337,14 +338,14 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
                   status: 'unconfirmed',
                   payload: {
                     ...optimistic.payload,
-                    deliveryError: action.error,
+                    ...(action.error ? { deliveryError: action.error } : {}),
                   },
                 },
               },
             }
           : {}),
         conversationState: action.previousConversationState,
-        error: action.error,
+        ...(action.error ? { error: action.error } : {}),
         transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
       };
     }
