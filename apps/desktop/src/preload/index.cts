@@ -47,7 +47,8 @@ async function readTaskClipboardResources(): Promise<{ resources: unknown[]; tex
   const attachments = Array.isArray(raw?.attachments) ? raw.attachments : [];
   if (paths.length > 0) {
     const resources = await invokeMainCommand('zeus:store-task-resource-paths', 'desktop.task_resources.store_paths', 'artifact', 'task-input-resources', paths);
-    return { resources: Array.isArray(resources) ? resources : [], text: '' };
+    // 路径已变成附件，但正文里剩下的说明文字仍要回到输入框。
+    return { resources: Array.isArray(resources) ? resources : [], text: typeof raw?.text === 'string' ? raw.text : '' };
   }
   if (attachments.length > 0) {
     const resources = await invokeMainCommand('zeus:materialize-task-resources', 'desktop.task_resources.materialize', 'artifact', 'task-input-resources', attachments);

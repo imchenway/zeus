@@ -1586,9 +1586,9 @@ export function TaskCreateModal(props: {
         if (pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
         if (result.resources.length > 0) {
           props.onAddAttachments(withTaskAttachmentRestoreTarget(result.resources, restoreTarget));
-        } else if (result.text) {
-          insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, result.text);
         }
+        // 兜底路径同样可能只剩正文：附件之外的文字必须回到当前字段。
+        if (result.text) insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, result.text);
         if (pasteShortcutFallbackTokenRef.current === fallbackToken) {
           pasteShortcutFallbackTokenRef.current += 1;
         }
@@ -1693,6 +1693,8 @@ export function TaskCreateModal(props: {
       const nativeResult = await props.onReadClipboardResources();
       if (nativeResult.resources.length > 0) {
         props.onAddAttachments(withTaskAttachmentRestoreTarget(nativeResult.resources, restoreTarget));
+        // 剪贴板里的文件路径已经变成附件，剩下的说明文字仍要写回当前字段。
+        insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, nativeResult.text);
         return;
       }
       if (pastedFiles.length > 0) {

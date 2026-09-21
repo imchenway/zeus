@@ -6,6 +6,7 @@ import { createConversationAttachmentGrant, resolveConversationAttachmentGrant }
 import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
+  extractTaskClipboardResidualText,
   inferTaskClipboardAttachmentMimeType,
   isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
@@ -125,7 +126,11 @@ export function createConversationInputResourceBroker(options: CreateConversatio
     async readClipboard(commandId) {
       const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (referencedPaths.length > 0) {
-        return { resources: await this.describePaths(referencedPaths, 'paste'), text: '' };
+        return {
+          resources: await this.describePaths(referencedPaths, 'paste'),
+          // 路径已经变成附件，剪贴板正文里剩下的说明文字仍要留在输入框。
+          text: extractTaskClipboardResidualText(safelyReadClipboardText(options.clipboard), referencedPaths),
+        };
       }
       const binaryResources = await readTaskClipboardAttachmentsFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (binaryResources.length > 0) {

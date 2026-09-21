@@ -300,14 +300,7 @@ function decodeClipboardBuffer(data: Uint8Array): string[] {
 
 function extractFileReferencesFromPlainText(value: string): string[] {
   const references = new Map<string, string>();
-  const candidates = [
-    ...value
-      .split(/\r?\n/gu)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#')),
-    ...extractEmbeddedFileReferenceCandidates(value),
-  ];
-  for (const candidate of candidates) {
+  for (const candidate of plainTextFileReferenceCandidates(value)) {
     for (const reference of fileReferenceToPath(candidate)) {
       if (!references.has(reference)) references.set(reference, reference);
     }
@@ -315,15 +308,48 @@ function extractFileReferencesFromPlainText(value: string): string[] {
   return Array.from(references.values());
 }
 
+/** 剪贴板纯文本里可能指向本地文件的候选：整行或以 file:// 链接内嵌在正文里。 */
+function plainTextFileReferenceCandidates(value: string): string[] {
+  return [
+    ...value
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#')),
+    ...extractEmbeddedFileReferenceCandidates(value),
+  ];
+}
+
 function extractEmbeddedFileReferenceCandidates(value: string): string[] {
   const candidates: string[] = [];
   // 只提取明确的 file:// 引用；不再从正文中抓取内嵌绝对路径，避免把日志里
   // <zeus_attachment> 描述的附件地址误当成待写入的文件附件。
-  const fileUrlPattern = /\bfile:\/\/\/[^\s"'<>]+/giu;
-  for (const match of value.matchAll(fileUrlPattern)) {
+  for (const match of value.matchAll(clipboardFileUrlPattern)) {
     candidates.push(match[0]);
   }
   return candidates;
+}
+
+/** 剪贴板正文里的 file:// 链接；附件识别与正文剥离共用同一条规则。 */
+const clipboardFileUrlPattern = /\bfile:\/\/\/[^\s"'<>]+/giu;
+
+/** 判断一段候选文本是否整段都已经变成附件，只有整段命中才允许从正文里移除。 */
+function isConsumedFileReference(candidate: string, consumedPaths: ReadonlySet<string>): boolean {
+  const references = fileReferenceToPath(candidate);
+  return references.length > 0 && references.every((reference) => consumedPaths.has(reference));
+}
+
+/**
+ * 计算剪贴板文字里没有被附件消费、仍应留在输入框的正文。
+ * 粘贴“文件路径 + 文字说明”时，路径变成附件，说明文字必须留在原来的字段里。
+ */
+export function extractTaskClipboardResidualText(value: string, referencedPaths: readonly string[]): string {
+  const consumedPaths = new Set(referencedPaths);
+  return value
+    .split(/\r?\n/gu)
+    .filter((line) => !isConsumedFileReference(line.trim(), consumedPaths))
+    .join('\n')
+    .replace(clipboardFileUrlPattern, (match) => (isConsumedFileReference(match, consumedPaths) ? '' : match))
+    .trim();
 }
 
 function extractFileReferencesFromHtml(value: string): string[] {
