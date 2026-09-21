@@ -85,7 +85,7 @@ async function main() {
   announceReleaseStage('执行候选前置检查');
   await ensureCandidatePreflight(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
-  console.log('发布说明模型：Zeus DeepSeek deepseek-v4-flash；不可用时自动使用确定性模板。');
+  console.log('发布说明模型：Zeus 已配置的官方 DeepSeek 连接（优先 flash 档位）；不可用时自动使用确定性模板。');
 
   announceReleaseStage('生成 Release notes');
   await ensureReleaseNotes(releaseState);

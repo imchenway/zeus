@@ -40,10 +40,11 @@ console.log(`Zeus 发布内容草稿：版本 ${releaseVersion}，范围 ${baseT
 let response;
 let usedDeterministicFallback = false;
 try {
-  response = await requestDeepSeekReleaseNotes(prompt);
-  console.log('发布说明已由 Zeus 配置的 deepseek-v4-flash 生成。');
+  const generated = await requestDeepSeekReleaseNotes(prompt);
+  response = generated.output;
+  console.log(`发布说明已由 Zeus 配置的 DeepSeek ${generated.model} 生成。`);
 } catch (error) {
-  console.warn(`deepseek-v4-flash 生成发布说明失败，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
+  console.warn(`DeepSeek 生成发布说明失败，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
   response = buildDeterministicFallback();
   usedDeterministicFallback = true;
 }
@@ -265,7 +266,8 @@ async function requestDeepSeekReleaseNotes(prompt) {
     const apiResponse = await globalThis.fetch(url, {
       method: 'POST',
       headers: { Accept: 'application/json', Authorization: `Bearer ${capability}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'deepseek-v4-flash', prompt }),
+      // 具体模型由 Zeus 本机服务按已配置的 DeepSeek 连接解析，命令侧不写死模型 ID。
+      body: JSON.stringify({ prompt }),
       signal: controller.signal,
     });
     const payload = await apiResponse.json().catch(() => null);
@@ -275,9 +277,9 @@ async function requestDeepSeekReleaseNotes(prompt) {
     }
     const output = payload?.output;
     if (!output || typeof output.markdown !== 'string') throw new Error('Zeus 本机服务没有返回有效发布说明');
-    return output;
+    return { model: typeof payload?.model === 'string' ? payload.model : 'DeepSeek', output };
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error('deepseek-v4-flash 在 90 秒内没有返回');
+    if (error instanceof Error && error.name === 'AbortError') throw new Error('DeepSeek 在 90 秒内没有返回');
     throw error;
   } finally {
     globalThis.clearTimeout(timeout);
@@ -293,7 +295,6 @@ function buildDeterministicFallback() {
       '## 本次更新',
       '',
       `- 本版本收录了 ${baseTag} 之后进入固定候选提交的功能改进与问题修复。`,
-      '- AI 发布说明不可用时采用保守模板，不根据缺失证据扩写具体功能。',
       '',
       '## 如何升级',
       '',
