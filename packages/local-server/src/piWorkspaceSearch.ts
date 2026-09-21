@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { relative } from 'node:path';
 import { promisify } from 'node:util';
+import { expandCliSearchPath } from '@zeus/ai-runtime';
 
 /** 使用参数数组执行搜索，用户的表达式和路径不能成为命令选项。 */
 const execFileAsync = promisify(execFile);
@@ -38,11 +39,13 @@ export async function searchPiWorkspace(input: { cwd: string; path: string; tool
   /** 成功结果或带有明确截断标记的已收集部分；不重放搜索。 */
   let output: string;
   try {
-    output = (await execFileAsync('rg', args, { cwd: input.cwd, timeout: 30_000, maxBuffer: maximumSearchBytes, signal: input.signal })).stdout;
+    /** 从 Finder 启动的应用拿不到用户 shell 的 PATH，而 rg 常在 homebrew 目录；搜索必须补齐同一份目录再执行。 */
+    output = (await execFileAsync('rg', args, { cwd: input.cwd, timeout: 30_000, maxBuffer: maximumSearchBytes, signal: input.signal, env: { ...process.env, PATH: expandCliSearchPath() } })).stdout;
   } catch (error) {
     /** ripgrep 仅退出码 1 表示正常的零匹配；语法错误、超时和路径错误继续上报。 */
     const failure = error as { code?: unknown; stdout?: unknown; message?: unknown };
     if (failure.code === 1) return '没有匹配结果。';
+    if (failure.code === 'ENOENT') throw new Error('本机没有找到 ripgrep（rg），Zeus 的内容搜索无法执行；请在终端执行 brew install ripgrep 后重试。');
     if (failure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || failure.message !== 'stdout maxBuffer length exceeded' || typeof failure.stdout !== 'string') throw error;
     // 收集不完整必须在首屏可见，分页只能恢复已收集的部分。
     output = `[搜索输出达到 64 KiB 收集上限，结果不完整；分页仅能读取已收集部分。请缩小 path、glob 或搜索表达式。]\n${failure.stdout}`;
