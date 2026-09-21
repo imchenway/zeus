@@ -12,6 +12,7 @@ import {
   type ZeusConversationSubmissionRecord,
   type ZeusConversationTurnRecord,
   type ZeusConversationWithMessagesRecord,
+  isQueueMemberStatus,
 } from '@zeus/storage';
 import { randomUUID } from 'node:crypto';
 import { ConversationQueueDispatchScheduler } from './conversationQueueDispatchScheduler.js';
@@ -666,7 +667,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (options.conversations.getRecordById(conversationId)?.archived) {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     }
-    const queuedCount = options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: content,
       ...(Object.prototype.hasOwnProperty.call(input, 'requestedServiceTier') ? { requestedServiceTier: input.requestedServiceTier } : {}),
@@ -708,7 +708,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       kind: 'message',
       requestedDelivery: 'queue',
       status: 'queued',
-      queuePosition: queuedCount + 1,
       input: payload,
       createdAt: now(),
     });
@@ -1207,7 +1206,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const conversation = requireConversation(input.conversationId);
     const context = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
-    const queuedCount = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
     const payload: PersistedSubmissionInput = {
       text: input.content,
       ...(typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
@@ -1231,7 +1229,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       kind: 'steer',
       requestedDelivery: 'send_now',
       status: 'dispatching',
-      queuePosition: queuedCount + 1,
       input: payload,
       targetProviderTurnId: input.expectedTurnId,
       providerTurnId: input.expectedTurnId,
@@ -2594,13 +2591,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         submissionId: created.id,
         resolvedAt: timestamp,
       });
-      const queuedIds = options.submissions
-        .listByConversation(conversation.id)
-        .filter((candidate) => candidate.status === 'queued' || candidate.status === 'paused' || candidate.status === 'failed')
-        .map((candidate) => candidate.id);
-      if (queuedIds[0] !== created.id) {
-        options.submissions.reorderQueued(conversation.id, [created.id, ...queuedIds.filter((id) => id !== created.id)], timestamp);
-      }
+      /** 队列名单由仓储统一给出，确认卡提交的提交必须成为下一个派发对象。 */
+      options.submissions.promoteQueuedHead(conversation.id, created.id, timestamp);
       return created;
     });
     contexts.set(conversation.id, context);
@@ -2818,7 +2810,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function releaseHeldSubmissions(conversationId: string, context: ConversationDispatchContext): Map<string, ZeusConversationSubmissionRecord> {
     const replacements = new Map<string, ZeusConversationSubmissionRecord>();
     for (const submission of options.submissions.listByConversation(conversationId)) {
-      if (submission.providerTurnId || (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed')) continue;
+      if (submission.providerTurnId || !isQueueMemberStatus(submission.status)) continue;
       const input = parseJsonRecord(submission.inputJson) as unknown as PersistedSubmissionInput;
       if (!isRecord(input.context) || input.context.holdDispatch !== true) continue;
       const nextInput: PersistedSubmissionInput = { ...input, context: { ...input.context, ...context } };
@@ -2837,8 +2829,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return replacements;
   }
 
+  /** 与 SQL 的 ORDER BY queue_position 语义保持一致：空位置在 SQLite 里排最前，比较器不得自行改成队尾。 */
   function compareConversationQueueOrder(left: ZeusConversationSubmissionRecord, right: ZeusConversationSubmissionRecord): number {
-    return (left.queuePosition ?? Number.MAX_SAFE_INTEGER) - (right.queuePosition ?? Number.MAX_SAFE_INTEGER) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+    return (left.queuePosition ?? -1) - (right.queuePosition ?? -1) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
   }
 
   /** 同一会话复用恢复；不同会话独立推进，并在运行实例变化后重新核对。 */

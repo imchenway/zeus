@@ -51,6 +51,7 @@ import type {
   ZeusConversationServerRequestRecord,
   ZeusConversationWithMessagesRecord,
   ZeusDatabase,
+  isQueueMemberStatus,
 } from '@zeus/storage';
 import { projectConversationTurnFailure } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
@@ -612,7 +613,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     const createdAt = options.now();
     try {
-      if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
+      if (isQueueMemberStatus(submission.status)) {
         submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
       }
       await input.segmentLifecycle?.beginDispatch();
@@ -1009,7 +1010,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     context.permissionMode = input.permissionMode;
     context.workMode = input.workMode;
     context.pluginSkillRoots = uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path)));
-    if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
+    if (isQueueMemberStatus(submission.status)) {
       submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
     }
     let compiledDispatchContext: ContextDispatchEnvelope | null = null;
@@ -2565,8 +2566,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...options.conversations.getNextTurnSettings(conversation.id),
           collaborationMode: nextMode,
         });
-        const queuedIds = options.submissions.listQueueByConversation(conversation.id).map((candidate) => candidate.id);
-        options.submissions.reorderQueued(conversation.id, [created.id, ...queuedIds.filter((id) => id !== created.id)], timestamp);
+        /** 队列名单由仓储统一给出，确认卡提交的提交必须成为下一个派发对象。 */
+        options.submissions.promoteQueuedHead(conversation.id, created.id, timestamp);
       }
       return created;
     });

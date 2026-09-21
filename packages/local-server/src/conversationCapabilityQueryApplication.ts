@@ -55,7 +55,7 @@ interface ConversationCapabilityQueryPorts {
   environments: Pick<TaskEnvironmentRepository, 'listByTask'>;
   workspaces: Pick<TaskWorkspaceRepository, 'getByRepositoryBranch' | 'listByEnvironment'>;
   conversations: Pick<ConversationRepository, 'listByProject' | 'listByEnvironment'>;
-  submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
+  submissions: Pick<ConversationSubmissionRepository, 'listByConversation' | 'hasInFlightByConversation'>;
   provider: ExistingProviderCapabilityReadPort;
   modelCatalog: {
     listSelectableModels(): Promise<SelectableConnectionModel[]>;
@@ -369,7 +369,7 @@ export class ConversationCapabilityQueryApplication {
   }
 
   private conversationHasActiveWork(conversation: ZeusConversationWithMessagesRecord): boolean {
-    const hasPendingWrite = this.ports.submissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+    const hasPendingWrite = this.ports.submissions.hasInFlightByConversation(conversation.id);
     return hasPendingWrite || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting';
   }
 

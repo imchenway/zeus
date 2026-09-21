@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, type CommandDeliveryRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, isQueueMemberStatus, type CommandDeliveryRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 
 /**
@@ -31,7 +31,7 @@ export class ConversationQueueCoreMutationApplication {
   update(input: { conversationId: string; submissionId: string; content: string }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
     if (planControlModeForSubmission(submission)) throw mutationError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot be edited.');
-    if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
+    if (!isQueueMemberStatus(submission.status)) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be edited.');
     }
     const persisted = parseJsonRecord(submission.inputJson);
@@ -78,7 +78,7 @@ export class ConversationQueueCoreMutationApplication {
     if (submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Submissions that already entered a Provider turn cannot be deleted.');
     }
-    if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') {
+    if (!isQueueMemberStatus(submission.status)) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be deleted.');
     }
     const queuedBeforeDelete = this.queueEntries(input.conversationId);
@@ -145,8 +145,9 @@ export class ConversationQueueCoreMutationApplication {
     return submission;
   }
 
+  /** 手动重排与内部提升共用仓储给出的可重排队列定义，避免两套名单互相不认账。 */
   private queueEntries(conversationId: string): ZeusConversationSubmissionRecord[] {
-    return this.options.submissions.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+    return this.options.submissions.listReorderableByConversation(conversationId);
   }
 }
 

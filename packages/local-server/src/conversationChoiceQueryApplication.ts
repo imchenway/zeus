@@ -1,15 +1,16 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type {
-  ConversationAttentionKind,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ProjectRepository,
-  TaskRepository,
-  TaskWorkspaceRepository,
-  ZeusConversationRecord,
-  ZeusTaskWorkspaceRecord,
+import {
+  isInFlightSubmission,
+  type ConversationAttentionKind,
+  type ConversationRepository,
+  type ConversationServerRequestRepository,
+  type ConversationSubmissionRepository,
+  type ConversationTurnRepository,
+  type ProjectRepository,
+  type TaskRepository,
+  type TaskWorkspaceRepository,
+  type ZeusConversationRecord,
+  type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 
 export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
@@ -29,7 +30,7 @@ interface ConversationChoiceQueryPorts {
   tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
   conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
-  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getFirstByConversation' | 'getFirstOperationIdentityByConversation'>;
+  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
   workspaces: Pick<TaskWorkspaceRepository, 'listByProject' | 'getById'>;
   codexNativeEnabled: boolean;
@@ -146,7 +147,7 @@ export class ConversationChoiceQueryApplication {
     const runningSubmissionConversationIds = new Set(
       this.ports.submissions
         .listRecoverable()
-        .filter((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active')
+        .filter(isInFlightSubmission)
         .map((submission) => submission.conversationId),
     );
     for (const conversation of this.ports.conversations.listUnarchivedRecords()) {
@@ -204,13 +205,13 @@ export class ConversationChoiceQueryApplication {
   private isMeaningfulTaskHistoryItem(conversation: ZeusConversationRecord): boolean {
     if (conversation.archived) return true;
     if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
-    const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
+    const firstSubmission = this.ports.submissions.getEarliestCreatedByConversation(conversation.id);
     const hasMessages = (this.ports.conversations.getById(conversation.id)?.messages.length ?? 0) > 0;
     return hasMessages || Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
   }
 
   private isEphemeral(conversation: Pick<ZeusConversationRecord, 'id'>): boolean {
-    const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
+    const firstSubmission = this.ports.submissions.getEarliestCreatedByConversation(conversation.id);
     const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
     return isRecord(context) && context.ephemeral === true;
   }
@@ -222,7 +223,7 @@ export class ConversationChoiceQueryApplication {
 
   toSummary(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {
     const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id) ?? null;
-    const firstSubmission = this.ports.submissions.getFirstByConversation(conversation.id);
+    const firstSubmission = this.ports.submissions.getEarliestCreatedByConversation(conversation.id);
     const execution = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
     const projectPath = this.ports.projects.getById(conversation.projectId)?.localPath;
     const workspace = conversation.workspaceId ? (context.workspaceById.get(conversation.workspaceId) ?? this.ports.workspaces.getById(conversation.workspaceId)) : undefined;
@@ -243,7 +244,7 @@ export class ConversationChoiceQueryApplication {
       workspaceMode,
       executionPath,
       /** 列表与创建回执共用持久创建身份，使提前到达的真实会话归入同一次推送。 */
-      creationOperationIdentity: this.ports.submissions.getFirstOperationIdentityByConversation(conversation.id),
+      creationOperationIdentity: this.ports.submissions.getEarliestOperationIdentityByConversation(conversation.id),
       projectId: conversation.projectId,
       taskId: conversation.taskId,
       workspaceId: conversation.workspaceId,

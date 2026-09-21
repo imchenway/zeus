@@ -1121,7 +1121,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id, beforeExternalWrite });
   }
 
-  function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean } = {}) {
+  function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean; fallbackPosition?: number } = {}) {
     const input = parseJsonObject(submission.inputJson);
     return {
       id: submission.id,
@@ -1137,7 +1137,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ...(isNativeApiRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer } : {}),
       expectedTurnId: submission.targetProviderTurnId ?? (typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null),
       clientUserMessageId: submission.clientMessageId,
-      position: submission.queuePosition,
+      /** 历史遗留的空位置按当前队列名次补齐，客户端永远拿到可比较的整数位置。 */
+      position: submission.queuePosition ?? options.fallbackPosition ?? 1,
       providerTurnId: submission.providerTurnId,
       pausedReason: submission.pausedReason,
       error: toNativeSubmissionError(submission.errorJson),
@@ -1196,7 +1197,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return {
       state,
       waitReason: inferNativeQueueWaitReason(conversation, state, queuedSubmissions),
-      submissions: queuedSubmissions.map((submission) => toNativeSubmission(submission, { includeRecoveryPayload: true })),
+      submissions: queuedSubmissions.map((submission, index) => toNativeSubmission(submission, { includeRecoveryPayload: true, fallbackPosition: index + 1 })),
     };
   }
 
@@ -1410,7 +1411,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const conversation = requireNativeQueueConversation(input.params);
     if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found'), { statusCode: 404 });
     const original = conversationSubmissions.getById(input.params.submissionId);
-    const queueHead = conversationSubmissions.listByConversation(conversation.id).find((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+    /** 队首判定必须与仓储给出的可重排队列完全一致，不得再手写一套状态集合。 */
+    const queueHead = conversationSubmissions.listReorderableByConversation(conversation.id)[0];
     if (!original || original.conversationId !== conversation.id || !queueHead || queueHead.id !== original.id) throw nativeApiError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能改路由替换当前暂停的队首提交。');
     if ((original.status !== 'paused' && original.status !== 'failed') || original.providerTurnId) throw nativeApiError('ZEUS_NATIVE_SUBMISSION_NOT_REROUTABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以改路由。');
     if (original.pausedReason === 'outcome_unknown' || original.submissionOutcome === 'outcome_unknown') throw nativeApiError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '接纳结果未知的提交禁止改路由，必须先完成恢复核对或取消。');

@@ -1,4 +1,5 @@
 import {
+  isQueueMemberStatus,
   type CommandDeliveryRepository,
   type ConversationExecutionRepository,
   type ConversationRepository,
@@ -55,7 +56,7 @@ export async function archiveUnboundConversationLocally(ports: UnboundConversati
   const submissions = ports.submissions.listByConversation(conversation.id);
   ports.db.transaction(() => {
     for (const submission of submissions) {
-      if ((submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) continue;
+      if (!isQueueMemberStatus(submission.status) || submission.providerTurnId) continue;
       ports.execution.cancelOpenSwitchForSubmission({
         conversationId: conversation.id,
         submissionId: submission.id,
