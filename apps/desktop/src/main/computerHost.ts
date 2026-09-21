@@ -63,10 +63,11 @@ interface CreateComputerHostOptions {
 }
 
 const serviceIdleTimeoutMs = 2 * 60_000;
-const serviceRequestTimeoutMs = 35_000;
-const snapshotDeadlineMs = 30_000;
+/** 单次原生请求时限：长任务（大窗口 AX 扫描、多步动作）不再被 35 秒硬切。 */
+const serviceRequestTimeoutMs = 120_000;
+const snapshotDeadlineMs = 60_000;
 /** 长时间接管分段返回等待状态，避免跨进程 HTTP 请求超时结束原任务。 */
-const userControlWaitTimeoutMs = 60_000;
+const userControlWaitTimeoutMs = 300_000;
 const serviceTerminationGraceMs = 1_000;
 const serviceTerminationKillWaitMs = 2_000;
 const maximumServiceLineBytes = 16 * 1024 * 1024;
@@ -212,7 +213,7 @@ export class ComputerHost implements BrowserAutomationPort {
 
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     // 直接宿主入口也必须有期限；已有调度期限不能因排队或目标检查而重新计时。
-    input = { ...input, deadlineUnixMs: input.deadlineUnixMs ?? Date.now() + 120_000 };
+    input = { ...input, deadlineUnixMs: input.deadlineUnixMs ?? Date.now() + 300_000 };
     if (input.namespace !== 'zeus_computer') return computerText(`ComputerHost 不支持命名空间：${String(input.namespace)}`, false);
     if (this.options.readOnlyValidation) return computerText('只读验证模式禁止启动或调用 Computer Use。', false);
     if (!this.settings.enabled) return computerText('Zeus Computer Use 尚未在设置中全局启用。', false);
@@ -781,7 +782,7 @@ export class ComputerHost implements BrowserAutomationPort {
       return { textValue: { ...result, screenshot: { error: 'invalid_artifact_path' } }, image: null };
     }
     const file = await stat(artifactPath).catch(() => null);
-    if (!file?.isFile() || file.size <= 0 || file.size > 30 * 1024 * 1024) {
+    if (!file?.isFile() || file.size <= 0 || file.size > 64 * 1024 * 1024) {
       return { textValue: { ...result, screenshot: { error: 'artifact_unavailable' } }, image: null };
     }
     const data = await readFile(artifactPath);

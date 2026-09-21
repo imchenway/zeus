@@ -208,8 +208,6 @@ export function normalizeStoredModelConnections(value: unknown): ModelConnection
   return records;
 }
 
-const officialDeepSeekResponsesModelIds = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
-
 /** DeepSeek 模板只有指向官方 HTTPS 端点时，才能使用官方价格和能力证据。 */
 export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): boolean {
   if (connection.templateId !== 'deepseek') return false;
@@ -222,9 +220,12 @@ export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnection
   }
 }
 
-/** 只有 DeepSeek 官方域名上的 V4 模型可以继承官方 Responses 兼容证据。 */
+/**
+ * 官方 DeepSeek 端点整体提供 Responses 兼容接口：这是端点的能力，不是逐个模型的能力。
+ * 因此只判定端点身份，不再按模型 ID 枚举白名单——官方上线新模型不需要改代码。
+ */
 export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): boolean {
-  return isOfficialDeepSeekApiConnection(connection) && officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase());
+  return modelId.trim().length > 0 && isOfficialDeepSeekApiConnection(connection);
 }
 
 export function modelConnectionRoute(
@@ -232,6 +233,7 @@ export function modelConnectionRoute(
   modelId: string,
   configuredProtocol: ModelProtocolFamily = 'openai_completions',
 ): Pick<ConfiguredModelDefinition, 'runtimeAdapter' | 'protocolFamily'> {
+  // 官方 DeepSeek 端点走 Responses 兼容的 Codex App Server；其余端点按声明的协议族走 Pi。
   if (isOfficialDeepSeekResponsesModel(connection, modelId)) return { runtimeAdapter: 'codex_app_server', protocolFamily: 'openai_responses' };
   return {
     runtimeAdapter: 'pi_sdk',
@@ -255,7 +257,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
             : tools === 'unsupported'
               ? '模型明确不支持工具调用，只能保存在诊断目录中。'
               : agentKind === 'codex'
-                ? 'Zeus 已完成该 DeepSeek 官方 V4 模型的 Responses 兼容验收；新会话使用 Codex App Server。'
+                ? '官方 DeepSeek 端点提供 Responses 兼容接口；新会话使用 Codex App Server。'
                 : '模型已配置；真实外部能力仍以运行探针结果为准。';
       return {
         id: modelRef(connection.id, model.id),

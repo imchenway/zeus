@@ -131,6 +131,8 @@ async function handleRequest(request: PiRuntimeWorkerRequest): Promise<unknown |
       return runtime.followUp(request.payload as FollowUpAgentRunInput);
     case 'compactSession':
       return runtime.compactSession(request.payload as Parameters<PiSdkRuntimeDriver['compactSession']>[0]);
+    case 'importPortableHistory':
+      return runtime.importPortableHistory(request.payload as Parameters<PiSdkRuntimeDriver['importPortableHistory']>[0]);
     case 'interruptRun':
       return runtime.interruptRun(request.payload as Parameters<PiSdkRuntimeDriver['interruptRun']>[0]);
     case 'respondToInteraction':

@@ -33,6 +33,14 @@ export interface PortableContextCompactionPlan {
   recentEntries: PortableHistoryEntry[];
   estimatedInputTokens: number;
   targetBudgetTokens: number;
+  /**
+   * 单次压缩请求允许携带的 token 预算。
+   *
+   * 两条 Provider 链路的压缩都是一次性请求：把待压缩历史全部放进一个请求。历史一旦超过
+   * 目标窗口，这个请求自身就会被 Provider 拒绝，而且此后每次发送都会重复失败。计划层给出
+   * 单批预算，各链路只按批执行，不再各自估算。
+   */
+  batchTokens: number;
 }
 
 /** 只从已确认模型历史构造跨分段输入，不读取队列、提示条或结果未知记录。 */
@@ -174,7 +182,9 @@ export function planPortableContextCompaction(context: PortableConversationConte
   const prefixEntries = groups.flat();
   const recentEntries = recentGroups.flat();
   if (prefixEntries.length === 0) return null;
-  return { prefixEntries, recentEntries, estimatedInputTokens, targetBudgetTokens };
+  // 单批预算取窗口的一半：请求还要容纳摘要输出、系统提示和工具定义，留出的一半是安全边界。
+  const batchTokens = Math.max(4_000, Math.floor(target.contextWindow * 0.5));
+  return { prefixEntries, recentEntries, estimatedInputTokens, targetBudgetTokens, batchTokens };
 }
 
 export function applyPortableContextCompaction(context: PortableConversationContext, plan: PortableContextCompactionPlan, summary: string, targetRuntime: 'codex' | 'pi'): void {

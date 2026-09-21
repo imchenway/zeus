@@ -24,7 +24,16 @@ import type {
   SteerAgentRunInput,
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
-import type { PiPermissionReviewInput, PiPermissionReviewResult, PiRuntimeConnection, PiZeusToolBroker, PiZeusToolDefinitionSpec, PiZeusToolRequest } from './piSdkRuntimeDriver.js';
+import type {
+  PiPermissionReviewInput,
+  PiPermissionReviewResult,
+  PiPortableHistoryImportInput,
+  PiPortableHistoryImportResult,
+  PiRuntimeConnection,
+  PiZeusToolBroker,
+  PiZeusToolDefinitionSpec,
+  PiZeusToolRequest,
+} from './piSdkRuntimeDriver.js';
 import {
   isPiRuntimeWorkerToCoreMessage,
   piRuntimeWorkerError,
@@ -89,7 +98,7 @@ interface PendingHello {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-const effectfulMethods = new Set<PiRuntimeWorkerMethod>(['openSession', 'resumeSession', 'startRun', 'steerRun', 'followUp', 'compactSession', 'interruptRun', 'respondToInteraction']);
+const effectfulMethods = new Set<PiRuntimeWorkerMethod>(['openSession', 'resumeSession', 'startRun', 'steerRun', 'followUp', 'compactSession', 'importPortableHistory', 'interruptRun', 'respondToInteraction']);
 
 /**
  * Core 侧 Pi Runtime Adapter。构造本身不启动进程；只有显式探测、恢复或真实运行调用才创建 Worker。
@@ -585,6 +594,10 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     async compactSession(input: CompactAgentSessionInput): Promise<CompactAgentSessionResult> {
       return (await request('compactSession', withCurrentSession(input))) as CompactAgentSessionResult;
     },
+    async importPortableHistory(input: PiPortableHistoryImportInput): Promise<PiPortableHistoryImportResult> {
+      // 分批导入可能触发多次摘要请求，超时窗口按批次数留足，不能被单次压缩时限截断。
+      return (await request('importPortableHistory', withCurrentSession(input), timeoutForMethod('importPortableHistory'))) as PiPortableHistoryImportResult;
+    },
     async interruptRun(input: InterruptAgentRunInput): Promise<void> {
       await request('interruptRun', withCurrentSession(input));
     },
@@ -693,6 +706,7 @@ function workerEnvironment(generationId: string): NodeJS.ProcessEnv {
 function timeoutForMethod(method: PiRuntimeWorkerMethod): number {
   if (method === 'startRun') return 310_000;
   if (method === 'compactSession') return 600_000;
+  if (method === 'importPortableHistory') return 900_000;
   if (method === 'openSession' || method === 'resumeSession') return 60_000;
   if (method === 'probe' || method === 'readCapabilities' || method === 'recover') return 30_000;
   return 15_000;
