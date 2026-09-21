@@ -1,7 +1,6 @@
 import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import type { ZeusBrowserComment } from '@zeus/shared';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { describeUserFacingError } from '@zeus/shared';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
@@ -317,7 +316,7 @@ function TaskPushMessageContent(
 }
 
 /** 按实际交付阶段显示提示；内部入队不等同于用户需要等待。 */
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], language: SessionUiLanguage, conversationRestoring = false, waitingInQueue = false): string | null {
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], conversationRestoring = false, waitingInQueue = false): string | null {
   // 接纳或终态已由权威记录确认，不再展示发送途中的提示。
   if (item.providerItemId || item.status === 'active' || item.status === 'completed' || item.status === 'resolved') return null;
   const delivery = primitiveText(item.payload.delivery);
@@ -334,9 +333,8 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     if (pausedReason === 'provider_archived') return labels.providerArchived;
     if (pausedReason === 'provider_stop_pending') return labels.providerStopPending;
     if (pausedReason === 'preflight_failed') {
-      // 优先展示服务端持久化的真实失败原因，避免笼统状态掩盖下一步。
-      const deliveryError = isRecord(item.payload.deliveryError) ? describeUserFacingError(item.payload.deliveryError, language).message : '';
-      return deliveryError || labels.preflightFailed;
+      // 失败原因由同一消息下方的发送状态提示承载（含错误详情），底栏只说明消息尚未发出。
+      return labels.preflightFailed;
     }
     return labels.deliveryPaused;
   }
@@ -509,7 +507,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = Boolean(subagentInput || expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
-  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.language, props.conversationRestoring, props.waitingInQueue) : null;
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.conversationRestoring, props.waitingInQueue) : null;
   /** 排队操作沿用父级传入的权限，不从外观或本地状态推断可发送性。 */
   const showQueuedActions = Boolean(props.waitingInQueue && props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission));
   /** 状态与操作共同决定底栏；已确认未发送可只有操作，未知送达可只有状态。 */

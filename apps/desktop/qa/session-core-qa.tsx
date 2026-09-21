@@ -504,9 +504,14 @@ function QueueActionsQa() {
     const expectedCheck = scenario === 'outcome_unknown' ? pendingCount : 0;
     /** 无需错误详情也能重试已确认未发送的消息。 */
     const expectedRetry = ['failed', 'preflight_failed', 'recovery_required', 'recovered_unsent'].includes(scenario) ? pendingCount : 0;
+    /** 发送前失败只在底栏说明消息未发出，原始失败原文交给下方发送状态提示。 */
+    const preflightStatus = language === 'zh-CN' ? '发送前检查未通过，消息尚未发送' : 'Preflight failed; the message was not sent';
+    const footerStatuses = [...(surface.current?.querySelectorAll('.session-queued-thread-footer .session-item-state') ?? [])].map((node) => node.textContent ?? '');
+    const preflightFooterMismatch = scenario === 'preflight_failed' && footerStatuses.some((text) => !text.includes(preflightStatus) || text.includes('消息在发送前失败。'));
     if (
       surface.current?.querySelectorAll('.session-queued-thread-delete').length !== expectedDelete ||
       surface.current?.querySelectorAll('.session-queued-thread-steer').length !== expectedSteer ||
+      preflightFooterMismatch ||
       [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '检查处理状态' : 'Check processing status')).length !== expectedCheck ||
       [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '重试' : 'Retry')).length !== expectedRetry
     )
