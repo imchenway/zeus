@@ -11,6 +11,9 @@ import {
   ConversationServerRequestRepository,
   ProjectRepository,
   createZeusDatabase,
+  isCancellableSubmission,
+  isInFlightSubmission,
+  isQueueMemberStatus,
 } from '../packages/storage/src/index.js';
 import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from '../packages/local-server/src/unboundConversationArchiveApplication.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
@@ -323,6 +326,51 @@ try {
     /** 底层结果未知不能覆盖本次“尚未归档”的准确提示。 */
     const archiveError = describeUserFacingError({ code: 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED', message: '尚未归档', cause: { code: 'ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', message: '送达未知' } });
     assertProbe(archiveError.message.includes('尚未归档') && archiveError.action === 'check' && archiveError.outcomeUnconfirmed, '归档反馈须保留检查入口与未知结果保护');
+    /**
+     * 计划确认卡的自由输入（refine）会在同一事务里把新提交提升到队首。历史中存在失败提交或
+     * 专家轮次提交时，提升所用的队列名单必须与重排校验定义一致，否则用户提交计划意见会直接报错。
+     */
+    const planConversation = conversations.create({ projectId: project.id, title: '计划队首提升', transportKind: 'codex_native', providerState: 'unbound' });
+    const seededAt = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
+    const seedSubmission = (id: string, status: 'queued' | 'paused' | 'failed', input: unknown, offsetMs: number) =>
+      submissions.createOrGet({
+        id,
+        conversationId: planConversation.id,
+        idempotencyKey: id,
+        requestHash: 'c'.repeat(64),
+        clientMessageId: id,
+        kind: 'message',
+        requestedDelivery: 'queue',
+        status,
+        input,
+        createdAt: seededAt(offsetMs),
+      });
+    seedSubmission('submission-queued-old', 'queued', { text: '排队中的消息' }, 1_000);
+    seedSubmission('submission-paused-old', 'paused', { text: '暂停中的消息' }, 2_000);
+    seedSubmission('submission-failed-old', 'failed', { text: '失败的历史消息' }, 3_000);
+    seedSubmission('submission-expert-old', 'queued', { expertRound: true, text: '专家轮次消息' }, 4_000);
+    const planRefinementSubmission = seedSubmission('submission-plan-refine', 'queued', { text: '先不修改代码，先调研方案差异' }, 5_000);
+    submissions.promoteQueuedHead(planConversation.id, planRefinementSubmission.id, seededAt(6_000));
+    const promotedOrder = submissions.listReorderableByConversation(planConversation.id).map((entry) => entry.id);
+    observed.queueHeadPromotionOrder = promotedOrder;
+    assertProbe(
+      promotedOrder.join(',') === ['submission-plan-refine', 'submission-queued-old', 'submission-paused-old', 'submission-failed-old', 'submission-expert-old'].join(','),
+      '计划意见提交必须成为可重排队列队首，且失败与专家轮次提交保持原有相对顺序',
+    );
+    observed.queueReorderPartial = captureCode(() => submissions.reorderQueued(planConversation.id, [planRefinementSubmission.id], seededAt(7_000)));
+    assertProbe(observed.queueReorderPartial === 'ZEUS_NATIVE_QUEUE_REORDER_INVALID', '缺项重排仍必须整体拒绝，不得放松队列完整性校验');
+    /** 队列位置由仓储统一发放：队列成员必须都有具体位置，且互不重复。 */
+    const createdPositions = submissions.listReorderableByConversation(planConversation.id).map((entry) => entry.queuePosition);
+    assertProbe(createdPositions.every((position) => typeof position === 'number') && new Set(createdPositions).size === createdPositions.length, '队列成员必须由仓储发放互不重复的具体位置，调用方不再各自推算');
+    /** 三个集合必须保持彼此不同：暂停项属于队列与可取消集合，但不属于「未完成写入」集合。 */
+    assertProbe(isQueueMemberStatus('paused') && isQueueMemberStatus('failed') && !isQueueMemberStatus('dispatching'), '队列成员状态集合必须只包含 queued/paused/failed');
+    assertProbe(
+      !isInFlightSubmission({ status: 'paused' }) &&
+        isInFlightSubmission({ status: 'dispatching' }) &&
+        isCancellableSubmission({ status: 'paused', providerTurnId: null }) &&
+        !isCancellableSubmission({ status: 'active', providerTurnId: 'turn-1' }),
+      '未完成写入与可取消两个集合不得互相替代：暂停项可取消但不在途，已绑定轮次的活动项不可取消',
+    );
     observed.quickCheck = db.get<{ quick_check: string }>(`PRAGMA quick_check`)?.quick_check ?? null;
 
     assertProbe(

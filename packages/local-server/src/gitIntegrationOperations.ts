@@ -50,6 +50,7 @@ import {
   TaskIntegrationRepository,
   TaskRepository,
   TaskWorkspaceRepository,
+  isCancellableSubmission,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
   type ZeusProjectRecord,
@@ -647,7 +648,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   function countTaskWorkspaceActiveConversations(workspace: ZeusTaskWorkspaceRecord): number {
     let count = 0;
     for (const conversation of listTaskWorkspaceConversations(workspace)) {
-      const hasPendingWrite = conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+      const hasPendingWrite = conversationSubmissions.hasInFlightByConversation(conversation.id);
       const providerBusy = conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting';
       if (hasPendingWrite || providerBusy) count += 1;
     }
@@ -838,7 +839,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   }
 
   function taskConversationHasActiveWork(conversation: ZeusConversationWithMessagesRecord): boolean {
-    const hasPendingWrite = conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+    const hasPendingWrite = conversationSubmissions.hasInFlightByConversation(conversation.id);
     const providerBusy = conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting';
     return hasPendingWrite || providerBusy;
   }
@@ -880,8 +881,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         }
       }
       for (const submission of conversationSubmissions.listByConversation(conversation.id)) {
-        const cancellable = submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed' || ((submission.status === 'dispatching' || submission.status === 'active') && !submission.providerTurnId);
-        if (!cancellable) continue;
+        if (!isCancellableSubmission(submission)) continue;
         conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: new Date().toISOString() });
         cancelled += 1;
       }
@@ -1319,9 +1319,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: activeTurn.providerTurnId });
         interrupted += 1;
       }
-      for (const submission of conversationSubmissions.listByConversation(conversation.id)) {
-        if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') cancellableSubmissionIds.push(submission.id);
-      }
+      for (const submission of conversationSubmissions.listReorderableByConversation(conversation.id)) cancellableSubmissionIds.push(submission.id);
     }
     return workspaceGitResponse({ workspaceId: workspace.id, interrupted, cancelled: cancellableSubmissionIds.length }, 200, () => {
       const resolvedAt = new Date().toISOString();

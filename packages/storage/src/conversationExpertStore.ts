@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { nextQueuePositionFor } from './conversationStore.js';
 import { randomId } from './randomId.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 
@@ -237,14 +238,7 @@ export class ConversationExpertRepository {
       const segmentId = `conversation_expert_round_segment_${randomId(12)}`;
       const submissionStatus = input.queued ? 'queued' : 'active';
       const turnStatus = input.queued ? 'queued' : 'running';
-      const queuePosition = input.queued
-        ? (this.db.get<{ position: number | null }>(
-            `SELECT MAX(queue_position) AS position
-               FROM conversation_submissions
-              WHERE conversation_id = ? AND status IN ('queued', 'paused', 'failed')`,
-            [input.conversationId],
-          )?.position ?? 0) + 1
-        : null;
+      const queuePosition = input.queued ? nextQueuePositionFor(this.db, input.conversationId) : null;
       const timelineSequence = this.nextSequence(input.conversationId, 'timeline_sequence');
       const userSequence = this.nextSequence(input.conversationId, 'model_history_sequence');
       /** 用户正文先取得持久身份，后续专家结果都归属该输入。 */
@@ -507,20 +501,7 @@ export class ConversationExpertRepository {
             SET status = ?, queue_position = ?, submission_outcome = 'accepted', resolved_at = NULL, error_json = NULL,
                 dispatched_at = ?, updated_at = ?
           WHERE id = ?`,
-        [
-          queued ? 'queued' : 'active',
-          queued
-            ? (this.db.get<{ position: number | null }>(
-                `SELECT MAX(queue_position) AS position
-                   FROM conversation_submissions
-                  WHERE conversation_id = ? AND status IN ('queued', 'paused', 'failed')`,
-                [execution.conversationId],
-              )?.position ?? 0) + 1
-            : null,
-          queued ? null : updatedAt,
-          updatedAt,
-          execution.submissionId,
-        ],
+        [queued ? 'queued' : 'active', queued ? nextQueuePositionFor(this.db, execution.conversationId) : null, queued ? null : updatedAt, updatedAt, execution.submissionId],
       );
       this.db.execute(
         `UPDATE conversation_turns

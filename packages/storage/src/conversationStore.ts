@@ -446,6 +446,36 @@ export interface ZeusConversationSubmissionRecord {
   modelHistorySequence: number | null;
 }
 
+/**
+ * 可重排队列成员的唯一状态集合。SQL 条件、逐行判断、队尾位置计算都从这里派生，
+ * 任何调用方都不允许再手写一份，否则「谁算队列成员」会再次出现两套答案。
+ */
+export const reorderableSubmissionStatuses = ['queued', 'paused', 'failed'] as const;
+
+/** 由状态集合派生的 SQL 条件片段，避免 SQL 与 TypeScript 各写一遍。 */
+export const reorderableSubmissionStatusSql = `status IN (${reorderableSubmissionStatuses.map((status) => `'${status}'`).join(', ')})`;
+
+/** 队列成员判定：仍在队列内，或保留审计的失败项。这是状态级别的唯一入口。 */
+export function isQueueMemberStatus(status: string): boolean {
+  return (reorderableSubmissionStatuses as readonly string[]).includes(status);
+}
+
+/** 尚未完成写入的活动提交：排队中、派发中或已被 Provider 接管。暂停项没有在途写入，不属于此集合。 */
+export function isInFlightSubmission(submission: Pick<ZeusConversationSubmissionRecord, 'status'>): boolean {
+  return submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active';
+}
+
+/** 可以安全取消的提交：队列成员，以及尚未产生 Provider 轮次的派发中项。 */
+export function isCancellableSubmission(submission: Pick<ZeusConversationSubmissionRecord, 'status' | 'providerTurnId'>): boolean {
+  return isQueueMemberStatus(submission.status) || ((submission.status === 'dispatching' || submission.status === 'active') && !submission.providerTurnId);
+}
+
+/** 队尾位置：新的排队提交必须落在现有队列成员之后，各入口不得再各自推算。 */
+export function nextQueuePositionFor(db: ZeusDatabasePort, conversationId: string): number {
+  const position = db.get<{ position: number | null }>(`SELECT MAX(queue_position) AS position FROM conversation_submissions WHERE conversation_id = ? AND ${reorderableSubmissionStatusSql}`, [conversationId])?.position;
+  return (position ?? 0) + 1;
+}
+
 export type ConversationServerRequestKind = 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp';
 export type ConversationServerRequestStatus = 'pending' | 'resolved' | 'declined' | 'expired' | 'failed';
 export interface ZeusConversationServerRequestRecord {
@@ -2189,6 +2219,8 @@ export class ConversationSubmissionRepository {
       return mapConversationSubmissionRow(existing);
     }
     const id = input.id ?? `conversation_submission_${randomId(12)}`;
+    /** 队列成员的位置统一由仓储落到队尾，调用方不再各自推算；非队列状态不需要位置。 */
+    const queuePosition = input.queuePosition ?? (isQueueMemberStatus(status) ? nextQueuePositionFor(this.db, input.conversationId) : null);
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
       `INSERT INTO conversation_submissions (id, conversation_id, idempotency_key, request_hash, client_message_id, kind, requested_delivery, status, queue_position, input_json, target_provider_turn_id, provider_turn_id, paused_reason, error_json, created_at, updated_at, dispatched_at, resolved_at, replacement_of_submission_id, replacement_reason, execution_snapshot_id, submission_outcome)
@@ -2202,7 +2234,7 @@ export class ConversationSubmissionRepository {
         kind,
         requestedDelivery,
         status,
-        input.queuePosition ?? null,
+        queuePosition,
         JSON.stringify(input.input),
         input.targetProviderTurnId ?? null,
         input.providerTurnId ?? null,
@@ -2231,13 +2263,14 @@ export class ConversationSubmissionRepository {
     return this.db.select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? ORDER BY queue_position, created_at, id`, [conversationId]).map(mapConversationSubmissionRow);
   }
 
-  getFirstByConversation(conversationId: string): ZeusConversationSubmissionRecord | undefined {
+  /** 只读取最早创建提交的身份：用于会话创建回执对账，与队列顺序无关。 */
+  getEarliestCreatedByConversation(conversationId: string): ZeusConversationSubmissionRecord | undefined {
     const row = this.db.get<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId]);
     return row ? mapConversationSubmissionRow(row) : undefined;
   }
 
-  /** 只读取首条提交的创建操作身份，避免会话列表加载提示词和附件正文。 */
-  getFirstOperationIdentityByConversation(conversationId: string): string | null {
+  /** 只读取最早提交的创建操作身份，避免会话列表加载提示词和附件正文。 */
+  getEarliestOperationIdentityByConversation(conversationId: string): string | null {
     return this.db.get<{ idempotency_key: string }>(`SELECT idempotency_key FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId])?.idempotency_key ?? null;
   }
 
@@ -2255,6 +2288,21 @@ export class ConversationSubmissionRepository {
     return this.db
       .select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? AND status IN ('queued', 'paused') ORDER BY queue_position, created_at, id`, [conversationId])
       .map(mapConversationSubmissionRow);
+  }
+
+  /**
+   * 可重排队列的唯一定义：所有仍参与用户排序的提交，包含暂停与失败的历史项。
+   * 重排校验、手动重排和内部「提升到队首」必须共用它，避免各自拼名单后互相不认账。
+   */
+  listReorderableByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
+    return this.db
+      .select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? AND ${reorderableSubmissionStatusSql} ORDER BY queue_position, created_at, id`, [conversationId])
+      .map(mapConversationSubmissionRow);
+  }
+
+  /** 会话内是否还有未完成写入：互斥门禁与恢复判定必须使用同一集合。 */
+  hasInFlightByConversation(conversationId: string): boolean {
+    return this.listByConversation(conversationId).some(isInFlightSubmission);
   }
 
   listRecoverable(): ZeusConversationSubmissionRecord[] {
@@ -2331,15 +2379,27 @@ export class ConversationSubmissionRepository {
     return this.getById(replacementId)!;
   }
 
+  /** 重排必须以可重排队列的完整成员为准，少一条、多一条或重复都会拒绝，防止错位或丢失。 */
   reorderQueued(conversationId: string, orderedSubmissionIds: readonly string[], updatedAt = nowIso()): ZeusConversationSubmissionRecord[] {
-    const queued = this.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+    const queued = this.listReorderableByConversation(conversationId);
     if (orderedSubmissionIds.length !== queued.length || new Set(orderedSubmissionIds).size !== queued.length || orderedSubmissionIds.some((id) => !queued.some((entry) => entry.id === id))) {
-      throw Object.assign(new Error('Queued submission reorder must contain every queued or paused submission exactly once.'), { code: 'ZEUS_NATIVE_QUEUE_REORDER_INVALID' as const });
+      throw Object.assign(new Error('Queued submission reorder must contain every queued, paused, or failed submission exactly once.'), { code: 'ZEUS_NATIVE_QUEUE_REORDER_INVALID' as const });
     }
     this.db.transaction(() => {
       orderedSubmissionIds.forEach((id, index) => this.db.execute(`UPDATE conversation_submissions SET queue_position = ?, updated_at = ? WHERE id = ? AND conversation_id = ?`, [index + 1, updatedAt, id, conversationId]));
     });
-    return this.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
+    return this.listReorderableByConversation(conversationId);
+  }
+
+  /**
+   * 把指定提交提升到可重排队列队首；不在队列中（例如幂等重放已派发的提交）或已在队首时保持原状。
+   * 调用方不需要自己拼队列名单，因此不会和重排校验的定义漂移。
+   */
+  promoteQueuedHead(conversationId: string, submissionId: string, updatedAt = nowIso()): void {
+    const queue = this.listReorderableByConversation(conversationId);
+    const index = queue.findIndex((entry) => entry.id === submissionId);
+    if (index <= 0) return;
+    this.reorderQueued(conversationId, [queue[index]!.id, ...queue.filter((entry) => entry.id !== submissionId).map((entry) => entry.id)], updatedAt);
   }
 
   /** 同步记录提交状态与引导目标，避免异步派发期间再次被当作普通队首。 */

@@ -1,4 +1,4 @@
-import type { ConversationExecutionRepository, ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { isInFlightSubmission, type ConversationExecutionRepository, type ConversationRepository, type ConversationSubmissionRepository, type ConversationTurnRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
 import { serializeError, toRecoverySubmissionError } from './codexNativeConversationPolicy.js';
 import { interruptUnconfirmedConversationTurns } from './codexRecoveryTurnState.js';
@@ -44,7 +44,7 @@ export function createCodexRecoveryStateApplication(options: CodexRecoveryStateA
       return false;
     }
     for (const submission of submissions) {
-      if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active') markSubmissionRecoveryRequired(submission, error);
+      if (isInFlightSubmission(submission)) markSubmissionRecoveryRequired(submission, error);
     }
     interruptUnconfirmedConversationTurns({
       conversationId,
