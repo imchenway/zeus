@@ -27,7 +27,7 @@ export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** 档位清单的来源，决定界面标签和这份清单有多可信。 */
-export type ModelReasoningBasis = 'official_endpoint' | 'catalog' | 'catalog_default' | 'model_name' | 'user' | 'unidentified';
+export type ModelReasoningBasis = 'official_endpoint' | 'vendor_docs' | 'catalog' | 'catalog_default' | 'model_name' | 'user' | 'unidentified';
 
 export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
