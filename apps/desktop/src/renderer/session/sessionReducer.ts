@@ -32,7 +32,7 @@ import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/sh
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
 import { isTranscriptContentUpdate } from './transcriptProjection.js';
-import { mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
+import { compareTranscriptTimelineOrder, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
 import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
 
 export type NativeSessionAction =
@@ -404,6 +404,11 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const previousItemStableIndexes = new Map(state.itemOrder.map((key, index) => [key, index]));
   /** 跨来源投影只认持久显示身份。 */
   const previousItemsByEntryId = new Map(Object.values(state.items).flatMap((item) => (item.transcript ? [[item.transcript.placement.entryId, item] as const] : [])));
+  /**
+   * 本地乐观条目提前声明它将来对应的持久显示身份。
+   * 落库条目带着同一身份到达时必须接管这条本地条目，不能并存成第二个气泡。
+   */
+  const previousUserEntryByDurableIdentity = new Map<string, { key: string; item: NativeSessionItemBuffer }>();
   const previousItemsByProviderId = new Map<string, NativeSessionItemBuffer>();
   const previousItemsByLocalId = new Map<string, NativeSessionItemBuffer>();
   const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
@@ -414,6 +419,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     if (item.providerItemId) previousItemsByProviderId.set(item.providerItemId, item);
     if (item.localItemId) previousItemsByLocalId.set(item.localItemId, item);
     if (!isUserMessageItem(item)) return;
+    const durableIdentity = durableUserMessageIdentity(item);
+    if (durableIdentity) previousUserEntryByDurableIdentity.set(durableIdentity, { key, item });
     const submissionId = stringValue(item.payload.submissionId);
     if (submissionId) previousUserItemsBySubmissionId.set(submissionId, item);
     for (const clientId of userMessageClientIds(item)) {
@@ -443,7 +450,9 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     const timelineAt = item.startedAt ?? item.updatedAt;
     const itemSubmissionId = isUserMessageType(item.type) ? stringValue(item.payload.submissionId) : null;
     let itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
-    const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined);
+    /** 同一条用户消息无论先到的是本地气泡还是落库条目，都按持久显示身份认作一条。 */
+    const durableIdentityEntry = isUserMessageType(item.type) ? previousUserEntryByDurableIdentity.get(item.transcript.placement.entryId) : undefined;
+    const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined) ?? durableIdentityEntry?.item;
     itemClientId ??= previousUserItem ? (userMessageClientIds(previousUserItem)[0] ?? null) : null;
     const existingProviderUserKey = itemClientId ? providerUserItemKeyByClientId.get(itemClientId) : undefined;
     if (existingProviderUserKey) {
@@ -453,7 +462,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       continue;
     }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
-    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, item.transcript.placement.entryId);
+    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? durableIdentityEntry?.key ?? nativeSessionItemKey(snapshot.id, threadId, turnId, item.transcript.placement.entryId);
     // 资源分页已经补齐到 Renderer 后，后续轻量权威快照仍可能只携带正文、把 resources
     // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
     // 对账时倒退为“图片不可用”。
@@ -834,17 +843,20 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
   const stableOrderIndex = new Map(stableOrder.map((key, index) => [key, index]));
   const itemOrder = stableOrder
     .filter((key) => Boolean(items[key]))
-    .sort((leftKey, rightKey) => {
-      const left = items[leftKey];
-      const right = items[rightKey];
-      if (!left || !right) return left ? -1 : right ? 1 : 0;
-      const leftPlacement = left.transcript?.placement;
-      const rightPlacement = right.transcript?.placement;
-      if (leftPlacement?.order !== null && leftPlacement?.order !== undefined && rightPlacement?.order !== null && rightPlacement?.order !== undefined) {
-        return leftPlacement.order - rightPlacement.order || leftPlacement.entryId.localeCompare(rightPlacement.entryId);
-      }
-      return (previousOrder.get(leftKey) ?? stableOrderIndex.get(leftKey) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(rightKey) ?? stableOrderIndex.get(rightKey) ?? Number.MAX_SAFE_INTEGER);
-    });
+    .sort((leftKey, rightKey) =>
+      compareTranscriptTimelineOrder(
+        {
+          entryId: items[leftKey]!.transcript?.placement.entryId ?? leftKey,
+          order: items[leftKey]!.transcript?.placement.order ?? null,
+          fallbackIndex: previousOrder.get(leftKey) ?? stableOrderIndex.get(leftKey) ?? Number.MAX_SAFE_INTEGER,
+        },
+        {
+          entryId: items[rightKey]!.transcript?.placement.entryId ?? rightKey,
+          order: items[rightKey]!.transcript?.placement.order ?? null,
+          fallbackIndex: previousOrder.get(rightKey) ?? stableOrderIndex.get(rightKey) ?? Number.MAX_SAFE_INTEGER,
+        },
+      ),
+    );
 
   const turnsByProviderId = { ...hydrated.turnsByProviderId };
   for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
@@ -1406,7 +1418,11 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
     : undefined;
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
-  const transcriptEntry = !providerItem && incomingTranscript ? Object.entries(state.items).find(([, item]) => item.transcript?.placement.entryId === incomingTranscript.placement.entryId) : undefined;
+  /**
+   * 落库条目带着持久显示身份到达时直接接管同身份的本地条目。
+   * 本地乐观气泡还没有位置记录，但它的持久身份已经确定，不能因为少了位置就多留一个气泡。
+   */
+  const transcriptEntry = !providerItem && incomingTranscript ? Object.entries(state.items).find(([, item]) => durableUserMessageIdentity(item) === incomingTranscript.placement.entryId) : undefined;
   const matchedKey = matchedUserEntry?.[0] ?? transcriptEntry?.[0];
   const key = matchedKey ?? providerKey;
   const previous = state.items[key] ?? providerItem ?? transcriptEntry?.[1];
@@ -1501,24 +1517,34 @@ function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConv
   return { ...state, items, pendingRequests, removedTranscriptEntryIds, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
 }
 
-/** 实时条目只按持久位置插入；无位置的乐观队列继续保留当前相对顺序。 */
+/** 实时条目按正文时间线的唯一比较规则插入；没有持久位置的本地条目整段留在持久区之后。 */
 function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<string, NativeSessionItemBuffer>>): string[] {
   const previousIndex = new Map(order.map((key, index) => [key, index]));
-  return [...order].sort((leftKey, rightKey) => {
-    const left = items[leftKey]?.transcript?.placement.order ?? null;
-    const right = items[rightKey]?.transcript?.placement.order ?? null;
-    if (left !== null && right !== null) return left - right || (items[leftKey]?.transcript?.placement.entryId ?? leftKey).localeCompare(items[rightKey]?.transcript?.placement.entryId ?? rightKey);
-    return (previousIndex.get(leftKey) ?? 0) - (previousIndex.get(rightKey) ?? 0);
-  });
+  return [...order].sort((leftKey, rightKey) =>
+    compareTranscriptTimelineOrder(
+      { entryId: items[leftKey]?.transcript?.placement.entryId ?? leftKey, order: items[leftKey]?.transcript?.placement.order ?? null, fallbackIndex: previousIndex.get(leftKey) ?? 0 },
+      { entryId: items[rightKey]?.transcript?.placement.entryId ?? rightKey, order: items[rightKey]?.transcript?.placement.order ?? null, fallbackIndex: previousIndex.get(rightKey) ?? 0 },
+    ),
+  );
+}
+
+/**
+ * 用户消息的持久显示身份：落库后统一是 user-message:<客户端身份>。
+ * 本地乐观气泡也用它提前声明“我将来就是这一条正文”，因此同身份只能存在一条消息。
+ */
+export function durableUserMessageIdentity(item: NativeSessionItemBuffer): string | null {
+  if (!isUserMessageItem(item)) return null;
+  if (item.transcript) return item.transcript.placement.entryId;
+  /** 优先使用正式提交身份；Provider 回显只补充关联，不重新编号用户输入。 */
+  const clientId = item.durableClientUserMessageId ?? item.clientUserMessageId ?? stringValue(item.payload.clientUserMessageId) ?? stringValue(item.payload.clientId);
+  return clientId ? `user-message:${clientId}` : null;
 }
 
 /** 已接纳输入可按持久客户端身份核对原位置；未发送输入不猜位置，也不进入恢复请求。 */
 export function sessionTranscriptEntryId(item: NativeSessionItemBuffer): string | null {
   if (item.transcript) return item.transcript.placement.entryId;
   if (!isUserMessageItem(item) || isUnacceptedTranscriptMessage(item)) return null;
-  /** 优先使用正式提交身份；Provider 回显只补充关联，不重新编号用户输入。 */
-  const clientId = item.durableClientUserMessageId ?? item.clientUserMessageId ?? stringValue(item.payload.clientUserMessageId) ?? stringValue(item.payload.clientId);
-  return clientId ? `user-message:${clientId}` : null;
+  return durableUserMessageIdentity(item);
 }
 
 function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {

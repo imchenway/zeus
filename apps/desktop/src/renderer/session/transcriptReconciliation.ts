@@ -11,6 +11,29 @@ export interface TranscriptReconciliationResult {
   movedEntryIds: string[];
 }
 
+/** 正文时间线排序的唯一输入：显示身份、服务端持久位置和无位置条目的兜底序号。 */
+export interface TranscriptTimelineOrderEntry {
+  /** 稳定显示身份；只用于同位置时的确定性比较。 */
+  entryId: string;
+  /** 服务端持久位置；null 表示这条消息还没有落库位置，不属于正文时间线。 */
+  order: number | null;
+  /** 没有位置时保留原有相对顺序用的兜底序号。 */
+  fallbackIndex: number;
+}
+
+/**
+ * 正文时间线的唯一比较规则，快照、实时、分页和状态水合共用同一份实现。
+ * 规则只有两条：有位置的按位置排（同位置用显示身份定序），没有位置的整段排在持久区之后。
+ * 这样比较关系是全序且可传递，不会出现“两条同身份消息一条有位置一条没有”时顺序随机（含沉底）。
+ */
+export function compareTranscriptTimelineOrder(left: TranscriptTimelineOrderEntry, right: TranscriptTimelineOrderEntry): number {
+  const leftPlaced = left.order !== null;
+  const rightPlaced = right.order !== null;
+  if (leftPlaced !== rightPlaced) return leftPlaced ? -1 : 1;
+  if (leftPlaced && rightPlaced) return left.order! - right.order! || left.entryId.localeCompare(right.entryId);
+  return left.fallbackIndex - right.fallbackIndex || left.entryId.localeCompare(right.entryId);
+}
+
 /** 快照、实时和分页唯一允许的条目合并入口。 */
 export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[], incoming: readonly NativeItemSnapshot[]): TranscriptReconciliationResult {
   /** 显示身份而非来源行身份决定 React 条目是否复用。 */
@@ -43,9 +66,14 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
     });
   const items = changedEntryIds.size === 0 ? (current as NativeItemSnapshot[]) : [...byEntryId.values()];
   if (structuralChange) {
-    /** 排序前记录候选顺序；位置未规划时沿用该顺序，不能把开场输入沉底。 */
+    /** 排序前记录候选顺序；没有位置的本地条目按该顺序整体留在持久区之后。 */
     const candidateIndex = new Map(items.map((item, index) => [transcriptEntryId(item), index]));
-    items.sort(compareTranscriptItemsByCandidate(candidateIndex));
+    items.sort((left, right) =>
+      compareTranscriptTimelineOrder(
+        { entryId: transcriptEntryId(left), order: left.transcript.placement.order, fallbackIndex: candidateIndex.get(transcriptEntryId(left)) ?? 0 },
+        { entryId: transcriptEntryId(right), order: right.transcript.placement.order, fallbackIndex: candidateIndex.get(transcriptEntryId(right)) ?? 0 },
+      ),
+    );
   }
   const movedEntryIds = items.flatMap((item, index) => {
     const entryId = transcriptEntryId(item);
@@ -53,16 +81,6 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
     return before !== undefined && before !== index ? [entryId] : [];
   });
   return { items, changedEntryIds: [...changedEntryIds], movedEntryIds };
-}
-
-/** 只有双方都有整数位置时才比较 order；缺位置的条目按候选顺序保留原位。 */
-function compareTranscriptItemsByCandidate(candidateIndex: ReadonlyMap<string, number>): (left: NativeItemSnapshot, right: NativeItemSnapshot) => number {
-  return (left, right) => {
-    const leftOrder = left.transcript.placement.order;
-    const rightOrder = right.transcript.placement.order;
-    if (leftOrder !== null && rightOrder !== null) return leftOrder - rightOrder || transcriptEntryId(left).localeCompare(transcriptEntryId(right));
-    return (candidateIndex.get(transcriptEntryId(left)) ?? 0) - (candidateIndex.get(transcriptEntryId(right)) ?? 0);
-  };
 }
 
 /** 读取条目的产品级稳定身份。 */

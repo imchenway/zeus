@@ -5,7 +5,7 @@ import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { createInitialSessionState, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
+import { createInitialSessionState, durableUserMessageIdentity, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
   type ConversationResourcePreview,
@@ -531,10 +531,24 @@ export function createSessionController(options: CreateSessionControllerOptions)
         snapshot: resumeCachedConversationSnapshot(cachedStateCandidate.snapshot),
       }
     : undefined;
+  const cachedItems = initialCachedState?.items ?? {};
+  /**
+   * 缓存里已经有同一条消息的持久条目时，本地乐观副本必须直接退休。
+   * 否则同一句话会被画成两个气泡，而没有位置的那个会被排队规则钉在记录末尾。
+   */
+  const durableCachedIdentities = new Set(
+    Object.values(cachedItems)
+      .filter((item) => !item.optimistic)
+      .map((item) => durableUserMessageIdentity(item))
+      .filter((identity): identity is string => identity !== null),
+  );
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
-    .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
-  const cachedItems = initialCachedState?.items ?? {};
+    .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId))
+    .filter((item) => {
+      const identity = durableUserMessageIdentity(item);
+      return identity === null || !durableCachedIdentities.has(identity);
+    });
   const optimisticItems = Object.fromEntries(initialOptimisticItems.map((item) => [item.key, { ...item }]));
   const itemOrder = [...new Set([...(initialCachedState?.itemOrder ?? []), ...initialOptimisticItems.map((item) => item.key)])];
   let state: NativeSessionState = {

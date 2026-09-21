@@ -1,9 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /**
+ * 条目入场动画的总时长，也是 is-entering 标记的保留时间。
+ * 必须不小于 session.css 里 is-entering 动画的时长，否则标记先被摘掉、弹簧动画会被截断成生硬跳变。
+ */
+export const newItemMotionDurationMs = 520;
+
+/**
  * 只标记当前列表真实新增的对象；首批历史数据不播放逐项入场，避免打开页面时整列内容排队闪动。
  */
-export function useNewItemMotionIds(ids: readonly string[], durationMs = 220, baselineReady = true, eligibleIds?: readonly string[]): ReadonlySet<string> {
+export function useNewItemMotionIds(ids: readonly string[], durationMs = newItemMotionDurationMs, baselineReady = true, eligibleIds?: readonly string[]): ReadonlySet<string> {
   /** 调用方保持键数组时无需再次序列化整段历史。 */
   const previousIds = useRef<readonly string[]>([]);
   if (ids.length !== previousIds.current.length || ids.some((id, index) => id !== previousIds.current[index])) previousIds.current = ids;
