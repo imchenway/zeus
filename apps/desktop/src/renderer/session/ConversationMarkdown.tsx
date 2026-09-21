@@ -3,7 +3,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationReso
 import { conversationFileLocationFromReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
-import { memo, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -48,6 +48,9 @@ const labels = {
     imageUnavailable: '图片不可用',
     contentTruncated: '内容过于复杂，已截断',
     codeTruncated: '代码块过长，已截断',
+    diagramRuntimeUnavailable: '图表运行库未加载，只能显示源码',
+    diagramRenderFailed: '图表渲染失败：',
+    diagramNotRendered: '图表没有渲染出来，已回退为源码',
   },
   'en-US': {
     copied: 'Copied',
@@ -59,6 +62,9 @@ const labels = {
     imageUnavailable: 'Image unavailable',
     contentTruncated: 'Content complexity truncated',
     codeTruncated: 'Code block truncated',
+    diagramRuntimeUnavailable: 'Diagram runtime unavailable; showing source',
+    diagramRenderFailed: 'Diagram failed to render: ',
+    diagramNotRendered: 'Diagram did not render; showing source',
   },
 } as const;
 
@@ -87,6 +93,8 @@ export type StructuredMessageToken = {
 
 interface MarkdownRuntimeContextValue {
   language: SessionUiLanguage;
+  /** 正文整体是否已经结束生成，用于判断图表代码块是否还会继续增长。 */
+  phase: ConversationMarkdownPhase;
   resources: ConversationResource[];
   onOpenResource?: ConversationMarkdownProps['onOpenResource'];
   onLoadResourcePreview?: ConversationMarkdownProps['onLoadResourcePreview'];
@@ -142,12 +150,13 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   const contextValue = useMemo<MarkdownRuntimeContextValue>(
     () => ({
       language: props.language,
+      phase: props.phase,
       resources: props.resources ?? EMPTY_RESOURCES,
       onOpenResource: props.onOpenResource,
       onLoadResourcePreview: props.onLoadResourcePreview,
       structuredTokens: props.structuredTokens,
     }),
-    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.resources, props.structuredTokens],
+    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens],
   );
 
   useLayoutEffect(() => {
@@ -292,14 +301,71 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
   );
 }
 
+/**
+ * 图表运行库只在首次需要时加载，上游加载失败会永久降级为源码视图。
+ * 这里提前探测一次，把"没加载出来"变成可读原因，而不是只丢一段源码。
+ */
+let mermaidRuntimeProbe: Promise<boolean> | null = null;
+function ensureMermaidRuntime(): Promise<boolean> {
+  mermaidRuntimeProbe ??= import('mermaid').then(() => true).catch(() => false);
+  return mermaidRuntimeProbe;
+}
+
 /** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
   /** 复用带可访问名称的复制按钮，关闭原生组件未标注名称的图标操作。 */
   const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  /** 上游把"画不出来"处理成源码视图且不报错，这里补上用户能看懂的原因。 */
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  /** 正文已经结束时图表代码块不会再增长，必须结束生成态，否则上游会一直只显示源码。 */
+  const phase = useContext(MarkdownRuntimeContext)?.phase ?? 'streaming';
+  const streaming = phase === 'streaming' && Boolean(props.node.loading);
+  useEffect(() => {
+    let active = true;
+    void ensureMermaidRuntime().then((available) => {
+      if (active && !available) setDiagnostic(languageLabels.diagramRuntimeUnavailable);
+    });
+    return () => {
+      active = false;
+    };
+  }, [languageLabels.diagramRuntimeUnavailable]);
+  /** 返回 true 表示异常已由本组件说明，避免与上游错误界面重复提示。 */
+  const onRenderError = useCallback(
+    (error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      setDiagnostic(`${languageLabels.diagramRenderFailed}${reason.slice(0, 200)}`);
+      return true;
+    },
+    [languageLabels.diagramRenderFailed],
+  );
+  /** 生成结束后仍然没有图形，说明上游已静默回退，标出事实并允许后续重试覆盖它。 */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || streaming) return;
+    let active = true;
+    const observer = new MutationObserver(() => {
+      if (container.querySelector('svg')) setDiagnostic(null);
+    });
+    observer.observe(container, { childList: true, subtree: true });
+    const timer = setTimeout(() => {
+      if (active && !container.querySelector('svg')) setDiagnostic((current) => current ?? languageLabels.diagramNotRendered);
+    }, 2_500);
+    return () => {
+      active = false;
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [languageLabels.diagramNotRendered, streaming]);
   return (
-    <div className="session-code-block">
+    <div ref={containerRef} className="session-code-block">
       <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
-      <MermaidBlockNode {...props} loading={Boolean(props.node.loading)} />
+      <MermaidBlockNode {...props} loading={streaming} onRenderError={onRenderError} />
+      {diagnostic ? (
+        <small className="session-markdown-code-truncated" role="status">
+          {diagnostic}
+        </small>
+      ) : null}
     </div>
   );
 }
