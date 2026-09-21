@@ -13,6 +13,14 @@ import { classifyConversationEventDurability, type ConversationEventDurabilityLe
 
 export const conversationSyncProtocolGeneration = conversationSyncProtocolV2Generation;
 export const maximumDurableConversationEventBytes = 1024 * 1024;
+
+/**
+ * 耐久事件超预算只说明这条实时投影太大，不代表 Provider 结果未知。
+ * 调用方（尤其是事件消费链）必须据此跳过本次推送，而不是把整轮判为失败。
+ */
+export function isDurableConversationEventTooLarge(error: unknown): boolean {
+  return Boolean(error) && typeof error === 'object' && (error as { code?: unknown }).code === 'ZEUS_CONVERSATION_SYNC_EVENT_TOO_LARGE';
+}
 export const conversationSyncTransportBudgets = conversationEventFlowBudgets.websocket;
 export const maximumRetainedConversationSyncEvents = 4_096;
 export const maximumRetainedConversationSyncBytes = 16 * 1024 * 1024;
