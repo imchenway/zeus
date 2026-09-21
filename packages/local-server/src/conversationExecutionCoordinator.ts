@@ -132,11 +132,18 @@ export class ConversationExecutionCoordinator {
         if (submission.conversationId !== input.conversationId) throw executionError('ZEUS_CONVERSATION_SUBMISSION_SCOPE_MISMATCH', '提交不属于当前产品会话。');
         submissionId = submission.id;
         const existingSnapshot = submission.executionSnapshotId ? this.options.execution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
-        if (existingSnapshot && existingSnapshot.routeFingerprint !== desiredFingerprint) {
+        const snapshotRouteChanged = Boolean(existingSnapshot && existingSnapshot.routeFingerprint !== desiredFingerprint);
+        /**
+         * 尚未被 Provider 接受的提交，其冻结路由只是入队当时的配置快照；用户此刻选定的模型与引擎才是这次发送的真实目标，
+         * 因此按当前路由重建快照后继续派发。否则引擎迁移（codex → pi）会让队列里的消息永久停在「排队中」：
+         * 路由指纹一旦因迁移而不同，这条提交就再也无法通过校验，既发不出去也无法自愈。
+         * 已被 Provider 接受的提交仍按原样拒绝，避免运行中的轮次被中途换模型。
+         */
+        if (snapshotRouteChanged && submission.providerTurnId) {
           throw executionError('ZEUS_CONVERSATION_ROUTE_SNAPSHOT_MISMATCH', '提交冻结的语义路由与本次派发目标不一致。');
         }
         const snapshot =
-          existingSnapshot ??
+          (existingSnapshot && !snapshotRouteChanged ? existingSnapshot : undefined) ??
           this.options.execution.createExecutionSnapshot({
             conversationId: input.conversationId,
             runtimeKind: input.route.runtimeKind,
@@ -159,7 +166,7 @@ export class ConversationExecutionCoordinator {
           submissionId: submission.id,
           executionSnapshotId: snapshot.id,
         });
-        if (!existingSnapshot) {
+        if (!existingSnapshot || snapshotRouteChanged) {
           this.options.execution.appendConfigEvidence({
             conversationId: input.conversationId,
             submissionId: submission.id,
