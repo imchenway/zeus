@@ -5,7 +5,7 @@ export const contextCompilerSchemaVersion = 'zeus-context-compiler-v1';
 export const maximumContextFragmentCount = 2_048;
 export const maximumContextCandidateCharacters = 32 * 1024 * 1024;
 
-export type ContextFragmentCategory = 'safety_boundary' | 'task_document' | 'long_term_memory' | 'project_code' | 'conversation_history' | 'runtime_evidence';
+export type ContextFragmentCategory = 'safety_boundary' | 'agent_rules' | 'task_document' | 'long_term_memory' | 'project_code' | 'conversation_history' | 'runtime_evidence';
 export type ContextFragmentAuthority = 'user_explicit' | 'project_document' | 'zeus_business' | 'provider_native';
 export type ContextFragmentStatus = 'current' | 'review_due' | 'stale' | 'missing';
 export type ContextPlacement = 'application' | 'untrusted';
@@ -181,6 +181,8 @@ export class ContextCompilerError extends Error {
 
 export const defaultContextBudgets: ContextBudget = {
   safety_boundary: 4_096,
+  /** 全局规则与项目规则共用这一档预算；超预算时按规则顺序截断，硬边界建议写在全局规则开头。 */
+  agent_rules: 8_192,
   task_document: 12_288,
   long_term_memory: 2_048,
   project_code: 8_192,
@@ -432,10 +434,10 @@ function prepareFragment(fragment: ContextFragment, asOf: string, tokenCounter: 
   const fragmentProviderId = optionalIdentity(fragment.providerId, 'fragment.providerId', 256);
   const nativeSessionId = optionalIdentity(fragment.nativeSessionId, 'fragment.nativeSessionId', 512);
   if (fragment.primaryTaskDocument && category !== 'task_document') throw invalidArgument('只有 task_document 可以标记为当前任务主文档。', { fragmentId: fragment.id });
-  if (provenance !== 'zeus_current' && (category === 'safety_boundary' || category === 'task_document' || category === 'long_term_memory')) {
-    throw invalidArgument('Provider 原生、便携或派生证据不能伪装成应用级安全、任务文档或长期记忆。', { fragmentId: fragment.id, provenance, category });
+  if (provenance !== 'zeus_current' && isApplicationContextCategory(category)) {
+    throw invalidArgument('Provider 原生、便携或派生证据不能伪装成应用级安全、规则、任务文档或长期记忆。', { fragmentId: fragment.id, provenance, category });
   }
-  if ((category === 'safety_boundary' || category === 'task_document' || category === 'long_term_memory') && authority === 'provider_native') {
+  if (isApplicationContextCategory(category) && authority === 'provider_native') {
     throw invalidArgument('不可信来源不能升格为应用级上下文分类。', { fragmentId: fragment.id, authority, category });
   }
   if (fragment.sourceTruncationReason !== undefined && fragment.sourceTruncationReason !== 'source_page_limit') throw invalidArgument('未知来源截断原因。', { fragmentId: fragment.id });
@@ -499,6 +501,8 @@ function comparePreparedFragments(left: PreparedContextFragment, right: Prepared
 function categoryPriority(fragment: PreparedContextFragment): number {
   const base: Record<ContextFragmentCategory, number> = {
     safety_boundary: 0,
+    /** 规则先于任务文档注入：长期约束比当前任务资料更早进入上下文。 */
+    agent_rules: 50,
     task_document: 100,
     long_term_memory: 200,
     project_code: 300,
@@ -509,9 +513,18 @@ function categoryPriority(fragment: PreparedContextFragment): number {
   return base.long_term_memory + (fragment.memoryKind === 'stable_workflow' ? 0 : 10);
 }
 
+/**
+ * 应用级（可信）上下文类别：只有这些类别进入 application 段，也不允许由 Provider 原生来源冒充。
+ *
+ * 新增应用级类别时只需改这一处：编译器分段判定与派发层防伪校验共用同一份清单，避免两处漂移。
+ */
+export function isApplicationContextCategory(category: ContextFragmentCategory): boolean {
+  return category === 'safety_boundary' || category === 'agent_rules' || category === 'task_document' || category === 'long_term_memory';
+}
+
 function placementFor(fragment: ContextFragment): ContextPlacement {
   if (fragment.provenance !== 'zeus_current') return 'untrusted';
-  return fragment.category === 'safety_boundary' || fragment.category === 'task_document' || fragment.category === 'long_term_memory' ? 'application' : 'untrusted';
+  return isApplicationContextCategory(fragment.category) ? 'application' : 'untrusted';
 }
 
 function normalizeBudgets(overrides: Partial<ContextBudget> | undefined): ContextBudget {

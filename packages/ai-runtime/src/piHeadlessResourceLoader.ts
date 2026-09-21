@@ -24,6 +24,8 @@ export interface PiApplicationContextResource {
   fingerprint: string;
   manifest: string;
   content: string;
+  /** 编译结果已包含规则片段时为 true；此时不再注入内核原生 AGENTS.md，避免重复规则。 */
+  agentRulesIncluded?: boolean;
 }
 
 interface ContextFile {
@@ -91,7 +93,11 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   getAgentsFiles(): { agentsFiles: ContextFile[] } {
-    return { agentsFiles: this.agentsFiles };
+    /**
+     * 规则现在由 Zeus 上下文编译统一注入（含全局、项目与子目录索引）。
+     * 只有在整轮没有编译上下文时才回退到内核原生 AGENTS.md，避免同一份规则注入两次。
+     */
+    return { agentsFiles: this.applicationContext?.agentRulesIncluded ? [] : this.agentsFiles };
   }
 
   getSystemPrompt(): undefined {

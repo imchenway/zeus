@@ -359,6 +359,7 @@ function buildPathMappings(flat: ZeusDataLayout, layered: ZeusDataLayout, legacy
     [flat.releaseUpdates, layered.releaseUpdates],
     [flat.localLogs, layered.localLogs],
     [flat.localConfig, layered.localConfig],
+    [flat.agentRules, layered.agentRules],
     [flat.database, layered.database],
   ];
   const mappings = pairs.map(([source, destination]) => ({ source: resolve(source), destination: resolve(destination) }));

@@ -18,6 +18,8 @@ export type ZeusDataPathKey =
   | 'rootIdentity'
   | 'database'
   | 'localConfig'
+  /** Zeus 级全局规则真源目录（AGENTS.md 唯一权威副本）。 */
+  | 'agentRules'
   | 'localLogs'
   | 'taskAttachments'
   | 'conversationAttachments'
@@ -62,6 +64,8 @@ export interface ZeusDataLayout {
   rootIdentity: string;
   database: string;
   localConfig: string;
+  /** 全局规则真源目录；Codex 与 Pi 都只通过投影或加载器消费这里的内容。 */
+  agentRules: string;
   localLogs: string;
   taskAttachments: string;
   conversationAttachments: string;
@@ -125,6 +129,7 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(dataDirectory, 'zeus.config.json'),
+    agentRules: join(dataDirectory, 'agent-rules'),
     localLogs: join(dataDirectory, 'logs', 'local-server'),
     taskAttachments: join(artifactsDirectory, 'task-attachments'),
     conversationAttachments: join(artifactsDirectory, 'conversation-attachments'),
@@ -180,6 +185,8 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     rootIdentity: join(root, '.zeus-root-identity.json'),
     database,
     localConfig: join(root, 'zeus.config.json'),
+    // 旧平铺布局没有规则真源目录，给出迁移搬运用的确定路径即可。
+    agentRules: join(root, 'agent-rules'),
     localLogs: `${database}.logs`,
     taskAttachments: join(root, 'task-attachments'),
     conversationAttachments: join(root, 'conversation-attachments'),
@@ -242,6 +249,8 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('rootIdentity', 'zeus', 'core', false, false, null),
       entry('database', 'zeus', 'core', false, false, null),
       entry('localConfig', 'zeus', 'core', false, false, null),
+      // 全局规则是用户手写资产：不可重建、不可被“清理数据”顺手删除。
+      entry('agentRules', 'zeus', 'core', false, false, null),
       entry('localLogs', 'zeus', 'managed', false, false, null),
       entry('taskAttachments', 'zeus', 'managed', false, false, null),
       entry('conversationAttachments', 'zeus', 'managed', false, false, null),

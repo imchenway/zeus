@@ -196,17 +196,23 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
       for (const entry of preview.entries) {
         const target = join(targetRoot, entry.path);
         await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        /** 目标是符号链接时（全局规则真源投影），导入必须落到真源，不能把链接替换成普通文件。 */
+        const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+          if (isNodeError(error, 'ENOENT')) return null;
+          throw error;
+        });
+        const writeTarget = existing?.isSymbolicLink() ? ((await realpath(target).catch(() => null)) ?? target) : target;
         try {
-          await lstat(target);
+          await lstat(writeTarget);
           const backupTarget = join(transactionBackupRoot, entry.path);
           await mkdir(dirname(backupTarget), { recursive: true, mode: 0o700 });
-          await rename(target, backupTarget);
+          await rename(writeTarget, backupTarget);
           backedUp.push(entry.path);
           wroteBackup = true;
         } catch (error) {
           if (!isNodeError(error, 'ENOENT')) throw error;
         }
-        await rename(join(stagingRoot, entry.path), target);
+        await rename(join(stagingRoot, entry.path), writeTarget);
         imported.push(entry.path);
       }
       if (wroteBackup) {

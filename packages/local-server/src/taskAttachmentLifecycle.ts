@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative } from 'node:path';
 import { isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
 import type { ZeusDatabase } from '@zeus/storage';
@@ -14,19 +14,131 @@ export function migrateRuntimeDirectory(legacyPath: string, targetPath: string):
   return realpathSync(targetPath);
 }
 
-export function ensurePiGlobalAgentProjection(codexHome: string | undefined, piAgentDirectory: string): void {
-  if (!codexHome) return;
-  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
-  const canonicalCodexHome = realpathSync(codexHome);
-  const projectionPath = join(piAgentDirectory, 'AGENTS.md');
-  try {
-    lstatSync(projectionPath);
-    return;
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT')) throw error;
+/** 全局规则真源文件名：Codex 与 Pi 共用的唯一权威副本。 */
+const globalAgentRulesFileName = 'AGENTS.md';
+
+/** 全局规则真源与投影的一次性保障结果，供启动日志与人工核对使用。 */
+export interface GlobalAgentRulesProvision {
+  /** 真源文件绝对路径。 */
+  sourcePath: string;
+  /** 是否从旧 Codex 目录一次性搬迁得到。 */
+  migratedFromCodexHome: boolean;
+  /** Codex 侧投影链接的处理结果。 */
+  codexProjection: 'linked' | 'unchanged' | 'replaced_equal_file' | 'conflict_backed_up' | 'skipped';
+  /** 内容冲突时保留的备份路径。 */
+  conflictBackupPath: string | null;
+  /** Pi 侧旧投影链接的处理结果；Pi 运行内核不再从该目录读取全局规则。 */
+  legacyPiProjection: 'absent' | 'already_current' | 'repointed' | 'left_untouched';
+}
+
+/**
+ * 保障全局规则真源存在，并把只读投影布置给按文件读取的运行内核。
+ *
+ * 真源唯一：Zeus 数据布局里的 agentRules 目录。Codex App Server 只认 CODEX_HOME/AGENTS.md，
+ * 因此用符号链接投影；内容冲突时保留备份、绝不静默覆盖用户文本。重复启动无副作用。
+ */
+export function ensureGlobalAgentRules(input: { agentRulesDirectory: string; codexHome?: string; legacyPiAgentDirectory?: string }): GlobalAgentRulesProvision {
+  /** 真源目录由 Zeus 拥有，缺失时按 0o700 建立。 */
+  mkdirSync(input.agentRulesDirectory, { recursive: true, mode: 0o700 });
+  const sourcePath = join(input.agentRulesDirectory, globalAgentRulesFileName);
+  const codexHome = input.codexHome;
+  if (codexHome) mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  const projectionPath = codexHome ? join(codexHome, globalAgentRulesFileName) : null;
+  const provision: GlobalAgentRulesProvision = {
+    sourcePath,
+    migratedFromCodexHome: false,
+    codexProjection: 'skipped',
+    conflictBackupPath: null,
+    legacyPiProjection: 'absent',
+  };
+  if (!existsSync(sourcePath) && projectionPath) {
+    // 旧版本把真源放在 Codex 目录里：第一次启动时原样搬过来。
+    provision.migratedFromCodexHome = migrateLegacyAgentRules(projectionPath, sourcePath);
   }
-  // Pi 只复用纯文本全局指令；Codex 插件、技能和配置格式不在这里伪装成 Pi 原生资源。
-  symlinkSync(relative(piAgentDirectory, join(canonicalCodexHome, 'AGENTS.md')), projectionPath);
+  if (projectionPath) {
+    const kind = nodeKind(projectionPath);
+    if (kind === 'missing') {
+      linkProjection(projectionPath, sourcePath);
+      provision.codexProjection = 'linked';
+    } else if (kind === 'symlink') {
+      const expected = relative(dirname(projectionPath), sourcePath);
+      if (readlinkSync(projectionPath) === expected) provision.codexProjection = 'unchanged';
+      else {
+        rmSync(projectionPath, { force: true });
+        linkProjection(projectionPath, sourcePath);
+        provision.codexProjection = 'linked';
+      }
+    } else if (kind === 'file' && existsSync(sourcePath)) {
+      if (readFileSync(projectionPath).equals(readFileSync(sourcePath))) {
+        /** 与真源一致的分叉文件直接收敛为链接，不产生备份。 */
+        rmSync(projectionPath, { force: true });
+        linkProjection(projectionPath, sourcePath);
+        provision.codexProjection = 'replaced_equal_file';
+      } else {
+        /** 内容不同：保留备份后收敛为链接，禁止静默丢弃用户文本。 */
+        const backupPath = join(codexHome!, `${globalAgentRulesFileName}.pre-link-${timestampSuffix()}`);
+        renameSync(projectionPath, backupPath);
+        linkProjection(projectionPath, sourcePath);
+        provision.codexProjection = 'conflict_backed_up';
+        provision.conflictBackupPath = backupPath;
+      }
+    } else {
+      /** 目录或其他类型不参与投影，保持原样以免破坏用户数据。 */
+      provision.codexProjection = 'skipped';
+    }
+  }
+  if (input.legacyPiAgentDirectory) {
+    const legacyPath = join(input.legacyPiAgentDirectory, globalAgentRulesFileName);
+    const kind = nodeKind(legacyPath);
+    if (kind === 'symlink') {
+      const expected = relative(dirname(legacyPath), sourcePath);
+      if (readlinkSync(legacyPath) === expected) provision.legacyPiProjection = 'already_current';
+      else {
+        rmSync(legacyPath, { force: true });
+        linkProjection(legacyPath, sourcePath);
+        provision.legacyPiProjection = 'repointed';
+      }
+    } else if (kind === 'file' || kind === 'other') {
+      provision.legacyPiProjection = 'left_untouched';
+    }
+  }
+  return provision;
+}
+
+/** 只在普通文件前提下搬迁旧真源；链接与其他类型不在此处理。 */
+function migrateLegacyAgentRules(legacyPath: string, sourcePath: string): boolean {
+  if (nodeKind(legacyPath) !== 'file') return false;
+  try {
+    renameSync(legacyPath, sourcePath);
+  } catch (error) {
+    /** 跨卷时 rename 会失败，退化为复制加删除。 */
+    if (!(error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'EXDEV')) throw error;
+    writeFileSync(sourcePath, readFileSync(legacyPath), { mode: 0o600 });
+    rmSync(legacyPath, { force: true });
+  }
+  return true;
+}
+
+/** 用相对目标建立投影链接，跟随数据目录整体移动时仍然有效。 */
+function linkProjection(projectionPath: string, sourcePath: string): void {
+  mkdirSync(dirname(projectionPath), { recursive: true, mode: 0o700 });
+  symlinkSync(relative(dirname(projectionPath), sourcePath), projectionPath);
+}
+
+/** 区分缺失、符号链接、普通文件与其他类型；断链仍然算符号链接。 */
+function nodeKind(path: string): 'missing' | 'symlink' | 'file' | 'other' {
+  try {
+    const status = lstatSync(path);
+    if (status.isSymbolicLink()) return 'symlink';
+    return status.isFile() ? 'file' : 'other';
+  } catch {
+    return 'missing';
+  }
+}
+
+/** 备份文件名后缀：冒号与点在部分文件系统上不友好，统一替换。 */
+function timestampSuffix(): string {
+  return new Date().toISOString().replace(/[:.]/gu, '-');
 }
 
 export function prepareTaskAttachmentRoot(path: string | undefined): string | undefined {

@@ -3201,6 +3201,8 @@ function toPiRunDispatchContext(envelope: ContextDispatchEnvelope | null) {
       fingerprint: envelope.compiled.fingerprint,
       manifest: envelope.rendered.manifest,
       content: envelope.rendered.application,
+      /** 规则已随编译上下文送达时，Pi 不再从项目目录重复注入 AGENTS.md。 */
+      agentRulesIncluded: envelope.compiled.applicationSections.some((section) => section.category === 'agent_rules'),
     },
     ...(envelope.rendered.untrusted
       ? {

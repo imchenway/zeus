@@ -955,6 +955,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         return project ? { id: project.id, localPath: project.localPath } : undefined;
       },
       now,
+      /** 预览必须与真实派发一致地呈现全局规则。 */
+      agentRulesDirectory: dataLayout.agentRules,
     }),
   );
 
@@ -3409,7 +3411,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   registerGlobalAgentSettingsRoutes({
     server,
-    codexHome: dependencies.codexHome,
+    agentRulesDirectory: dataLayout.agentRules,
     commands: settingsCommands,
     redactSensitiveText,
     recordSaved: (metadata) => appendAuditLog({ actorType: 'local_api', action: 'settings.agents.updated', resourceType: 'settings', resourceId: 'agents', payload: { path: metadata.path, revision: metadata.revision } }),

@@ -103,6 +103,8 @@ export interface AgentRunApplicationContext {
   fingerprint: string;
   manifest: string;
   content: string;
+  /** 编译结果已包含规则片段时为 true；Pi 据此不再重复注入 AGENTS.md。 */
+  agentRulesIncluded?: boolean;
 }
 
 /** Core 已编译的不可信上下文；必须留在当前 user/custom message，禁止升格为 system。 */

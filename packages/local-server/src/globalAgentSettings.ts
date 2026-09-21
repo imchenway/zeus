@@ -121,8 +121,8 @@ export function validateGlobalAgentSettingsInput(input: SaveGlobalAgentSettingsI
 export function registerGlobalAgentSettingsRoutes(options: {
   /** 已安装本地鉴权及只读限制的服务器。 */
   server: FastifyInstance;
-  /** 当前运行目录，不可用时不回退到其他用户配置。 */
-  codexHome?: string;
+  /** 全局规则真源目录；不可用时不回退到其他用户配置。 */
+  agentRulesDirectory?: string;
   /** 现有设置命令通道。 */
   commands: SettingsCommandApplication;
   /** 统一脱敏入口。 */
@@ -131,7 +131,7 @@ export function registerGlobalAgentSettingsRoutes(options: {
   recordSaved(metadata: GlobalAgentSettingsMetadata): void;
 }): void {
   /** 单个服务实例负责该目标的写入顺序。 */
-  const file = options.codexHome ? new GlobalAgentSettings(options.codexHome) : null;
+  const file = options.agentRulesDirectory ? new GlobalAgentSettings(options.agentRulesDirectory) : null;
   options.server.get('/api/settings/agents', async (_request, reply) => {
     if (!file) return reply.code(503).send({ error: 'ZEUS_AGENTS_SETTINGS_UNAVAILABLE', message: '当前 Zeus 全局规则目录不可用。' });
     try {
