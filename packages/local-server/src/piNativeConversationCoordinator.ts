@@ -51,9 +51,8 @@ import type {
   ZeusConversationServerRequestRecord,
   ZeusConversationWithMessagesRecord,
   ZeusDatabase,
-  isQueueMemberStatus,
 } from '@zeus/storage';
-import { projectConversationTurnFailure } from '@zeus/storage';
+import { isQueueMemberStatus, projectConversationTurnFailure } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { CreateCodexNativeConversationCoordinatorOptions, NativeConversationAttachmentInput, NativeConversationSkillInput } from './codexNativeConversationContracts.js';
