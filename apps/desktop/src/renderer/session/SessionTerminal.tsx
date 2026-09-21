@@ -5,7 +5,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TerminalIcon as TerminalGlyph } from '@phosphor-icons/react/dist/csr/Terminal';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   AiRuntimeSession,
   AiRuntimeSessionStatus,
@@ -26,9 +26,12 @@ const integratedTerminalScript = 'exec "${SHELL:-sh}" -l';
 const integratedTerminalArgs = ['-lc', integratedTerminalScript] as const;
 const terminalHeightStorageKey = 'zeus.session-terminal.height.v1';
 const defaultTerminalHeight = 284;
-/** 右侧面板默认宽度，实际尺寸仍受当前会话宽度约束。 */
-const defaultTerminalWidth = 480;
-/** 保留终端基本可读宽度；窄窗口最多占用一半空间。 */
+/** 右侧终端默认打开宽度占会话工作区比例，与内置浏览器右侧工作面的默认占比一致。 */
+const defaultTerminalWidthShare = 0.56;
+/** 右侧终端与内置浏览器共用同一档可调范围，两个右侧工作面手感一致。 */
+const minimumTerminalWidthShare = 0.38;
+const maximumTerminalWidthShare = 0.72;
+/** 保留终端基本可读宽度。 */
 const minimumTerminalWidth = 240;
 /** 位置偏好按项目隔离，未选择时从右侧打开。 */
 type TerminalPosition = 'right' | 'bottom';
@@ -133,8 +136,8 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const positionStorageKey = `zeus.session-terminal.position:${encodeURIComponent(props.projectId)}`;
   /** 位置切换只更新布局，保留现有终端、输出与输入内容。 */
   const [position, setPosition] = useState<TerminalPosition>(() => readStoredTerminalPosition(positionStorageKey));
-  /** 宽度与底部高度独立，往返切换不互相覆盖。 */
-  const [width, setWidth] = useState(defaultTerminalWidth);
+  /** 宽度与底部高度独立，往返切换不互相覆盖；0 表示尚未按工作区占比写入默认宽度。 */
+  const [width, setWidth] = useState(0);
   /** 当前方向决定分隔线使用的坐标轴。 */
   const right = position === 'right';
   /** 切换按钮描述点击后的目标位置。 */
@@ -185,6 +188,11 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     };
   }, []);
 
+  /** 首次挂载按工作区占比写入打开宽度；之后的宽度沿用用户拖动与切换位置的结果。 */
+  useLayoutEffect(() => {
+    setWidth((current) => (current > 0 ? current : defaultTerminalPanelWidth()));
+  }, []);
+
   useEffect(() => {
     const subscribe = props.client.subscribeRealtimeEvents;
     if (!subscribe) return;
@@ -224,7 +232,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     if (!panel || !root) return;
     const observer = new ResizeObserver(() => {
       setHeight((current) => clampTerminalHeight(current, root.getBoundingClientRect().height));
-      setWidth((current) => Math.min(Math.max(minimumTerminalWidth, current), root.getBoundingClientRect().width * 0.5));
+      setWidth((current) => clampTerminalWidth(current));
     });
     observer.observe(root);
     return () => observer.disconnect();
@@ -323,15 +331,39 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     setSessions((current) => current.map((session) => (session.id === sessionId && session.status !== status ? { ...session, status } : session)));
   }
 
+  /** 会话根节点覆盖终端与正文，避免根据自身尺寸反复收缩。 */
+  function workspaceBounds(): { width: number; height: number } {
+    const bounds = panelRef.current?.closest('.session-workspace-root')?.getBoundingClientRect();
+    return { width: bounds?.width ?? window.innerWidth, height: bounds?.height ?? window.innerHeight };
+  }
+
+  /** 右侧宽度范围按工作区占比计算，与内置浏览器右侧工作面保持同一档手感。 */
+  function terminalWidthRange(): { minimum: number; maximum: number } {
+    const workspaceWidth = workspaceBounds().width;
+    const maximum = Math.round(workspaceWidth * maximumTerminalWidthShare);
+    /** 窄窗口的下限不能超过实际上限，否则分隔线一开始就越界。 */
+    return { minimum: Math.min(Math.max(minimumTerminalWidth, Math.round(workspaceWidth * minimumTerminalWidthShare)), maximum), maximum };
+  }
+
   /** 当前方向的尺寸上限始终为正文保留空间。 */
   function terminalMaximumSize(): number {
-    /** 会话根节点覆盖终端与正文，避免根据自身尺寸反复收缩。 */
-    const bounds = panelRef.current?.closest('.session-workspace-root')?.getBoundingClientRect();
-    return right ? (bounds?.width ?? window.innerWidth) * 0.5 : maximumTerminalHeight(bounds?.height ?? window.innerHeight);
+    return right ? terminalWidthRange().maximum : maximumTerminalHeight(workspaceBounds().height);
   }
 
   /** 窄窗口优先保留正文，分隔线的最小值不超过实际可用上限。 */
-  const minimumSize = right ? Math.min(minimumTerminalWidth, terminalMaximumSize()) : minimumTerminalHeight;
+  const minimumSize = right ? terminalWidthRange().minimum : minimumTerminalHeight;
+
+  /** 右侧宽度按同一档占比范围收敛，窗口变化不会把终端挤出可读区间。 */
+  function clampTerminalWidth(nextWidth: number): number {
+    const { minimum, maximum } = terminalWidthRange();
+    return Math.min(maximum, Math.max(minimum, Math.round(nextWidth)));
+  }
+
+  /** 右侧终端默认打开宽度取同一占比，保证与内置浏览器右侧工作面打开宽度一致。 */
+  function defaultTerminalPanelWidth(): number {
+    return clampTerminalWidth(workspaceBounds().width * defaultTerminalWidthShare);
+  }
+
   /** 当前方向的已选尺寸，用于键盘及指针调整。 */
   const size = right ? width : height;
 
@@ -392,7 +424,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
         aria-valuemax={terminalMaximumSize()}
         aria-valuenow={size}
         tabIndex={0}
-        onDoubleClick={() => commitSize(right ? defaultTerminalWidth : defaultTerminalHeight)}
+        onDoubleClick={() => commitSize(right ? defaultTerminalPanelWidth() : defaultTerminalHeight)}
         onPointerDown={(event) => {
           resizeStateRef.current = { pointerId: event.pointerId, startCoordinate: right ? event.clientX : event.clientY, startSize: size };
           event.currentTarget.setPointerCapture(event.pointerId);
