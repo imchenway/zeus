@@ -277,18 +277,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       commandTraceIdentity = dispatchEnvelope.traceIdentity ?? null;
       segmentLifecycle?.bindCommandDelivery({ outboxId: preparedDelivery.outbox.id, providerId: 'codex' });
       runStates.set(conversation.id, { type: 'dispatching', submissionId: submission.id });
-      const responsesRuntime = await options.resolveResponsesRuntime({
-        modelSourceId: context.modelSourceId,
-        model: context.model,
-      });
-      if (responsesRuntime) {
-        await options.manager.ensureReady({
-          commandPath: commandPath(),
-          ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
-          providerEnvironment: responsesRuntime.environment,
-          responsesProvider: responsesRuntime.provider,
-        });
-      }
       let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
       commandProviderGenerationId = providerThreadId ? options.manager.generationForThread(providerThreadId) : readyGenerationId();
       if (!providerThreadId && !commandProviderGenerationId) {
@@ -331,7 +319,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           developerInstructions,
           ephemeral: context.ephemeral,
           dynamicTools,
-          ...(responsesRuntime ? { responsesRuntime } : {}),
         };
         markDispatchRpcStarted(lease, submission.id);
         const thread = await providerCommands.executeSession({
@@ -477,7 +464,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           additionalContext: context.additionalContext,
         },
         pluginPromptContext,
-        responsesRuntime,
         beforePortableProviderWrite: () => {
           lease.contentWriteStarted = true;
           markDispatchRpcStarted(lease, submission.id);
@@ -558,7 +544,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       const turn = await options.manager.startTurn({
         threadId: providerThreadId,
         traceIdentity: commandTraceIdentity,
-        ...(responsesRuntime ? { responsesRuntime } : {}),
         clientUserMessageId: submission.clientMessageId,
         input: providerInput,
         ...(additionalContext ? { additionalContext } : {}),

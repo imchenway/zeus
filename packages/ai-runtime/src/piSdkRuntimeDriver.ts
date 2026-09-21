@@ -187,17 +187,18 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       const connections = await options.loadConnections();
       const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
       for (const connection of connections) {
-        const piModels = connection.models.filter((model) => model.runtimeAdapter === 'pi_sdk');
-        if (!connection.enabled || piModels.length === 0) continue;
+        /** 连接目录里的每个模型都由 Zeus 内核执行；没有模型时不注册空 Provider。 */
+        const connectionModels = connection.models;
+        if (!connection.enabled || connectionModels.length === 0) continue;
         const providerId = piProviderId(connection.id);
-        const authenticationSchemes = new Map(piModels.map((model) => [model.id, model.authenticationScheme]));
+        const authenticationSchemes = new Map(connectionModels.map((model) => [model.id, model.authenticationScheme]));
         runtime.registerNativeProvider(
           createProvider({
             id: providerId,
             name: connection.name,
             baseUrl: connection.baseUrl,
             auth: { apiKey: envApiKeyAuth(`${connection.name} API Key`, []) },
-            models: piModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
+            models: connectionModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
             api: {
               'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload),
               'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload),

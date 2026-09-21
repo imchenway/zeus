@@ -612,7 +612,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/projects/:projectId/git/commit-models', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
     const items = (await modelConnections.listSelectableModels())
-      .filter((model: SelectableConnectionModel) => model.available && model.enabled && model.runtimeAdapter === 'pi_sdk')
+      .filter((model: SelectableConnectionModel) => model.available && model.enabled)
       .map((model: SelectableConnectionModel) => ({ id: model.id, label: `${model.sourceName} · ${model.displayName}` }));
     let warning = '';
     try {

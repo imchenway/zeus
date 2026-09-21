@@ -2671,7 +2671,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (connectionId && !connection) throw nativeApiError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '目标模型连接已经不存在。');
     const configuredModel = connection?.models.find((model) => model.id === input.modelId);
     if (connection && !configuredModel) throw nativeApiError('ZEUS_MODEL_NOT_READY', '目标模型已经不在连接目录中。');
-    const configuredRuntimeKind = configuredModel?.runtimeAdapter === 'codex_app_server' ? 'codex' : configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : null;
+    // 模型连接只由 Zeus 内核执行；这里只核对调用方给出的路由是否与事实一致。
+    const configuredRuntimeKind = configuredModel ? 'pi' : null;
     if (configuredRuntimeKind && configuredRuntimeKind !== input.agentKind) {
       throw nativeApiError('ZEUS_CONVERSATION_ROUTE_CHANGED', '目标模型的运行适配器与已选择路由不一致。');
     }
@@ -3177,7 +3178,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const goalObjective = parseGoalObjective((body as Record<string, unknown>).goalObjective);
         if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
         const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushPrompt, body.pluginReferences);
-        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
+        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         // 先在用户实际选择 Skill 的项目目录复验身份，避免失效选择在创建 Worktree 后才失败；
         // Worktree 就绪后再按相同稳定 ID 解析一次，确保 repo Skill 使用该工作目录中的真实文件。
         const projectSkill = await resolveWorkflowSkill(body.skillId, project.localPath);
@@ -3290,7 +3291,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const prompt = taskStage ? `${taskStageHandoffText(taskStage)}\n\n${createTaskCodeReviewPrompt(task, reviewWorkspace)}` : createTaskCodeReviewPrompt(task, reviewWorkspace);
         const pluginReferences = body.pluginReferences === undefined ? [] : await resolveNewConversationPluginReferences(project.id, prompt, body.pluginReferences);
         const skill = projectSkill ? await resolveWorkflowSkill(projectSkill.id, reviewCwd) : undefined;
-        if (selectedAgentKind === 'codex') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
 
         nativeOperation = await startTaskStageConversation(
           taskStage,
@@ -3424,7 +3425,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const selectedAgentKind = modelConversation.agentKind;
         const serviceTierPlan = selectedAgentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, { sourceId: modelConversation.modelSourceId, modelId }) : null;
         const skill = await resolveWorkflowSkill(body.skillId, project.localPath);
-        if (selectedAgentKind === 'codex') await assertCodexAccountReady(modelConversation.modelSourceId, modelId);
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
           conversationId: reservation.conversationId,

@@ -1,5 +1,5 @@
 import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
-import { type CodexAppServerEvent, type CodexResponsesRuntime, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
+import { type CodexAppServerEvent, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import {
   type ConversationCollaborationMode,
@@ -791,7 +791,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    if (!input.holdDispatch) await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
+    if (!input.holdDispatch) await assertCodexAccountReady();
     const legacyContext = resolveLegacyReference(input);
     const additionalContext = mergeCodexAdditionalContext(input.additionalContext, legacyContext ? { zeus_legacy_reference: legacyContext } : undefined);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
@@ -871,7 +871,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
+    await assertCodexAccountReady();
     const title = projectNativeConversationTitle(input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
@@ -925,8 +925,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
-  async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
-    if (await options.resolveResponsesRuntime({ modelSourceId, model })) return;
+  async function assertCodexAccountReady(): Promise<void> {
     const account = await options.manager.readAccount({ cachedOnly: true }).catch((error: unknown) => {
       // 无本地快照时由真实 thread/turn RPC 权威认证，账号探测不再成为派发门禁。
       if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') return null;
@@ -936,10 +935,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', '当前应用的 Codex 尚未登录。请在“设置 → AI 连接”中完成登录，再重试。');
   }
 
-  async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model' | 'contextCapacityTokens'>): Promise<CodexResponsesRuntime | null> {
-    /** 根据当前目标校验；预算始终来自产品会话的冻结值。 */
+  /** 派发前复验冻结的上下文容量；预算始终来自产品会话的冻结值。 */
+  function assertDispatchContextCapacity(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model' | 'contextCapacityTokens'>): void {
     options.validateContextCapacity(context.contextCapacityTokens ?? null, context.modelSourceId, context.model, 'codex');
-    return options.resolveResponsesRuntime({ modelSourceId: context.modelSourceId, model: context.model });
   }
 
   function projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string) {
@@ -2114,15 +2112,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         source: 'resume',
       });
       assertOpen();
-      const responsesRuntime = await responsesRuntimeFor(context);
-      assertOpen();
-      if (responsesRuntime) {
-        await options.manager.ensureReady({
-          commandPath: commandPath(),
-          ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
-          providerEnvironment: responsesRuntime.environment,
-        });
-      }
+      assertDispatchContextCapacity(context);
       assertOpen();
       try {
         await executeSessionCommand({
@@ -2141,7 +2131,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         contextCapacityTokens: conversation.contextCapacityTokens,
         threadId: providerThreadId,
         cwd: context.projectLocalPath,
-        ...(responsesRuntime ? { responsesRuntime } : {}),
         signal: archivedRecoveryAbortController.signal,
       });
       assertOpen();
@@ -2859,17 +2848,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const requestedConversationIds = [...new Set(conversationIds)];
     if (requestedConversationIds.length === 0) return;
     for (let pass = 0; pass < 3; pass += 1) {
-      /** 每次核对前重新取得当前实例，不能沿用上一次恢复的世代。
-       *  恢复必须沿用目标会话所属的 Responses 运行时身份；若回退到默认 Codex 实例，
-       *  会把 DeepSeek 等自定义线程的原 owner 排空并翻转代次，触发“运行实例已变化”。 */
+      /** 每次核对前重新取得当前实例，不能沿用上一次恢复的世代。 */
       const firstConversation = options.conversations.getById(requestedConversationIds[0]!);
       const runtimeContext = firstConversation ? (contexts.get(firstConversation.id) ?? contextFromConversation(firstConversation)) : null;
-      const responsesRuntime = runtimeContext ? await responsesRuntimeFor(runtimeContext) : null;
+      if (runtimeContext) assertDispatchContextCapacity(runtimeContext);
       assertOpen();
       const capabilities = await options.manager.ensureReady({
         commandPath: commandPath(),
         ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
-        ...(responsesRuntime ? { providerEnvironment: responsesRuntime.environment, responsesProvider: responsesRuntime.provider } : {}),
       });
       assertOpen();
       await Promise.all(
@@ -3021,7 +3007,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       return context;
     },
     inferRunState,
-    responsesRuntimeFor,
+    assertDispatchContextCapacity,
     enqueueProviderTurnReconciliation,
     projectedProviderThreadSnapshot,
     reconcileConversationSnapshot,

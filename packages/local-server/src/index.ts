@@ -13,11 +13,9 @@ import {
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
   type CodexAppServerManager,
-  type CodexResponsesRuntime,
   createAiRuntimeSessionManager,
   createCodexRuntimeGenerationManager,
   createOptionalNodePtyRuntimeSpawn,
-  isOfficialDeepSeekResponsesModel,
   listAiCliAdapters,
   modelConnectionCredentialSlotId,
   modelRef,
@@ -1146,8 +1144,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const configuredModel = configuredConnection?.models.find((model) => model.id === input.modelId);
     if (configuredConnection && !configuredModel) throw nativeApiError('ZEUS_CONTEXT_MODEL_NOT_FOUND', '上下文编译找不到已冻结的模型配置，已拒绝 Provider 派发。');
     if (configuredModel) {
-      const expectedAdapter = input.provider === 'codex' ? 'codex_app_server' : 'pi_sdk';
-      if (configuredModel.runtimeAdapter !== expectedAdapter) throw nativeApiError('ZEUS_CONTEXT_RUNTIME_MODEL_MISMATCH', '上下文模型配置与真实运行适配器不一致，已拒绝 Provider 派发。');
+      // 模型连接一律由 Zeus 内核执行；把它当 Codex 订阅模型派发属于路由错误，必须在派发前拒绝。
+      if (input.provider === 'codex') throw nativeApiError('ZEUS_CONTEXT_RUNTIME_MODEL_MISMATCH', '上下文模型配置与真实运行适配器不一致，已拒绝 Provider 派发。');
     }
 
     const budget: DispatchModelBudget | null = configuredModel
@@ -1754,37 +1752,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { runtimeReloaded: true, runtimeGenerationId: capabilities.generationId, restartRequired: false };
   }
 
-  async function resolveResponsesRuntime(input: { modelSourceId: string | null; model: string }): Promise<CodexResponsesRuntime | null> {
-    if (!input.modelSourceId || input.modelSourceId === 'codex') return null;
-    const connections = await modelConnections.loadRuntimeConnections();
-    const connection = connections.find((candidate) => candidate.id === input.modelSourceId);
-    const model = connection?.models.find((candidate) => candidate.id === input.model);
-    if (!connection || !model || !isOfficialDeepSeekResponsesModel(connection, model.id)) return null;
-    if (!connection.enabled || !model.enabled || !connection.apiKey) {
-      throw nativeApiError('ZEUS_CODEX_PROVIDER_CREDENTIAL_UNAVAILABLE', 'DeepSeek 官方 Responses 会话缺少可用的连接或 API Key。');
-    }
-    const environment: Record<string, string> = {};
-    for (const candidate of connections) {
-      if (!candidate.enabled || !candidate.apiKey || !candidate.models.some((item) => item.enabled && isOfficialDeepSeekResponsesModel(candidate, item.id))) continue;
-      environment[deepSeekResponsesEnvKey(candidate.id)] = candidate.apiKey;
-    }
-    const identity = createHash('sha256').update(connection.id).digest('hex').slice(0, 24);
-    return {
-      provider: {
-        id: `zeus_deepseek_${identity}`,
-        name: `DeepSeek · ${connection.name}`,
-        baseUrl: 'https://api.deepseek.com',
-        envKey: deepSeekResponsesEnvKey(connection.id),
-        modelContextWindow: model.contextWindow,
-      },
-      environment,
-    };
-  }
-
-  function deepSeekResponsesEnvKey(connectionId: string): string {
-    const identity = createHash('sha256').update(connectionId).digest('hex').slice(0, 24).toUpperCase();
-    return `ZEUS_MODEL_CONNECTION_${identity}_API_KEY`;
-  }
   const codexUsageService = createCodexUsageService({
     manager: codexAppServerManager,
     ledger: codexUsageLedger,
@@ -1855,7 +1822,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       commandDeliveries,
       toolResults: conversationToolResults,
       eventFlow: conversationEventFlow,
-      resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
       workTools: nativeWorkTools,
       plugins: zeusConversationPluginRuntime,
@@ -1954,7 +1920,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const connection = frozen.connectionId ? await modelConnections.get(frozen.connectionId) : undefined;
       const configuredModel = connection?.models.find((model) => model.id === frozen.modelId);
       if (frozen.connectionId) {
-        const currentRuntimeKind = configuredModel?.runtimeAdapter === 'codex_app_server' ? 'codex' : configuredModel?.runtimeAdapter === 'pi_sdk' ? 'pi' : null;
+        // 模型连接只可能由 Zeus 内核执行；旧会话若记着 codex，说明它曾在两条链路间漂移，必须重新选路由。
+        const currentRuntimeKind = configuredModel ? 'pi' : null;
         const currentCredentialSlotId = connection && configuredModel ? modelConnectionCredentialSlotId(connection.id, configuredModel.authenticationScheme) : null;
         const mismatch = {
           connectionMissing: !connection,
@@ -2950,7 +2917,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     recordTaskEvent,
     redactSensitiveText,
     resolveCodexModel: () => conversationOperations.resolveCodexModel(),
-    resolveResponsesRuntime,
     resolveTaskManagementStatusConfigForProject,
     runtimeSessions,
     taskAttachmentRoot,

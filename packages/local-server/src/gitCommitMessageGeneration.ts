@@ -19,7 +19,7 @@ export async function generateGitCommitMessage(service: ModelConnectionService, 
   const connections = await service.loadRuntimeConnections();
   const available = connections
     .filter((connection) => connection.enabled && connection.apiKey)
-    .flatMap((connection) => connection.models.filter((model) => model.enabled && model.runtimeAdapter === 'pi_sdk').map((model) => ({ connection, model, ref: modelRef(connection.id, model.id) })));
+    .flatMap((connection) => connection.models.filter((model) => model.enabled).map((model) => ({ connection, model, ref: modelRef(connection.id, model.id) })));
   const requestedModelRef = input.modelRef;
   // 未记住提交模型时退回第一个可用模型，不再依赖项目级白名单或默认模型配置。
   const selected = requestedModelRef ? available.find((entry) => entry.ref === requestedModelRef) : available[0];
