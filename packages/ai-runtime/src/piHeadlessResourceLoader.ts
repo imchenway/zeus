@@ -38,6 +38,10 @@ interface GitPaths {
   commonGitDir: string;
 }
 
+/** Pi 在 Zeus 中交付文件和操作浏览器的宿主约定，与公共资源预览入口一致。 */
+const piConversationResourceInstructions = `在 Zeus 会话中交付或引用本地文件时，使用 Markdown 链接：[显示名称](/绝对路径/文件)。需要定位代码时可追加 :行号；路径含空格时用尖括号包住链接目标。不要只用反引号包裹路径代替可点击链接。HTML 文件同样提供文件链接，Zeus 会展示网页卡片，点击默认进入内置浏览器；代码文件点击进入源码预览。
+用户未明确指定 Chrome 或 Edge 时，网页打开、导航和检查优先使用 Zeus 原生 zeus_browser 工具，surface 省略或使用 built_in。浏览器插件没有连接不代表 Zeus 内置浏览器不可用；不要自行改用 Chrome、系统 open 命令或外部 Playwright。用户明确选择其他浏览器时尊重该选择。`;
+
 /**
  * Zeus 只保留 Pi 会话需要的项目上下文和 Zeus Skill，不加载扩展、主题和终端界面资源。
  */
@@ -110,6 +114,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
 
   getAppendSystemPrompt(): string[] {
     return [
+      piConversationResourceInstructions,
       ...(this.pluginInstructions ? [this.pluginInstructions] : []),
       ...(this.applicationContext
         ? [`Zeus application context manifest (application-owned):\n${this.applicationContext.manifest}`, ...(this.applicationContext.content ? [`Zeus application context (application-owned):\n${this.applicationContext.content}`] : [])]
@@ -119,6 +124,7 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
 
   getAppendSystemPromptSources(): Array<{ path: string }> {
     return [
+      { path: 'zeus-context://conversation-resource-instructions' },
       ...(this.pluginInstructions ? [{ path: 'zeus-plugin://activation-snapshot/instructions' }] : []),
       ...(this.applicationContext
         ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/manifest` }, ...(this.applicationContext.content ? [{ path: `zeus-context://${this.applicationContext.fingerprint}/application` }] : [])]

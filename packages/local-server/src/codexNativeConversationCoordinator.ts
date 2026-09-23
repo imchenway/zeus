@@ -110,7 +110,7 @@ import { createCodexRecoveryStateApplication } from './codexRecoveryStateApplica
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import { ConversationQueueCoreMutationApplication } from './conversationQueueCoreMutationApplication.js';
 import { createCodexRecoveredUnsentQueueApplication, hasRecoveredUnsentSubmission } from './codexRecoveredUnsentQueueApplication.js';
-import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import { syncConversationResources } from './conversationResources.js';
 import { archiveUnboundConversationLocally, hasUnwrittenConversationEvidence, hasUnwrittenSubmissionEvidence, restoreUnboundConversationLocally } from './unboundConversationArchiveApplication.js';
 import { persistThreadProviderSettings as persistProviderThreadMetadata, threadPath } from './codexThreadMetadataProjection.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
@@ -323,23 +323,22 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (!projectRoot) return [];
     const submission = item.itemType === 'userMessage' ? submissionForProviderUserItem(conversation.id, turn, payload) : undefined;
     const resourcePayload = submission ? { ...payload, attachments: submissionAttachments(submission) } : payload;
-    const normalized = normalizeConversationResources({
-      projectId: conversation.projectId,
-      projectRoot,
-      conversationId: conversation.id,
-      turnId: turn.id,
-      item,
-      payload: resourcePayload,
-      text,
-      trustedAttachmentRoots: options.trustedAttachmentRoots,
-      generatedImageRoot: options.generatedImageRoot,
-      artifactsDirectory: options.artifactsDirectory,
-      now: timestamp,
-    });
-    return resources
-      .replaceForItem(item.id, normalized, timestamp)
-      .map(toConversationResource)
-      .filter((resource): resource is NonNullable<typeof resource> => resource !== null);
+    return syncConversationResources(
+      {
+        projectId: conversation.projectId,
+        projectRoot,
+        conversationId: conversation.id,
+        turnId: turn.id,
+        item,
+        payload: resourcePayload,
+        text,
+        trustedAttachmentRoots: options.trustedAttachmentRoots,
+        generatedImageRoot: options.generatedImageRoot,
+        artifactsDirectory: options.artifactsDirectory,
+        now: timestamp,
+      },
+      resources,
+    );
   }
 
   function projectProcessItem(input: {

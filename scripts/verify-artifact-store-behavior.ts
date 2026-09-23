@@ -2,10 +2,22 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ArtifactStore, ArtifactStoreError, ConversationExecutionRepository, ZeusStorageWriteFaultError, createZeusDatabase, type ArtifactOwnerIdentity } from '../packages/storage/src/index.js';
+import {
+  ArtifactStore,
+  ArtifactStoreError,
+  ConversationExecutionRepository,
+  ConversationProviderItemRepository,
+  ConversationResourceRepository,
+  ConversationSnapshotV2Repository,
+  ZeusStorageWriteFaultError,
+  createZeusDatabase,
+  type ArtifactOwnerIdentity,
+} from '../packages/storage/src/index.js';
 import { ManagedConversationToolResultStore, PortableConversationContextBuilder, planPortableContextCompaction } from '../packages/local-server/src/conversationPortableContext.js';
 import { searchPiWorkspace } from '../packages/local-server/src/piWorkspaceSearch.js';
 import { completedItemProjection, liveProgressProjection } from '../packages/local-server/src/codexNativeConversationPolicy.js';
+import { syncConversationResources, toConversationResourceOpenIntent } from '../packages/local-server/src/conversationResources.js';
+import { readConversationResourcePreview } from '../packages/local-server/src/conversationResourcePreview.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-artifact-store-probe-'));
 const observed: Record<string, unknown> = {};
@@ -16,11 +28,90 @@ try {
   await verifyExternalFaultBridge();
   await verifyConversationToolResultReplay();
   await verifyContextBudgetAndSearch();
+  await verifyConversationFileResources();
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
 }
 
 console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
+
+/** 真实文件与 SQLite 验证两条执行链共用资源、行号预览及重新打开后的持久身份。 */
+async function verifyConversationFileResources(): Promise<void> {
+  /** 所有文件和账本只存在于本次探针目录。 */
+  const root = join(probeRoot, 'conversation-files');
+  await mkdir(root);
+  await writeFile(join(root, '页面.html'), '<title>文件预览</title><p>预览内容</p>');
+  await writeFile(join(root, 'source.ts'), '// 示例源码\nexport const value = 7;\n');
+  /** 两种 Provider 使用同一正文，同时覆盖行号、HTML、越界路径与危险协议。 */
+  const text = '[网页](页面.html) [代码](source.ts:2) [越界](../outside.ts) [危险](javascript:alert)';
+  /** 重复登记及重新打开前后用于核对的稳定资源身份。 */
+  let resourceIds: string[] = [];
+  /** 独立账本不接触任何用户会话。 */
+  const databasePath = join(root, 'resources.db');
+  const database = await createZeusDatabase(databasePath);
+  try {
+    /** 消息和资源沿用产品实际仓储。 */
+    const items = new ConversationProviderItemRepository(database);
+    const resources = new ConversationResourceRepository(database);
+    /** 固定时间避免探针把时钟变化误当作资源变化。 */
+    const timestamp = '2026-09-23T06:00:00.000Z';
+    for (const agentKind of ['codex', 'pi'] as const) {
+      /** 相同输入仅改变执行链身份。 */
+      const item = items.upsertCompleted({
+        conversationId: 'resource-conversation',
+        turnId: 'resource-turn',
+        providerThreadId: agentKind,
+        providerTurnId: 'turn',
+        providerItemId: 'reply',
+        itemType: 'agentMessage',
+        phase: 'final_answer',
+        payload: {},
+        textContent: text,
+        status: 'completed',
+        updatedAt: timestamp,
+        completedAt: timestamp,
+        agentKind,
+      });
+      /** 公共登记同时形成 HTML 正文链接、网页卡片和源码链接。 */
+      const input = { projectId: 'resource-project', projectRoot: root, conversationId: item.conversationId, turnId: item.turnId, item, payload: {}, text, trustedAttachmentRoots: [], now: timestamp };
+      const projected = syncConversationResources(input, resources);
+      assertProbe(projected.length === 3, '两条执行链都应生成三个合法资源，不能接受越界路径或危险协议');
+      assertProbe(
+        projected.some((resource) => resource.kind === 'file' && resource.iconKind === 'html' && resource.presentation === 'card' && resource.displayName === '文件预览'),
+        'HTML 必须有以文档标题展示的网页卡片',
+      );
+      /** 源码预览实际读取文件，并保留目标行号。 */
+      const source = projected.find((resource) => resource.kind === 'file' && resource.iconKind === 'typescript');
+      assertProbe(source?.kind === 'file' && source.location?.line === 2, '代码文件链接必须保留行号');
+      const preview = readConversationResourcePreview(source, toConversationResourceOpenIntent(resources.getById(source.id)!));
+      assertProbe(preview.kind === 'source' && preview.content.includes('value = 7') && preview.location?.line === 2, '代码预览应读取真实文件并定位指定行');
+      assertProbe(JSON.stringify(syncConversationResources(input, resources).map((resource) => resource.id)) === JSON.stringify(projected.map((resource) => resource.id)), '重复登记不得改变资源身份或叠加卡片');
+      if (agentKind === 'pi') resourceIds = projected.map((resource) => resource.id);
+    }
+    assertProbe(items.listCompletedItemsForResourceBackfill().length === 1, '普通文件历史回填只应选中 Pi 消息');
+    await database.save();
+  } finally {
+    await database.close();
+  }
+  /** 重新打开真实账本，确认资源不依赖进程内缓存。 */
+  const reopened = await createZeusDatabase(databasePath);
+  try {
+    const resources = new ConversationResourceRepository(reopened);
+    assertProbe(
+      resourceIds.every((id) => resources.getById(id)),
+      '重新打开后 Pi 文件资源必须仍然可解析',
+    );
+    /** 界面资源分页须返回同一批稳定身份，不能只在底层仓库中存在。 */
+    const page = new ConversationSnapshotV2Repository(reopened).listResourcePage({ conversationId: 'resource-conversation' });
+    assertProbe(
+      resourceIds.every((id) => page.items.some((resource) => resource.id === id)),
+      '重新打开后界面资源分页必须返回 Pi 的文件链接和卡片',
+    );
+    observed.conversationFileResources = { codexAndPi: true, htmlCard: true, sourceLinePreview: true, unauthorizedPathsRejected: true, stableAfterReopen: true };
+  } finally {
+    await reopened.close();
+  }
+}
 
 /** 在真实文件、ripgrep、SQLite 和原件存储上检查上下文边界与可恢复性。 */
 async function verifyContextBudgetAndSearch(): Promise<void> {

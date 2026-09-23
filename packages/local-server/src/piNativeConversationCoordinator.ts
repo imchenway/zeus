@@ -1,5 +1,5 @@
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
-import type { AsyncQuestionAnswer } from '@zeus/shared';
+import type { AsyncQuestionAnswer, ConversationResource } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
@@ -49,6 +49,7 @@ import type {
   ConversationTranscriptRepository,
   ConversationTurnRepository,
   ZeusConversationServerRequestRecord,
+  ZeusConversationItemRecord,
   ZeusConversationWithMessagesRecord,
   ZeusDatabase,
 } from '@zeus/storage';
@@ -133,6 +134,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
   providerItems: ConversationProviderItemRepository;
+  /** 沿用 Codex 的受信资源登记，工作目录必须取自本次执行上下文。 */
+  syncItemResources(item: ZeusConversationItemRecord, projectRoot: string): ConversationResource[];
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   /** Pi 问答事件与快照共用持久显示身份。 */
@@ -1658,6 +1661,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const phase = isToolUseStage ? ('prework' as const) : ('final_answer' as const);
       const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
       let attention: ReturnType<ConversationRepository['markAttentionUnread']> | null = null;
+      /** 与完成消息同时保存并发出，避免首屏链接缺资源、刷新后才可预览。 */
+      let itemResources: ConversationResource[] = [];
       if (text && !failed) {
         const itemInput = {
           conversationId: run.conversationId,
@@ -1673,7 +1678,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           agentKind: 'pi' as const,
           nativeItemId: messageStageId,
         };
-        options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
+        /** 当前执行根决定相对文件归属，不能回退到项目主目录。 */
+        const context = contexts.get(run.conversationId);
+        if (!context) throw piError('ZEUS_PI_CONTEXT_NOT_FOUND', 'Pi 消息缺少执行工作目录，无法登记文件预览。');
+        /** 已持久化的消息身份也是文件资源的归属身份。 */
+        const item = options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
+        itemResources = options.syncItemResources(item, context.cwd);
         options.conversations.appendMessage({
           conversationId: run.conversationId,
           role: 'assistant',
@@ -1726,6 +1736,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           status: 'completed',
           phase,
           textContent: text,
+          itemResources,
         });
       }
     }
@@ -2309,8 +2320,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId,
     });
     options.conversations.markAttentionUnread(context.conversationId, { kind: 'unread', turnId: run.providerTurnId, occurredAt: timestamp });
+    /** 工具提交的说明与计划也使用同一文件链接登记入口。 */
+    const itemResources = options.syncItemResources(item, context.cwd);
     await options.db.save();
-    publish('conversation.item.completed', context.conversationId, { turnId: run.providerTurnId, itemId: providerItemId, itemType, itemPayload: metadata, status: 'completed', phase: 'commentary', textContent: text });
+    publish('conversation.item.completed', context.conversationId, { turnId: run.providerTurnId, itemId: providerItemId, itemType, itemPayload: metadata, status: 'completed', phase: 'commentary', textContent: text, itemResources });
     return item;
   }
 
