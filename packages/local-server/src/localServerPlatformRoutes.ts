@@ -201,6 +201,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   server: FastifyInstance;
+  /** 平台通用时钟返回 Date；写入存储前由各领域显式序列化。 */
+  now(): Date;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
@@ -3016,6 +3018,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       );
   const automationTasks = new AutomationTaskRepository(db);
   const automationRuns = new AutomationRunRepository(db);
+  /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
+  const automationNow = (): string => now().toISOString();
 
   registerAutomationRoutes({
     server,
@@ -3023,7 +3027,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     runs: automationRuns,
     db,
     kick: () => automationScheduler?.kick(),
-    now,
+    now: automationNow,
   });
 
   registerDigitalEmployeeRoutes({
@@ -3126,7 +3130,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       submissions: conversationSubmissions,
       getProject: (projectId) => projects.getById(projectId),
       save: () => db.save(),
-      now,
+      now: automationNow,
       publish: publishRealtimeEvent,
       dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent }),
     });
