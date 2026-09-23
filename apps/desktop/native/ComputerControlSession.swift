@@ -60,6 +60,8 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var target: ComputerWindowTarget?
     /** 持续采集触发 macOS 自身的屏幕共享状态入口。 */
     private var capture: SCStream?
+    /** 停止帧先于原因回调时保留流身份，原因明确前不得重建采集或恢复输入。 */
+    private var captureStopPending = false
     /** 最近一个有效帧；队列和缓存均有界。 */
     private var image: CGImage?
     /** 完整或空闲帧的时间；空闲帧明确表示窗口内容未变化。 */
@@ -163,7 +165,10 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         if previous?.windowId != next.windowId || previous?.frame != next.frame || previous?.scale != next.scale || existing == nil {
             // 先脱离旧流，迟到的旧流停止回调不会撤销新窗口。
-            lock.withLock { capture = nil; image = nil; previewData = nil; frameDate = .distantPast; imageDate = .distantPast; frameTime = .invalid; needsObservation = true }
+            try lock.withLock {
+                guard !captureStopPending else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "正在确认采集停止原因，请稍后重新观察，不能继续旧动作。") }
+                capture = nil; image = nil; previewData = nil; frameDate = .distantPast; imageDate = .distantPast; frameTime = .invalid; needsObservation = true
+            }
             if let existing { await Self.unregister(existing); try await existing.stopCapture() }
             let configuration = SCStreamConfiguration()
             configuration.width = max(1, Int(next.frame.width * scale))
@@ -200,13 +205,15 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             }
             do { try await stream.startCapture() }
             catch {
+                // 启动失败也先处理明确的用户撤权，不能被锁屏降级吞掉。
+                self.stream(stream, didStopWithError: error)
                 /** 锁屏下像素采集失败不等于窗口控制失败；保留实时辅助功能和输入目标。 */
-                if computerSessionScreenIsLocked() { invalidateCapture(stream, observationRemainsValid: true) }
-                else { self.stream(stream, didStopWithError: error); throw error }
+                if !computerSessionScreenIsLocked() { throw error }
             }
         }
         try lock.withLock {
             if stopped { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "本轮控制已停止。") }
+            guard !captureStopPending else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "正在确认采集停止原因，请稍后重新观察，不能继续旧动作。") }
             guard target?.windowId == next.windowId, target?.pid == next.pid else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "目标窗口已变化，请重新观察。")
             }
@@ -267,8 +274,17 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     }
 
     /** 只发送清理用的抬起事件，不恢复已撤销的操作权限。 */
-    private func releaseInput() {
-        let releases = lock.withLock { let values = Array(pendingReleases.values); pendingReleases.removeAll(); return values }
+    private func releaseInput(stream: SCStream? = nil) {
+        let releases = lock.withLock {
+            // 迟到的旧采集回调不能中断新窗口的输入。
+            guard stream == nil || capture === stream else { return [(CGEvent, pid_t)]() }
+            /** 本次需要释放的虚拟按键或鼠标按钮。 */
+            let values = Array(pendingReleases.values)
+            // 清理意味着在途动作已被打断；与输入闸门共用锁，先作废再发送抬起事件。
+            if !values.isEmpty { needsObservation = true }
+            pendingReleases.removeAll()
+            return values
+        }
         for (event, pid) in releases { event.postToPid(pid) }
     }
 
@@ -300,21 +316,22 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         guard outputType == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let rawStatus = attachments.first?[.status] as? Int, let status = SCFrameStatus(rawValue: rawStatus) else { return }
-        if [.blank, .suspended].contains(status) {
-            // 锁屏可能暂停像素帧，但辅助功能和定向输入仍可继续；只清除过期图像，不撤销观察或动作资格。
+        if [.blank, .suspended, .stopped].contains(status) {
+            // 空帧只清除过期图像；停止原因未明或在途输入被释放时，必须阻止旧动作继续。
             /** 迟到的旧流空帧不能清理新窗口正在进行的输入。 */
             let cleared = lock.withLock { () -> Bool in
                 guard capture === stream && !stopped else { return false }
                 image = nil; previewData = nil; frameTime = .invalid
+                // 停止帧不携带原因；保留 capture 给随后到达的用户停止回调判定身份。
+                if status == .stopped { captureStopPending = true; needsObservation = true }
                 return true
             }
             if cleared {
-                releaseInput()
+                releaseInput(stream: stream)
                 DispatchQueue.main.async { [weak self] in self?.publishPreview() }
             }
             return
         }
-        if status == .stopped { invalidateCapture(stream, observationRemainsValid: computerSessionScreenIsLocked()); return }
         // 将原始单调帧时间换算为采集时刻，避免把队列送达时间误当成截图时间。
         let sampleTime = sampleBuffer.presentationTimeStamp
         guard sampleTime.isValid else { return }
@@ -345,16 +362,19 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if failure.domain == SCStreamErrorDomain && [SCStreamError.Code.userStopped.rawValue, SCStreamError.Code.userDeclined.rawValue].contains(failure.code) {
             stop(reason: "system_capture_stopped", stream: stream)
         } else {
-            invalidateCapture(stream, observationRemainsValid: computerSessionScreenIsLocked())
+            invalidateCapture(stream, observationRemainsValid: computerSessionScreenIsLocked(), stopReasonResolved: true)
         }
     }
 
     /** 窗口关闭或采集失败只作废观察；下一次观察重建采集，旧动作不会自动重放。 */
-    private func invalidateCapture(_ stream: SCStream, observationRemainsValid: Bool = false) {
+    private func invalidateCapture(_ stream: SCStream, observationRemainsValid: Bool = false, stopReasonResolved: Bool = false) {
         /** 同一把锁确认流身份并清理，迟到的旧流事件不能使新窗口失效。 */
         let invalidated = lock.withLock { () -> Bool in
             guard !stopped, capture === stream else { return false }
-            capture = nil; image = nil; previewData = nil; frameTime = .invalid; paused = false; needsObservation = !observationRemainsValid
+            // 生命周期检查不能先移除尚待撤权判定的流；只有携带原因的回调可以结束等待。
+            guard !captureStopPending || stopReasonResolved else { return false }
+            capture = nil; captureStopPending = false; image = nil; previewData = nil; frameTime = .invalid
+            needsObservation = needsObservation || !observationRemainsValid || !pendingReleases.isEmpty
             return true
         }
         guard invalidated else { return }
@@ -369,7 +389,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             guard !stopped, stream == nil || capture === stream else { return nil }
             stopped = true
             let result = (capture, target?.sessionId ?? "")
-            capture = nil; image = nil; previewData = nil
+            capture = nil; captureStopPending = false; image = nil; previewData = nil
             return result
         }
         guard let previous else { return }
