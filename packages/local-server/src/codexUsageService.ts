@@ -57,7 +57,7 @@ export interface CodexUsageService {
     modelContextWindow: number | null;
     occurredAt: string;
   }): Promise<NativeTokenUsageSnapshot>;
-  refreshOfficialUsage(): Promise<CodexOfficialUsageSnapshot>;
+  refreshOfficialUsage(minimumAgeMs?: number): Promise<CodexOfficialUsageSnapshot>;
   readCachedOfficialUsage(): CodexOfficialUsageSnapshot;
   handleSparseRateLimitUpdate(): void;
   handleAccountChanged(): void;
@@ -74,6 +74,12 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   const now = options.now ?? (() => new Date().toISOString());
   let accountCache: { value: CodexAccountSnapshot; expiresAt: number } | null = null;
   let officialRefresh: Promise<CodexOfficialUsageSnapshot> | null = null;
+  /** 最近检查结果也保留未登录和失败状态，避免打开浮窗连续重试。 */
+  let officialSnapshot: CodexOfficialUsageSnapshot | null = null;
+  /** 官方检查节流使用单调时钟，不受系统校时影响。 */
+  let officialCheckedAt = -Infinity;
+  /** 账户切换后丢弃旧账户在途刷新，避免旧快照重新出现。 */
+  let officialAccountEpoch = 0;
   let sparseRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   /** 一个服务实例只维护一份下载，缺价并发不会重复联网。 */
   let pricingRefresh: Promise<void> | null = null;
@@ -180,7 +186,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     pricingAbort.abort();
     if (pricingTimer) clearTimeout(pricingTimer);
     if (sparseRefreshTimer) clearTimeout(sparseRefreshTimer);
-    await pricingRefresh?.catch(() => undefined);
+    await Promise.allSettled([pricingRefresh, officialRefresh]);
   }
 
   /**
@@ -241,7 +247,9 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
 
   async function readAccount(): Promise<CodexAccountSnapshot> {
     if (accountCache && accountCache.expiresAt > Date.now()) return accountCache.value;
+    const epoch = officialAccountEpoch;
     const value = await options.manager.readAccount();
+    if (epoch !== officialAccountEpoch) return value;
     accountCache = { value, expiresAt: Date.now() + 60_000 };
     return value;
   }
@@ -259,16 +267,22 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     await options.persist?.();
   }
 
-  async function refreshOfficialUsage(): Promise<CodexOfficialUsageSnapshot> {
+  async function refreshOfficialUsage(minimumAgeMs = 15_000): Promise<CodexOfficialUsageSnapshot> {
+    if (pricingAbort.signal.aborted) return readCachedOfficialUsage();
     if (officialRefresh) return officialRefresh;
+    const cached = readCachedOfficialUsage();
+    const cacheAge = cached.fetchedAt ? Date.parse(now()) - Date.parse(cached.fetchedAt) : Infinity;
+    if (performance.now() - officialCheckedAt < minimumAgeMs || (!cached.stale && cacheAge >= 0 && cacheAge < minimumAgeMs)) return cached;
+    const epoch = officialAccountEpoch;
     officialRefresh = (async () => {
       let account: CodexAccountSnapshot;
       try {
         account = await readAccount();
       } catch (error) {
-        const previous = cachedOfficial();
+        const previous = officialAccountEpoch === 0 ? cachedOfficial() : officialSnapshot;
         return previous ? { ...previous, stale: true, error: errorMessage(error) } : emptyOfficial('unavailable', null, null, null, true, errorMessage(error));
       }
+      if (epoch !== officialAccountEpoch) return readCachedOfficialUsage();
       if (!account.signedIn) return emptyOfficial('signed_out', account.accountScopeId, account.accountType, account.planType, false, null);
       if (account.accountType !== 'chatgpt') return emptyOfficial('unsupported', account.accountScopeId, account.accountType, account.planType, false, null);
 
@@ -298,11 +312,20 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         stale: usageResult.status === 'rejected' || limitsResult.status === 'rejected',
         error: [usageResult, limitsResult].map(settledError).filter(Boolean).join('；') || null,
       };
+      if (epoch !== officialAccountEpoch) return readCachedOfficialUsage();
       await persistOfficial(snapshot);
       return snapshot;
-    })().finally(() => {
-      officialRefresh = null;
-    });
+    })()
+      .then((snapshot) => {
+        if (epoch !== officialAccountEpoch) return readCachedOfficialUsage();
+        officialSnapshot = snapshot;
+        officialCheckedAt = performance.now();
+        return snapshot;
+      })
+      .finally(() => {
+        officialRefresh = null;
+        if (epoch !== officialAccountEpoch) handleSparseRateLimitUpdate();
+      });
     return officialRefresh;
   }
 
@@ -382,10 +405,10 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   }
 
   function handleSparseRateLimitUpdate(): void {
-    if (sparseRefreshTimer) return;
+    if (sparseRefreshTimer || pricingAbort.signal.aborted) return;
     sparseRefreshTimer = setTimeout(() => {
       sparseRefreshTimer = null;
-      void refreshOfficialUsage().then(
+      void refreshOfficialUsage(0).then(
         (official) => options.broadcast('codex.usage.changed', { providerId: 'codex', scope: 'official', stale: official.stale, updatedAt: now() }),
         () => undefined,
       );
@@ -394,16 +417,21 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
 
   function handleAccountChanged(): void {
     accountCache = null;
+    officialAccountEpoch += 1;
+    officialCheckedAt = -Infinity;
+    officialSnapshot = emptyOfficial('unavailable', null, null, null, true, null);
     handleSparseRateLimitUpdate();
   }
 
   function readCachedOfficialUsage(): CodexOfficialUsageSnapshot {
-    const cached = cachedOfficial();
-    return cached ? { ...cached, creditBalance: cached.creditBalance ?? null, creditsUnlimited: cached.creditsUnlimited ?? false } : emptyOfficial('unavailable', null, null, null, true, null);
+    const cached = officialSnapshot ?? cachedOfficial();
+    return cached
+      ? { ...cached, stale: cached.stale || !cached.fetchedAt || Date.parse(now()) - Date.parse(cached.fetchedAt) >= 10 * 60_000, creditBalance: cached.creditBalance ?? null, creditsUnlimited: cached.creditsUnlimited ?? false }
+      : emptyOfficial('unavailable', null, null, null, true, null);
   }
 
   async function readSummary(): Promise<CodexUsageSummarySnapshot> {
-    const [official] = await Promise.all([refreshOfficialUsage()]);
+    const official = readCachedOfficialUsage();
     const today = localDate(new Date());
     const sevenDayStart = localDate(addDays(startOfLocalDay(new Date()), -6));
     const rows = options.ledger.list({ accountScopeId: official.accountScopeId ?? 'codex-local', since: addDays(startOfLocalDay(new Date()), -6).toISOString() });
@@ -419,7 +447,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   }
 
   async function readAnalytics(input: Parameters<CodexUsageService['readAnalytics']>[0]): Promise<CodexUsageAnalyticsSnapshot> {
-    const official = await refreshOfficialUsage();
+    const official = readCachedOfficialUsage();
     const rows = options.ledger.list({ accountScopeId: official.accountScopeId ?? 'codex-local', since: rangeStart(input.range), projectId: input.projectId, model: input.model });
     return {
       providerId: 'codex',

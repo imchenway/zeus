@@ -73,8 +73,38 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 使用采集帧原始时间戳，防止动作后才到达的旧帧被误认为新画面。 */
     private var frameTime = CMTime.invalid
     /** 供会话内预览使用的有界缩略图，不写入磁盘或另开采集流。 */
-    private var previewData: Data?
-    /** 用户操作目标应用时暂让输入，空闲后恢复观察资格。 */
+    private var previewData: Data? {
+        didSet {
+            // 系统可能重复提交相同完整帧；仅在到帧时比较有界 JPEG，不扫描原图或周期性哈希。
+            if previewData != oldValue { previewRevision &+= 1; encodedPreview = nil }
+        }
+    }
+    /** 每个新帧只执行一次编码，空闲帧不修改此身份。 */
+    private var previewRevision: UInt64 = 0
+    /** 仅保留当前缩略图的编码结果。 */
+    private var encodedPreview: String?
+    /** 图像与安全状态共同决定发布，不能仅按图像吞掉用户接管。 */
+    private struct PreviewIdentity: Equatable {
+        /** 控制轮次及目标窗口发生变化时必须重新发布。 */
+        let sessionId: String
+        /** 窗口切换不能复用旧预览。 */
+        let windowId: CGWindowID
+        /** 展示名称更新独立于画面。 */
+        let label: String
+        /** 窗口移动影响光标归一化坐标。 */
+        let frame: CGRect
+        /** 当前图像身份；无需为去重重新扫描整张图像。 */
+        let revision: UInt64
+        /** 暂停、观察要求和光标变化独立于图像。 */
+        let paused: Bool
+        /** 恢复后需要观察的安全状态。 */
+        let needsObservation: Bool
+        /** 窗口内光标位置，窗口外统一为空。 */
+        let cursor: CGPoint?
+    }
+    /** 上一次成功构造的完整预览身份。 */
+    private var publishedPreview: PreviewIdentity?
+    /** 用户接管目标窗口时暂让输入，空闲后恢复观察资格。 */
     private var paused = false
     /** 接管空闲窗口使用单调时钟，避免系统校时影响恢复。 */
     private var lastUserInput = 0.0
@@ -444,11 +474,15 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         let payload = lock.withLock { () -> [String: Any]? in
             guard !stopped, let target else { return nil }
             let point = cursorPoint.flatMap { target.frame.contains($0) ? $0 : nil }
+            let identity = PreviewIdentity(sessionId: target.sessionId, windowId: target.windowId, label: targetLabel, frame: target.frame, revision: previewRevision, paused: paused, needsObservation: needsObservation, cursor: point)
+            guard identity != publishedPreview else { return nil }
+            if encodedPreview == nil, let previewData { encodedPreview = "data:image/jpeg;base64," + previewData.base64EncodedString() }
+            publishedPreview = identity
             return [
                 "event": "control_preview", "sessionId": target.sessionId,
                 "preview": [
                     "appName": targetLabel, "paused": paused, "needsObservation": needsObservation,
-                    "imageUrl": previewData.map { "data:image/jpeg;base64," + $0.base64EncodedString() } as Any? ?? NSNull(),
+                    "imageUrl": encodedPreview as Any? ?? NSNull(),
                     "cursor": point.map { ["x": ($0.x - target.frame.minX) / target.frame.width, "y": ($0.y - target.frame.minY) / target.frame.height] } as Any? ?? NSNull(),
                 ],
             ]

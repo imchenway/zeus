@@ -902,6 +902,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const telegramCommandRunMessages = new Map<string, { chatId: number; messageId?: number }>();
   const telegramCommandRunLogCounts = new Map<string, number>();
   const eventSubscribers = new Set<ConversationRealtimeSocket>();
+  /** IM 复用现有提交后事件；未启用连接时监听回调只作常量时间判断。 */
+  let imRealtimeObserver: ((event: ZeusRealtimeEvent) => void) | undefined;
   const nativeLocalEventGenerationId = `zeus-local-${randomUUID()}`;
   const conversationEventFlow = new ConversationEventFlowControl();
   const realtimeSubscriberHighWaterBytes = conversationEventFlowBudgets.websocket.maximumBufferedBytes;
@@ -2554,6 +2556,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   /** 慢订阅者在有界高水位断开，随后通过耐久游标补拉，避免 Core 为单个窗口无界缓存。 */
   function broadcastRealtimeEvent(event: ZeusRealtimeEvent): void {
+    imRealtimeObserver?.(event);
     const encoded = JSON.stringify(event);
     for (const subscriber of eventSubscribers) {
       if (subscriber.readyState !== subscriber.OPEN) continue;
@@ -3603,6 +3606,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     db,
     dispatchUnifiedConversationQueueHead,
     eventSubscribers,
+    setImRealtimeObserver: (listener: ((event: ZeusRealtimeEvent) => void) | undefined) => {
+      imRealtimeObserver = listener;
+    },
     executeConversationDispatchMessage,
     executeConversationDispatchRequestResponse,
     executeProjectConversationIdempotent,

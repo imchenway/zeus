@@ -201,6 +201,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   server: FastifyInstance;
+  /** 平台通用时钟返回 Date；写入存储前由各领域显式序列化。 */
+  now(): Date;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
@@ -337,6 +339,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     db,
     dispatchUnifiedConversationQueueHead,
     eventSubscribers,
+    setImRealtimeObserver,
     executeConversationDispatchMessage,
     executeConversationDispatchRequestResponse,
     executeProjectConversationIdempotent,
@@ -1001,6 +1004,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
     },
   );
+  /** 显式诊断操作只控制进程内的有界采样，不写入业务数据。 */
+  server.post('/api/diagnostics/performance/capture', async () => {
+    apiPerformance.startEventLoopCapture();
+    return apiPerformance.snapshot({ recentLimit: 0 }).coreRuntime;
+  });
+  /** 提前结束诊断；读取报告从不隐式启用采样。 */
+  server.delete('/api/diagnostics/performance/capture', async () => {
+    apiPerformance.stopEventLoopCapture();
+    return apiPerformance.snapshot({ recentLimit: 0 }).coreRuntime;
+  });
   server.get('/api/diagnostics/heavy-workers', async () => heavyWorkerPoolSnapshot());
 
   server.post(
@@ -2645,25 +2658,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         });
         return true;
       },
+      latestConversationOutputSequence: ({ projectId, conversationId }) => {
+        const conversation = conversations.getRecordById(conversationId);
+        if (!conversation || conversation.projectId !== projectId || conversation.archived) return 0;
+        return conversationSnapshotV2.latestAssistantOutputSequence(conversationId);
+      },
       readConversationOutput: async ({ projectId, conversationId, afterSequence }) => {
         const conversation = conversations.getRecordById(conversationId);
         if (!conversation || conversation.projectId !== projectId || conversation.archived) return [];
-        const projected: Array<{
-          id: string;
-          sequence: number;
-          turnId: string;
-          providerItemId: string | null;
-          role: string;
-          reasoningSummary: boolean;
-          toolPairId: string | null;
-          content: { preview: string; byteLength: number; truncated: boolean; contentHandle: string | null; refreshRequired: boolean };
-        }> = [];
-        let cursor: string | undefined;
-        do {
-          const page = conversationSnapshotV2.listModelHistoryPage({ conversationId, ...(cursor ? { cursor } : {}), entryLimit: 256, byteLimit: 1024 * 1024 });
-          projected.push(...page.items);
-          cursor = page.hasMore && page.nextCursor ? page.nextCursor : undefined;
-        } while (cursor && projected.length < 4_096);
+        // 每批最多读取 128 个待发送结果，完成送达后再继续下一批。
+        const projected = conversationSnapshotV2.listModelHistoryPage({ conversationId, afterSequence, assistantOutputOnly: true, entryLimit: 128, byteLimit: 1024 * 1024 }).items;
+        if (projected.length === 0) return [];
 
         const resourceRecords = conversationResources.listByConversation(conversationId);
         const output = [];
@@ -2999,6 +3004,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
   });
 
+  // 复用已有提交后广播，变化只唤醒对应连接，不建立第二套消息队列。
+  setImRealtimeObserver((event: import('./index.js').ZeusRealtimeEvent) => imTelegramService.notifyChange(event));
+  server.addHook('onClose', async () => {
+    setImRealtimeObserver(undefined);
+  });
   registerImConnectionRoutes({ server, application: telegramCommands, service: imTelegramService, redactSensitiveText });
   if (!readOnlyValidation)
     void imTelegramService
@@ -3008,6 +3018,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       );
   const automationTasks = new AutomationTaskRepository(db);
   const automationRuns = new AutomationRunRepository(db);
+  /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
+  const automationNow = (): string => now().toISOString();
 
   registerAutomationRoutes({
     server,
@@ -3015,7 +3027,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     runs: automationRuns,
     db,
     kick: () => automationScheduler?.kick(),
-    now,
+    now: automationNow,
   });
 
   registerDigitalEmployeeRoutes({
@@ -3118,7 +3130,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       submissions: conversationSubmissions,
       getProject: (projectId) => projects.getById(projectId),
       save: () => db.save(),
-      now,
+      now: automationNow,
       publish: publishRealtimeEvent,
       dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent }),
     });
@@ -3194,6 +3206,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/codex/usage-summary', async () => codexUsageService.readSummary());
 
   server.get('/api/usage-overview', async () => usageOverviewService.read());
+
+  /** 显式显示或刷新才检查官方数据，普通读取始终无网络及持久化副作用。 */
+  server.post('/api/usage-overview/refresh', async (request: FastifyRequest<{ Body: { force?: boolean } }>, reply) => {
+    if (request.body?.force !== undefined && typeof request.body.force !== 'boolean') return reply.code(400).send({ error: 'ZEUS_USAGE_REFRESH_INVALID' });
+    if (codexAppServerManager.getState().type === 'ready') {
+      await codexUsageService.refreshOfficialUsage(request.body?.force === true ? 15_000 : 10 * 60_000);
+    }
+    return usageOverviewService.read();
+  });
 
   server.get(
     '/api/usage-analytics',
