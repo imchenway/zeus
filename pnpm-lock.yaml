@@ -26,7 +26,7 @@ patchedDependencies:
     hash: ef7ff88329e100574e6f9da1210617ce3921c15d6d11b9c210d86e49836a0f7d
     path: patches/@earendil-works__pi-coding-agent@0.83.0.patch
   node-pty@1.1.0:
-    hash: 0b9b88e048000acd3abb9371e0924cb5af579f5675c7849f7e6ad1266f3d41ed
+    hash: 03acd11208e90e06aed135ba98bb017a1101e68a132436e28b1d5fac56d50943
     path: patches/node-pty@1.1.0.patch
 
 importers:
@@ -232,7 +232,7 @@ importers:
         version: link:../shared
       node-pty:
         specifier: ^1.1.0
-        version: 1.1.0(patch_hash=0b9b88e048000acd3abb9371e0924cb5af579f5675c7849f7e6ad1266f3d41ed)
+        version: 1.1.0(patch_hash=03acd11208e90e06aed135ba98bb017a1101e68a132436e28b1d5fac56d50943)
       typebox:
         specifier: 1.3.7
         version: 1.3.7
@@ -6258,7 +6258,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.1.0(patch_hash=0b9b88e048000acd3abb9371e0924cb5af579f5675c7849f7e6ad1266f3d41ed):
+  node-pty@1.1.0(patch_hash=03acd11208e90e06aed135ba98bb017a1101e68a132436e28b1d5fac56d50943):
     dependencies:
       node-addon-api: 7.1.1
 
