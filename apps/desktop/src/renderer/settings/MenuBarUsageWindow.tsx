@@ -543,6 +543,7 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
             <Metric key={id} label={metrics[id].label} accessibleLabel={metrics[id].accessibleLabel} value={metrics[id].value} />
           ))}
       </dl>
+      {provider.sevenDayLocal.hasBackfilledPricing && <p className="menu-bar-usage-pricing-note">{language === 'zh-CN' ? '含历史补算：按补价时价格估算' : 'Includes historical usage estimated at backfill-time prices'}</p>}
     </section>
   );
 }

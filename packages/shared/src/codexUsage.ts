@@ -8,6 +8,10 @@ export interface TokenUsageBreakdown {
 }
 
 export interface CodexUsageRateSnapshot {
+  /** 自动获取公开价格的时间，不代表供应商价格生效时间。 */
+  retrievedAt?: string;
+  /** 历史缺价按补价时公开单价估算的时间；已有价格不覆盖。 */
+  backfilledAt?: string;
   catalogDate: string;
   model: string;
   normalizedModel: string | null;
@@ -110,6 +114,8 @@ export interface UsageOverviewSnapshot {
 }
 
 export interface CodexLocalUsageTotals extends TokenUsageBreakdown {
+  /** 汇总中包含按补价时价格估算的记录，界面必须说明此口径。 */
+  hasBackfilledPricing?: boolean;
   conversationCount: number;
   turnCount: number;
   cacheHitRate: number | null;
@@ -316,18 +322,21 @@ export function calculateUncachedInputTokens(usage: Pick<TokenUsageBreakdown, 'i
 export function estimateCodexUsage(input: { model: string; serviceTier?: string | null; usage: TokenUsageBreakdown }): CodexUsageEstimate {
   const model = resolvePrice(input.model);
   const serviceTier = input.serviceTier ?? null;
-  const isFast = serviceTier === 'priority';
+  const isFast = serviceTier === 'priority' || serviceTier === 'fast';
+  /** 内置表只有普通与快速档位；其他档位等待对应公开价格，不能套用普通单价。 */
+  const supportedTier = serviceTier === null || serviceTier === 'default' || serviceTier === 'standard' || isFast;
   const longContext = input.usage.inputTokens > 272_000 && model?.longUsd !== null;
-  const usdRates = model ? (isFast ? (longContext ? model.fastLongUsd : model.fastUsd) : longContext ? model.longUsd : model.standardUsd) : null;
+  const usdRates = model && supportedTier ? (isFast ? (longContext ? model.fastLongUsd : model.fastUsd) : longContext ? model.longUsd : model.standardUsd) : null;
   const creditsMultiplier = isFast && model?.fastCreditsMultiplier ? model.fastCreditsMultiplier : 1;
-  const creditRates = model
-    ? {
-        input: model.credits.input * creditsMultiplier,
-        cachedInput: model.credits.cachedInput * creditsMultiplier,
-        cacheWrite: model.credits.cacheWrite === null ? null : model.credits.cacheWrite * creditsMultiplier,
-        output: model.credits.output * creditsMultiplier,
-      }
-    : null;
+  const creditRates =
+    model && supportedTier
+      ? {
+          input: model.credits.input * creditsMultiplier,
+          cachedInput: model.credits.cachedInput * creditsMultiplier,
+          cacheWrite: model.credits.cacheWrite === null ? null : model.credits.cacheWrite * creditsMultiplier,
+          output: model.credits.output * creditsMultiplier,
+        }
+      : null;
   const rateSnapshot: CodexUsageRateSnapshot = {
     catalogDate: CODEX_USAGE_PRICE_CATALOG_DATE,
     model: input.model,
