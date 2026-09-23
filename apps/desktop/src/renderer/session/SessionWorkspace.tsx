@@ -3152,9 +3152,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           visible={terminalOpen}
           projectId={props.conversation.projectId}
           projectName={owner?.projectName ?? props.conversation.projectId}
-          projectPath={props.projectPath}
+          conversationId={props.conversation.id}
           taskId={props.task?.id ?? props.conversation.taskId ?? undefined}
-          cwd={props.state?.snapshot?.executionContext?.cwd}
           focusRequest={terminalFocusRequest}
           onClose={closeSessionTerminal}
         />

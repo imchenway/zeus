@@ -1,4 +1,6 @@
 import { isInteractiveShellSession } from '@zeus/shared';
+import { realpathSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AiCliAdapterDescriptor, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
@@ -23,6 +25,8 @@ import {
 interface CreateRuntimeSessionInput {
   projectId: string;
   taskId?: string;
+  /** 新终端所属会话，用于解析受信任的工作目录。 */
+  conversationId?: string;
   command: string;
   args?: string[];
   cwd?: string;
@@ -32,6 +36,8 @@ interface CreateRuntimeSessionInput {
 interface RuntimeConfirmationSessionInput {
   projectId: string;
   taskId?: string;
+  /** 与启动请求绑定同一会话身份。 */
+  conversationId?: string;
   command: string;
   args?: string[];
   cwd?: string;
@@ -85,7 +91,7 @@ export interface RuntimeOperationConfirmation {
   riskLevel: 'high';
   reason: string;
   securityContext: RuntimeConfirmationSecurityContext;
-  session: Required<Pick<RuntimeConfirmationSessionInput, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionInput, 'taskId'>;
+  session: Required<Pick<RuntimeConfirmationSessionInput, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionInput, 'taskId' | 'conversationId'>;
   createdAt: string;
   confirmedAt: string | null;
   consumedAt: string | null;
@@ -135,6 +141,8 @@ export function registerRuntimeSessionCommandRoutes(options: {
   runtimeSessions: RuntimeSessionRepository;
   projects: Pick<ProjectRepository, 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'create'>;
+  /** 仅返回归属匹配且可用的会话工作目录，不创建或恢复工作树。 */
+  resolveConversationExecutionRoot(projectId: string, taskId: string | undefined, conversationId: string): string | null;
   resolveRegisteredRuntimeAdapter(command: string): AiCliAdapterDescriptor | null;
   resolveExistingRuntimeSessionAdapter(command: string): AiCliAdapterDescriptor | null;
   readProjectAllowsShell(projectId: string): boolean;
@@ -716,7 +724,7 @@ async function prepareRuntimeConfirmation(options: Parameters<typeof registerRun
   if (input.action !== 'start_generic_session' || !input.reason?.trim() || !input.session?.projectId || !input.session.command) {
     throw new RuntimeSessionRouteError('ZEUS_INVALID_RUNTIME_CONFIRMATION', 'action, reason and session are required for runtime confirmation', 400);
   }
-  assertAllowedKeys(input.session, ['args', 'command', 'cwd', 'projectId', 'taskId'], 'runtime.confirmation.session');
+  assertAllowedKeys(input.session, ['args', 'command', 'conversationId', 'cwd', 'projectId', 'taskId'], 'runtime.confirmation.session');
   if (options.resolveRegisteredRuntimeAdapter(input.session.command)?.id !== 'generic') {
     throw new RuntimeSessionRouteError('ZEUS_INVALID_RUNTIME_CONFIRMATION', 'runtime confirmation is only required for Generic shell sessions', 400);
   }
@@ -725,14 +733,17 @@ async function prepareRuntimeConfirmation(options: Parameters<typeof registerRun
   if (!options.readProjectAllowsShell(project.id)) {
     throw new RuntimeSessionRouteError('ZEUS_RUNTIME_SHELL_PERMISSION_REQUIRED', 'Project must enable allowShell before Generic shell sessions can be confirmed', 403);
   }
+  /** 确认与启动都从同一会话来源解析目录，避免界面快照缺失时落回主目录。 */
+  const projectRoot = resolveRuntimeWorkingRoot(options, input.session, project.localPath);
   const session = {
     projectId: requiredIdentity(input.session.projectId, 'session.projectId'),
     ...(input.session.taskId ? { taskId: requiredIdentity(input.session.taskId, 'session.taskId') } : {}),
+    ...(input.session.conversationId !== undefined ? { conversationId: input.session.conversationId } : {}),
     command: requiredIdentity(input.session.command, 'session.command'),
     args: optionalStringArray(input.session.args, 'session.args'),
-    cwd: input.session.cwd ?? project.localPath,
+    cwd: input.session.cwd ?? projectRoot,
   };
-  await assertRuntimeSecurity(options, session, project.localPath, 'confirmation');
+  await assertRuntimeSecurity(options, session, projectRoot, 'confirmation');
   return { reason: input.reason.trim(), session };
 }
 
@@ -745,14 +756,27 @@ async function prepareRuntimeStart(options: Parameters<typeof registerRuntimeSes
   if (adapter.id === 'generic' && !options.readProjectAllowsShell(project.id)) {
     throw new RuntimeSessionRouteError('ZEUS_RUNTIME_SHELL_PERMISSION_REQUIRED', 'Project must enable allowShell before Generic shell sessions can run', 403);
   }
-  await assertRuntimeSecurity(options, { ...input, args: input.args ?? [], cwd: input.cwd ?? project.localPath }, project.localPath, 'session');
-  if (adapter.id !== 'generic') return { projectRoot: project.localPath, adapter };
+  /** 启动前重新解析目录；确认后工作区若已变化，旧确认不能用于新目录。 */
+  const projectRoot = resolveRuntimeWorkingRoot(options, input, project.localPath);
+  await assertRuntimeSecurity(options, { ...input, args: input.args ?? [], cwd: input.cwd ?? projectRoot }, projectRoot, 'session');
+  if (adapter.id !== 'generic') return { projectRoot, adapter };
   const confirmation = input.confirmationId ? confirmations.get(input.confirmationId) : undefined;
   if (confirmation?.status === 'rejected') throw new RuntimeSessionRouteError('ZEUS_RUNTIME_CONFIRMATION_REJECTED', 'Runtime confirmation was rejected', 409);
-  if (!confirmation || !canConsumeGenericRuntimeConfirmation(confirmation, input, project.localPath)) {
+  if (!confirmation || !canConsumeGenericRuntimeConfirmation(confirmation, input, projectRoot)) {
     throw new RuntimeSessionRouteError('ZEUS_GENERIC_RUNTIME_REQUIRES_CONFIRMATION', 'Generic shell runtime requires a confirmed high-risk confirmation before it can start a session', 400);
   }
-  return { projectRoot: project.localPath, adapter, confirmation };
+  return { projectRoot, adapter, confirmation };
+}
+
+/** 会话终端复用实际执行目录；普通项目终端继续使用项目目录。 */
+function resolveRuntimeWorkingRoot(options: Parameters<typeof registerRuntimeSessionCommandRoutes>[0], input: RuntimeConfirmationSessionInput, projectRoot: string): string {
+  if (input.conversationId === undefined) return projectRoot;
+  /** 会话标识仅用于查询，客户端不能以目录字符串授予额外权限。 */
+  const conversationId = requiredIdentity(input.conversationId, 'conversationId');
+  /** 解析端同时验证项目、任务归属以及目录是否可用。 */
+  const root = options.resolveConversationExecutionRoot(input.projectId, input.taskId, conversationId);
+  if (!root) throw new RuntimeSessionRouteError('ZEUS_RUNTIME_WORKSPACE_UNAVAILABLE', '当前会话的工作目录不可用，请检查任务工作区后重试。', 409);
+  return root;
 }
 
 async function assertRuntimeSecurity(
@@ -761,7 +785,7 @@ async function assertRuntimeSecurity(
   projectRoot: string,
   phase: 'confirmation' | 'session',
 ): Promise<void> {
-  if (!isPathInsideProjectRoot(input.cwd, projectRoot)) {
+  if (!isRuntimeDirectoryInsideRoot(input.cwd, projectRoot)) {
     options.appendAuditLog({
       actorType: 'local_api',
       action: 'security.runtime.cwd_rejected',
@@ -844,10 +868,11 @@ function parseEmptySessionCommand(
 }
 
 function validateRuntimeStartShape(input: CreateRuntimeSessionInput, commandType: string): void {
-  assertAllowedKeys(input, ['args', 'command', 'confirmationId', 'cwd', 'projectId', 'taskId'], commandType);
+  assertAllowedKeys(input, ['args', 'command', 'confirmationId', 'conversationId', 'cwd', 'projectId', 'taskId'], commandType);
   requiredIdentity(input.projectId, 'projectId');
   requiredIdentity(input.command, 'command');
   if (input.taskId !== undefined) requiredIdentity(input.taskId, 'taskId');
+  if (input.conversationId !== undefined) requiredIdentity(input.conversationId, 'conversationId');
   if (input.confirmationId !== undefined) requiredIdentity(input.confirmationId, 'confirmationId');
   if (input.cwd !== undefined) requiredIdentity(input.cwd, 'cwd');
   optionalStringArray(input.args, 'args');
@@ -902,6 +927,7 @@ function canConsumeGenericRuntimeConfirmation(confirmation: RuntimeOperationConf
     confirmation.status === 'confirmed' &&
     confirmation.session.projectId === body.projectId &&
     confirmation.session.taskId === body.taskId &&
+    confirmation.session.conversationId === body.conversationId &&
     confirmation.session.command === body.command &&
     confirmation.session.cwd === (body.cwd ?? defaultCwd) &&
     confirmation.session.args.length === requestedArgs.length &&
@@ -938,6 +964,15 @@ function detectGenericShellRisk(args: string[], projectRoot: string): { kind: 'o
     }
   }
   return null;
+}
+
+/** 工作目录必须真实存在且留在会话根目录内，符号链接不能扩大允许范围。 */
+function isRuntimeDirectoryInsideRoot(candidatePath: string, projectRoot: string): boolean {
+  try {
+    return isAbsolute(candidatePath) && isPathInsideProjectRoot(candidatePath, projectRoot) && isPathInsideProjectRoot(realpathSync(candidatePath), realpathSync(projectRoot));
+  } catch {
+    return false;
+  }
 }
 
 function isPathInsideProjectRoot(candidatePath: string, projectRoot: string): boolean {

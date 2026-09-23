@@ -185,6 +185,8 @@ export interface RuntimeTerminalEventPage {
 export interface StartRuntimeSessionRequest {
   projectId: string;
   taskId?: string;
+  /** 指定时由后台解析当前会话的工作目录，包括隔离工作树。 */
+  conversationId?: string;
   command: string;
   args?: string[];
   cwd?: string;
@@ -194,6 +196,8 @@ export interface StartRuntimeSessionRequest {
 export interface RuntimeConfirmationSessionRequest {
   projectId: string;
   taskId?: string;
+  /** 确认与启动绑定同一会话，防止跨会话复用确认。 */
+  conversationId?: string;
   command: string;
   args?: string[];
   cwd?: string;
@@ -221,7 +225,7 @@ export interface RuntimeOperationConfirmation {
     commandPreview: string;
     redacted: boolean;
   };
-  session: Required<Pick<RuntimeConfirmationSessionRequest, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionRequest, 'taskId'>;
+  session: Required<Pick<RuntimeConfirmationSessionRequest, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionRequest, 'taskId' | 'conversationId'>;
   createdAt: string;
   confirmedAt: string | null;
   consumedAt: string | null;
