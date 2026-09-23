@@ -2416,7 +2416,7 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
 /** 创建固定显示尺寸的菜单栏图标，并同步菜单与点击行为。 */
 function setupTray(): void {
   if (!tray) {
-      const trayIconPath = join(desktopRoot(), 'assets/trayTemplate@2x.png');
+    const trayIconPath = join(desktopRoot(), 'assets/trayTemplate@2x.png');
     /** 按路径同时加载 18×18 原图和 36×36 的 @2x 副本，让系统按屏幕密度选择清晰资源。 */
     const trayIcon = nativeImage.createFromPath(trayIconPath);
     if (trayIcon.isEmpty()) throw new Error(`Zeus tray icon is empty: ${trayIconPath}`);
