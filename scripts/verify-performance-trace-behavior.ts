@@ -150,6 +150,18 @@ try {
   const boundedApiSnapshot = apiPerformance.snapshot({ recentLimit: 500 });
   assertBehavior(boundedApiSnapshot.capacity === 5 && boundedApiSnapshot.capturedSampleCount === 4 && boundedApiSnapshot.recent.length === 4, 'API 观测样本容量或请求计数错误。');
 
+  // 默认运行不启用高频定时器；显式诊断重复开启不叠加，停止后计数稳定。
+  assertBehavior(apiPerformance.snapshot().coreRuntime.eventLoopDelayMs.count === 0, '被动请求统计不应启用事件循环采样。');
+  apiPerformance.startEventLoopCapture();
+  const captureStartedAt = apiPerformance.snapshot().coreRuntime.eventLoopDelayMs.startedAt;
+  apiPerformance.startEventLoopCapture();
+  assertBehavior(apiPerformance.snapshot().coreRuntime.eventLoopDelayMs.startedAt === captureStartedAt, '重复诊断不得重置或延长采样窗口。');
+  await new Promise<void>((resolve) => setTimeout(resolve, 120));
+  apiPerformance.stopEventLoopCapture();
+  const capturedDelayCount = apiPerformance.snapshot().coreRuntime.eventLoopDelayMs.count;
+  await new Promise<void>((resolve) => setTimeout(resolve, 80));
+  assertBehavior(capturedDelayCount > 0 && apiPerformance.snapshot().coreRuntime.eventLoopDelayMs.count === capturedDelayCount, '显式采样必须产生结果并在停止后释放计时器。');
+
   console.log(
     JSON.stringify(
       {
@@ -164,6 +176,7 @@ try {
           abandonedTraceIdentityReleased: true,
           retainedFields: Object.keys(tracedSnapshot.recent[0] ?? {}).sort(),
           sqlOrParameterBodyRetained: false,
+          eventLoopCapture: { passiveCount: 0, capturedDelayCount, stopped: true },
         },
       },
       null,

@@ -1083,8 +1083,24 @@ export class ConversationSnapshotV2Repository {
     return buildSequencePage(context, items);
   }
 
-  listModelHistoryPage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
-    const context = this.sequencePageContext(input, 'model_history', '');
+  /** 切换绑定只记录当前输出边界，不读取或发送旧正文及附件。 */
+  latestAssistantOutputSequence(conversationId: string): number {
+    return (
+      this.db.get<{ sequence: number | null }>(
+        `SELECT MAX(sequence) AS sequence FROM conversation_model_history
+      WHERE conversation_id = ? AND role = 'assistant' AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`,
+        [requiredIdentity(conversationId, 'conversationId')],
+      )?.sequence ?? 0
+    );
+  }
+
+  /** Telegram 从送达位置读取符合既有规则的结果，其他历史读取维持原有分页合同。 */
+  listModelHistoryPage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number; afterSequence?: number; assistantOutputOnly?: boolean }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
+    const context = this.sequencePageContext(input, 'model_history', input.assistantOutputOnly ? 'assistant-output' : '');
+    if (!input.cursor && input.afterSequence !== undefined) {
+      if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0) throw new Error('消息送达位置必须是非负安全整数。');
+      context.afterSequence = input.afterSequence;
+    }
     const rows = this.db.select<ModelHistoryProjectionRow>(
       `SELECT id,
                 sequence,
@@ -1111,6 +1127,7 @@ export class ConversationSnapshotV2Repository {
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND sequence > ? AND sequence <= ?
+          ${input.assistantOutputOnly ? `AND role = 'assistant' AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : ''}
         ORDER BY sequence
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, context.afterSequence, context.throughSequence, context.entryLimit + 1],

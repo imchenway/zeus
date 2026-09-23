@@ -185,35 +185,72 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     return () => observer.disconnect();
   }, [snapshot, selection, surfaceSettings.language, error]);
 
-  const load = useCallback(() => {
-    if (requestRef.current) return requestRef.current;
-    const request = (async () => {
-      setLoading(true);
-      try {
-        const next = await props.client.loadUsageOverview();
-        setSnapshot(next);
-        storeSnapshot(next);
-        setError(null);
-      } catch (cause) {
-        setError(cause);
-      } finally {
-        requestRef.current = null;
-        setLoading(false);
-      }
-    })();
-    requestRef.current = request;
-    return request;
-  }, [props.client]);
+  const load = useCallback(
+    (refresh?: 'if-stale' | 'force') => {
+      if (requestRef.current) return requestRef.current;
+      const request = (async () => {
+        setLoading(true);
+        try {
+          const next = await props.client.loadUsageOverview(refresh);
+          setSnapshot(next);
+          storeSnapshot(next);
+          setError(null);
+        } catch (cause) {
+          setError(cause);
+        } finally {
+          requestRef.current = null;
+          setLoading(false);
+        }
+      })();
+      requestRef.current = request;
+      return request;
+    },
+    [props.client],
+  );
 
   useEffect(() => {
-    void load();
+    /** 隐藏期间只记变化，合并显示、聚焦及同批用量通知。 */
+    let dirty = true;
+    /** 打开时检查过期官方数据，普通事件只读取本地快照。 */
+    let refresh: 'if-stale' | undefined = 'if-stale';
+    /** 仅可见窗口允许提交请求；原生初始隐藏窗口也必须已经取得焦点。 */
+    const visible = () => document.visibilityState === 'visible' && (!window.zeus || document.hasFocus());
+    /** 订阅退出后，不允许在途请求重新安排任务。 */
+    let disposed = false;
+    /** 一个短暂合并窗口，不建立持续轮询。 */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    /** 请求期间的新通知留到下一轮，避免在途去重吞掉最终更新。 */
+    const schedule = () => {
+      if (disposed || timer || !dirty || !visible()) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (disposed || !visible()) return;
+        if (requestRef.current) {
+          void requestRef.current.finally(schedule);
+          return;
+        }
+        dirty = false;
+        const requestedRefresh = refresh;
+        refresh = undefined;
+        void load(requestedRefresh).finally(schedule);
+      }, 150);
+    };
     const unsubscribe = props.client.subscribeEvents(
       (event) => {
-        if (event.type === 'usage.changed' || event.type === 'codex.usage.changed') void load();
+        if (event.type !== 'usage.changed' && event.type !== 'codex.usage.changed') return;
+        dirty = true;
+        schedule();
       },
       () => undefined,
     );
-    const refreshWhenShown = () => void load();
+    /** 重新显示时补读一次；重复可见性通知共享同一合并窗口。 */
+    const refreshWhenShown = () => {
+      if (!visible()) return;
+      dirty = true;
+      refresh = 'if-stale';
+      schedule();
+    };
+    schedule();
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       /** 指标下拉是原生 popover，Escape 交给轻量关闭处理，不关闭整个浮窗。 */
@@ -222,9 +259,13 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
       void window.zeus?.hideMenuBarUsage?.();
     };
     window.addEventListener('focus', refreshWhenShown);
+    document.addEventListener('visibilitychange', refreshWhenShown);
     window.addEventListener('keydown', closeOnEscape);
     return () => {
+      disposed = true;
+      clearTimeout(timer);
       unsubscribe();
+      document.removeEventListener('visibilitychange', refreshWhenShown);
       window.removeEventListener('focus', refreshWhenShown);
       window.removeEventListener('keydown', closeOnEscape);
     };
@@ -293,7 +334,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <small className="menu-bar-usage-freshness" data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite" title={freshness}>
               {freshness}
             </small>
-            <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load()}>
+            <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load('force')}>
               {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
             </button>
           </span>

@@ -38,7 +38,7 @@ export interface CodexApiClient {
   refreshTaskPushRepositoryRemote: (projectId: string, taskId: string, repositoryId: string) => Promise<CodexTaskRepositoryCapability>;
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
   loadCodexUsageSummary: () => Promise<CodexUsageSummarySnapshot>;
-  loadUsageOverview: () => Promise<UsageOverviewSnapshot>;
+  loadUsageOverview: (refresh?: 'if-stale' | 'force') => Promise<UsageOverviewSnapshot>;
   loadUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<UsageAnalyticsSnapshot>;
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
@@ -141,9 +141,9 @@ export interface CodexApiClient {
 export function createCodexApiClient(transport: LocalApiTransport): CodexApiClient {
   /** 同一冻结清单共享请求，最多保留最近 64 轮，随客户端连接隔离。 */
   const frozenSkills = new Map<string, Promise<SkillCatalog>>();
-  const loadUsageOverview = async (): Promise<UsageOverviewSnapshot> => {
+  const loadUsageOverview = async (refresh?: 'if-stale' | 'force'): Promise<UsageOverviewSnapshot> => {
     try {
-      return await transport.request<UsageOverviewSnapshot>('/api/usage-overview');
+      return await transport.request<UsageOverviewSnapshot>(refresh ? '/api/usage-overview/refresh' : '/api/usage-overview', refresh ? { method: 'POST', body: JSON.stringify({ force: refresh === 'force' }) } : undefined);
     } catch (error) {
       if (!(error instanceof ZeusApiError) || error.status !== 404) throw error;
       const analytics = await transport.request<CodexUsageAnalyticsSnapshot>('/api/codex/usage-analytics?range=7d');

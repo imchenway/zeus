@@ -1993,6 +1993,24 @@ export class ConversationProviderSyncCheckpointRepository {
 
 /** 供应源用量账本不建立外键，被引用对象删除后仍保留真实历史消耗。 */
 export class CodexUsageLedgerRepository {
+  /** 账本提交后递增，概览缓存不受无关的任务日志写入影响。 */
+  private revision = 0;
+  /** 未提交或回滚过的修改不允许命中概览缓存。 */
+  private committedRevision = 0;
+
+  /** 外部连接写入也使缓存失效；本进程只有共享仓储负责运行期账本修改。 */
+  readRevision(): string | null {
+    if (this.revision !== this.committedRevision) return null;
+    return `${this.revision}:${this.db.get<{ data_version: number }>('PRAGMA data_version')?.data_version ?? 0}`;
+  }
+
+  /** 只取历史边界和缓存能力，概览无需加载七天以前的正文及计价快照。 */
+  listOverviewProviders(): Array<{ providerId: string; firstAt: string; lastAt: string; hasCache: number }> {
+    return this.db.select(`SELECT CASE WHEN provider_id LIKE 'pi:%' THEN 'api:' || substr(provider_id, 4) ELSE provider_id END AS providerId,
+      MIN(occurred_at) AS firstAt, MAX(occurred_at) AS lastAt,
+      MAX(cached_input_tokens > 0 OR cache_write_input_tokens > 0) AS hasCache
+      FROM codex_usage_ledger GROUP BY providerId ORDER BY MIN(occurred_at || char(0) || id)`);
+  }
   constructor(private readonly db: ZeusDatabasePort) {}
 
   upsert(input: UpsertCodexUsageLedgerInput): CodexUsageLedgerRecord {
@@ -2056,6 +2074,10 @@ export class CodexUsageLedgerRepository {
         timestamp,
       ],
     );
+    const revision = ++this.revision;
+    this.db.afterCommit(() => {
+      this.committedRevision = revision;
+    });
     return this.findByProviderTurn(input.providerId, input.providerThreadId, input.providerTurnId)!;
   }
 
@@ -2066,6 +2088,10 @@ export class CodexUsageLedgerRepository {
 
   deleteById(id: string): void {
     this.db.execute(`DELETE FROM codex_usage_ledger WHERE id = ?`, [id]);
+    const revision = ++this.revision;
+    this.db.afterCommit(() => {
+      this.committedRevision = revision;
+    });
   }
 
   list(input: ListCodexUsageLedgerInput = {}): CodexUsageLedgerRecord[] {
