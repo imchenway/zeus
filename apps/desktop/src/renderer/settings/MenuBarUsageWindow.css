@@ -1186,6 +1186,15 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
+/* 历史补价说明始终可见，窄浮窗中允许自然换行。 */
+.menu-bar-usage-pricing-note {
+  margin: 0 0 8px;
+  color: var(--usage-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .menu-bar-usage-overview-head {
   display: flex;
   align-items: center;

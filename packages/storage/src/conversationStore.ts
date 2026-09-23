@@ -1165,7 +1165,7 @@ export class ConversationRepository {
   }
 
   /**
-   * 仅供历史定价身份修复：保留 Provider 的 generation/sequence 与真实 Token，替换由旧路由写错的
+   * 仅供历史定价修复与缺价补算：保留 Provider 的 generation/sequence 与真实 Token，替换
    * 估算字段。普通事件仍必须走 upsertProviderTokenUsageSnapshot 的单调序列门禁。
    */
   repairProviderTokenUsagePricing(conversationId: string, snapshot: ConversationProviderTokenUsageSnapshot): ConversationProviderTokenUsageSnapshot {

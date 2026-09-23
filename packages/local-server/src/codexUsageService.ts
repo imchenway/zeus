@@ -2,7 +2,6 @@ import type { CodexAccountRateLimitsSnapshot, CodexAccountSnapshot, CodexAppServ
 import {
   calculateCacheHitRate,
   CODEX_USAGE_PRICE_CATALOG_DATE,
-  CODEX_USAGE_PRICE_SOURCE_URLS,
   emptyTokenUsageBreakdown,
   estimateCodexUsage,
   estimateCodexUsageWithRateSnapshot,
@@ -17,6 +16,7 @@ import {
   type TokenUsageBreakdown,
 } from '@zeus/shared';
 import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, ConversationRepository, ProjectRepository, SettingRepository } from '@zeus/storage';
+import { estimatePublishedCodexUsage, fetchPublishedCodexPricing, parsePublishedCodexPrices, type PublishedCodexPricing } from './codexUsagePricing.js';
 
 interface CreateCodexUsageServiceOptions {
   manager: CodexAppServerManager;
@@ -28,6 +28,8 @@ interface CreateCodexUsageServiceOptions {
   persist?: () => Promise<void>;
   now?: () => string;
   repairLegacyCodexSourceAlias?: boolean;
+  /** 只读验收禁用网络补价与账本写入。 */
+  automaticPricing?: boolean;
 }
 
 interface PersistedOfficialUsage {
@@ -36,6 +38,10 @@ interface PersistedOfficialUsage {
 }
 
 export interface CodexUsageService {
+  /** 后台补齐缺价记录，不由查询接口触发写入。 */
+  refreshMissingPricing(): Promise<void>;
+  /** 停止补价请求与延迟任务，避免服务关闭后写入账本。 */
+  dispose(): Promise<void>;
   recordTurn(input: {
     generationId: string;
     sequence: number;
@@ -61,14 +67,121 @@ export interface CodexUsageService {
 
 const lastAccountScopeSettingKey = 'codex.usage.last_account_scope';
 const officialCacheKey = (scopeId: string) => `codex.usage.official.${scopeId}`;
+/** 官方价目原文复用现有设置存储，不引入额外数据库或文件。 */
+const publishedPricingKey = 'codex.usage.published_pricing';
 
 export function createCodexUsageService(options: CreateCodexUsageServiceOptions): CodexUsageService {
   const now = options.now ?? (() => new Date().toISOString());
   let accountCache: { value: CodexAccountSnapshot; expiresAt: number } | null = null;
   let officialRefresh: Promise<CodexOfficialUsageSnapshot> | null = null;
   let sparseRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 一个服务实例只维护一份下载，缺价并发不会重复联网。 */
+  let pricingRefresh: Promise<void> | null = null;
+  /** 先提交 Token 事件，再在下一次事件循环补价。 */
+  let pricingTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 关闭时同时取消网络请求。 */
+  const pricingAbort = new AbortController();
+  /** 成功后一小时内、失败后五分钟内不重复获取同一官方页面。 */
+  let nextPricingAttemptAt = 0;
+  /** 已验证的公开价格，重启后仍可离线使用。 */
+  let publishedPricing: PublishedCodexPricing | null = null;
+  /** 同一官方原文仅解析一次，避免按账本行重复扫描整份文档。 */
+  let publishedPrices: ReturnType<typeof parsePublishedCodexPrices> = [];
+  try {
+    /** 设置也是数据边界，损坏缓存不能中断账本服务。 */
+    const cached = options.settings.getJson<PublishedCodexPricing>(publishedPricingKey);
+    if (cached && typeof cached.document === 'string' && cached.document.length <= 512_000 && typeof cached.fetchedAt === 'string' && Number.isFinite(Date.parse(cached.fetchedAt))) {
+      publishedPrices = parsePublishedCodexPrices(cached.document);
+      publishedPricing = cached;
+      nextPricingAttemptAt = Date.parse(cached.fetchedAt) + 60 * 60_000;
+    }
+  } catch {
+    // 缓存损坏时下次后台刷新重新获取，Token 记录仍正常工作。
+  }
 
   if (options.repairLegacyCodexSourceAlias !== false) repairLegacyCodexSourceAlias();
+
+  /** 先用已有本地价格，缺价才使用已经自动获取的官方价格。 */
+  function estimateAvailablePrice(input: { model: string; serviceTier?: string | null; usage: TokenUsageBreakdown }) {
+    /** 内置价格保持当前记账口径，不在补价时重定价已知模型。 */
+    const local = estimateCodexUsage(input);
+    return local.apiEquivalentUsd !== null || !publishedPricing ? local : (estimatePublishedCodexUsage({ ...input, catalog: publishedPricing, prices: publishedPrices }) ?? local);
+  }
+
+  /** 只更新空费用，重新读取账本避免联网期间覆盖新增 Token 或已补齐的价格。 */
+  function backfillAvailablePrices(): boolean {
+    /** 会话价格汇总只在该会话存在实际变化时重建一次。 */
+    const affected = new Set<string>();
+    for (const row of options.ledger.list({ providerId: 'codex' })) {
+      if (row.estimate.apiEquivalentUsd !== null) continue;
+      /** 补价不是历史价格证明，因此始终保存补价标记。 */
+      const estimate = estimateAvailablePrice({ model: row.model, serviceTier: row.serviceTier, usage: row.usage });
+      if (estimate.apiEquivalentUsd === null) continue;
+      estimate.rateSnapshot.backfilledAt = now();
+      options.ledger.upsert({ ...row, estimate });
+      affected.add(row.conversationId);
+    }
+    for (const conversationId of affected) repairConversationUsageSnapshot(conversationId);
+    return affected.size > 0;
+  }
+
+  /** 本地补价与联网补价统一串行执行；失败保留真实用量和未知费用。 */
+  function refreshMissingPricing(): Promise<void> {
+    if (options.automaticPricing === false || pricingAbort.signal.aborted) return Promise.resolve();
+    if (pricingRefresh) return pricingRefresh;
+    pricingRefresh = (async () => {
+      /** 优先使用缓存补价，离线也能恢复已经有依据的费用。 */
+      let changed = backfillAvailablePrices();
+      /** 只有仍缺价时才联网，官方模型之外的供应源不套用官方费率。 */
+      const missing = options.ledger.list({ providerId: 'codex' }).some((row) => row.estimate.apiEquivalentUsd === null);
+      if (missing && Date.parse(now()) >= nextPricingAttemptAt) {
+        nextPricingAttemptAt = Date.parse(now()) + 5 * 60_000;
+        /** 只捕获下载错误，存储失败必须交给现有服务错误边界处理。 */
+        let fetched: PublishedCodexPricing | null = null;
+        try {
+          /** 联网期间不阻塞 Token 事件；完成后再读取最新账本。 */
+          fetched = await fetchPublishedCodexPricing(pricingAbort.signal);
+        } catch {
+          // 官方未发布、网络失败或格式变化时保持缺价，五分钟后允许重试。
+        }
+        if (pricingAbort.signal.aborted) return;
+        if (fetched) {
+          options.settings.setJson(publishedPricingKey, fetched);
+          publishedPrices = parsePublishedCodexPrices(fetched.document);
+          publishedPricing = fetched;
+          nextPricingAttemptAt = Date.parse(now()) + 60 * 60_000;
+          changed = backfillAvailablePrices() || changed;
+          await options.persist?.();
+        }
+      }
+      if (changed && !pricingAbort.signal.aborted) {
+        await options.persist?.();
+        options.broadcast('codex.usage.changed', { providerId: 'codex', scope: 'pricing', updatedAt: now() });
+        options.broadcast('usage.changed', { providerId: 'codex', scope: 'pricing', updatedAt: now() });
+      }
+    })().finally(() => {
+      pricingRefresh = null;
+    });
+    return pricingRefresh;
+  }
+
+  /** 轮次记账后异步补价，不把官网响应时间加入模型事件处理。 */
+  function schedulePricingRefresh(): void {
+    if (pricingTimer || options.automaticPricing === false || pricingAbort.signal.aborted) return;
+    pricingTimer = setTimeout(() => {
+      pricingTimer = null;
+      void refreshMissingPricing().catch(() => undefined);
+    }, 0);
+    pricingTimer.unref?.();
+  }
+
+  /** 服务关闭后不保留计时器、网络请求或后台写入。 */
+  async function dispose(): Promise<void> {
+    pricingAbort.abort();
+    if (pricingTimer) clearTimeout(pricingTimer);
+    if (sparseRefreshTimer) clearTimeout(sparseRefreshTimer);
+    await pricingRefresh?.catch(() => undefined);
+  }
 
   /**
    * 早期任务推送把原生 Codex 的 sourceId 写成了字符串 `codex`，旧迁移又把所有非空
@@ -210,11 +323,13 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
       existing?.providerBaseline ?? priorProviderTotal ?? previousSnapshotTotal ?? (existing ? subtractBreakdowns(input.total, existing.usage) : legacyRowsExist ? subtractBreakdowns(input.total, input.last) : emptyTokenUsageBreakdown());
     const usage = subtractBreakdowns(input.total, providerBaseline);
     const usageComplete = existing?.providerBaseline ? existing.usageComplete : Boolean(priorProviderTotal || previousSnapshotTotal || (!existing && !legacyRowsExist));
-    const estimate = existing
-      ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot)
-      : nativeCodexSource
-        ? estimateCodexUsage({ model: input.model, serviceTier: input.serviceTier, usage })
-        : estimateDeepSeekUsage({ model: input.model, usage, occurredAt: input.occurredAt });
+    const estimate =
+      existing && (!nativeCodexSource || existing.estimate.apiEquivalentUsd !== null)
+        ? estimateCodexUsageWithRateSnapshot(usage, existing.estimate.rateSnapshot)
+        : nativeCodexSource
+          ? estimateAvailablePrice({ model: input.model, serviceTier: input.serviceTier, usage })
+          : estimateDeepSeekUsage({ model: input.model, usage, occurredAt: input.occurredAt });
+    if (nativeCodexSource && existing && existing.estimate.apiEquivalentUsd === null && estimate.apiEquivalentUsd !== null) estimate.rateSnapshot.backfilledAt = now();
     let accountScopeId = nativeCodexSource ? 'codex-local' : input.modelSourceId!;
     if (nativeCodexSource) {
       try {
@@ -262,6 +377,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
       historyComplete,
     };
     options.broadcast('codex.usage.changed', { providerId, conversationId: input.conversationId, updatedAt: now() });
+    if (nativeCodexSource && estimate.apiEquivalentUsd === null) schedulePricingRefresh();
     return snapshot;
   }
 
@@ -326,15 +442,19 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         collectionStartedAt: options.ledger.collectionStartedAt(official.accountScopeId ?? 'codex-local'),
       },
       pricing: {
-        catalogDate: CODEX_USAGE_PRICE_CATALOG_DATE,
-        sourceUrls: [...CODEX_USAGE_PRICE_SOURCE_URLS],
-        note: 'Credits 与 API 等价美元均为估算，不是实际账单；未知模型不估价。',
+        catalogDate:
+          rows
+            .map((row) => row.estimate.rateSnapshot.catalogDate)
+            .sort()
+            .at(-1) ?? CODEX_USAGE_PRICE_CATALOG_DATE,
+        sourceUrls: [...new Set(rows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))],
+        note: 'Credits 与 API 等价美元均为估算，不是实际账单；缺价会自动获取官方价格。' + (rows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录按补价时价格估算。' : ''),
       },
       updatedAt: now(),
     };
   }
 
-  return { recordTurn, refreshOfficialUsage, readCachedOfficialUsage, handleSparseRateLimitUpdate, handleAccountChanged, readSummary, readAnalytics };
+  return { recordTurn, refreshOfficialUsage, readCachedOfficialUsage, handleSparseRateLimitUpdate, handleAccountChanged, readSummary, readAnalytics, refreshMissingPricing, dispose };
 }
 
 function emptyOfficial(state: CodexOfficialUsageSnapshot['state'], accountScopeId: string | null, accountType: string | null, planType: string | null, stale: boolean, error: string | null): CodexOfficialUsageSnapshot {
@@ -405,6 +525,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
   const savingsValues = rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
   return {
     ...usage,
+    hasBackfilledPricing: rows.some((row) => Boolean(row.estimate.rateSnapshot.backfilledAt)),
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
     cacheHitRate: calculateCacheHitRate(usage),

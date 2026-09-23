@@ -160,7 +160,9 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           pricing: {
             catalogDate: catalogDates.at(-1) ?? null,
             sourceUrls,
-            note: isCodex ? 'Credits 与 API 等价美元均为估算，不是实际账单；未知模型不估价。' : '费用为供应商费率估算；未知模型或未返回费率的轮次不会计入估算。',
+            note: isCodex
+              ? 'Credits 与 API 等价美元均为估算，不是实际账单；缺价会自动获取官方价格。' + (filteredRows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录按补价时价格估算。' : '')
+              : '费用为供应商费率估算；未知模型或未返回费率的轮次不会计入估算。',
           },
         };
       })
@@ -238,6 +240,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
   const savingsValues = rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
   return {
     ...usage,
+    hasBackfilledPricing: rows.some((row) => Boolean(row.estimate.rateSnapshot.backfilledAt)),
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
     cacheHitRate: calculateCacheHitRate(usage),
