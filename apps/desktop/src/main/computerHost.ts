@@ -236,7 +236,8 @@ export class ComputerHost implements BrowserAutomationPort {
         this.scheduleIdleStop();
         if (owner.preview?.paused) {
           await this.waitForUserControl(input, generation, owner);
-          return this.userControlContinuation(owner, '当前请求尚未执行。');
+          // 空闲后直接完成本次只读观察；动作请求仍返回接管结果，绝不自动重放。
+          if (input.tool !== 'get_app_state' || owner.preview?.paused) return this.userControlContinuation(owner, '当前请求尚未执行。');
         }
       }
     } catch (error) {

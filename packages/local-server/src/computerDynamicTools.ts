@@ -59,7 +59,8 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
     {
       type: 'namespace',
       name: 'zeus_computer',
-      description: 'Observe and control running macOS apps through accessibility elements and app-scoped coordinates.',
+      description:
+        'Observe and control macOS apps in the background through accessibility elements and window-scoped virtual input. Do not activate or raise windows to make input work. User input in the controlled app temporarily yields control; work in other apps can continue.',
       tools: [
         {
           type: 'function',
@@ -112,9 +113,11 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'paste',
-          description: 'Paste text into the observed target and restore the clipboard afterward. Use only user-provided, authorized credentials for login; existing password values are not returned.',
+          // 后台应用没有可靠的全局输入焦点，粘贴必须绑定最新观察到的可编辑控件。
+          description:
+            'Paste text into an editable element from the latest get_app_state result and restore the clipboard afterward. element_index is required; do not rely on foreground focus. Use only user-provided, authorized credentials for login; existing password values are not returned.',
           deferLoading: true,
-          inputSchema: objectSchema({ ...elementTargetProperties, text: { type: 'string', description: 'Text to paste.' }, format: { type: 'string', enum: ['text', 'md', 'html'] } }, ['app', 'text', 'format']),
+          inputSchema: objectSchema({ ...elementTargetProperties, text: { type: 'string', description: 'Text to paste.' }, format: { type: 'string', enum: ['text', 'md', 'html'] } }, ['app', 'element_index', 'text', 'format']),
         },
         {
           type: 'function',
@@ -166,9 +169,9 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'type_text',
           description:
-            'Insert Unicode text at the observed selection without using the clipboard or pressing Enter; use this for editing and line breaks. Unsupported custom or rich text controls return an error. Use only user-provided, authorized credentials for login; existing password values are not returned.',
+            'Insert Unicode text into an editable element from the latest get_app_state result without using the clipboard or pressing Enter; use this for editing and line breaks. element_index is required; do not rely on foreground focus. Unsupported custom or rich text controls return an error. Use only user-provided, authorized credentials for login; existing password values are not returned.',
           deferLoading: true,
-          inputSchema: objectSchema({ ...elementTargetProperties, text: { type: 'string' } }, ['app', 'text']),
+          inputSchema: objectSchema({ ...elementTargetProperties, text: { type: 'string' } }, ['app', 'element_index', 'text']),
         },
       ],
     },

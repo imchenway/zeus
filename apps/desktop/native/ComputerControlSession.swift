@@ -5,6 +5,14 @@ import ScreenCaptureKit
 /** 标准输出同时承载请求响应和系统停止通知，整行写入避免相互拼接。 */
 private let computerOutputLock = NSLock()
 
+/** macOS 的 Tab 虚拟键码；与 Command 组合时由系统应用切换器处理。 */
+private let applicationSwitchTabKeyCode: UInt16 = 48
+
+/** 仅用于选择锁屏下仍存在的后台窗口；锁屏本身不撤销 Computer Use。 */
+private func computerSessionScreenIsLocked() -> Bool {
+    (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true
+}
+
 /** 串行输出一条完整的原生服务消息。 */
 func writeComputerOutput(_ data: Data) {
     computerOutputLock.withLock {
@@ -64,7 +72,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var frameTime = CMTime.invalid
     /** 供会话内预览使用的有界缩略图，不写入磁盘或另开采集流。 */
     private var previewData: Data?
-    /** 用户接管目标窗口时暂让输入，空闲后恢复观察资格。 */
+    /** 用户操作目标应用时暂让输入，空闲后恢复观察资格。 */
     private var paused = false
     /** 接管空闲窗口使用单调时钟，避免系统校时影响恢复。 */
     private var lastUserInput = 0.0
@@ -88,7 +96,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var cursorPanel: ComputerCursorPanel?
     /** 当前虚拟光标的全局逻辑坐标。 */
     private var cursorPoint: CGPoint?
-    /** 目标窗口物理输入监听，不因用户操作其他应用而暂停。 */
+    /** 目标应用物理输入监听，不因用户操作其他应用而暂停。 */
     private var inputMonitor: Any?
     /** 目标退出和窗口失效的有限频率检查。 */
     private var lifecycleTimer: Timer?
@@ -118,7 +126,8 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     func observe(app: NSRunningApplication, sessionId: String, windowId: CGWindowID?) async throws -> ComputerWindowTarget {
         guard !sessionId.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_REQUIRED", message: "缺少宿主控制身份。") }
         guard CGPreflightScreenCaptureAccess() else { throw ServiceFailure(code: "ZEUS_COMPUTER_SCREEN_CAPTURE_PERMISSION_REQUIRED", message: "开始控制需要屏幕录制权限，以显示真实的控制状态。") }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        /** 锁屏遮住桌面但不会关闭应用窗口；此时必须保留后台窗口候选，才能继续同一控制。 */
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: !computerSessionScreenIsLocked())
         // 原生菜单使用非零层级；只按真实进程及可见边界筛选，不把层级当作窗口归属。
         let windows = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.windowLayer >= 0 && $0.frame.width > 1 && $0.frame.height > 1 }
         availableWindows = windows.map { ["window_id": $0.windowID, "title": $0.title ?? "", "layer": $0.windowLayer, "frame": ["x": $0.frame.minX, "y": $0.frame.minY, "width": $0.frame.width, "height": $0.frame.height]] }
@@ -190,12 +199,16 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
                 }
             }
             do { try await stream.startCapture() }
-            catch { self.stream(stream, didStopWithError: error); throw error }
+            catch {
+                /** 锁屏下像素采集失败不等于窗口控制失败；保留实时辅助功能和输入目标。 */
+                if computerSessionScreenIsLocked() { invalidateCapture(stream, observationRemainsValid: true) }
+                else { self.stream(stream, didStopWithError: error); throw error }
+            }
         }
         try lock.withLock {
             if stopped { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "本轮控制已停止。") }
-            guard capture != nil, target?.windowId == next.windowId, target?.pid == next.pid else {
-                throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "目标窗口或采集已变化，请重新观察。")
+            guard target?.windowId == next.windowId, target?.pid == next.pid else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "目标窗口已变化，请重新观察。")
             }
             if !paused { needsObservation = false }
         }
@@ -214,8 +227,8 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 工具线程的输入闸门；窗口关闭、移动、暂停或撤销时均不投递输入。 */
     func requireTarget(pid: pid_t, sessionId: String) throws -> ComputerWindowTarget {
         let current = try lock.withLock { () throws -> ComputerWindowTarget in
-            guard !stopped, capture != nil, let target, target.pid == pid, target.sessionId == sessionId else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口，不能直接开始输入。") }
-            guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户正在操作目标窗口；宿主会等待空闲后返回，请保留任务并重新观察，不能重放旧动作。") }
+            guard !stopped, let target, target.pid == pid, target.sessionId == sessionId else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先观察当前应用窗口，不能直接开始输入。") }
+            guard !paused else { throw ServiceFailure(code: "ZEUS_COMPUTER_PAUSED", message: "用户正在操作目标应用；宿主会等待空闲后返回，请保留任务并重新观察，不能重放旧动作。") }
             guard !needsObservation else { throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "窗口位置或用户控制状态已变化，请重新观察。") }
             return target
         }
@@ -261,11 +274,14 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
 
     /** 将接管状态附在观察结果中；读取状态不会绕过空闲等待。 */
     var status: [String: Any] {
-        lock.withLock { ["active": !stopped && capture != nil, "paused": paused, "needs_observation": needsObservation] }
+        lock.withLock { ["active": !stopped && target != nil, "paused": paused, "needs_observation": needsObservation] }
     }
 
     /** 帧须晚于动作和控件回读；分别返回像素采集及内容未变化确认的时间。 */
     func snapshot(notBefore: CMTime) async throws -> (CGImage, ComputerWindowTarget, Date, Date) {
+        guard lock.withLock({ !stopped && capture != nil }) else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_FRAME_UNAVAILABLE", message: "当前没有可用像素帧；辅助功能观察和定向输入仍可继续。")
+        }
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline {
             let current = try lock.withLock { () throws -> (CGImage, ComputerWindowTarget, Date, Date)? in
@@ -284,17 +300,21 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         guard outputType == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let rawStatus = attachments.first?[.status] as? Int, let status = SCFrameStatus(rawValue: rawStatus) else { return }
-        if [.blank, .suspended, .stopped].contains(status) {
-            // 帧状态不代表用户撤权；明确的停止原因由采集结束回调处理。
+        if [.blank, .suspended].contains(status) {
+            // 锁屏可能暂停像素帧，但辅助功能和定向输入仍可继续；只清除过期图像，不撤销观察或动作资格。
             /** 迟到的旧流空帧不能清理新窗口正在进行的输入。 */
-            let invalidated = lock.withLock { () -> Bool in
+            let cleared = lock.withLock { () -> Bool in
                 guard capture === stream && !stopped else { return false }
-                image = nil; previewData = nil; frameTime = .invalid; needsObservation = true
+                image = nil; previewData = nil; frameTime = .invalid
                 return true
             }
-            if invalidated { releaseInput() }
+            if cleared {
+                releaseInput()
+                DispatchQueue.main.async { [weak self] in self?.publishPreview() }
+            }
             return
         }
+        if status == .stopped { invalidateCapture(stream, observationRemainsValid: computerSessionScreenIsLocked()); return }
         // 将原始单调帧时间换算为采集时刻，避免把队列送达时间误当成截图时间。
         let sampleTime = sampleBuffer.presentationTimeStamp
         guard sampleTime.isValid else { return }
@@ -325,16 +345,16 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if failure.domain == SCStreamErrorDomain && [SCStreamError.Code.userStopped.rawValue, SCStreamError.Code.userDeclined.rawValue].contains(failure.code) {
             stop(reason: "system_capture_stopped", stream: stream)
         } else {
-            invalidateCapture(stream)
+            invalidateCapture(stream, observationRemainsValid: computerSessionScreenIsLocked())
         }
     }
 
     /** 窗口关闭或采集失败只作废观察；下一次观察重建采集，旧动作不会自动重放。 */
-    private func invalidateCapture(_ stream: SCStream) {
+    private func invalidateCapture(_ stream: SCStream, observationRemainsValid: Bool = false) {
         /** 同一把锁确认流身份并清理，迟到的旧流事件不能使新窗口失效。 */
         let invalidated = lock.withLock { () -> Bool in
             guard !stopped, capture === stream else { return false }
-            capture = nil; image = nil; previewData = nil; frameTime = .invalid; paused = false; needsObservation = true
+            capture = nil; image = nil; previewData = nil; frameTime = .invalid; paused = false; needsObservation = !observationRemainsValid
             return true
         }
         guard invalidated else { return }
@@ -419,7 +439,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 用户可以提前结束等待；恢复后仍必须重新观察，停止的会话不能复活。 */
     func resume(sessionId: String) throws {
         try lock.withLock {
-            guard !stopped, capture != nil, target?.sessionId == sessionId else {
+            guard !stopped, target?.sessionId == sessionId else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "该屏幕控制会话已结束，不能继续。")
             }
             paused = false; needsObservation = true
@@ -435,16 +455,21 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         if let sessionId = lock.withLock({ target?.sessionId }) { try? resume(sessionId: sessionId) }
     }
 
-    /** 过滤本服务的合成输入，其他应用中的物理输入不影响控制。 */
+    /** 过滤本服务的合成输入；用户操作同一应用时让权，操作其他应用时继续。 */
     private func observeUserInput(_ event: NSEvent) {
         guard let current = lock.withLock({ stopped ? nil : target }), let cgEvent = event.cgEvent,
               cgEvent.getIntegerValueField(.eventSourceUnixProcessID) != Int64(ProcessInfo.processInfo.processIdentifier) else { return }
-        /** 按键与修饰键以目标应用焦点判断，鼠标只命中固定窗口。 */
-        let keyboard = [.keyDown, .keyUp, .flagsChanged].contains(event.type)
-        let touchesTarget = keyboard
+        /** 修饰键本身不改变应用内容；真正的按键再按当时的前台应用判定。 */
+        if event.type == .flagsChanged { return }
+        /** 键盘发给前台应用，鼠标与滚轮按指针下窗口的所属应用判定。 */
+        let keyboard = [.keyDown, .keyUp].contains(event.type)
+        /** Command-Tab 由系统切换应用，不属于目标应用输入。 */
+        let switchesApplication = keyboard && event.keyCode == applicationSwitchTabKeyCode && event.modifierFlags.contains(.command)
+        /** 同一应用的任意窗口都共享应用内焦点和状态，因此统一让权。 */
+        let usesTargetApplication = !switchesApplication && (keyboard
             ? NSWorkspace.shared.frontmostApplication?.processIdentifier == current.pid
-            : topWindow(at: cgEvent.location) == current.windowId
-        if touchesTarget {
+            : topWindow(at: cgEvent.location)?.pid == current.pid)
+        if usesTargetApplication {
             lock.withLock {
                 paused = true; needsObservation = true
                 lastUserInput = ProcessInfo.processInfo.systemUptime
@@ -458,9 +483,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 跟随目标窗口生命周期，光标只出现在目标自身可见区域。 */
     private func refreshPresentation() {
         guard let current = lock.withLock({ stopped ? nil : target }) else { cursorPanel?.orderOut(nil); return }
-        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
-            stop(reason: "screen_locked"); return
-        }
+        /** 全局 Computer Use 开关已经代表用户授权；锁屏不撤销控制，采集或窗口失效时沿用既有的重新观察流程。 */
         guard let frame = windowFrame(current.windowId), NSRunningApplication(processIdentifier: current.pid)?.isTerminated == false else {
             if let stream = lock.withLock({ target?.windowId == current.windowId ? capture : nil }) { invalidateCapture(stream) }
             return
@@ -477,11 +500,11 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
         }
         let state = lock.withLock { (paused, needsObservation) }
         statusCaption?.title = state.0 ? "等待用户操作结束 · \(targetLabel)" : targetLabel
-        statusItem?.button?.toolTip = state.0 ? "目标窗口空闲 3 秒后自动继续；停止可结束本轮控制" : "Zeus 正在控制 \(targetLabel)"
+        statusItem?.button?.toolTip = state.0 ? "目标应用空闲 3 秒后自动继续；停止可结束本轮控制" : "Zeus 正在控制 \(targetLabel)"
         resumeItem?.isHidden = !state.0
         publishPreview()
         guard !state.0, !state.1, let point = cursorPoint, current.frame.contains(point) else { cursorPanel?.orderOut(nil); return }
-        guard topWindow(at: point) == current.windowId else { cursorPanel?.orderOut(nil); return }
+        guard topWindow(at: point)?.windowId == current.windowId else { cursorPanel?.orderOut(nil); return }
         if cursorPanel == nil {
             let initialRect = NSRect(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).height - point.y - 24, width: 24, height: 24)
             let cursor = ComputerCursorPanel(contentRect: initialRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -497,18 +520,20 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     /** 读取同一个窗口的实时边界，窗口缺失时不回退其他窗口。 */
     private func windowFrame(_ id: CGWindowID) -> CGRect? {
         guard let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String: Any]],
-              windows.first?[kCGWindowIsOnscreen as String] as? Bool == true,
+              windows.first?[kCGWindowIsOnscreen as String] as? Bool == true || computerSessionScreenIsLocked(),
               let bounds = windows.first?[kCGWindowBounds as String] as? [String: Any] else { return nil }
         return CGRect(dictionaryRepresentation: bounds as CFDictionary)
     }
 
-    /** 命中检测忽略自己的光标浮层，不把光标显示到遮挡目标的用户应用上。 */
-    private func topWindow(at point: CGPoint) -> CGWindowID? {
+    /** 命中检测返回窗口及应用身份，并忽略自己的光标浮层。 */
+    private func topWindow(at point: CGPoint) -> (windowId: CGWindowID, pid: pid_t)? {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         for window in windows {
             if window[kCGWindowOwnerPID as String] as? Int32 == ProcessInfo.processInfo.processIdentifier { continue }
             guard let bounds = window[kCGWindowBounds as String] as? [String: Any], let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary), frame.contains(point) else { continue }
-            return window[kCGWindowNumber as String] as? CGWindowID
+            guard let windowId = window[kCGWindowNumber as String] as? CGWindowID,
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t else { return nil }
+            return (windowId, pid)
         }
         return nil
     }
