@@ -1,0 +1,217 @@
+diff --git a/binding.gyp b/binding.gyp
+index 5f63978b07ab50aaf7523219a2170ec737a6b5db..b507b4ea1e65ac022622700de48a32c0748efb9f 100644
+--- a/binding.gyp
++++ b/binding.gyp
+@@ -4,6 +4,10 @@
+       "<!(node -p \"require('node-addon-api').targets\"):node_addon_api_except",
+     ],
+     'conditions': [
++      # 与 Zeus 打包入口一致，显式使用当前 macOS SDK 的 C++ 标准库头文件。
++      ['OS=="mac"', {
++        'include_dirs': ['<!(xcrun --sdk macosx --show-sdk-path)/usr/include/c++/v1'],
++      }],
+       ['OS=="win"', {
+         'msvs_configuration_attributes': {
+           'SpectreMitigation': 'Spectre'
+diff --git a/scripts/prebuild.js b/scripts/prebuild.js
+index 17f1d980e62e017d77058627a7a15c4c29f9470c..42db143635f6805797b808339472b4225bd074d6 100644
+--- a/scripts/prebuild.js
++++ b/scripts/prebuild.js
+@@ -17,9 +17,9 @@ const path = require('path');
+ const PREBUILDS_ROOT = path.join(__dirname, '..', 'prebuilds');
+ const PREBUILD_DIR = path.join(__dirname, '..', 'prebuilds', `${process.platform}-${process.arch}`);
+ 
+-// Do not use prebuilds when npm_config_build_from_source is set
+-if (process.env.npm_config_build_from_source === 'true') {
+-  console.log('\x1b[33m> Removing prebuilds and rebuilding because npm_config_build_from_source is set\x1b[0m');
++// macOS 必须编译修复后的源码，禁止加载仍会泄漏伪终端的上游预编译产物。
++if (process.platform === 'darwin' || process.env.npm_config_build_from_source === 'true') {
++  console.log('\x1b[33m> 移除预编译产物并从源码构建原生终端模块\x1b[0m');
+   fs.rmSync(PREBUILDS_ROOT, { recursive: true, force: true });
+   process.exit(1);
+ }
+diff --git a/src/unix/pty.cc b/src/unix/pty.cc
+index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..fe9ad6f6d811183393f8b850f94049a5fdf0f2e4 100644
+--- a/src/unix/pty.cc
++++ b/src/unix/pty.cc
+@@ -370,7 +370,7 @@ Napi::Value PtyFork(const Napi::CallbackInfo& info) {
+   int err = -1;
+   pty_posix_spawn(argv, env, term, &winp, &master, &pid, &err);
+   if (err != 0) {
+-    throw Napi::Error::New(napiEnv, "posix_spawnp failed.");
++    throw Napi::Error::New(napiEnv, std::string("posix_spawnp failed: ") + strerror(err));
+   }
+   if (pty_nonblock(master) == -1) {
+     throw Napi::Error::New(napiEnv, "Could not set master fd to nonblocking.");
+@@ -684,6 +684,7 @@ pty_getproc(int fd, char *tty) {
+ #endif
+ 
+ #if defined(__APPLE__)
++// 在 macOS 创建终端子进程，并在成功与失败出口释放父进程不再需要的描述符。
+ static void
+ pty_posix_spawn(char** argv, char** env,
+                 const struct termios *termp,
+@@ -691,96 +692,110 @@ pty_posix_spawn(char** argv, char** env,
+                 int* master,
+                 pid_t* pid,
+                 int* err) {
++  // 临时占住可能关闭的标准输入输出；使用普通文件，不额外申请伪终端。
+   int low_fds[3];
++  // 只统计已经成功打开的描述符，统一按实际数量释放。
+   size_t count = 0;
+-
+-  for (; count < 3; count++) {
+-    low_fds[count] = posix_openpt(O_RDWR);
+-    if (low_fds[count] >= STDERR_FILENO)
+-      break;
+-  }
+-
++  // 父进程只把 master 交给 JavaScript，slave 在本函数内始终关闭。
++  int slave = -1;
++  // 提前声明清理路径使用的变量，所有失败出口共用 cleanup。
++  int res;
++  char slave_pty_name[128];
++  posix_spawn_file_actions_t acts;
++  posix_spawnattr_t attrs;
++  sigset_t signal_set;
++  // 子进程建立独立会话并重置信号，不继承宿主的其他文件描述符。
+   int flags = POSIX_SPAWN_CLOEXEC_DEFAULT |
+               POSIX_SPAWN_SETSIGDEF |
+               POSIX_SPAWN_SETSIGMASK |
+               POSIX_SPAWN_SETSID;
++  *master = -1;
++  *pid = -1;
++  *err = 0;
++
++  while (count < 3) {
++    low_fds[count] = open("/dev/null", O_RDWR);
++    if (low_fds[count] == -1) {
++      *err = errno;
++      goto cleanup;
++    }
++    if (low_fds[count++] >= STDERR_FILENO)
++      break;
++  }
++
+   *master = posix_openpt(O_RDWR);
+   if (*master == -1) {
+-    return;
++    *err = errno;
++    goto cleanup;
+   }
+ 
+-  int res = grantpt(*master) || unlockpt(*master);
+-  if (res == -1) {
+-    return;
++  if (grantpt(*master) == -1 || unlockpt(*master) == -1) {
++    *err = errno;
++    goto cleanup;
+   }
+ 
+-  // Use TIOCPTYGNAME instead of ptsname() to avoid threading problems.
+-  int slave;
+-  char slave_pty_name[128];
++  // 用 ioctl 获取从端名称，避免 ptsname 的线程共享缓冲区。
+   res = ioctl(*master, TIOCPTYGNAME, slave_pty_name);
+   if (res == -1) {
+-    return;
++    *err = errno;
++    goto cleanup;
+   }
+ 
+   slave = open(slave_pty_name, O_RDWR | O_NOCTTY);
+   if (slave == -1) {
+-    return;
++    *err = errno;
++    goto cleanup;
+   }
+ 
+-  if (termp) {
+-    res = tcsetattr(slave, TCSANOW, termp);
+-    if (res == -1) {
+-      return;
+-    };
++  if (termp && tcsetattr(slave, TCSANOW, termp) == -1) {
++    *err = errno;
++    goto cleanup;
+   }
+-
+-  if (winp) {
+-    res = ioctl(slave, TIOCSWINSZ, winp);
+-    if (res == -1) {
+-      return;
+-    }
++  if (winp && ioctl(slave, TIOCSWINSZ, winp) == -1) {
++    *err = errno;
++    goto cleanup;
+   }
+ 
+-  posix_spawn_file_actions_t acts;
+-  posix_spawn_file_actions_init(&acts);
+-  posix_spawn_file_actions_adddup2(&acts, slave, STDIN_FILENO);
+-  posix_spawn_file_actions_adddup2(&acts, slave, STDOUT_FILENO);
+-  posix_spawn_file_actions_adddup2(&acts, slave, STDERR_FILENO);
+-  posix_spawn_file_actions_addclose(&acts, slave);
+-  posix_spawn_file_actions_addclose(&acts, *master);
++  *err = posix_spawn_file_actions_init(&acts);
++  if (*err != 0) goto cleanup;
++  if ((*err = posix_spawn_file_actions_adddup2(&acts, slave, STDIN_FILENO)) != 0 ||
++      (*err = posix_spawn_file_actions_adddup2(&acts, slave, STDOUT_FILENO)) != 0 ||
++      (*err = posix_spawn_file_actions_adddup2(&acts, slave, STDERR_FILENO)) != 0 ||
++      (*err = posix_spawn_file_actions_addclose(&acts, slave)) != 0 ||
++      (*err = posix_spawn_file_actions_addclose(&acts, *master)) != 0)
++    goto actions_done;
+ 
+-  posix_spawnattr_t attrs;
+-  posix_spawnattr_init(&attrs);
++  *err = posix_spawnattr_init(&attrs);
++  if (*err != 0) goto actions_done;
+   *err = posix_spawnattr_setflags(&attrs, flags);
+-  if (*err != 0) {
+-    goto done;
+-  }
++  if (*err != 0) goto done;
+ 
+-  sigset_t signal_set;
+-  /* Reset all signal the child to their default behavior */
++  // 子进程恢复所有信号的默认行为。
+   sigfillset(&signal_set);
+   *err = posix_spawnattr_setsigdefault(&attrs, &signal_set);
+-  if (*err != 0) {
+-    goto done;
+-  }
++  if (*err != 0) goto done;
+ 
+-  /* Reset the signal mask for all signals */
++  // 子进程不继承父进程屏蔽的信号。
+   sigemptyset(&signal_set);
+   *err = posix_spawnattr_setsigmask(&attrs, &signal_set);
+-  if (*err != 0) {
+-    goto done;
+-  }
++  if (*err != 0) goto done;
+ 
+   do
+     *err = posix_spawn(pid, argv[0], &acts, &attrs, argv, env);
+   while (*err == EINTR);
+ done:
+-  posix_spawn_file_actions_destroy(&acts);
+   posix_spawnattr_destroy(&attrs);
+-
+-  for (; count > 0; count--) {
+-    close(low_fds[count]);
+-  }
++actions_done:
++  posix_spawn_file_actions_destroy(&acts);
++cleanup:
++  // 子进程已有自己的标准输入输出，父进程不再持有 slave。
++  if (slave >= 0) close(slave);
++  // 启动失败时 JavaScript 收不到 master，必须在原生边界释放。
++  if (*err != 0 && *master >= 0) {
++    close(*master);
++    *master = -1;
++  }
++  while (count > 0) close(low_fds[--count]);
+ }
+ #endif
+ 
