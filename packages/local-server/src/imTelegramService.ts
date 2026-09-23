@@ -49,7 +49,8 @@ import { telegramChildOperation, TelegramCommandApplication, telegramCommandType
 const pairingLifetimeMs = 10 * 60 * 1_000;
 const interactionLifetimeMs = 10 * 60 * 1_000;
 const onlinePollWindowMs = 90 * 1_000;
-const synchronizationIntervalMs = 2_000;
+/** 变化通知丢失时的轻量补漏周期，正常结果由通知即时唤醒。 */
+const synchronizationIntervalMs = 30_000;
 const telegramLongMessageLimit = 3_900;
 const telegramPollSuccessDelayMs = 50;
 const telegramPollFailureBaseDelayMs = 2_000;
@@ -142,6 +143,8 @@ export interface ImTelegramBridgeOperations {
   sendConversationMessage(input: { projectId: string; conversationId: string; content: string; attachments: ImDownloadedAttachment[]; delivery: 'queue' | 'steer_now'; operationIdentity: string }): Promise<void>;
   interruptConversation(input: { projectId: string; conversationId: string; operationIdentity: string }): Promise<boolean>;
   resumeConversation(input: { projectId: string; conversationId: string; operationIdentity: string }): Promise<boolean>;
+  /** 绑定已有对话时读取边界，禁止为跳过历史而展开全部正文。 */
+  latestConversationOutputSequence(input: { projectId: string; conversationId: string }): number;
   readConversationOutput(input: { projectId: string; conversationId: string; afterSequence: number }): Promise<ImConversationOutboundItem[]>;
   listPendingRequests(input: { projectId: string; conversationId: string }): ZeusConversationServerRequestRecord[];
   getPendingRequest(input: { projectId: string; conversationId: string; requestId: string }): ZeusConversationServerRequestRecord | undefined;
@@ -169,6 +172,20 @@ export class ImTelegramService {
   private sender: TelegramMessageSender | undefined;
   private pollingGeneration = 0;
   private synchronizationInFlight = false;
+  /** 同一连接的变化通知合并为一个短暂调度窗口。 */
+  private synchronizationWakeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 执行中到达的变化必须在本轮结束后继续处理。 */
+  private synchronizationRequested = false;
+  /** 失败后至少等待一个补漏周期，流式事件不能制造重试风暴。 */
+  private synchronizationRetryAt = 0;
+  /** 当前连接的执行入口，停止后清空，旧事件不能恢复服务。 */
+  private synchronizeNow: (() => void) | undefined;
+  /** 关闭时等待已经发出的操作结算，不遗留后台同步。 */
+  private synchronizationJob: Promise<void> | undefined;
+  /** 当前关注的会话，避免其他会话逐字输出唤醒此连接。 */
+  private watchedConversationId: string | undefined;
+  /** 当前连接项目限定任务通知范围。 */
+  private watchedProjectId: string | undefined;
   private readonly pairingPlaintext = new Map<string, string>();
   private readonly interactionDrafts = new Map<string, ImInteractionDraft>();
   private readonly pendingTextActions = new Map<string, ImPendingTextAction>();
@@ -199,6 +216,26 @@ export class ImTelegramService {
     return imText(this.options.language?.() ?? 'zh-CN', zh, en);
   }
 
+  /** 提交后的业务变化只安排一次同步，不在事件广播调用栈中读取数据库。 */
+  notifyChange(event?: import('./index.js').ZeusRealtimeEvent): void {
+    if (!this.synchronizeNow) return;
+    if (event) {
+      if (!event.type.startsWith('conversation.') && !event.type.startsWith('task.') && !event.type.startsWith('codex.')) return;
+      if (event.payload.projectId && event.payload.projectId !== this.watchedProjectId) return;
+      if (event.payload.conversationId && event.payload.conversationId !== this.watchedConversationId) return;
+    }
+    this.synchronizationRequested = true;
+    if (this.synchronizationWakeTimer || this.synchronizationInFlight) return;
+    this.synchronizationWakeTimer = setTimeout(
+      () => {
+        this.synchronizationWakeTimer = undefined;
+        this.synchronizeNow?.();
+      },
+      Math.max(200, this.synchronizationRetryAt - performance.now()),
+    );
+    this.synchronizationWakeTimer.unref?.();
+  }
+
   async restore(): Promise<void> {
     const connection = this.options.repository.getConnectionByChannel('telegram');
     if (!connection) return;
@@ -213,6 +250,10 @@ export class ImTelegramService {
 
   async close(): Promise<void> {
     this.pollingGeneration += 1;
+    this.synchronizeNow = undefined;
+    this.synchronizationRequested = false;
+    clearTimeout(this.synchronizationWakeTimer);
+    this.synchronizationWakeTimer = undefined;
     if (this.pollingTimer) clearTimeout(this.pollingTimer);
     if (this.synchronizationTimer) clearInterval(this.synchronizationTimer);
     this.pollingTimer = undefined;
@@ -220,6 +261,7 @@ export class ImTelegramService {
     const pollingService = this.pollingService;
     this.pollingService = undefined;
     await pollingService?.stop();
+    await this.synchronizationJob;
     this.sender = undefined;
     this.pairingPlaintext.clear();
     this.interactionDrafts.clear();
@@ -358,12 +400,19 @@ export class ImTelegramService {
 
   private async startPolling(connection: ImConnectionRecord, token: string): Promise<void> {
     const generation = ++this.pollingGeneration;
+    this.synchronizeNow = undefined;
+    clearTimeout(this.synchronizationWakeTimer);
+    this.synchronizationWakeTimer = undefined;
+    this.synchronizationRequested = false;
     if (this.pollingTimer) clearTimeout(this.pollingTimer);
     if (this.synchronizationTimer) clearInterval(this.synchronizationTimer);
     this.pollingTimer = undefined;
     const previousPollingService = this.pollingService;
     this.pollingService = undefined;
     await previousPollingService?.stop();
+    await this.synchronizationJob;
+    this.synchronizationRetryAt = 0;
+    this.watchedProjectId = connection.projectId;
     this.sender = createTelegramBotMessageClient({ token });
     const pollingService = createTelegramPollingService({
       client: createTelegramLongPollingClient({ token }),
@@ -371,7 +420,7 @@ export class ImTelegramService {
       initialOffset: connection.pollingOffset,
       handleUpdate: (update) => {
         if (this.pollingGeneration !== generation || this.pollingService !== pollingService || !pollingService.status().running) return Promise.resolve(undefined);
-        return this.handleUpdate(connection.id, update);
+        return this.handleUpdate(connection.id, update).finally(() => this.notifyChange());
       },
       onPollComplete: async (status) => {
         if (this.pollingGeneration !== generation || this.pollingService !== pollingService) return;
@@ -408,10 +457,20 @@ export class ImTelegramService {
     };
     scheduleNext(0);
     const synchronize = (): void => {
-      if (this.synchronizationInFlight) return;
+      if (this.pollingGeneration !== generation) return;
+      if (performance.now() < this.synchronizationRetryAt) {
+        this.notifyChange();
+        return;
+      }
+      if (this.synchronizationInFlight) {
+        this.synchronizationRequested = true;
+        return;
+      }
+      this.synchronizationRequested = false;
       this.synchronizationInFlight = true;
-      void this.synchronizeConnection(connection.id)
+      this.synchronizationJob = this.synchronizeConnection(connection.id)
         .catch(async (error) => {
+          this.synchronizationRetryAt = performance.now() + synchronizationIntervalMs;
           const message = boundedError(error, this.options.redactSensitiveText);
           this.options.repository.appendLog({ connectionId: connection.id, level: 'warning', event: 'synchronization.failed', message, now: this.nowIso() });
           const endpoint = this.options.repository.getTrustedEndpoint(connection.id);
@@ -429,8 +488,12 @@ export class ImTelegramService {
           }
           await this.options.save();
         })
-        .finally(() => (this.synchronizationInFlight = false));
+        .finally(() => {
+          this.synchronizationInFlight = false;
+          if (this.synchronizationRequested) this.notifyChange();
+        });
     };
+    this.synchronizeNow = synchronize;
     synchronize();
     this.synchronizationTimer = setInterval(synchronize, synchronizationIntervalMs);
     this.synchronizationTimer.unref?.();
@@ -442,6 +505,7 @@ export class ImTelegramService {
     const endpoint = this.options.repository.getTrustedEndpoint(connection.id);
     if (!endpoint) return;
     const binding = this.options.repository.getBinding(connection.id, endpoint.id);
+    this.watchedConversationId = binding?.conversationId;
     if (binding) {
       const conversation = this.options.operations.listConversations(connection.projectId).find((candidate) => candidate.id === binding.conversationId);
       if (conversation && conversation.projectId === connection.projectId && !conversation.archived) {
@@ -483,7 +547,9 @@ export class ImTelegramService {
     if (!Number.isSafeInteger(chatId)) throw imError('ZEUS_IM_ENDPOINT_INVALID', '可信 Telegram chat_id 无效。', 409);
     const cursor = this.options.repository.getDeliveryCursor(connection.id, conversationId);
     const items = await this.options.operations.readConversationOutput({ projectId: connection.projectId, conversationId, afterSequence: cursor });
+    const generation = this.pollingGeneration;
     for (const item of items.sort((left, right) => left.sequence - right.sequence)) {
+      if (generation !== this.pollingGeneration) return;
       const baseIdentity = stableIdentity('im_delivery', `${connection.id}:${conversationId}:${item.sequence}`);
       if (item.text.trim()) {
         if ([...item.text].length <= telegramLongMessageLimit) {
@@ -512,6 +578,7 @@ export class ImTelegramService {
       this.options.repository.setDeliveryCursor(connection.id, conversationId, item.sequence, this.nowIso());
       await this.options.save();
     }
+    if (items.length > 0) this.notifyChange();
   }
 
   private async synchronizeConversationInteractions(connection: ImConnectionRecord, endpoint: ImTrustedEndpointRecord, conversationId: string): Promise<void> {
@@ -1120,8 +1187,7 @@ export class ImTelegramService {
       const conversation = this.options.operations.listConversations(connection.projectId).find((item) => item.id === capability.targetId);
       if (!conversation || conversation.projectId !== connection.projectId || conversation.archived) throw imError('ZEUS_IM_CONVERSATION_UNAVAILABLE', '目标会话已不可用。', 409);
       if (this.options.repository.getDeliveryCursor(connection.id, conversation.id) === 0) {
-        const existingOutput = await this.options.operations.readConversationOutput({ projectId: connection.projectId, conversationId: conversation.id, afterSequence: 0 });
-        const latestSequence = existingOutput.at(-1)?.sequence;
+        const latestSequence = this.options.operations.latestConversationOutputSequence({ projectId: connection.projectId, conversationId: conversation.id });
         if (latestSequence) this.options.repository.setDeliveryCursor(connection.id, conversation.id, latestSequence, this.nowIso());
       }
       this.options.repository.setBinding({ connectionId: connection.id, endpointId: endpoint.id, conversationId: conversation.id, taskId: conversation.taskId, now: this.nowIso() });

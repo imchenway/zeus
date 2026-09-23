@@ -37,7 +37,7 @@ export interface LocalApiPerformanceSummary {
   coreRuntime: {
     processUptimeSeconds: number;
     eventLoopUtilization: number;
-    eventLoopDelayMs: { count: number; min: number | null; max: number | null; mean: number | null; p50: number | null; p95: number | null; p99: number | null };
+    eventLoopDelayMs: { active: boolean; startedAt: string | null; stoppedAt: string | null; count: number; min: number | null; max: number | null; mean: number | null; p50: number | null; p95: number | null; p99: number | null };
     memoryBytes: { rss: number; heapTotal: number; heapUsed: number; external: number; arrayBuffers: number };
   };
 }
@@ -53,11 +53,16 @@ export class LocalApiPerformanceCollector {
   private readonly activeTraceIds = new Set<string>();
   private readonly samples: LocalApiPerformanceSample[] = [];
   private readonly eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  /** 细粒度采样只在明确请求的有界诊断窗口内启用。 */
+  private delayTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 结果带采样窗口，未开启不冒充零延迟。 */
+  private delayStartedAt: string | null = null;
+  /** 最近一轮结束时间，关闭后仍可只读获取统计。 */
+  private delayStoppedAt: string | null = null;
   private readonly initialEventLoopUtilization = performance.eventLoopUtilization();
 
   constructor(private readonly capacity = defaultSampleCapacity) {
     if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('Performance sample capacity must be a positive integer.');
-    this.eventLoopDelay.enable();
   }
 
   begin(request: FastifyRequest, reply: FastifyReply): string {
@@ -143,9 +148,28 @@ export class LocalApiPerformanceCollector {
     };
   }
 
+  /** 单次采样六十秒；重复启动复用当前窗口，不累计计时器或延长采样。 */
+  startEventLoopCapture(): void {
+    if (this.delayTimer) return;
+    this.eventLoopDelay.reset();
+    this.delayStartedAt = new Date().toISOString();
+    this.delayStoppedAt = null;
+    this.eventLoopDelay.enable();
+    this.delayTimer = setTimeout(() => this.stopEventLoopCapture(), 60_000);
+    this.delayTimer.unref?.();
+  }
+
+  /** 到期、主动停止和服务关闭共用释放入口。 */
+  stopEventLoopCapture(): void {
+    clearTimeout(this.delayTimer);
+    this.delayTimer = undefined;
+    this.eventLoopDelay.disable();
+    if (this.delayStartedAt && !this.delayStoppedAt) this.delayStoppedAt = new Date().toISOString();
+  }
+
   close(): void {
     this.activeTraceIds.clear();
-    this.eventLoopDelay.disable();
+    this.stopEventLoopCapture();
   }
 
   /** 客户端断连不会进入 onResponse；必须独立释放并发 trace 身份且不得形成成功样本。 */
@@ -168,6 +192,9 @@ export class LocalApiPerformanceCollector {
       processUptimeSeconds: roundMetric(process.uptime()),
       eventLoopUtilization: roundMetric(performance.eventLoopUtilization(this.initialEventLoopUtilization).utilization),
       eventLoopDelayMs: {
+        active: this.delayTimer !== undefined,
+        startedAt: this.delayStartedAt,
+        stoppedAt: this.delayStoppedAt,
         count: this.eventLoopDelay.count,
         min: hasDelaySamples ? nanosecondsToMilliseconds(this.eventLoopDelay.min) : null,
         max: hasDelaySamples ? nanosecondsToMilliseconds(this.eventLoopDelay.max) : null,

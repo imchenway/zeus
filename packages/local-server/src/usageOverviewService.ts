@@ -32,86 +32,42 @@ export interface UsageOverviewService {
 export function createUsageOverviewService(options: CreateUsageOverviewServiceOptions): UsageOverviewService {
   const now = options.now ?? (() => new Date());
 
-  /** 官方网络读取最多占用两秒；后台请求继续复用，慢响应不阻塞本地统计。 */
-  async function readOfficialUsage(): Promise<Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>> {
-    /** 超时只结束本次等待，不取消其他读取者共享的官方刷新。 */
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        options.codexUsage.refreshOfficialUsage(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('官方用量仍在刷新')), 2_000);
-        }),
-      ]);
-    } catch (error) {
-      return { ...options.codexUsage.readCachedOfficialUsage(), stale: true, error: error instanceof Error ? error.message : '暂时无法刷新官方用量' };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+  /** 仅缓存最近一次概览；实际账本、日期、连接名称或官方快照变化即重算。 */
+  let overviewCache: { key: string; snapshot: UsageOverviewSnapshot } | undefined;
 
-  /** 主动读取时优先更新官方用量，超过等待预算则展示缓存和本地统计。 */
+  /** 被动读取不刷新官方账户；仅汇总最近七天记录与数据库返回的历史边界。 */
   async function read(): Promise<UsageOverviewSnapshot> {
-    /** 官方读取复用现有运行时与请求去重，不会为统计启动新的外部进程。 */
-    const official = await readOfficialUsage();
+    const official = options.codexUsage.readCachedOfficialUsage();
     const readAt = now();
-    const allRows = options.ledger.list();
     const connections = options.modelConnections.listMetadata();
+    const revision = options.ledger.readRevision();
+    const key = JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official]);
+    if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
-    const groups = groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId));
-    if (official.state === 'available' && !groups.some(([providerId]) => providerId === 'codex')) groups.unshift(['codex', []]);
-    const providers = groups
-      .map(([providerId, rows]): UsageProviderSummary => {
-        const isCodex = providerId === 'codex';
-        const sourceId = isCodex ? 'codex' : providerId.startsWith('api:') ? providerId.slice(4) : providerId;
-        const connectionName = connectionNames.get(sourceId);
-        const connection = connectionsById.get(sourceId);
-        const todayRows = rows.filter((row) => row.occurredAt >= startOfLocalDay(readAt).toISOString());
-        const sevenDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
-        const today = localDate(readAt);
-        const sevenDayStart = localDate(addDays(startOfLocalDay(readAt), -6));
-        const accountDays = isCodex ? (official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null) : null;
-        const latestLocalAt = rows.at(-1)?.occurredAt ?? readAt.toISOString();
-        const updatedAt = isCodex && official.fetchedAt && official.fetchedAt > latestLocalAt ? official.fetchedAt : latestLocalAt;
-        return {
-          providerId,
-          sourceId,
-          name: isCodex ? 'Codex' : (connectionName ?? sourceId),
-          kind: isCodex ? 'subscription' : 'api',
-          deleted: !isCodex && !connectionName,
-          cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
-          planType: isCodex ? official.planType : null,
-          officialState: isCodex ? official.state : null,
-          rateLimitWindows: isCodex ? official.rateLimitWindows : [],
-          officialCreditBalance: isCodex ? official.creditBalance : null,
-          officialCreditsUnlimited: isCodex ? official.creditsUnlimited : false,
-          accountTodayTokens: accountDays?.find((day) => day.date === today)?.totalTokens ?? null,
-          accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
-          dailyAccount: accountDays,
-          todayLocal: aggregateRows(todayRows),
-          todayLocalComplete: todayRows.every((row) => row.usageComplete),
-          sevenDayLocal: aggregateRows(sevenDayRows),
-          sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
-          dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
-          collectionStartedAt: rows[0]?.occurredAt ?? null,
-          updatedAt,
-          stale: isCodex ? official.stale : false,
-          error: isCodex ? official.error : null,
-        };
+    const groups = new Map(groupRows(options.ledger.list({ since: addDays(startOfLocalDay(readAt), -6).toISOString() }), (row) => canonicalUsageProviderId(row.providerId)));
+    const history = options.ledger.listOverviewProviders();
+    const providerIds = new Set([...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []), ...history.map((entry) => entry.providerId)]);
+    const providers = [...providerIds]
+      .map((providerId) => {
+        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], readAt, official, connectionNames, connectionsById });
+        const bounds = history.find((entry) => entry.providerId === providerId);
+        if (bounds) {
+          provider.collectionStartedAt = bounds.firstAt;
+          provider.cacheUsageAvailable ||= bounds.hasCache === 1;
+          provider.updatedAt = providerId === 'codex' && official.fetchedAt && official.fetchedAt > bounds.lastAt ? official.fetchedAt : bounds.lastAt;
+        }
+        return provider;
       })
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    return {
-      providers,
-      providerCoverage: 'all-recorded',
-      // 汇总时间记录本次读取，供应源更新时间继续保留原始含义。
-      updatedAt: readAt.toISOString(),
-    };
+    const snapshot: UsageOverviewSnapshot = { providers, providerCoverage: 'all-recorded', updatedAt: readAt.toISOString() };
+    overviewCache = revision === null ? undefined : { key, snapshot };
+    return snapshot;
   }
 
   async function readAnalytics(input: Parameters<UsageOverviewService['readAnalytics']>[0]): Promise<UsageAnalyticsSnapshot> {
     const readAt = now();
-    const official = await readOfficialUsage();
+    const official = options.codexUsage.readCachedOfficialUsage();
     const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
