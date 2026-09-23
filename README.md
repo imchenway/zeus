@@ -85,7 +85,7 @@ requirement，用于减少升级后因代码身份变化而重复询问“文稿
 
 系统设置中的“全局规则”可读取和手动编辑 Zeus 的 AGENTS.md；页面显示实际文件路径。保存后新会话读取更新的规则，已有会话可能仍使用原规则。项目专属规则请保留在各自仓库中。
 
-使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。
+使用 Node.js 24–25 和 pnpm 10，首次运行 `pnpm install --frozen-lockfile`。macOS 需要 Xcode Command Line Tools（`xcode-select --install`）；安装时会从修复后的源码编译终端依赖，避免旧预编译包持续占用系统伪终端。
 
 - `pnpm dev`：首次构建运行依赖后启动 Electron + Vite；React/CSS 修改热更新，不生成安装包。主进程、preload 和共享后端包修改后需重启命令。退出开发窗口或按 Ctrl+C 会关闭本次开发服务，不影响已安装应用。
 - 开发配置读取根目录 `.env`、`.env.development`，系统环境变量优先；`ZEUS_DEV_MODE=test pnpm dev` 读取 `.env`、`.env.test`。数据默认隔离到 `.tmp/electron-development-data` 或 `.tmp/electron-test-data`，可通过 `ZEUS_USER_DATA_DIR` 指定兼容的开发数据目录。不要指向正式数据目录。修改环境文件后重启开发命令；只有 `VITE_` 前缀变量可供前端读取，勿放入密钥。
