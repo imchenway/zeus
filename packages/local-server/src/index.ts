@@ -135,7 +135,7 @@ import { ManagedConversationToolResultStore } from './conversationPortableContex
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
-import { normalizeConversationResources } from './conversationResources.js';
+import { normalizeConversationResources, syncConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { ConversationSyncProtocol } from './conversationSyncProtocol.js';
 import { type ConversationRealtimeSocket } from './conversationSyncRoutes.js';
@@ -942,7 +942,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
   // 仅补齐已完成答复遗漏的托管产物图片，保留已有资源。
-  const conversationResourceBackfillRevision = '20260907_managed_artifact_markdown_images';
+  /** 补齐 Pi 历史文件链接，仍保留已登记的资源和图片原件。 */
+  const conversationResourceBackfillRevision = '20260923_pi_conversation_resources';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1317,6 +1318,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const piNativeCoordinator = readOnlyValidation
     ? createReadOnlyValidationPiCoordinator(() => now().toISOString())
     : createPiNativeConversationCoordinator({
+        /** 消息到达时读取已经准备好的资源目录，按真实执行根复用公共登记。 */
+        syncItemResources: (item, projectRoot) =>
+          syncConversationResources(
+            {
+              projectId: conversations.getById(item.conversationId)!.projectId,
+              projectRoot,
+              conversationId: item.conversationId,
+              turnId: item.turnId,
+              item,
+              payload: parseJsonObject(item.payloadJson),
+              text: item.textContent,
+              trustedAttachmentRoots: trustedConversationAttachmentRoots,
+              artifactsDirectory: dataLayout.artifactsDirectory,
+              now: item.updatedAt,
+            },
+            conversationResources,
+          ),
         // 延后到实际派发时读取已完成装配的共用恢复入口。
         ensureExecutionContext: (input) => ensureNativeConversationExecutionContext(input),
         validateContextCapacity: validateNativeContextCapacity,
@@ -1599,7 +1617,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (!readOnlyValidation && resourceBackfillState?.revision !== conversationResourceBackfillRevision) {
     const existingResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     let conversationResourceBackfillCount = 0;
-    // 首次资源回填仍处理全部 item；升级路径只读取带 Markdown 图片的已完成最终答复，
+    // 首次资源回填仍处理全部 item；升级只补最终答复图片和 Pi 已完成消息中的链接，
     // 不把全部历史正文重新载入内存，也不覆盖已经存在的文件/网页资源。
     if (existingResourceCount === 0) {
       for (const conversation of conversations.listNativeBoundRecords()) {
@@ -1639,13 +1657,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
       }
     } else {
-      const imageItems = conversationProviderItems.listCompletedFinalAnswersWithMarkdownImages();
-      for (const item of imageItems) {
+      /** 数据库先筛选有资源引用的历史消息，避免扫描全部正文。 */
+      const resourceItems = conversationProviderItems.listCompletedItemsForResourceBackfill();
+      for (const item of resourceItems) {
         const conversation = conversations.getById(item.conversationId);
         if (!conversation) continue;
         const project = projects.getById(conversation.projectId);
         if (!project) continue;
-        const projectRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
+        const projectRoot = resolveNativeConversationExecutionRoot(conversation);
+        // 执行根丢失时不借用项目主目录，否则同名代码文件会指向错误工作树。
+        if (!projectRoot) continue;
         const normalized = normalizeConversationResources({
           projectId: conversation.projectId,
           projectRoot,
@@ -1659,11 +1680,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           assistantImageArchiveRoot: conversationAttachmentRoot,
           artifactsDirectory: dataLayout.artifactsDirectory,
           now: item.updatedAt,
-        }).filter(isDurableAssistantMarkdownImageResource);
+        }).filter((resource) => item.agentKind === 'pi' || isDurableAssistantMarkdownImageResource(resource));
         if (normalized.length === 0) continue;
         const existing = conversationResources.listByItem(item.id);
-        const existingDigests = new Set(existing.map((resource) => resource.canonicalTargetDigest));
-        const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(resource.canonicalTargetDigest))];
+        // 同一 HTML 的正文链接和卡片共用目标，但属于两种展示，必须分别补齐。
+        const existingDigests = new Set(existing.map((resource) => `${resource.presentation}:${resource.canonicalTargetDigest}`));
+        const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(`${resource.presentation}:${resource.canonicalTargetDigest}`))];
         if (merged.length === existing.length) continue;
         conversationResources.replaceForItem(item.id, merged, item.updatedAt);
         conversationResourceBackfillCount += merged.length - existing.length;

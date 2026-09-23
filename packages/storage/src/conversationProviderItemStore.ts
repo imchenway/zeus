@@ -307,13 +307,16 @@ export class ConversationProviderItemRepository {
       .map((row) => row.provider_turn_id);
   }
 
-  /** 仅供一次性资源迁移读取，避免启动时把全部历史 Provider item 载入内存。 */
-  listCompletedFinalAnswersWithMarkdownImages(): ZeusConversationItemRecord[] {
+  /** 一次性补齐最终答复图片及 Pi 文件链接，只读取含资源引用的已完成消息。 */
+  listCompletedItemsForResourceBackfill(): ZeusConversationItemRecord[] {
     return this.db
       .select<ProviderItemRow>(
         `SELECT *
            FROM conversation_provider_item_states
-          WHERE status = 'completed' AND phase = 'final_answer' AND instr(text_projection, '![') > 0
+          WHERE status = 'completed' AND (
+            (phase = 'final_answer' AND instr(text_projection, '![') > 0)
+            OR (agent_kind = 'pi' AND instr(text_projection, '](') > 0)
+          )
           ORDER BY conversation_id, updated_at, id`,
       )
       .map(mapRow);

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ConversationAttachmentResource, ConversationFileIconKind, ConversationFileLocation, ConversationFileResource, ConversationResource, ConversationResourcePresentation, ConversationWebsiteResource } from '@zeus/shared';
-import type { ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
+import type { ConversationResourceRepository, ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
 
 interface ResourceCandidateBase {
   sourceIndex: number;
@@ -86,6 +86,14 @@ const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
 const maximumArchivedAssistantImageBytes = 16 * 1_024 * 1_024;
 const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
+
+/** 两条执行链共用资源识别、授权及落盘，实时事件与重新打开会话读取同一份资源。 */
+export function syncConversationResources(input: NormalizeConversationResourcesInput, resources: ConversationResourceRepository): ConversationResource[] {
+  return resources
+    .replaceForItem(input.item.id, normalizeConversationResources(input), input.now)
+    .map(toConversationResource)
+    .filter((resource): resource is ConversationResource => resource !== null);
+}
 
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
   const candidates: ResourceCandidate[] = [];
