@@ -286,6 +286,8 @@ export interface StartAiRuntimeSessionInput {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 普通工具命令明确关闭伪终端，仍保留标准输入和受管进程生命周期；省略时沿用终端后端。 */
+  terminal?: boolean;
   /** 只保存在当前进程内，用于在任何日志回调前抹除声明式敏感参数值。 */
   redactValues?: string[];
 }
@@ -986,7 +988,8 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         if (closing || closed) throw new Error('AI Runtime 正在关闭，不能继续启动新会话。');
         if (stopRequestedSessions.has(session.id)) throw new Error('AI Runtime 会话在 spawn 前已收到停止请求，已取消启动。');
         appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
-        handle = spawn(input.command, input.args ?? [], {
+        // 命令的进程管理与终端设备分配分开，避免普通 AI 命令消耗系统伪终端。
+        handle = (input.terminal === false ? spawnWithNodeChildProcess : spawn)(input.command, input.args ?? [], {
           cwd: input.cwd,
           env: {
             ...(input.env ?? process.env),

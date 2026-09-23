@@ -104,6 +104,8 @@ export function createConversationToolProcesses(options: {
       projectId: owner.projectId,
       ...(owner.taskId ? { taskId: owner.taskId } : {}),
       cwd: owner.cwd,
+      // AI 命令通过输出游标和标准输入交互，不需要终端设备或自动分页器。
+      terminal: false,
       command: mode === 'danger-full-access' ? '/bin/zsh' : '/usr/bin/sandbox-exec',
       args: mode === 'danger-full-access' ? ['-lc', input.command] : ['-p', profile!, '/bin/zsh', '-lc', input.command],
       env: { ...options.environment(), ...(mode === 'danger-full-access' ? {} : { TMPDIR: scratchDirectory }) },

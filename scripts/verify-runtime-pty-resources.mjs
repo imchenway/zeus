@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { URL } from 'node:url';
+import { createAiRuntimeSessionManager, createNodePtyRuntimeSpawn } from '../packages/ai-runtime/dist/index.js';
 
 /** 直接加载运行包使用的原生依赖，手动检查 macOS 的真实资源释放。 */
 const require = createRequire(new URL('../packages/ai-runtime/package.json', import.meta.url));
@@ -83,4 +84,45 @@ for (let attempt = 0; attempt < 32; attempt += 1) {
 }
 await runTerminal(true);
 assert.deepEqual(descriptorCounts(), baseline, '主动停止后泄漏了资源');
-console.log(JSON.stringify({ normalExits: 33, spawnFailures: 32, stopped: 1, baseline, after: descriptorCounts() }));
+
+/** 普通 AI 命令在启用了 PTY 后端的同一个管理器中仍必须使用管道。 */
+const runtime = createAiRuntimeSessionManager({ allowedRoot: process.cwd(), spawn: createNodePtyRuntimeSpawn(pty) });
+try {
+  /** 同时检查无终端、标准输入和独立错误输出，不只验证进程能结束。 */
+  const command = await runtime.startSession({
+    projectId: 'pty-resource-probe',
+    command: '/bin/sh',
+    args: ['-c', 'if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then exit 99; fi; read line; printf "%s" "$line"; printf "pipe-stderr" >&2'],
+    cwd: process.cwd(),
+    terminal: false,
+  });
+  assert.equal(descriptorCounts().terminals, baseline.terminals, '普通 AI 命令申请了伪终端');
+  runtime.inputSession(command.id, 'pipe-stdin\n');
+  assert.equal(await runtime.waitForSessionCompletion(command.id, 5_000), true);
+  assert.equal(runtime.getSession(command.id)?.exitCode, 0);
+  assert.equal(
+    runtime
+      .getLogs(command.id)
+      .filter((entry) => entry.stream === 'stdout')
+      .map((entry) => entry.text)
+      .join(''),
+    'pipe-stdin',
+  );
+  assert.equal(
+    runtime
+      .getLogs(command.id)
+      .filter((entry) => entry.stream === 'stderr')
+      .map((entry) => entry.text)
+      .join(''),
+    'pipe-stderr',
+  );
+  /** 管道命令仍由同一管理器负责停止和回收。 */
+  const stopped = await runtime.startSession({ projectId: 'pty-resource-probe', command: '/bin/sleep', args: ['30'], cwd: process.cwd(), terminal: false });
+  runtime.stopSession(stopped.id);
+  assert.equal(await runtime.waitForSessionCompletion(stopped.id, 5_000), true);
+  assert.equal(runtime.getSession(stopped.id)?.status, 'stopped');
+} finally {
+  await runtime.close();
+}
+assert.equal(descriptorCounts().terminals, baseline.terminals, '普通命令结束后遗留了伪终端');
+console.log(JSON.stringify({ normalExits: 33, spawnFailures: 32, stopped: 1, managedPipeCommands: 2, baseline, after: descriptorCounts() }));

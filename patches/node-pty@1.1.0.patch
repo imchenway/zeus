@@ -31,10 +31,19 @@ index 17f1d980e62e017d77058627a7a15c4c29f9470c..42db143635f6805797b808339472b422
    process.exit(1);
  }
 diff --git a/src/unix/pty.cc b/src/unix/pty.cc
-index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..fe9ad6f6d811183393f8b850f94049a5fdf0f2e4 100644
+index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..8e1862e830b7871d34924d1bd944fcd1d664dfec 100644
 --- a/src/unix/pty.cc
 +++ b/src/unix/pty.cc
-@@ -370,7 +370,7 @@ Napi::Value PtyFork(const Napi::CallbackInfo& info) {
+@@ -167,6 +167,8 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pid_t pid) {
+         }
+       }
+     }
++    // 子进程退出监听完成后释放内核事件队列，避免每条命令再泄漏一个描述符。
++    if (kq >= 0) close(kq);
+ #else
+     while (true) {
+       errno = 0;
+@@ -370,7 +372,7 @@ Napi::Value PtyFork(const Napi::CallbackInfo& info) {
    int err = -1;
    pty_posix_spawn(argv, env, term, &winp, &master, &pid, &err);
    if (err != 0) {
@@ -43,7 +52,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..fe9ad6f6d811183393f8b850f94049a5
    }
    if (pty_nonblock(master) == -1) {
      throw Napi::Error::New(napiEnv, "Could not set master fd to nonblocking.");
-@@ -684,6 +684,7 @@ pty_getproc(int fd, char *tty) {
+@@ -684,6 +686,7 @@ pty_getproc(int fd, char *tty) {
  #endif
  
  #if defined(__APPLE__)
@@ -51,7 +60,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..fe9ad6f6d811183393f8b850f94049a5
  static void
  pty_posix_spawn(char** argv, char** env,
                  const struct termios *termp,
-@@ -691,96 +692,110 @@ pty_posix_spawn(char** argv, char** env,
+@@ -691,96 +694,110 @@ pty_posix_spawn(char** argv, char** env,
                  int* master,
                  pid_t* pid,
                  int* err) {
