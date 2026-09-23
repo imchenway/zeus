@@ -690,16 +690,17 @@ private final class ComputerService {
     private func inspectActionTarget(_ method: String, _ params: [String: Any]) async throws -> (element: AXUIElement?, summary: [String: Any], state: Data) {
         try requireAccessibility()
         try requireUnlockedSession()
-        let (app, requestedElement) = try appAndElement(params, elementRequired: method == "set_value")
+        // 后台文字输入没有可靠的全局焦点，必须使用本次观察中的明确控件。
+        let (app, requestedElement) = try appAndElement(params, elementRequired: ["set_value", "type_text", "paste"].contains(method))
         let window = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
         if method == "press_key" { _ = try keyChord(params["key"] as? String ?? "") }
         var hitParams = params
         if method == "drag" { hitParams["x"] = params["from_x"] ?? params["start_x"]; hitParams["y"] = params["from_y"] ?? params["start_y"] }
         let focused = focusedElement(app.processIdentifier)
-        // 与实际执行函数选择同一控件：文字与粘贴不使用坐标，按键只使用真实焦点。
+        // 与实际执行函数选择同一控件：文字与粘贴只用明确控件，按键只使用真实焦点。
         let target: AXUIElement?
         if method == "press_key" { target = focused }
-        else if ["type_text", "paste"].contains(method) { target = requestedElement ?? focused }
+        else if ["type_text", "paste"].contains(method) { target = requestedElement }
         else if method == "drag" { target = try hitElement(app.processIdentifier, params: hitParams) }
         else { target = try requestedElement ?? hitElement(app.processIdentifier, params: hitParams) }
         guard let target else {
@@ -1068,9 +1069,11 @@ private final class ComputerService {
     private func performPaste(_ params: [String: Any]) throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
-        let (app, element) = try appAndElement(params, elementRequired: false)
+        // 粘贴必须与执行前签名的观察控件一致，不能退回到前台焦点猜测。
+        let (app, element) = try appAndElement(params, elementRequired: true)
+        guard let element else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "粘贴需要最新观察中的可编辑控件。") }
         // 已授权的登录粘贴沿用同一目标和剪贴板恢复流程。
-        if let element { try focus(element) }
+        try focus(element)
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "paste 缺少 text。") }
         let pasteboard = NSPasteboard.general
         let previous = snapshotPasteboard(pasteboard)
@@ -1245,14 +1248,16 @@ private final class ComputerService {
     private func typeText(_ params: [String: Any]) async throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
-        let (app, element) = try appAndElement(params, elementRequired: false)
+        // 普通文字输入同样固定到观察控件，避免后台应用焦点缺失或串到其他窗口。
+        let (app, element) = try appAndElement(params, elementRequired: true)
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "type_text 缺少 text。") }
-        guard let target = element ?? focusedElement(app.processIdentifier) else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "文字输入需要明确的可编辑元素。") }
+        guard let target = element else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "文字输入需要最新观察中的可编辑控件。") }
         try requireElementWindow(target, target: control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId))
-        if element != nil { try focus(target) }
         defer { control.didMutate() }
         /** 密码输入只投递用户提供的文字，不读取已有值或伪称已校验密码内容。 */
         if (try? rejectSecure(target)) == nil {
+            // 按键投递需要目标内部焦点；普通文字使用控件接口，不提前改变焦点。
+            if element != nil { try focus(target) }
             // 按 Unicode 标量发送，避免把表情等字符的 UTF-16 代理对拆成两次输入。
             for scalar in text.unicodeScalars {
                 /** 一个完整字符对应的 UTF-16 单元。 */
@@ -1334,7 +1339,9 @@ private final class ComputerService {
         return element
     }
 
+    /** 仅供粘贴和密码按键投递设置控件焦点；普通语义写入不调用。 */
     private func focus(_ element: AXUIElement) throws {
+        if boolAttribute(element, kAXFocusedAttribute) == true { return }
         guard AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_FOCUS_FAILED", message: "目标元素无法获得焦点。")
         }
