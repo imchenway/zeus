@@ -62,9 +62,9 @@ export interface SessionTerminalPanelProps {
   visible: boolean;
   projectId: string;
   projectName: string;
-  projectPath: string;
+  /** 当前会话决定新终端的实际工作目录，由后台解析并校验。 */
+  conversationId: string;
   taskId?: string;
-  cwd?: string | null;
   focusRequest: number;
   onClose: () => void;
 }
@@ -151,7 +151,6 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   const autoStartAttemptRef = useRef<string | null>(null);
   const closeInFlightRef = useRef(false);
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? null, [activeSessionId, sessions]);
-  const preferredCwd = useMemo(() => resolveTerminalCwd(props.projectPath, props.cwd), [props.cwd, props.projectPath]);
 
   const loadPanel = useCallback(async (): Promise<void> => {
     const revision = ++loadRevisionRef.current;
@@ -258,10 +257,10 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       }
       const request: Omit<StartRuntimeSessionRequest, 'confirmationId'> = {
         projectId: props.projectId,
+        conversationId: props.conversationId,
         ...(props.taskId ? { taskId: props.taskId } : {}),
         command: integratedTerminalCommand,
         args: [...integratedTerminalArgs],
-        cwd: preferredCwd,
       };
       const confirmation = await props.client.createRuntimeConfirmation({
         action: 'start_generic_session',
@@ -280,7 +279,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       startInFlightRef.current = false;
       if (mountedRef.current) setStarting(false);
     }
-  }, [copy.permissionUnavailable, copy.startupFailed, phase, preferredCwd, props.client, props.language, props.projectId, props.projectName, props.taskId]);
+  }, [copy.permissionUnavailable, copy.startupFailed, phase, props.client, props.conversationId, props.language, props.projectId, props.projectName, props.taskId]);
 
   useEffect(() => {
     if (!props.visible || phase.kind !== 'ready' || !phase.shellAllowed || sessions.length > 0 || startInFlightRef.current) return;
@@ -885,17 +884,6 @@ export function isIntegratedTerminalSession(session: Pick<AiRuntimeSession, 'com
 
 export function isSessionTerminalShortcut(event: Pick<KeyboardEvent, 'altKey' | 'code' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>): boolean {
   return event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.code === 'Backquote' || event.key === '`');
-}
-
-function resolveTerminalCwd(projectPath: string, candidate: string | null | undefined): string {
-  const normalizedProject = normalizeComparablePath(projectPath);
-  const normalizedCandidate = normalizeComparablePath(candidate ?? '');
-  if (normalizedCandidate === normalizedProject || normalizedCandidate.startsWith(`${normalizedProject}/`)) return candidate!.trim();
-  return projectPath;
-}
-
-function normalizeComparablePath(value: string): string {
-  return value.trim().replaceAll('\\', '/').replace(/\/+$/u, '');
 }
 
 /** 只接受明确保存的底部选择；缺失、损坏或不可读取时默认右侧。 */

@@ -3675,6 +3675,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     tasks,
     resolveRegisteredRuntimeAdapter: (command) => resolveRegisteredRuntimeAdapter(command, resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell).command),
     resolveExistingRuntimeSessionAdapter,
+    /** 复用会话执行目录的唯一来源，跨项目、跨任务或目录失效均不回退到主目录。 */
+    resolveConversationExecutionRoot: (projectId, taskId, conversationId) => {
+      /** 终端必须绑定界面正在查看的会话，不能任意指定其他任务的工作树。 */
+      const conversation = conversations.getRecordById(conversationId);
+      if (!conversation || conversation.projectId !== projectId || (conversation.taskId ?? undefined) !== taskId) return null;
+      /** 同时覆盖直接目录、任务环境以及会话独立工作树。 */
+      const root = resolveNativeConversationExecutionRoot(conversation);
+      return root && existsSync(root) && statSync(root).isDirectory() ? root : null;
+    },
     readProjectAllowsShell: (projectId) => readProjectConfig(projectId).security.allowShell,
     readTerminalStartupCommand: () => platformMutableState.runtimeSettings.terminalStartupCommand,
     buildRuntimeProcessEnv,
