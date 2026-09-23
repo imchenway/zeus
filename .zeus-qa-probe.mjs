@@ -1,6 +1,9 @@
 /** 临时验收探针：用 Electron 窗口加载 QA 页面，输出布局几何并截图。 */
-const { app, BrowserWindow } = require('electron');
-const fs = require('fs');
+import { app, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import process from 'node:process';
+import console from 'node:console';
+import { setTimeout } from 'node:timers';
 
 /** 目标地址、截图输出路径和窗口宽度由命令行传入。 */
 const targetUrl = process.argv[2];
