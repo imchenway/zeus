@@ -3774,6 +3774,7 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 任务、Git、源码、命令及会话共用连续底色；源码和命令共用代码工作区，外层不绘制卡片边缘。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root, .workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
+.macos-ai-app.zeus-shell.main-layout-upstream .ai-workspace:has(> .project-workspace-mode-toolbar) > :is(.workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
 .macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
 .macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
 .macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
