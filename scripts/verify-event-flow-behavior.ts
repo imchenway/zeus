@@ -234,7 +234,7 @@ function verifyAutomaticQueueDispatchSelection(): Record<string, unknown> {
   return { selectedId: selected.id, blockedSelection: null, legacyHeadId: legacyQueued.id };
 }
 
-/** 真实转录投影同时核对单轮过程分组和用户补充始终位于主会话流。 */
+/** 真实转录投影同时核对沟通边界分组和用户、助手文字始终位于主会话流。 */
 function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const turnId = 'stage-turn';
   let timelineOrdinal = 0;
@@ -275,12 +275,14 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const rows = projectTranscriptRows(items);
   const turnRows = projectTranscriptTurnRows(rows, null, { [turnId]: 'completed' });
   const workRows = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
-  assertBehavior(workRows.length === 3, '同轮引导必须分隔前后过程，不能把回复放到引导消息上方。');
-  /** 各输入后的阶段继续保持全轮先后顺序。 */
+  assertBehavior(workRows.length === 4, '每段连续操作必须在助手沟通处结束，不能跨过可见说明合并。');
+  /** 操作分组继续保持全轮先后顺序，但不再接管助手沟通正文。 */
   const stages = workRows.flatMap((row) => row.segments);
-  assertBehavior(stages.length === 3, 'A/B/C 三条摘要必须生成三个独立过程阶段。');
-  assertBehavior(stages.map((stage) => (stage.summary?.kind === 'item' ? stage.summary.item.text : null)).join('|') === 'A 摘要|B 摘要|C 摘要', '阶段摘要顺序必须保持 A/B/C，不得被整轮活动组吞并。');
-  assertBehavior(!stages.some((stage) => stage.summary === null), '首条摘要之前的准备过程必须归入 A 阶段，不能生成无摘要的孤立过程入口。');
+  assertBehavior(stages.length === 4, '四段连续操作必须各自保留一个过程阶段。');
+  assertBehavior(
+    stages.every((stage) => stage.summary === null),
+    '助手沟通已经位于主会话，过程阶段不得再复制同一段文字。',
+  );
   assertBehavior(
     stages.every((stage) => !stage.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning')),
     '已完成轮次的 reasoning 摘要不得重新混入正文阶段。',
@@ -305,8 +307,10 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
       '用户开场与同轮补充必须按原顺序保留在主会话流。',
     );
     assertBehavior(
-      projected.map((row) => (row.kind === 'turn_work' ? row.segments[0]?.summary?.key : row.key)).join('|') === 'opening-user|summary-a|mid-user-a|summary-b|mid-user-b|summary-c|final',
-      '运行和历史展示均必须先显示引导消息，再显示针对它的回复。',
+      projected
+        .map((row) => (row.kind === 'turn_work' ? `process:${row.segments.flatMap((segment) => segment.rows.flatMap((detail) => (detail.kind === 'activity' ? detail.items.map((entry) => entry.key) : [])).join(','))}` : row.key))
+        .join('|') === 'opening-user|process:bootstrap-command-a|summary-a|process:command-a|mid-user-a|summary-b|process:tool-b|mid-user-b|summary-c|process:file-c|final',
+      '运行和历史展示均须保持用户输入、连续操作、助手沟通的真实阅读顺序。',
     );
     assertBehavior(new Set(projected.map((row) => row.key)).size === projected.length, '同轮多个过程段必须有独立稳定身份。');
     assertBehavior(
@@ -326,11 +330,15 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
       '工具活动不得跨用户消息合并。',
     );
   }
-  /** 没有引导仍使用一个过程入口；前置事件早于开场落库时仍放在用户消息后。 */
+  /** 前置事件早于开场落库时仍放在用户消息后；助手沟通继续形成下一段操作边界。 */
   const ordinaryRows = projectTranscriptTurnRows(projectTranscriptRows([items[2]!, items[0]!, items[3]!, items[4]!]), turnId);
-  assertBehavior(ordinaryRows.length === 2 && ordinaryRows[0]?.key === 'opening-user' && ordinaryRows[1]?.kind === 'turn_work', '普通轮次保持单一过程，前置事件不能越过开场用户消息。');
+  assertBehavior(
+    ordinaryRows.length === 4 && ordinaryRows[0]?.key === 'opening-user' && ordinaryRows[1]?.kind === 'turn_work' && ordinaryRows[2]?.key === 'summary-a' && ordinaryRows[3]?.kind === 'turn_work',
+    '前置事件不能越过开场用户消息，后续操作也不能跨过助手沟通合并。',
+  );
   return {
     mainStreamUserMessages: 3,
+    mainStreamAssistantMessages: 4,
     stages: stages.map((stage) => ({
       summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null,
       detailGroups: stage.rows.length,
