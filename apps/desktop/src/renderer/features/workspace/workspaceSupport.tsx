@@ -260,6 +260,7 @@ export type NativeConversationAppClient = SessionControllerClient &
     | 'saveModelConnectionReasoningOptions'
     | 'auditModelConnectionReasoningLevels'
     | 'refreshModelConnectionModels'
+    | 'refreshModelConnectionPricing'
     | 'probeModelConnectionModels'
     | 'diagnoseModelConnection'
     | 'loadZentaoInstances'

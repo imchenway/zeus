@@ -80,7 +80,7 @@ export function parsePublishedCodexPrices(document: string): PublishedModelPrice
       .split('|')
       .map((cell) => cell.trim());
     /** 仅去掉官网明确的上下文说明，模型别名必须精确匹配。 */
-    const model = cells[0]?.match(/^([a-z0-9][a-z0-9.-]*)(?: \(<272K context length\))?$/u)?.[1];
+    const model = cells[0]?.match(/^([A-Za-z0-9][A-Za-z0-9._:/-]*)(?: \(<272K context length\))?$/u)?.[1];
     if (cells.length !== 9 || !model) throw new Error('官方价格表结构已变化');
     if (prices.some((price) => price.model === model && price.serviceTier === serviceTier)) throw new Error('官方价格存在重复模型');
     /** 缺少必要单价时跳过该行，不能把横线当成零。 */
@@ -116,14 +116,14 @@ export function estimatePublishedCodexUsage(input: {
 }): CodexUsageEstimate | null {
   /** 服务端支持 fast 和 priority 两种快速模式名称。 */
   const tier = input.serviceTier === 'fast' || input.serviceTier === 'priority' ? 'priority' : input.serviceTier == null || input.serviceTier === 'default' || input.serviceTier === 'standard' ? 'default' : input.serviceTier;
-  /** 精确模型优先；日期后缀只能匹配同名模型。 */
-  const model = input.model.trim().toLowerCase();
+  /** 模型身份精确匹配；没有页面别名依据时不删除日期后缀。 */
+  const model = input.model.trim();
   /** 原文在下载或载入时只解析一次，补算多条记录共用同一价格目录。 */
   const prices = input.prices.filter((price) => price.serviceTier === tier);
   /** 不把未知模型映射到“类似”模型。 */
-  const price = prices.find((entry) => entry.model === model) ?? prices.find((entry) => model.replace(/-\d{4}-\d{2}-\d{2}$/u, '') === entry.model);
+  const price = prices.find((entry) => entry.model === model);
   if (!price) return null;
-  /** ponytail: 沿用轮次累计输入判档；逐请求精算需改由请求账本分别选择上下文费率。 */
+  /** 调用方传入单次请求用量，按该请求的上下文选择费率。 */
   const longContext = input.usage.inputTokens > 272_000;
   /** 缺少该档位价格时保持未知，不退回便宜档位。 */
   const rates = longContext ? price.longContext : price.shortContext;

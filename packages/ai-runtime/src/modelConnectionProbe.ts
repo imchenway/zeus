@@ -226,6 +226,24 @@ function streamApiFor(piModel: Model<Api>): ProviderStreams {
   return openAICompletionsApi();
 }
 
+/** 复用已配置连接生成受限文本，不提供工具、不继承会话内容。 */
+export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal }): Promise<string> {
+  /** 沿用真实运行的协议与鉴权适配。 */
+  const model = toPiModel(input.model, `zeus-pricing-${input.connection.id}`, input.connection.baseUrl);
+  /** 页面识别限制时间与输出，避免后台无限消耗。 */
+  const options: SimpleStreamOptions = { apiKey: input.apiKey, maxTokens: 8192, signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(80_000)]) : AbortSignal.timeout(80_000) };
+  /** 用户的密钥只发往原模型连接，不发往价格页面。 */
+  const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
+  for await (const event of streamApiFor(model).streamSimple(model, { systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }, authenticated)) {
+    if (event.type === 'error') throw new Error('价格识别模型请求失败。');
+    if (event.type === 'done') {
+      if (event.message.stopReason !== 'stop') throw new Error('价格识别结果不完整。');
+      return event.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+    }
+  }
+  throw new Error('价格识别模型未返回结果。');
+}
+
 /** 执行一次真实请求并把观测结果收敛成纯数据；失败只返回原因，不抛出。 */
 async function runProbeRequest(streams: ProviderStreams, piModel: Model<Api>, input: ProbeConfiguredModelInput, request: { context: Context; timeoutMs: number; reasoningLevel?: PiThinkingLevel | null }): Promise<ProbeObservation> {
   const observation: ProbeObservation = { ok: false, failure: null, servedModelId: null, deltaCount: 0, thinkingSeen: false, toolCallSeen: false, usage: null };

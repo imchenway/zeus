@@ -84,6 +84,10 @@ export interface ModelConnectionRecord {
   templateId: ModelConnectionTemplateId;
   baseUrl: string;
   modelsPath: string;
+  /** 一个价格清单页面覆盖全部模型。 */
+  pricingUrl?: string;
+  /** 已校验价格的只读状态。 */
+  pricingCatalog?: import('@zeus/shared').ModelPricingCatalog | null;
   enabled: boolean;
   apiKeyConfigured: boolean;
   models: ModelConnectionModel[];
@@ -96,6 +100,8 @@ export interface SaveModelConnectionRequest {
   templateId: ModelConnectionTemplateId;
   baseUrl: string;
   modelsPath: string;
+  /** 可选的供应商价格页面。 */
+  pricingUrl?: string;
   enabled: boolean;
   models: ModelConnectionModel[];
   apiKey?: string;

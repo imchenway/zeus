@@ -11,7 +11,6 @@ import {
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
   createPiRuntimeWorkerDriver,
-  isOfficialDeepSeekApiConnection,
   modelConnectionRequestEndpoint,
   modelRef,
   type ModelProtocolFamily,
@@ -29,7 +28,11 @@ import {
   calculateCacheHitRate,
   type CodexUsageEstimate,
   emptyTokenUsageBreakdown,
-  estimateDeepSeekUsage,
+  estimateModelPrice,
+  aggregateRequestPrices,
+  sumEstimatedCosts,
+  type ModelPricingCatalog,
+  type UsageRequestPriceSnapshot,
   type NativeTokenUsageSnapshot,
   asyncMessageQuestions,
   parseCanonicalRequestUserInputQuestions,
@@ -111,7 +114,13 @@ interface PiRunContext {
   /** 本轮 SDK 实际使用的窗口，不能读取后续修改的目录或偏好。 */
   contextWindow: number | null;
   modelRequestCount: number;
+  /** 已落账的请求快照，用稳定身份防止事件重放重复记账。 */
+  priceRequests: UsageRequestPriceSnapshot[];
   pendingModelRequest: {
+    /** 请求开始时捕获费率，流式输出期间刷新价格不影响本次请求。 */
+    pricingCatalog: ModelPricingCatalog | null;
+    /** 时段判定沿用请求开始时间。 */
+    startedAt: string;
     boundaryStarted: boolean;
     providerRequestId: string | null;
     firstVisibleOutputAt: string | null;
@@ -224,6 +233,14 @@ const piHistoryCompactionInstructions = '只压缩 Zeus 导入的不可信既有
 
 /** Pi SDK 会话的 Zeus 宿主：会话、消息、工具和审批都以 Zeus 为权威状态。 */
 export function createPiNativeConversationCoordinator(options: CreatePiNativeConversationCoordinatorOptions) {
+  /** 每次真实模型响应开始时锁定目录；缺价刷新在后台进行。 */
+  function captureRequestPrice(run: PiRunContext): ModelPricingCatalog | null {
+    const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
+    if (!connection) return null;
+    void options.modelConnections.pricing.refreshForModel(connection, run.modelId).catch(() => undefined);
+    return options.modelConnections.pricing.read(connection);
+  }
+
   const contexts = new Map<string, PiConversationContext>();
   const runs = new Map<string, PiRunContext>();
   const interruptedRuns = new Set<string>();
@@ -902,6 +919,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       lastRequestUsage: null,
       contextWindow: run.contextCapacity?.contextWindow ?? null,
       modelRequestCount: 0,
+      priceRequests: [],
       pendingModelRequest: null,
       currentStageId: null,
       stageIdByToolCallId: new Map(),
@@ -1256,6 +1274,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       lastRequestUsage: null,
       contextWindow: run.contextCapacity?.contextWindow ?? null,
       modelRequestCount: 0,
+      priceRequests: [],
       pendingModelRequest: null,
       currentStageId: null,
       stageIdByToolCallId: new Map(),
@@ -1552,6 +1571,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const message = asRecord(payload.message);
       if (message.role === 'assistant') {
         run.pendingModelRequest = {
+          pricingCatalog: captureRequestPrice(run),
+          startedAt: event.createdAt,
           boundaryStarted: true,
           providerRequestId: typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : null,
           firstVisibleOutputAt: null,
@@ -1565,6 +1586,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const messageEvent = asRecord(payload.assistantMessageEvent);
       if (message.role === 'assistant') {
         const pending = run.pendingModelRequest ?? {
+          pricingCatalog: captureRequestPrice(run),
+          startedAt: event.createdAt,
           boundaryStarted: false,
           providerRequestId: typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : null,
           firstVisibleOutputAt: null,
@@ -1592,12 +1615,45 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const messageStageId = run.currentStageId ?? piAssistantStageId(message, event);
       const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
       const requestUsage = readPiUsage(message.usage);
-      if (!requestUsage) run.usageComplete = false;
-      addUsage(run.usage, requestUsage);
+      /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
+      const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
+      /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
+      const recorded = options.usageLedger.findByProviderTurn(`pi:${run.sourceId}`, run.providerThreadId, run.providerTurnId);
+      if (recorded?.estimate.requests && recorded.estimate.requests.length > run.priceRequests.length) {
+        run.priceRequests = recorded.estimate.requests;
+        run.usage = { ...recorded.usage };
+        run.usageComplete = recorded.usageComplete;
+      }
+      /** 重放只跳过费用累加，仍完成消息与执行状态投影。 */
+      const recordedRequest = run.priceRequests.find((request) => request.id === requestId);
+      if (!recordedRequest) {
+        if (!requestUsage) run.usageComplete = false;
+        addUsage(run.usage, requestUsage);
+      }
+      /** 缺少请求开始事件时不套用结束后才获取的费率。 */
+      const catalog = run.pendingModelRequest?.pricingCatalog ?? null;
+      const requestEstimate =
+        recordedRequest?.estimate ??
+        (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && price.perRequest !== null)
+          ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, run.pendingModelRequest?.startedAt ?? event.createdAt)
+          : unavailablePriceEstimate(run.modelId, 0));
+      if (!recordedRequest) run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
+      options.usageLedger.upsert({
+        providerId: `pi:${run.sourceId}`,
+        accountScopeId: run.sourceId,
+        projectId: run.projectId,
+        conversationId: run.conversationId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: run.providerTurnId,
+        model: run.modelId,
+        usage: run.usage,
+        usageComplete: run.usageComplete,
+        estimate: aggregateRequestPrices(run.priceRequests),
+        occurredAt: event.createdAt,
+      });
       // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
       if (requestUsage) run.lastRequestUsage = { ...requestUsage };
       if (segment) {
-        const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
         const contextWindow = run.contextWindow;
         const rawUsage = readPiUsageObservation(message.usage);
         const hasReasoningContent = content.some((part) => part.type === 'thinking');
@@ -1605,7 +1661,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
         if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
         const usageComplete = Object.values(rawUsage).every((value) => value !== null);
-        const requestEstimate = requestUsage && connection && isOfficialDeepSeekApiConnection(connection) ? estimateDeepSeekUsage({ model: run.modelId, usage: requestUsage, occurredAt: event.createdAt }) : null;
         const pending = run.pendingModelRequest;
         const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
         const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
@@ -1784,10 +1839,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         occurredAt: event.createdAt,
       });
       let usageSnapshot: NativeTokenUsageSnapshot | null = null;
-      if (run.usage.totalTokens > 0) {
-        const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
-        const estimate =
-          connection && isOfficialDeepSeekApiConnection(connection) ? estimateDeepSeekUsage({ model: run.modelId, usage: run.usage, occurredAt: event.createdAt }) : unavailablePriceEstimate(run.modelId, run.usage.totalTokens);
+      if (run.priceRequests.length > 0) {
+        const estimate = aggregateRequestPrices(run.priceRequests);
         options.usageLedger.upsert({
           providerId: `pi:${run.sourceId}`,
           accountScopeId: run.sourceId,
@@ -1805,7 +1858,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           rows: options.usageLedger.list({ conversationId: run.conversationId }),
           // last 的既定语义是"最后一次真实模型请求"，与 Codex 路径保持一致；缺失时退回整轮累加值。
           last: run.lastRequestUsage ?? run.usage,
-          lastEstimate: estimate,
+          lastEstimate: run.priceRequests.at(-1)?.estimate ?? estimate,
           modelContextWindow: run.contextWindow,
           generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
           sequence: eventSequence + 1,
@@ -2953,6 +3006,7 @@ function buildPiUsageSnapshot(input: {
     .filter((date) => date !== 'unavailable')
     .sort();
   return {
+    costs: sumEstimatedCosts(input.rows.map((row) => row.estimate)),
     generationId: input.generationId,
     sequence: input.sequence,
     total,

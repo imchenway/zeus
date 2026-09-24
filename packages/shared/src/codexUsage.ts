@@ -8,6 +8,8 @@ export interface TokenUsageBreakdown {
 }
 
 export interface CodexUsageRateSnapshot {
+  /** 其他供应商的原币公开费率及依据。 */
+  price?: import('./modelPricing.js').ModelPrice;
   /** 自动获取公开价格的时间，不代表供应商价格生效时间。 */
   retrievedAt?: string;
   /** 历史缺价按补价时公开单价估算的时间；已有价格不覆盖。 */
@@ -23,6 +25,10 @@ export interface CodexUsageRateSnapshot {
 }
 
 export interface CodexUsageEstimate {
+  /** 原币估算金额，币种之间不直接相加。 */
+  costs?: import('./modelPricing.js').EstimatedMoney[];
+  /** 每次真实请求的不可变价格依据。 */
+  requests?: import('./modelPricing.js').UsageRequestPriceSnapshot[];
   credits: number | null;
   apiEquivalentUsd: number | null;
   cacheSavingsUsd: number | null;
@@ -33,6 +39,8 @@ export interface CodexUsageEstimate {
 }
 
 export interface NativeTokenUsageSnapshot {
+  /** 按原币汇总的会话费用。 */
+  costs?: import('./modelPricing.js').EstimatedMoney[];
   generationId: string;
   sequence: number;
   serviceTier?: string | null;
@@ -81,6 +89,20 @@ export interface CodexOfficialUsageSnapshot {
 
 export type UsageProviderKind = 'subscription' | 'api';
 
+/** 菜单栏费用明细使用的不可变单价，不引用供应商当前价格。 */
+export interface UsageModelRate {
+  currency: string;
+  perMillion: { input: number; output: number; cachedInput: number | null; cacheWrite: number | null } | null;
+  perRequest: number | null;
+}
+
+/** 同一模型和同一价格快照归为一行，调价后的记录保持分开。 */
+export interface UsageModelCostBreakdown {
+  model: string;
+  rate: UsageModelRate | null;
+  usage: TokenUsageBreakdown;
+}
+
 export interface UsageProviderSummary {
   providerId: string;
   sourceId: string;
@@ -97,8 +119,12 @@ export interface UsageProviderSummary {
   accountSevenDayTokens: number | null;
   dailyAccount: Array<{ date: string; totalTokens: number }> | null;
   todayLocal: CodexLocalUsageTotals;
+  /** 今日按模型和历史单价归组的费用依据。 */
+  todayCostBreakdown: UsageModelCostBreakdown[];
   todayLocalComplete: boolean;
   sevenDayLocal: CodexLocalUsageTotals;
+  /** 近七日按模型和历史单价归组的费用依据。 */
+  sevenDayCostBreakdown: UsageModelCostBreakdown[];
   sevenDayLocalComplete: boolean;
   dailyLocal: CodexLocalUsageDay[];
   collectionStartedAt: string | null;
@@ -114,6 +140,8 @@ export interface UsageOverviewSnapshot {
 }
 
 export interface CodexLocalUsageTotals extends TokenUsageBreakdown {
+  /** 按原币汇总的费用。 */
+  costs?: import('./modelPricing.js').EstimatedMoney[];
   /** 汇总中包含按补价时价格估算的记录，界面必须说明此口径。 */
   hasBackfilledPricing?: boolean;
   conversationCount: number;

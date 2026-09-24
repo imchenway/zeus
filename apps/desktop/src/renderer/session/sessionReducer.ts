@@ -2134,6 +2134,11 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
     modelContextWindow: numberValue(payload.modelContextWindow),
     cacheHitRate: numberValue(payload.cacheHitRate),
     estimatedCredits: numberValue(payload.estimatedCredits),
+    costs: Array.isArray(payload.costs)
+      ? payload.costs.filter(
+          (cost): cost is import('@zeus/shared').EstimatedMoney => typeof cost?.currency === 'string' && /^[A-Z]{3}$/u.test(cost.currency) && typeof cost.amount === 'number' && Number.isFinite(cost.amount) && cost.amount >= 0,
+        )
+      : undefined,
     apiEquivalentUsd: numberValue(payload.apiEquivalentUsd),
     lastApiEquivalentUsd: numberValue(payload.lastApiEquivalentUsd),
     cacheSavingsUsd: numberValue(payload.cacheSavingsUsd),

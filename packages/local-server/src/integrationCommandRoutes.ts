@@ -181,6 +181,26 @@ export function registerIntegrationCommandRoutes(options: {
     }
   });
 
+  /** 价格刷新沿用现有命令身份，重放不会再次调用识别模型。 */
+  server.post('/api/model-connections/:connectionId/pricing/refresh', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: IntegrationCommandRequest<EmptyInput> }>, reply) => {
+    try {
+      const parsed = parseResourceCommand<EmptyInput>(application, request.body, integrationCommandTypes.modelConnectionPricingRefresh, 'provider_configuration', request.params.connectionId);
+      assertExactKeys(parsed.input, [], parsed.command.commandType);
+      const mutation = await application.executeExternal({
+        parsed,
+        destinationId: 'model_pricing',
+        resourceId: request.params.connectionId,
+        externalOperationId: externalOperationId(parsed),
+        invoke: () => options.modelConnections.refreshPricing(request.params.connectionId),
+        mutateAcceptedBusinessState: (connection) =>
+          options.appendAuditLog({ actorType: 'local_api', action: 'model.connection.pricing.refreshed', resourceType: 'model_connection', resourceId: connection.id, payload: { matched: connection.pricingCatalog?.prices.length ?? 0 } }),
+      });
+      return mutation.result;
+    } catch (error) {
+      return sendIntegrationError(reply, error, options.redactSensitiveText, '价格读取失败。');
+    }
+  });
+
   server.post('/api/model-connections/:connectionId/models/refresh', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: IntegrationCommandRequest<EmptyInput> }>, reply) => {
     try {
       const parsed = parseResourceCommand<EmptyInput>(application, request.body, integrationCommandTypes.modelConnectionModelsRefresh, 'provider_configuration', request.params.connectionId);
@@ -501,7 +521,7 @@ function appendZentaoAudit(options: Pick<Parameters<typeof registerIntegrationCo
 }
 
 function assertModelConnectionInput(input: SaveModelConnectionRequest): void {
-  assertAllowedKeys(input, ['name', 'templateId', 'baseUrl', 'modelsPath', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
+  assertAllowedKeys(input, ['name', 'templateId', 'baseUrl', 'modelsPath', 'pricingUrl', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
 }
 
 function assertZentaoInput(input: SaveZentaoInstanceRequest): void {

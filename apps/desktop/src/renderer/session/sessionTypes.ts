@@ -214,6 +214,8 @@ export interface NativeRuntimeDetailsSnapshot {
     contextTokens: NativeRuntimeFact<number>;
     contextWindow: NativeRuntimeFact<number>;
     cacheHitRate: NativeRuntimeFact<number>;
+    /** 原币会话估算，缺失时兼容历史美元记录。 */
+    costs?: import('@zeus/shared').EstimatedMoney[];
     apiEquivalentUsd: NativeRuntimeFact<number>;
     priceCoverage: NativeRuntimeFact<number>;
     pricingCatalogDate: NativeRuntimeFact<string>;
@@ -480,6 +482,8 @@ export interface NativeContextCompactionStatus {
 export interface NativeSessionMetricsSnapshot {
   usage: NativeUnifiedUsageSnapshot;
   cost: {
+    /** 供应商原币估算。 */
+    costs?: import('@zeus/shared').EstimatedMoney[];
     apiEquivalentUsd: number | null;
     priceCoverage: number | null;
     pricingCatalogDate: string | null;

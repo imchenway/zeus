@@ -1,3 +1,4 @@
+import { createModelPricingService } from './modelPricingService.js';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import {
@@ -11,6 +12,7 @@ import {
   normalizeStoredModelConnections,
   auditConfiguredModelReasoningLevels,
   probeConfiguredModel,
+  generateConfiguredModelText,
   syncDiscoveredModels,
   isPiThinkingLevel,
   type ConfiguredModelDefinition,
@@ -65,6 +67,10 @@ export interface ModelConnectionDiagnostic {
 }
 
 export interface ModelConnectionService {
+  /** 公开价格服务，与密钥和模型配置隔离。 */
+  pricing: ReturnType<typeof createModelPricingService>;
+  /** 手工读取价格后返回连接展示状态。 */
+  refreshPricing(id: string): Promise<ModelConnectionRecord>;
   listMetadata(): ModelConnectionRecord[];
   list(): Promise<ModelConnectionRecord[]>;
   get(id: string): Promise<ModelConnectionRecord | undefined>;
@@ -95,7 +101,14 @@ const maximumProbeModelCount = 12;
 const probeConcurrency = 3;
 
 /** 模型连接元数据进 SQLite settings，API Key 只进 SecretStore。 */
-export function createModelConnectionService(options: { settings: SettingRepository; secretStore: SecretStore; save: () => Promise<void>; now?: () => string; fetch?: typeof fetch }): ModelConnectionService {
+export function createModelConnectionService(options: {
+  settings: SettingRepository;
+  secretStore: SecretStore;
+  save: () => Promise<void>;
+  now?: () => string;
+  fetch?: typeof fetch;
+  readPricingPage?: (input: { url: string }) => Promise<string>;
+}): ModelConnectionService {
   const now = options.now ?? (() => new Date().toISOString());
   const fetcher = options.fetch ?? fetch;
 
@@ -103,10 +116,26 @@ export function createModelConnectionService(options: { settings: SettingReposit
     return normalizeStoredModelConnections(options.settings.getJson<unknown>(modelConnectionsSettingKey));
   }
 
+  /** 使用现有连接的模型能力读取价格，页面内容不进入任何用户会话。 */
+  const pricing = createModelPricingService({
+    readPricingPage: options.readPricingPage,
+    settings: options.settings,
+    connections: readStored,
+    save: options.save,
+    now,
+    async extract(connection, text, system, signal) {
+      const model = connection.models.find((candidate) => candidate.enabled);
+      const apiKey = await options.secretStore.getSecret(modelConnectionSecretAccount(connection.id));
+      if (!model || !apiKey) throw new Error('页面需要自动识别，请先启用此连接的模型并配置密钥。');
+      return generateConfiguredModelText({ connection, model, apiKey, text, system, signal });
+    },
+  });
+
   async function hydrate(records = readStored()): Promise<ModelConnectionRecord[]> {
     return Promise.all(
       records.map(async (record) => ({
         ...record,
+        pricingCatalog: pricing.read(record),
         apiKeyConfigured: Boolean(await options.secretStore.getSecret(modelConnectionSecretAccount(record.id))),
       })),
     );
@@ -147,7 +176,7 @@ export function createModelConnectionService(options: { settings: SettingReposit
     else records.push(record);
     if (apiKey) await options.secretStore.setSecret(modelConnectionSecretAccount(id), apiKey);
     await write(records);
-    return { ...record, apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured) };
+    return { ...record, apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured), pricingCatalog: pricing.read(record) };
   }
 
   async function fetchModelIds(connection: ModelConnectionRecord): Promise<string[]> {
@@ -182,6 +211,11 @@ export function createModelConnectionService(options: { settings: SettingReposit
   }
 
   return {
+    pricing,
+    async refreshPricing(id) {
+      const connection = await requireConnection(id);
+      return { ...connection, pricingCatalog: await pricing.refresh(connection) };
+    },
     listMetadata() {
       // 用量汇总只需要供应源身份，不应为展示名称触发钥匙串读取。
       return readStored();

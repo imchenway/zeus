@@ -40,6 +40,7 @@ interface GitPaths {
 
 /** Pi 在 Zeus 中交付文件和操作浏览器的宿主约定，与公共资源预览入口一致。 */
 const piConversationResourceInstructions = `在 Zeus 会话中交付或引用本地文件时，使用 Markdown 链接：[显示名称](/绝对路径/文件)。需要定位代码时可追加 :行号；路径含空格时用尖括号包住链接目标。不要只用反引号包裹路径代替可点击链接。HTML 文件同样提供文件链接，Zeus 会展示网页卡片，点击默认进入内置浏览器；代码文件点击进入源码预览。
+view_image 只用于让模型检查本地图片，不会把图片交付给用户。需要向用户展示本地图片时，必须在最终答复正文中使用 Markdown 图片语法 ![说明](/绝对路径/image.png) 明确引用；不要用“上图”“下图”等文字代替图片本身。
 用户未明确指定 Chrome 或 Edge 时，网页打开、导航和检查优先使用 Zeus 原生 zeus_browser 工具，surface 省略或使用 built_in。浏览器插件没有连接不代表 Zeus 内置浏览器不可用；不要自行改用 Chrome、系统 open 命令或外部 Playwright。用户明确选择其他浏览器时尊重该选择。`;
 
 /**

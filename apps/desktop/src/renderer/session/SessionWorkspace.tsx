@@ -3961,12 +3961,13 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const reasoningTokens = conversationUsage?.reasoningOutputTokens ?? usage?.total.reasoningOutputTokens ?? null;
   const cacheHitRate = nullableCacheHitRate(conversationUsage?.inputTokens ?? null, conversationUsage?.cachedInputTokens ?? null) ?? usage?.cacheHitRate ?? null;
   const cost = metrics?.cost ?? {
+    costs: usage?.costs,
     apiEquivalentUsd: usage?.apiEquivalentUsd ?? null,
     priceCoverage: usage?.priceCoverage ?? null,
     pricingCatalogDate: usage?.pricingCatalogDate ?? null,
     pricingSourceUrls: usage?.pricingSourceUrls ?? [],
     historyComplete: usage?.historyComplete ?? false,
-    complete: usage?.apiEquivalentUsd !== null && usage?.priceCoverage === 1 && usage?.historyComplete === true,
+    complete: Boolean(usage?.costs?.length || usage?.apiEquivalentUsd != null) && usage?.priceCoverage === 1 && usage?.historyComplete === true,
   };
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   /** 环境展示优先采用最近命令事实，不改变会话默认目录和相对文件打开语义。 */
@@ -3991,6 +3992,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       contextTokens: runtimeFact(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, props.language === 'zh-CN' ? '暂无最近请求的上下文用量。' : 'Context usage for the latest request is unavailable.'),
       contextWindow: runtimeFact(latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, props.language === 'zh-CN' ? '尚未读取到模型可处理的最大长度。' : 'The model’s maximum context length is unavailable.'),
       cacheHitRate: runtimeFact(cacheHitRate, props.language === 'zh-CN' ? '暂无缓存使用比例。' : 'The cache usage ratio is unavailable.'),
+      costs: cost.costs,
       apiEquivalentUsd: runtimeFact(cost.apiEquivalentUsd, props.language === 'zh-CN' ? '当前模型没有可用于估算费用的价格。' : 'No price is available to estimate this model’s cost.'),
       priceCoverage: runtimeFact(cost.priceCoverage, props.language === 'zh-CN' ? '尚未确定有多少用量可估算费用。' : 'The amount of usage covered by pricing is unknown.'),
       pricingCatalogDate: runtimeFact(cost.pricingCatalogDate, props.language === 'zh-CN' ? '暂无价格更新时间。' : 'The pricing update date is unavailable.'),

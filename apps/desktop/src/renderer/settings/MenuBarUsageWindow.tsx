@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { CodexOfficialRateWindow, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
+import type { CodexOfficialRateWindow, UsageModelCostBreakdown, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
@@ -30,6 +30,9 @@ type ChartDimension = 'tokens' | 'cost';
 
 /** 柱图槽位：日期、数值与完整性，数值为 null 表示当天没有可用数据。 */
 type DailySlot = { date: string; value: number | null; complete: boolean };
+
+/** 指标展示值可选携带模型费用明细，非费用指标不创建说明入口。 */
+type MetricValue = { label: string; accessibleLabel?: string; value: string; detailLabel?: string; costBreakdown?: UsageModelCostBreakdown[] };
 
 const copy = {
   'zh-CN': {
@@ -62,6 +65,19 @@ const copy = {
     sevenDayConversations: '7 日会话数',
     sevenDayTurns: '7 日轮次数',
     averageTurnCost: '平均每轮费用',
+    todayCostDetail: '今日模型费用明细',
+    sevenDayCostDetail: '近 7 日模型费用明细',
+    averageTurnCostDetail: '近 7 日平均每轮费用明细',
+    costDetailHint: 'Token 单价按每百万计',
+    showCostDetail: '查看模型、单价和 Token 明细',
+    model: '模型',
+    unitPrice: '单价',
+    consumedTokens: '消耗 Token',
+    inputPrice: '输入',
+    cachedInputPrice: '缓存读',
+    cacheWritePrice: '缓存写',
+    outputPrice: '输出',
+    perRequestPrice: '每次请求',
     overview: '用量概览',
     metrics: '指标',
     dimension: '统计维度',
@@ -118,6 +134,19 @@ const copy = {
     sevenDayConversations: 'Sessions · 7 days',
     sevenDayTurns: 'Turns · 7 days',
     averageTurnCost: 'Avg cost per turn',
+    todayCostDetail: "Today's model cost details",
+    sevenDayCostDetail: 'Model cost details · 7 days',
+    averageTurnCostDetail: 'Average cost per turn details · 7 days',
+    costDetailHint: 'Token rates are per million',
+    showCostDetail: 'Show model, rate, and token details',
+    model: 'Model',
+    unitPrice: 'Rate',
+    consumedTokens: 'Tokens',
+    inputPrice: 'Input',
+    cachedInputPrice: 'Cache read',
+    cacheWritePrice: 'Cache write',
+    outputPrice: 'Output',
+    perRequestPrice: 'Per request',
     overview: 'Usage overview',
     metrics: 'Metrics',
     dimension: 'Metric dimension',
@@ -253,8 +282,8 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     schedule();
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      /** 指标下拉是原生 popover，Escape 交给轻量关闭处理，不关闭整个浮窗。 */
-      if (document.querySelector('.menu-bar-usage-metrics-menu:popover-open')) return;
+      /** 页面内弹层打开时，Escape 只关闭当前弹层，不关闭整个菜单栏浮窗。 */
+      if (document.querySelector('.menu-bar-usage-metrics-menu:popover-open, .menu-bar-usage-cost-detail:popover-open')) return;
       event.preventDefault();
       void window.zeus?.hideMenuBarUsage?.();
     };
@@ -581,7 +610,7 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
         {metricOrder
           .filter((id) => visibleMetrics.includes(id))
           .map((id) => (
-            <Metric key={id} label={metrics[id].label} accessibleLabel={metrics[id].accessibleLabel} value={metrics[id].value} />
+            <Metric key={id} {...metrics[id]} language={language} />
           ))}
       </dl>
       {provider.sevenDayLocal.hasBackfilledPricing && <p className="menu-bar-usage-pricing-note">{language === 'zh-CN' ? '含历史补算：按补价时价格估算' : 'Includes historical usage estimated at backfill-time prices'}</p>}
@@ -590,7 +619,7 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
 }
 
 /** 指标取值与文案：多选面板和网格共用一份结果，标签与数值始终对应。 */
-function readMetricValues(provider: UsageProviderSummary, language: Language): Record<MetricId, { label: string; accessibleLabel?: string; value: string }> {
+function readMetricValues(provider: UsageProviderSummary, language: Language): Record<MetricId, MetricValue> {
   const text = copy[language];
   const cacheAvailable = provider.cacheUsageAvailable ?? (provider.providerId === 'codex' || provider.sevenDayLocal.cachedInputTokens > 0 || provider.sevenDayLocal.cacheWriteInputTokens > 0);
   const sevenDayLocalComplete = provider.sevenDayLocalComplete === true;
@@ -601,14 +630,30 @@ function readMetricValues(provider: UsageProviderSummary, language: Language): R
       : '—';
   return {
     todayTokens: { label: text.today, value: formatIncompleteTokens(provider.todayLocal.totalTokens, provider.todayLocalComplete, language) },
-    todayCost: { label: text.todayCost, value: provider.todayLocalComplete === true ? formatUsd(provider.todayLocal.apiEquivalentUsd, provider.todayLocal.priceCoverage, language, text.noPrice) : '—' },
+    todayCost: {
+      label: text.todayCost,
+      value: provider.todayLocalComplete === true ? formatUsd(provider.todayLocal.apiEquivalentUsd, provider.todayLocal.priceCoverage, language, text.noPrice) : '—',
+      detailLabel: text.todayCostDetail,
+      costBreakdown: provider.todayCostBreakdown ?? [],
+    },
     sevenDayTokens: { label: text.sevenDays, value: formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language) },
-    sevenDayCost: { label: text.costShort, accessibleLabel: text.cost, value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.apiEquivalentUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—' },
+    sevenDayCost: {
+      label: text.costShort,
+      accessibleLabel: text.cost,
+      value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.apiEquivalentUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—',
+      detailLabel: text.sevenDayCostDetail,
+      costBreakdown: provider.sevenDayCostBreakdown ?? [],
+    },
     cacheHit: { label: text.cache, value: !sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported },
     cacheSavings: { label: text.cacheSavings, value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.cacheSavingsUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—' },
     sevenDayConversations: { label: text.sevenDayConversations, value: formatIncompleteCount(provider.sevenDayLocal.conversationCount, provider.sevenDayLocalComplete, language) },
     sevenDayTurns: { label: text.sevenDayTurns, value: formatIncompleteCount(provider.sevenDayLocal.turnCount, provider.sevenDayLocalComplete, language) },
-    averageTurnCost: { label: text.averageTurnCost, value: sevenDayLocalComplete ? averageTurnCost : '—' },
+    averageTurnCost: {
+      label: text.averageTurnCost,
+      value: sevenDayLocalComplete ? averageTurnCost : '—',
+      detailLabel: text.averageTurnCostDetail,
+      costBreakdown: provider.sevenDayCostBreakdown ?? [],
+    },
   };
 }
 
@@ -770,14 +815,189 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   );
 }
 
-/** 菜单栏指标只显示名称和数值，减少重复说明占用的空间。 */
-function Metric(props: { label: string; accessibleLabel?: string; value: string }) {
+/** 菜单栏费用指标在名称右侧提供可点击的真实账本明细。 */
+function Metric(props: MetricValue & { language: Language }) {
   return (
     <div>
-      <dt aria-label={props.accessibleLabel}>{props.label}</dt>
+      <dt>
+        <span aria-label={props.accessibleLabel}>{props.label}</span>
+        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} /> : null}
+      </dt>
       <dd>{props.value}</dd>
     </div>
   );
+}
+
+/** 费用明细浮层与感叹号之间保留的间距。 */
+const costDetailPopoverGap = 8;
+
+/** 费用明细浮层距离可视区域边缘的最小留白。 */
+const costDetailViewportInset = 12;
+
+/** 费用说明使用原生顶层浮层，并依据可视区域剩余空间左右翻转。 */
+function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language }) {
+  const text = copy[props.language];
+  /** 每个指标独立关联触发按钮和浮层，保证多个费用指标同时存在时不串位。 */
+  const popoverId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(false);
+  const hoverCloseTimerRef = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  /** 使用浮层实际尺寸判断：默认放右侧，右侧放不下时翻到左侧，并约束在可视区域内。 */
+  const positionPopover = useCallback(() => {
+    const trigger = triggerRef.current;
+    const popover = popoverRef.current;
+    if (!trigger || !popover?.matches(':popover-open')) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const rightSpace = window.innerWidth - costDetailViewportInset - triggerRect.right;
+    const placeOnLeft = rightSpace < popoverRect.width + costDetailPopoverGap;
+    const preferredLeft = placeOnLeft ? triggerRect.left - costDetailPopoverGap - popoverRect.width : triggerRect.right + costDetailPopoverGap;
+    const maximumLeft = Math.max(costDetailViewportInset, window.innerWidth - costDetailViewportInset - popoverRect.width);
+    const preferredTop = triggerRect.top + (triggerRect.height - popoverRect.height) / 2;
+    const maximumTop = Math.max(costDetailViewportInset, window.innerHeight - costDetailViewportInset - popoverRect.height);
+    const left = Math.min(Math.max(preferredLeft, costDetailViewportInset), maximumLeft);
+    const top = Math.min(Math.max(preferredTop, costDetailViewportInset), maximumTop);
+    popover.style.setProperty('--usage-cost-detail-left', `${Math.round(left)}px`);
+    popover.style.setProperty('--usage-cost-detail-top', `${Math.round(top)}px`);
+    popover.dataset.side = placeOnLeft ? 'left' : 'right';
+  }, []);
+
+  /** 取消延迟关闭，让鼠标可以跨过触发器与浮层之间的间距。 */
+  const clearHoverClose = () => {
+    if (hoverCloseTimerRef.current === null) return;
+    window.clearTimeout(hoverCloseTimerRef.current);
+    hoverCloseTimerRef.current = null;
+  };
+  /** 悬停、聚焦或点击时打开同一个原生浮层。 */
+  const showPopover = () => {
+    clearHoverClose();
+    if (!popoverRef.current?.matches(':popover-open')) popoverRef.current?.showPopover();
+  };
+  /** 未被点击固定时，指针离开触发器和浮层后延迟收起。 */
+  const scheduleHoverClose = () => {
+    clearHoverClose();
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      hoverCloseTimerRef.current = null;
+      if (pinnedRef.current || triggerRef.current?.matches(':hover') || popoverRef.current?.matches(':hover')) return;
+      if (popoverRef.current?.matches(':popover-open')) popoverRef.current.hidePopover();
+    }, 120);
+  };
+  /** 点击切换固定状态；固定后移开鼠标仍保持展示。 */
+  const togglePinned = () => {
+    if (pinnedRef.current) {
+      pinnedRef.current = false;
+      if (popoverRef.current?.matches(':popover-open')) popoverRef.current.hidePopover();
+      return;
+    }
+    pinnedRef.current = true;
+    showPopover();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    /** 窗口变化、滚动或内容尺寸变化后重新贴住触发器。 */
+    const syncPosition = () => positionPopover();
+    const observer = new ResizeObserver(syncPosition);
+    if (triggerRef.current) observer.observe(triggerRef.current);
+    if (popoverRef.current) observer.observe(popoverRef.current);
+    window.addEventListener('resize', syncPosition);
+    window.addEventListener('scroll', syncPosition, true);
+    positionPopover();
+    return () => {
+      observer.disconnect();
+      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+      window.removeEventListener('resize', syncPosition);
+      window.removeEventListener('scroll', syncPosition, true);
+    };
+  }, [open, positionPopover]);
+
+  return (
+    <div className="menu-bar-usage-cost-detail-control" onPointerEnter={showPopover} onPointerLeave={scheduleHoverClose}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="menu-bar-usage-cost-detail-trigger"
+        aria-label={`${props.label} · ${text.showCostDetail}`}
+        aria-controls={popoverId}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={togglePinned}
+        onFocus={showPopover}
+        onBlur={scheduleHoverClose}
+      >
+        <span aria-hidden="true">!</span>
+      </button>
+      <div
+        ref={popoverRef}
+        id={popoverId}
+        popover="auto"
+        className="menu-bar-usage-cost-detail"
+        role="dialog"
+        aria-label={props.label}
+        onPointerEnter={clearHoverClose}
+        onPointerLeave={scheduleHoverClose}
+        onToggle={(event) => {
+          const nextOpen = event.currentTarget.matches(':popover-open');
+          if (!nextOpen) pinnedRef.current = false;
+          setOpen(nextOpen);
+          if (nextOpen) positionPopover();
+        }}
+      >
+        <strong>{props.label}</strong>
+        <small>{text.costDetailHint}</small>
+        <div className="menu-bar-usage-cost-table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">{text.model}</th>
+                <th scope="col">{text.unitPrice}</th>
+                <th scope="col">{text.consumedTokens}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.entries.map((entry, index) => (
+                <tr key={`${entry.model}-${index}`}>
+                  <th scope="row">{entry.model}</th>
+                  <td>
+                    {formatModelRate(entry, props.language).map((line) => (
+                      <span key={line}>{line}</span>
+                    ))}
+                  </td>
+                  <td>{formatTokens(entry.usage.totalTokens, props.language)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 单价单元格完整列出实际使用过的计价类别，空费率明确显示暂无价格。 */
+function formatModelRate(entry: UsageModelCostBreakdown, language: Language): string[] {
+  const text = copy[language];
+  const rate = entry.rate;
+  if (!rate) return [text.noPrice];
+  if (rate.perRequest !== null) return [`${text.perRequestPrice} ${formatRateAmount(rate.perRequest, rate.currency, language)}`];
+  if (!rate.perMillion) return [text.noPrice];
+  /** 缓存类别只在单价已知时显示，避免把未知误写成零。 */
+  const lines = [`${text.inputPrice} ${formatRateAmount(rate.perMillion.input, rate.currency, language)}`];
+  if (rate.perMillion.cachedInput !== null) lines.push(`${text.cachedInputPrice} ${formatRateAmount(rate.perMillion.cachedInput, rate.currency, language)}`);
+  if (rate.perMillion.cacheWrite !== null) lines.push(`${text.cacheWritePrice} ${formatRateAmount(rate.perMillion.cacheWrite, rate.currency, language)}`);
+  lines.push(`${text.outputPrice} ${formatRateAmount(rate.perMillion.output, rate.currency, language)}`);
+  return lines;
+}
+
+/** 费率保留原币种；美元与人民币使用熟悉符号，其他单位显示原始代码。 */
+function formatRateAmount(value: number, currency: string, language: Language): string {
+  const amount = new Intl.NumberFormat(language, { maximumFractionDigits: 6 }).format(value);
+  if (currency === 'USD') return `$${amount}`;
+  if (currency === 'CNY') return `¥${amount}`;
+  return `${currency} ${amount}`;
 }
 
 function UsageSkeleton(props: { label: string }) {
