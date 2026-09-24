@@ -734,6 +734,63 @@ body:has(.menu-bar-usage-root),
   font-weight: 550;
 }
 
+/* 原生下拉框保留系统交互，仅把入口收敛为与“指标”一致的胶囊样式。 */
+.menu-bar-usage-source-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--usage-muted);
+}
+
+/* 自绘箭头避免系统默认外观破坏浮窗的统一视觉。 */
+.menu-bar-usage-source-select::after {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 10px;
+  inline-size: 6px;
+  block-size: 6px;
+  border-inline-end: 1.5px solid currentcolor;
+  border-block-end: 1.5px solid currentcolor;
+  content: '';
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.menu-bar-usage-source-select select {
+  inline-size: 124px;
+  min-block-size: 26px;
+  padding: 2px 26px 2px 9px;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-pill, 999px);
+  appearance: none;
+  background: var(--usage-panel-strong);
+  color: var(--usage-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+/* 悬浮态沿用现有品牌浅底，不额外引入新的颜色体系。 */
+.menu-bar-usage-source-select:hover select {
+  border-color: var(--usage-accent-border);
+  background: var(--zeus-brand-hover);
+}
+
+/* 焦点环与浮窗内其他控件一致，深浅色都由品牌色保证可见。 */
+.menu-bar-usage-source-select select:focus-visible {
+  outline: 2px solid var(--usage-accent);
+  outline-offset: 1px;
+}
+
+.menu-bar-usage-source-select:focus-within {
+  color: var(--usage-accent-strong);
+}
+
 .menu-bar-usage-source-info {
   display: inline-grid;
   place-items: center;
@@ -1463,8 +1520,9 @@ body:has(.menu-bar-usage-root),
   pointer-events: none;
 }
 
-.menu-bar-usage-chart-source:hover .menu-bar-usage-source-hint,
-.menu-bar-usage-chart-source:focus-within .menu-bar-usage-source-hint {
+/* 说明气泡只由信息图标触发，操作下拉框时不遮挡图表。 */
+.menu-bar-usage-source-info:hover .menu-bar-usage-source-hint,
+.menu-bar-usage-source-info:focus .menu-bar-usage-source-hint {
   opacity: 1;
   visibility: visible;
 }
