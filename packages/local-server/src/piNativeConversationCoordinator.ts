@@ -126,6 +126,8 @@ interface PiRunContext {
     firstVisibleOutputAt: string | null;
     firstTextOutputAt: string | null;
     hasNonTextOutput: boolean;
+    /** 当前 Assistant 响应已经收到的可见文字，增量与完成事件共用同一正文身份。 */
+    textContent: string;
   } | null;
   /** 当前 Assistant 响应的稳定展示阶段。 */
   currentStageId: string | null;
@@ -233,6 +235,13 @@ const piHistoryCompactionInstructions = '只压缩 Zeus 导入的不可信既有
 
 /** Pi SDK 会话的 Zeus 宿主：会话、消息、工具和审批都以 Zeus 为权威状态。 */
 export function createPiNativeConversationCoordinator(options: CreatePiNativeConversationCoordinatorOptions) {
+  /** Pi 的实时增量与完成消息共用同一来源说明，避免显示阶段切换时身份漂移。 */
+  function piProviderPresentation(run: PiRunContext) {
+    /** 来源名称只用于展示，稳定关联仍使用 sourceId 与 modelId。 */
+    const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? 'Pi';
+    return { agentKind: 'pi', modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
+  }
+
   /** 每次真实模型响应开始时锁定目录；缺价刷新在后台进行。 */
   function captureRequestPrice(run: PiRunContext): ModelPricingCatalog | null {
     const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
@@ -1578,6 +1587,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           firstVisibleOutputAt: null,
           firstTextOutputAt: null,
           hasNonTextOutput: false,
+          textContent: '',
         };
       }
     }
@@ -1593,12 +1603,58 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           firstVisibleOutputAt: null,
           firstTextOutputAt: null,
           hasNonTextOutput: false,
+          textContent: '',
         };
         if (messageEvent.type === 'thinking_delta' && typeof messageEvent.delta === 'string' && messageEvent.delta.trim()) {
           pending.firstVisibleOutputAt ??= event.createdAt;
-        } else if (messageEvent.type === 'text_delta' && typeof messageEvent.delta === 'string' && messageEvent.delta.trim()) {
-          pending.firstVisibleOutputAt ??= event.createdAt;
-          pending.firstTextOutputAt ??= event.createdAt;
+        } else if (messageEvent.type === 'text_delta' && typeof messageEvent.delta === 'string' && messageEvent.delta.length > 0) {
+          pending.textContent += messageEvent.delta;
+          if (messageEvent.delta.trim()) {
+            pending.firstVisibleOutputAt ??= event.createdAt;
+            pending.firstTextOutputAt ??= event.createdAt;
+          }
+          /** 文字一到达就写入 Provider 条目；工具交接只决定最终 phase，不再阻塞正文显示。 */
+          if (segment && protocolFamily && run.currentStageId && pending.textContent.trim()) {
+            /** 进行中消息先按沟通内容登记，message_end 会在同一身份上补齐最终用途和资源。 */
+            const presentation = piProviderPresentation(run);
+            /** 实时正文只携带显示所需字段，完整用量与工具内容仍走各自存储。 */
+            const itemPayload = { ...presentation, protocolFamily, stageId: run.currentStageId };
+            /** 同一 stageId 是开始、增量和完成事件的稳定条目身份。 */
+            const item = options.providerItems.upsertProgress({
+              conversationId: run.conversationId,
+              turnId: run.turnId,
+              providerThreadId: event.nativeSessionId ?? run.providerThreadId,
+              providerTurnId: run.providerTurnId,
+              providerItemId: run.currentStageId,
+              itemType: 'agentMessage',
+              phase: 'prework',
+              payload: itemPayload,
+              textContent: pending.textContent,
+              startedAt: pending.startedAt,
+              updatedAt: event.createdAt,
+              agentKind: 'pi',
+              nativeItemId: run.currentStageId,
+            });
+            /** 终态事件统一持久化；分片只更新仓储并广播，避免按 Token 频率反复刷盘。 */
+            publish('conversation.item.delta', run.conversationId, {
+              turnId: run.providerTurnId,
+              itemId: run.currentStageId,
+              itemType: 'agentMessage',
+              itemPayload,
+              protocolFamily,
+              stageId: run.currentStageId,
+              status: 'in_progress',
+              phase: 'prework',
+              textContent: pending.textContent,
+              transcript: options.transcripts.envelopeForSource({
+                conversationId: run.conversationId,
+                sourceDomain: 'provider_item',
+                sourceScope: item.providerThreadId,
+                sourceId: item.providerItemId,
+                facet: 'content',
+              }),
+            });
+          }
         } else if (messageEvent.type === 'toolcall_start' || messageEvent.type === 'toolcall_delta' || messageEvent.type === 'toolcall_end') {
           pending.hasNonTextOutput = true;
         }
@@ -1614,6 +1670,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const failed = stopReason === 'error' || stopReason === 'aborted';
       const messageStageId = run.currentStageId ?? piAssistantStageId(message, event);
       const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
+      /** 完成事件可能省略已经流过的文字，保留同一请求的累计正文作为可靠后备。 */
+      const pendingModelRequest = run.pendingModelRequest;
       const requestUsage = readPiUsage(message.usage);
       /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
       const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
@@ -1631,11 +1689,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         addUsage(run.usage, requestUsage);
       }
       /** 缺少请求开始事件时不套用结束后才获取的费率。 */
-      const catalog = run.pendingModelRequest?.pricingCatalog ?? null;
+      const catalog = pendingModelRequest?.pricingCatalog ?? null;
       const requestEstimate =
         recordedRequest?.estimate ??
         (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && price.perRequest !== null)
-          ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, run.pendingModelRequest?.startedAt ?? event.createdAt)
+          ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, pendingModelRequest?.startedAt ?? event.createdAt)
           : unavailablePriceEstimate(run.modelId, 0));
       if (!recordedRequest) run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
       options.usageLedger.upsert({
@@ -1661,7 +1719,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
         if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
         const usageComplete = Object.values(rawUsage).every((value) => value !== null);
-        const pending = run.pendingModelRequest;
+        const pending = pendingModelRequest;
         const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
         const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
         const measurementComplete =
@@ -1692,7 +1750,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
         run.modelRequestCount += 1;
       }
-      run.pendingModelRequest = null;
       // 接口实际返回的图片沿用工具图片存储；无需按模型名称猜测生图能力。
       const imageProjections: string[] = [];
       for (const [index, part] of content.entries()) {
@@ -1708,21 +1765,22 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
         imageProjections.push(image.projectionText);
       }
-      const text = [messageText(message), ...imageProjections].filter(Boolean).join('\n\n');
+      const text = [messageText(message) || pendingModelRequest?.textContent.trim() || '', ...imageProjections].filter(Boolean).join('\n\n');
       const hasToolCall = content.some((part) => part.type === 'toolCall' || part.type === 'tool_use');
       const isToolUseStage = stopReason === 'toolUse' || stopReason === 'tool_use' || hasToolCall;
-      const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? 'Pi';
-      const providerPresentation = { agentKind: 'pi', modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
+      const providerPresentation = piProviderPresentation(run);
       const phase = isToolUseStage ? ('prework' as const) : ('final_answer' as const);
       const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
       let attention: ReturnType<ConversationRepository['markAttentionUnread']> | null = null;
       /** 与完成消息同时保存并发出，避免首屏链接缺资源、刷新后才可预览。 */
       let itemResources: ConversationResource[] = [];
-      if (text && !failed) {
+      /** 增量和终态必须更新同一条目；失败时也要结束已经显示的部分正文。 */
+      let messageItem: ZeusConversationItemRecord | null = null;
+      if (text) {
         const itemInput = {
           conversationId: run.conversationId,
           turnId: run.turnId,
-          providerThreadId: event.nativeSessionId ?? '',
+          providerThreadId: event.nativeSessionId ?? run.providerThreadId,
           providerTurnId: run.providerTurnId,
           providerItemId: messageStageId,
           itemType: 'agentMessage' as const,
@@ -1733,12 +1791,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           agentKind: 'pi' as const,
           nativeItemId: messageStageId,
         };
+        /** 部分正文失败后仍保留原文，但不能把它写成已确认的模型历史。 */
+        messageItem = options.providerItems.upsertCompleted({ ...itemInput, status: failed ? 'failed' : 'completed', completedAt: event.createdAt });
+      }
+      if (messageItem && !failed) {
         /** 当前执行根决定相对文件归属，不能回退到项目主目录。 */
         const context = contexts.get(run.providerThreadId);
         if (!context) throw piError('ZEUS_PI_CONTEXT_NOT_FOUND', 'Pi 消息缺少执行工作目录，无法登记文件预览。');
         /** 已持久化的消息身份也是文件资源的归属身份。 */
-        const item = options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
-        itemResources = options.syncItemResources(item, context.cwd);
+        itemResources = options.syncItemResources(messageItem, context.cwd);
         options.conversations.appendMessage({
           conversationId: run.conversationId,
           role: 'assistant',
@@ -1746,7 +1807,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           source: 'pi_sdk',
           metadata: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
           createdAt: event.createdAt,
-          providerThreadId: event.nativeSessionId ?? undefined,
+          providerThreadId: event.nativeSessionId ?? run.providerThreadId,
           providerTurnId: run.providerTurnId,
           providerItemId: messageStageId,
         });
@@ -1780,7 +1841,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           attentionRevision: attention.attentionRevision,
         });
       }
-      if (text && !failed) {
+      if (messageItem) {
         publish('conversation.item.completed', run.conversationId, {
           turnId: run.providerTurnId,
           itemId: messageStageId,
@@ -1788,12 +1849,21 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           itemPayload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
           protocolFamily: messageProtocolFamily,
           stageId: messageStageId,
-          status: 'completed',
+          status: failed ? 'failed' : 'completed',
           phase,
           textContent: text,
           itemResources,
+          transcript: options.transcripts.envelopeForSource({
+            conversationId: run.conversationId,
+            sourceDomain: 'provider_item',
+            sourceScope: messageItem.providerThreadId,
+            sourceId: messageItem.providerItemId,
+            facet: 'content',
+          }),
         });
       }
+      /** 本次响应已经以终态覆盖同一条目，下一次模型请求重新建立缓冲。 */
+      run.pendingModelRequest = null;
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';

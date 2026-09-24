@@ -9663,7 +9663,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding-block-end: 6px;
 }
 
-/* 活动轮次把最新进展和当前动作固定在过程入口上方，历史操作默认收起。 */
+/* 活动轮次把当前或最近动作固定在过程入口上方，助手沟通继续按原顺序显示。 */
 .session-codex-parity-v1 .session-turn-process-preview {
   display: grid;
   gap: 6px;

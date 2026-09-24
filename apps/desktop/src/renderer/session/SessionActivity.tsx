@@ -196,7 +196,7 @@ export function isLiveActivityItem(item: Pick<NativeSessionItemBuffer, 'status'>
   return item.status !== 'completed' && item.status !== 'failed';
 }
 
-/** 简洁活动行只在进行中播报；完成后的整理记录作为普通历史文字呈现。 */
+/** 简洁活动行显示当前或最近动作；只有进行中的变化需要主动播报。 */
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
   // 状态播报跟随真实条目，回看已完成记录时不重复宣告进度。
   const active = isLiveActivityItem(props.item);
