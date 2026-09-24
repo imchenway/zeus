@@ -1679,7 +1679,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           nativeItemId: messageStageId,
         };
         /** 当前执行根决定相对文件归属，不能回退到项目主目录。 */
-        const context = contexts.get(run.conversationId);
+        const context = contexts.get(run.providerThreadId);
         if (!context) throw piError('ZEUS_PI_CONTEXT_NOT_FOUND', 'Pi 消息缺少执行工作目录，无法登记文件预览。');
         /** 已持久化的消息身份也是文件资源的归属身份。 */
         const item = options.providerItems.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
