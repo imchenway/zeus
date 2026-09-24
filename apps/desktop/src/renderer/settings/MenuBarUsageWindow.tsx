@@ -28,6 +28,9 @@ type MetricId = (typeof metricOrder)[number];
 /** 柱图统计维度；费用只能来自本地账本估算，官方账户历史没有模型维度。 */
 type ChartDimension = 'tokens' | 'cost';
 
+/** Codex 柱图统计来源；其他供应商始终使用 Zeus 本地账本。 */
+type ChartSource = 'local' | 'account';
+
 /** 柱图槽位：日期、数值与完整性，数值为 null 表示当天没有可用数据。 */
 type DailySlot = { date: string; value: number | null; complete: boolean };
 
@@ -83,11 +86,14 @@ const copy = {
     dimension: '统计维度',
     dimensionTokens: 'Token',
     dimensionCost: '费用',
+    statisticsSource: '统计来源',
+    zeusLocalUsage: 'Zeus 本地统计',
+    zeusLocalUsageHint: '只统计在 Zeus 中产生的用量；费用由本地账本按模型单价估算。',
     costEstimateHint: '费用由 Zeus 本地账本按模型单价估算，只统计已定价的轮次；Codex 官方账户在其它客户端的用量不在此列。',
     noPrice: '暂无价格',
     recentUsage: '每日 Token',
-    accountUsage: 'Codex 账户',
-    accountUsageHint: '历史日期使用 Codex 账户统计；当日 Token 使用 Zeus 本地消耗。近 7 日为图中用量合计。',
+    accountUsage: 'Codex 账户统计',
+    accountUsageHint: '显示 Codex 账户在所有客户端的每日 Token；Codex 官方未提供每日费用。',
     insufficientHistory: '用量积累后显示趋势',
     missingDay: '暂无数据',
     fullStatistics: '用量详情',
@@ -152,11 +158,14 @@ const copy = {
     dimension: 'Metric dimension',
     dimensionTokens: 'Tokens',
     dimensionCost: 'Cost',
+    statisticsSource: 'Statistics source',
+    zeusLocalUsage: 'Zeus local stats',
+    zeusLocalUsageHint: 'Includes usage generated in Zeus only; cost is estimated from the local ledger using model rates.',
     costEstimateHint: 'Cost is estimated from the local Zeus ledger using model rates and covers priced turns only; usage the Codex account records on other clients is not included.',
     noPrice: 'No pricing',
     recentUsage: 'Daily tokens',
-    accountUsage: 'Codex account',
-    accountUsageHint: 'Past days use Codex account usage; today uses local Zeus consumption. The 7-day total sums the chart.',
+    accountUsage: 'Codex account stats',
+    accountUsageHint: 'Shows daily tokens across all clients. Codex does not provide daily account cost.',
     insufficientHistory: 'A trend appears after usage is recorded',
     missingDay: 'No data',
     fullStatistics: 'Usage details',
@@ -560,7 +569,7 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
 
       <UsageOverview provider={props.provider} language={props.language} />
 
-      <DailyBars provider={props.provider} language={props.language} />
+      <DailyBars key={props.provider.providerId} provider={props.provider} language={props.language} />
     </article>
   );
 }
@@ -709,21 +718,25 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   );
 }
 
-/** Codex 历史使用账户数据，当天使用本地消耗；其他供应商使用本地日用量。 */
+/** Codex 可切换本地或账户来源；其他供应商固定使用本地日用量。 */
 function DailyBars(props: { provider: UsageProviderSummary; language: Language }) {
-  /** Codex 图表明确标注跨来源口径，当天仍与顶部今日指标一致。 */
+  /** Codex 才显示来源选择，首次打开固定使用 Zeus 本地统计。 */
   const text = copy[props.language];
-  const accountUsage = props.provider.providerId === 'codex';
-  const [dimension, setDimension] = useState<ChartDimension>(readStoredChartDimension);
+  const sourceSelectable = props.provider.providerId === 'codex';
+  const [source, setSource] = useState<ChartSource>('local');
+  /** 本地维度单独保存；切到账户来源时不丢失用户之前选择的费用维度。 */
+  const [localDimension, setLocalDimension] = useState<ChartDimension>(readStoredChartDimension);
+  /** Codex 账户接口只返回 Token，不能把本地费用冒充为账户费用。 */
+  const accountSource = sourceSelectable && source === 'account';
+  const dimension: ChartDimension = accountSource ? 'tokens' : localDimension;
   /** 费用维度只来自本地账本，官方账户历史没有模型维度，无法换算金额。 */
   const costDimension = dimension === 'cost';
-  const label = costDimension ? text.cost : accountUsage ? text.accountUsage : text.recentUsage;
+  const label = costDimension ? text.cost : accountSource ? text.accountUsage : sourceSelectable ? text.zeusLocalUsage : text.recentUsage;
   /** 图注口径随维度切换，避免两种数据源被当成同一份统计。 */
-  const sourceHint = costDimension ? text.costEstimateHint : text.accountUsageHint;
-  const showSourceHint = costDimension || accountUsage;
+  const sourceHint = accountSource ? text.accountUsageHint : sourceSelectable ? text.zeusLocalUsageHint : costDimension ? text.costEstimateHint : null;
   /** 维度偏好写入本地存储，重开浮窗保持一致。 */
   const selectDimension = (next: ChartDimension) => {
-    setDimension(next);
+    setLocalDimension(next);
     try {
       localStorage.setItem(chartDimensionStorageKey, next);
     } catch {
@@ -732,14 +745,14 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   };
   /** 费用维度依赖本地账本；没有本地记录时不再画一排空柱。 */
   const hasLocalHistory = props.provider.dailyLocal.length > 0 || props.provider.collectionStartedAt !== null;
-  if ((costDimension || !accountUsage) && !hasLocalHistory)
+  if (!sourceSelectable && !hasLocalHistory)
     return (
       <div className="menu-bar-usage-chart-empty">
         <small>{text.insufficientHistory}</small>
       </div>
     );
   /** 补齐近七日日期；开始记录之前保留缺失状态。 */
-  const slots = buildDailySlots(props.provider, dimension);
+  const slots = buildDailySlots(props.provider, dimension, accountSource ? 'account' : 'local');
   const maximum = Math.max(...slots.flatMap((slot) => (slot.value && slot.value > 0 ? [slot.value] : [])), 1);
   /** 按实际展示的七根柱汇总；缺失日期或当天尚不完整时标明已知下限。 */
   const sevenDayTotal = slots.reduce((sum, slot) => sum + (slot.value ?? 0), 0);
@@ -749,7 +762,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
         slots.every((slot) => slot.complete),
         props.language,
       )
-    : accountUsage
+    : accountSource
       ? formatIncompleteTokens(
           sevenDayTotal,
           slots.every((slot) => slot.complete),
@@ -760,8 +773,18 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
     <figure className="menu-bar-usage-bars" aria-label={`${providerDisplayName(props.provider)} ${label}`}>
       <figcaption>
         <span className="menu-bar-usage-chart-source">
-          {label}
-          {showSourceHint && (
+          {sourceSelectable ? (
+            <label className="menu-bar-usage-source-select">
+              <span className="menu-bar-usage-sr-only">{text.statisticsSource}</span>
+              <select aria-label={text.statisticsSource} value={source} onChange={(event) => setSource(event.currentTarget.value === 'account' ? 'account' : 'local')}>
+                <option value="local">{text.zeusLocalUsage}</option>
+                <option value="account">{text.accountUsage}</option>
+              </select>
+            </label>
+          ) : (
+            label
+          )}
+          {sourceHint && (
             <span className="menu-bar-usage-source-info" role="img" tabIndex={0} aria-label={sourceHint}>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <circle cx="8" cy="8" r="6" />
@@ -774,14 +797,16 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
             </span>
           )}
         </span>
-        <span className="menu-bar-usage-dimension" role="group" aria-label={text.dimension}>
-          <button type="button" aria-pressed={!costDimension} onClick={() => selectDimension('tokens')}>
-            {text.dimensionTokens}
-          </button>
-          <button type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
-            {text.dimensionCost}
-          </button>
-        </span>
+        {!accountSource ? (
+          <span className="menu-bar-usage-dimension" role="group" aria-label={text.dimension}>
+            <button type="button" aria-pressed={!costDimension} onClick={() => selectDimension('tokens')}>
+              {text.dimensionTokens}
+            </button>
+            <button type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
+              {text.dimensionCost}
+            </button>
+          </span>
+        ) : null}
         <dl>
           <div>
             <dt>{text.sevenDaysSummary}</dt>
@@ -1038,10 +1063,10 @@ function providerDisplayName(provider: UsageProviderSummary, compact = false): s
   return `${name.slice(0, 12)}…${name.slice(-8)}`;
 }
 
-/** Codex 只替换当天账户数据，历史缺失不以本地记录或零填充。 */
-function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimension): DailySlot[] {
+/** 账户数据保持官方原貌；缺失日期不以本地记录或零填充。 */
+function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimension, source: ChartSource): DailySlot[] {
   /** 账户图使用官方历史；费用维度与普通供应商沿用本地日账本。 */
-  const accountUsage = provider.providerId === 'codex' && dimension === 'tokens';
+  const accountUsage = provider.providerId === 'codex' && source === 'account';
   const buckets = accountUsage ? (provider.dailyAccount ?? []) : provider.dailyLocal.map((day) => ({ date: day.date, totalTokens: dimension === 'cost' ? day.apiEquivalentUsd : day.totalTokens }));
   /** 按日期查找数值，本地采集起点只用于普通供应商的空白日期。 */
   const bucketsByDate = new Map(buckets.map((bucket) => [bucket.date, bucket.totalTokens]));
@@ -1054,9 +1079,6 @@ function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimensi
     const date = new Date(today);
     date.setDate(date.getDate() - 6 + index);
     const dateKey = localDateKey(date);
-    if (accountUsage && index === 6) {
-      return { date: dateKey, value: Math.max(0, provider.todayLocal.totalTokens), complete: provider.todayLocalComplete === true };
-    }
     /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零，未定价日期按缺失处理。 */
     const recorded = bucketsByDate.get(dateKey);
     const value = recorded === undefined || recorded === null ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
