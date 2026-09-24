@@ -76,21 +76,25 @@ export function SessionComputerPreview(props: { conversationId: string; language
             <span>
               <strong>{preview.appName}</strong>
               <small role="status">
-                {preview.paused
+                {preview.systemUnavailable
                   ? zh
-                    ? '等待用户操作结束 · 空闲 3 秒后自动继续'
-                    : 'Waiting for user · continues after 3 seconds idle'
-                  : preview.needsObservation
+                    ? '等待系统解锁或唤醒'
+                    : 'Waiting for system unlock or wake'
+                  : preview.paused
                     ? zh
-                      ? '等待重新观察'
-                      : 'Waiting for observation'
-                    : zh
-                      ? '正在控制'
-                      : 'Controlling'}
+                      ? '等待用户操作结束 · 空闲 3 秒后自动继续'
+                      : 'Waiting for user · continues after 3 seconds idle'
+                    : preview.needsObservation
+                      ? zh
+                        ? '等待重新观察'
+                        : 'Waiting for observation'
+                      : zh
+                        ? '正在控制'
+                        : 'Controlling'}
               </small>
             </span>
             <div>
-              {preview.paused ? (
+              {preview.paused && !preview.systemUnavailable ? (
                 <button type="button" disabled={busy} onClick={() => void control('resume')}>
                   {zh ? '立即继续' : 'Resume now'}
                 </button>
@@ -102,7 +106,7 @@ export function SessionComputerPreview(props: { conversationId: string; language
           </header>
           <div className="session-computer-preview-image">
             {preview.imageUrl ? <img src={preview.imageUrl} alt={zh ? `${preview.appName} 实时画面` : `Live view of ${preview.appName}`} draggable={false} /> : <p>{zh ? '正在获取画面…' : 'Waiting for image…'}</p>}
-            {preview.imageUrl && preview.cursor && !preview.paused && !preview.needsObservation ? (
+            {preview.imageUrl && preview.cursor && !preview.paused && !preview.needsObservation && !preview.systemUnavailable ? (
               <CursorIcon className="session-computer-preview-cursor" weight="fill" aria-hidden="true" style={{ left: `${preview.cursor.x * 100}%`, top: `${preview.cursor.y * 100}%` }} />
             ) : null}
           </div>
