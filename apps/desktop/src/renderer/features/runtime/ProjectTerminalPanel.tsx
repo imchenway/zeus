@@ -351,6 +351,8 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     /** 异步导入、查询和队列都检查卸载状态。 */
     let disposed = false;
     let terminal: import('@xterm/xterm').Terminal | undefined;
+    /** 由 xterm 的实际字符网格计算可见行列数。 */
+    let fitAddon: import('@xterm/addon-fit').FitAddon | undefined;
     let observer: ResizeObserver | undefined;
     let disposeTheme: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -378,14 +380,12 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     }
 
     function resize(): void {
-      if (!terminal || !containerRef.current || !ready || !runningRef.current) return;
-      const screen = containerRef.current.querySelector('.xterm-screen');
-      const bounds = screen?.getBoundingClientRect();
-      if (!bounds?.width || !bounds.height) return;
-      const cols = Math.max(2, Math.floor(containerRef.current.clientWidth / (bounds.width / terminal.cols)));
-      const rows = Math.max(2, Math.floor(containerRef.current.clientHeight / (bounds.height / terminal.rows)));
-      terminal.resize(cols, rows);
-      send(() => props.client.resizeRuntimeSession(props.session.id, { cols, rows }));
+      if (!terminal || !fitAddon || !containerRef.current || !ready || !runningRef.current) return;
+      /** 只在字体和容器已可测量时同步，避免用初始默认值覆盖真实 PTY 尺寸。 */
+      const proposed = fitAddon.proposeDimensions();
+      if (!proposed) return;
+      fitAddon.fit();
+      send(() => props.client.resizeRuntimeSession(props.session.id, { cols: terminal!.cols, rows: terminal!.rows }));
     }
 
     async function refresh(): Promise<void> {
@@ -434,10 +434,12 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
       }, 50);
     }
 
-    void import('@xterm/xterm')
-      .then(({ Terminal }) => {
+    void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
+      .then(([{ Terminal }, { FitAddon }]) => {
         if (disposed || !containerRef.current) return;
         terminal = new Terminal({ ...terminalDisplayOptions, disableStdin: true, screenReaderMode: true, scrollback: 5_000, rows: 24, cols: 100 });
+        fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
         disposeTheme = observeTerminalTheme(terminal, containerRef.current);
         terminal.open(containerRef.current);
         terminal.textarea?.setAttribute('aria-label', props.zh ? '终端输入' : 'Terminal input');
