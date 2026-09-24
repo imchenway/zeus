@@ -2,6 +2,8 @@ import {
   type CodexAppServerEvent,
   type CodexAppServerManager,
   type CodexCapabilitiesSnapshot,
+  type CodexRuntimeActivationInput,
+  type CodexRuntimeMaintenanceControl,
   type CodexRpcRetryProgress,
   type CodexServerRequestResponse,
   type CodexTransportState,
@@ -37,14 +39,6 @@ interface RuntimeLease {
   entry: RuntimeEntry;
   release(): void;
 }
-
-type RuntimeActivationInput = {
-  commandPath: string;
-  externalAgentHome?: string;
-  remoteControl?: boolean;
-  /** 手动订阅登录要求本次新连接取得远端目录后再接替旧连接。 */
-  requireFreshModels?: boolean;
-};
 
 /** 只在真实配置声明了 node_repl 时覆盖其环境，避免凭空创建不完整的 MCP server。 */
 function nodeReplToolRuntimeFlags(codexHome: string | undefined, toolRuntimeCodexHome: string | undefined): string[] {
@@ -394,7 +388,7 @@ export function createCodexRuntimeGenerationManager(
     }
   }
 
-  async function activate(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+  async function activate(input: CodexRuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
@@ -516,11 +510,17 @@ export function createCodexRuntimeGenerationManager(
     return entry.closePromise;
   }
 
-  function enqueueActivation(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
-    if (maintenanceActive) return Promise.reject(managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请稍后重试。'));
+  /** 把世代切换串到唯一激活链，避免并发启动覆盖当前运行身份。 */
+  function appendActivation(input: CodexRuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     const activation = activationChain.then(() => activate(input, forceFreshGeneration));
     activationChain = activation.catch(() => undefined);
     return activation;
+  }
+
+  /** 普通调用在维护窗口外进入世代切换链。 */
+  function enqueueActivation(input: CodexRuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+    if (maintenanceActive) return Promise.reject(managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请稍后重试。'));
+    return appendActivation(input, forceFreshGeneration);
   }
 
   function entryForGeneration(generationId: string): RuntimeEntry | null {
@@ -772,16 +772,30 @@ export function createCodexRuntimeGenerationManager(
         })
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot !== null);
     },
-    async runExclusiveMaintenance<Result>(operation: () => Promise<Result>): Promise<Result> {
+    async runExclusiveMaintenance<Result>(operation: (control: CodexRuntimeMaintenanceControl) => Promise<Result>): Promise<Result> {
       if (maintenanceActive) throw managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请等待当前更新完成。');
       maintenanceActive = true;
       try {
         /** 已经开始的世代切换先完成；维护期间的新切换会被拒绝。 */
         await activationChain;
         /** 已接纳的轮次、写请求和授权必须先收口，禁止更新过程中改变执行程序。 */
-        const busy = [...entries].some((entry) => entry.inFlightWrites > 0 || entry.activeTurns.size > 0 || entry.pendingRequests.size > 0);
+        const busy = [...entries].some((entry) => entry.inFlightWrites > 0 || entry.activeTurns.size > 0 || entry.activeGoals.size > 0 || entry.pendingRequests.size > 0);
         if (busy) throw managerError('ZEUS_CODEX_UPDATE_BUSY', '仍有 Codex 任务或授权请求正在处理，请完成后再更新。');
-        return await operation();
+        /** 维护控制器让升级链在门禁释放前完成新世代接管，其他调用仍会被拒绝。 */
+        const control: CodexRuntimeMaintenanceControl = {
+          async deactivateCurrentGeneration() {
+            /** 先摘除活动身份，再关闭管理器，确保断线不会触发旧程序自动重连。 */
+            const current = activeEntry;
+            if (!current) return;
+            activeEntry = null;
+            await tryDrain(current);
+          },
+          activateFreshGeneration(input) {
+            if (!maintenanceActive) return Promise.reject(managerError('ZEUS_CODEX_MAINTENANCE_ENDED', 'Codex 维护窗口已经结束。'));
+            return appendActivation(input, true);
+          },
+        };
+        return await operation(control);
       } finally {
         maintenanceActive = false;
       }
