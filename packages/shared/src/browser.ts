@@ -148,6 +148,8 @@ export interface ZeusComputerPreview extends ZeusComputerControlIdentity {
   paused: boolean;
   /** 恢复或窗口变化后需由模型重新观察。 */
   needsObservation: boolean;
+  /** 锁屏、休眠或采集暂停期间关闭输入，等待系统恢复后重新观察。 */
+  systemUnavailable: boolean;
   /** 有界 JPEG 缩略图；尚未产生首帧时为空。 */
   imageUrl: string | null;
   /** 虚拟光标在受控窗口内的归一化位置。 */

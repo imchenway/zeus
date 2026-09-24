@@ -68,6 +68,8 @@ const serviceRequestTimeoutMs = 120_000;
 const snapshotDeadlineMs = 60_000;
 /** 长时间接管分段返回等待状态，避免跨进程 HTTP 请求超时结束原任务。 */
 const userControlWaitTimeoutMs = 300_000;
+/** 观察中途被打断时只在桌面串行队列内等待一次短空闲，不能长期阻塞其他应用。 */
+const inlineObservationRecoveryWaitMs = 5_000;
 const serviceTerminationGraceMs = 1_000;
 const serviceTerminationKillWaitMs = 2_000;
 const maximumServiceLineBytes = 16 * 1024 * 1024;
@@ -234,7 +236,9 @@ export class ComputerHost implements BrowserAutomationPort {
         }
         // 新控制开始时取消此前只读查询留下的空闲回收计时。
         this.scheduleIdleStop();
-        if (owner.preview?.paused) {
+        if (owner.preview?.systemUnavailable) {
+          if (input.tool !== 'get_app_state') return this.systemControlContinuation('当前请求尚未执行。');
+        } else if (owner.preview?.paused) {
           await this.waitForUserControl(input, generation, owner);
           // 空闲后直接完成本次只读观察；动作请求仍返回接管结果，绝不自动重放。
           if (input.tool !== 'get_app_state' || owner.preview?.paused) return this.userControlContinuation(owner, '当前请求尚未执行。');
@@ -263,7 +267,9 @@ export class ComputerHost implements BrowserAutomationPort {
       await this.refreshServiceStatus();
       this.assertToolPermissions(input);
       this.assertControlAllowed(input, generation);
-      if (owner?.preview?.paused) {
+      if (owner?.preview?.systemUnavailable) {
+        if (input.tool !== 'get_app_state') return this.systemControlContinuation('当前请求尚未执行。');
+      } else if (owner?.preview?.paused) {
         return this.userControlContinuation(owner, '当前请求尚未执行。');
       }
       const serviceArguments = this.prepareServiceArguments(input, owner);
@@ -274,11 +280,15 @@ export class ComputerHost implements BrowserAutomationPort {
       // 动作一旦发出就不能继续使用旧索引；只有实际回读成功才能恢复缓存。
       if (!['get_app_state', 'list_apps'].includes(input.tool)) owner?.snapshots.clear();
       const serviceStartedAt = performance.now();
-      const result = await this.callService(input.tool, serviceArguments);
+      const result = await this.callServiceWithObservationRecovery(input, serviceArguments, generation, owner);
       const serviceFinishedAt = performance.now();
       this.assertControlAllowed(input, generation);
       if (owner && (owner.preview?.paused || asRecord(asRecord(result).control).paused === true || asRecord(asRecord(result).confirmation).code === 'ZEUS_COMPUTER_PAUSED')) {
         return this.userControlContinuation(owner, input.tool === 'get_app_state' ? '观察期间发生用户接管，旧观察已作废。' : '动作已经返回，可能已执行；不得重放，必须重新观察实际结果。');
+      }
+      const resultSystemUnavailable = asRecord(asRecord(result).control).system_unavailable;
+      if (owner && (resultSystemUnavailable === true || (resultSystemUnavailable === undefined && owner.preview?.systemUnavailable))) {
+        return this.systemControlContinuation(input.tool === 'get_app_state' ? '观察期间系统画面变为不可见，旧观察已作废。' : '动作已经返回，可能已执行；不得重放。');
       }
       if (isRecord(result) && typeof result.snapshot_generation === 'number') this.rememberAppState(input.arguments, result, owner);
       // 先记住动作回读的观察世代，再裁剪模型投影；目标检查始终读取实时控件。
@@ -314,13 +324,31 @@ export class ComputerHost implements BrowserAutomationPort {
       if (owner && (code === 'ZEUS_COMPUTER_PAUSED' || owner.preview?.paused)) {
         return this.userControlContinuation(owner, `请求被用户接管打断（${code}: ${message.slice(0, 500)}），可能尚未执行或仅部分执行；不得重放，必须重新观察实际结果。`);
       }
+      if (code === 'ZEUS_COMPUTER_SESSION_UNAVAILABLE' || owner?.preview?.systemUnavailable) return this.systemControlContinuation(`系统会话暂不可见（${code}: ${message.slice(0, 500)}）。`);
       this.settings = { ...this.settings, serviceState: this.child ? 'ready' : 'error', detail: `${code}: ${message}`.slice(0, 1000) };
       return computerText(`${code}: ${message}`.slice(0, 2000), false);
     }
   }
 
+  /** 观察在用户接管期间失效时，等待空闲并安全重读一次；任何动作都不会在这里重放。 */
+  private async callServiceWithObservationRecovery(input: BrowserAutomationToolCall, initialArguments: Record<string, unknown>, generation: number, owner: ComputerControlOwner | undefined): Promise<unknown> {
+    let serviceArguments = initialArguments;
+    for (let attempt = 0; ; attempt += 1) {
+      const result = await this.callService(input.tool, serviceArguments);
+      this.assertControlAllowed(input, generation);
+      const interrupted = owner && (owner.preview?.paused || asRecord(asRecord(result).control).paused === true || asRecord(asRecord(result).confirmation).code === 'ZEUS_COMPUTER_PAUSED');
+      if (!interrupted || input.tool !== 'get_app_state' || attempt > 0) return result;
+      owner.snapshots.clear();
+      await this.waitForUserControl(input, generation, owner, inlineObservationRecoveryWaitMs);
+      if (owner.preview?.paused) return result;
+      this.assertControlAllowed(input, generation);
+      serviceArguments = this.prepareServiceArguments(input, owner);
+      serviceArguments._deadline_unix_ms = Date.now() + snapshotDeadlineMs;
+    }
+  }
+
   /** 等待原生空闲通知，不占用原生请求超时，也不向服务投递恢复或旧动作。 */
-  private async waitForUserControl(input: BrowserAutomationToolCall, generation: number, owner: ComputerControlOwner): Promise<void> {
+  private async waitForUserControl(input: BrowserAutomationToolCall, generation: number, owner: ComputerControlOwner, maximumWaitMs = userControlWaitTimeoutMs): Promise<void> {
     owner.snapshots.clear();
     this.assertControlAllowed(input, generation);
     /** 错误响应可能先于预览事件到达，先核对原生状态，不能误报已空闲。 */
@@ -335,7 +363,7 @@ export class ComputerHost implements BrowserAutomationPort {
           resolveWait();
         };
         /** 等待上限只返回继续等待的结果，不撤销控制或执行动作。 */
-        const timer = setTimeout(finish, Math.min(userControlWaitTimeoutMs, (input.deadlineUnixMs ?? Date.now() + userControlWaitTimeoutMs) - Date.now()));
+        const timer = setTimeout(finish, Math.min(maximumWaitMs, (input.deadlineUnixMs ?? Date.now() + maximumWaitMs) - Date.now()));
         owner.userControlWaiters.add(finish);
       });
     this.assertControlAllowed(input, generation);
@@ -351,6 +379,19 @@ export class ComputerHost implements BrowserAutomationPort {
         requires_observation: true,
         action_replayed: false,
         message: `${outcome} ${waiting ? '用户仍在操作，请保留原任务并再次调用 get_app_state 继续等待，不要结束本轮。' : '用户操作等待已结束，请立即调用 get_app_state 获取新状态后继续原任务。'} 无需用户点击继续或发送新消息。`,
+      }),
+      true,
+    );
+  }
+
+  /** 锁屏、休眠或采集暂停不结束任务；恢复后只能重新观察，不能补发旧动作。 */
+  private systemControlContinuation(outcome: string): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
+    return computerText(
+      JSON.stringify({
+        status: 'waiting_for_system',
+        requires_observation: true,
+        action_replayed: false,
+        message: `${outcome} 请保留原任务；系统解锁或唤醒后调用 get_app_state 重新观察再继续，无需重放旧动作。`,
       }),
       true,
     );
@@ -584,7 +625,8 @@ export class ComputerHost implements BrowserAutomationPort {
   private rememberPreview(response: ComputerServiceResponse): void {
     const owner = [...this.controlOwners.values()].find((candidate) => candidate.id === response.sessionId);
     const value = response.preview;
-    if (!owner || response.sessionId !== owner.id || !isRecord(value) || typeof value.appName !== 'string' || typeof value.paused !== 'boolean' || typeof value.needsObservation !== 'boolean') return;
+    if (!owner || response.sessionId !== owner.id || !isRecord(value) || typeof value.appName !== 'string' || typeof value.paused !== 'boolean' || typeof value.needsObservation !== 'boolean' || typeof value.systemUnavailable !== 'boolean')
+      return;
     if (value.imageUrl !== null && (typeof value.imageUrl !== 'string' || value.imageUrl.length > 1024 * 1024 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/u.test(value.imageUrl))) return;
     const point = isRecord(value.cursor) ? value.cursor : null;
     const cursor =
@@ -595,10 +637,11 @@ export class ComputerHost implements BrowserAutomationPort {
       appName: value.appName.slice(0, 200),
       paused: value.paused,
       needsObservation: value.needsObservation,
+      systemUnavailable: value.systemUnavailable,
       imageUrl: value.imageUrl as string | null,
       cursor,
     };
-    if (value.paused || value.needsObservation) owner.snapshots.clear();
+    if (value.paused || value.needsObservation || value.systemUnavailable) owner.snapshots.clear();
     if (!value.paused) {
       for (const finish of owner.userControlWaiters) finish();
     }
@@ -698,7 +741,9 @@ export class ComputerHost implements BrowserAutomationPort {
   private rememberAppState(args: Record<string, unknown>, result: unknown, owner: ComputerControlOwner | undefined): void {
     const record = asRecord(result);
     const appRecord = isRecord(record.application) ? record.application : isRecord(record.app) ? record.app : {};
-    const appKeys = [args.app, typeof record.app === 'string' ? record.app : undefined, appRecord.name, appRecord.bundleId, appRecord.path].filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const appKeys = [computerAppSnapshotKey(args.app), typeof record.app === 'string' ? record.app : undefined, appRecord.name, appRecord.bundleId, appRecord.path, computerAppSnapshotKey(appRecord.pid)].filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
     const generation = typeof record.snapshot_generation === 'number' ? record.snapshot_generation : 0;
     for (const key of appKeys) owner?.snapshots.set(key, generation);
     const status = isRecord(record.status) ? record.status : {};
@@ -725,7 +770,7 @@ export class ComputerHost implements BrowserAutomationPort {
   /** 内部身份与目标校验凭据只由宿主写入，模型参数不能伪造。 */
   private prepareServiceArguments(input: BrowserAutomationToolCall, owner: ComputerControlOwner | undefined): Record<string, unknown> {
     const args: Record<string, unknown> = { ...Object.fromEntries(Object.entries(input.arguments).filter(([key]) => !key.startsWith('_'))), _control_session_id: owner?.id };
-    const app = typeof args.app === 'string' ? args.app : '';
+    const app = computerAppSnapshotKey(args.app) ?? '';
     const snapshot = app ? owner?.snapshots.get(app) : undefined;
     if (input.tool === 'get_app_state' || args.wait_for !== undefined) {
       if (args.disableDiff !== true && args.previous_snapshot_generation === undefined && snapshot) args.previous_snapshot_generation = snapshot;
@@ -868,6 +913,13 @@ function computerPermissionDetail(accessibilityTrusted: boolean, screenCaptureAv
   if (!accessibilityTrusted && !screenCaptureAvailable) return '请授予 Zeus Computer Service 辅助功能与屏幕录制权限。';
   if (!accessibilityTrusted) return '请授予 Zeus Computer Service 辅助功能权限。';
   return '请授予 Zeus Computer Service 屏幕录制权限；辅助功能已就绪。';
+}
+
+/** 应用名称沿用原值，数值 PID 使用独立前缀，避免快照缓存键相互碰撞。 */
+function computerAppSnapshotKey(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return `pid:${value}`;
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

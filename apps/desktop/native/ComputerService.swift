@@ -22,6 +22,8 @@ private struct ElementSnapshot {
 
 private let axMessagingTimeoutSeconds: Float = 2
 private let minimumScreenshotBudgetMilliseconds: Double = 5_000
+/** 富格式粘贴只临时保存有界剪贴板，避免一次系统操作耗尽 Helper 内存。 */
+private let maximumPasteboardSnapshotBytes = 32 * 1024 * 1024
 
 /** 明确的界面完成条件；只确认观察到的状态，不推断外部业务已完成。 */
 private struct ComputerStateCondition {
@@ -159,6 +161,8 @@ private final class ComputerServiceSession {
     var snapshotHistory: [Int: ElementSnapshot] = [:]
     /** 一次性动作凭据只在同一轮次内消费。 */
     var preparedAction: PreparedComputerAction?
+    /** 已验证窗口的辅助功能根可在应用退到后台后继续读取，并在窗口身份变化时重新定位。 */
+    var accessibilityRoot: (pid: pid_t, windowId: CGWindowID, element: AXUIElement)?
 
     /** 立即停止原生输入，再在主线程移除菜单监听。 */
     func stop(reason: String) {
@@ -237,6 +241,11 @@ private final class ComputerService {
     private var preparedAction: PreparedComputerAction? {
         get { currentSession!.preparedAction }
         set { currentSession!.preparedAction = newValue }
+    }
+    /** 当前轮次最近一次通过窗口身份与边界校验的辅助功能根。 */
+    private var cachedAccessibilityRoot: (pid: pid_t, windowId: CGWindowID, element: AXUIElement)? {
+        get { currentSession!.accessibilityRoot }
+        set { currentSession!.accessibilityRoot = newValue }
     }
     /** 虚拟输入独立于硬件键鼠状态，不继承用户正在按住的修饰键。 */
     private let inputSource = CGEventSource(stateID: .privateState)
@@ -372,7 +381,7 @@ private final class ComputerService {
         case "drag":
             action = try await performDrag(params)
         case "paste":
-            action = try performPaste(params)
+            action = try await performPaste(params)
         case "press_key":
             action = try performKey(params)
         case "scroll":
@@ -492,7 +501,7 @@ private final class ComputerService {
             axStartedAt = Date()
             let readStarted = ProcessInfo.processInfo.systemUptime
             // 每次重新定位窗口树，不复用已经离开页面的 AX 控件引用。
-            let observedWindow = accessibilityRoot(applicationElement, target: target)
+            let observedWindow = try accessibilityRoot(applicationElement, target: target)
             windowMatched = observedWindow != nil
             elements.removeAll(keepingCapacity: true)
             summaries.removeAll(keepingCapacity: true)
@@ -798,6 +807,14 @@ private final class ComputerService {
         guard let prepared, params["_action_token"] as? String == prepared.token, method == prepared.method, try actionArguments(params) == prepared.arguments else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_ACTION_CHANGED", message: "本次操作的目标检查已失效，动作尚未执行；请重新观察后发起操作。")
         }
+        /** 富格式粘贴和密码按键会改变应用内部焦点；先让权，再读取可能已随焦点切换的辅助功能树。 */
+        let changesApplicationFocus = (method == "paste" && (params["format"] as? String ?? "text") != "text") || (method == "type_text" && prepared.element.map { (try? rejectSecure($0)) == nil } == true)
+        if changesApplicationFocus {
+            guard let requested = params["app"], let app = try runningApplication(for: requested) else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行，请重新观察。")
+            }
+            try control.requireFocusAvailable(pid: app.processIdentifier, sessionId: controlSessionId)
+        }
         let current = try await inspectActionTarget(method, params)
         /** 无控件仅能对应受限窗口导航，其他动作仍比较真实控件引用。 */
         let sameElement: Bool
@@ -809,23 +826,37 @@ private final class ComputerService {
     }
 
     private func resolveApplication(_ params: [String: Any]) async throws -> NSRunningApplication {
-        guard let requested = params["app"] as? String, !requested.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let requested = params["app"] else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "Computer 请求缺少 app。")
         }
-        let value = requested.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let running = runningApplication(for: value) { return running }
+        if let running = try runningApplication(for: requested) { return running }
+        guard let value = requested as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "指定 PID 的目标应用当前没有运行。")
+        }
         return try await launchApplication(identifier: value)
     }
 
-    /** 按 bundle id、应用路径或显示名匹配已运行的实例。 */
-    private func runningApplication(for value: String) -> NSRunningApplication? {
-        NSWorkspace.shared.runningApplications.first {
+    /** 按精确 PID 或唯一的 bundle、路径、显示名匹配；重复实例必须由调用方消歧。 */
+    private func runningApplication(for requested: Any) throws -> NSRunningApplication? {
+        if let number = requested as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.rounded() == number.doubleValue,
+           let pid = pid_t(exactly: number.int64Value), pid > 0 {
+            return NSRunningApplication(processIdentifier: pid)
+        }
+        guard let raw = requested as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "app 必须是应用名称、路径、bundle ID 或 list_apps 返回的 PID。") }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "Computer 请求缺少 app。") }
+        let matches = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == value || $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: value).standardizedFileURL.path || $0.localizedName?.caseInsensitiveCompare(value) == .orderedSame
         }
+        guard matches.count <= 1 else {
+            let choices = matches.map { "\($0.processIdentifier): \($0.localizedName ?? $0.bundleIdentifier ?? "未命名应用")" }.joined(separator: "；")
+            throw ServiceFailure(code: "ZEUS_COMPUTER_APP_AMBIGUOUS", message: "多个运行实例符合 app，请使用 list_apps 返回的 PID 指定。可用实例：\(choices)")
+        }
+        return matches.first
     }
 
     /**
-     * 目标应用未运行时按需启动，并在有界时间内等待它进入运行列表。
+     * 目标应用未运行时按需启动，并直接使用系统返回的精确运行实例。
      *
      * 启动只负责让应用存在；窗口是否可控制仍由 observe 判定，没有窗口的应用依旧不能控制。
      * activates 保持 false：Computer Use 使用虚拟光标，不抢占用户当前焦点。
@@ -838,14 +869,9 @@ private final class ComputerService {
         configuration.activates = false
         configuration.createsNewApplicationInstance = false
         let launched = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
-        /** 系统可能返回代理或已存在实例；仍以真实运行列表为准。 */
-        let deadline = ProcessInfo.processInfo.systemUptime + 10
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            if let running = runningApplication(for: identifier) ?? runningApplication(for: launched.bundleIdentifier ?? "") { return running }
-            if launched.isTerminated { break }
-            try await Task.sleep(nanoseconds: 200_000_000)
-        }
-        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_TIMEOUT", message: "目标应用已请求启动，但十秒内没有进入可控制状态：\(identifier)")
+        /** 系统返回本次实际打开或复用的精确进程，避免再次按 bundle 猜测实例。 */
+        if !launched.isTerminated { return launched }
+        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用启动后立即退出，无法进入可控制状态：\(identifier)")
     }
 
     /** 只接受 bundle id、应用路径和常见应用目录下的显示名，不猜测其他位置的可执行文件。 */
@@ -866,20 +892,18 @@ private final class ComputerService {
         }
     }
 
-    /**
-     * 锁屏与"非控制台会话"不再阻断 Computer Use（用户明确要求放开）。
-     *
-     * 保留这个调用点作为系统会话校验的唯一入口：将来需要恢复锁屏判断时，只改这一处。
-     */
-    private func requireUnlockedSession() throws {}
+    /** 锁屏或不可见控制台会话不能继续使用旧画面执行系统动作。 */
+    private func requireUnlockedSession() throws {
+        guard !computerSessionScreenIsLocked() else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_SESSION_UNAVAILABLE", message: "macOS 当前处于锁屏或不可见会话；输入已暂停，解锁后必须重新观察。")
+        }
+    }
 
     private func appAndElement(_ params: [String: Any], elementRequired: Bool) throws -> (NSRunningApplication, AXUIElement?) {
-        guard let requested = params["app"] as? String else {
+        guard let requested = params["app"] else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "Computer 请求缺少 app。")
         }
-        guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == requested || $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: requested).standardizedFileURL.path || $0.localizedName?.caseInsensitiveCompare(requested) == .orderedSame
-        }) else {
+        guard let app = try runningApplication(for: requested) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_RUNNING", message: "目标应用当前没有运行，请先调用 get_app_state。")
         }
         let target = try control.requireTarget(pid: app.processIdentifier, sessionId: controlSessionId)
@@ -903,8 +927,17 @@ private final class ComputerService {
     /** 语义动作不能利用同一应用的旧元素跨到未观察窗口。 */
     private func requireElementWindow(_ element: AXUIElement, target: ComputerWindowTarget) throws {
         // 文件选择框以 AXSheet 挂在主窗口内；AXWindow 指向主窗口不代表控件不属于面板。
-        guard enclosingSurfaces(element).contains(where: { matchesWindow($0, target: target) }) else {
-            throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_MISMATCH", message: "无法确认元素或键盘焦点属于已观察窗口，请重新观察目标窗口。")
+        let surfaces = enclosingSurfaces(element)
+        if let cached = cachedAccessibilityRoot, cached.pid == target.pid, cached.windowId == target.windowId, matchesWindow(cached.element, target: target) {
+            guard surfaces.contains(where: { CFEqual($0, cached.element) }) else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_MISMATCH", message: "元素不属于已唯一绑定的窗口，请重新观察目标窗口。")
+            }
+            return
+        }
+        let matches = surfaces.filter { matchesWindow($0, target: target) }
+        guard matches.count == 1 else {
+            let code = matches.count > 1 ? "ZEUS_COMPUTER_WINDOW_AMBIGUOUS" : "ZEUS_COMPUTER_WINDOW_MISMATCH"
+            throw ServiceFailure(code: code, message: "无法唯一确认元素或键盘焦点属于已观察窗口，请重新观察目标窗口。")
         }
     }
 
@@ -930,7 +963,12 @@ private final class ComputerService {
     }
 
     /** 读取与捕获边界一致的辅助功能根；原生文件面板不一定直接列在 AXWindows 中。 */
-    private func accessibilityRoot(_ application: AXUIElement, target: ComputerWindowTarget) -> AXUIElement? {
+    private func accessibilityRoot(_ application: AXUIElement, target: ComputerWindowTarget) throws -> AXUIElement? {
+        // 应用退到后台后可能不再公开 AXFocusedWindow 或 AXWindows；复用此前已按窗口身份验证的根。
+        if let cached = cachedAccessibilityRoot, cached.pid == target.pid, cached.windowId == target.windowId, matchesWindow(cached.element, target: target) {
+            return cached.element
+        }
+        if let cached = cachedAccessibilityRoot, cached.pid != target.pid || cached.windowId != target.windowId { cachedAccessibilityRoot = nil }
         /** 焦点链可能直接指向独立面板或正在跟踪的菜单。 */
         var candidates = menuObservation.roots(for: target.pid)
         for name in [kAXFocusedUIElementAttribute, kAXFocusedWindowAttribute] {
@@ -940,15 +978,27 @@ private final class ComputerService {
         candidates.append(contentsOf: attribute(application, kAXChildrenAttribute) as? [AXUIElement] ?? [])
         /** 只展开窗口和面板的容器关系，不扫描整页或隐藏的菜单栏。 */
         var visited = Set<CFHashCode>()
+        /** 所有通过同一窗口合同的候选；多于一个时必须拒绝猜测。 */
+        var matches: [AXUIElement] = []
         var offset = 0
         while offset < candidates.count && offset < 128 {
             let candidate = candidates[offset]
             offset += 1
             guard visited.insert(CFHash(candidate)).inserted else { continue }
-            if matchesWindow(candidate, target: target) { return candidate }
+            if matchesWindow(candidate, target: target) {
+                matches.append(candidate)
+                continue
+            }
             let role = stringAttribute(candidate, kAXRoleAttribute) ?? ""
             guard [kAXWindowRole, kAXSheetRole, kAXDrawerRole, kAXGroupRole, kAXSplitGroupRole].contains(role) else { continue }
             candidates.append(contentsOf: attribute(candidate, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+        }
+        guard matches.count <= 1 else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_AMBIGUOUS", message: "多个辅助功能窗口都符合已选择的 window_id；为避免操作错误窗口，本次观察已拒绝。请分离或移动窗口后重试。")
+        }
+        if let match = matches.first {
+            cachedAccessibilityRoot = (pid: target.pid, windowId: target.windowId, element: match)
+            return match
         }
         return nil
     }
@@ -989,10 +1039,20 @@ private final class ComputerService {
         return (items, fingerprint)
     }
 
-    /** 辅助功能窗口与采集窗口使用相同的逻辑边界，允许系统的小数舍入。 */
+    /** 用标题和系统窗框级边界误差确认辅助功能窗口，不能因截图裁掉边框而丢失真实目标。 */
     private func matchesWindow(_ element: AXUIElement, target: ComputerWindowTarget) -> Bool {
         guard let frame = frameAttribute(element), let x = frame["x"], let y = frame["y"], let width = frame["width"], let height = frame["height"] else { return false }
-        return abs(x - target.frame.minX) < 1 && abs(y - target.frame.minY) < 1 && abs(width - target.frame.width) < 1 && abs(height - target.frame.height) < 1
+        /** ScreenCaptureKit 会裁掉原生窗口的边框和标题栏，辅助功能仍返回完整窗口；仅容忍各边三十二个逻辑像素。 */
+        let borderTolerance = 32.0
+        /** 将辅助功能属性还原成同一全局逻辑坐标中的候选边界。 */
+        let candidate = CGRect(x: x, y: y, width: width, height: height)
+        guard abs(candidate.minX - target.frame.minX) <= borderTolerance,
+              abs(candidate.minY - target.frame.minY) <= borderTolerance,
+              abs(candidate.maxX - target.frame.maxX) <= borderTolerance,
+              abs(candidate.maxY - target.frame.maxY) <= borderTolerance else { return false }
+        /** 标题仅在两侧都存在时必须一致，系统无标题面板仍由严格边界约束。 */
+        let title = stringAttribute(element, kAXTitleAttribute) ?? ""
+        return title.isEmpty || target.title.isEmpty || title == target.title
     }
 
     private func performClick(_ params: [String: Any], secondary: Bool) throws -> [String: Any] {
@@ -1066,30 +1126,50 @@ private final class ComputerService {
         return ["dispatched": "drag", "effect_verified": false, "start": ["x": startX, "y": startY], "end": ["x": endX, "y": endY]]
     }
 
-    private func performPaste(_ params: [String: Any]) throws -> [String: Any] {
+    /** 纯文字优先使用控件自身的辅助功能接口；只有富格式才需要临时剪贴板和窗口内键盘焦点。 */
+    private func performPaste(_ params: [String: Any]) async throws -> [String: Any] {
         try requireAccessibility()
         try requireUnlockedSession()
-        // 粘贴必须与执行前签名的观察控件一致，不能退回到前台焦点猜测。
-        let (app, element) = try appAndElement(params, elementRequired: true)
-        guard let element else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "粘贴需要最新观察中的可编辑控件。") }
-        // 已授权的登录粘贴沿用同一目标和剪贴板恢复流程。
-        try focus(element)
         guard let text = params["text"] as? String else { throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_REQUIRED", message: "paste 缺少 text。") }
-        let pasteboard = NSPasteboard.general
-        let previous = snapshotPasteboard(pasteboard)
         let format = params["format"] as? String ?? "text"
         guard ["text", "md", "html"].contains(format) else { throw ServiceFailure(code: "ZEUS_COMPUTER_PASTE_FORMAT_INVALID", message: "paste format 仅支持 text、md 或 html。") }
+        if format == "text" {
+            // 系统文件选择器等后台面板可能拒绝焦点和 Command-V；复用可回读验证的语义文字写入。
+            var result = try await typeText(params)
+            result["format"] = format
+            result["clipboard_unchanged"] = true
+            return result
+        }
+        // 富格式粘贴必须与执行前签名的观察控件一致，不能退回到前台焦点猜测。
+        let (app, element) = try appAndElement(params, elementRequired: true)
+        guard let element else { throw ServiceFailure(code: "ZEUS_COMPUTER_ELEMENT_REQUIRED", message: "粘贴需要最新观察中的可编辑控件。") }
+        // 富格式必须通过应用自己的粘贴处理；只设置目标内部焦点，不激活或抬升应用窗口。
+        try focus(element, pid: app.processIdentifier)
+        let pasteboard = NSPasteboard.general
+        let previous = try snapshotPasteboard(pasteboard)
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        if format == "html" { pasteboard.setString(text, forType: .html) }
-        if format == "md" { pasteboard.setString(text, forType: NSPasteboard.PasteboardType("net.daringfireball.markdown")) }
+        let wrotePlain = pasteboard.setString(text, forType: .string)
+        let wroteRich = format == "html" ? pasteboard.setString(text, forType: .html) : pasteboard.setString(text, forType: NSPasteboard.PasteboardType("net.daringfireball.markdown"))
+        guard wrotePlain, wroteRich else {
+            _ = restorePasteboard(pasteboard, previous)
+            throw ServiceFailure(code: "ZEUS_COMPUTER_CLIPBOARD_WRITE_FAILED", message: "无法准备富格式剪贴板，粘贴尚未执行。")
+        }
         let zeusChangeCount = pasteboard.changeCount
-        // 无论投递是否成功，只在剪贴板仍属于本次粘贴时恢复，避免覆盖用户的新复制。
-        defer { if pasteboard.changeCount == zeusChangeCount { restorePasteboard(pasteboard, previous) } }
-        try postKeyChord(pid: app.processIdentifier, keyCode: 9, flags: .maskCommand)
-        Thread.sleep(forTimeInterval: 0.25)
-        let shouldRestore = pasteboard.changeCount == zeusChangeCount
-        return ["dispatched": "paste", "effect_verified": false, "format": format, "length": text.utf16.count, "clipboardRestored": shouldRestore]
+        do {
+            try postKeyChord(pid: app.processIdentifier, keyCode: 9, flags: .maskCommand)
+            try await Task.sleep(nanoseconds: 250_000_000)
+            // 用户期间复制了新内容时绝不覆盖；否则必须确认原剪贴板真正写回成功。
+            guard pasteboard.changeCount == zeusChangeCount else {
+                return ["dispatched": "paste", "effect_verified": false, "format": format, "length": text.utf16.count, "clipboardRestored": false, "userClipboardChanged": true]
+            }
+            guard restorePasteboard(pasteboard, previous) else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_EFFECT_UNKNOWN", message: "富格式粘贴可能已执行，但原剪贴板恢复失败；不得自动重放粘贴。")
+            }
+            return ["dispatched": "paste", "effect_verified": false, "format": format, "length": text.utf16.count, "clipboardRestored": true]
+        } catch {
+            if pasteboard.changeCount == zeusChangeCount { _ = restorePasteboard(pasteboard, previous) }
+            throw error
+        }
     }
 
     private func performKey(_ params: [String: Any]) throws -> [String: Any] {
@@ -1257,7 +1337,7 @@ private final class ComputerService {
         /** 密码输入只投递用户提供的文字，不读取已有值或伪称已校验密码内容。 */
         if (try? rejectSecure(target)) == nil {
             // 按键投递需要目标内部焦点；普通文字使用控件接口，不提前改变焦点。
-            if element != nil { try focus(target) }
+            if element != nil { try focus(target, pid: app.processIdentifier) }
             // 按 Unicode 标量发送，避免把表情等字符的 UTF-16 代理对拆成两次输入。
             for scalar in text.unicodeScalars {
                 /** 一个完整字符对应的 UTF-16 单元。 */
@@ -1339,8 +1419,9 @@ private final class ComputerService {
         return element
     }
 
-    /** 仅供粘贴和密码按键投递设置控件焦点；普通语义写入不调用。 */
-    private func focus(_ element: AXUIElement) throws {
+    /** 仅供粘贴和密码按键投递设置控件焦点；同应用其他窗口在用时必须让权。 */
+    private func focus(_ element: AXUIElement, pid: pid_t) throws {
+        try control.requireFocusAvailable(pid: pid, sessionId: controlSessionId)
         if boolAttribute(element, kAXFocusedAttribute) == true { return }
         guard AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_FOCUS_FAILED", message: "目标元素无法获得焦点。")
@@ -1415,10 +1496,10 @@ private final class ComputerService {
         try postEvent(event, pid: pid, point: point)
     }
 
-    /** 用公开 AppKit 构造器附带窗口身份，并在投递前验证两套坐标一致。 */
+    /** 用 AppKit 携带窗口身份，再明确设置 Quartz 全局坐标；外部窗口的局部坐标由接收进程换算。 */
     private func windowMouseEvent(pid: pid_t, type: CGEventType, point: CGPoint, clickState: Int64) throws -> CGEvent {
         let target = try control.requireTarget(pid: pid, sessionId: controlSessionId)
-        /** AppKit 保留窗口内坐标，不能只在桥接后修改全局坐标；窗口坐标以左下角为原点。 */
+        /** AppKit 构造器接收窗口内坐标，但当前进程并不持有目标应用的 NSWindow。 */
         let windowPoint = CGPoint(x: point.x - target.frame.minX, y: target.frame.maxY - point.y)
         guard let eventType = NSEvent.EventType(rawValue: UInt(type.rawValue)),
               let event = NSEvent.mouseEvent(with: eventType, location: windowPoint, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -1426,12 +1507,12 @@ private final class ComputerService {
             throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_CREATION_FAILED", message: "无法创建目标窗口鼠标事件。")
         }
         event.setSource(inputSource)
-        /** 外部窗口不一定能被 AppKit 正确换算；拒绝投递与已观察目标位置不一致的事件。 */
+        // 跨进程窗口在本进程中为 nil，AppKit 会将局部位置误作屏幕位置；必须显式写入已观察的全局坐标。
+        event.location = point
+        /** 发送端只能验证全局位置与窗口编号，不能把无窗口的 locationInWindow 当成目标窗口内坐标。 */
         let decoded = NSEvent(cgEvent: event)
         guard abs(event.location.x - point.x) < 1, abs(event.location.y - point.y) < 1,
-              let decoded, decoded.windowNumber == Int(target.windowId),
-              abs(decoded.locationInWindow.x - windowPoint.x) < 1,
-              abs(decoded.locationInWindow.y - windowPoint.y) < 1 else {
+              let decoded, decoded.windowNumber == Int(target.windowId) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_EVENT_COORDINATE_MISMATCH", message: "系统未能为目标窗口生成一致的鼠标坐标，动作未投递。请使用目标公开的辅助功能动作；不能将本次点击视为已执行。")
         }
         return event
@@ -1664,20 +1745,35 @@ private final class ComputerService {
         return CGPoint(x: x + width / 2, y: y + height / 2)
     }
 
-    private func snapshotPasteboard(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
-        (pasteboard.pasteboardItems ?? []).map { item in
-            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in item.data(forType: type).map { (type, $0) } })
+    private func snapshotPasteboard(_ pasteboard: NSPasteboard) throws -> [[NSPasteboard.PasteboardType: Data]] {
+        var totalBytes = 0
+        var snapshot: [[NSPasteboard.PasteboardType: Data]] = []
+        for item in pasteboard.pasteboardItems ?? [] {
+            var values: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                guard let data = item.data(forType: type) else {
+                    throw ServiceFailure(code: "ZEUS_COMPUTER_CLIPBOARD_SNAPSHOT_FAILED", message: "当前剪贴板包含无法完整保存的系统格式；为避免丢失用户内容，已拒绝富格式粘贴。")
+                }
+                totalBytes += data.count
+                guard totalBytes <= maximumPasteboardSnapshotBytes else {
+                    throw ServiceFailure(code: "ZEUS_COMPUTER_CLIPBOARD_TOO_LARGE", message: "当前剪贴板超过 32 MiB；为避免占用过多内存或丢失内容，已拒绝富格式粘贴。")
+                }
+                values[type] = data
+            }
+            snapshot.append(values)
         }
+        return snapshot
     }
 
-    private func restorePasteboard(_ pasteboard: NSPasteboard, _ snapshot: [[NSPasteboard.PasteboardType: Data]]) {
+    /** 恢复先前剪贴板并返回系统是否接受全部对象。 */
+    private func restorePasteboard(_ pasteboard: NSPasteboard, _ snapshot: [[NSPasteboard.PasteboardType: Data]]) -> Bool {
         pasteboard.clearContents()
         let items = snapshot.map { values -> NSPasteboardItem in
             let item = NSPasteboardItem()
             for (type, data) in values { item.setData(data, forType: type) }
             return item
         }
-        if !items.isEmpty { pasteboard.writeObjects(items) }
+        return items.isEmpty || pasteboard.writeObjects(items)
     }
 
     private func elementProcessIdentifier(_ element: AXUIElement) -> pid_t? {
