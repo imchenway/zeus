@@ -124,7 +124,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
-import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
+import { codexCapabilitiesChangedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage } from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -477,6 +477,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (event.type === 'codex.models.changed') {
           // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
           if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+          return;
+        }
+        if (event.type === 'codex.update.progress') {
+          /** 更新进度已经由本机 Core 校验，窗口事件只负责送达当前设置页。 */
+          /** 当前阶段必须属于设置页支持的稳定集合。 */
+          const stage = event.payload.stage;
+          /** 当前比例必须是 Core 上报的有限值。 */
+          const progress = event.payload.progress;
+          if (isCodexRuntimeUpdateStage(stage) && (progress === null || (typeof progress === 'number' && Number.isFinite(progress) && progress >= 0 && progress <= 1))) {
+            window.dispatchEvent(new CustomEvent(codexRuntimeUpdateProgressEvent, { detail: { stage, progress } }));
+          }
           return;
         }
         if (event.type === 'codex.rpc.retrying') {

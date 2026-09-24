@@ -32,6 +32,22 @@ import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTr
 /** 新运行实例就绪后通知当前窗口刷新模型选择器，保留正在编辑的草稿。 */
 export const codexCapabilitiesChangedEvent = 'zeus:codex-capabilities-changed';
 
+/** Codex 更新阶段通过窗口事件同步给设置页，不创建第二条轮询链路。 */
+export const codexRuntimeUpdateProgressEvent = 'zeus:codex-runtime-update-progress';
+
+/** 只接受服务端定义的更新阶段。 */
+export function isCodexRuntimeUpdateStage(value: unknown): value is CodexRuntimeUpdateProgress['stage'] {
+  return ['checking', 'preparing', 'downloading', 'installing', 'verifying', 'switching', 'completed'].includes(String(value));
+}
+
+/** 设置页只接收服务端确认完成的真实更新阶段。 */
+export interface CodexRuntimeUpdateProgress {
+  /** 当前更新阶段。 */
+  stage: 'checking' | 'preparing' | 'downloading' | 'installing' | 'verifying' | 'switching' | 'completed';
+  /** 当前阶段有真实总量时返回 0 到 1，否则不伪造数值。 */
+  progress: number | null;
+}
+
 export interface CodexApiClient {
   loadAgents: () => Promise<AgentCatalogSnapshot>;
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;

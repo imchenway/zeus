@@ -3,7 +3,7 @@ import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { AppShellSettings, CodexConfigImportPreview } from '../apiClient.js';
 import type { CodexAccountSnapshot, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 import type { AiRuntimeAdapterStatus, CodexRuntimeUpdateStatus } from '../features/runtime/runtimeContracts.js';
-import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
+import { codexCapabilitiesChangedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage, type CodexRuntimeUpdateProgress } from '../features/codex/codexApiClient.js';
 import { authenticateCodexWithBrowser, completeCodexSubscriptionSetup, type CodexSubscriptionSetupInput } from '../codexLoginHandoff.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
@@ -84,6 +84,8 @@ export function useModelSetup(input: {
   const [modelsChecked, setModelsChecked] = useState(false);
   /** 保存最近一次手动检测或更新后的官方版本比较。 */
   const [updateCheck, setUpdateCheck] = useState<CodexRuntimeUpdateStatus | null>(null);
+  /** 百分比只跟随服务端确认的真实下载字节，不按时间伪造推进。 */
+  const [updateProgress, setUpdateProgress] = useState<CodexRuntimeUpdateProgress>({ stage: 'checking', progress: null });
   /** 仅保存可跳过的普通配置导入预览。 */
   const [preview, setPreview] = useState<CodexConfigImportPreview | null>(null);
   /** 导入后启用失败只重试启用。 */
@@ -189,6 +191,20 @@ export function useModelSetup(input: {
     overviewClientRef.current = client;
     void refreshCodexOverview(false);
   }, [input.settingsActive, input.client]);
+
+  useEffect(() => {
+    /** 未知阶段或越界比例不能进入界面状态。 */
+    const receiveUpdateProgress = (event: Event): void => {
+      /** 窗口事件先按未知字段读取，再逐项校验。 */
+      const detail = (event as CustomEvent<Partial<CodexRuntimeUpdateProgress>>).detail;
+      if (!detail || !isCodexRuntimeUpdateStage(detail.stage) || !(detail.progress === null || (typeof detail.progress === 'number' && Number.isFinite(detail.progress) && detail.progress >= 0 && detail.progress <= 1))) return;
+      /** 通过校验后再收窄为页面状态。 */
+      const next = { stage: detail.stage, progress: detail.progress };
+      setUpdateProgress(next);
+    };
+    window.addEventListener(codexRuntimeUpdateProgressEvent, receiveUpdateProgress);
+    return () => window.removeEventListener(codexRuntimeUpdateProgressEvent, receiveUpdateProgress);
+  }, []);
 
   useEffect(() => {
     /** 登录或重新连接完成后原地刷新模型目录，不清空已经显示的账号状态。 */
@@ -314,7 +330,10 @@ export function useModelSetup(input: {
     const request = ++requestRef.current;
     setOperation(checkUpdate ? 'checking_update' : 'checking');
     setError(null);
-    if (checkUpdate) setUpdateCheck(null);
+    if (checkUpdate) {
+      setUpdateCheck(null);
+      setUpdateProgress({ stage: 'checking', progress: null });
+    }
     /** 更新完成后必须再读一次账号和模型，避免保留热切换前的目录快照。 */
     let didUpdate = false;
     /** 在线检测命中新版本时直接更新；按钮只表达一次完整的“检测并更新”操作。 */
@@ -619,6 +638,7 @@ export function useModelSetup(input: {
     models,
     modelsChecked,
     updateCheck,
+    updateProgress,
     preview,
     needsActivation,
     customVisited,
@@ -641,6 +661,21 @@ export function useModelSetup(input: {
 /** 首次引导和设置面共用的窗口内控制状态。 */
 type ModelSetupController = ReturnType<typeof useModelSetup>;
 
+/** 更新阶段文案与原生“检查更新”窗口保持同一结构。 */
+function codexUpdateProgressLabel(stage: CodexRuntimeUpdateProgress['stage'], zh: boolean): string {
+  /** 中文与英文共用同一阶段顺序。 */
+  const labels: Record<CodexRuntimeUpdateProgress['stage'], [string, string]> = {
+    checking: ['正在检查最新版本', 'Checking the latest version'],
+    preparing: ['正在准备更新', 'Preparing update'],
+    downloading: ['正在下载 Codex', 'Downloading Codex'],
+    installing: ['正在安装 Codex', 'Installing Codex'],
+    verifying: ['正在校验安装结果', 'Verifying installation'],
+    switching: ['正在切换运行实例', 'Switching runtimes'],
+    completed: ['更新完成', 'Update complete'],
+  };
+  return labels[stage][zh ? 0 : 1];
+}
+
 /** 模型供应商设置顶部的常驻订阅入口，状态来自实际账号查询。 */
 export function CodexAccountSettings({ controller }: { controller: ModelSetupController }) {
   /** 沿用当前应用语言。 */
@@ -651,6 +686,8 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
   const signedIn = account?.signedIn && account.accountType === 'chatgpt';
   /** 复用所有模型选择入口的稳定排序，不在设置页另造目录顺序。 */
   const presentedModels = presentModelOptions(controller.models, '', zh ? 'zh-CN' : 'en-US').models;
+  /** 只有下载器返回真实字节比例时才展示百分比。 */
+  const updateProgressPercent = controller.updateProgress.progress === null ? null : Math.round(controller.updateProgress.progress * 100);
   /** 更新结果与本机版本分开表达，未检测时不猜测是否最新。 */
   const updateLabel =
     controller.operation === 'updating'
@@ -719,8 +756,23 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
         </Button>
       </div>
       {controller.operation === 'updating' ? (
-        <div className="codex-update-progress" role="progressbar" aria-label={zh ? 'Codex 更新进度' : 'Codex update progress'} aria-valuetext={zh ? '正在更新' : 'Updating'}>
-          <span />
+        <div className="codex-update-progress">
+          <div className="codex-update-progress-copy">
+            <span>{codexUpdateProgressLabel(controller.updateProgress.stage, zh)}</span>
+            {updateProgressPercent === null ? null : <strong>{updateProgressPercent}%</strong>}
+          </div>
+          <div
+            className="codex-update-progress-track"
+            data-indeterminate={updateProgressPercent === null ? true : undefined}
+            role="progressbar"
+            aria-label={zh ? 'Codex 更新进度' : 'Codex update progress'}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={updateProgressPercent ?? undefined}
+            aria-valuetext={updateProgressPercent === null ? codexUpdateProgressLabel(controller.updateProgress.stage, zh) : undefined}
+          >
+            <span style={updateProgressPercent === null ? undefined : { inlineSize: `${updateProgressPercent}%` }} />
+          </div>
         </div>
       ) : null}
       <section className="codex-available-models" aria-labelledby="codex-available-models-title">
