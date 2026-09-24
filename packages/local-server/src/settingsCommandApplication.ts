@@ -10,6 +10,8 @@ export const settingsCommandTypes = {
   projectConfigPut: 'settings.project_config.put',
   projectModelServiceTierPreferencePut: 'settings.project_model_service_tier_preference.put',
   runtimeSettingsPut: 'settings.runtime.put',
+  /** 设置页手动操作与主进程静默调度共用的 Codex 官方程序更新。 */
+  codexRuntimeUpdate: 'settings.codex_runtime.update',
   appShellSettingsPut: 'settings.app_shell.put',
   /** 全局规则文件的手动保存。 */
   agentsPut: 'settings.agents.put',
@@ -55,7 +57,15 @@ interface ReplayedExternal {
 
 export const settingsCommandRoutePolicy = {
   coreApplications: ['PUT /api/projects/:projectId/config', 'PUT /api/projects/:projectId/model-service-tier-preference', 'PUT /api/settings/app-shell'],
-  externalOperations: ['PUT /api/projects/:projectId/database/secret', 'DELETE /api/projects/:projectId/database/secret', 'PUT /api/runtime/settings', 'PUT /api/settings/agents', 'POST /api/settings/import', 'POST /api/data/import'],
+  externalOperations: [
+    'PUT /api/projects/:projectId/database/secret',
+    'DELETE /api/projects/:projectId/database/secret',
+    'PUT /api/runtime/settings',
+    'POST /api/runtime/adapters/codex/update',
+    'PUT /api/settings/agents',
+    'POST /api/settings/import',
+    'POST /api/data/import',
+  ],
   importBodyBudgets: { settingsBytes: 1024 * 1024, businessDataBytes: 32 * 1024 * 1024 },
   runtimeRetentionFact: 'runtime.settings.logRetentionDays',
   runtimeRetentionDerivedOperation: 'rebuildable_runtime_log_retention',

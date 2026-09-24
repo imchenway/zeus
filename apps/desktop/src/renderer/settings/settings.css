@@ -941,6 +941,73 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+  .codex-update-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .codex-update-state {
+    flex: 0 1 auto;
+    margin: 0;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .codex-update-progress {
+    grid-column: 1 / -1;
+    position: relative;
+    overflow: hidden;
+    block-size: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--zeus-product-accent) 16%, transparent);
+  }
+  .codex-update-progress > span {
+    position: absolute;
+    inset-block: 0;
+    inline-size: 36%;
+    border-radius: inherit;
+    background: var(--zeus-product-accent);
+    animation: codex-update-progress 1.1s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .codex-update-progress > span {
+      animation: none;
+      inset-inline-start: 0;
+    }
+  }
+  .codex-available-models {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 10px;
+    padding-block-start: 10px;
+  }
+  .codex-available-models > strong {
+    font-size: 13px;
+  }
+  .codex-available-models > small {
+    color: var(--zeus-product-muted);
+  }
+  .codex-available-models > ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .codex-available-models li {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    max-inline-size: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 7px;
+    background: var(--zeus-product-panel);
+  }
+  .codex-available-models li > span {
+    overflow-wrap: anywhere;
+  }
 
   /* Zeus 本地明细保持原始开放布局，只有官方账户半年活动图使用独立日历卡片。 */
   .codex-usage-section {
@@ -1986,4 +2053,13 @@
 
 .macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell .settings-detail-pane {
   margin: 0;
+}
+
+@keyframes codex-update-progress {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(310%);
+  }
 }

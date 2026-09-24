@@ -272,7 +272,8 @@ function selectPreferredArtifact(artifacts: ReleaseUpdateArtifact[], arch: Relea
   return artifacts.find((artifact) => artifact.arch === arch && artifact.kind === 'dmg') ?? artifacts.find((artifact) => artifact.arch === arch) ?? null;
 }
 
-function compareSemverLike(leftVersion: string, rightVersion: string): number {
+/** 比较已规范化的数字版本；Codex 与 Zeus 更新检测共用同一顺序规则。 */
+export function compareSemverLike(leftVersion: string, rightVersion: string): number {
   const left = parseSemverParts(leftVersion);
   const right = parseSemverParts(rightVersion);
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {

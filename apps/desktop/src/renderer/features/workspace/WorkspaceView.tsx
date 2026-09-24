@@ -499,6 +499,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     client: props.nativeConversationClient ?? null,
     settings: appShellSettings,
     onSettingsSaved: state.setAppShellSettings,
+    settingsActive: activeNavTarget === 'settings' && settingsCategory === 'models',
     taskContext: taskModelSetupContext,
     requestedTaskStep: taskModelPushEntry === 'choose' || taskModelPushEntry === 'custom' ? taskModelPushEntry : undefined,
   });
