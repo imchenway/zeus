@@ -559,7 +559,8 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
                 settings: {
                   model: context.model,
                   reasoning_effort: wireEffort,
-                  developer_instructions: null,
+                  /** 每轮重申当前宿主与插件规则，保证已存在的 Provider 线程也接收最新交付约定。 */
+                  developer_instructions: developerInstructions,
                 },
               },
             }

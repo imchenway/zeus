@@ -63,6 +63,7 @@ type ModelConnectionClient = Pick<
   | 'saveModelConnectionReasoningOptions'
   | 'auditModelConnectionReasoningLevels'
   | 'refreshModelConnectionModels'
+  | 'refreshModelConnectionPricing'
   | 'probeModelConnectionModels'
   | 'diagnoseModelConnection'
 >;
@@ -217,6 +218,7 @@ export function ModelConnectionsSettingsPane(props: {
       templateId: connection.templateId,
       baseUrl: connection.baseUrl,
       modelsPath: connection.modelsPath,
+      pricingUrl: connection.pricingUrl ?? '',
       enabled: connection.enabled,
       models: connection.models.map(cloneModel),
       apiKey: '',
@@ -281,10 +283,28 @@ export function ModelConnectionsSettingsPane(props: {
       templateId: value.templateId,
       baseUrl: value.baseUrl,
       modelsPath: value.modelsPath,
+      pricingUrl: value.pricingUrl?.trim() ?? '',
       enabled: value.enabled,
       models: value.models,
       ...(value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}),
     };
+  }
+
+  /** 先保存单一页面地址，再读取清单；无需逐模型填价。 */
+  async function refreshPricing(): Promise<void> {
+    if (!props.client || busy || !current) return;
+    setStatus('refreshing');
+    setMessage(null);
+    try {
+      await props.client.updateModelConnection(current.id, { ...createSaveInput({ ...current, id: current.id, apiKey: '' }), pricingUrl: draft.pricingUrl?.trim() ?? '' });
+      const updated = await props.client.refreshModelConnectionPricing(current.id);
+      setConnections((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setDraft((value) => (value.id === updated.id ? { ...value, pricingUrl: updated.pricingUrl ?? '' } : value));
+    } catch (error) {
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+    } finally {
+      setStatus('idle');
+    }
   }
 
   async function persistConnection(input: SaveModelConnectionRequest): Promise<void> {
@@ -654,6 +674,65 @@ export function ModelConnectionsSettingsPane(props: {
             ) : null}
           </div>
 
+          <section aria-label={zh ? '价格来源' : 'Pricing source'}>
+            <label>
+              <span>{zh ? '价格清单页面' : 'Pricing page'}</span>
+              <input
+                type="url"
+                value={draft.pricingUrl ?? ''}
+                placeholder={draft.templateId === 'custom' ? 'https://example.com/pricing' : zh ? '留空使用供应商公开价格页面' : 'Use the built-in pricing page'}
+                onChange={(event) => changeDraft({ ...draft, pricingUrl: event.currentTarget.value })}
+                disabled={busy}
+              />
+            </label>
+            <p>
+              {zh
+                ? '提供一个页面即可自动匹配模型；公开价估算不包含私人折扣。未知页面可能调用此连接的模型辅助识别，产生少量用量。'
+                : 'One page covers all models. Public-price estimates exclude private discounts. Unfamiliar pages may use this connection’s model to extract prices.'}
+            </p>
+            <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => void refreshPricing()}>
+              {zh ? (current?.pricingCatalog?.retrievedAt ? '立即更新' : '读取并启用') : 'Read pricing'}
+            </Button>
+            {!current ? <small>{zh ? '保存供应商后即可读取价格。' : 'Save the provider first.'}</small> : null}
+            {current?.pricingCatalog ? (
+              <div role="status">
+                <p>
+                  {zh
+                    ? `已匹配 ${current.models.filter((model) => current.pricingCatalog?.prices.some((price) => price.model === model.id)).length} / ${current.models.length} 个模型`
+                    : `${current.pricingCatalog.prices.length} prices recognized`}
+                </p>
+                {current.pricingCatalog.retrievedAt ? (
+                  <small>
+                    {zh ? '上次读取：' : 'Last read: '}
+                    {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
+                  </small>
+                ) : null}
+                {current.pricingCatalog.error ? (
+                  <p>
+                    {current.pricingCatalog.error}
+                    {current.pricingCatalog.retrievedAt && current.pricingCatalog.retrievedAt !== current.pricingCatalog.checkedAt ? (zh ? '；当前显示最近一次读取的有效价格。' : '; showing the latest valid prices.') : ''}
+                  </p>
+                ) : null}
+                <details>
+                  <summary>{zh ? '查看价格明细' : 'View prices'}</summary>
+                  <a href={current.pricingCatalog.url} target="_blank" rel="noreferrer">
+                    {current.pricingCatalog.url}
+                  </a>
+                  <ul>
+                    {current.pricingCatalog.prices.map((price, index) => (
+                      <li key={`${price.model}:${index}`}>
+                        <strong>{price.model}</strong> · {price.currency} ·{' '}
+                        {price.perMillion ? `${zh ? '输入' : 'Input'} ${price.perMillion.input} / ${zh ? '输出' : 'Output'} ${price.perMillion.output} / 1M tokens` : `${price.perRequest} / ${zh ? '次' : 'request'}`}
+                        <br />
+                        {price.basis}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            ) : null}
+          </section>
+
           <label className="model-connection-enabled">
             <input
               type="checkbox"
@@ -841,7 +920,8 @@ export function ModelConnectionsSettingsPane(props: {
                   !current.enabled ||
                   !defaultModelRef ||
                   Boolean(draft.apiKey) ||
-                  JSON.stringify(createSaveInput()) !== JSON.stringify({ name: current.name, templateId: current.templateId, baseUrl: current.baseUrl, modelsPath: current.modelsPath, enabled: current.enabled, models: current.models })
+                  JSON.stringify(createSaveInput()) !==
+                    JSON.stringify({ name: current.name, templateId: current.templateId, baseUrl: current.baseUrl, modelsPath: current.modelsPath, pricingUrl: current.pricingUrl ?? '', enabled: current.enabled, models: current.models })
                 }
               >
                 {zh ? '完成接入' : 'Finish setup'}

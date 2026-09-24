@@ -1,3 +1,5 @@
+/** 桌面动态价格读取复用受限公网访问边界。 */
+export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacitySupported } from '@zeus/shared';
 import type { ConversationWorktreeOptions } from '@zeus/shared';
@@ -1105,6 +1107,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       })
     : undefined;
   const modelConnections = createModelConnectionService({
+    readPricingPage: options.browserAutomation?.readPricingPage?.bind(options.browserAutomation),
     settings,
     secretStore,
     save: () => db.save(),
@@ -1814,7 +1817,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let usageRefreshInFlight: Promise<void> | undefined;
   const refreshOfficialUsageInBackground = async (): Promise<void> => {
     // 定价来自公开页面，不需要启动 Codex 或等待账户登录。
-    await codexUsageService.refreshMissingPricing();
+    await Promise.all([codexUsageService.refreshMissingPricing(), modelConnections.pricing.refreshDue()]);
     // 后台用量刷新只能复用已经由用户操作启动的 Codex，应用首次打开不得为读取用量而执行外部 CLI。
     if (codexAppServerManager.getState().type !== 'ready') return;
     const official = await codexUsageService.refreshOfficialUsage();

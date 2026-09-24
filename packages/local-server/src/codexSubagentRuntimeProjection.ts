@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative } from 'node:path';
 import type { CodexThreadSnapshot } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, estimateCodexUsage, type TokenUsageBreakdown } from '@zeus/shared';
+import { calculateCacheHitRate, estimateCodexUsageWithRateSnapshot, unavailableRateSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
 
 export const codexSubagentRuntimeMaximumJsonlBytes = 512 * 1024 * 1024;
 export const codexSubagentRuntimeMaximumJsonlLineBytes = 16 * 1024 * 1024;
@@ -270,7 +270,8 @@ function toRuntimeDetails(thread: CodexThreadSnapshot, ownedTurns: Record<string
   const effort: SubagentRuntimeFact<string> = context?.effort ? available(context.effort) : unavailable(contextReason);
   const serviceTier: SubagentRuntimeFact<string | null> = context?.hasServiceTier ? available(context.serviceTier) : unavailable(contextReason);
   const last = state?.latestLast ?? null;
-  const estimate = usage && model.state === 'available' ? estimateCodexUsage({ model: model.value, serviceTier: serviceTier.state === 'available' ? serviceTier.value : null, usage }) : null;
+  /** 原生历史只提供累计用量，缺少请求费率快照时不得按当前价格回算。 */
+  const estimate = usage && model.state === 'available' ? estimateCodexUsageWithRateSnapshot(usage, unavailableRateSnapshot(model.value)) : null;
   const activity = activityFacts(ownedTurns, state, scanReason);
   const changeSummary = changeFacts(ownedTurns);
   const gitInfo = isRecord(thread.gitInfo) ? thread.gitInfo : {};

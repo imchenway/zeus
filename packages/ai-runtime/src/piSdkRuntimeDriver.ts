@@ -846,7 +846,7 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     defineTool({
       name: 'view_image',
       label: '查看图片',
-      description: '读取已授权的本地图片，交给当前模型理解；不因能力未知而删除图片。',
+      description: '读取已授权的本地图片，只交给当前模型理解，不会展示给用户；向用户交付图片时须在最终答复中使用 Markdown 图片语法。',
       parameters: Type.Object({ path: Type.String() }),
       execute: (id, args, signal) => execute(id, 'view_image', args, signal),
     }),

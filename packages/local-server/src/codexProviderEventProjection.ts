@@ -1167,6 +1167,22 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const model = context?.model ?? settings?.model ?? conversation.providerModel;
     if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Raw response event cannot resolve its model.');
     const usage = isRecord(params.usage) ? tokenUsageBreakdown(params.usage) : null;
+    /** 原始响应按真实请求身份固定费用，后续累计通知不能重定价。 */
+    const requestEstimate =
+      usage && options.usage
+        ? await options.usage.recordRequest({
+            projectId: conversation.projectId,
+            conversationId: conversation.id,
+            providerThreadId: threadId,
+            providerTurnId,
+            requestId: providerRequestId,
+            model,
+            modelSourceId: context?.modelSourceId ?? conversation.modelSourceId,
+            serviceTier: typeof params.serviceTier === 'string' ? params.serviceTier : (context?.serviceTier ?? settings?.serviceTier),
+            usage,
+            occurredAt: event.receivedAt,
+          })
+        : null;
     const timing = modelRequestTiming.complete(conversation.id, turn.id);
     const completedAt = event.receivedAt;
     const measurementComplete = usage !== null && timing.firstTextOutputAt !== null && Date.parse(completedAt) > Date.parse(timing.firstTextOutputAt) && !timing.hasNonTextOutput;
@@ -1209,7 +1225,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         outputTokens: usage?.outputTokens ?? null,
         reasoningOutputTokens: usage?.reasoningOutputTokens ?? null,
         totalTokens: usage?.totalTokens ?? null,
-        estimatedUsd: null,
+        estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
         usageComplete: usage !== null,
         providerRequestId,
         firstVisibleOutputAt: timing.firstVisibleOutputAt,

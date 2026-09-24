@@ -5,6 +5,7 @@ import type { UserFacingErrorCause } from './userFacingError.js';
 export * from './taskPush.js';
 export * from './temporaryWorkspace.js';
 export * from './codexUsage.js';
+export * from './modelPricing.js';
 export * from './commandEnvelope.js';
 export * from './commandGovernance.js';
 export * from './executionHostStopCommand.js';

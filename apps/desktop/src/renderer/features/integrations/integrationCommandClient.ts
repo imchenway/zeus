@@ -6,6 +6,8 @@ export const integrationClientCommandTypes = {
   modelConnectionUpdate: 'integration.model_connection.update',
   modelConnectionDelete: 'integration.model_connection.delete',
   modelConnectionApiKeyClear: 'integration.model_connection.api_key.clear',
+  /** 整份价格清单的幂等刷新。 */
+  modelConnectionPricingRefresh: 'integration.model_connection.pricing.refresh',
   modelConnectionModelsRefresh: 'integration.model_connection.models.refresh',
   modelConnectionModelsProbe: 'integration.model_connection.models.probe',
   modelConnectionDiagnose: 'integration.model_connection.diagnose',

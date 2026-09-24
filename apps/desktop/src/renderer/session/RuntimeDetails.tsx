@@ -1,3 +1,4 @@
+import { formatEstimatedCosts } from '@zeus/shared';
 import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -51,7 +52,14 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
           <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          <RuntimeSummaryMetric label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)} />
+          <RuntimeSummaryMetric
+            label={zh ? '费用（估算）' : 'Estimated cost'}
+            value={
+              props.runtime.usage.costs?.length
+                ? `${formatEstimatedCosts(props.runtime.usage.costs, null)}${props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 ? '' : zh ? '（部分）' : ' (partial)'}`
+                : formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)
+            }
+          />
         </span>
       </summary>
       <div className="session-runtime-detail-groups">
@@ -80,7 +88,10 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           ) : null}
           <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
           <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          <RuntimeUsageRow label={zh ? 'API 等价费用（估算）' : 'API-equivalent cost (est.)'} value={formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)} />
+          <RuntimeUsageRow
+            label={zh ? '费用（估算）' : 'Estimated cost'}
+            value={props.runtime.usage.costs?.length ? formatEstimatedCosts(props.runtime.usage.costs, null) : formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)}
+          />
         </RuntimeDetailGroup>
         <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
           <RuntimeUsageRow
