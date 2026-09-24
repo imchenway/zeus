@@ -123,6 +123,8 @@ export function createCodexRuntimeGenerationManager(
   let activationChain: Promise<unknown> = Promise.resolve();
   let activationSequence = 0;
   let remoteControlEnabled = false;
+  /** 维护窗口只阻止写操作，账号和状态读取仍可完成。 */
+  let maintenanceActive = false;
   /** 只有当前连接定期读取目录，旧连接继续完成既有任务。 */
   let modelCatalogTimer: ReturnType<typeof setTimeout> | null = null;
   /** 后台每五分钟检查一次；登录和账号变化仍触发及时检查。 */
@@ -210,6 +212,7 @@ export function createCodexRuntimeGenerationManager(
   }
 
   function retainEntry(entry: RuntimeEntry): RuntimeLease {
+    if (maintenanceActive) throw managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请稍后再开始或继续任务。');
     if (entry.closing || entry.manager.getState().type === 'closed') {
       throw managerError('ZEUS_CODEX_GENERATION_EXITED', 'Codex runtime generation closed before the writer operation could start.');
     }
@@ -514,6 +517,7 @@ export function createCodexRuntimeGenerationManager(
   }
 
   function enqueueActivation(input: RuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
+    if (maintenanceActive) return Promise.reject(managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请稍后重试。'));
     const activation = activationChain.then(() => activate(input, forceFreshGeneration));
     activationChain = activation.catch(() => undefined);
     return activation;
@@ -767,6 +771,20 @@ export function createCodexRuntimeGenerationManager(
           };
         })
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot !== null);
+    },
+    async runExclusiveMaintenance<Result>(operation: () => Promise<Result>): Promise<Result> {
+      if (maintenanceActive) throw managerError('ZEUS_CODEX_MAINTENANCE_IN_PROGRESS', 'Codex 正在更新，请等待当前更新完成。');
+      maintenanceActive = true;
+      try {
+        /** 已经开始的世代切换先完成；维护期间的新切换会被拒绝。 */
+        await activationChain;
+        /** 已接纳的轮次、写请求和授权必须先收口，禁止更新过程中改变执行程序。 */
+        const busy = [...entries].some((entry) => entry.inFlightWrites > 0 || entry.activeTurns.size > 0 || entry.pendingRequests.size > 0);
+        if (busy) throw managerError('ZEUS_CODEX_UPDATE_BUSY', '仍有 Codex 任务或授权请求正在处理，请完成后再更新。');
+        return await operation();
+      } finally {
+        maintenanceActive = false;
+      }
     },
     async prepareForShutdown() {
       preparingForShutdown = true;

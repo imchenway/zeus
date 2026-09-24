@@ -48,6 +48,15 @@ export interface AiRuntimeAdapterStatus extends AiRuntimeAdapterDescriptor {
   modelConfiguration: 'user-configured';
 }
 
+/** Codex 程序更新检测；账号可用模型由运行时目录单独返回。 */
+export interface CodexRuntimeUpdateStatus {
+  adapter: AiRuntimeAdapterStatus;
+  status: 'available' | 'up_to_date' | 'unavailable';
+  currentVersion: string | null;
+  latestVersion: string | null;
+  checkedAt: string;
+}
+
 export interface RuntimeStatusSnapshot {
   aiCli: {
     name: string;

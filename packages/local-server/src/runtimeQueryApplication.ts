@@ -45,6 +45,17 @@ export interface RuntimeAdapterReadEffectPort {
   listAdapters(): AiCliAdapterDescriptor[];
   /** 用户显式进入单个 check 路由时才允许探测 CLI；不得启动会话或保存探测结果。 */
   checkAdapter(adapterId: string, configuredCommandPath?: string): Promise<AiCliAdapterStatus>;
+  /** 用户明确检测 Codex 更新时才访问官方发布源。 */
+  checkCodexUpdate(adapter: AiCliAdapterStatus): Promise<CodexRuntimeUpdateStatus>;
+}
+
+/** Codex 程序版本检测结果；模型权限仍由运行时目录单独决定。 */
+export interface CodexRuntimeUpdateStatus {
+  adapter: AiCliAdapterStatus;
+  status: 'available' | 'up_to_date' | 'unavailable';
+  currentVersion: string | null;
+  latestVersion: string | null;
+  checkedAt: string;
 }
 
 export interface LiveRuntimeReadPort {
@@ -77,6 +88,16 @@ export class RuntimeQueryApplication {
     /** 每次重新读取设置，不能沿用安装前或编辑路径前的检测结果。 */
     const configuredPath = this.ports.readSettings().adapterCliPaths[adapterId];
     return this.ports.adapters.checkAdapter(adapterId, configuredPath);
+  }
+
+  /** 使用与登录相同的程序来源检查更新，避免比较到用户全局的另一份 Codex。 */
+  async checkCodexUpdate(): Promise<CodexRuntimeUpdateStatus> {
+    /** 当前程序状态由服务端重新探测，不能相信界面回传的版本。 */
+    const adapter = await this.checkAdapter('codex');
+    if (!adapter.available || !adapter.version) {
+      return { adapter, status: 'unavailable', currentVersion: adapter.version, latestVersion: null, checkedAt: this.ports.now().toISOString() };
+    }
+    return this.ports.adapters.checkCodexUpdate(adapter);
   }
 
   readSettings(): RuntimeSettingsSnapshot {

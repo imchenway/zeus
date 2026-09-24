@@ -14,6 +14,15 @@ export function registerRuntimeQueryRoutes(options: { server: FastifyInstance; a
     }
   });
 
+  /** 在线更新检查供设置页显式检测使用；后台调度走带持久命令的更新入口。 */
+  options.server.get('/api/runtime/adapters/codex/update', async (_request, reply) => {
+    try {
+      return await options.application.checkCodexUpdate();
+    } catch (error) {
+      return sendNativeQueryRouteError(reply, error);
+    }
+  });
+
   options.server.get('/api/runtime/settings', async () => options.application.readSettings());
 
   options.server.get('/api/runtime/sessions', async (request: FastifyRequest<{ Querystring: ListRuntimeSessionsQuery }>) => options.application.listSessions(request.query));

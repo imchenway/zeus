@@ -1786,6 +1786,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const capabilities = await codexAppServerManager.activateFreshGeneration({
       commandPath: currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      remoteControl: codexRemoteControlEnabled,
       requireFreshModels: input.syncSubscriptionModels === true,
     });
     return { runtimeReloaded: true, runtimeGenerationId: capabilities.generationId, restartRequired: false };

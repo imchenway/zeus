@@ -541,6 +541,8 @@ export interface CodexAppServerManager {
   capabilitiesForGeneration(generationId: string): CodexCapabilitiesSnapshot | null;
   generationForThread(threadId: string): string | null;
   listRuntimeGenerations(): CodexRuntimeGenerationSnapshot[];
+  /** 在没有活动写入时暂时阻止新写入，用于安全替换 Codex 程序。 */
+  runExclusiveMaintenance?<Result>(operation: () => Promise<Result>): Promise<Result>;
   prepareForShutdown(): Promise<void>;
   close(): Promise<void>;
 }
