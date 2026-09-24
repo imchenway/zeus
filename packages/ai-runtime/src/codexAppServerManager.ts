@@ -441,6 +441,26 @@ export interface CodexRuntimeGenerationSnapshot {
   pendingRequestCount: number;
 }
 
+/** 描述一次 Codex 运行世代切换所需的完整配置。 */
+export interface CodexRuntimeActivationInput {
+  /** 本世代实际启动的 Codex 可执行文件绝对路径。 */
+  commandPath: string;
+  /** 可选的外部 Agent 配置根目录。 */
+  externalAgentHome?: string;
+  /** 是否通过官方 Remote Control 守护进程建立连接。 */
+  remoteControl?: boolean;
+  /** 登录后的新连接须等到本次远端目录更新完成，不能接受启动时的旧缓存。 */
+  requireFreshModels?: boolean;
+}
+
+/** 维护窗口内唯一允许执行的运行世代切换入口。 */
+export interface CodexRuntimeMaintenanceControl {
+  /** 关闭当前空闲世代，阻止旧程序在外部守护进程退出后自动重连。 */
+  deactivateCurrentGeneration(): Promise<void>;
+  /** 在新写入仍被拦截时激活并验证指定 Codex 运行世代。 */
+  activateFreshGeneration(input: CodexRuntimeActivationInput): Promise<CodexCapabilitiesSnapshot>;
+}
+
 export type CodexRemoteControlConnectionStatus = 'disabled' | 'connecting' | 'connected' | 'errored';
 
 export interface CodexRemoteControlStatus {
@@ -474,15 +494,9 @@ export interface CodexRemoteControlClientsPage {
 }
 
 export interface CodexAppServerManager {
-  ensureReady(input: {
-    commandPath: string;
-    externalAgentHome?: string;
-    remoteControl?: boolean;
-    /** 登录后的新连接须等到本次远端目录更新完成，不能接受启动时的旧缓存。 */
-    requireFreshModels?: boolean;
-  }): Promise<CodexCapabilitiesSnapshot>;
+  ensureReady(input: CodexRuntimeActivationInput): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
-  activateFreshGeneration?(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; requireFreshModels?: boolean }): Promise<CodexCapabilitiesSnapshot>;
+  activateFreshGeneration?(input: CodexRuntimeActivationInput): Promise<CodexCapabilitiesSnapshot>;
   /** 刷新既有连接的完整目录，不重启进程或重放任何模型请求。 */
   refreshModels(): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean; allowCachedOnTransportFailure?: boolean; preferCached?: boolean; cachedOnly?: boolean }): Promise<CodexAccountSnapshot>;
@@ -542,7 +556,7 @@ export interface CodexAppServerManager {
   generationForThread(threadId: string): string | null;
   listRuntimeGenerations(): CodexRuntimeGenerationSnapshot[];
   /** 在没有活动写入时暂时阻止新写入，用于安全替换 Codex 程序。 */
-  runExclusiveMaintenance?<Result>(operation: () => Promise<Result>): Promise<Result>;
+  runExclusiveMaintenance?<Result>(operation: (control: CodexRuntimeMaintenanceControl) => Promise<Result>): Promise<Result>;
   prepareForShutdown(): Promise<void>;
   close(): Promise<void>;
 }

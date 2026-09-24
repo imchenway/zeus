@@ -1779,11 +1779,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return capabilities.modelBudgets[model.model] ?? null;
   };
 
-  async function activateCurrentCodexConfiguration(input: { syncSubscriptionModels?: boolean } = {}): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
-    if (!codexAppServerManager.activateFreshGeneration) {
+  async function activateCurrentCodexConfiguration(
+    input: {
+      /** 是否要求新世代先取得与其版本一致的完整模型目录。 */
+      syncSubscriptionModels?: boolean;
+      /** 维护窗口传入的专用激活入口，确保接管完成前不放行新任务。 */
+      activateFreshGeneration?: NonNullable<typeof codexAppServerManager.activateFreshGeneration>;
+    } = {},
+  ): Promise<{ runtimeReloaded: true; runtimeGenerationId: string; restartRequired: false }> {
+    /** 日常配置切换使用公共入口，升级维护则使用同一门禁内的专用入口。 */
+    const activateFreshGeneration = input.activateFreshGeneration ?? codexAppServerManager.activateFreshGeneration?.bind(codexAppServerManager);
+    if (!activateFreshGeneration) {
       throw nativeApiError('ZEUS_CODEX_CONFIG_HOT_RELOAD_UNAVAILABLE', '当前 Codex 运行服务不支持配置热启用。');
     }
-    const capabilities = await codexAppServerManager.activateFreshGeneration({
+    const capabilities = await activateFreshGeneration({
       commandPath: currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
       remoteControl: codexRemoteControlEnabled,
