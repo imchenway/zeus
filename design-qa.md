@@ -67,3 +67,47 @@ final result: blocked
 - 因此真实 Agent 会话、会话请求转管理者待办、交付物验收/返工和受管会话只读恢复仍缺登录后的 GUI 闭环证据；静态实现和 Command 成功不能替代这些证据。
 
 final result: passed for observable packaged Command and cockpit state; authenticated Agent lifecycle blocked by isolated Codex login
+
+---
+
+# ZEUS-0686 会话显示优化设计 QA
+
+## 对比目标
+
+- 参考：`docs/show-me-session-preview.html`，浏览器截图为 `/Users/david/.zeus/artifacts/browser-comments/browser-exports/1790211727110-8f5a1f48-a6f0-4490-9e44-0139ebfde933/screenshot.png`。
+- 当前问题证据：`docs/ZEUS-0686_evidence/01-current.png`。
+- 实现：`ConversationTranscript.tsx`、`SessionActivity.tsx` 与 `session.css` 中的共用会话投影和样式。
+- 真实运行：当前工作树的开发 Electron，独立资料根 `.tmp/zeus-0686-runtime`，外接屏 `displayId=5`，窗口 `1240 × 820`。
+
+## 已确认
+
+- 隔离开发实例能正常启动、加载本任务创建的独立项目，并显示当前分支和工作区；主窗口首次位于外接屏 `displayId=5`。
+- 隔离身份完成官方 Codex 授权后，真实会话实际读取、搜索并运行命令。运行态显示最新状态和单一过程入口，完成态显示“用时 45s · 5 项操作”。
+- 展开五项操作后，界面保留阶段说明和“读取了 1 个文件 · 搜索了 1 次 · 运行了 4 条命令”；收起后恢复简洁摘要。
+- 无副作用命令 `false` 的真实失败态显示“1 项操作”，展开后明确显示失败命令和退出状态 1，没有被普通成功样式吞掉。
+- `760 × 820` 窄窗口中，长文本、过程入口和失败行正常换行，无横向溢出或遮挡。
+- 真实 Pi 模型连接已完成原生动态轮次；修复完成消息上下文键后，文件读取、命令工具、过程摘要、展开明细和最终答复形成闭环。
+- Pi 同步 `git diff --check` 真实退出 `128`，界面与数据库均保留失败过程。原因是隔离沙箱拒绝用户级 Git 配置，不把该结果误记为检查通过。
+- 过程入口是原生按钮，保留展开状态、焦点样式、`aria-expanded`、`aria-controls` 和已加载操作数量的无障碍名称。
+- 摘要从既有结构化动作计算数量；没有根据文本重排或删除真实条目。
+- `pnpm lint`、`pnpm typecheck`、`pnpm build` 和 `git diff --check` 均通过。
+
+## 证据
+
+- `docs/ZEUS-0686_evidence/02-native-completed.png`
+- `docs/ZEUS-0686_evidence/03-native-expanded.png`
+- `docs/ZEUS-0686_evidence/04-native-active.png`
+- `docs/ZEUS-0686_evidence/05-native-failed-operation.png`
+- `docs/ZEUS-0686_evidence/06-native-narrow.png`
+- `docs/ZEUS-0686_evidence/08-pi-native-completed.png`
+- `docs/ZEUS-0686_evidence/09-pi-native-expanded.png`
+- `docs/ZEUS-0686_evidence/10-pi-native-process-projected.png`
+- `docs/ZEUS-0686_evidence/11-pi-native-sync-command.png`
+
+## 未覆盖
+
+- 未制造长历史过程分页、断线重连或运行中用户插话。
+- 没有启动打包后的 `Zeus Test.app`；本次按项目日常验收约束使用当前工作树的 `pnpm dev` 真机实例。
+- 两个长命令返回运行句柄后，Pi 没有继续轮询；仅同步命令的退出码可作为真实命令结束证据。
+
+final result: passed for the core authenticated Codex and Pi Electron conversation flows; pagination, reconnect and interruption remain unverified

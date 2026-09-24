@@ -9663,6 +9663,26 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding-block-end: 6px;
 }
 
+/* 活动轮次把最新进展和当前动作固定在过程入口上方，历史操作默认收起。 */
+.session-codex-parity-v1 .session-turn-process-preview {
+  display: grid;
+  gap: 6px;
+  inline-size: min(var(--session-thread-max), 100%);
+  min-inline-size: 0;
+}
+
+/* 当前动作沿用活动行语义，不再额外生成一个可展开的操作组。 */
+.session-codex-parity-v1 .session-activity-current {
+  min-inline-size: 0;
+}
+
+/* 数量是入口的次要信息，保持正文可读且允许窄栏换行。 */
+.session-codex-parity-v1 .session-turn-process-control > button > small {
+  color: var(--session-text-subtle);
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .session-codex-parity-v1 .session-turn-process-control:empty {
   display: none;
 }

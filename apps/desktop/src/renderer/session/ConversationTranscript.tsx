@@ -4,7 +4,17 @@ import { classifyAssistantMessage, conversationNavigationExcerpt, conversationQu
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
+import {
+  activityCategory,
+  isActiveSessionTurn,
+  isLiveActivityItem,
+  isOperationalActivityItem,
+  type SessionActivityCategory,
+  SessionActivityCurrent,
+  SessionActivityGroup,
+  SessionTurnDuration,
+  SessionTurnProcessDisclosure,
+} from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import type {
@@ -1068,44 +1078,70 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         (segment) =>
           Boolean(segment.summary && transcriptRowContainsItemKey(segment.summary, completionAnchorKeyByTurn[row.turnId])) || segment.rows.some((child) => transcriptRowContainsItemKey(child, completionAnchorKeyByTurn[row.turnId])),
       );
+      /** 缺少轮次快照时沿用过程行自身的实时状态。 */
+      const turnActive = turn ? isActiveSessionTurn(turn) : row.live;
+      /** 只有当前输入所属的活动轮次显示外置进展。 */
+      const processLive = row.live && turnActive;
+      /** 当前进展独立于历史操作显示，展开过程时不重复同一行。 */
+      const currentStatusRow = processLive ? latestTurnProcessStatusRow(row.segments) : null;
+      /** 当前动作来自真实运行条目，结束或等待时不伪造动作。 */
+      const currentActivityItem = processLive ? latestTurnProcessActivityItem(row.segments) : null;
+      /** 折叠入口只汇总当前已经加载的真实操作数。 */
+      const processActivityCount = turnProcessActivityCount(row.segments);
+      /** 过程展开后保留原始顺序，仅去掉主时间线已经显示的当前进展行。 */
       const renderProcessSegments = (active: boolean): ReactNode =>
-        row.segments.map((segment, segmentIndex) => (
-          <section className="session-turn-process-stage" data-current={row.live && projectedTurnWorkKeyByTurn.get(row.turnId) === row.key && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
-            {segment.summary ? (
-              <div className="session-turn-stage-summary">
-                {renderTranscriptRow(segment.summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
-              </div>
-            ) : null}
-            {segment.rows.map((child) => {
-              const content = renderTranscriptRow(
-                child,
-                transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
-              );
-              return active ? (
-                <div className="session-live-turn-row" key={child.key} data-navigation-row-key={child.key}>
-                  {content}
+        row.segments.map((segment, segmentIndex) => {
+          /** 活动轮次的当前说明已固定显示在入口上方。 */
+          const summary = segment.summary?.key === currentStatusRow?.key ? null : segment.summary;
+          /** 子行同样避免重复当前说明，操作明细仍完整保留。 */
+          const rows = segment.rows.filter((child) => child.key !== currentStatusRow?.key);
+          if (!summary && rows.length === 0) return null;
+          return (
+            <section className="session-turn-process-stage" data-current={row.live && projectedTurnWorkKeyByTurn.get(row.turnId) === row.key && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
+              {summary ? (
+                <div className="session-turn-stage-summary">
+                  {renderTranscriptRow(summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
                 </div>
-              ) : (
-                <div key={child.key} data-navigation-row-key={child.key}>
-                  {content}
-                </div>
-              );
-            })}
-          </section>
-        ));
+              ) : null}
+              {rows.map((child) => {
+                const content = renderTranscriptRow(
+                  child,
+                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                );
+                return active ? (
+                  <div className="session-live-turn-row" key={child.key} data-navigation-row-key={child.key}>
+                    {content}
+                  </div>
+                ) : (
+                  <div key={child.key} data-navigation-row-key={child.key}>
+                    {content}
+                  </div>
+                );
+              })}
+            </section>
+          );
+        });
+      /** 活动轮次主时间线只保留最新进展和当前动作。 */
+      const livePreview =
+        processLive && (currentStatusRow || currentActivityItem) ? (
+          <div className="session-turn-process-preview">
+            {currentStatusRow ? renderTranscriptRow(currentStatusRow, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId)) : null}
+            {currentActivityItem ? <SessionActivityCurrent item={currentActivityItem} language={props.language} /> : null}
+          </div>
+        ) : null;
       if (!turn) {
-        const processLive = row.live;
         const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
           <>
+            {livePreview}
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
-                presentation={processLive ? 'inline' : 'disclosure'}
+                itemCount={processActivityCount}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
-                open={processLive ? undefined : expandedRowKeys.has(expansionKey)}
-                onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
+                open={expandedRowKeys.has(expansionKey)}
+                onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
                 onOpen={async () => {
                   if (!row.loadMore) return;
                   if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
@@ -1120,23 +1156,22 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </>
         );
       }
-      const turnActive = isActiveSessionTurn(turn);
-      const processLive = row.live && turnActive;
       const v2PagingKey = turn.providerTurnId ?? turn.id;
       const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
       const process = renderProcessSegments(processLive);
       return (
         <>
+          {livePreview}
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
               turn={turnActive || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
               requests={props.state.pendingRequests}
-              presentation={processLive ? 'inline' : 'disclosure'}
+              itemCount={processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
-              open={processLive ? undefined : expandedRowKeys.has(expansionKey)}
-              onOpenChange={processLive ? undefined : (open) => setTranscriptRowExpanded(expansionKey, open)}
+              open={expandedRowKeys.has(expansionKey)}
+              onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
               onOpen={async () => {
                 if (!row.loadMore) return;
                 if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
@@ -2254,7 +2289,9 @@ function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]):
     current.rows.push(row);
   }
 
-  return segments.map((segment, index) => {
+  /** 仅展示边界参与分段；没有可见说明的内部阶段不再制造重复入口。 */
+  const visibleSegments = compactInternalActivityStages(segments);
+  return visibleSegments.map((segment, index) => {
     const identityRow = segment.summary ?? segment.rows[0];
     const identity = segment.stageId ?? identityRow?.key ?? `empty-${index}`;
     return {
@@ -2263,6 +2300,57 @@ function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]):
       rows: mergeStageActivityRows(segment.rows, turnId, identity),
     };
   });
+}
+
+/** 连续纯操作阶段沿用最近的可见说明，同时保留每条操作的真实顺序和身份。 */
+function compactInternalActivityStages(segments: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }>): Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> {
+  /** 返回新数组，避免修改阶段投影和后续分页复用的数据。 */
+  const compacted: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> = [];
+  for (const segment of segments) {
+    /** 用户可见说明和非操作内容都是真实阅读边界。 */
+    const activityOnly = segment.rows.length > 0 && segment.rows.every((row) => row.kind === 'activity');
+    const previous = compacted.at(-1);
+    /** 只有连续两段都不夹杂其他可见内容时才跨内部阶段收拢。 */
+    const previousAcceptsActivity = Boolean(previous && previous.rows.every((row) => row.kind === 'activity'));
+    if (!segment.summary && activityOnly && previousAcceptsActivity) {
+      previous!.rows.push(...segment.rows);
+      continue;
+    }
+    compacted.push({ ...segment, rows: [...segment.rows] });
+  }
+  return compacted;
+}
+
+/** 活动轮次显示最后一条用户可读进展，不把结构化问答当作运行状态。 */
+function latestTurnProcessStatusRow(segments: readonly TranscriptTurnProcessSegment[]): TranscriptRow | null {
+  for (let segmentIndex = segments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
+    const segment = segments[segmentIndex]!;
+    for (let rowIndex = segment.rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
+      const row = segment.rows[rowIndex]!;
+      if (row.kind === 'item' && (isTurnStageSummaryRow(row) || normalizeItemType(row.item.type) === 'reasoning')) return row;
+    }
+    if (segment.summary) return segment.summary;
+  }
+  return null;
+}
+
+/** 当前动作只取最后一条仍在运行的真实活动记录。 */
+function latestTurnProcessActivityItem(segments: readonly TranscriptTurnProcessSegment[]): NativeSessionItemBuffer | null {
+  for (let segmentIndex = segments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
+    const rows = segments[segmentIndex]!.rows;
+    for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
+      const row = rows[rowIndex]!;
+      if (row.kind !== 'activity') continue;
+      const item = [...row.items].reverse().find(isLiveActivityItem);
+      if (item) return item;
+    }
+  }
+  return null;
+}
+
+/** 操作数按原生条目计数，不用命令文本去重。 */
+function turnProcessActivityCount(segments: readonly TranscriptTurnProcessSegment[]): number {
+  return segments.reduce((count, segment) => count + segment.rows.reduce((segmentCount, row) => segmentCount + (row.kind === 'activity' ? row.items.length : 0), 0), 0);
 }
 
 /** 只合并相邻且规范化后完全相同的阶段摘要，不使用模糊文本匹配。 */

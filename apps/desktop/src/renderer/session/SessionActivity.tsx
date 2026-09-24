@@ -106,6 +106,15 @@ interface SessionActivityGroupProps {
   onLoadContent?: (handle: string) => Promise<void>;
 }
 
+/** 活动轮次只把当前动作放在主时间线，完整历史仍由处理过程承载。 */
+export function SessionActivityCurrent(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
+  return (
+    <section className="session-activity-current">
+      <ActivityLiveRow item={props.item} language={props.language} />
+    </section>
+  );
+}
+
 /** 活动组保留真实过程；单条无详情的整理记录直接显示，避免标题与明细重复。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   /** 摘要、活动行与展开详情使用同一份名称投影。 */
@@ -577,7 +586,6 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
-  presentation?: 'disclosure' | 'inline';
   onOpen?: () => void | Promise<void>;
   loading?: boolean;
   error?: string | null;
@@ -586,12 +594,13 @@ export function SessionTurnProcessDisclosure(props: {
   turn?: NativeTurnSnapshot;
   /** 计时扣除本轮等待用户回应的时间。 */
   requests?: NativePendingRequest[];
+  /** 已加载的真实操作数量；只作摘要，不替代分页后的完整记录。 */
+  itemCount?: number;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
-  const inline = props.presentation === 'inline';
-  const open = inline || (props.open ?? internalOpen);
+  const open = props.open ?? internalOpen;
   const onOpenRef = useRef(props.onOpen);
   onOpenRef.current = props.onOpen;
   const bodyId = useId();
@@ -615,28 +624,31 @@ export function SessionTurnProcessDisclosure(props: {
         : open
           ? 'Hide process'
           : 'View process';
+  /** 数量让折叠入口在不展开时仍能说明信息规模。 */
+  const countLabel = props.itemCount ? (props.language === 'zh-CN' ? `${props.itemCount} 项操作` : `${props.itemCount} ${props.itemCount === 1 ? 'operation' : 'operations'}`) : null;
+  /** 无障碍名称同时说明动作和当前已加载数量。 */
+  const accessibleLabel = countLabel ? `${label}，${countLabel}` : label;
   return (
-    <section className="session-turn-process" data-open={open || undefined} data-presentation={inline ? 'inline' : 'disclosure'} aria-busy={props.loading || undefined}>
-      {!inline ? (
-        <div className="session-turn-process-control">
-          <button
-            type="button"
-            aria-label={label}
-            title={label}
-            aria-expanded={open}
-            aria-controls={bodyId}
-            onClick={() => {
-              const nextOpen = !open;
-              if (props.open === undefined) setInternalOpen(nextOpen);
-              props.onOpenChange?.(nextOpen);
-            }}
-          >
-            <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label}</span>
-            <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
-          </button>
-        </div>
-      ) : null}
-      <Collapsible id={inline ? undefined : bodyId} open={open}>
+    <section className="session-turn-process" data-open={open || undefined} aria-busy={props.loading || undefined}>
+      <div className="session-turn-process-control">
+        <button
+          type="button"
+          aria-label={accessibleLabel}
+          title={accessibleLabel}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => {
+            const nextOpen = !open;
+            if (props.open === undefined) setInternalOpen(nextOpen);
+            props.onOpenChange?.(nextOpen);
+          }}
+        >
+          <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label}</span>
+          {countLabel ? <small aria-hidden="true">· {countLabel}</small> : null}
+          <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
+        </button>
+      </div>
+      <Collapsible id={bodyId} open={open}>
         <div className="session-turn-process-body">
           {props.children}
           {props.error ? (
@@ -660,6 +672,12 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
   /** 只调整摘要文字，保留原有分组、顺序与展开行为。 */
   const exceptions = [...new Set(outcomes)].filter((outcome) => outcome !== 'running' && outcome !== 'completed');
   if (exceptions.length > 0) {
+    /** 单项异常直接指出对象；混合组同时保留总量，避免只看到“失败”。 */
+    const exceptionalItems = items.filter((item) => !['running', 'completed'].includes(activityOutcome(item)));
+    if (exceptionalItems.length === 1) {
+      const exceptionalTitle = activityItemTitle(exceptionalItems[0]!, language);
+      return items.length === 1 ? exceptionalTitle : `${items.length} ${language === 'zh-CN' ? '项操作' : items.length === 1 ? 'operation' : 'operations'} · ${exceptionalTitle}`;
+    }
     return [
       language === 'zh-CN' ? (active ? '正在处理' : '操作记录') : active ? 'Working' : 'Activity',
       ...exceptions.map((outcome) => `${outcomes.filter((value) => value === outcome).length} ${language === 'zh-CN' ? '项' : '·'}${activityOutcomeLabel(outcome, language === 'zh-CN')}`),
@@ -674,7 +692,12 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
   const commandItems = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type)));
   const webSearches = items.filter((item) => normalizeType(item.type) === 'websearch').length;
   const imageViews = items.filter((item) => normalizeType(item.type) === 'imageview').length;
-  const actionTypes = new Set(commandItems.flatMap((item) => commandActions(item).map((action) => normalizeType(primitive(action.type) ?? ''))));
+  /** 结构化动作直接提供可核对数量，不再把不同规模都写成同一句话。 */
+  const actionTypes = commandItems.flatMap((item) => commandActions(item).map((action) => normalizeType(primitive(action.type) ?? '')));
+  /** 读取与列目录对用户都是获取文件信息，摘要合并计数。 */
+  const readCount = actionTypes.filter((type) => type === 'read' || type === 'listfiles').length;
+  /** 文件内搜索与网页搜索分别计数，避免混淆数据来源。 */
+  const fileSearchCount = actionTypes.filter((type) => type === 'search').length;
   const genericCommandCount = commandItems.filter((item) => {
     const actions = commandActions(item);
     if (actions.length === 0) return true;
@@ -690,40 +713,40 @@ function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLa
     if (active) {
       const activeParts = [
         fileChanges > 0 ? '编辑文件' : null,
-        actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
-        actionTypes.has('search') ? '搜索文件' : null,
+        readCount > 0 ? `读取 ${readCount} 个文件` : null,
+        fileSearchCount > 0 ? `搜索 ${fileSearchCount} 次` : null,
         webSearches > 0 ? '搜索网页' : null,
         skills.length > 0 ? '读取技能' : null,
         imageViews > 0 ? '查看图像' : null,
-        genericCommandCount > 0 ? '运行命令' : null,
+        genericCommandCount > 0 ? `运行 ${genericCommandCount} 条命令` : null,
         browserTools ? '浏览器操作' : null,
         computerTools ? '桌面操作' : null,
         otherTools > 0 ? '使用工具' : null,
       ].filter(Boolean);
-      return `正在处理：${activeParts.join('、')}`;
+      return `正在处理：${activeParts.join(' · ')}`;
     }
     const completedParts = [
       fileChanges > 0 ? '编辑了文件' : null,
-      actionTypes.has('read') || actionTypes.has('listfiles') ? '读取文件' : null,
-      actionTypes.has('search') ? '搜索文件' : null,
+      readCount > 0 ? `读取了 ${readCount} 个文件` : null,
+      fileSearchCount > 0 ? `搜索了 ${fileSearchCount} 次` : null,
       webSearches > 0 ? '搜索了网页' : null,
       skills.length > 0 ? `读取了${skills.length === 1 ? (skills[0] ? ` ${skills[0]} ` : '') : ` ${skills.length} 个`}技能` : null,
       imageViews > 0 ? `查看了 ${imageViews} 张图像` : null,
-      genericCommandCount > 0 ? '运行了命令' : null,
+      genericCommandCount > 0 ? `运行了 ${genericCommandCount} 条命令` : null,
       browserTools ? '已进行浏览器操作' : null,
       computerTools ? '已进行桌面操作' : null,
       otherTools > 0 ? '使用了工具' : null,
     ].filter(Boolean);
-    return completedParts.join('、') || '完成了处理';
+    return completedParts.join(' · ') || '完成了处理';
   }
   const englishParts = [
     fileChanges > 0 ? (active ? 'editing files' : 'edited files') : null,
-    actionTypes.has('read') || actionTypes.has('listfiles') ? (active ? 'reading files' : 'read files') : null,
-    actionTypes.has('search') ? (active ? 'searching files' : 'searched files') : null,
+    readCount > 0 ? `${active ? 'reading' : 'read'} ${readCount} ${readCount === 1 ? 'file' : 'files'}` : null,
+    fileSearchCount > 0 ? `${active ? 'searching files' : 'searched files'} ${fileSearchCount} ${fileSearchCount === 1 ? 'time' : 'times'}` : null,
     webSearches > 0 ? (active ? 'searching the web' : 'searched the web') : null,
     skills.length > 0 ? `${active ? 'reading' : 'read'} ${skills.length === 1 ? `${skills[0] ? `${skills[0]} ` : ''}skill` : `${skills.length} skills`}` : null,
     imageViews > 0 ? `${active ? 'viewing' : 'viewed'} ${imageViews} ${imageViews === 1 ? 'image' : 'images'}` : null,
-    genericCommandCount > 0 ? (active ? 'running commands' : 'ran commands') : null,
+    genericCommandCount > 0 ? `${active ? 'running' : 'ran'} ${genericCommandCount} ${genericCommandCount === 1 ? 'command' : 'commands'}` : null,
     browserTools ? (active ? 'browser operations' : 'performed browser operations') : null,
     computerTools ? (active ? 'desktop operations' : 'performed desktop operations') : null,
     otherTools > 0 ? (active ? 'using tools' : 'used tools') : null,
