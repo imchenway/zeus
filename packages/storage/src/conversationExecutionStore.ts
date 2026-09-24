@@ -192,6 +192,8 @@ export interface ConversationContextCompactionStatus {
 export interface ConversationSessionMetricsSnapshot {
   usage: ConversationUsageSnapshot;
   cost: {
+    /** 原币费用，与美元兼容字段独立。 */
+    costs?: import('@zeus/shared').EstimatedMoney[];
     apiEquivalentUsd: number | null;
     priceCoverage: number | null;
     pricingCatalogDate: string | null;
@@ -2576,18 +2578,23 @@ function outputRate(request: ConversationModelRequestUsageRecord | null): number
 function readProviderUsageMetrics(db: ZeusDatabasePort, conversationId: string): ConversationSessionMetricsSnapshot['cost'] {
   const raw = db.get<{ provider_token_usage_json: string }>(`SELECT provider_token_usage_json FROM conversations WHERE id = ?`, [conversationId])?.provider_token_usage_json;
   const value = parseRecord(raw);
+  /** 存储入口已校验，投影仍仅保留合法货币项。 */
+  const costs = Array.isArray(value?.costs)
+    ? value.costs.filter((cost): cost is import('@zeus/shared').EstimatedMoney => typeof cost?.currency === 'string' && /^[A-Z]{3}$/u.test(cost.currency) && nonNegativeFinite(cost.amount) !== null)
+    : undefined;
   const apiEquivalentUsd = nonNegativeFinite(value?.apiEquivalentUsd);
   const priceCoverage = unitInterval(value?.priceCoverage);
   const pricingCatalogDate = typeof value?.pricingCatalogDate === 'string' && value.pricingCatalogDate.trim() ? value.pricingCatalogDate : null;
   const pricingSourceUrls = Array.isArray(value?.pricingSourceUrls) ? value.pricingSourceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0) : [];
   const historyComplete = value?.historyComplete === true;
   return {
+    costs,
     apiEquivalentUsd,
     priceCoverage,
     pricingCatalogDate,
     pricingSourceUrls,
     historyComplete,
-    complete: apiEquivalentUsd !== null && priceCoverage === 1 && historyComplete,
+    complete: (Boolean(costs?.length) || apiEquivalentUsd !== null) && priceCoverage === 1 && historyComplete,
   };
 }
 

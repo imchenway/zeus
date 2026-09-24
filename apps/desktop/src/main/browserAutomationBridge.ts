@@ -62,6 +62,19 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
 
   return {
     register,
+    async readPricingPage(input) {
+      const current = registration;
+      if (!current) throw new Error('Zeus 界面离线，暂时无法读取动态价格页面。');
+      const response = await fetch(`${current.baseUrl}/pricing/read`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(25_000),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok || !isRecord(result) || typeof result.text !== 'string') throw new Error('动态价格页面读取失败。');
+      return result.text;
+    },
     currentLeaseId: () => registration?.leaseId ?? null,
     /** 只通知当前界面租约结束控制，不重放到另一个界面实例。 */
     async endComputerUse(input) {
@@ -112,12 +125,17 @@ async function handleDesktopBrowserBridgeRequest(request: IncomingMessage, respo
     sendJson(response, 401, { error: 'ZEUS_BROWSER_BRIDGE_UNAUTHORIZED', message: '浏览器自动化桥凭据无效。' });
     return;
   }
-  if (request.method !== 'POST' || !['/invoke', '/computer/end'].includes(request.url ?? '')) {
+  if (request.method !== 'POST' || !['/invoke', '/computer/end', '/pricing/read'].includes(request.url ?? '')) {
     sendJson(response, 404, { error: 'ZEUS_BROWSER_BRIDGE_NOT_FOUND', message: '浏览器自动化桥路径不存在。' });
     return;
   }
   try {
     const input = await readJsonBody(request);
+    if (request.url === '/pricing/read') {
+      if (!isRecord(input) || typeof input.url !== 'string' || !browserAutomation.readPricingPage) throw new Error('动态价格读取不可用。');
+      sendJson(response, 200, { text: await browserAutomation.readPricingPage({ url: input.url }) });
+      return;
+    }
     if (request.url === '/computer/end') {
       if (!isRecord(input) || !isNonEmptyString(input.conversationId) || !isNonEmptyString(input.turnId)) {
         sendJson(response, 400, { message: 'Computer Use 轮次身份无效。' });

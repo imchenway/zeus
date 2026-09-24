@@ -545,10 +545,152 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-metrics dt {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-block-size: 24px;
   overflow-wrap: anywhere;
   color: var(--usage-muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.menu-bar-usage-metrics dt > span {
+  min-inline-size: 0;
+}
+
+/* 触发器保留独立悬停与点击区域，浮层仍由原生 Popover 负责点击外部关闭。 */
+.menu-bar-usage-cost-detail-control {
+  display: inline-grid;
+  inline-size: 24px;
+  block-size: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+}
+
+/* 视觉上是紧邻名称的小感叹号，实际按钮保留 24px 键盘与触控目标。 */
+.menu-bar-usage-cost-detail-trigger {
+  display: inline-grid;
+  inline-size: 24px;
+  block-size: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--usage-muted);
+  cursor: pointer;
+}
+
+.menu-bar-usage-cost-detail-trigger > span {
+  display: grid;
+  inline-size: 13px;
+  block-size: 13px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.menu-bar-usage-cost-detail-trigger:hover,
+.menu-bar-usage-cost-detail-trigger:focus-visible {
+  color: var(--usage-accent-strong);
+}
+
+.menu-bar-usage-cost-detail-trigger:focus-visible {
+  outline: 2px solid var(--usage-accent);
+  outline-offset: -2px;
+  border-radius: 5px;
+}
+
+/* 结构化费用明细进入顶层，位置由实际剩余空间计算，长模型列表自身滚动。 */
+.menu-bar-usage-cost-detail[popover] {
+  position: fixed;
+  inset: auto;
+  left: var(--usage-cost-detail-left, 12px);
+  top: var(--usage-cost-detail-top, 12px);
+  display: none;
+  inline-size: min(324px, calc(100vw - 24px));
+  max-block-size: min(360px, calc(100vh - 24px));
+  margin: 0;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-control, 8px);
+  background: var(--usage-panel-strong);
+  box-shadow: var(--usage-shadow-soft);
+  color: var(--usage-text);
+  font-size: 11px;
+}
+
+.menu-bar-usage-cost-detail:popover-open {
+  display: grid;
+  gap: 4px;
+}
+
+.menu-bar-usage-cost-detail > strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.menu-bar-usage-cost-detail > small {
+  color: var(--usage-muted);
+  font-size: 10px;
+}
+
+.menu-bar-usage-cost-table-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.menu-bar-usage-cost-detail table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: start;
+  user-select: text;
+}
+
+.menu-bar-usage-cost-detail th,
+.menu-bar-usage-cost-detail td {
+  padding: 6px 5px;
+  border-block-start: 1px solid var(--usage-line);
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.menu-bar-usage-cost-detail thead th {
+  border-block-start: 0;
+  color: var(--usage-muted);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.menu-bar-usage-cost-detail th:first-child {
+  inline-size: 34%;
+  text-align: start;
+}
+
+.menu-bar-usage-cost-detail th:nth-child(2) {
+  inline-size: 42%;
+  text-align: start;
+}
+
+.menu-bar-usage-cost-detail th:last-child,
+.menu-bar-usage-cost-detail td:last-child {
+  inline-size: 24%;
+  text-align: end;
+}
+
+.menu-bar-usage-cost-detail tbody th {
+  font-weight: 600;
+}
+
+.menu-bar-usage-cost-detail td span {
+  display: block;
+  color: var(--usage-muted);
+  line-height: 1.45;
 }
 
 .menu-bar-usage-metrics dd {

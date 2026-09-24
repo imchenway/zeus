@@ -1,11 +1,15 @@
 import {
   calculateCacheHitRate,
   emptyTokenUsageBreakdown,
+  sumEstimatedCosts,
   type CodexLocalUsageDay,
   type CodexLocalUsageTotals,
+  type CodexUsageRateSnapshot,
   type CodexUsageRange,
   type TokenUsageBreakdown,
   type UsageAnalyticsSnapshot,
+  type UsageModelCostBreakdown,
+  type UsageModelRate,
   type UsageOverviewSnapshot,
   type UsageProviderAnalytics,
   type UsageProviderSummary,
@@ -90,8 +94,10 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
           dailyAccount: accountDays,
           todayLocal: aggregateRows(todayRows),
+          todayCostBreakdown: aggregateCostBreakdown(todayRows),
           todayLocalComplete: todayRows.every((row) => row.usageComplete),
           sevenDayLocal: aggregateRows(sevenDayRows),
+          sevenDayCostBreakdown: aggregateCostBreakdown(sevenDayRows),
           sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
           dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
           collectionStartedAt: rows[0]?.occurredAt ?? null,
@@ -214,8 +220,10 @@ function buildProviderSummary(input: {
     accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
     dailyAccount: accountDays,
     todayLocal: aggregateRows(todayRows),
+    todayCostBreakdown: aggregateCostBreakdown(todayRows),
     todayLocalComplete: todayRows.every((row) => row.usageComplete),
     sevenDayLocal: aggregateRows(sevenDayRows),
+    sevenDayCostBreakdown: aggregateCostBreakdown(sevenDayRows),
     sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
     dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
     collectionStartedAt: rows[0]?.occurredAt ?? null,
@@ -240,6 +248,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
   const savingsValues = rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
   return {
     ...usage,
+    costs: sumEstimatedCosts(rows.map((row) => row.estimate)),
     hasBackfilledPricing: rows.some((row) => Boolean(row.estimate.rateSnapshot.backfilledAt)),
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
@@ -249,6 +258,60 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
     cacheSavingsUsd: savingsValues.length > 0 ? savingsValues.reduce((sum, value) => sum + value, 0) : null,
     priceCoverage: billableTokens > 0 ? pricedTokens / billableTokens : null,
   };
+}
+
+/** 按真实请求的模型和价格快照归组，避免用最后一次单价解释整段历史。 */
+function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[]): UsageModelCostBreakdown[] {
+  /** JSON 键只用于同一次聚合内识别完全相同的模型与费率。 */
+  const groups = new Map<string, UsageModelCostBreakdown>();
+  for (const row of rows) {
+    /** 新账本优先使用请求级快照；旧账本仍以整轮快照展示真实已知信息。 */
+    const requests = row.estimate.requests?.length
+      ? row.estimate.requests.map((request) => ({ model: request.estimate.rateSnapshot.model || row.model, usage: request.usage, rateSnapshot: request.estimate.rateSnapshot }))
+      : [{ model: row.estimate.rateSnapshot.model || row.model, usage: row.usage, rateSnapshot: row.estimate.rateSnapshot }];
+    for (const request of requests) {
+      /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
+      const rate = usageModelRate(request.rateSnapshot);
+      const key = JSON.stringify([request.model, rate]);
+      const existing = groups.get(key);
+      if (existing) {
+        existing.usage = sumBreakdowns([existing.usage, request.usage]);
+      } else {
+        groups.set(key, { model: request.model, rate, usage: { ...request.usage } });
+      }
+    }
+  }
+  return [...groups.values()].sort((left, right) => left.model.localeCompare(right.model));
+}
+
+/** 把各供应商费率投影为同一展示口径，缺价继续保持未知。 */
+function usageModelRate(snapshot: CodexUsageRateSnapshot): UsageModelRate | null {
+  if (snapshot.price) return { currency: snapshot.price.currency, perMillion: snapshot.price.perMillion, perRequest: snapshot.price.perRequest };
+  if (snapshot.usdPerMillion) {
+    return {
+      currency: 'USD',
+      perMillion: {
+        input: snapshot.usdPerMillion.input,
+        output: snapshot.usdPerMillion.output,
+        cachedInput: snapshot.usdPerMillion.cachedInput,
+        cacheWrite: snapshot.usdPerMillion.cacheWrite,
+      },
+      perRequest: null,
+    };
+  }
+  if (snapshot.creditsPerMillion) {
+    return {
+      currency: 'Credits',
+      perMillion: {
+        input: snapshot.creditsPerMillion.input,
+        output: snapshot.creditsPerMillion.output,
+        cachedInput: snapshot.creditsPerMillion.cachedInput,
+        cacheWrite: snapshot.creditsPerMillion.cacheWrite,
+      },
+      perRequest: null,
+    };
+  }
+  return null;
 }
 
 function sumBreakdowns(values: readonly TokenUsageBreakdown[]): TokenUsageBreakdown {

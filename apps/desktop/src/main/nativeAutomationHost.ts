@@ -1,3 +1,4 @@
+import { readPublicPricingPage } from './pricingPageReader.js';
 import type { BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 
 interface NativeAutomationHostOptions {
@@ -9,6 +10,7 @@ interface NativeAutomationHostOptions {
 /** Electron Main 的单一自动化端口；执行宿主只持有短期桥租约，不拥有任何 UI 或系统权限。 */
 export function createNativeAutomationHost(options: NativeAutomationHostOptions): BrowserAutomationPort {
   return {
+    readPricingPage: readPublicPricingPage,
     /** 将桌面控制生命周期送到唯一的原生控制宿主。 */
     endComputerUse: (input) => options.computer.endComputerUse?.(input) ?? Promise.resolve(),
     invoke(input: BrowserAutomationToolCall) {

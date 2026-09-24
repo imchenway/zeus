@@ -113,6 +113,10 @@ export interface ModelConnectionRecord {
   templateId: ModelConnectionTemplateId;
   baseUrl: string;
   modelsPath: string;
+  /** 可选价格清单页面；空值使用内置来源。 */
+  pricingUrl?: string;
+  /** 仅用于展示的价格读取状态，不参与连接配置存储。 */
+  pricingCatalog?: import('@zeus/shared').ModelPricingCatalog | null;
   enabled: boolean;
   apiKeyConfigured: boolean;
   models: ConfiguredModelDefinition[];
@@ -126,6 +130,8 @@ export interface SaveModelConnectionInput {
   templateId?: ModelConnectionTemplateId;
   baseUrl: string;
   modelsPath?: string;
+  /** 自定义供应商只需提供一个价格清单页面。 */
+  pricingUrl?: string;
   enabled?: boolean;
   models?: ConfiguredModelDefinition[];
 }
@@ -236,6 +242,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
     templateId,
     baseUrl,
     modelsPath,
+    ...(input.pricingUrl?.trim() ? { pricingUrl: normalizePricingPageUrl(input.pricingUrl) } : {}),
     enabled: input.enabled !== false,
     apiKeyConfigured: options.apiKeyConfigured,
     models,
@@ -847,4 +854,11 @@ function inferSpeedLabel(modelId: string): ConfiguredModelDefinition['speedLabel
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 价格页面独立于模型接口，不接受凭据及非网页协议。 */
+function normalizePricingPageUrl(value: string): string {
+  const url = new URL(value.trim());
+  if (value.length > 2048 || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('价格页面必须是无凭据的 HTTP 或 HTTPS 地址。');
+  return url.href;
 }

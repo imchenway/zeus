@@ -9,6 +9,8 @@ export const integrationCommandTypes = {
   modelConnectionUpdate: 'integration.model_connection.update',
   modelConnectionDelete: 'integration.model_connection.delete',
   modelConnectionApiKeyClear: 'integration.model_connection.api_key.clear',
+  /** 整份价格清单的幂等刷新。 */
+  modelConnectionPricingRefresh: 'integration.model_connection.pricing.refresh',
   modelConnectionModelsRefresh: 'integration.model_connection.models.refresh',
   modelConnectionModelsProbe: 'integration.model_connection.models.probe',
   modelConnectionDiagnose: 'integration.model_connection.diagnose',
@@ -84,6 +86,7 @@ export const integrationCommandRoutePolicy = {
     'DELETE /api/model-connections/:connectionId',
     'DELETE /api/model-connections/:connectionId/api-key',
     'POST /api/model-connections/:connectionId/models/refresh',
+    'POST /api/model-connections/:connectionId/pricing/refresh',
     'POST /api/model-connections/:connectionId/models/probe',
     'POST /api/zentao-instances',
     'PUT /api/zentao-instances/:instanceId',

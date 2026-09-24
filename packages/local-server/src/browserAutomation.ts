@@ -22,6 +22,8 @@ export interface BrowserAutomationToolResult {
  * 不直接依赖 Electron、Chromium session 或窗口对象。
  */
 export interface BrowserAutomationPort {
+  /** 使用无登录凭据的临时浏览器读取动态价格正文，不占用用户会话标签页。 */
+  readPricingPage?(input: { url: string }): Promise<string>;
   invoke(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult>;
   /** 轮次结束或用户中断时撤销桌面控制；浏览器会话不受影响。 */
   endComputerUse?(input: { conversationId: string; turnId: string }): Promise<void>;

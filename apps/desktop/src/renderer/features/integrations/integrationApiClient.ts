@@ -19,6 +19,8 @@ import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTra
 import { buildIntegrationCommandRequest, integrationClientCommandTypes } from './integrationCommandClient.js';
 
 export interface IntegrationApiClient {
+  /** 自动识别整份价格页面，返回只读结果。 */
+  refreshModelConnectionPricing: (connectionId: string) => Promise<ModelConnectionRecord>;
   loadModelConnections: () => Promise<ModelConnectionRecord[]>;
   createModelConnection: (input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
@@ -108,6 +110,8 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
   };
 
   return {
+    refreshModelConnectionPricing: (connectionId) =>
+      modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionPricingRefresh, 'pricing_refresh', 'POST', '/pricing/refresh', {}) as ReturnType<IntegrationApiClient['refreshModelConnectionPricing']>,
     loadModelConnections: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadModelConnections']>> }>('/api/model-connections')).items,
     createModelConnection: async (input) => {
       const body = await buildIntegrationCommandRequest({

@@ -256,6 +256,8 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
 }
 
 export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
+  /** 原币费用汇总，保持美元字段的原有语义。 */
+  costs?: import('@zeus/shared').EstimatedMoney[];
   serviceTier?: string | null;
   total: TokenUsageBreakdown;
   last: TokenUsageBreakdown;
@@ -2935,12 +2937,14 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
       'lastApiEquivalentUsd',
       'cacheSavingsUsd',
       'priceCoverage',
+      'costs',
       'pricingCatalogDate',
       'pricingSourceUrls',
       'historyComplete',
     ],
     'provider token usage snapshot',
   );
+  validateEstimatedMoney(candidate.costs);
   validateTokenUsageBreakdown(candidate.total);
   validateTokenUsageBreakdown(candidate.last);
   if (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string') throw new Error('Invalid provider token usage snapshot');
@@ -2961,7 +2965,30 @@ export function validateTokenUsageBreakdown(value: unknown): asserts value is To
 
 function validateCodexUsageEstimate(value: unknown): asserts value is CodexUsageEstimate {
   if (!isPlainRecord(value) || !isPlainRecord(value.rateSnapshot)) throw new Error('Invalid Codex usage estimate');
-  assertNoSecretLikeProviderKeys(value, new Set(['input', 'cachedinput', 'cachewrite', 'output', 'billabletokens', 'pricedtokens']));
+  validateEstimatedMoney(value.costs);
+  if (value.requests !== undefined) {
+    if (!Array.isArray(value.requests)) throw new Error('Invalid request price snapshots');
+    const identities = new Set<string>();
+    for (const request of value.requests) {
+      if (
+        !isPlainRecord(request) ||
+        typeof request.id !== 'string' ||
+        identities.has(request.id) ||
+        typeof request.occurredAt !== 'string' ||
+        !Number.isFinite(Date.parse(request.occurredAt)) ||
+        !isPlainRecord(request.estimate) ||
+        request.estimate.requests !== undefined
+      )
+        throw new Error('Invalid request price snapshot');
+      identities.add(request.id);
+      validateTokenUsageBreakdown(request.usage);
+      validateCodexUsageEstimate(request.estimate);
+    }
+  }
+  assertNoSecretLikeProviderKeys(
+    value,
+    new Set(['input', 'cachedinput', 'cachewrite', 'output', 'billabletokens', 'pricedtokens', 'totaltokens', 'inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens']),
+  );
   for (const candidate of [value.credits, value.apiEquivalentUsd, value.cacheSavingsUsd, value.coverage]) {
     if (candidate !== null && (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0)) throw new Error('Invalid Codex usage estimate');
   }
@@ -3677,4 +3704,16 @@ function mapIdempotencyRequestRow(row: DbIdempotencyRequestRow): ZeusIdempotency
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** 货币数组是跨进程数据，拒绝重复币种、非有限数和负金额。 */
+function validateEstimatedMoney(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 32) throw new Error('Invalid estimated money');
+  const currencies = new Set<string>();
+  for (const cost of value) {
+    if (!isPlainRecord(cost) || typeof cost.currency !== 'string' || !/^[A-Z]{3}$/u.test(cost.currency) || currencies.has(cost.currency) || typeof cost.amount !== 'number' || !Number.isFinite(cost.amount) || cost.amount < 0)
+      throw new Error('Invalid estimated money');
+    currencies.add(cost.currency);
+  }
 }
