@@ -1,5 +1,7 @@
 /** 工具页面唯一的宿主适配面：只导出控件、契约和现有客户端能力。 */
 export { MotionPresence } from '../ui/MotionPresence.js';
+/** 工具页通过宿主识别内部临时工作区，沿用共享标识而不直接依赖系统包。 */
+export { temporaryWorkspaceId } from '@zeus/shared';
 export { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 export { type CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 export { type DashboardClient, type ProjectRecord } from '../apiClient.js';

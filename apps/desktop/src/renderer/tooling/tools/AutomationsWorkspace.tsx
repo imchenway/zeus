@@ -1,6 +1,6 @@
 import { MotionPresence } from '../toolPageHost.js';
 import { reportApplicationError, VisibleApplicationError } from '../toolPageHost.js';
-import { temporaryWorkspaceId } from '@zeus/shared';
+import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
