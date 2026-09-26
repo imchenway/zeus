@@ -90,6 +90,8 @@ interface PiConversationContext {
   permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   model: string;
   attachmentRoots: string[];
+  /** 当前会话由服务端冻结的可写项目目录。 */
+  writableRoots: string[];
   /** 与模型收到的冻结插件 Skill 清单一致，仅供文件工具只读访问。 */
   pluginSkillRoots: string[];
   /** 当前执行快照的模式，不能由正在编辑的下一轮设置覆盖。 */
@@ -205,6 +207,8 @@ export interface StartPiConversationInput {
   environmentId?: string;
   attachments?: NativeConversationAttachmentInput[];
   allowedAttachmentRoots?: string[];
+  /** 多项目会话中由服务端冻结的可写目录。 */
+  writableRoots?: string[];
   browserComments?: Record<string, unknown>[];
   browserCommentContent?: string;
   conversationContext?: Record<string, unknown>;
@@ -395,13 +399,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (existingConversation && !input.holdDispatch) {
       /** 切换模型后首次派发也先恢复原任务目录，再准备工具和模型请求。 */
       const executionContext = await options.ensureExecutionContext({ conversationId: existingConversation.id, mode: 'dispatch' });
-      if (executionContext) input = { ...input, cwd: executionContext.projectLocalPath };
+      if (!executionContext) throw piError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录尚未准备完成。');
+      input = { ...input, cwd: executionContext.projectLocalPath, writableRoots: executionContext.writableRoots ?? [executionContext.projectLocalPath] };
     }
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const rawPathReferences = orderedAttachments.flatMap((attachment) => (attachment.localPath ? [{ name: attachment.name, path: attachment.localPath }] : []));
     let selectedSkills = input.skills ?? (input.skill ? [input.skill] : []);
     const skillRoots = selectedSkills.map(resolveSkillResourceRoot);
-    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? []), ...skillRoots]);
+    /** 新会话优先使用服务端冻结目录，普通会话仍只允许 cwd。 */
+    const writableRoots = uniquePaths(input.writableRoots ?? [input.cwd]);
+    /** 可读范围合并项目、附件与 Skill，写范围仍单独受策略约束。 */
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? []), ...writableRoots, ...skillRoots]);
     let providerPrompt = appendConversationResourceContext(
       input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, orderedAttachments) : appendPiAttachmentReferences(input.prompt, rawPathReferences),
       input.browserCommentContent,
@@ -471,6 +479,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             permissionMode: input.permissionMode,
             holdDispatch: true,
             ...(allowedResourceRoots.length ? { allowedAttachmentRoots: allowedResourceRoots } : {}),
+            ...(writableRoots.length ? { writableRoots } : {}),
             ...(input.operationContext ? { operationContext: input.operationContext } : {}),
           },
           ...(input.internalOperation ? { internalOperation: true } : {}),
@@ -548,6 +557,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             agentKind: 'pi',
             thinkingLevel: input.thinkingLevel,
             ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
+            ...(writableRoots.length ? { writableRoots } : {}),
           },
           ...(input.internalOperation ? { internalOperation: true } : {}),
         },
@@ -716,6 +726,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       permissionMode: input.permissionMode,
       model: piModelIdentity(input.model),
       attachmentRoots: attachmentInput.allowedRoots,
+      writableRoots,
       pluginSkillRoots: uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path))),
       workMode: input.workMode ?? 'default',
       session,
@@ -981,7 +992,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     let selectedSkills = input.skills ?? (input.skill ? [input.skill] : []);
     const skillRoots = selectedSkills.map(resolveSkillResourceRoot);
-    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...skillRoots]);
+    /** 续发和重启只采用重新核验的目录，旧输入或内存不能覆盖当前授权。 */
+    const writableRoots = uniquePaths(executionContext.writableRoots ?? [cwd]);
+    /** 读取附件与 Skill 不会扩大可写项目范围。 */
+    const allowedResourceRoots = uniquePaths([...(input.allowedAttachmentRoots ?? context?.attachmentRoots ?? [cwd]), ...writableRoots, ...skillRoots]);
     let attachmentInput: PiAttachmentResolution = { attachments: input.attachments ?? [], images: [], pathReferences: [], allowedRoots: allowedResourceRoots };
     let providerContent = input.content;
     /** 已接纳的队列输入沿用原请求摘要，恢复问题的回答不能被重新计算为另一请求。 */
@@ -1004,7 +1018,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
         ...((input.skills ?? (input.skill ? [input.skill] : undefined)) ? { skills: input.skills ?? [input.skill!] } : {}),
         ...(input.computerUseRequested ? { computerUseRequested: true } : {}),
-        context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: cwd },
+        context: {
+          model: input.model.modelId,
+          modelSourceId: input.model.sourceId,
+          agentKind: 'pi',
+          thinkingLevel: input.thinkingLevel,
+          projectLocalPath: cwd,
+          ...(allowedResourceRoots.length ? { allowedAttachmentRoots: allowedResourceRoots } : {}),
+          ...(writableRoots.length ? { writableRoots } : {}),
+        },
       },
       createdAt,
     });
@@ -1040,6 +1062,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         permissionMode: input.permissionMode,
         model: piModelIdentity(input.model),
         attachmentRoots: [],
+        writableRoots,
         pluginSkillRoots: uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path))),
         workMode: input.workMode,
         session,
@@ -1050,6 +1073,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     context.permissionMode = input.permissionMode;
     context.workMode = input.workMode;
     context.pluginSkillRoots = uniquePaths([...skillCatalog, ...(pluginPreparation?.skills ?? [])].map((skill) => dirname(skill.path)));
+    context.writableRoots = writableRoots;
     if (isQueueMemberStatus(submission.status)) {
       submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
     }
@@ -1402,7 +1426,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       idempotencyKey: next.idempotencyKey,
       clientUserMessageId: next.clientMessageId,
       attachments: Array.isArray(persisted.attachments) ? (persisted.attachments as NativeConversationAttachmentInput[]) : [],
-      allowedAttachmentRoots: typeof persistedContext.projectLocalPath === 'string' ? [persistedContext.projectLocalPath] : [],
+      allowedAttachmentRoots:
+        Array.isArray(persistedContext.allowedAttachmentRoots) && persistedContext.allowedAttachmentRoots.every((root) => typeof root === 'string')
+          ? persistedContext.allowedAttachmentRoots
+          : typeof persistedContext.projectLocalPath === 'string'
+            ? [persistedContext.projectLocalPath]
+            : [],
       browserComments: Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isRecord) : [],
       ...(typeof persisted.browserCommentContent === 'string' ? { browserCommentContent: persisted.browserCommentContent } : {}),
       ...(isRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
@@ -2231,7 +2260,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '命令没有对应的活动轮次。');
       /** 短等待只返回进程句柄，实际非零退出仍作为失败工具结果交给模型和界面。 */
       const result = await options.processes.start(
-        { ...context, turnId: activeRun.turnId, readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots] },
+        { ...context, turnId: activeRun.turnId, readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots], writableRoots: context.writableRoots },
         { toolCallId: request.toolCallId, command, escalated, yieldTimeMs: numberArg(request.args.yield_time_ms, 1_000) },
       );
       return {
@@ -2264,6 +2293,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       workMode: context.workMode,
       write: request.toolName === 'write' || request.toolName === 'edit',
       readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots],
+      writableRoots: context.writableRoots,
     });
     if (target.requiresApproval && !(await requestApproval(context, request))) throw piError('ZEUS_PI_TOOL_DECLINED', '用户已拒绝访问该路径。');
     const path = target.path;

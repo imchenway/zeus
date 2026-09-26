@@ -2298,10 +2298,17 @@ export function createConversationApplicationOperations(dependencies: Conversati
     throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', `Response type does not match pending ${requestKind} request.`);
   }
 
-  async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void) {
+  async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void, executionProjectIds?: string[]) {
     assertRequestedAgentKind(body);
+    /** 跨项目目录只能来自服务端调用参数，不能读取客户端正文中的路径。 */
+    const executionProjects = executionProjectIds?.map((projectId) => projects.getById(projectId)) ?? [project];
+    if (executionProjects.some((candidate) => !candidate) || executionProjects[0]?.id !== project.id || new Set(executionProjectIds ?? [project.id]).size !== executionProjects.length) {
+      throw nativeApiError('ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', '自动化目标项目已变化或不可用。');
+    }
+    /** 项目集合参与幂等摘要，重放时不能把同一请求身份换成另一组目录。 */
+    const idempotencyInput = executionProjectIds ? { ...body, zeusServerExecutionProjectIds: executionProjectIds } : body;
     const scope = `project-conversation:${project.id}`;
-    const requestHash = nativeIdempotencyRequestHash(body);
+    const requestHash = nativeIdempotencyRequestHash(idempotencyInput);
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
     const reservation = createTaskConversationAcceptanceReservation(scope, requestHash, stableOperationId, body, project.id, idempotencyKey);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
@@ -2309,11 +2316,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
       executeIdempotentJson(
         scope,
         idempotencyKey,
-        body,
+        idempotencyInput,
         202,
         async (ownedOperationId, lifecycle) => {
           if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a project conversation.');
-          const accepted = await acceptProjectConversation(project, body, idempotencyKey, ownedOperationId, reservation, lifecycle);
+          const accepted = await acceptProjectConversation(project, body, idempotencyKey, ownedOperationId, reservation, lifecycle, executionProjects as ZeusProjectRecord[]);
           await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
           return accepted;
         },
@@ -2355,6 +2362,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     stableOperationId: string,
     reservation: ProjectConversationAcceptanceReservation,
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
+    executionProjects: ZeusProjectRecord[] = [project],
   ) {
     await validateNewConversationCapacity(project, body, reservation.contextCapacityTokens);
     if (!isNativeApiRecord(body) || body.mode !== 'create') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
@@ -2439,6 +2447,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
     };
     const executionRoot = reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree));
+    /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
+    const executionRoots = reviewWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
+    /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */
+    const writableRoots = executionRoots;
     const resolvedRoute = await resolveConversationExecutionRoute({
       contextCapacityTokens: reservation.contextCapacityTokens,
       agentKind: selectedAgentKind,
@@ -2485,6 +2497,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             },
             ...(effectiveEffort ? { thinkingLevel: effectiveEffort } : {}),
             attachments,
+            allowedAttachmentRoots: executionRoots,
+            writableRoots,
             permissionMode,
             workMode: collaborationMode,
             idempotencyKey,
@@ -2504,6 +2518,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             prompt: providerContent,
             ...(displayText !== providerContent ? { displayText } : {}),
             attachments,
+            allowedAttachmentRoots: executionRoots,
+            writableRoots,
             model: selectedModel.model,
             modelSourceId: selectedModel.sourceId ?? null,
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),

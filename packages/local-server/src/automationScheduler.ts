@@ -11,7 +11,10 @@ export interface AutomationSchedulerOptions {
   conversations: ConversationRepository;
   submissions: ConversationSubmissionRepository;
   getProject(projectId: string): ZeusProjectRecord | undefined;
-  dispatch(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord }): Promise<AutomationDispatchResult>;
+  /** 无项目运行按需创建 Zeus 托管的临时会话工作区。 */
+  ensureTemporaryWorkspace(runId: string): ZeusProjectRecord;
+  /** 一次派发接收整组冻结项目，只能产生一个会话。 */
+  dispatch(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord; projects: ZeusProjectRecord[] }): Promise<AutomationDispatchResult>;
   save(): Promise<void>;
   now(): string;
   publish(type: string, payload: Record<string, unknown>): void;
@@ -45,16 +48,22 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
 
   function acceptDue(now: string): void {
     for (const task of options.tasks.listDue(now)) {
-      for (const target of options.tasks.listTargets(task.id).filter((entry) => entry.enabled)) {
-        const scheduledAt = task.nextRunAt ?? now;
-        options.runs.enqueue({
-          automationId: task.id,
-          projectId: target.projectId,
-          triggerKind: task.triggerKind,
-          triggerIdentity: `schedule:${scheduledAt}`,
-          scheduledAt,
-        });
-      }
+      /** 定时触发同样把全部启用项目冻结到一条运行。 */
+      const projectIds = options.tasks
+        .listTargets(task.id)
+        .filter((entry) => entry.enabled)
+        .map((entry) => entry.projectId);
+      const scheduledAt = task.nextRunAt ?? now;
+      /** 无项目定时触发必须先建立回执外键所需的托管工作区。 */
+      const projectId = projectIds[0] ?? options.ensureTemporaryWorkspace(`schedule:${task.id}:${scheduledAt}`).id;
+      options.runs.enqueue({
+        automationId: task.id,
+        projectIds,
+        projectId,
+        triggerKind: task.triggerKind,
+        triggerIdentity: `schedule:${scheduledAt}`,
+        scheduledAt,
+      });
       options.tasks.setNextRun(task.id, computeNextRun(task, new Date(now)), now);
     }
   }
@@ -108,15 +117,24 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     const running = options.runs.markDispatching(candidate.id);
     if (!running) return;
     const revision = options.tasks.getRevision(running.automationRevisionId);
-    const project = options.getProject(running.projectId);
-    if (!revision || !project) {
-      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', !revision ? '运行修订已不可用。' : '目标项目已不可用。');
+    /** 运行按冻结顺序解析项目；缺少任何一个都整体阻断。 */
+    const projects = running.projectIds.map((projectId) => options.getProject(projectId));
+    if (!revision || projects.some((project) => !project)) {
+      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', !revision ? '运行修订已不可用。' : '至少一个目标项目已不可用。');
+      return;
+    }
+    let executionProject: ZeusProjectRecord;
+    try {
+      /** 无项目运行只在派发前按需建立技术工作区，不把它写回用户目标列表。 */
+      executionProject = (projects[0] as ZeusProjectRecord | undefined) ?? options.getProject(running.projectId) ?? options.ensureTemporaryWorkspace(running.id);
+    } catch (error) {
+      options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
       return;
     }
     // 在进入外部提交前保存运行身份；退出后可据此对账，不能重新生成运行。
     await options.save();
     try {
-      const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project });
+      const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project: executionProject, projects: projects as ZeusProjectRecord[] });
       const updated = options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
       await options.save();
       options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, conversationId: updated.conversationId });

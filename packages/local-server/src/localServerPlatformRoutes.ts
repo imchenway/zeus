@@ -39,7 +39,7 @@ import {
 } from '@zeus/git-core';
 import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
-import { cloneTaskManagementStatusConfig, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
+import { cloneTaskManagementStatusConfig, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,
   AutomationTaskRepository,
@@ -3428,12 +3428,20 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   const automationRuns = new AutomationRunRepository(db);
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
+  /** 无项目自动化复用产品已有临时会话工作区，不创建普通项目。 */
+  const ensureAutomationTemporaryWorkspace = (runIdentity: string) =>
+    workManagementProjectOperations.create({ temporary: true, name: '临时会话', localPath: '' }, temporaryWorkspaceId, {
+      commandId: `automation-temporary-workspace:${runIdentity}`,
+      operationIdentity: `automation:${runIdentity}`,
+      actor: { kind: 'system', id: 'automation-scheduler' },
+    });
 
   registerAutomationRoutes({
     server,
     tasks: automationTasks,
     runs: automationRuns,
     db,
+    ensureTemporaryWorkspace: ensureAutomationTemporaryWorkspace,
     kick: () => automationScheduler?.kick(),
     now: automationNow,
   });
@@ -3537,6 +3545,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       conversations,
       submissions: conversationSubmissions,
       getProject: (projectId) => projects.getById(projectId),
+      ensureTemporaryWorkspace: ensureAutomationTemporaryWorkspace,
       save: () => db.save(),
       now: automationNow,
       publish: publishRealtimeEvent,

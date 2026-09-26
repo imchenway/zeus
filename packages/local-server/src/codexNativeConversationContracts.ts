@@ -367,6 +367,10 @@ export interface StartProjectConversationInput {
   idempotencyKey: string;
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
+  /** 服务端冻结的跨项目只读范围。 */
+  allowedAttachmentRoots?: string[];
+  /** 服务端冻结的跨项目写入范围。 */
+  writableRoots?: string[];
   /** 会话和首条消息耐久接受后立即返回，Provider 由统一队列后台启动。 */
   deferInitialDispatch?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;

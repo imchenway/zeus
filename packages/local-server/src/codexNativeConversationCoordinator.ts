@@ -870,7 +870,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     await assertCodexAccountReady();
-    const title = projectNativeConversationTitle(input.prompt, input.attachments);
+    const title = projectNativeConversationTitle(input.displayText ?? input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
     const context: ConversationDispatchContext = {
@@ -887,6 +887,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       allowTests: permissionMode !== 'read-only',
       allowGitCommit: false,
       permissionMode,
+      ...(input.allowedAttachmentRoots?.length ? { allowedAttachmentRoots: input.allowedAttachmentRoots.map((root) => resolve(root)) } : {}),
+      ...(input.writableRoots?.length ? { writableRoots: input.writableRoots.map((root) => resolve(root)) } : {}),
       workMode: input.collaborationMode ?? existingConversation?.collaborationMode ?? 'default',
     };
     if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== null || existingConversation.transportKind !== 'codex_native')) {
@@ -899,7 +901,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
         title,
-        summary: [...input.prompt].slice(0, 240).join('') || input.attachments?.[0]?.name || '',
+        summary: [...(input.displayText ?? input.prompt)].slice(0, 240).join('') || input.attachments?.[0]?.name || '',
         status: 'starting',
         transportKind: 'codex_native',
         providerId: 'codex',

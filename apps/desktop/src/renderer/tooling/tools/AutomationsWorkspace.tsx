@@ -1,5 +1,6 @@
 import { MotionPresence } from '../toolPageHost.js';
 import { reportApplicationError, VisibleApplicationError } from '../toolPageHost.js';
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
@@ -21,10 +22,14 @@ import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPer
 type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string };
 type View = 'tasks' | 'inbox';
 const allProjectsValue = '__all_projects__';
+/** 无项目选项只改变用户目标范围，运行时目录由服务端托管。 */
+const noProjectValue = '__no_project__';
 
 /** 自动化目录与收件箱使用全局控件，编辑及删除复用表单弹窗。 */
 export function AutomationsWorkspace(props: { client: DashboardClient | null; projects: ProjectRecord[]; language: 'zh-CN' | 'en-US'; onOpenConversation: (run: AutomationRunRecord) => Promise<void> }) {
   const zh = props.language === 'zh-CN';
+  /** 临时会话是技术工作区，不得作为用户项目出现在目标列表。 */
+  const userProjects = props.projects.filter((project) => project.id !== temporaryWorkspaceId);
   const [view, setView] = useState<View>('tasks');
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [inbox, setInbox] = useState<AutomationRunRecord[]>([]);
@@ -42,18 +47,18 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const [pendingDelete, setPendingDelete] = useState<AutomationTaskRecord | null>(null);
   /** 模型刷新独立于自动化表单与运行记录。 */
   const modelRevisionRef = useRef(0);
-  /** 目录按当前编辑的项目读取。 */
-  const modelProjectId = draft.projectIds[0] ?? props.projects[0]?.id;
+  /** 有项目时保留项目默认模型；完全无项目时读取全局模型目录。 */
+  const modelProjectId = draft.projectIds[0] ?? userProjects[0]?.id;
 
   useEffect(() => {
     const client = props.client;
-    if (!client || !modelProjectId) return;
-    /** 切换项目后，旧目录读取不能覆盖当前模型选项。 */
+    if (!client) return;
+    /** 自动化模型属于全局配置，不要求先选择项目。 */
     let disposed = false;
     const refreshModels = (): void => {
       const revision = ++modelRevisionRef.current;
-      void client
-        .loadCodexConversationCapabilities(modelProjectId)
+      const request = modelProjectId ? client.loadCodexConversationCapabilities(modelProjectId) : client.loadDigitalEmployeeCapabilities();
+      void request
         .then((next) => {
           if (!disposed && revision === modelRevisionRef.current) setModels(next.models.filter((model) => model.available !== false));
         })
@@ -61,13 +66,14 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
           // 网络恢复后的目录通知会重试，不打断自动化草稿编辑。
         });
     };
+    refreshModels();
     window.addEventListener(codexCapabilitiesChangedEvent, refreshModels);
     return () => {
       disposed = true;
       modelRevisionRef.current += 1;
       window.removeEventListener(codexCapabilitiesChangedEvent, refreshModels);
     };
-  }, [props.client, modelProjectId]);
+  }, [modelProjectId, props.client]);
 
   async function refresh(): Promise<void> {
     if (!props.client) return;
@@ -76,14 +82,15 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     setLoading(true);
     setError(null);
     try {
-      const projectId = draft.projectIds[0] ?? props.projects[0]?.id;
-      const [nextTasks, nextInbox, capabilities] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), projectId ? props.client.loadCodexConversationCapabilities(projectId) : Promise.resolve(null)]);
+      const capabilitiesRequest = modelProjectId ? props.client.loadCodexConversationCapabilities(modelProjectId) : props.client.loadDigitalEmployeeCapabilities();
+      const [nextTasks, nextInbox, capabilities] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), capabilitiesRequest]);
       setTasks(nextTasks);
       setInbox(nextInbox);
       if (modelRevision === modelRevisionRef.current) setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
       setDraft((current) => {
         if (current.modelId || !capabilities?.models.length) return current;
-        const preferred = capabilities.models.find((model) => model.model === capabilities.preferredModel) ?? capabilities.models[0]!;
+        const preferredModel = 'preferredModel' in capabilities ? capabilities.preferredModel : null;
+        const preferred = capabilities.models.find((model) => model.model === preferredModel) ?? capabilities.models[0]!;
         return { ...current, modelSourceId: preferred.sourceId ?? 'codex', modelId: preferred.model, reasoningEffort: preferred.defaultReasoningEffort ?? null };
       });
     } catch (cause) {
@@ -100,7 +107,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
 
   const selectedProjectKey = draft.projectIds.join('\u0000');
   useEffect(() => {
-    if (!props.client || !editingId || !selectedProjectKey) {
+    if (!props.client || !editingId) {
       setExtensionCatalog(null);
       setExtensionsLoading(false);
       setExtensionsError(null);
@@ -110,8 +117,9 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     setExtensionCatalog(null);
     setExtensionsLoading(true);
     setExtensionsError(null);
-    const projectIds = selectedProjectKey.split('\u0000');
-    void Promise.all(projectIds.map((projectId) => props.client!.loadSkills(projectId)))
+    const projectIds = selectedProjectKey ? selectedProjectKey.split('\u0000') : [];
+    /** 无项目时读取个人 Skill 与 Plugin；有项目时保留交集语义。 */
+    void Promise.all(projectIds.length > 0 ? projectIds.map((projectId) => props.client!.loadSkills(projectId)) : [props.client.loadSkills()])
       .then((catalogs) => {
         if (!active) return;
         const first = catalogs[0]!;
@@ -155,21 +163,22 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     ...(reasoningEffort && !selectedModel?.supportedReasoningEfforts.includes(reasoningEffort) ? [{ value: reasoningEffort, label: `${reasoningEffort} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }] : []),
   ];
   const unreadCount = inbox.filter((run) => run.unread).length;
-  const allProjectsSelected = props.projects.length > 0 && props.projects.every((project) => draft.projectIds.includes(project.id));
+  const allProjectsSelected = userProjects.length > 0 && userProjects.every((project) => draft.projectIds.includes(project.id));
   const projectOptions = [
-    { value: allProjectsValue, label: zh ? `全选项目（${props.projects.length}）` : `Select all projects (${props.projects.length})`, group: zh ? '批量选择' : 'Bulk selection' },
-    ...props.projects.map((project) => ({ value: project.id, label: project.name, group: zh ? '项目' : 'Projects', searchText: project.localPath })),
+    { value: noProjectValue, label: zh ? '不使用任何项目' : 'Work without a project', group: zh ? '工作范围' : 'Work scope' },
+    ...(userProjects.length > 0 ? [{ value: allProjectsValue, label: zh ? `全选项目（${userProjects.length}）` : `Select all projects (${userProjects.length})`, group: zh ? '批量选择' : 'Bulk selection' }] : []),
+    ...userProjects.map((project) => ({ value: project.id, label: project.name, group: zh ? '项目' : 'Projects', searchText: project.localPath })),
   ];
-  const projectSelectionValues = allProjectsSelected ? [allProjectsValue, ...draft.projectIds] : draft.projectIds;
-  const selectedProjectNames = draft.projectIds.map((id) => props.projects.find((project) => project.id === id)?.name ?? id);
+  const projectSelectionValues = draft.projectIds.length === 0 ? [noProjectValue] : allProjectsSelected ? [allProjectsValue, ...draft.projectIds] : draft.projectIds;
+  const selectedProjectNames = draft.projectIds.map((id) => userProjects.find((project) => project.id === id)?.name ?? id);
   const projectTriggerLabel = allProjectsSelected
     ? zh
-      ? `全部 ${props.projects.length} 个项目`
-      : `All ${props.projects.length} projects`
+      ? `全部 ${userProjects.length} 个项目`
+      : `All ${userProjects.length} projects`
     : selectedProjectNames.length === 0
       ? zh
-        ? '未选择项目'
-        : 'No projects selected'
+        ? '不使用任何项目'
+        : 'Work without a project'
       : selectedProjectNames.length === 1
         ? selectedProjectNames[0]
         : zh
@@ -203,6 +212,8 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const extensionsValid =
     (!draft.skillId && draft.pluginIds.length === 0) ||
     (!extensionsLoading && !extensionsError && Boolean(extensionCatalog) && (!draft.skillId || extensionCatalog!.skills.some((skill) => skill.id === draft.skillId)) && draft.pluginIds.every((id) => availablePluginIds.has(id)));
+  /** 原会话不能被自动化静默扩展到其他项目目录。 */
+  const conversationProjectsValid = draft.conversationMode !== 'original' || draft.projectIds.length === 1;
 
   /** 创建时重置草稿，弹窗负责初始焦点。 */
   function startCreate(): void {
@@ -295,7 +306,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       <header className="automations-header">
         <div>
           <h1 id="automations-title">{zh ? '自动化' : 'Automations'}</h1>
-          <p>{zh ? '按设定的时间和项目自动执行指令，并查看每次运行的结果。' : 'Run instructions automatically for selected projects on a schedule, and view the result of each run.'}</p>
+          <p>{zh ? '按设定时间在一个会话内依次处理所选项目，并查看每次运行结果。' : 'Process selected projects in one conversation on a schedule, and view each run result.'}</p>
         </div>
         <div className="automations-header-actions">
           <Button aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} busy={loading} disabled={loading || Boolean(busyId)}>
@@ -342,26 +353,28 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     <span>
                       <strong>{task.name}</strong>
                       <small>
-                        {projectNames(task.projectIds, props.projects)} · {modelName(task, models)}
+                        {projectNames(task.projectIds, props.projects, zh)} · {modelName(task, models)}
                       </small>
                     </span>
                     <span className="automation-row-schedule">{scheduleLabel(task, zh)}</span>
                   </button>
                   <div className="automation-row-actions">
+                    {task.status === 'active' ? (
+                      <Button
+                        className="automation-icon-action"
+                        title={zh ? '立即运行' : 'Run now'}
+                        aria-label={`${zh ? '立即运行' : 'Run'} ${task.name}`}
+                        busy={busyId === `run:${task.id}`}
+                        disabled={Boolean(busyId)}
+                        onClick={() => void mutate(`run:${task.id}`, () => props.client!.runAutomation(task.id))}
+                      >
+                        <Play aria-hidden="true" />
+                      </Button>
+                    ) : null}
                     <Button
                       className="automation-icon-action"
-                      title={zh ? '立即运行' : 'Run now'}
-                      aria-label={`${zh ? '立即运行' : 'Run'} ${task.name}`}
-                      busy={busyId === `run:${task.id}`}
-                      disabled={Boolean(busyId) || task.status !== 'active'}
-                      onClick={() => void mutate(`run:${task.id}`, () => props.client!.runAutomation(task.id))}
-                    >
-                      <Play aria-hidden="true" />
-                    </Button>
-                    <Button
-                      className="automation-icon-action"
-                      title={task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '恢复' : 'Resume'}
-                      aria-label={`${task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '恢复' : 'Resume'} ${task.name}`}
+                      title={task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'}
+                      aria-label={`${task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'} ${task.name}`}
                       busy={busyId === `status:${task.id}`}
                       disabled={Boolean(busyId)}
                       onClick={() => void mutate(`status:${task.id}`, () => props.client!.setAutomationStatus(task.id, task.status === 'active' ? 'paused' : 'active'))}
@@ -386,7 +399,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   <div>
                     <strong>{task?.name ?? run.automationId}</strong>
                     <small>
-                      {projectNames([run.projectId], props.projects)} · {formatDate(run.completedAt ?? run.createdAt)}
+                      {projectNames(run.projectIds, props.projects, zh)} · {formatDate(run.completedAt ?? run.createdAt)}
                     </small>
                     {run.errorMessage ? (
                       <p>
@@ -423,7 +436,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             zh={zh}
             busy={Boolean(busyId)}
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
-            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !draft.projectIds.length || !selectedModel || !extensionsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
+            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !selectedModel || !extensionsValid || !conversationProjectsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
             onClose={() => setEditingId(null)}
             onSubmit={(event) => void submit(event)}
           >
@@ -451,18 +464,22 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   selectedValues={projectSelectionValues}
                   options={projectOptions}
                   onChange={(value) => {
+                    if (value === noProjectValue) {
+                      setDraft({ ...draft, projectIds: [] });
+                      return;
+                    }
                     if (value === allProjectsValue) {
-                      setDraft({ ...draft, projectIds: allProjectsSelected ? [] : props.projects.map((project) => project.id) });
+                      setDraft({ ...draft, projectIds: allProjectsSelected ? [] : userProjects.map((project) => project.id) });
                       return;
                     }
                     setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
                   }}
                   triggerLabel={projectTriggerLabel}
-                  disabled={!props.projects.length}
-                  searchable={props.projects.length > 8}
+                  searchable={userProjects.length > 8}
                   searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
                   emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
                 />
+                {draft.projectIds.length === 0 ? <small>{zh ? '本次运行不会读取或修改任何用户项目，仅使用 Zeus 临时工作区。' : 'This run cannot read or modify user projects and only uses the Zeus temporary workspace.'}</small> : null}
               </div>
             </fieldset>
             <fieldset className="automation-form-section">
@@ -538,7 +555,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   label={zh ? '会话模式' : 'Conversation mode'}
                   value={draft.conversationMode ?? 'independent'}
                   options={[
-                    ['independent', zh ? '每次独立会话' : 'Independent conversation'],
+                    ['independent', zh ? '每次新建一个会话' : 'One new conversation per run'],
                     ['original', zh ? '追加原会话' : 'Append to original'],
                   ]}
                   onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
@@ -555,10 +572,19 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 />
               </div>
               {draft.conversationMode === 'original' ? (
-                <label>
-                  <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
-                  <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
-                </label>
+                <>
+                  <label>
+                    <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
+                    <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
+                  </label>
+                  {draft.projectIds.length !== 1 ? (
+                    <small className="automation-capability-error">
+                      {zh
+                        ? '追加原会话必须选择该会话所属的一个项目；无项目或多项目请使用“每次新建一个会话”。'
+                        : 'Appending to an existing conversation requires its one project. Use one new conversation per run without a project or with multiple projects.'}
+                    </small>
+                  ) : null}
+                </>
               ) : null}
             </fieldset>
             <details>
@@ -572,7 +598,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     onChange={(value) => setDraft({ ...draft, skillId: value || null })}
                     language={props.language}
                     catalog={extensionCatalog}
-                    disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
+                    disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
                     ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
                   />
                 </label>
@@ -586,7 +612,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     options={pluginOptions}
                     onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
                     triggerLabel={pluginTriggerLabel}
-                    disabled={!draft.projectIds.length || extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
+                    disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
                     searchable
                     searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
                     emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
@@ -733,11 +759,13 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; zh: 
 }
 
 function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapability): Draft {
+  /** 新建时仍沿用首个真实项目；用户可显式切换为无项目。 */
+  const firstProject = projects.find((project) => project.id !== temporaryWorkspaceId);
   return {
     name: '',
     description: '',
     prompt: '',
-    projectIds: projects[0] ? [projects[0].id] : [],
+    projectIds: firstProject ? [firstProject.id] : [],
     triggerKind: 'manual',
     triggerConfig: {},
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -782,8 +810,9 @@ function triggerOptions(zh: boolean): Array<[string, string]> {
   ];
 }
 
-function projectNames(ids: string[], projects: ProjectRecord[]): string {
-  return ids.map((id) => projects.find((project) => project.id === id)?.name ?? id).join(', ');
+/** 把空目标明确展示成无项目，避免空白被误解为加载失败。 */
+function projectNames(ids: string[], projects: ProjectRecord[], zh: boolean): string {
+  return ids.length === 0 ? (zh ? '无项目' : 'No project') : ids.map((id) => projects.find((project) => project.id === id)?.name ?? id).join(', ');
 }
 function modelName(task: AutomationTaskRecord, models: CodexTaskPushModelCapability[]): string {
   return models.find((model) => (model.sourceId ?? 'codex') === task.modelSourceId && model.model === task.modelId)?.displayName ?? task.modelId;
